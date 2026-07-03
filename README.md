@@ -17,6 +17,7 @@
 ## Table of Contents
 
 - [Why](#why)
+- [Open Science vs. Claude Science](#open-science-vs-claude-science)
 - [Vision](#vision)
 - [Design Principles](#design-principles)
 - [What We're Building](#what-were-building)
@@ -53,6 +54,28 @@ But it is also a single vendor's closed, subscription-gated product — one mode
 Science is a public good. We think the software layer that increasingly mediates how science gets done should be inspectable, forkable, and free of a single corporate gatekeeper — the same argument that got Linux under every cloud and JupyterHub under every university. Open Science is an attempt to build that layer from first principles: not a proxy or a jailbreak of someone else's product (see [What This Is Not](#what-this-is-not)), but an independent, open implementation of the same category of tool.
 
 > Debating whether this problem framing is even right? That's a Discord conversation, not a GitHub Issue — **[come argue with us](https://discord.gg/85dKfuGM9)**.
+
+## Open Science vs. Claude Science
+
+We keep referencing [Claude Science](https://www.anthropic.com/news/claude-science-ai-workbench) throughout this document because it deserves the credit: it's the best current articulation of "an AI workbench for scientists," and a lot of the architecture below — the coordinator + specialist-agent pattern, a dedicated reviewer agent, artifacts with full reproducibility — is us saluting a good design and asking "what would this look like if it were open?"
+
+So let's be direct about where each project actually stands, instead of hand-waving it:
+
+| | Claude Science | Open Science |
+|---|---|---|
+| **Source** | Closed source | Open source, Apache-2.0 |
+| **Model** | Claude models only | Model-agnostic — Claude, GPT, Gemini, DeepSeek, Qwen, or a local open-weight model |
+| **Deployment** | Anthropic-hosted cloud | Self-hosted by default; your infrastructure, your data doesn't have to leave it |
+| **Pricing** | Seat-based subscription (Claude Pro/Max/Team/Enterprise) | Free and open; you pay only for the compute/model calls you choose to make |
+| **Availability** | Gated by Anthropic billing region and plan tier | Runs anywhere you can run the software |
+| **Skills** | ~60 curated skills, Anthropic-maintained | Open skills commons — community-contributed, versioned in git, forkable (seeded by [aipoch/medical-research-skills](https://github.com/aipoch/medical-research-skills)) |
+| **Domain scope today** | Life sciences (genomics, proteomics, structural biology, cheminformatics) | Life sciences, plus social science and economics from day one (planned) |
+| **Compute** | SSH/HPC access plus Modal for on-demand GPUs | Pluggable compute fabric — any HPC scheduler, any cloud GPU provider (planned) |
+| **Reviewer / verification agent** | Yes, shipping today | Yes, planned as an open, inspectable layer ([Phase 3](#roadmap)) |
+| **Customization** | Configure agents inside Anthropic's product surface | Every layer — gateway, skill runtime, compute broker, reviewer — is inspectable and replaceable |
+| **Maturity** | A shipping, polished product, in use today | Pre-alpha: architecture and vision stage (see [Roadmap](#roadmap)) |
+
+That last row matters most, so we won't bury it: **if you need a working AI research assistant today, Claude Science is the more capable choice.** Open Science's advantage isn't feature parity yet — it's the structural ceiling underneath. Nothing about Claude Science's design requires it to be closed, single-vendor, or subscription-gated; those are business-model choices layered on top of a good architecture. Open Science exists to remove that layer, so the same category of tool can run on a lab's own terms — any model, any infrastructure, any budget, fully auditable. We'd rather ship a slower, honest path to that than fake a finished product.
 
 ## Vision
 
@@ -93,7 +116,7 @@ flowchart TD
 
 ## What We're Building
 
-Open Science is organized around eight cooperating layers:
+Open Science is organized around eight cooperating layers — the same category of capability Claude Science demonstrates, decomposed into open, independently replaceable pieces instead of one closed product surface:
 
 ```mermaid
 flowchart TB
@@ -188,7 +211,7 @@ flowchart LR
 - **Phase 0 — Vision & Architecture (now).** This document, RFCs for each layer above, and community formation.
 - **Phase 1 — Core Loop.** Orchestrator, model gateway, CLI, and a skill runtime compatible with the `aipoch/medical-research-skills` format — enough to run single-agent literature and data-analysis workflows end to end.
 - **Phase 2 — Multi-Agent.** Specialist sub-agents, agent hierarchies, reproducible notebook execution, and native artifact rendering.
-- **Phase 3 — Compute & Trust.** HPC/cloud compute fabric integration, the reviewer/verifier agent, and the desktop app.
+- **Phase 3 — Compute & Trust.** HPC/cloud compute fabric integration, and an open equivalent of Claude Science's reviewer agent, plus the desktop app.
 - **Phase 4 — Commons.** Public skills marketplace, an optional hosted offering, and institutional governance/audit features for labs that need them.
 
 We'll turn each phase into tracked issues and RFCs as contributors join — this roadmap is a starting hypothesis, not a fixed spec. Phase kickoffs and priority calls get announced on **[X](https://x.com/aipoch_ai)** first, and debated in **[Discord](https://discord.gg/85dKfuGM9)** before they get written down here.
