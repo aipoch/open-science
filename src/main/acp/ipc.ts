@@ -1,0 +1,135 @@
+import { homedir } from 'node:os'
+
+import { app, BrowserWindow, ipcMain } from 'electron'
+
+import type {
+  AcpCancelPromptRequest,
+  AcpConnectRequest,
+  AcpCreateSessionRequest,
+  AcpRuntimeEvent,
+  AcpDeleteSessionRequest,
+  AcpPermissionRequest,
+  AcpPermissionResponse,
+  AcpPromptRequest,
+  AcpResumeSessionRequest,
+  AcpStateSnapshot
+} from '../../shared/acp'
+import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../../shared/artifacts'
+import { AcpRuntime } from './runtime'
+import type { ArtifactRepository } from '../artifacts/repository'
+import type { ArtifactRunRegistry } from '../artifacts/run-registry'
+import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
+import { NotebookRunRepository } from '../notebook/repository'
+import { NotebookRuntimeService } from '../notebook/runtime-service'
+import { resolveStorageRoot } from '../storage-root'
+import type { UploadRepository } from '../uploads/repository'
+
+type AcpIpcArtifacts = {
+  repository: ArtifactRepository
+  runRegistry: ArtifactRunRegistry
+}
+
+type AcpIpcOptions = AcpIpcArtifacts & {
+  mcpEntryPath: string
+  uploadRepository: UploadRepository
+  notebookRpcServer: NotebookLocalRpcServer
+}
+
+// Sends one runtime payload to every currently open renderer window.
+const broadcast = <Payload>(channel: string, payload: Payload): void => {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(channel, payload)
+    }
+  }
+}
+
+// Creates the shared runtime instance used by all ACP IPC handlers and artifact claims.
+const createRuntime = ({
+  mcpEntryPath,
+  repository,
+  runRegistry,
+  uploadRepository,
+  notebookRpcServer
+}: AcpIpcOptions): AcpRuntime => {
+  const storageRoot = resolveStorageRoot()
+
+  return new AcpRuntime({
+    appVersion: app.getVersion(),
+    // Packaged macOS apps often start with cwd at "/" or the app bundle; use home instead.
+    defaultCwd: homedir(),
+    artifacts: {
+      // Reuse the session persistence root so chat state and generated files move together.
+      storageRoot,
+      projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
+      mcpEntryPath,
+      repository,
+      runRegistry
+    },
+    uploads: {
+      // Reuse the renderer upload repository so prompt content only references managed files.
+      repository: uploadRepository
+    },
+    notebook: {
+      projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
+      mcpEntryPath,
+      getRpcConnection: () => notebookRpcServer.ensureStarted(),
+      registerSessionAlias: (aliasSessionId, sessionId) =>
+        notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId)
+    },
+    callbacks: {
+      onStateChanged: (state: AcpStateSnapshot) => broadcast('acp:state', state),
+      onEvent: (event: AcpRuntimeEvent) => broadcast('acp:event', event),
+      onPermissionRequest: (request: AcpPermissionRequest) =>
+        broadcast('acp:permission-request', request)
+    }
+  })
+}
+
+// Registers renderer-callable runtime commands on Electron IPC.
+const registerAcpIpcHandlers = (options: AcpIpcOptions): void => {
+  const runtime = createRuntime(options)
+
+  ipcMain.handle('acp:get-state', () => runtime.getSnapshot())
+  ipcMain.handle('acp:connect', async (_event, request: AcpConnectRequest) =>
+    runtime.connect(request)
+  )
+  ipcMain.handle('acp:disconnect', () => runtime.disconnect())
+  ipcMain.handle('acp:create-session', async (_event, request: AcpCreateSessionRequest) =>
+    runtime.createSession(request)
+  )
+  ipcMain.handle('acp:resume-session', async (_event, request: AcpResumeSessionRequest) =>
+    runtime.resumeSession(request)
+  )
+  // Prompt calls wait for the turn to stop, then return the latest snapshot.
+  ipcMain.handle('acp:send-prompt', async (_event, request: AcpPromptRequest) => {
+    await runtime.sendPrompt(request)
+    return runtime.getSnapshot()
+  })
+  ipcMain.handle('acp:cancel', (_event, request: AcpCancelPromptRequest) =>
+    runtime.cancelPrompt(request)
+  )
+  ipcMain.handle('acp:delete-session', (_event, request: AcpDeleteSessionRequest) =>
+    runtime.deleteSession(request)
+  )
+  ipcMain.handle('acp:respond-permission', (_event, response: AcpPermissionResponse) =>
+    runtime.respondToPermission(response)
+  )
+}
+
+// Creates the shared notebook runtime used by both renderer IPC and agent MCP calls.
+const createDefaultNotebookRuntimeService = (): NotebookRuntimeService => {
+  const storageRoot = resolveStorageRoot()
+
+  return new NotebookRuntimeService({
+    storageRoot,
+    projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
+    repository: new NotebookRunRepository(storageRoot),
+    callbacks: {
+      onNotebookAvailable: (event) => broadcast('notebook:available', event),
+      onNotebookChanged: (event) => broadcast('notebook:changed', event)
+    }
+  })
+}
+
+export { createDefaultNotebookRuntimeService, registerAcpIpcHandlers }

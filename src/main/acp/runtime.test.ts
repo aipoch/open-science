@@ -1,0 +1,1197 @@
+import * as acp from '@agentclientprotocol/sdk'
+import type { ContentBlock } from '@agentclientprotocol/sdk'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { EventEmitter } from 'node:events'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { PassThrough, Readable, Writable } from 'node:stream'
+import { afterEach, describe, expect, it } from 'vitest'
+
+import { AcpRuntime } from './runtime'
+import { ArtifactRepository } from '../artifacts/repository'
+import { UploadRepository } from '../uploads/repository'
+
+// Minimal child-process stand-in that exposes the streams the runtime expects.
+class FakeAgentProcess extends EventEmitter {
+  stdin = new PassThrough()
+  stdout = new PassThrough()
+  stderr = new PassThrough()
+  killed = false
+
+  // Simulates a clean process shutdown and emits the normal exit signal.
+  kill(): boolean {
+    this.killed = true
+    this.emit('exit', 0, null)
+    return true
+  }
+}
+
+// Narrows the fake process into the runtime's child process type.
+const asAgentProcess = (process: FakeAgentProcess): ChildProcessWithoutNullStreams =>
+  process as unknown as ChildProcessWithoutNullStreams
+
+// Creates a manually controlled promise for ordering async protocol steps.
+const createDeferred = <Value = void>(): {
+  promise: Promise<Value>
+  resolve: (value: Value) => void
+  reject: (error: unknown) => void
+} => {
+  let resolve!: (value: Value) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<Value>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve
+    reject = promiseReject
+  })
+
+  return { promise, resolve, reject }
+}
+
+// Starts an in-memory fake agent that can create sessions, stream replies, and close sessions.
+const startFakeAgent = (
+  process: FakeAgentProcess,
+  sessionIds: string[],
+  options: {
+    supportsResume?: boolean
+    onPrompt?: (context: {
+      sessionId: string
+      text: string
+      prompt: ContentBlock[]
+    }) => Promise<void> | void
+  } = {}
+): {
+  prompts: Array<{ sessionId: string; text: string }>
+  newSessions: Array<{ cwd: string; mcpServers: unknown[]; _meta?: unknown }>
+  resumedSessions: Array<{ sessionId: string; cwd: string; mcpServers: unknown[]; _meta?: unknown }>
+  closedSessions: string[]
+} => {
+  const prompts: Array<{ sessionId: string; text: string }> = []
+  const newSessions: Array<{ cwd: string; mcpServers: unknown[]; _meta?: unknown }> = []
+  const resumedSessions: Array<{
+    sessionId: string
+    cwd: string
+    mcpServers: unknown[]
+    _meta?: unknown
+  }> = []
+  const closedSessions: string[] = []
+  let sessionIndex = 0
+
+  acp
+    .agent({ name: 'test-agent' })
+    .onRequest(acp.methods.agent.initialize, () => ({
+      protocolVersion: acp.PROTOCOL_VERSION,
+      agentCapabilities: {
+        loadSession: false,
+        sessionCapabilities: {
+          close: {},
+          ...(options.supportsResume === false ? {} : { resume: {} })
+        }
+      },
+      authMethods: []
+    }))
+    .onRequest(acp.methods.agent.session.new, (ctx) => {
+      newSessions.push({
+        cwd: ctx.params.cwd,
+        mcpServers: ctx.params.mcpServers,
+        ...(ctx.params._meta === undefined ? {} : { _meta: ctx.params._meta })
+      })
+      // Return deterministic ids so the tests can assert exact routing.
+      const sessionId = sessionIds[sessionIndex]
+      sessionIndex += 1
+
+      return { sessionId }
+    })
+    .onRequest(acp.methods.agent.session.resume, (ctx) => {
+      resumedSessions.push({
+        sessionId: ctx.params.sessionId,
+        cwd: ctx.params.cwd,
+        mcpServers: ctx.params.mcpServers ?? [],
+        ...(ctx.params._meta === undefined ? {} : { _meta: ctx.params._meta })
+      })
+
+      return {}
+    })
+    .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
+      // Flatten text blocks because these tests only exercise plain prompts.
+      const text = ctx.params.prompt
+        .map((content) => (content.type === 'text' ? content.text : ''))
+        .join('')
+
+      prompts.push({ sessionId: ctx.params.sessionId, text })
+      await options.onPrompt?.({ sessionId: ctx.params.sessionId, text, prompt: ctx.params.prompt })
+      // Stream one assistant chunk through the client callback path before stopping.
+      await ctx.client.notify(acp.methods.client.session.update, {
+        sessionId: ctx.params.sessionId,
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          messageId: `reply-${ctx.params.sessionId}`,
+          content: {
+            type: 'text',
+            text: `reply for ${ctx.params.sessionId}`
+          }
+        }
+      })
+
+      return { stopReason: 'end_turn' }
+    })
+    .onNotification(acp.methods.agent.session.cancel, () => undefined)
+    .onRequest(acp.methods.agent.session.close, (ctx) => {
+      closedSessions.push(ctx.params.sessionId)
+      return {}
+    })
+    .connect(
+      acp.ndJsonStream(
+        Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+        Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+      )
+    )
+
+  return { prompts, newSessions, resumedSessions, closedSessions }
+}
+
+let temporaryRoot: string | undefined
+
+const createTemporaryRoot = async (): Promise<string> => {
+  temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-runtime-artifacts-'))
+  return temporaryRoot
+}
+
+const getEnvValue = (mcpServer: unknown, name: string): string => {
+  if (
+    typeof mcpServer !== 'object' ||
+    mcpServer === null ||
+    !('env' in mcpServer) ||
+    !Array.isArray((mcpServer as { env?: unknown }).env)
+  ) {
+    throw new Error('Missing MCP server env array')
+  }
+
+  const entry = (mcpServer as { env: Array<{ name?: unknown; value?: unknown }> }).env.find(
+    (item) => item.name === name
+  )
+
+  if (typeof entry?.value !== 'string') {
+    throw new Error(`Missing env value: ${name}`)
+  }
+
+  return entry.value
+}
+
+afterEach(async () => {
+  if (temporaryRoot) {
+    await rm(temporaryRoot, { recursive: true, force: true })
+    temporaryRoot = undefined
+  }
+})
+
+describe('ACP runtime session management', () => {
+  it('creates protocol sessions and routes prompts by session id', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1', 'remote-session-2'])
+    const events: Array<{ sessionId?: string; text?: string }> = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: {
+        onEvent: (event) => events.push({ sessionId: event.sessionId, text: event.text })
+      }
+    })
+
+    const first = await runtime.createSession({ cwd: '/workspace' })
+    const second = await runtime.createSession({ cwd: '/workspace' })
+
+    await runtime.sendPrompt({ sessionId: first.sessionId, text: 'hello first' })
+    await runtime.sendPrompt({ sessionId: second.sessionId, text: 'hello second' })
+
+    expect(first.sessionId).toBe('remote-session-1')
+    expect(second.sessionId).toBe('remote-session-2')
+    expect(fakeAgent.prompts).toEqual([
+      { sessionId: 'remote-session-1', text: 'hello first' },
+      { sessionId: 'remote-session-2', text: 'hello second' }
+    ])
+    expect(events).toEqual(
+      expect.arrayContaining([
+        { sessionId: 'remote-session-1', text: 'reply for remote-session-1' },
+        { sessionId: 'remote-session-2', text: 'reply for remote-session-2' }
+      ])
+    )
+  })
+
+  it('sends staged uploads as ACP prompt content blocks', async () => {
+    const root = await createTemporaryRoot()
+    const uploadRepository = new UploadRepository(root)
+    const stagedAttachments = await uploadRepository.stageFiles({
+      files: [
+        {
+          name: 'paste.png',
+          mimeType: 'image/png',
+          content: Buffer.from('png-bytes').toString('base64')
+        },
+        {
+          name: 'notes.txt',
+          mimeType: 'text/plain',
+          content: Buffer.from('hello from upload').toString('base64')
+        }
+      ]
+    })
+    const process = new FakeAgentProcess()
+    const receivedPrompts: ContentBlock[][] = []
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: ({ prompt }) => {
+        receivedPrompts.push(prompt)
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      uploads: {
+        repository: uploadRepository
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'review these attachments',
+      attachments: stagedAttachments
+    })
+
+    expect(receivedPrompts).toHaveLength(1)
+    expect(receivedPrompts[0][0]).toEqual({
+      type: 'text',
+      text: 'review these attachments'
+    })
+    expect(receivedPrompts[0][1]).toMatchObject({
+      type: 'image',
+      mimeType: 'image/png',
+      data: Buffer.from('png-bytes').toString('base64'),
+      uri: expect.stringContaining('/uploads/default-project/remote-session-1/paste.png')
+    })
+    expect(receivedPrompts[0][2]).toMatchObject({
+      type: 'resource',
+      resource: {
+        mimeType: 'text/plain',
+        text: 'hello from upload',
+        uri: expect.stringContaining('/uploads/default-project/remote-session-1/notes.txt')
+      }
+    })
+    await expect(
+      readFile(join(root, 'uploads', 'default-project', 'remote-session-1', 'notes.txt'), 'utf8')
+    ).resolves.toBe('hello from upload')
+  })
+
+  it('allows prompts from different sessions to run concurrently', async () => {
+    const process = new FakeAgentProcess()
+    const promptCanStopBySession = new Map<string, ReturnType<typeof createDeferred>>()
+    const promptStartedBySession = new Map<string, ReturnType<typeof createDeferred>>()
+    const prompts: Array<{ sessionId: string; text: string }> = []
+    const events: Array<{ sessionId?: string; text?: string }> = []
+    let sessionIndex = 0
+
+    acp
+      .agent({ name: 'parallel-test-agent' })
+      .onRequest(acp.methods.agent.initialize, () => ({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        agentCapabilities: {
+          loadSession: false,
+          sessionCapabilities: {
+            close: {}
+          }
+        },
+        authMethods: []
+      }))
+      .onRequest(acp.methods.agent.session.new, () => {
+        sessionIndex += 1
+        return { sessionId: `remote-session-${sessionIndex}` }
+      })
+      .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
+        const text = ctx.params.prompt
+          .map((content) => (content.type === 'text' ? content.text : ''))
+          .join('')
+        const sessionId = ctx.params.sessionId
+        const promptCanStop = promptCanStopBySession.get(sessionId)
+        const promptStarted = promptStartedBySession.get(sessionId)
+
+        if (!promptCanStop || !promptStarted) {
+          throw new Error(`Unexpected prompt session: ${sessionId}`)
+        }
+
+        prompts.push({ sessionId, text })
+        promptStarted.resolve(undefined)
+
+        await promptCanStop.promise
+        await ctx.client.notify(acp.methods.client.session.update, {
+          sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `reply-${sessionId}`,
+            content: {
+              type: 'text',
+              text: `reply for ${sessionId}`
+            }
+          }
+        })
+
+        return { stopReason: 'end_turn' }
+      })
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: {
+        onEvent: (event) => events.push({ sessionId: event.sessionId, text: event.text })
+      }
+    })
+    const first = await runtime.createSession({ cwd: '/workspace' })
+    const second = await runtime.createSession({ cwd: '/workspace' })
+
+    promptCanStopBySession.set(first.sessionId, createDeferred())
+    promptStartedBySession.set(first.sessionId, createDeferred())
+    promptCanStopBySession.set(second.sessionId, createDeferred())
+    promptStartedBySession.set(second.sessionId, createDeferred())
+
+    const firstPrompt = runtime.sendPrompt({ sessionId: first.sessionId, text: 'first prompt' })
+    const secondPrompt = runtime.sendPrompt({
+      sessionId: second.sessionId,
+      text: 'second prompt'
+    })
+
+    await promptStartedBySession.get(first.sessionId)?.promise
+    await promptStartedBySession.get(second.sessionId)?.promise
+
+    expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([
+      'remote-session-1',
+      'remote-session-2'
+    ])
+
+    promptCanStopBySession.get(first.sessionId)?.resolve(undefined)
+    await firstPrompt
+    expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual(['remote-session-2'])
+
+    promptCanStopBySession.get(second.sessionId)?.resolve(undefined)
+    await secondPrompt
+
+    expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([])
+    expect(prompts).toEqual([
+      { sessionId: 'remote-session-1', text: 'first prompt' },
+      { sessionId: 'remote-session-2', text: 'second prompt' }
+    ])
+    expect(events).toEqual(
+      expect.arrayContaining([
+        { sessionId: 'remote-session-1', text: 'reply for remote-session-1' },
+        { sessionId: 'remote-session-2', text: 'reply for remote-session-2' }
+      ])
+    )
+  })
+
+  it('shares one agent connection when sessions are created concurrently', async () => {
+    const initializeCanFinish = createDeferred()
+    let spawnCount = 0
+    let sessionIndex = 0
+
+    const createDelayedAgentProcess = (): ChildProcessWithoutNullStreams => {
+      spawnCount += 1
+      const process = new FakeAgentProcess()
+
+      acp
+        .agent({ name: `delayed-agent-${spawnCount}` })
+        .onRequest(acp.methods.agent.initialize, async () => {
+          await initializeCanFinish.promise
+
+          return {
+            protocolVersion: acp.PROTOCOL_VERSION,
+            agentCapabilities: {
+              loadSession: false,
+              sessionCapabilities: {
+                close: {}
+              }
+            },
+            authMethods: []
+          }
+        })
+        .onRequest(acp.methods.agent.session.new, () => {
+          sessionIndex += 1
+          return { sessionId: `remote-session-${sessionIndex}` }
+        })
+        .connect(
+          acp.ndJsonStream(
+            Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+            Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+          )
+        )
+
+      return asAgentProcess(process)
+    }
+
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: createDelayedAgentProcess
+    })
+    const firstSession = runtime.createSession({ cwd: '/workspace' })
+    const secondSession = runtime.createSession({ cwd: '/workspace' })
+
+    initializeCanFinish.resolve(undefined)
+
+    await expect(Promise.all([firstSession, secondSession])).resolves.toEqual([
+      { sessionId: 'remote-session-1', cwd: '/workspace' },
+      { sessionId: 'remote-session-2', cwd: '/workspace' }
+    ])
+    expect(spawnCount).toBe(1)
+    expect(runtime.getSnapshot().sessionIds).toEqual(['remote-session-1', 'remote-session-2'])
+  })
+
+  it('invalidates an in-flight connection when disconnect is requested before initialization finishes', async () => {
+    const initializeStarted = createDeferred()
+    const firstInitializeCanFinish = createDeferred()
+    let spawnCount = 0
+
+    const createDelayedAgentProcess = (): ChildProcessWithoutNullStreams => {
+      spawnCount += 1
+      const processId = spawnCount
+      const process = new FakeAgentProcess()
+
+      acp
+        .agent({ name: `disconnect-race-agent-${processId}` })
+        .onRequest(acp.methods.agent.initialize, async () => {
+          if (processId === 1) {
+            initializeStarted.resolve(undefined)
+            await firstInitializeCanFinish.promise
+          }
+
+          return {
+            protocolVersion: acp.PROTOCOL_VERSION,
+            agentCapabilities: {
+              loadSession: false,
+              sessionCapabilities: {
+                close: {}
+              }
+            },
+            authMethods: []
+          }
+        })
+        .onRequest(acp.methods.agent.session.new, () => ({
+          sessionId: `remote-session-${processId}`
+        }))
+        .connect(
+          acp.ndJsonStream(
+            Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+            Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+          )
+        )
+
+      return asAgentProcess(process)
+    }
+
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: createDelayedAgentProcess
+    })
+    const firstConnect = runtime.connect({ cwd: '/first-workspace' })
+    const firstConnectRejection = expect(firstConnect).rejects.toThrow()
+
+    await initializeStarted.promise
+    await expect(runtime.disconnect()).resolves.toMatchObject({ status: 'closed' })
+
+    const session = await runtime.createSession({ cwd: '/second-workspace' })
+
+    firstInitializeCanFinish.resolve(undefined)
+    await firstConnectRejection
+
+    expect(session).toEqual({
+      sessionId: 'remote-session-2',
+      cwd: '/second-workspace'
+    })
+    expect(spawnCount).toBe(2)
+    expect(runtime.getSnapshot()).toMatchObject({
+      status: 'connected',
+      sessionIds: ['remote-session-2']
+    })
+  })
+
+  it('rejects filesystem callbacks for unknown sessions instead of falling back to global cwd', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'open-science-acp-runtime-'))
+    const filePath = join(workspaceRoot, 'notes.txt')
+    let filesystemError: string | undefined
+
+    try {
+      await writeFile(filePath, 'session scoped file', 'utf8')
+
+      const process = new FakeAgentProcess()
+
+      acp
+        .agent({ name: 'unknown-fs-session-agent' })
+        .onRequest(acp.methods.agent.initialize, () => ({
+          protocolVersion: acp.PROTOCOL_VERSION,
+          agentCapabilities: {
+            loadSession: false,
+            sessionCapabilities: {
+              close: {}
+            }
+          },
+          authMethods: []
+        }))
+        .onRequest(acp.methods.agent.session.new, () => ({ sessionId: 'remote-session-1' }))
+        .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
+          try {
+            await ctx.client.request(acp.methods.client.fs.readTextFile, {
+              sessionId: 'missing-session',
+              path: filePath
+            })
+          } catch (error) {
+            filesystemError = String(error)
+          }
+
+          return { stopReason: 'end_turn' }
+        })
+        .connect(
+          acp.ndJsonStream(
+            Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+            Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+          )
+        )
+
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: workspaceRoot,
+        spawnAgent: () => asAgentProcess(process)
+      })
+      const session = await runtime.createSession({ cwd: workspaceRoot })
+
+      await runtime.sendPrompt({ sessionId: session.sessionId, text: 'read unknown session file' })
+
+      expect(filesystemError).toBeDefined()
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects permission callbacks for unknown sessions without emitting renderer prompts', async () => {
+    const process = new FakeAgentProcess()
+    let permissionError: string | undefined
+    let emittedUnknownPermission = false
+
+    acp
+      .agent({ name: 'unknown-permission-session-agent' })
+      .onRequest(acp.methods.agent.initialize, () => ({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        agentCapabilities: {
+          loadSession: false,
+          sessionCapabilities: {
+            close: {}
+          }
+        },
+        authMethods: []
+      }))
+      .onRequest(acp.methods.agent.session.new, () => ({ sessionId: 'remote-session-1' }))
+      .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
+        try {
+          await ctx.client.request(acp.methods.client.session.requestPermission, {
+            sessionId: 'missing-session',
+            toolCall: {
+              toolCallId: 'tool-1',
+              title: 'Run command',
+              status: 'pending'
+            },
+            options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+          })
+        } catch (error) {
+          permissionError = String(error)
+        }
+
+        return { stopReason: 'end_turn' }
+      })
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: {
+        onPermissionRequest: (request) => {
+          emittedUnknownPermission = request.sessionId === 'missing-session'
+          runtime.respondToPermission({ requestId: request.requestId, cancelled: true })
+        }
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'request unknown permission' })
+
+    expect(emittedUnknownPermission).toBe(false)
+    expect(permissionError).toBeDefined()
+    expect(runtime.getSnapshot().pendingPermissions).toEqual([])
+  })
+
+  it('removes a session so later prompts cannot target it', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+
+    await runtime.deleteSession({ sessionId: session.sessionId })
+
+    expect(fakeAgent.closedSessions).toEqual(['remote-session-1'])
+    await expect(
+      runtime.sendPrompt({ sessionId: session.sessionId, text: 'hello' })
+    ).rejects.toThrow(/not found/)
+  })
+
+  it('resumes an existing protocol session so restored conversations can continue', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, [])
+    const events: Array<{ sessionId?: string; text?: string }> = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: {
+        onEvent: (event) => events.push({ sessionId: event.sessionId, text: event.text })
+      }
+    })
+
+    await runtime.resumeSession({
+      sessionId: 'remote-session-1',
+      cwd: '/workspace'
+    })
+    await runtime.sendPrompt({
+      sessionId: 'remote-session-1',
+      text: 'continue restored session'
+    })
+
+    expect(fakeAgent.resumedSessions).toEqual([
+      {
+        sessionId: 'remote-session-1',
+        cwd: '/workspace',
+        mcpServers: []
+      }
+    ])
+    expect(fakeAgent.prompts).toEqual([
+      {
+        sessionId: 'remote-session-1',
+        text: 'continue restored session'
+      }
+    ])
+    expect(events).toEqual(
+      expect.arrayContaining([
+        { sessionId: 'remote-session-1', text: 'reply for remote-session-1' }
+      ])
+    )
+  })
+
+  it('passes the artifact MCP server to new and resumed sessions', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      artifacts: {
+        storageRoot: '/Users/example/.open-science',
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        mcpCommand: '/Applications/Open Science.app/Contents/MacOS/Open Science'
+      }
+    })
+
+    const createdSession = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.resumeSession({
+      sessionId: 'remote-session-2',
+      cwd: '/workspace'
+    })
+
+    expect(createdSession.sessionId).toBe('remote-session-1')
+    expect(fakeAgent.newSessions[0].mcpServers).toHaveLength(1)
+    expect(fakeAgent.newSessions[0].mcpServers[0]).toMatchObject({
+      name: 'open-science-artifacts',
+      command: '/Applications/Open Science.app/Contents/MacOS/Open Science',
+      args: ['/app/out/main/index.js', '--open-science-artifact-mcp']
+    })
+    expect(
+      getEnvValue(fakeAgent.newSessions[0].mcpServers[0], 'OPEN_SCIENCE_ARTIFACT_SESSION_ID')
+    ).toMatch(/^artifact-session-/)
+    expect(fakeAgent.resumedSessions[0].mcpServers).toHaveLength(1)
+    expect(
+      getEnvValue(fakeAgent.resumedSessions[0].mcpServers[0], 'OPEN_SCIENCE_ARTIFACT_SESSION_ID')
+    ).toBe('remote-session-2')
+    expect(fakeAgent.newSessions[0]._meta).toMatchObject({
+      systemPrompt: {
+        type: 'preset',
+        preset: 'claude_code',
+        append: expect.stringContaining('write_artifact_file')
+      }
+    })
+    expect(fakeAgent.resumedSessions[0]._meta).toMatchObject({
+      systemPrompt: {
+        type: 'preset',
+        preset: 'claude_code',
+        append: expect.stringContaining('write_artifact_file')
+      }
+    })
+  })
+
+  it('scopes the artifact MCP project to a caller-supplied projectName on create and resume', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      artifacts: {
+        storageRoot: '/Users/example/.open-science',
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js'
+      }
+    })
+
+    await runtime.createSession({ cwd: '/workspace', projectName: 'project-abc' })
+    await runtime.resumeSession({
+      sessionId: 'remote-session-2',
+      cwd: '/workspace',
+      projectName: 'project-xyz'
+    })
+
+    // The per-session projectName (not the runtime default) reaches the artifact MCP server config.
+    expect(
+      getEnvValue(fakeAgent.newSessions[0].mcpServers[0], 'OPEN_SCIENCE_ARTIFACT_PROJECT_NAME')
+    ).toBe('project-abc')
+    expect(
+      getEnvValue(fakeAgent.resumedSessions[0].mcpServers[0], 'OPEN_SCIENCE_ARTIFACT_PROJECT_NAME')
+    ).toBe('project-xyz')
+  })
+
+  it('falls back to the runtime default projectName when none is supplied', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      artifacts: {
+        storageRoot: '/Users/example/.open-science',
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js'
+      }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+
+    expect(
+      getEnvValue(fakeAgent.newSessions[0].mcpServers[0], 'OPEN_SCIENCE_ARTIFACT_PROJECT_NAME')
+    ).toBe('default-project')
+  })
+
+  it('passes notebook MCP server and scoped notebook instructions to new and resumed sessions', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'])
+    const aliases: Array<{ aliasSessionId: string; sessionId: string }> = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        mcpCommand: '/Applications/Open Science.app/Contents/MacOS/Open Science',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:4567',
+          token: 'secret-token'
+        }),
+        registerSessionAlias: (aliasSessionId, sessionId) => {
+          aliases.push({ aliasSessionId, sessionId })
+        }
+      }
+    })
+
+    const createdSession = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.resumeSession({
+      sessionId: 'remote-session-2',
+      cwd: '/workspace'
+    })
+
+    expect(createdSession.sessionId).toBe('remote-session-1')
+    expect(fakeAgent.newSessions[0].mcpServers).toHaveLength(1)
+    expect(fakeAgent.newSessions[0].mcpServers[0]).toMatchObject({
+      name: 'open-science-notebook',
+      command: '/Applications/Open Science.app/Contents/MacOS/Open Science',
+      args: ['/app/out/main/index.js', '--open-science-notebook-mcp']
+    })
+    expect(
+      getEnvValue(fakeAgent.newSessions[0].mcpServers[0], 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID')
+    ).toMatch(/^notebook-session-/)
+    expect(
+      getEnvValue(fakeAgent.newSessions[0].mcpServers[0], 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD')
+    ).toBe('/workspace')
+    expect(aliases).toEqual([
+      {
+        aliasSessionId: getEnvValue(
+          fakeAgent.newSessions[0].mcpServers[0],
+          'OPEN_SCIENCE_NOTEBOOK_SESSION_ID'
+        ),
+        sessionId: 'remote-session-1'
+      }
+    ])
+    expect(fakeAgent.resumedSessions[0].mcpServers).toHaveLength(1)
+    expect(
+      getEnvValue(fakeAgent.resumedSessions[0].mcpServers[0], 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID')
+    ).toBe('remote-session-2')
+    expect(fakeAgent.newSessions[0]._meta).toMatchObject({
+      systemPrompt: {
+        type: 'preset',
+        preset: 'claude_code',
+        append: expect.stringContaining(
+          'Notebook tool instructions (only applies when using open-science-notebook tools)'
+        )
+      }
+    })
+    expect(fakeAgent.newSessions[0]._meta).toMatchObject({
+      systemPrompt: {
+        append: expect.stringContaining('~/.open-science/notebooks/default-project/<sessionId>/')
+      }
+    })
+  })
+
+  it('passes workspace and notebook roots to the artifact MCP server as allowed import roots', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      artifacts: {
+        storageRoot: '/Users/example/.open-science',
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js'
+      },
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:4567',
+          token: 'secret-token'
+        })
+      }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+
+    const byName = (name: string): unknown | undefined =>
+      fakeAgent.newSessions[0].mcpServers.find(
+        (server) =>
+          typeof server === 'object' && server !== null && 'name' in server && server.name === name
+      )
+    const artifactServer = byName('open-science-artifacts')
+    const notebookServer = byName('open-science-notebook')
+
+    if (!artifactServer || !notebookServer) {
+      throw new Error('Expected artifact and notebook MCP servers')
+    }
+
+    const notebookSessionId = getEnvValue(notebookServer, 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID')
+
+    expect(
+      JSON.parse(getEnvValue(artifactServer, 'OPEN_SCIENCE_ARTIFACT_ALLOWED_IMPORT_ROOTS'))
+    ).toEqual([
+      '/workspace',
+      `/Users/example/.open-science/notebooks/default-project/${notebookSessionId}`
+    ])
+  })
+
+  it('uses the configured main entry path for artifact MCP server config', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      artifacts: {
+        storageRoot: '/Users/example/.open-science',
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        mcpCommand: '/Applications/Open Science.app/Contents/MacOS/Open Science'
+      }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+
+    expect(fakeAgent.newSessions[0].mcpServers[0]).toMatchObject({
+      args: ['/app/out/main/index.js', '--open-science-artifact-mcp']
+    })
+  })
+
+  it('adds artifact instructions through session system prompt metadata without mutating prompts', async () => {
+    const storageRoot = await createTemporaryRoot()
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'])
+    const events: Array<{ role?: string; text?: string }> = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: {
+        onEvent: (event) => events.push({ role: event.role, text: event.text })
+      },
+      artifacts: {
+        storageRoot,
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        repository: new ArtifactRepository(storageRoot)
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'Generate a little duckling meme image and save it locally'
+    })
+
+    expect(fakeAgent.prompts[0]).toMatchObject({
+      sessionId: 'remote-session-1',
+      text: 'Generate a little duckling meme image and save it locally'
+    })
+    expect(fakeAgent.newSessions[0]._meta).toMatchObject({
+      systemPrompt: {
+        type: 'preset',
+        preset: 'claude_code',
+        append: expect.stringContaining('write_artifact_file')
+      }
+    })
+    expect(fakeAgent.newSessions[0]._meta).toMatchObject({
+      systemPrompt: {
+        append: expect.stringContaining(
+          'Do not save generated user-facing files directly into the workspace'
+        )
+      }
+    })
+    expect(fakeAgent.newSessions[0]._meta).toMatchObject({
+      systemPrompt: {
+        append: expect.stringContaining('inline content or a local source path')
+      }
+    })
+    expect(events).toEqual(
+      expect.arrayContaining([
+        { role: 'user', text: 'Generate a little duckling meme image and save it locally' }
+      ])
+    )
+  })
+
+  it('emits an artifact event with pending files before a prompt stops', async () => {
+    const storageRoot = await createTemporaryRoot()
+    const repository = new ArtifactRepository(storageRoot)
+    const process = new FakeAgentProcess()
+    const events: Array<{
+      kind: string
+      sessionId?: string
+      runId?: string
+      artifactClaimId?: string
+      artifactCount?: number
+    }> = []
+    let currentRunFile = ''
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: async ({ sessionId }) => {
+        const context = JSON.parse(await readFile(currentRunFile, 'utf8')) as { runId: string }
+
+        await repository.writePendingFile({
+          projectName: 'default-project',
+          sessionId: getEnvValue(
+            fakeAgent.newSessions[0].mcpServers[0],
+            'OPEN_SCIENCE_ARTIFACT_SESSION_ID'
+          ),
+          runId: context.runId,
+          filename: 'result.txt',
+          source: { kind: 'inline', content: 'artifact content', encoding: 'utf8' }
+        })
+        expect(sessionId).toBe('remote-session-1')
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      artifacts: {
+        storageRoot,
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        mcpCommand: '/usr/bin/electron',
+        repository
+      },
+      callbacks: {
+        onEvent: (event) => {
+          if (event.kind === 'artifact') {
+            events.push({
+              kind: event.kind,
+              sessionId: event.sessionId,
+              runId: event.runId,
+              artifactClaimId: event.artifactClaimId,
+              artifactCount: event.artifacts?.length
+            })
+          }
+        }
+      }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    currentRunFile = getEnvValue(
+      fakeAgent.newSessions[0].mcpServers[0],
+      'OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE'
+    )
+    await runtime.sendPrompt({ sessionId: 'remote-session-1', text: 'make a file' })
+
+    expect(events).toEqual([
+      {
+        kind: 'artifact',
+        sessionId: 'remote-session-1',
+        runId: expect.stringMatching(/^artifact-run-/),
+        artifactClaimId: expect.stringMatching(/^artifact-claim-/),
+        artifactCount: 1
+      }
+    ])
+  })
+
+  it('cleans up prompt in-flight state when artifact run activation fails', async () => {
+    const storageRoot = await createTemporaryRoot()
+    const blockedStorageRoot = join(storageRoot, 'storage-file')
+    const process = new FakeAgentProcess()
+    const events: Array<{ kind: string; text?: string }> = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      artifacts: {
+        storageRoot: blockedStorageRoot,
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        mcpCommand: '/usr/bin/electron'
+      },
+      callbacks: {
+        onEvent: (event) => events.push({ kind: event.kind, text: event.text })
+      }
+    })
+    startFakeAgent(process, ['remote-session-1'])
+    await writeFile(blockedStorageRoot, 'not a directory', 'utf8')
+    const session = await runtime.createSession({ cwd: '/workspace' })
+
+    await expect(
+      runtime.sendPrompt({ sessionId: session.sessionId, text: 'make a file' })
+    ).rejects.toThrow()
+
+    expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([])
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'error'
+        })
+      ])
+    )
+  })
+
+  it('rejects restored sessions when the agent does not advertise resume support', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, [], { supportsResume: false })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await expect(
+      runtime.resumeSession({
+        sessionId: 'remote-session-1',
+        cwd: '/workspace'
+      })
+    ).rejects.toThrow(/does not support session resume/)
+    expect(fakeAgent.resumedSessions).toEqual([])
+  })
+
+  it('keeps a cancelling prompt in flight until the agent returns its stop response', async () => {
+    const process = new FakeAgentProcess()
+    const promptCanStop = createDeferred()
+    const promptStarted = createDeferred()
+    const prompts: string[] = []
+
+    acp
+      .agent({ name: 'cancel-test-agent' })
+      .onRequest(acp.methods.agent.initialize, () => ({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        agentCapabilities: {
+          loadSession: false,
+          sessionCapabilities: {
+            close: {}
+          }
+        },
+        authMethods: []
+      }))
+      .onRequest(acp.methods.agent.session.new, () => ({ sessionId: 'remote-session-1' }))
+      .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
+        // Keep the first prompt open so cancellation can be observed while it is in flight.
+        const text = ctx.params.prompt
+          .map((content) => (content.type === 'text' ? content.text : ''))
+          .join('')
+        prompts.push(text)
+
+        if (prompts.length === 1) {
+          promptStarted.resolve()
+          await promptCanStop.promise
+          return { stopReason: 'cancelled' }
+        }
+
+        return { stopReason: 'end_turn' }
+      })
+      .onNotification(acp.methods.agent.session.cancel, () => {
+        promptCanStop.resolve()
+      })
+      .onRequest(acp.methods.agent.session.close, () => ({}))
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    const promptPromise = runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'first prompt'
+    })
+
+    await promptStarted.promise
+
+    const cancelSnapshot = await runtime.cancelPrompt({ sessionId: session.sessionId })
+
+    expect(cancelSnapshot.promptInFlightSessionIds).toEqual(['remote-session-1'])
+    await expect(
+      runtime.sendPrompt({ sessionId: session.sessionId, text: 'second prompt' })
+    ).rejects.toThrow(/already running/)
+
+    await promptPromise
+
+    expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([])
+    expect(prompts).toEqual(['first prompt'])
+  })
+})

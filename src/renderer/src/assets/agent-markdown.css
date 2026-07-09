@@ -1,0 +1,712 @@
+@plugin '@tailwindcss/typography';
+@import 'streamdown/styles.css';
+@source '../../../../node_modules/streamdown/dist';
+
+@theme inline {
+  /* Streamdown / agent markdown palette */
+  --color-sd-border: #e5e1da;
+  --color-sd-ink: #1a1a1a;
+  --color-sd-muted: #6b655c;
+  --color-sd-hover: #f5f2f0;
+  --color-sd-hover-alt: #f7f6f2;
+  --color-sd-surface: #ffffff;
+  --color-sd-surface-subtle: #f7f4ee;
+  --color-sd-surface-warm: #faf8f4;
+  --color-sd-table-head: hsl(45 12% 93%);
+  --color-sd-code-bg: #f5f2f0;
+  --color-sd-link: #b95538;
+  --color-sd-link-strong: #c95f3f;
+  --color-sd-prose-muted: #6f655a;
+  --color-sd-prose-lead: #3f3f3f;
+  --color-sd-prose-quote: #2f2a25;
+  --color-sd-prose-code: #1f1b17;
+  --color-sd-prose-pre: #f8f4ee;
+  --color-sd-prose-pre-bg: #29241f;
+  --color-sd-prose-th: #d8cfc3;
+  --color-sd-prose-td: #e8e0d6;
+  --color-sd-prose-hr: #e4ded5;
+  --color-sd-prose-bullet: #8a7c6c;
+  --color-sd-highlight: #f3dfb0;
+  --color-sd-inline-code: #f0ebe3;
+  --color-sd-scrollbar-track: #ebe6e1;
+  --color-sd-scrollbar-thumb: #c4bbb0;
+  --shadow-sd-menu: 0 4px 12px rgb(30 28 24 / 12%);
+  --shadow-sd-menu-lg: 0 4px 12px rgb(30 28 24 / 18%);
+  --shadow-sd-panel: 0 18px 48px rgb(30 28 24 / 18%);
+  --shadow-sd-close: 0 1px 4px rgb(30 28 24 / 12%);
+  --radius-sd-panel: 14px;
+}
+
+:root {
+  /* Streamdown portal chrome (referenced by third-party inline styles) */
+  --sd-modal-mask: rgb(30 28 24 / 45%);
+  --sd-modal-panel-bg: var(--color-sd-surface);
+  --sd-modal-panel-border: var(--color-sd-border);
+  --sd-modal-panel-radius: var(--radius-sd-panel);
+  --sd-modal-panel-shadow: var(--shadow-sd-panel);
+  --sd-modal-title: var(--color-sd-ink);
+  --sd-modal-muted: var(--color-sd-muted);
+}
+
+@layer components {
+  /* --- Agent markdown shell --- */
+  .agent-markdown-root {
+    @apply max-w-full min-w-0 break-words;
+    overflow-anchor: none;
+
+    [data-streamdown='table-wrapper'] {
+      @apply my-[0.75em] overflow-visible rounded-xl border border-border-200 bg-bg-000 p-2.5 first:mt-0 last:mb-0;
+
+      & > div:first-child:not(:has(table)) {
+        @apply relative z-10 flex h-7 items-center justify-end gap-1;
+      }
+
+      & > div:has(table),
+      & > div:has([data-streamdown='table']) {
+        @apply block min-h-0 overflow-x-auto overflow-y-visible;
+        height: auto !important;
+      }
+
+      & .relative > .absolute {
+        @apply hidden!;
+      }
+    }
+
+    [data-streamdown='mermaid-block-actions'] .relative > .absolute {
+      @apply fixed! z-[200] m-0! min-w-[7.5rem] w-max overflow-hidden rounded-md border border-sd-border bg-white! shadow-sd-menu break-normal;
+      top: var(--sd-menu-top, 0) !important;
+      right: var(--sd-menu-right, 0) !important;
+      left: auto !important;
+      bottom: auto !important;
+    }
+  }
+
+  .agent-markdown-streaming {
+    & blockquote:not(:has(p:not(:empty))),
+    & hr {
+      @apply hidden;
+    }
+
+    & > div > :empty {
+      @apply hidden;
+    }
+  }
+
+  /* --- Streamdown dropdown panels & items --- */
+  :is(
+    .agent-markdown-root [data-streamdown='mermaid-block-actions'] .relative > .absolute,
+    [data-streamdown='table-fullscreen'] .relative > .absolute
+  ) {
+    @apply fixed! m-0! overflow-hidden rounded-md border border-sd-border bg-white! shadow-sd-menu-lg break-normal;
+    top: var(--sd-menu-top, 0) !important;
+    right: var(--sd-menu-right, 0) !important;
+    left: auto !important;
+    bottom: auto !important;
+  }
+
+  .agent-markdown-root [data-streamdown='mermaid-block-actions'] .relative > .absolute {
+    @apply z-[200] min-w-[7.5rem] w-max shadow-sd-menu;
+  }
+
+  [data-streamdown='table-fullscreen'] .relative > .absolute {
+    @apply z-[10000]! min-w-32! w-max! max-w-[calc(100vw-1rem)]! transform-none!;
+  }
+
+  body > div.fixed.inset-0.z-50.flex.items-center.justify-center[role='button']:not([data-streamdown]) .relative > .absolute {
+    @apply absolute! right-0! left-auto! z-[200] m-0 min-w-[7.5rem] w-max overflow-hidden rounded-md border border-sd-border bg-white! shadow-sd-menu-lg break-normal;
+    top: auto !important;
+    bottom: calc(100% + 4px) !important;
+  }
+
+  :is(
+    .agent-markdown-root [data-streamdown='table-wrapper'] .relative > .absolute button,
+    [data-streamdown='table-fullscreen'] .relative > .absolute button,
+    .agent-markdown-root [data-streamdown='mermaid-block-actions'] .relative > .absolute button,
+    body > div.fixed.inset-0.z-50.flex.items-center.justify-center[role='button']:not([data-streamdown]) .relative > .absolute button
+  ) {
+    @apply block! box-border w-full! min-w-32! bg-white! px-3 py-2 text-left text-sm leading-5 text-sd-ink! whitespace-nowrap! break-normal! transition-colors duration-150;
+    word-break: keep-all !important;
+
+    &:hover {
+      @apply bg-sd-hover! text-sd-ink!;
+    }
+  }
+
+  /* Inline chat table format menu (plain DOM portal — avoids scroll clipping). */
+  .sd-table-format-menu {
+    @apply fixed z-[10000] min-w-32 overflow-hidden rounded-md border border-sd-border bg-white shadow-sd-menu-lg;
+
+    & > button {
+      @apply block box-border w-full min-w-32 cursor-pointer border-0 bg-white px-3 py-2 text-left text-sm leading-5 whitespace-nowrap text-sd-ink transition-colors duration-150;
+
+      &:hover {
+        @apply bg-sd-hover;
+      }
+    }
+  }
+
+  /* Toolbar icon buttons (not dropdown items). */
+  .agent-markdown-root :is(
+    [data-streamdown='table-wrapper'] > div:first-child:not(:has(table)) > button,
+    [data-streamdown='table-wrapper'] > div:first-child:not(:has(table)) > .relative > button,
+    [data-streamdown='code-block-actions'] > button,
+    [data-streamdown='code-block-actions'] .relative > button,
+    [data-streamdown='mermaid-block-actions'] > button,
+    [data-streamdown='mermaid-block-actions'] .relative > button,
+    [data-streamdown='code-block'] > div:first-child button
+  ) {
+    @apply inline-flex size-7 shrink-0 items-center justify-center p-0;
+    transform: none;
+    transition-property: color, background-color, opacity;
+  }
+
+  /* --- Streamdown modal overlays (link safety + table fullscreen) --- */
+  :is([data-streamdown='link-safety-modal'], [data-streamdown='table-fullscreen']) {
+    @apply flex items-center justify-center p-6 break-normal;
+    background: var(--sd-modal-mask) !important;
+    backdrop-filter: none;
+
+    & > div[role='presentation'] {
+      @apply flex flex-col overflow-hidden border border-sd-border bg-white shadow-sd-panel;
+      border-radius: var(--sd-modal-panel-radius);
+
+      & > div:first-child {
+        @apply relative z-40 flex shrink-0 items-center overflow-visible border-b border-sd-border bg-white px-4 py-[0.7rem];
+        border-radius: var(--sd-modal-panel-radius) var(--sd-modal-panel-radius) 0 0;
+
+        &::before {
+          @apply mr-auto text-[13px] font-semibold text-sd-ink;
+        }
+
+        & > button,
+        & > .relative > button {
+          @apply inline-flex size-7 shrink-0 cursor-pointer items-center justify-center p-0 text-sd-muted;
+          transform: none;
+        }
+
+        & button svg {
+          @apply inline-block! size-3.5! shrink-0 overflow-visible border-0! bg-transparent! p-0! m-0! align-middle text-inherit;
+        }
+      }
+
+      & > div:last-child {
+        @apply relative z-[1] min-h-0 flex-1 overflow-auto bg-white p-4;
+      }
+    }
+  }
+
+  [data-streamdown='link-safety-modal'] {
+    & > div[role='presentation'] {
+      @apply h-auto max-h-[min(90vh,640px)] w-[min(420px,calc(100vw-3rem))];
+
+      & > div:first-child::before {
+        content: 'Open external link?';
+      }
+    }
+
+    & .sd-link-safety-description {
+      @apply m-0 mb-3 text-[13px] leading-[1.45] text-sd-muted;
+    }
+
+    & .sd-link-safety-url {
+      @apply break-words rounded-[10px] border border-sd-border bg-sd-surface-subtle p-3 font-mono text-xs leading-[1.45] text-sd-ink;
+      overflow-wrap: anywhere;
+
+      &.max-scroll {
+        @apply max-h-32 overflow-y-auto;
+      }
+    }
+
+    & .sd-link-safety-actions {
+      @apply mt-4 flex gap-2;
+
+      & > button {
+        @apply inline-flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-[10px] border border-sd-border bg-white px-3 py-2 text-[13px] leading-tight text-sd-ink transition-colors duration-150;
+
+        &:hover {
+          @apply bg-sd-hover-alt;
+        }
+
+        &.sd-link-safety-primary {
+          @apply border-sd-link-strong bg-sd-link-strong text-white;
+
+          &:hover {
+            @apply bg-sd-link;
+          }
+        }
+      }
+    }
+  }
+
+  [data-streamdown='table-fullscreen'] {
+    & .relative {
+      @apply relative z-50 overflow-visible;
+    }
+
+    & > div[role='presentation'] {
+      @apply h-[min(90vh,880px)] max-h-[min(90vh,880px)] w-[min(960px,calc(100vw-3rem))];
+
+      & > div:first-child::before {
+        content: 'Table';
+      }
+
+      & > div:last-child {
+        @apply px-4 pb-4 pt-0;
+      }
+    }
+
+    & [data-streamdown='table'] {
+      @apply w-full table-auto text-[13px] leading-[1.45] text-sd-ink;
+
+      & th,
+      & td {
+        @apply border border-border-200 bg-bg-000 px-3 py-2 text-left align-top text-sd-ink! break-normal;
+        white-space: normal;
+      }
+
+      & th {
+        @apply bg-bg-300 font-semibold;
+      }
+
+      & thead {
+        @apply z-[1]!;
+      }
+    }
+  }
+
+  /* Mermaid fullscreen portal (role=button, no data-streamdown attribute). */
+  body > div.fixed.inset-0.z-50.flex.items-center.justify-center[role='button']:not([data-streamdown]) {
+    @apply flex! items-center justify-center p-6;
+    background: var(--sd-modal-mask) !important;
+    backdrop-filter: blur(4px);
+
+    & > button {
+      @apply fixed! top-5! right-5! left-auto! bottom-auto! z-[62]! m-0! inline-flex! size-8! cursor-pointer items-center justify-center rounded-md border-0 bg-white! p-0 text-sd-muted shadow-sd-close transition-colors duration-150;
+      transform: none;
+
+      &:hover {
+        @apply bg-sd-hover-alt text-sd-ink;
+      }
+    }
+
+    & > div[role='presentation'] {
+      @apply relative flex h-[min(90vh,880px)] max-h-[min(90vh,880px)] w-[min(960px,calc(100vw-3rem))] items-center justify-center overflow-auto border border-sd-border bg-white p-6 shadow-sd-panel;
+      border-radius: var(--sd-modal-panel-radius);
+
+      & [data-streamdown='mermaid'] {
+        @apply flex size-full items-center justify-center;
+      }
+
+      & svg {
+        @apply m-0! block! size-auto! min-w-0! max-h-[min(78vh,760px)]! max-w-[min(900px,calc(100vw-5rem))]! rounded-none! border-0! bg-transparent! p-0!;
+      }
+    }
+  }
+}
+
+/* Agent message typography: prose tokens + Streamdown element overrides. */
+.agent-markdown {
+  @apply max-w-full min-w-0 break-words text-[13px] leading-5 text-sd-ink;
+
+  --tw-prose-body: var(--color-sd-ink);
+  --tw-prose-headings: var(--color-sd-ink);
+  --tw-prose-lead: var(--color-sd-prose-lead);
+  --tw-prose-links: var(--color-sd-link);
+  --tw-prose-bold: var(--color-sd-ink);
+  --tw-prose-counters: var(--color-sd-prose-muted);
+  --tw-prose-bullets: var(--color-sd-prose-bullet);
+  --tw-prose-hr: var(--color-sd-prose-hr);
+  --tw-prose-quotes: var(--color-sd-prose-quote);
+  --tw-prose-quote-borders: var(--color-sd-prose-th);
+  --tw-prose-captions: var(--color-sd-prose-muted);
+  --tw-prose-code: var(--color-sd-prose-code);
+  --tw-prose-pre-code: var(--color-sd-prose-pre);
+  --tw-prose-pre-bg: var(--color-sd-prose-pre-bg);
+  --tw-prose-th-borders: var(--color-sd-prose-th);
+  --tw-prose-td-borders: var(--color-sd-prose-td);
+
+  :is(
+    [data-streamdown='code-block'],
+    [data-streamdown='code-block-body'],
+    [data-streamdown='code-block-header'],
+    [data-streamdown='mermaid'],
+    [data-streamdown='mermaid-block'],
+    [data-streamdown='table-wrapper'],
+    [data-streamdown='table'],
+    [data-streamdown='table'] > div,
+    [data-streamdown='image-wrapper'],
+    [data-streamdown='link'],
+    img,
+    p,
+    li,
+    blockquote,
+    pre,
+    table,
+    .katex-display
+  ) {
+    @apply max-w-full;
+  }
+
+  :is(a, [data-streamdown='link'], :where(code):not(:where(pre *))) {
+    @apply break-words;
+  }
+
+  [data-streamdown='code-block'] {
+    @apply relative my-[0.75em] min-w-0 max-w-full gap-2 rounded-xl border border-border-200 bg-bg-000! p-2.5 first:mt-0 last:mb-0;
+  }
+
+  [data-streamdown='code-block-header'] {
+    @apply flex min-h-8 items-center px-1 text-[11px] text-sd-muted;
+
+    & span {
+      @apply font-mono lowercase;
+    }
+  }
+
+  :is([data-streamdown='code-block'] > div.sticky, [data-streamdown='mermaid-block'] > div.sticky) {
+    @apply pointer-events-none absolute! right-2.5! top-2.5! left-auto! z-[5] m-0! h-8! w-auto!;
+    transform: none !important;
+  }
+
+  :is([data-streamdown='code-block-actions'], [data-streamdown='mermaid-block-actions']) {
+    @apply pointer-events-auto gap-1 rounded-lg border border-sd-border bg-white/90 px-1 py-0.5 shadow-sm backdrop-blur-sm;
+  }
+
+  [data-streamdown='mermaid-block-actions'] .relative > .absolute {
+    @apply hidden!;
+  }
+
+  [data-streamdown='image-wrapper'] {
+    @apply relative my-[0.75em] inline-block max-w-full;
+  }
+
+  [data-streamdown='image'] {
+    @apply max-w-full rounded-lg;
+  }
+
+  [data-streamdown='image-fallback'] {
+    @apply text-xs italic text-sd-muted;
+  }
+
+  /* Inline SVG charts only — never stretch Streamdown UI icons/menus. */
+  svg:not(
+    :is(
+      [data-streamdown='link-safety-modal'] *,
+      [data-streamdown='table-fullscreen'] *,
+      [data-streamdown='code-block-actions'] *,
+      [data-streamdown='mermaid-block-actions'] *,
+      [data-streamdown='table-wrapper'] *,
+      [data-streamdown='mermaid'] *,
+      aside[data-agent-alert] *,
+      figure *,
+      video *,
+      audio *,
+      button *
+    )
+  ) {
+    @apply my-3 box-content block size-auto max-w-full overflow-visible rounded-lg border border-sd-border bg-white px-3 pb-9 pt-2;
+  }
+
+  :is(
+    [data-streamdown='code-block-actions'] svg,
+    [data-streamdown='mermaid-block-actions'] svg,
+    [data-streamdown='table-wrapper'] > div:first-child:not(:has(table)) svg,
+    [data-streamdown='table-fullscreen'] > div[role='presentation'] > div:first-child svg,
+    button svg
+  ) {
+    @apply m-0! inline-block! size-3.5! max-w-none! rounded-none! border-0! bg-transparent! p-0! align-middle;
+  }
+
+  [data-streamdown='mermaid'] svg {
+    @apply m-0 h-auto max-w-full rounded-none border-0 bg-transparent p-0;
+  }
+
+  [data-streamdown='mermaid-block'] {
+    @apply relative my-[0.75em] min-w-0 max-w-full gap-2 overflow-visible rounded-xl p-2.5 first:mt-0 last:mb-0;
+
+    & > div:first-child {
+      @apply min-h-8 px-1 text-[11px] text-sd-muted;
+    }
+  }
+
+  [data-streamdown='table'] {
+    @apply my-[0.55em] first:mt-0 last:mb-0;
+  }
+
+  [data-streamdown='mermaid'] {
+    @apply mt-0.5 max-w-full min-w-0 rounded-lg;
+  }
+
+  :where(:not([class~='not-prose'], [class~='not-prose'] *)) {
+    &:where(h1, h2, h3, h4, p) + :is([data-streamdown='code-block'], [data-streamdown='mermaid-block'], [data-streamdown='table-wrapper']) {
+      @apply mt-[0.65em];
+    }
+  }
+
+  [data-streamdown='code-block-body'] {
+    @apply mt-0.5 w-full max-w-full min-w-0 overflow-x-scroll! overflow-y-hidden rounded-lg border border-border-200 bg-bg-200 overscroll-x-contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-sd-scrollbar-thumb) var(--color-sd-scrollbar-track);
+
+    &::-webkit-scrollbar {
+      @apply h-2.5;
+    }
+
+    &::-webkit-scrollbar-track {
+      @apply rounded-full bg-sd-scrollbar-track;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      @apply rounded-full bg-sd-scrollbar-thumb;
+    }
+
+    & pre {
+      @apply m-0 min-w-full w-max max-w-none bg-transparent px-3 py-2.5 text-sd-ink;
+      white-space: pre !important;
+      tab-size: 2;
+    }
+
+    & code,
+    & code span,
+    & code .line {
+      white-space: pre !important;
+    }
+
+    & code {
+      @apply block min-w-full;
+    }
+  }
+
+  :is(pre, .katex-display) {
+    @apply overflow-x-auto;
+  }
+
+  .katex-display {
+    @apply my-[0.7em] py-1 text-center;
+  }
+
+  .katex,
+  .katex * {
+    @apply border-0! break-normal outline-none!;
+    overflow-wrap: normal;
+  }
+
+  .katex [data-sd-animate] {
+    @apply opacity-100!;
+    animation: none !important;
+    filter: none !important;
+  }
+
+  mark {
+    @apply rounded-sm bg-sd-highlight px-[0.2em] py-[0.05em] text-inherit;
+  }
+
+  :is(sub, sup) {
+    @apply text-[0.75em];
+  }
+
+  details {
+    @apply my-[0.55em] rounded-lg border border-sd-border bg-sd-surface-warm px-3 py-2;
+  }
+
+  summary {
+    @apply cursor-pointer font-medium text-sd-prose-quote;
+  }
+
+  :is(.footnotes, section.footnotes) {
+    @apply mt-4 border-t border-sd-border pt-3 text-[12px] leading-5 text-sd-prose-muted;
+  }
+
+  .footnotes ol {
+    @apply list-decimal ps-[1.2em];
+  }
+
+  :is(.footnote-ref, .data-footnote-backref) {
+    @apply text-sd-link no-underline;
+  }
+
+  aside[data-agent-alert] {
+    @apply my-[0.65em] rounded-lg border px-3 py-2.5 text-[13px] leading-5;
+
+    &::before {
+      @apply mb-[0.35rem] block text-[11px] font-semibold uppercase tracking-wide;
+    }
+
+    &[data-agent-alert='note'] {
+      @apply border-[#93c5fd] bg-[#eff6ff] text-[#1e3a5f];
+
+      &::before {
+        content: 'Note';
+      }
+    }
+
+    &[data-agent-alert='tip'] {
+      @apply border-[#86efac] bg-[#f0fdf4] text-[#14532d];
+
+      &::before {
+        content: 'Tip';
+      }
+    }
+
+    &[data-agent-alert='important'] {
+      @apply border-[#c4b5fd] bg-[#f5f3ff] text-[#4c1d95];
+
+      &::before {
+        content: 'Important';
+      }
+    }
+
+    &:is([data-agent-alert='warning'], [data-agent-alert='caution']) {
+      @apply border-[#fcd34d] bg-[#fffbeb] text-[#78350f];
+    }
+
+    &[data-agent-alert='warning']::before {
+      content: 'Warning';
+    }
+
+    &[data-agent-alert='caution']::before {
+      content: 'Caution';
+    }
+  }
+
+  figure {
+    @apply my-[0.65em];
+  }
+
+  figcaption {
+    @apply mt-1.5 text-center text-[12px] text-sd-prose-muted;
+  }
+
+  :is(video, audio) {
+    @apply my-[0.65em] max-w-full rounded-lg border border-sd-border bg-sd-surface-warm;
+  }
+
+  dl {
+    @apply my-[0.55em];
+  }
+
+  dt {
+    @apply font-semibold text-sd-ink;
+  }
+
+  dd {
+    @apply mb-2 ms-4 text-sd-prose-lead;
+  }
+
+  ruby {
+    ruby-align: center;
+  }
+
+  rt {
+    @apply text-[0.65em] text-sd-prose-muted;
+  }
+
+  time {
+    @apply text-sd-prose-muted;
+  }
+
+  span.agent-badge {
+    @apply inline-flex rounded-full bg-sd-inline-code px-2 py-0.5 text-[11px] font-medium text-sd-prose-muted;
+  }
+
+  kbd {
+    @apply rounded border border-sd-prose-th bg-sd-code-bg px-1.5 py-0.5 font-mono text-[11px] shadow-sm;
+  }
+
+  :where(:not([class~='not-prose'], [class~='not-prose'] *)) {
+    &:where(p, ul, ol, pre, table, blockquote) {
+      @apply my-[0.55em] first:mt-0 last:mb-0;
+    }
+
+    &:where(h1, h2, h3, h4) {
+      @apply mt-[0.7em] mb-[0.35em] font-semibold leading-[1.35] first:mt-0;
+    }
+
+    &:where(h1) {
+      @apply text-[1.35em];
+    }
+
+    &:where(h2) {
+      @apply text-[1.2em];
+    }
+
+    &:where(h3) {
+      @apply text-[1.1em];
+    }
+
+    &:where(h4) {
+      @apply text-[1em];
+    }
+
+    &:where(ul, ol) {
+      @apply ps-[1.2em];
+
+      :where(li) {
+        @apply my-[0.2em];
+      }
+    }
+
+    &:where(ul) {
+      @apply list-disc;
+    }
+
+    &:where(ol) {
+      @apply list-decimal;
+    }
+
+    &:where(blockquote) {
+      @apply border-l-2 border-sd-prose-th ps-3 text-sd-prose-quote;
+    }
+
+    &:where(hr) {
+      @apply my-[0.85em] border-sd-prose-hr;
+    }
+
+    &:where(a) {
+      @apply break-words text-sd-link underline underline-offset-2;
+      overflow-wrap: anywhere;
+    }
+
+    &:where(table) {
+      @apply w-full border-collapse text-[12px];
+
+      :where(th),
+      :where(td) {
+        @apply border border-border-200 bg-bg-000 px-2 py-1.5 text-left align-top;
+      }
+
+      :where(th) {
+        @apply bg-bg-300 font-semibold;
+      }
+    }
+
+    &:where(pre) {
+      @apply rounded-lg px-[1em] py-[0.85em];
+
+      :where(code) {
+        @apply bg-transparent p-0 text-[12px];
+      }
+    }
+
+    &:where(code):not(:where(pre *)) {
+      @apply rounded bg-sd-inline-code px-[0.3em] py-[0.1em] text-[12px] font-medium break-words;
+      overflow-wrap: anywhere;
+      white-space: break-spaces;
+
+      &::before,
+      &::after {
+        content: none;
+      }
+    }
+
+    &:where(p, li, td, th, blockquote) {
+      @apply break-words;
+      overflow-wrap: anywhere;
+    }
+
+    &:where(input[type='checkbox']) {
+      @apply me-1.5 align-middle;
+    }
+  }
+}

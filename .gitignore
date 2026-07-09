@@ -1,0 +1,74 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+out/
+release/
+*.asar
+*.blockmap
+
+# Caches and generated metadata
+.cache/
+.vite/
+.eslintcache
+.stylelintcache
+*.tsbuildinfo
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Editors and IDEs
+.idea/
+.vscode/
+*.code-workspace
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.user
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+.factorypath
+*.sublime-project
+*.sublime-workspace
+
+# Internal docs (not published to the repo)
+docs/internal/
+
+# Agent and AI assistant local state
+.codex/
+.claude/
+.ai/
+.aider*
+.continue/
+.cursor/
+.windsurf/
+.roo/
+.gemini/
+.qwen/
+.crush/
+.goose/
+.mcp/
+.serena/
+.taskmaster/

@@ -1,0 +1,50 @@
+name: PR Check
+
+# Runs the quality gate automatically on PR open/update: lint + typecheck + test + build.
+# All must pass before merge is allowed (paired with branch protection — see the README).
+on:
+  pull_request:
+    branches:
+      - master
+    types: [opened, synchronize, reopened]
+
+# Cancel a still-running check from the same PR when a new push arrives, to save CI minutes.
+concurrency:
+  group: pr-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    # Matches the release environment: the project has an arm64-only native dependency, so
+    # verification runs on Apple Silicon to avoid a mismatch between what's tested on Linux
+    # (missing the darwin native package) and what's actually released.
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # postinstall runs prisma generate + electron-builder install-app-deps
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test
+
+      # Build only, no packaging (electron-vite build), to surface compile errors early.
+      - name: Build
+        run: npm run build

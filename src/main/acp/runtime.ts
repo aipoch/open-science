@@ -1,0 +1,1110 @@
+import * as acp from '@agentclientprotocol/sdk'
+import type {
+  ActiveSession,
+  ClientConnection,
+  ContentBlock,
+  McpServer,
+  PromptResponse,
+  RequestPermissionRequest,
+  RequestPermissionResponse,
+  SessionNotification
+} from '@agentclientprotocol/sdk'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
+import { Readable, Writable } from 'node:stream'
+import { pathToFileURL } from 'node:url'
+
+import type {
+  AcpCancelPromptRequest,
+  AcpConnectRequest,
+  AcpCreateSessionRequest,
+  AcpCreateSessionResponse,
+  AcpRuntimeEvent,
+  AcpDeleteSessionRequest,
+  AcpPermissionRequest,
+  AcpPermissionResponse,
+  AcpPromptRequest,
+  AcpResumeSessionRequest,
+  AcpStateSnapshot
+} from '../../shared/acp'
+import { spawnClaudeAgentAcp } from './agent-process'
+import { toAcpRuntimeEvent } from './runtime-events'
+import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
+import { AcpPermissionBroker } from './permission-broker'
+import { createArtifactMcpServerConfig } from '../artifacts/mcp-server'
+import { ArtifactRepository, getArtifactCurrentRunFilePath } from '../artifacts/repository'
+import { ArtifactRunRegistry } from '../artifacts/run-registry'
+import {
+  NOTEBOOK_SYSTEM_PROMPT_APPEND,
+  createNotebookMcpServerConfig,
+  type NotebookRpcConnection
+} from '../notebook/mcp-server'
+import { getNotebookSessionRoot } from '../notebook/repository'
+import type { UploadRepository } from '../uploads/repository'
+import type { UploadedAttachment } from '../../shared/uploads'
+
+type AcpRuntimeCallbacks = {
+  onStateChanged?: (state: AcpStateSnapshot) => void
+  onEvent?: (event: AcpRuntimeEvent) => void
+  onPermissionRequest?: (request: AcpPermissionRequest) => void
+}
+
+type AcpRuntimeOptions = {
+  appVersion: string
+  defaultCwd: string
+  callbacks?: AcpRuntimeCallbacks
+  spawnAgent?: () => ChildProcessWithoutNullStreams
+  artifacts?: AcpRuntimeArtifactOptions
+  uploads?: AcpRuntimeUploadOptions
+  notebook?: AcpRuntimeNotebookOptions
+}
+
+type AcpRuntimeArtifactOptions = {
+  storageRoot: string
+  projectName: string
+  mcpEntryPath: string
+  mcpCommand?: string
+  repository?: ArtifactRepository
+  runRegistry?: ArtifactRunRegistry
+}
+
+type AcpRuntimeUploadOptions = {
+  repository: UploadRepository
+}
+
+type ActiveArtifactRun = {
+  runId: string
+  artifactSessionId: string
+  currentRunFile: string
+}
+
+type AcpRuntimeNotebookOptions = {
+  projectName: string
+  mcpEntryPath: string
+  mcpCommand?: string
+  getRpcConnection?: () => Promise<NotebookRpcConnection>
+  registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
+}
+
+type SessionAttachmentResponse = {
+  sessionId: string
+  modes?: unknown
+  configOptions?: unknown
+  _meta?: unknown
+}
+
+type ClientContextSessionAttacher = {
+  attachSession: (response: SessionAttachmentResponse) => ActiveSession
+}
+
+// Keeps runtime snapshots bounded so long conversations do not grow renderer payloads forever.
+const MAX_EVENTS = 500
+// Appends artifact tool guidance as system prompt metadata so user prompts stay untouched.
+const ARTIFACT_FILE_SYSTEM_PROMPT_APPEND = [
+  '<open_science_artifact_instructions>',
+  'When this turn creates or saves local user-facing files such as images, documents, reports, data exports, XML, SVG, HTML, CSV, PDF, or archives, you MUST save them through the MCP tool `write_artifact_file` from the `open-science-artifacts` server.',
+  'Do not save generated user-facing files directly into the workspace or current directory unless the user explicitly asks to modify project files.',
+  'Pass only the filename, MIME type, and either inline content or a local source path to `write_artifact_file`; the app assigns the project, session, run, and final message location.',
+  'After using the tool, mention the generated filename rather than an absolute filesystem path. The app will display the generated file list below your message.',
+  '</open_science_artifact_instructions>'
+].join('\n')
+
+// Small text uploads are embedded directly; larger files stay as links to avoid huge prompt payloads.
+const MAX_EMBEDDED_TEXT_UPLOAD_BYTES = 1024 * 1024
+
+// Converts unknown thrown values into user-visible error text.
+const errorMessage = (error: unknown): string => {
+  if (error instanceof Error) {
+    return error.message
+  }
+
+  return String(error)
+}
+
+// Owns the agent process, protocol connection, and all active protocol sessions.
+class AcpRuntime {
+  private status: AcpStateSnapshot['status'] = 'idle'
+  private cwd: string
+  private error: string | undefined
+  private events: AcpRuntimeEvent[] = []
+  private eventSequence = 0
+  private agentProcess: ChildProcessWithoutNullStreams | undefined
+  private connection: ClientConnection | undefined
+  private connectInFlight: Promise<AcpStateSnapshot> | undefined
+  private connectionGeneration = 0
+  private currentSessionId: string | undefined
+  private supportsSessionClose = false
+  private supportsSessionResume = false
+  private readonly sessions = new Map<string, ActiveSession>()
+  private readonly sessionCwds = new Map<string, string>()
+  // Per-session artifact/notebook storage project; keeps run activation and claims in the same subtree.
+  private readonly sessionProjectNames = new Map<string, string>()
+  private readonly promptInFlightSessionIds = new Set<string>()
+  private expectedProcessExits = new WeakSet<ChildProcessWithoutNullStreams>()
+  private readonly permissionBroker: AcpPermissionBroker
+  private readonly callbacks: AcpRuntimeCallbacks
+  private readonly spawnAgent: () => ChildProcessWithoutNullStreams
+  private readonly artifactOptions: AcpRuntimeArtifactOptions | undefined
+  private readonly notebookOptions: AcpRuntimeNotebookOptions | undefined
+  private readonly artifactRepository: ArtifactRepository | undefined
+  private readonly artifactRunRegistry: ArtifactRunRegistry | undefined
+  private readonly uploadRepository: UploadRepository | undefined
+  private readonly artifactSessionIds = new Map<string, string>()
+  private artifactSessionSequence = 0
+  private artifactRunSequence = 0
+  private notebookSessionSequence = 0
+
+  // Wires runtime dependencies and forwards permission prompts into the event stream.
+  constructor(private readonly options: AcpRuntimeOptions) {
+    this.cwd = resolve(options.defaultCwd)
+    this.callbacks = options.callbacks ?? {}
+    this.spawnAgent = options.spawnAgent ?? spawnClaudeAgentAcp
+    this.artifactOptions = options.artifacts
+    this.notebookOptions = options.notebook
+    this.artifactRepository = options.artifacts
+      ? (options.artifacts.repository ?? new ArtifactRepository(options.artifacts.storageRoot))
+      : undefined
+    this.artifactRunRegistry = options.artifacts
+      ? (options.artifacts.runRegistry ?? new ArtifactRunRegistry())
+      : undefined
+    this.uploadRepository = options.uploads?.repository
+    this.permissionBroker = new AcpPermissionBroker((request) => {
+      this.pushEvent({
+        kind: 'permission',
+        level: 'warning',
+        sessionId: request.sessionId,
+        toolCallId: request.toolCallId,
+        title: 'Permission requested',
+        text: request.title,
+        raw: request
+      })
+      this.callbacks.onPermissionRequest?.(request)
+      this.emitState()
+    })
+  }
+
+  // Returns an immutable renderer-facing view of connection and session state.
+  getSnapshot(): AcpStateSnapshot {
+    const sessionIds = Array.from(this.sessions.keys())
+    const promptInFlightSessionIds = Array.from(this.promptInFlightSessionIds)
+
+    return {
+      status: this.status,
+      cwd: this.cwd,
+      sessionId: this.currentSessionId,
+      sessionIds,
+      error: this.error,
+      events: [...this.events],
+      pendingPermissions: this.permissionBroker.getPendingRequests(),
+      promptInFlight: promptInFlightSessionIds.length > 0,
+      promptInFlightSessionIds
+    }
+  }
+
+  // Starts a fresh agent process connection and initializes protocol capabilities.
+  async connect(request: AcpConnectRequest = {}): Promise<AcpStateSnapshot> {
+    if (this.connectInFlight) {
+      return this.connectInFlight
+    }
+
+    const generation = this.nextConnectionGeneration()
+    const connectPromise = this.connectFresh(request, generation)
+    this.connectInFlight = connectPromise
+
+    try {
+      return await connectPromise
+    } finally {
+      if (this.connectInFlight === connectPromise) {
+        this.connectInFlight = undefined
+      }
+    }
+  }
+
+  private async connectFresh(
+    request: AcpConnectRequest = {},
+    generation: number
+  ): Promise<AcpStateSnapshot> {
+    await this.disconnectCurrent(false)
+    this.assertCurrentConnectionGeneration(generation)
+
+    this.cwd = resolve(request.cwd || this.options.defaultCwd)
+    this.error = undefined
+    this.setStatus('connecting')
+
+    try {
+      this.agentProcess = this.spawnAgent()
+      this.attachAgentProcessEvents(this.agentProcess)
+
+      const stream = acp.ndJsonStream(
+        Writable.toWeb(this.agentProcess.stdin) as WritableStream<Uint8Array>,
+        Readable.toWeb(this.agentProcess.stdout) as ReadableStream<Uint8Array>
+      )
+
+      this.connection = this.createClientConnection(stream)
+      this.connection.closed.then(() => {
+        if (
+          this.connectionGeneration === generation &&
+          (this.status === 'connected' || this.status === 'connecting')
+        ) {
+          this.handleConnectionClosed()
+        }
+      })
+
+      // Initialization tells the agent which client-side services this app can handle.
+      const initResult = await this.connection.agent.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientInfo: {
+          name: 'open-science',
+          version: this.options.appVersion
+        },
+        clientCapabilities: {
+          fs: {
+            readTextFile: true,
+            writeTextFile: true
+          },
+          session: {
+            configOptions: {
+              boolean: {}
+            }
+          },
+          plan: {}
+        }
+      })
+      this.supportsSessionClose = Boolean(initResult.agentCapabilities?.sessionCapabilities?.close)
+      this.supportsSessionResume = Boolean(
+        initResult.agentCapabilities?.sessionCapabilities?.resume
+      )
+      this.assertCurrentConnectionGeneration(generation)
+
+      this.pushEvent({
+        kind: 'system',
+        level: 'info',
+        title: 'Agent initialized',
+        text: `ACP protocol ${initResult.protocolVersion}`
+      })
+      this.setStatus('connected')
+    } catch (error) {
+      if (generation !== this.connectionGeneration) {
+        throw error
+      }
+
+      this.error = errorMessage(error)
+      this.pushEvent({
+        kind: 'error',
+        level: 'error',
+        title: 'Connection failed',
+        text: this.error
+      })
+      await this.disconnectCurrent(false)
+      this.status = 'error'
+      this.emitState()
+      throw error
+    }
+
+    return this.getSnapshot()
+  }
+
+  // Creates a protocol session, injects artifact tooling, and uses the returned id as the app session id.
+  async createSession(request: AcpCreateSessionRequest = {}): Promise<AcpCreateSessionResponse> {
+    const sessionCwd = resolve(request.cwd || this.cwd || this.options.defaultCwd)
+    const projectName = this.normalizeProjectName(request.projectName)
+    const connection = await this.ensureConnected(sessionCwd)
+    const artifactSessionId = this.createArtifactSessionId()
+    const notebookSessionId = this.createNotebookSessionId()
+
+    const session = await connection.agent
+      .buildSession({
+        cwd: sessionCwd,
+        mcpServers: await this.createMcpServers({
+          artifactSessionId,
+          notebookSessionId,
+          sessionCwd,
+          projectName
+        }),
+        ...this.createSessionMeta()
+      })
+      .start()
+
+    this.sessions.set(session.sessionId, session)
+    this.sessionCwds.set(session.sessionId, sessionCwd)
+    this.sessionProjectNames.set(session.sessionId, projectName)
+    this.rememberArtifactSession(session.sessionId, artifactSessionId)
+    this.rememberNotebookSession(session.sessionId, notebookSessionId)
+    this.currentSessionId = session.sessionId
+    this.cwd = sessionCwd
+    this.pushEvent({
+      kind: 'system',
+      level: 'info',
+      sessionId: session.sessionId,
+      title: 'Session created',
+      text: sessionCwd
+    })
+    this.emitState()
+
+    return { sessionId: session.sessionId, cwd: sessionCwd }
+  }
+
+  // Reattaches a persisted protocol session after an app restart so later prompts can stream.
+  async resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
+    const sessionCwd = resolve(request.cwd || this.cwd || this.options.defaultCwd)
+    const projectName = this.normalizeProjectName(request.projectName)
+
+    // If the runtime already attached this session, only refresh routing metadata.
+    if (this.sessions.has(request.sessionId)) {
+      this.currentSessionId = request.sessionId
+      this.cwd = sessionCwd
+      this.sessionCwds.set(request.sessionId, sessionCwd)
+      this.sessionProjectNames.set(request.sessionId, projectName)
+      this.emitState()
+
+      return { sessionId: request.sessionId, cwd: sessionCwd }
+    }
+
+    const connection = await this.ensureConnected(sessionCwd)
+    // Resume is optional in ACP, so fail early when the agent did not advertise it.
+    if (!this.supportsSessionResume) {
+      throw new Error('ACP agent does not support session resume.')
+    }
+
+    // Resumed sessions already have stable ids, so the artifact session mirrors the runtime session id.
+    const resumeResponse = await connection.agent.request(acp.methods.agent.session.resume, {
+      sessionId: request.sessionId,
+      cwd: sessionCwd,
+      mcpServers: await this.createMcpServers({
+        artifactSessionId: request.sessionId,
+        notebookSessionId: request.sessionId,
+        sessionCwd,
+        projectName
+      }),
+      ...this.createSessionMeta()
+    })
+    // The SDK exposes public helpers for new sessions only. The runtime keeps this adapter
+    // narrow so resume can reuse the same update routing surface as newly-created sessions.
+    const session = (connection.agent as unknown as ClientContextSessionAttacher).attachSession({
+      sessionId: request.sessionId,
+      ...resumeResponse
+    })
+
+    this.sessions.set(request.sessionId, session)
+    this.sessionCwds.set(request.sessionId, sessionCwd)
+    this.sessionProjectNames.set(request.sessionId, projectName)
+    this.rememberArtifactSession(request.sessionId, request.sessionId)
+    this.currentSessionId = request.sessionId
+    this.cwd = sessionCwd
+    this.pushEvent({
+      kind: 'system',
+      level: 'info',
+      sessionId: request.sessionId,
+      title: 'Session resumed',
+      text: sessionCwd
+    })
+    this.emitState()
+
+    return { sessionId: request.sessionId, cwd: sessionCwd }
+  }
+
+  // Tears down every local session route and closes the underlying agent process.
+  async disconnect(emitClosedStatus = true): Promise<AcpStateSnapshot> {
+    this.nextConnectionGeneration()
+    this.connectInFlight = undefined
+
+    return this.disconnectCurrent(emitClosedStatus)
+  }
+
+  private async disconnectCurrent(emitClosedStatus = true): Promise<AcpStateSnapshot> {
+    this.permissionBroker.cancelAll()
+    this.promptInFlightSessionIds.clear()
+
+    for (const session of this.sessions.values()) {
+      session.dispose()
+    }
+
+    this.sessions.clear()
+    this.sessionCwds.clear()
+    this.sessionProjectNames.clear()
+    this.artifactSessionIds.clear()
+    this.currentSessionId = undefined
+    this.supportsSessionClose = false
+    this.supportsSessionResume = false
+    this.connection?.close()
+    this.connection = undefined
+
+    if (this.agentProcess) {
+      this.expectedProcessExits.add(this.agentProcess)
+
+      if (!this.agentProcess.killed) {
+        this.agentProcess.kill()
+      }
+    }
+
+    this.agentProcess = undefined
+
+    if (emitClosedStatus) {
+      this.setStatus('closed')
+    }
+
+    return this.getSnapshot()
+  }
+
+  private nextConnectionGeneration(): number {
+    this.connectionGeneration += 1
+    return this.connectionGeneration
+  }
+
+  private assertCurrentConnectionGeneration(generation: number): void {
+    if (generation !== this.connectionGeneration) {
+      throw new Error('ACP connection was superseded.')
+    }
+  }
+
+  // Sends one prompt turn to the targeted session and streams updates until stop.
+  async sendPrompt(request: AcpPromptRequest): Promise<PromptResponse> {
+    const activeSession = this.sessions.get(request.sessionId)
+
+    if (!activeSession) {
+      throw new Error(`ACP session not found: ${request.sessionId}`)
+    }
+
+    if (this.promptInFlightSessionIds.has(request.sessionId)) {
+      throw new Error('An ACP prompt is already running for this session')
+    }
+
+    this.currentSessionId = request.sessionId
+    this.promptInFlightSessionIds.add(request.sessionId)
+    this.emitState()
+    let artifactRun: ActiveArtifactRun | undefined
+
+    try {
+      // Create a fresh run context before prompting so MCP writes can be attributed to this turn.
+      artifactRun = await this.activateArtifactRun(activeSession.sessionId)
+      const promptContent = await this.createPromptContent(activeSession.sessionId, request)
+
+      this.pushEvent({
+        kind: 'message',
+        level: 'info',
+        sessionId: activeSession.sessionId,
+        role: 'user',
+        text: request.text
+      })
+
+      // Start the prompt and race it against routed updates from the active session queue.
+      const promptFailure = new Promise<never>((_, reject) => {
+        activeSession.prompt(promptContent).catch(reject)
+      })
+
+      for (;;) {
+        const message = await Promise.race([activeSession.nextUpdate(), promptFailure])
+
+        if (message.kind === 'stop') {
+          // Emit artifact metadata before stop so the renderer can attach files to the finished message.
+          await this.emitArtifactRunEvent(activeSession.sessionId, artifactRun)
+          this.pushEvent({
+            kind: 'stop',
+            level: 'info',
+            sessionId: activeSession.sessionId,
+            title: 'Prompt stopped',
+            text: message.stopReason,
+            raw: message.response
+          })
+          return message.response
+        }
+
+        this.handleSessionUpdate(message.notification)
+      }
+    } catch (error) {
+      this.pushEvent({
+        kind: 'error',
+        level: 'error',
+        sessionId: activeSession.sessionId,
+        title: 'Prompt failed',
+        text: errorMessage(error)
+      })
+      throw error
+    } finally {
+      try {
+        await this.clearArtifactRun(artifactRun)
+      } catch (error) {
+        this.pushEvent({
+          kind: 'error',
+          level: 'error',
+          sessionId: activeSession.sessionId,
+          title: 'Artifact cleanup failed',
+          text: errorMessage(error)
+        })
+      }
+      this.promptInFlightSessionIds.delete(request.sessionId)
+      this.emitState()
+    }
+  }
+
+  // Requests cancellation without clearing in-flight state before the agent stops.
+  async cancelPrompt(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot> {
+    const activeSession = this.sessions.get(request.sessionId)
+
+    if (this.connection && activeSession) {
+      await this.connection.agent.notify(acp.methods.agent.session.cancel, {
+        sessionId: activeSession.sessionId
+      })
+      this.permissionBroker.cancelForSession(request.sessionId)
+      this.pushEvent({
+        kind: 'system',
+        level: 'warning',
+        sessionId: activeSession.sessionId,
+        title: 'Prompt cancellation requested'
+      })
+      this.emitState()
+    }
+
+    return this.getSnapshot()
+  }
+
+  // Closes the agent-side session when supported, then removes local routing state.
+  async deleteSession(request: AcpDeleteSessionRequest): Promise<AcpStateSnapshot> {
+    const session = this.sessions.get(request.sessionId)
+
+    if (session) {
+      if (this.connection && this.supportsSessionClose) {
+        await this.connection.agent.request(acp.methods.agent.session.close, {
+          sessionId: request.sessionId
+        })
+      } else {
+        await this.connection?.agent.notify(acp.methods.agent.session.cancel, {
+          sessionId: request.sessionId
+        })
+      }
+
+      session.dispose()
+      this.permissionBroker.cancelForSession(request.sessionId)
+      this.sessions.delete(request.sessionId)
+      this.sessionCwds.delete(request.sessionId)
+      this.sessionProjectNames.delete(request.sessionId)
+      this.artifactSessionIds.delete(request.sessionId)
+      this.promptInFlightSessionIds.delete(request.sessionId)
+      this.currentSessionId =
+        this.currentSessionId === request.sessionId
+          ? Array.from(this.sessions.keys())[0]
+          : this.currentSessionId
+      this.pushEvent({
+        kind: 'system',
+        level: 'info',
+        sessionId: request.sessionId,
+        title: 'Session deleted'
+      })
+      this.emitState()
+    }
+
+    return this.getSnapshot()
+  }
+
+  // Resolves or cancels one pending permission request from the renderer.
+  respondToPermission(response: AcpPermissionResponse): AcpStateSnapshot {
+    const handled = this.permissionBroker.respond(response)
+
+    this.pushEvent({
+      kind: 'permission',
+      level: handled ? 'info' : 'warning',
+      title: handled ? 'Permission response sent' : 'Permission request not found',
+      text: response.cancelled ? 'cancelled' : response.optionId
+    })
+    this.emitState()
+
+    return this.getSnapshot()
+  }
+
+  // Turns the renderer prompt plus upload references into the ACP prompt payload.
+  private async createPromptContent(
+    sessionId: string,
+    request: AcpPromptRequest
+  ): Promise<string | ContentBlock[]> {
+    const attachments = request.attachments ?? []
+
+    if (attachments.length === 0) return request.text
+    if (!this.uploadRepository) throw new Error('Upload storage is not configured.')
+
+    // The runtime owns the durable session id, so it is the final authority for upload ownership.
+    const finalizedAttachments = await this.uploadRepository.finalizePendingSessionUploads(
+      sessionId,
+      attachments
+    )
+    const contentBlocks: ContentBlock[] = request.text.trim()
+      ? [{ type: 'text', text: request.text }]
+      : []
+
+    // Keep the user's text first, then append files in the same order they were added.
+    for (const attachment of finalizedAttachments) {
+      contentBlocks.push(await this.createAttachmentContentBlock(attachment))
+    }
+
+    return contentBlocks
+  }
+
+  // Converts one managed upload into the richest ACP content block that is safe for its type.
+  private async createAttachmentContentBlock(
+    attachment: UploadedAttachment
+  ): Promise<ContentBlock> {
+    if (!this.uploadRepository) throw new Error('Upload storage is not configured.')
+
+    const filePath = await this.uploadRepository.resolveManagedUploadPath({ path: attachment.path })
+    const uri = pathToFileURL(filePath).href
+
+    // Images are embedded as base64 so vision-capable agents receive the actual pixels.
+    if (attachment.mimeType?.startsWith('image/')) {
+      return {
+        type: 'image',
+        data: (await readFile(filePath)).toString('base64'),
+        mimeType: attachment.mimeType ?? 'application/octet-stream',
+        uri
+      }
+    }
+
+    // Small text-like files are embedded for direct reading; oversized text falls through to a link.
+    if (
+      (attachment.mimeType?.startsWith('text/') || attachment.mimeType === 'application/json') &&
+      attachment.size <= MAX_EMBEDDED_TEXT_UPLOAD_BYTES
+    ) {
+      return {
+        type: 'resource',
+        resource: {
+          uri,
+          mimeType: attachment.mimeType,
+          text: await readFile(filePath, 'utf8')
+        }
+      }
+    }
+
+    // Binary and large files are passed as resource links so agents can decide how to fetch them.
+    return {
+      type: 'resource_link',
+      uri,
+      name: attachment.originalName || attachment.name,
+      title: attachment.originalName || attachment.name,
+      mimeType: attachment.mimeType,
+      size: attachment.size
+    }
+  }
+
+  // Lazily initializes the process connection before session creation.
+  private async ensureConnected(cwd: string): Promise<ClientConnection> {
+    if (this.connection && this.status === 'connected') {
+      return this.connection
+    }
+
+    await this.connect({ cwd })
+
+    if (!this.connection) {
+      throw new Error('ACP connection failed')
+    }
+
+    return this.connection
+  }
+
+  // Registers client-side protocol handlers exposed to the agent process.
+  private createClientConnection(stream: acp.Stream): ClientConnection {
+    return acp
+      .client({ name: 'open-science' })
+      .onRequest(acp.methods.client.session.requestPermission, (ctx) =>
+        this.handlePermissionRequest(ctx.params)
+      )
+      .onRequest(acp.methods.client.fs.readTextFile, (ctx) =>
+        readWorkspaceTextFile(this.resolveSessionCwd(ctx.params.sessionId), ctx.params)
+      )
+      .onRequest(acp.methods.client.fs.writeTextFile, (ctx) =>
+        writeWorkspaceTextFile(this.resolveSessionCwd(ctx.params.sessionId), ctx.params)
+      )
+      .connect(stream)
+  }
+
+  // Looks up the workspace root bound to a session for filesystem operations.
+  private resolveSessionCwd(sessionId: string): string {
+    const sessionCwd = this.sessionCwds.get(sessionId)
+
+    if (!this.sessions.has(sessionId) || !sessionCwd) {
+      throw new Error(`Unknown ACP session: ${sessionId}`)
+    }
+
+    return sessionCwd
+  }
+
+  // Creates an app-owned artifact session id so new ACP sessions never decide their storage directory.
+  private createArtifactSessionId(): string {
+    if (!this.artifactOptions) return ''
+
+    this.artifactSessionSequence += 1
+
+    return `artifact-session-${Date.now()}-${this.artifactSessionSequence}`
+  }
+
+  // Maps protocol session ids to artifact session ids for later prompt turns and cleanup.
+  private rememberArtifactSession(sessionId: string, artifactSessionId: string): void {
+    if (!artifactSessionId) return
+
+    this.artifactSessionIds.set(sessionId, artifactSessionId)
+  }
+
+  // Provides the agent with exactly one artifact MCP server scoped to this session's storage context.
+  private createArtifactMcpServers(
+    artifactSessionId: string,
+    notebookSessionId: string,
+    sessionCwd: string,
+    projectName: string
+  ): McpServer[] {
+    if (!this.artifactOptions || !artifactSessionId) return []
+
+    const allowedImportRoots = [
+      sessionCwd,
+      ...(this.notebookOptions && notebookSessionId
+        ? [getNotebookSessionRoot(this.artifactOptions.storageRoot, projectName, notebookSessionId)]
+        : [])
+    ]
+
+    return [
+      createArtifactMcpServerConfig({
+        command: this.artifactOptions.mcpCommand ?? process.execPath,
+        entryPath: this.artifactOptions.mcpEntryPath,
+        storageRoot: this.artifactOptions.storageRoot,
+        projectName,
+        sessionId: artifactSessionId,
+        currentRunFile: this.getArtifactCurrentRunFile(artifactSessionId, projectName),
+        allowedImportRoots
+      })
+    ]
+  }
+
+  // Creates an app-owned notebook session alias for new ACP sessions whose real id is not known yet.
+  private createNotebookSessionId(): string {
+    if (!this.notebookOptions) return ''
+
+    this.notebookSessionSequence += 1
+
+    return `notebook-session-${Date.now()}-${this.notebookSessionSequence}`
+  }
+
+  // Lets the local notebook RPC layer map pre-start aliases to the final ACP session id.
+  private rememberNotebookSession(sessionId: string, notebookSessionId: string): void {
+    if (!this.notebookOptions || !notebookSessionId || notebookSessionId === sessionId) return
+
+    this.notebookOptions.registerSessionAlias?.(notebookSessionId, sessionId)
+  }
+
+  // Provides the agent with a notebook MCP server scoped to this session's runtime route.
+  private async createNotebookMcpServers(
+    notebookSessionId: string,
+    sessionCwd: string,
+    projectName: string
+  ): Promise<McpServer[]> {
+    if (!this.notebookOptions || !notebookSessionId) return []
+
+    const connection = await this.resolveNotebookRpcConnection()
+
+    return [
+      createNotebookMcpServerConfig({
+        command: this.notebookOptions.mcpCommand ?? process.execPath,
+        entryPath: this.notebookOptions.mcpEntryPath,
+        endpoint: connection.endpoint,
+        token: connection.token,
+        projectName,
+        sessionId: notebookSessionId,
+        workspaceCwd: sessionCwd
+      })
+    ]
+  }
+
+  // Resolves either a static test connection or the real app-local RPC server connection.
+  private async resolveNotebookRpcConnection(): Promise<NotebookRpcConnection> {
+    if (!this.notebookOptions) {
+      throw new Error('Notebook runtime is not configured.')
+    }
+
+    if (this.notebookOptions.getRpcConnection) {
+      return this.notebookOptions.getRpcConnection()
+    }
+
+    throw new Error('Notebook runtime RPC connection is not configured.')
+  }
+
+  // Combines every MCP config that should be visible to the agent for one session.
+  private async createMcpServers({
+    artifactSessionId,
+    notebookSessionId,
+    sessionCwd,
+    projectName
+  }: {
+    artifactSessionId: string
+    notebookSessionId: string
+    sessionCwd: string
+    projectName: string
+  }): Promise<McpServer[]> {
+    return [
+      ...this.createArtifactMcpServers(
+        artifactSessionId,
+        notebookSessionId,
+        sessionCwd,
+        projectName
+      ),
+      ...(await this.createNotebookMcpServers(notebookSessionId, sessionCwd, projectName))
+    ]
+  }
+
+  // Builds Claude-specific session metadata for system-prompt guidance without modifying user text.
+  private createSessionMeta():
+    | {
+        _meta: {
+          systemPrompt: {
+            type: 'preset'
+            preset: 'claude_code'
+            append: string
+          }
+        }
+      }
+    | Record<string, never> {
+    const appendSections = [
+      ...(this.artifactOptions ? [ARTIFACT_FILE_SYSTEM_PROMPT_APPEND] : []),
+      ...(this.notebookOptions ? [NOTEBOOK_SYSTEM_PROMPT_APPEND] : [])
+    ]
+
+    if (appendSections.length === 0) return {}
+
+    return {
+      _meta: {
+        systemPrompt: {
+          type: 'preset',
+          preset: 'claude_code',
+          append: appendSections.join('\n\n')
+        }
+      }
+    }
+  }
+
+  // Resolves the artifact/notebook storage project for a session, defaulting to the runtime constant.
+  private resolveSessionProjectName(sessionId: string): string {
+    return this.sessionProjectNames.get(sessionId) ?? this.artifactOptions?.projectName ?? ''
+  }
+
+  // Normalizes a requested project name, falling back to the runtime default when absent.
+  private normalizeProjectName(requestedProjectName: string | undefined): string {
+    return requestedProjectName?.trim() || (this.artifactOptions?.projectName ?? '')
+  }
+
+  // Resolves the per-session handoff file that tells the MCP process which run is active.
+  private getArtifactCurrentRunFile(artifactSessionId: string, projectName: string): string {
+    if (!this.artifactOptions) {
+      throw new Error('Artifact storage is not configured.')
+    }
+
+    return getArtifactCurrentRunFilePath(
+      this.artifactOptions.storageRoot,
+      projectName,
+      artifactSessionId
+    )
+  }
+
+  // Marks a new assistant turn as the active artifact run before the model can call the MCP tool.
+  private async activateArtifactRun(sessionId: string): Promise<ActiveArtifactRun | undefined> {
+    if (!this.artifactOptions || !this.artifactRepository) return undefined
+
+    this.artifactRunSequence += 1
+    const artifactSessionId = this.artifactSessionIds.get(sessionId) ?? sessionId
+    const currentRunFile = this.getArtifactCurrentRunFile(
+      artifactSessionId,
+      this.resolveSessionProjectName(sessionId)
+    )
+    const artifactRun = {
+      runId: `artifact-run-${Date.now()}-${this.artifactRunSequence}`,
+      artifactSessionId,
+      currentRunFile
+    }
+
+    await mkdir(dirname(currentRunFile), { recursive: true })
+    await writeFile(currentRunFile, `${JSON.stringify({ runId: artifactRun.runId })}\n`, 'utf8')
+
+    return artifactRun
+  }
+
+  // Clears the handoff file after the prompt so late MCP writes cannot attach to a completed turn.
+  private async clearArtifactRun(artifactRun: ActiveArtifactRun | undefined): Promise<void> {
+    if (!artifactRun) return
+
+    await writeFile(artifactRun.currentRunFile, `${JSON.stringify({})}\n`, 'utf8')
+  }
+
+  // Publishes pending files as a claim event; the renderer later supplies the final message id.
+  private async emitArtifactRunEvent(
+    sessionId: string,
+    artifactRun: ActiveArtifactRun | undefined
+  ): Promise<void> {
+    if (
+      !this.artifactOptions ||
+      !this.artifactRepository ||
+      !this.artifactRunRegistry ||
+      !artifactRun
+    ) {
+      return
+    }
+
+    const sessionProjectName = this.resolveSessionProjectName(sessionId)
+    const artifacts = await this.artifactRepository.listPendingRunFiles({
+      projectName: sessionProjectName,
+      sessionId: artifactRun.artifactSessionId,
+      runId: artifactRun.runId
+    })
+
+    if (artifacts.length === 0) return
+
+    const artifactClaimId = this.artifactRunRegistry.register({
+      projectName: sessionProjectName,
+      artifactSessionId: artifactRun.artifactSessionId,
+      sessionId,
+      runId: artifactRun.runId
+    })
+
+    this.pushEvent({
+      kind: 'artifact',
+      level: 'info',
+      sessionId,
+      title: 'Generated files',
+      runId: artifactRun.runId,
+      artifactSessionId: artifactRun.artifactSessionId,
+      artifactClaimId,
+      artifacts
+    })
+  }
+
+  // Hands permission requests to the broker so the renderer can answer later.
+  private handlePermissionRequest(
+    params: RequestPermissionRequest
+  ): Promise<RequestPermissionResponse> {
+    if (!this.sessions.has(params.sessionId)) {
+      throw new Error(`Unknown ACP session: ${params.sessionId}`)
+    }
+
+    return this.permissionBroker.requestPermission(params)
+  }
+
+  // Normalizes low-level session notifications into runtime/workspace events.
+  private handleSessionUpdate(notification: SessionNotification): void {
+    const event = toAcpRuntimeEvent(notification, this.nextEventId())
+
+    if ((event.kind === 'message' || event.kind === 'thought') && !event.text) {
+      return
+    }
+
+    this.pushEvent(event)
+  }
+
+  // Captures process stderr/errors/exits and converts unexpected ones to events.
+  private attachAgentProcessEvents(agentProcess: ChildProcessWithoutNullStreams): void {
+    agentProcess.stderr.on('data', (data: Buffer) => {
+      if (this.expectedProcessExits.has(agentProcess)) {
+        return
+      }
+
+      const text = data.toString('utf8').trim()
+
+      if (text) {
+        this.pushEvent({
+          kind: 'system',
+          level: 'warning',
+          title: 'claude-agent-acp',
+          text
+        })
+      }
+    })
+
+    agentProcess.on('error', (error) => {
+      if (this.expectedProcessExits.has(agentProcess)) {
+        return
+      }
+
+      this.error = errorMessage(error)
+      this.pushEvent({
+        kind: 'error',
+        level: 'error',
+        title: 'Agent process error',
+        text: this.error
+      })
+      this.setStatus('error')
+    })
+
+    agentProcess.on('exit', (code, signal) => {
+      if (this.expectedProcessExits.has(agentProcess)) {
+        return
+      }
+
+      if (this.status === 'connected' || this.status === 'connecting') {
+        this.pushEvent({
+          kind: 'system',
+          level: code === 0 ? 'info' : 'warning',
+          title: 'Agent process exited',
+          text: signal ? `signal ${signal}` : `code ${code ?? 'unknown'}`
+        })
+      }
+    })
+  }
+
+  // Clears local state after the protocol connection closes unexpectedly.
+  private handleConnectionClosed(): void {
+    this.permissionBroker.cancelAll()
+    this.sessions.clear()
+    this.sessionCwds.clear()
+    this.sessionProjectNames.clear()
+    this.artifactSessionIds.clear()
+    this.currentSessionId = undefined
+    this.supportsSessionClose = false
+    this.connection = undefined
+    this.agentProcess = undefined
+    this.promptInFlightSessionIds.clear()
+    this.setStatus('closed')
+  }
+
+  // Updates connection status and broadcasts the new snapshot.
+  private setStatus(status: AcpStateSnapshot['status']): void {
+    this.status = status
+    this.emitState()
+  }
+
+  // Adds a bounded event entry and notifies all renderer listeners.
+  private pushEvent(
+    event: Omit<AcpRuntimeEvent, 'id' | 'timestamp'> & Partial<AcpRuntimeEvent>
+  ): void {
+    const runtimeEvent: AcpRuntimeEvent = {
+      id: event.id ?? this.nextEventId(),
+      timestamp: event.timestamp ?? Date.now(),
+      level: event.level ?? 'info',
+      kind: event.kind,
+      sessionId: event.sessionId,
+      messageId: event.messageId,
+      role: event.role,
+      text: event.text,
+      title: event.title,
+      status: event.status,
+      toolCallId: event.toolCallId,
+      providerToolName: event.providerToolName,
+      toolKind: event.toolKind,
+      toolContent: event.toolContent,
+      toolLocations: event.toolLocations,
+      runId: event.runId,
+      artifactSessionId: event.artifactSessionId,
+      artifactClaimId: event.artifactClaimId,
+      artifacts: event.artifacts,
+      raw: event.raw
+    }
+
+    this.events = [...this.events, runtimeEvent].slice(-MAX_EVENTS)
+    this.callbacks.onEvent?.(runtimeEvent)
+    this.emitState()
+  }
+
+  // Generates monotonically increasing event ids for this runtime instance.
+  private nextEventId(): string {
+    this.eventSequence += 1
+    return `acp-event-${this.eventSequence}`
+  }
+
+  // Broadcasts the latest runtime snapshot if a listener is registered.
+  private emitState(): void {
+    this.callbacks.onStateChanged?.(this.getSnapshot())
+  }
+}
+
+export { AcpRuntime }

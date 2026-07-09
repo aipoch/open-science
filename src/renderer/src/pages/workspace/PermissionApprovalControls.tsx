@@ -1,0 +1,105 @@
+import type { AcpPermissionRequest } from '../../../../shared/acp'
+
+type PermissionApprovalControlsProps = {
+  requests: AcpPermissionRequest[]
+  onRespond: (requestId: string, optionId?: string) => void
+}
+
+type PermissionOption = AcpPermissionRequest['options'][number]
+type PermissionActionKind = 'always' | 'allow-once' | 'reject' | 'other'
+
+const permissionActionOrder: Record<PermissionActionKind, number> = {
+  always: 0,
+  'allow-once': 1,
+  reject: 2,
+  other: 3
+}
+
+const permissionActionKindByOptionKind: Record<string, PermissionActionKind> = {
+  allow_always: 'always',
+  allow_once: 'allow-once',
+  reject_always: 'reject',
+  reject_once: 'reject'
+}
+
+// ACP option kinds are protocol semantics; names stay display-only for unknown options.
+const getPermissionActionKind = (option: PermissionOption): PermissionActionKind => {
+  const normalizedKind = option.kind.toLowerCase()
+
+  return permissionActionKindByOptionKind[normalizedKind] ?? 'other'
+}
+
+const getPermissionActionLabel = (
+  option: PermissionOption,
+  actionKind: PermissionActionKind
+): string => {
+  if (actionKind === 'always') return 'Always'
+  if (actionKind === 'allow-once') return 'Allow once'
+  if (actionKind === 'reject') return 'Reject'
+
+  return option.name
+}
+
+const getOrderedPermissionOptions = (options: PermissionOption[]): PermissionOption[] =>
+  [...options].sort(
+    (leftOption, rightOption) =>
+      permissionActionOrder[getPermissionActionKind(leftOption)] -
+      permissionActionOrder[getPermissionActionKind(rightOption)]
+  )
+
+const PermissionApprovalControls = ({
+  requests,
+  onRespond
+}: PermissionApprovalControlsProps): React.JSX.Element | null => {
+  if (requests.length === 0) return null
+
+  return (
+    <div className="mb-2 w-full max-w-full space-y-2 overflow-hidden rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-5 text-amber-900">
+      {requests.map((request) => (
+        <div
+          key={request.requestId}
+          className="flex min-w-0 flex-col items-stretch gap-2 overflow-hidden"
+        >
+          <span
+            className="w-full min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
+            title={request.title}
+          >
+            {request.title}
+          </span>
+          <span className="flex flex-wrap items-center justify-end gap-1 w-full overflow-hidden">
+            {getOrderedPermissionOptions(request.options).map((option) => {
+              const actionKind = getPermissionActionKind(option)
+              const actionLabel = getPermissionActionLabel(option, actionKind)
+
+              return (
+                <button
+                  key={option.optionId}
+                  type="button"
+                  className="max-w-full break-words rounded-md border border-amber-300 bg-white px-2 py-1 text-[12px] hover:bg-amber-100"
+                  aria-label={`${actionLabel}: ${request.title}`}
+                  onClick={() => onRespond(request.requestId, option.optionId)}
+                >
+                  <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                    {actionLabel}
+                  </span>
+                </button>
+              )
+            })}
+            <button
+              type="button"
+              className="max-w-full break-words rounded-md px-2 py-1 text-[12px] hover:bg-amber-100"
+              aria-label={`Cancel: ${request.title}`}
+              onClick={() => onRespond(request.requestId)}
+            >
+              <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                Cancel
+              </span>
+            </button>
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export { PermissionApprovalControls }

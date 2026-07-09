@@ -1,0 +1,73 @@
+appId: com.aipoch.open-science
+productName: Open Science
+directories:
+  buildResources: build
+# Apply a valid deep ad-hoc signature on macOS (no Developer ID available). Without this,
+# electron-builder ships an incompletely-signed bundle that Gatekeeper flags as "damaged"
+# on downloaded/quarantined copies, so the app won't launch on other machines. See the hook.
+afterPack: build/adhoc-sign.cjs
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  # Prisma is shipped via extraResources (see below), not inside the asar. Exclude it here so that at
+  # runtime `require('@prisma/client')` resolves the real copy in Contents/Resources/node_modules
+  # (app.asar's parent dir) instead of a broken in-asar copy that can't find its generated `.prisma`
+  # client — which otherwise crashes the main process at startup with
+  # "Cannot find module '.prisma/client/default'" (window never opens; dock icon bounces and quits).
+  - '!node_modules/@prisma/client{,/**/*}'
+  - '!node_modules/.prisma{,/**/*}'
+asarUnpack:
+  - resources/**
+  # Native Claude CLI and ACP agent must live outside asar so the child process can execute them.
+  - node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/**
+  - node_modules/@agentclientprotocol/claude-agent-acp/**
+# The Prisma generated client (`node_modules/.prisma`) is produced by `prisma generate` and is NOT a
+# declared dependency, so electron-builder's node_modules collector never bundles it into the asar.
+# It also loads a native query engine (.dylib.node) by path, which can't run from inside an asar. Ship
+# the client + generated code as plain files under Contents/Resources/node_modules; Node's normal
+# directory walk from app.asar finds them there. (@prisma/client v6 has zero runtime deps, so the
+# client + .prisma pair is self-contained.)
+extraResources:
+  - from: node_modules/.prisma
+    to: node_modules/.prisma
+  - from: node_modules/@prisma/client
+    to: node_modules/@prisma/client
+win:
+  executableName: open-science
+nsis:
+  artifactName: ${name}-${version}-setup.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+mac:
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    CFBundleName: Open Science
+    CFBundleDisplayName: Open Science
+    NSCameraUsageDescription: Application requests access to the device's camera.
+    NSMicrophoneUsageDescription: Application requests access to the device's microphone.
+    NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
+    NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
+  notarize: false
+dmg:
+  artifactName: ${name}-${version}.${ext}
+linux:
+  target:
+    - AppImage
+    - snap
+    - deb
+  maintainer: aipoch
+  category: Utility
+appImage:
+  artifactName: ${name}-${version}.${ext}
+npmRebuild: false
+publish:
+  provider: github
+  owner: aipoch
+  repo: open-science
+electronDownload:
+  mirror: https://npmmirror.com/mirrors/electron/

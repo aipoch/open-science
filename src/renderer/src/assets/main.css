@@ -1,0 +1,156 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import './agent-markdown.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-session-running: var(--session-running);
+  --color-session-waiting: var(--session-waiting);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-bg-10: var(--bg-10);
+  --color-bg-000: var(--bg-000);
+  --color-bg-200: var(--bg-200);
+  --color-bg-300: var(--bg-300);
+  --color-bg-400: var(--bg-400);
+  --color-border-200: hsl(var(--border-ink-channel) / 0.15);
+  --color-border-300: hsl(var(--border-ink-channel) / 0.2);
+  --color-border-100: hsl(var(--border-ink-channel));
+  --color-text-000: var(--text-000);
+  --color-text-100: var(--text-100);
+  --color-text-300: var(--text-300);
+  --color-danger-000: var(--danger-000);
+  --color-danger-900: var(--danger-900);
+  --color-action-primary: var(--action-primary);
+  --color-action-primary-hover: var(--action-primary-hover);
+  --color-action-panel-toggle: var(--action-panel-toggle);
+  --color-surface-control-hover: var(--surface-control-hover);
+  --color-message-user-text: var(--message-user-text);
+  --color-rail-card-bg: hsl(var(--rail-card-bg));
+  --shadow-card: 0 0 0 1px rgb(10 10 10 / 0.06), 0 4px 24px rgb(10 10 10 / 0.04);
+  --shadow-card-opaque: 0 0 0 1px rgb(10 10 10 / 0.08), 0 8px 28px rgb(10 10 10 / 0.1);
+  --shadow-menu: 0 4px 16px hsl(var(--always-black) / 10%);
+  --shadow-dialog: 0 8px 32px rgb(10 10 10 / 12%);
+  --z-index-modal: 50;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  --radius: 0.5rem;
+  --bg-10: hsl(60 14% 99%);
+  --bg-000: hsl(0 0% 100%);
+  --bg-200: hsl(60 11% 95%);
+  --bg-300: hsl(45 12% 93%);
+  --bg-400: hsl(45 10% 88%);
+  --border-ink-channel: 60 2% 12%;
+  --text-000: hsl(0 0% 7%);
+  --text-100: hsl(43 3% 47%);
+  --text-300: hsl(43 3% 57%);
+  --rail-card-bg: 0 0% 100%;
+  --danger-000: hsl(0 45% 38%);
+  --danger-900: hsl(0 55% 95%);
+  --action-primary: hsl(13 55% 51%);
+  --action-primary-hover: hsl(13 53% 47%);
+  --action-panel-toggle: hsl(0 0% 42%);
+  --surface-control-hover: hsl(38 20% 90%);
+  --message-user-text: hsl(0 0% 12%);
+  --always-black: 0 0% 0%;
+  --background: oklch(0.985 0.01 96);
+  --foreground: oklch(0.19 0.025 236);
+  --card: oklch(0.998 0.004 96);
+  --card-foreground: oklch(0.19 0.025 236);
+  --popover: oklch(0.998 0.004 96);
+  --popover-foreground: oklch(0.19 0.025 236);
+  --primary: oklch(0.47 0.105 184);
+  --primary-foreground: oklch(0.985 0.008 180);
+  --secondary: oklch(0.94 0.018 93);
+  --secondary-foreground: oklch(0.23 0.03 235);
+  --muted: oklch(0.94 0.018 93);
+  --muted-foreground: oklch(0.48 0.035 235);
+  --accent: oklch(0.87 0.115 82);
+  --accent-foreground: oklch(0.2 0.03 62);
+  --destructive: oklch(0.58 0.22 25);
+  --session-running: oklch(0.49 0.115 184);
+  --session-waiting: oklch(0.62 0.16 68);
+  --border: oklch(0.87 0.018 92);
+  --input: oklch(0.87 0.018 92);
+  --ring: oklch(0.58 0.11 184);
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    letter-spacing: 0;
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring/50;
+  }
+
+  html,
+  body,
+  #root {
+    min-height: 100vh;
+  }
+
+  body {
+    @apply bg-bg-10 text-foreground;
+    margin: 0;
+    overflow: hidden;
+    font-family:
+      Inter,
+      ui-sans-serif,
+      system-ui,
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      sans-serif;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  button,
+  a,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+}
+
+@layer components {
+  /*
+   * Radix ScrollArea wraps content in display:table / min-width:100%, which lets
+   * long unbroken strings expand past the resizable panel. Force a normal block.
+   */
+  [data-slot='scroll-area-viewport'] {
+    @apply min-w-0!;
+
+    & > div {
+      @apply block! w-full min-w-0 max-w-full!;
+    }
+  }
+}

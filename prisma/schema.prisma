@@ -1,0 +1,34 @@
+// Prisma schema for the project data layer.
+//
+// Scope (per plan docs/project-session-storage-plan.md): the SQLite DB holds ONLY Project entities.
+// Sessions, messages, and artifacts stay on disk (see src/shared/session-persistence.ts) and are NOT
+// modeled here. At runtime the datasource url is supplied programmatically (see prisma-client.ts) so
+// the DB lives under the app storage root; DATABASE_URL here only serves the Prisma CLI.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  description String   @default("")
+  isExample   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Per-project preview panel state (panel open/collapsed, active tab, opened file previews as JSON).
+// Runtime-only tabs (notebook) are not stored; see src/shared/preview-state.ts.
+model ProjectPreviewState {
+  projectId    String   @id
+  panelState   String
+  activeItemId String?
+  items        String   @default("[]")
+  updatedAt    DateTime @updatedAt
+}
