@@ -46,6 +46,10 @@ const isTimeoutError = (error: unknown): boolean => {
 export type AgentSpawnConfig = {
   envOverrides: Record<string, string>
   executablePath: string
+  // Settings scopes the ACP session should load. Custom (isolated) providers restrict this to
+  // ["user"] so the user's global ~/.claude project/local settings can't override the injected
+  // endpoint; claude-default leaves it undefined to reuse the user's full settings.
+  settingSources?: readonly string[]
 }
 
 export type SettingsServiceOptions = {
@@ -245,7 +249,13 @@ class SettingsService {
       claudeExecutablePath: executablePath
     })
 
-    return { envOverrides, executablePath }
+    // Custom providers are fully isolated: restrict the agent to the "user" settings scope (the
+    // isolated CLAUDE_CONFIG_DIR) so the user's global ~/.claude project/local settings — which may
+    // carry a proxy ANTHROPIC_BASE_URL env block — can't override the injected endpoint. claude-default
+    // reuses the user's full settings, so it leaves this unset.
+    const settingSources = activeProvider.type === 'custom' ? (['user'] as const) : undefined
+
+    return { envOverrides, executablePath, settingSources }
   }
 
   // Maps a stored provider to its masked renderer view, flagging custom keys that no longer decrypt.

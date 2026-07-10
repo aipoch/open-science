@@ -11,29 +11,29 @@ describe('validate: request construction', () => {
   it('builds a bearer /v1/messages probe with anthropic-version and a 1-token body', () => {
     const request = buildValidationRequest({
       type: 'custom',
-      baseUrl: 'https://gateway.example/v1',
+      baseUrl: 'https://api.anthropic.com',
       model: 'claude-sonnet-4-5',
-      key: 'tok'
+      key: 'test-token'
     })
 
-    expect(request.url).toBe('https://gateway.example/v1/v1/messages')
-    expect(request.headers.authorization).toBe('Bearer tok')
+    expect(request.url).toBe('https://api.anthropic.com/v1/messages')
+    expect(request.headers.authorization).toBe('Bearer test-token')
     expect(request.headers['anthropic-version']).toBe('2023-06-01')
     expect(JSON.parse(request.body)).toMatchObject({ model: 'claude-sonnet-4-5', max_tokens: 1 })
   })
 
-  it('always authenticates with a bearer token and normalizes a trailing-slash base URL', () => {
+  it('normalizes a base URL that already carries /v1 so the probe never doubles it', () => {
     const request = buildValidationRequest({
       type: 'custom',
-      baseUrl: 'https://g/v1/',
-      key: 'k'
+      baseUrl: 'https://api.anthropic.com/v1',
+      key: 'test-token'
     })
 
-    expect(request.headers.authorization).toBe('Bearer k')
+    expect(request.headers.authorization).toBe('Bearer test-token')
     // Custom providers never send an x-api-key header.
     expect(request.headers['x-api-key']).toBeUndefined()
-    // A trailing slash on the base URL must not double up the slash before /v1/messages.
-    expect(request.url).toBe('https://g/v1/v1/messages')
+    // A user-supplied trailing /v1 (and/or slash) must resolve to a single /v1/messages, not two.
+    expect(request.url).toBe('https://api.anthropic.com/v1/messages')
   })
 
   it('throws for a missing or unparseable base URL', () => {

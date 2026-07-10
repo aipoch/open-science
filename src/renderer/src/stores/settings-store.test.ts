@@ -123,6 +123,50 @@ describe('settings store: saveAndActivateProvider', () => {
   })
 })
 
+describe('settings store: hasEnteredApp latch (onboarding is first-run only)', () => {
+  it('latches on when load finds both gates ready', async () => {
+    api.getPreflight.mockResolvedValue({ claudeReady: true, activeProviderReady: true })
+
+    await useSettingsStore.getState().load()
+
+    expect(useSettingsStore.getState().hasEnteredApp).toBe(true)
+  })
+
+  it('stays off when load finds a gate unmet on a genuine first run', async () => {
+    api.getPreflight.mockResolvedValue({ claudeReady: true, activeProviderReady: false })
+
+    await useSettingsStore.getState().load()
+
+    expect(useSettingsStore.getState().hasEnteredApp).toBe(false)
+  })
+
+  it('does not turn back off when a later preflight flips a gate (provider select)', async () => {
+    // Entered the app: both gates ready.
+    api.getPreflight.mockResolvedValue({ claudeReady: true, activeProviderReady: true })
+    await useSettingsStore.getState().load()
+    expect(useSettingsStore.getState().hasEnteredApp).toBe(true)
+
+    // Selecting a not-yet-validated provider makes the active provider not-ready again...
+    api.getPreflight.mockResolvedValue({ claudeReady: true, activeProviderReady: false })
+    await useSettingsStore.getState().refreshPreflight()
+
+    // ...but the app must stay entered so it doesn't jump back to onboarding.
+    expect(useSettingsStore.getState().preflight.activeProviderReady).toBe(false)
+    expect(useSettingsStore.getState().hasEnteredApp).toBe(true)
+  })
+
+  it('does not turn back off when settings is reopened (load) on an unready provider', async () => {
+    api.getPreflight.mockResolvedValue({ claudeReady: true, activeProviderReady: true })
+    await useSettingsStore.getState().load()
+
+    // Reopening settings triggers another load while the active provider is temporarily not-ready.
+    api.getPreflight.mockResolvedValue({ claudeReady: true, activeProviderReady: false })
+    await useSettingsStore.getState().load()
+
+    expect(useSettingsStore.getState().hasEnteredApp).toBe(true)
+  })
+})
+
 describe('settings store: provider switch flow', () => {
   it('does not need confirmation when no session is running', async () => {
     acp.getState.mockResolvedValue({ promptInFlightSessionIds: [] })

@@ -33,6 +33,10 @@ type SettingsStoreData = {
   activeProviderId: string | undefined
   providers: ProviderView[]
   preflight: Preflight
+  // Latched true the first time both startup gates pass. Onboarding is a first-run gate, so once the
+  // user has entered the app, later provider changes (which may momentarily flip a gate) must not send
+  // them back to the wizard — the app reads this instead of preflight alone to decide onboarding.
+  hasEnteredApp: boolean
   encryptionAvailable: boolean
   npmAvailable: boolean
   // Transient UI state for the wizard/settings page.
@@ -69,12 +73,17 @@ const createInitialPreflight = (): Preflight => ({
   activeProviderReady: false
 })
 
+// Both hard startup gates satisfied — the condition that latches hasEnteredApp and clears onboarding.
+const isPreflightReady = (preflight: Preflight): boolean =>
+  preflight.claudeReady && preflight.activeProviderReady
+
 export const createInitialSettingsState = (): SettingsStoreData => ({
   isLoaded: false,
   claude: {},
   activeProviderId: undefined,
   providers: [],
   preflight: createInitialPreflight(),
+  hasEnteredApp: false,
   encryptionAvailable: true,
   npmAvailable: true,
   isDetectingClaude: false,
@@ -117,20 +126,28 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       window.api.settings.isNpmAvailable()
     ])
 
-    set({
+    set((state) => ({
       ...applySnapshot(snapshot),
       preflight,
+      // Latch on only; a later load (e.g. reopening settings on a not-yet-validated provider) must
+      // never turn this back off and resurrect onboarding.
+      hasEnteredApp: state.hasEnteredApp || isPreflightReady(preflight),
       encryptionAvailable,
       npmAvailable,
       isLoaded: true
-    })
+    }))
   },
 
   // Re-checks the two startup gates without reloading the whole snapshot.
   refreshPreflight: async () => {
     const preflight = await window.api.settings.getPreflight()
 
-    set({ preflight })
+    // Latch hasEnteredApp on (never off): once the app is entered, a later gate flip in settings must
+    // not resurrect the onboarding wizard.
+    set((state) => ({
+      preflight,
+      hasEnteredApp: state.hasEnteredApp || isPreflightReady(preflight)
+    }))
 
     return preflight
   },

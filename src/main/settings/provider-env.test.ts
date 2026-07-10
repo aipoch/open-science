@@ -9,22 +9,37 @@ describe('provider-env', () => {
     const env = buildProviderEnv(
       {
         type: 'custom',
-        baseUrl: 'https://gateway.example/v1',
+        baseUrl: 'https://api.anthropic.com',
         model: 'claude-sonnet-4-5',
-        key: 'secret-token'
+        key: 'test-token'
       },
       options
     )
 
     expect(env).toEqual({
       CLAUDE_CODE_EXECUTABLE: '/bin/claude',
-      ANTHROPIC_BASE_URL: 'https://gateway.example/v1',
-      ANTHROPIC_AUTH_TOKEN: 'secret-token',
+      ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
+      ANTHROPIC_AUTH_TOKEN: 'test-token',
       ANTHROPIC_MODEL: 'claude-sonnet-4-5',
       CLAUDE_CONFIG_DIR: getIsolatedClaudeConfigDir('/root')
     })
     // Custom providers never use x-api-key; the key is always sent as a bearer token.
     expect(env.ANTHROPIC_API_KEY).toBeUndefined()
+  })
+
+  it('normalizes a base URL that already carries /v1 so the client does not double it', () => {
+    const env = buildProviderEnv(
+      {
+        type: 'custom',
+        baseUrl: 'https://api.anthropic.com/v1',
+        model: 'claude-sonnet-4-5',
+        key: 'test-token'
+      },
+      options
+    )
+
+    // The client appends /v1/messages itself; ANTHROPIC_BASE_URL must not carry a redundant /v1.
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://api.anthropic.com')
   })
 
   it('omits base URL and isolated config dir for claude-default with a model override', () => {

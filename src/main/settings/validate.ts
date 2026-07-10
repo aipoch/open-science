@@ -1,4 +1,5 @@
 import type { ValidateProviderResult, ValidationCategory } from '../../shared/settings'
+import { normalizeAnthropicBaseUrl } from './base-url'
 import type { ResolvedProvider } from './provider-env'
 
 // Runs a real connectivity/auth probe for a provider and classifies the outcome into an actionable
@@ -26,9 +27,11 @@ const buildValidationRequest = (provider: ResolvedProvider): ValidationHttpReque
   let url: string
 
   try {
-    // Mirror how the claude client builds requests: ANTHROPIC_BASE_URL + "/v1/messages". Validate it
-    // parses as a URL so an unusable base can be classified as bad-url instead of firing a bad fetch.
-    url = new URL(`${provider.baseUrl.replace(/\/+$/, '')}/v1/messages`).toString()
+    // Mirror how the claude client builds requests: ANTHROPIC_BASE_URL + "/v1/messages". The base URL
+    // is normalized first so a user-supplied trailing `/v1` isn't doubled into `.../v1/v1/messages`
+    // (a 404). Validate it parses as a URL so an unusable base is classified as bad-url instead of
+    // firing a doomed fetch.
+    url = new URL(`${normalizeAnthropicBaseUrl(provider.baseUrl)}/v1/messages`).toString()
   } catch {
     throw new Error('Invalid base URL.')
   }

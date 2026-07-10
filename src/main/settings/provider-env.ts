@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 
 import type { ProviderType } from '../../shared/settings'
+import { normalizeAnthropicBaseUrl } from './base-url'
 
 // Resolves an active provider into the environment overrides that the ACP agent (and the claude
 // binary it spawns) read. Pure and free of Electron so the branch matrix stays unit-testable.
@@ -42,7 +43,13 @@ const buildProviderEnv = (
   }
 
   // custom providers are fully isolated: gateway URL, key, model, and a private config directory.
-  if (provider.baseUrl) env.ANTHROPIC_BASE_URL = provider.baseUrl
+  // The base URL is normalized so a user-supplied trailing `/v1` isn't doubled by the client's own
+  // `/v1/messages` suffix (which would 404).
+  if (provider.baseUrl) {
+    const baseUrl = normalizeAnthropicBaseUrl(provider.baseUrl)
+
+    if (baseUrl) env.ANTHROPIC_BASE_URL = baseUrl
+  }
 
   // Custom gateways authenticate with a bearer token (ANTHROPIC_AUTH_TOKEN).
   if (provider.key) env.ANTHROPIC_AUTH_TOKEN = provider.key

@@ -97,4 +97,42 @@ describe('settings IPC handlers', () => {
     expect(service.setActiveProvider).toHaveBeenCalledWith('p1')
     expect(onActiveProviderChanged).toHaveBeenCalledOnce()
   })
+
+  it('drops the agent connection when the edited provider is the active one', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    service.upsertProvider.mockResolvedValue({ claude: {}, activeProviderId: 'p1', providers: [] })
+    const onActiveProviderChanged = vi.fn()
+    registerSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+
+    await invoke('settings:upsert-provider', { id: 'p1', type: 'custom', name: 'G' })
+
+    // Editing the live provider must respawn the agent so the new base URL / key / model take effect.
+    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+  })
+
+  it('does not drop the connection when editing a non-active provider', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    service.upsertProvider.mockResolvedValue({ claude: {}, activeProviderId: 'p1', providers: [] })
+    const onActiveProviderChanged = vi.fn()
+    registerSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+
+    await invoke('settings:upsert-provider', { id: 'p2', type: 'custom', name: 'Other' })
+
+    expect(onActiveProviderChanged).not.toHaveBeenCalled()
+  })
+
+  it('does not drop the connection when creating a new provider', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    service.upsertProvider.mockResolvedValue({ claude: {}, activeProviderId: 'p1', providers: [] })
+    const onActiveProviderChanged = vi.fn()
+    registerSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+
+    // A create has no id, so it can't be the active provider yet — no respawn.
+    await invoke('settings:upsert-provider', { type: 'custom', name: 'New' })
+
+    expect(onActiveProviderChanged).not.toHaveBeenCalled()
+  })
 })
