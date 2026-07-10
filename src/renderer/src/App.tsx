@@ -16,6 +16,8 @@ const App = (): React.JSX.Element | null => {
   const loadProjects = useProjectStore((state) => state.loadProjects)
   const isSettingsLoaded = useSettingsStore((state) => state.isLoaded)
   const preflight = useSettingsStore((state) => state.preflight)
+  // Latched once both gates first pass; keeps onboarding a first-run gate (see settings-store).
+  const hasEnteredApp = useSettingsStore((state) => state.hasEnteredApp)
   const loadSettings = useSettingsStore((state) => state.load)
   const isSettingsOpen = useSettingsStore((state) => state.isSettingsOpen)
   const closeSettings = useSettingsStore((state) => state.closeSettings)
@@ -35,8 +37,12 @@ const App = (): React.JSX.Element | null => {
     return null
   }
 
-  // Hard startup gate: a runnable claude plus a validated active provider are both required.
-  if (!preflight.claudeReady || !preflight.activeProviderReady) {
+  const gatesReady = preflight.claudeReady && preflight.activeProviderReady
+
+  // Hard first-run gate: a runnable claude plus a validated active provider are both required before
+  // the app is ever shown. After that (hasEnteredApp), changing providers in settings stays in the app
+  // instead of yanking the user back to the wizard.
+  if (!gatesReady && !hasEnteredApp) {
     return <OnboardingWizard onComplete={() => undefined} />
   }
 

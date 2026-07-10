@@ -94,9 +94,13 @@ const ProviderForm = ({
               aria-label="Base URL"
               value={value.baseUrl}
               disabled={disabled}
-              placeholder="https://gateway.example/v1"
+              placeholder="https://gateway.example"
               onChange={(event) => onChange({ baseUrl: event.target.value })}
             />
+            <p className="text-xs text-muted-foreground">
+              The gateway root — don&apos;t include a trailing <code>/v1</code>; it&apos;s added
+              automatically.
+            </p>
             {errors.baseUrl ? (
               <p className={fieldErrorClassName} role="alert">
                 {errors.baseUrl}

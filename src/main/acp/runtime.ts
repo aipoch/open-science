@@ -138,6 +138,9 @@ class AcpRuntime {
   private connectionGeneration = 0
   private currentSessionId: string | undefined
   private supportsSessionClose = false
+  // Settings scopes to load for sessions on the current connection (from the active provider's spawn
+  // config). Undefined means unrestricted (agent default). Set for isolated custom providers.
+  private activeSettingSources: readonly string[] | undefined
   private supportsSessionResume = false
   private readonly sessions = new Map<string, ActiveSession>()
   private readonly sessionCwds = new Map<string, string>()
@@ -475,6 +478,11 @@ class AcpRuntime {
     if (!config) {
       throw new Error('ACP agent spawn configuration is not available.')
     }
+
+    // Remember the active provider's settings-scope restriction so sessions created on this connection
+    // load only the intended scopes (see createSessionMeta). Cleared to undefined for unrestricted
+    // providers so a later claude-default reconnect doesn't inherit a stale restriction.
+    this.activeSettingSources = config.settingSources
 
     return spawnClaudeAgentAcp(config)
   }
@@ -867,34 +875,36 @@ class AcpRuntime {
     ]
   }
 
-  // Builds Claude-specific session metadata for system-prompt guidance without modifying user text.
-  private createSessionMeta():
-    | {
-        _meta: {
-          systemPrompt: {
-            type: 'preset'
-            preset: 'claude_code'
-            append: string
-          }
-        }
-      }
-    | Record<string, never> {
+  // Builds Claude-specific session metadata: system-prompt guidance for artifact/notebook tooling, and
+  // (for isolated custom providers) a settingSources restriction so the user's global ~/.claude
+  // project/local settings can't override the injected provider endpoint. Returns `{}` when neither
+  // applies so the session is created with no extra `_meta`.
+  private createSessionMeta(): { _meta: Record<string, unknown> } | Record<string, never> {
     const appendSections = [
       ...(this.artifactOptions ? [ARTIFACT_FILE_SYSTEM_PROMPT_APPEND] : []),
       ...(this.notebookOptions ? [NOTEBOOK_SYSTEM_PROMPT_APPEND] : [])
     ]
 
-    if (appendSections.length === 0) return {}
+    const meta: Record<string, unknown> = {}
 
-    return {
-      _meta: {
-        systemPrompt: {
-          type: 'preset',
-          preset: 'claude_code',
-          append: appendSections.join('\n\n')
-        }
+    if (appendSections.length > 0) {
+      meta.systemPrompt = {
+        type: 'preset',
+        preset: 'claude_code',
+        append: appendSections.join('\n\n')
       }
     }
+
+    // `_meta.claudeCode.options` is forwarded by the ACP agent into the SDK query options, where it
+    // overrides the agent's default settingSources of ["user","project","local"]. Restricting to
+    // ["user"] keeps only the isolated CLAUDE_CONFIG_DIR scope for custom providers.
+    if (this.activeSettingSources) {
+      meta.claudeCode = { options: { settingSources: [...this.activeSettingSources] } }
+    }
+
+    if (Object.keys(meta).length === 0) return {}
+
+    return { _meta: meta }
   }
 
   // Resolves the artifact/notebook storage project for a session, defaulting to the runtime constant.

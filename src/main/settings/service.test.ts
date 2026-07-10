@@ -212,9 +212,9 @@ describe('SettingsService: preflight & spawn config', () => {
       await service.upsertProvider({
         type: 'custom',
         name: 'G',
-        baseUrl: 'https://g/v1',
+        baseUrl: 'https://api.anthropic.com/v1',
         model: 'm',
-        key: 'sk-key'
+        key: 'test-key'
       })
     ).providers[0]
     await service.setActiveProvider(created.id)
@@ -223,13 +223,31 @@ describe('SettingsService: preflight & spawn config', () => {
 
     expect(config.executablePath).toBe(execPath)
     expect(config.envOverrides).toMatchObject({
-      ANTHROPIC_BASE_URL: 'https://g/v1',
-      ANTHROPIC_AUTH_TOKEN: 'sk-key',
+      // A user-supplied trailing /v1 is normalized away; the client appends /v1/messages itself.
+      ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
+      ANTHROPIC_AUTH_TOKEN: 'test-key',
       ANTHROPIC_MODEL: 'm',
       CLAUDE_CONFIG_DIR: getIsolatedClaudeConfigDir(storageRoot)
     })
     // Custom providers always use the bearer token variable, never x-api-key.
     expect(config.envOverrides.ANTHROPIC_API_KEY).toBeUndefined()
+    // Custom providers restrict the session to the isolated "user" settings scope so the user's global
+    // ~/.claude project/local settings can't override the injected endpoint.
+    expect(config.settingSources).toEqual(['user'])
+  })
+
+  it('leaves settingSources unset for a claude-default provider (reuses user settings)', async () => {
+    const service = createService()
+
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    const created = (
+      await service.upsertProvider({ type: 'claude-default', name: 'Local' })
+    ).providers[0]
+    await service.setActiveProvider(created.id)
+
+    const config = await service.resolveActiveSpawnConfig()
+
+    expect(config.settingSources).toBeUndefined()
   })
 
   it('throws a clear error when no active provider is configured', async () => {

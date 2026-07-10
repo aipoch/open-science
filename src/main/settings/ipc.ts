@@ -43,9 +43,18 @@ const registerSettingsIpcHandlers = ({
     service.installClaude(request, broadcastInstallLog)
   )
 
-  ipcMain.handle('settings:upsert-provider', (_event, request: UpsertProviderRequest) =>
-    service.upsertProvider(request)
-  )
+  ipcMain.handle('settings:upsert-provider', async (_event, request: UpsertProviderRequest) => {
+    const snapshot = await service.upsertProvider(request)
+
+    // Editing the currently-active provider in place must also refresh the agent. The live process
+    // baked its base URL / key / model in at spawn time, so without this a credential or model edit
+    // would silently keep hitting the pre-edit gateway until the next manual provider switch.
+    if (request.id && request.id === snapshot.activeProviderId) {
+      onActiveProviderChanged?.()
+    }
+
+    return snapshot
+  })
   ipcMain.handle('settings:delete-provider', (_event, request: DeleteProviderRequest) =>
     service.deleteProvider(request.id)
   )

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { toUnpackedAsarPath } from './agent-process'
+import { buildAgentSpawnEnv, toUnpackedAsarPath } from './agent-process'
 
 describe('ACP agent process packaging paths', () => {
   it('uses the real unpacked path for executables resolved inside app.asar', () => {
@@ -19,5 +19,52 @@ describe('ACP agent process packaging paths', () => {
         '/Users/lj/Desktop/cs/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude'
       )
     ).toBe('/Users/lj/Desktop/cs/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude')
+  })
+})
+
+describe('buildAgentSpawnEnv', () => {
+  // A custom provider is isolated (its overrides include CLAUDE_CONFIG_DIR).
+  const isolatedOverrides = {
+    ANTHROPIC_BASE_URL: 'https://gateway.example',
+    ANTHROPIC_AUTH_TOKEN: 'provider-token',
+    ANTHROPIC_MODEL: 'gateway-model',
+    CLAUDE_CONFIG_DIR: '/root/claude'
+  }
+
+  it('drops inherited ANTHROPIC_* for an isolated provider so parent creds cannot leak', () => {
+    const env = buildAgentSpawnEnv(
+      {
+        ANTHROPIC_BASE_URL: 'https://proxy.example', // inherited proxy — must not survive
+        ANTHROPIC_API_KEY: 'inherited-token', // not overridden — must be dropped, not leaked
+        ANTHROPIC_CUSTOM_HEADERS: 'x: y',
+        PATH: '/usr/bin'
+      },
+      isolatedOverrides,
+      '/bin/claude'
+    )
+
+    // Only the provider's own endpoint/token/model remain.
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://gateway.example')
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('provider-token')
+    // Inherited ANTHROPIC_* that the provider does not set are removed entirely.
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined()
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined()
+    // Non-Anthropic inherited vars are preserved.
+    expect(env.PATH).toBe('/usr/bin')
+    expect(env.CLAUDE_CODE_EXECUTABLE).toBe('/bin/claude')
+  })
+
+  it('keeps inherited ANTHROPIC_* for a non-isolated (claude-default) provider', () => {
+    const env = buildAgentSpawnEnv(
+      { ANTHROPIC_BASE_URL: 'https://proxy.example', PATH: '/usr/bin' },
+      // claude-default overrides carry no CLAUDE_CONFIG_DIR → not isolated.
+      { ANTHROPIC_MODEL: 'claude-opus' },
+      '/bin/claude'
+    )
+
+    // Reuses the user's global environment (proxy, login, etc.).
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://proxy.example')
+    expect(env.ANTHROPIC_MODEL).toBe('claude-opus')
+    expect(env.CLAUDE_CODE_EXECUTABLE).toBe('/bin/claude')
   })
 })
