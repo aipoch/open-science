@@ -51,6 +51,19 @@ import type {
   SaveSessionManifestRequest
 } from '../shared/session-persistence'
 import type {
+  ClaudeDetectResult,
+  ClaudeInstallLogEvent,
+  ClaudeInstallResult,
+  DeleteProviderRequest,
+  InstallClaudeRequest,
+  Preflight,
+  SetActiveProviderRequest,
+  SettingsSnapshot,
+  UpsertProviderRequest,
+  ValidateProviderRequest,
+  ValidateProviderResult
+} from '../shared/settings'
+import type {
   DeleteUploadRequest,
   FinalizeUploadSessionRequest,
   StageUploadFilesRequest,
@@ -87,6 +100,19 @@ interface OpenScienceAPI {
     deleteSession(request: DeleteSessionRequest): Promise<void>
     deleteProjectSessions(request: DeleteProjectSessionsRequest): Promise<void>
     saveManifest(request: SaveSessionManifestRequest): Promise<void>
+  }
+  settings: {
+    getPreflight(): Promise<Preflight>
+    getSettings(): Promise<SettingsSnapshot>
+    isEncryptionAvailable(): Promise<boolean>
+    isNpmAvailable(): Promise<boolean>
+    detectClaude(): Promise<ClaudeDetectResult>
+    installClaude(request: InstallClaudeRequest): Promise<ClaudeInstallResult>
+    upsertProvider(request: UpsertProviderRequest): Promise<SettingsSnapshot>
+    deleteProvider(request: DeleteProviderRequest): Promise<SettingsSnapshot>
+    setActiveProvider(request: SetActiveProviderRequest): Promise<SettingsSnapshot>
+    validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult>
+    onInstallLog(listener: AcpListener<ClaudeInstallLogEvent>): RemoveListener
   }
   projects: {
     list(): Promise<Project[]>

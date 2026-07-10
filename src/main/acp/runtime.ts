@@ -28,7 +28,7 @@ import type {
   AcpResumeSessionRequest,
   AcpStateSnapshot
 } from '../../shared/acp'
-import { spawnClaudeAgentAcp } from './agent-process'
+import { spawnClaudeAgentAcp, type SpawnClaudeAgentAcpOptions } from './agent-process'
 import { toAcpRuntimeEvent } from './runtime-events'
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 import { AcpPermissionBroker } from './permission-broker'
@@ -55,6 +55,9 @@ type AcpRuntimeOptions = {
   defaultCwd: string
   callbacks?: AcpRuntimeCallbacks
   spawnAgent?: () => ChildProcessWithoutNullStreams
+  // Resolves the current active-provider spawn config at connect time so switching providers takes
+  // effect on reconnect. Ignored when an explicit spawnAgent is provided (tests inject that directly).
+  resolveSpawnConfig?: () => Promise<SpawnClaudeAgentAcpOptions> | SpawnClaudeAgentAcpOptions
   artifacts?: AcpRuntimeArtifactOptions
   uploads?: AcpRuntimeUploadOptions
   notebook?: AcpRuntimeNotebookOptions
@@ -144,7 +147,7 @@ class AcpRuntime {
   private expectedProcessExits = new WeakSet<ChildProcessWithoutNullStreams>()
   private readonly permissionBroker: AcpPermissionBroker
   private readonly callbacks: AcpRuntimeCallbacks
-  private readonly spawnAgent: () => ChildProcessWithoutNullStreams
+  private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
   private readonly artifactOptions: AcpRuntimeArtifactOptions | undefined
   private readonly notebookOptions: AcpRuntimeNotebookOptions | undefined
   private readonly artifactRepository: ArtifactRepository | undefined
@@ -159,7 +162,7 @@ class AcpRuntime {
   constructor(private readonly options: AcpRuntimeOptions) {
     this.cwd = resolve(options.defaultCwd)
     this.callbacks = options.callbacks ?? {}
-    this.spawnAgent = options.spawnAgent ?? spawnClaudeAgentAcp
+    this.spawnAgent = options.spawnAgent
     this.artifactOptions = options.artifacts
     this.notebookOptions = options.notebook
     this.artifactRepository = options.artifacts
@@ -233,7 +236,7 @@ class AcpRuntime {
     this.setStatus('connecting')
 
     try {
-      this.agentProcess = this.spawnAgent()
+      this.agentProcess = await this.spawnAgentProcess()
       this.attachAgentProcessEvents(this.agentProcess)
 
       const stream = acp.ndJsonStream(
@@ -456,6 +459,24 @@ class AcpRuntime {
     if (generation !== this.connectionGeneration) {
       throw new Error('ACP connection was superseded.')
     }
+  }
+
+  // Creates the agent process, preferring an injected spawner (tests) and otherwise resolving the
+  // current active-provider spawn config so each reconnect uses up-to-date credentials.
+  private async spawnAgentProcess(): Promise<ChildProcessWithoutNullStreams> {
+    if (this.spawnAgent) {
+      return this.spawnAgent()
+    }
+
+    const config = this.options.resolveSpawnConfig
+      ? await this.options.resolveSpawnConfig()
+      : undefined
+
+    if (!config) {
+      throw new Error('ACP agent spawn configuration is not available.')
+    }
+
+    return spawnClaudeAgentAcp(config)
   }
 
   // Sends one prompt turn to the targeted session and streams updates until stop.

@@ -6,6 +6,8 @@ import { registerNotebookIpcHandlers } from './notebook/ipc'
 import { NotebookLocalRpcServer } from './notebook/local-rpc-server'
 import { registerProjectIpcHandlers } from './projects/ipc'
 import { registerSessionPersistenceIpcHandlers } from './session-persistence/ipc'
+import { registerSettingsIpcHandlers } from './settings/ipc'
+import { createDefaultSettingsService } from './settings/service'
 import { createDefaultUploadRepository, registerUploadIpcHandlers } from './uploads/ipc'
 
 type IpcRegistrationOptions = {
@@ -21,14 +23,23 @@ const registerIpcHandlers = ({ mainEntryPath }: IpcRegistrationOptions): void =>
   const uploadRepository = createDefaultUploadRepository()
   const notebookService = createDefaultNotebookRuntimeService()
   const notebookRpcServer = new NotebookLocalRpcServer(notebookService)
+  // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
+  const settingsService = createDefaultSettingsService()
 
   registerFileSaveHandlers()
-  registerAcpIpcHandlers({
+  const runtime = registerAcpIpcHandlers({
     mcpEntryPath: mainEntryPath,
     repository: artifactRepository,
     runRegistry: artifactRunRegistry,
     uploadRepository,
-    notebookRpcServer
+    notebookRpcServer,
+    settingsService
+  })
+  // Switching the active provider drops the agent connection so the next prompt reconnects with the
+  // new credentials (and resumes the active session through the existing resume path).
+  registerSettingsIpcHandlers({
+    service: settingsService,
+    onActiveProviderChanged: () => void runtime.disconnect()
   })
   registerNotebookIpcHandlers(notebookService)
   registerArtifactIpcHandlers(artifactRepository, artifactRunRegistry)

@@ -53,6 +53,19 @@ import type {
   SaveSessionManifestRequest
 } from '../shared/session-persistence'
 import type {
+  ClaudeDetectResult,
+  ClaudeInstallLogEvent,
+  ClaudeInstallResult,
+  DeleteProviderRequest,
+  InstallClaudeRequest,
+  Preflight,
+  SetActiveProviderRequest,
+  SettingsSnapshot,
+  UpsertProviderRequest,
+  ValidateProviderRequest,
+  ValidateProviderResult
+} from '../shared/settings'
+import type {
   DeleteUploadRequest,
   FinalizeUploadSessionRequest,
   StageUploadFilesRequest,
@@ -101,6 +114,19 @@ type OpenScienceAPI = {
     deleteSession: (request: DeleteSessionRequest) => Promise<void>
     deleteProjectSessions: (request: DeleteProjectSessionsRequest) => Promise<void>
     saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
+  }
+  settings: {
+    getPreflight: () => Promise<Preflight>
+    getSettings: () => Promise<SettingsSnapshot>
+    isEncryptionAvailable: () => Promise<boolean>
+    isNpmAvailable: () => Promise<boolean>
+    detectClaude: () => Promise<ClaudeDetectResult>
+    installClaude: (request: InstallClaudeRequest) => Promise<ClaudeInstallResult>
+    upsertProvider: (request: UpsertProviderRequest) => Promise<SettingsSnapshot>
+    deleteProvider: (request: DeleteProviderRequest) => Promise<SettingsSnapshot>
+    setActiveProvider: (request: SetActiveProviderRequest) => Promise<SettingsSnapshot>
+    validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
+    onInstallLog: (listener: AcpListener<ClaudeInstallLogEvent>) => RemoveListener
   }
   projects: {
     list: () => Promise<Project[]>
@@ -206,6 +232,27 @@ const api: OpenScienceAPI = {
     // Persists the last-open project/session pointer.
     saveManifest: (request) =>
       ipcRenderer.invoke('sessions:save-manifest', request) as Promise<void>
+  },
+  settings: {
+    // Model-settings/onboarding surface: secrets stay in main, the renderer only sees masked views.
+    getPreflight: () => ipcRenderer.invoke('settings:get-preflight') as Promise<Preflight>,
+    getSettings: () => ipcRenderer.invoke('settings:get-settings') as Promise<SettingsSnapshot>,
+    isEncryptionAvailable: () =>
+      ipcRenderer.invoke('settings:encryption-available') as Promise<boolean>,
+    isNpmAvailable: () => ipcRenderer.invoke('settings:npm-available') as Promise<boolean>,
+    detectClaude: () => ipcRenderer.invoke('settings:detect-claude') as Promise<ClaudeDetectResult>,
+    installClaude: (request) =>
+      ipcRenderer.invoke('settings:install-claude', request) as Promise<ClaudeInstallResult>,
+    upsertProvider: (request) =>
+      ipcRenderer.invoke('settings:upsert-provider', request) as Promise<SettingsSnapshot>,
+    deleteProvider: (request) =>
+      ipcRenderer.invoke('settings:delete-provider', request) as Promise<SettingsSnapshot>,
+    setActiveProvider: (request) =>
+      ipcRenderer.invoke('settings:set-active-provider', request) as Promise<SettingsSnapshot>,
+    validateProvider: (request) =>
+      ipcRenderer.invoke('settings:validate-provider', request) as Promise<ValidateProviderResult>,
+    // Streams live installer output while a one-click install runs.
+    onInstallLog: (listener) => onIpcMessage('settings:install-log', listener)
   },
   projects: {
     // Project CRUD backed by the SQLite/Prisma layer (scope: projects only).

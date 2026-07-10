@@ -22,6 +22,7 @@ import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import { NotebookRunRepository } from '../notebook/repository'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import { resolveStorageRoot } from '../storage-root'
+import type { SettingsService } from '../settings/service'
 import type { UploadRepository } from '../uploads/repository'
 
 type AcpIpcArtifacts = {
@@ -33,6 +34,8 @@ type AcpIpcOptions = AcpIpcArtifacts & {
   mcpEntryPath: string
   uploadRepository: UploadRepository
   notebookRpcServer: NotebookLocalRpcServer
+  // Drives the agent spawn env from the active provider so switching takes effect on reconnect.
+  settingsService: SettingsService
 }
 
 // Sends one runtime payload to every currently open renderer window.
@@ -50,7 +53,8 @@ const createRuntime = ({
   repository,
   runRegistry,
   uploadRepository,
-  notebookRpcServer
+  notebookRpcServer,
+  settingsService
 }: AcpIpcOptions): AcpRuntime => {
   const storageRoot = resolveStorageRoot()
 
@@ -58,6 +62,8 @@ const createRuntime = ({
     appVersion: app.getVersion(),
     // Packaged macOS apps often start with cwd at "/" or the app bundle; use home instead.
     defaultCwd: homedir(),
+    // Read the active provider's credentials/model on every connect so provider switches apply.
+    resolveSpawnConfig: () => settingsService.resolveActiveSpawnConfig(),
     artifacts: {
       // Reuse the session persistence root so chat state and generated files move together.
       storageRoot,
@@ -86,8 +92,9 @@ const createRuntime = ({
   })
 }
 
-// Registers renderer-callable runtime commands on Electron IPC.
-const registerAcpIpcHandlers = (options: AcpIpcOptions): void => {
+// Registers renderer-callable runtime commands on Electron IPC and returns the shared runtime so the
+// settings layer can drop the connection when the active provider changes.
+const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntime => {
   const runtime = createRuntime(options)
 
   ipcMain.handle('acp:get-state', () => runtime.getSnapshot())
@@ -115,6 +122,8 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): void => {
   ipcMain.handle('acp:respond-permission', (_event, response: AcpPermissionResponse) =>
     runtime.respondToPermission(response)
   )
+
+  return runtime
 }
 
 // Creates the shared notebook runtime used by both renderer IPC and agent MCP calls.

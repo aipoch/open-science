@@ -16,6 +16,7 @@ type WorkspaceSidebarProps = {
   onOpenSession: (sessionId: string) => void
   onRenameSession: (session: ChatSession) => void
   onDeleteSession: (session: ChatSession) => void
+  onOpenSettings: () => void
 }
 
 // Maps each session status to the left-side indicator dot using emitted theme colors.
@@ -66,7 +67,8 @@ const WorkspaceSidebar = ({
   onOpenFiles,
   onOpenSession,
   onRenameSession,
-  onDeleteSession
+  onDeleteSession,
+  onOpenSettings
 }: WorkspaceSidebarProps): React.JSX.Element => (
   <aside className="z-10 flex h-full w-[220px] min-w-0 shrink-0 flex-col">
     <div className="m-2 mr-0 flex min-h-0 flex-1 flex-col rounded-lg bg-rail-card-bg shadow-card">
@@ -225,6 +227,7 @@ const WorkspaceSidebar = ({
           />
           <button
             type="button"
+            onClick={onOpenSettings}
             className={cn(
               'inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000',
               sidebarInteractiveTransitionClassName

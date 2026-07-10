@@ -196,11 +196,18 @@ const startPendingSessionPrompt = (
       return
     }
 
-    void runtime.sendPrompt(runtimeSessionId, content, promptAttachments).then((snapshot) => {
-      if (!snapshot) {
-        useSessionStore.getState().failRun(runtimeSessionId, 'Agent run failed')
-      }
-    })
+    void runtime
+      .sendPrompt(runtimeSessionId, content, promptAttachments)
+      .then((snapshot) => {
+        if (!snapshot) {
+          useSessionStore.getState().failRun(runtimeSessionId, 'Agent run failed')
+        }
+      })
+      .catch((error) => {
+        // A rejected prompt (e.g. an upstream gateway 5xx) must surface as a visible session error
+        // instead of being swallowed as an unhandled rejection.
+        useSessionStore.getState().failRun(runtimeSessionId, getErrorMessage(error))
+      })
   })()
 }
 
@@ -304,11 +311,18 @@ const sendWorkspaceMessage = async (
     }
 
     // The hook returns after local state is updated; event listeners handle the streamed result.
-    void runtime.sendPrompt(targetSessionId, content, promptAttachments).then((snapshot) => {
-      if (!snapshot) {
-        useSessionStore.getState().failRun(targetSessionId, 'Agent run failed')
-      }
-    })
+    void runtime
+      .sendPrompt(targetSessionId, content, promptAttachments)
+      .then((snapshot) => {
+        if (!snapshot) {
+          useSessionStore.getState().failRun(targetSessionId, 'Agent run failed')
+        }
+      })
+      .catch((error) => {
+        // A rejected prompt (e.g. an upstream gateway 5xx) must surface as a visible session error
+        // instead of being swallowed as an unhandled rejection.
+        useSessionStore.getState().failRun(targetSessionId, getErrorMessage(error))
+      })
 
     return appended
   }

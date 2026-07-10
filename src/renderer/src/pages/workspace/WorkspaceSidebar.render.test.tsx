@@ -35,6 +35,7 @@ const renderSidebar = async (sessions: ChatSession[]): Promise<string> => {
       onOpenSession={vi.fn()}
       onRenameSession={vi.fn()}
       onDeleteSession={vi.fn()}
+      onOpenSettings={vi.fn()}
     />
   )
 }
@@ -112,7 +113,8 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenFiles: vi.fn(),
       onOpenSession,
       onRenameSession,
-      onDeleteSession
+      onDeleteSession,
+      onOpenSettings: vi.fn()
     })
     const elements = collectElements(tree)
     const notebookButton = elements.find(
@@ -151,7 +153,8 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenFiles,
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
-      onDeleteSession: vi.fn()
+      onDeleteSession: vi.fn(),
+      onOpenSettings: vi.fn()
     })
     const buttons = collectElements(tree).filter((element) => element.type === 'button')
     const newButtonIndex = buttons.findIndex((button) => getTextContent(button).trim() === 'New')

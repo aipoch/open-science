@@ -1,4 +1,13 @@
-import { Archive, Building2, Clock, MoreVertical, Pencil, Plus, Trash2 } from 'lucide-react'
+import {
+  Archive,
+  Building2,
+  Clock,
+  MoreVertical,
+  Pencil,
+  Plus,
+  Settings,
+  Trash2
+} from 'lucide-react'
 import { DropdownMenu } from 'radix-ui'
 import { useMemo, useState } from 'react'
 
@@ -9,6 +18,7 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import type { ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
 import { useProjectStore } from '@/stores/project-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import type { Project } from '../../../../shared/projects'
 
 import { DeleteProjectDialog } from './DeleteProjectDialog'
@@ -61,6 +71,7 @@ const HomePage = (): React.JSX.Element => {
   const sessions = useSessionStore((state) => state.sessions)
   const openProject = useNavigationStore((state) => state.openProject)
   const openSession = useNavigationStore((state) => state.openSession)
+  const openSettings = useSettingsStore((state) => state.openSettings)
 
   const [formState, setFormState] = useState<ProjectFormState | null>(null)
   const [nameDraft, setNameDraft] = useState('')
@@ -201,6 +212,14 @@ const HomePage = (): React.JSX.Element => {
             <div className="mt-1 text-[11px] text-text-100">Beta</div>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              aria-label="Model settings"
+              onClick={openSettings}
+              className="inline-flex size-9 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000"
+            >
+              <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
+            </button>
             <button
               type="button"
               aria-label="Account"

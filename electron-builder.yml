@@ -20,10 +20,13 @@ files:
   # "Cannot find module '.prisma/client/default'" (window never opens; dock icon bounces and quits).
   - '!node_modules/@prisma/client{,/**/*}'
   - '!node_modules/.prisma{,/**/*}'
+  # The bundled Claude native binary (~220MB) is never executed: the app spawns the ACP agent with
+  # CLAUDE_CODE_EXECUTABLE pointing at the user's system-installed claude, and claude-agent-acp only
+  # resolves this optional platform package when that env var is unset. Excluding it drops ~220MB.
+  - '!node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64{,/**/*}'
 asarUnpack:
   - resources/**
-  # Native Claude CLI and ACP agent must live outside asar so the child process can execute them.
-  - node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/**
+  # The ACP agent runs as a spawned child process, so its entry must live outside the asar.
   - node_modules/@agentclientprotocol/claude-agent-acp/**
 # The Prisma generated client (`node_modules/.prisma`) is produced by `prisma generate` and is NOT a
 # declared dependency, so electron-builder's node_modules collector never bundles it into the asar.

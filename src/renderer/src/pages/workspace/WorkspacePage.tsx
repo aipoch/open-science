@@ -8,6 +8,7 @@ import { useWorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { usePreviewPersistence } from '@/lib/preview-persistence/preview-persistence'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import {
   createNotebookPreviewItem,
   createProjectFilesPreviewItem,
@@ -88,6 +89,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   // matches no session and triggers the redirect below.
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
   const goHome = useNavigationStore((state) => state.goHome)
+  const openSettings = useSettingsStore((state) => state.openSettings)
   const scopedProjectId = activeProjectId ?? ''
   const activeProject = useProjectStore((state) =>
     state.projects.find((project) => project.id === scopedProjectId)
@@ -466,6 +468,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
           onOpenSession={openSession}
           onRenameSession={openRenameDialog}
           onDeleteSession={setSessionToDelete}
+          onOpenSettings={openSettings}
         />
 
         {/* Resizable panels follow the existing workspace layout; main content owns chat state. */}
