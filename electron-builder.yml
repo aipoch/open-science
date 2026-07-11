@@ -9,6 +9,12 @@ directories:
 afterPack: build/adhoc-sign.cjs
 files:
   - '!**/.vscode/*'
+  # Agent/AI tooling state lives in the project (.claude holds git worktrees — full nested repo
+  # copies, easily >1GB — plus memory/logs; .codex is similar). electron-builder sweeps in everything
+  # under the project root by default, so without this it bundles all of that into app.asar, bloating
+  # the app to multiple GB AND leaking local agent state into the shipped bundle.
+  - '!.claude{,/**/*}'
+  - '!.codex{,/**/*}'
   - '!src/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
