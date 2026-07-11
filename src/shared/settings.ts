@@ -44,6 +44,8 @@ export type SettingsSnapshot = {
   claude: ClaudeInfo
   activeProviderId?: string
   providers: ProviderView[]
+  // Timestamp of first-run onboarding completion; undefined until it finishes at least once.
+  onboardingCompletedAt?: number
 }
 
 // The two hard startup gates. Kept as plain booleans so the wizard can target the first unmet step.
@@ -93,7 +95,7 @@ export type ValidateProviderResult = {
 }
 
 // Selectable install sources for the one-click claude installer.
-export type ClaudeInstallSource = 'npm-mirror' | 'official-script'
+export type ClaudeInstallSource = 'npm' | 'official-script'
 
 // Static, non-secret description of an install source shown in the UI (command is copyable).
 export type ClaudeInstallSourceInfo = {
@@ -105,12 +107,12 @@ export type ClaudeInstallSourceInfo = {
   requiresNpm: boolean
 }
 
-// The ordered install sources; npm mirror is the mainland-friendly default.
+// The ordered install sources; a plain global npm install is the default when npm is available.
 export const CLAUDE_INSTALL_SOURCES: ClaudeInstallSourceInfo[] = [
   {
-    id: 'npm-mirror',
-    label: 'npm + China mirror',
-    displayCommand: 'npm i -g @anthropic-ai/claude-code --registry=https://registry.npmmirror.com',
+    id: 'npm',
+    label: 'npm (global install)',
+    displayCommand: 'npm i -g @anthropic-ai/claude-code',
     requiresNpm: true
   },
   {
@@ -141,7 +143,7 @@ export type ClaudeInstallResult = {
   error?: string
 }
 
-// Availability of npm on the host, used to gate the npm-mirror source.
+// Availability of npm on the host, used to gate the npm source.
 export type NpmAvailability = {
   available: boolean
 }

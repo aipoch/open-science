@@ -40,9 +40,31 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     import('./windows')
   ])
 
-  app.setName(APP_NAME)
+  // Dev runs get a "(DEV)" suffix so the app name, macOS menu, and per-app paths (logs, userData)
+  // are visibly distinct from an installed build — and don't collide with it.
+  app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
 
   await app.whenReady()
+
+  // Initialize file logging as early as possible so startup and agent-spawn issues are captured for
+  // later troubleshooting (especially in packaged builds where console output is not visible).
+  const { createLogger, getLogFilePath, initLogger } = await import('./logger')
+  initLogger({ logDir: app.getPath('logs') })
+  const log = createLogger('main')
+
+  log.info('app starting', {
+    version: app.getVersion(),
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    electron: process.versions.electron,
+    node: process.versions.node,
+    execPath: process.execPath,
+    logFile: getLogFilePath()
+  })
+
+  // Capture otherwise-silent crashes so a hang or unexpected exit leaves a trail in the log file.
+  process.on('uncaughtException', (error) => log.error('uncaughtException', error))
+  process.on('unhandledRejection', (reason) => log.error('unhandledRejection', reason))
 
   // Set app user model id for windows
   electronApp.setAppUserModelId(APP_USER_MODEL_ID)

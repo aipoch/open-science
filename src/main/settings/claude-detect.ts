@@ -6,6 +6,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
 import type { ClaudeDetectResult } from '../../shared/settings'
+import { augmentedPathEnv } from './shell-path'
 
 const execFileAsync = promisify(execFile)
 
@@ -91,10 +92,14 @@ const runClaudeVersion = async (path: string): Promise<string | undefined> => {
   }
 }
 
-// Resolves the npm global bin directory (`npm prefix -g` -> `<prefix>/bin`) if npm is present.
+// Resolves the npm global bin directory (`npm prefix -g` -> `<prefix>/bin`) if npm is present. PATH is
+// augmented with common node locations so a GUI-launched app can still locate npm.
 const resolveNpmBinDirs = async (): Promise<string[]> => {
   try {
-    const { stdout } = await execFileAsync('npm', ['prefix', '-g'], { timeout: 10_000 })
+    const { stdout } = await execFileAsync('npm', ['prefix', '-g'], {
+      timeout: 10_000,
+      env: augmentedPathEnv()
+    })
     const prefix = stdout.trim()
 
     return prefix ? [join(prefix, 'bin')] : []

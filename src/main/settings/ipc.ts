@@ -72,6 +72,7 @@ const registerSettingsIpcHandlers = ({
   ipcMain.handle('settings:validate-provider', (_event, request: ValidateProviderRequest) =>
     service.validateProvider(request)
   )
+  ipcMain.handle('settings:mark-onboarding-complete', () => service.markOnboardingComplete())
 }
 
 export { SETTINGS_INSTALL_LOG_CHANNEL, registerSettingsIpcHandlers }

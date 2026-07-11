@@ -6,7 +6,7 @@ import { CLAUDE_INSTALL_SOURCES } from '../../../../shared/settings'
 type ClaudeInstallCardProps = {
   isInstalling: boolean
   installLogs: string[]
-  // Whether npm is available on the host; disables/deprioritizes the npm-mirror source when false.
+  // Whether npm is available on the host; disables/deprioritizes the npm source when false.
   npmAvailable: boolean
   onInstall: (source: ClaudeInstallSource) => void
 }
@@ -20,10 +20,10 @@ const ClaudeInstallCard = ({
   onInstall
 }: ClaudeInstallCardProps): React.JSX.Element => {
   const [source, setSource] = useState<ClaudeInstallSource>(
-    npmAvailable ? 'npm-mirror' : 'official-script'
+    npmAvailable ? 'npm' : 'official-script'
   )
   const selectedSource = CLAUDE_INSTALL_SOURCES.find((item) => item.id === source)
-  const npmMissing = source === 'npm-mirror' && !npmAvailable
+  const npmMissing = source === 'npm' && !npmAvailable
 
   return (
     <div className="rounded-xl border border-border p-4">

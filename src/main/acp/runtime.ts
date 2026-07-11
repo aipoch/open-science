@@ -29,6 +29,7 @@ import type {
   AcpStateSnapshot
 } from '../../shared/acp'
 import { spawnClaudeAgentAcp, type SpawnClaudeAgentAcpOptions } from './agent-process'
+import { createLogger } from '../logger'
 import { toAcpRuntimeEvent } from './runtime-events'
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 import { AcpPermissionBroker } from './permission-broker'
@@ -125,6 +126,18 @@ const errorMessage = (error: unknown): string => {
   return String(error)
 }
 
+const log = createLogger('acp')
+
+// Detects the ACP JSON-RPC "Resource not found" (-32002) the agent returns when a resumed session id
+// is unknown to the current process — the signal that the agent was replaced (e.g. provider switch).
+const isSessionNotFoundError = (error: unknown): boolean => {
+  if (typeof error !== 'object' || error === null) return false
+
+  const candidate = error as { code?: number; message?: string }
+
+  return candidate.code === -32002 || /resource not found/i.test(candidate.message ?? '')
+}
+
 // Owns the agent process, protocol connection, and all active protocol sessions.
 class AcpRuntime {
   private status: AcpStateSnapshot['status'] = 'idle'
@@ -138,15 +151,17 @@ class AcpRuntime {
   private connectionGeneration = 0
   private currentSessionId: string | undefined
   private supportsSessionClose = false
-  // Settings scopes to load for sessions on the current connection (from the active provider's spawn
-  // config). Undefined means unrestricted (agent default). Set for isolated custom providers.
-  private activeSettingSources: readonly string[] | undefined
   private supportsSessionResume = false
   private readonly sessions = new Map<string, ActiveSession>()
   private readonly sessionCwds = new Map<string, string>()
+  // A replaced agent's own session id -> the app-facing id it was adopted under (after a provider
+  // switch), so agent-origin events/permissions relabel into the conversation the renderer tracks.
+  private readonly agentToAppSessionId = new Map<string, string>()
   // Per-session artifact/notebook storage project; keeps run activation and claims in the same subtree.
   private readonly sessionProjectNames = new Map<string, string>()
   private readonly promptInFlightSessionIds = new Set<string>()
+  // A provider change requested while a prompt was running, applied when the session next goes idle.
+  private pendingProviderReconnect = false
   private expectedProcessExits = new WeakSet<ChildProcessWithoutNullStreams>()
   private readonly permissionBroker: AcpPermissionBroker
   private readonly callbacks: AcpRuntimeCallbacks
@@ -176,16 +191,20 @@ class AcpRuntime {
       : undefined
     this.uploadRepository = options.uploads?.repository
     this.permissionBroker = new AcpPermissionBroker((request) => {
+      // Relabel to the app-facing id when this session was adopted onto a replaced agent.
+      const sessionId = this.agentToAppSessionId.get(request.sessionId) ?? request.sessionId
+      const routed = sessionId === request.sessionId ? request : { ...request, sessionId }
+
       this.pushEvent({
         kind: 'permission',
         level: 'warning',
-        sessionId: request.sessionId,
-        toolCallId: request.toolCallId,
+        sessionId: routed.sessionId,
+        toolCallId: routed.toolCallId,
         title: 'Permission requested',
-        text: request.title,
-        raw: request
+        text: routed.title,
+        raw: routed
       })
-      this.callbacks.onPermissionRequest?.(request)
+      this.callbacks.onPermissionRequest?.(routed)
       this.emitState()
     })
   }
@@ -237,6 +256,7 @@ class AcpRuntime {
     this.cwd = resolve(request.cwd || this.options.defaultCwd)
     this.error = undefined
     this.setStatus('connecting')
+    log.info('connecting agent', { cwd: this.cwd, generation })
 
     try {
       this.agentProcess = await this.spawnAgentProcess()
@@ -283,6 +303,12 @@ class AcpRuntime {
       )
       this.assertCurrentConnectionGeneration(generation)
 
+      log.info('agent initialized', {
+        protocolVersion: initResult.protocolVersion,
+        supportsSessionClose: this.supportsSessionClose,
+        supportsSessionResume: this.supportsSessionResume
+      })
+
       this.pushEvent({
         kind: 'system',
         level: 'info',
@@ -296,6 +322,7 @@ class AcpRuntime {
       }
 
       this.error = errorMessage(error)
+      log.error('agent connection failed', error)
       this.pushEvent({
         kind: 'error',
         level: 'error',
@@ -351,6 +378,29 @@ class AcpRuntime {
     return { sessionId: session.sessionId, cwd: sessionCwd }
   }
 
+  // Registers a freshly-built agent session under an app-facing id (used when adopting a conversation
+  // onto a replaced agent after a provider switch). Remaps the agent's own id so later updates and
+  // permission requests relabel into the same conversation.
+  private adoptSession(
+    appSessionId: string,
+    session: ActiveSession,
+    cwd: string,
+    projectName: string
+  ): void {
+    this.sessions.set(appSessionId, session)
+
+    if (session.sessionId !== appSessionId) {
+      this.agentToAppSessionId.set(session.sessionId, appSessionId)
+    }
+
+    this.sessionCwds.set(appSessionId, cwd)
+    this.sessionProjectNames.set(appSessionId, projectName)
+    this.rememberArtifactSession(appSessionId, appSessionId)
+    this.rememberNotebookSession(appSessionId, appSessionId)
+    this.currentSessionId = appSessionId
+    this.cwd = cwd
+  }
+
   // Reattaches a persisted protocol session after an app restart so later prompts can stream.
   async resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
     const sessionCwd = resolve(request.cwd || this.cwd || this.options.defaultCwd)
@@ -374,17 +424,47 @@ class AcpRuntime {
     }
 
     // Resumed sessions already have stable ids, so the artifact session mirrors the runtime session id.
-    const resumeResponse = await connection.agent.request(acp.methods.agent.session.resume, {
-      sessionId: request.sessionId,
-      cwd: sessionCwd,
-      mcpServers: await this.createMcpServers({
-        artifactSessionId: request.sessionId,
-        notebookSessionId: request.sessionId,
-        sessionCwd,
-        projectName
-      }),
-      ...this.createSessionMeta()
-    })
+    let resumeResponse
+    try {
+      resumeResponse = await connection.agent.request(acp.methods.agent.session.resume, {
+        sessionId: request.sessionId,
+        cwd: sessionCwd,
+        mcpServers: await this.createMcpServers({
+          artifactSessionId: request.sessionId,
+          notebookSessionId: request.sessionId,
+          sessionCwd,
+          projectName
+        }),
+        ...this.createSessionMeta()
+      })
+    } catch (error) {
+      if (!isSessionNotFoundError(error)) throw error
+
+      // A provider switch replaces the agent process, so the fresh agent no longer holds this session
+      // (and it may live under a different provider's config dir). Rather than dead-end the thread,
+      // adopt a brand-new agent session under the SAME app id so the user can keep chatting on the new
+      // provider — earlier turns stay visible; only agent-side context resets, which is expected when
+      // moving to a different model.
+      log.info('resumed session adopted onto replaced agent', { sessionId: request.sessionId })
+
+      const adopted = await connection.agent
+        .buildSession({
+          cwd: sessionCwd,
+          mcpServers: await this.createMcpServers({
+            artifactSessionId: request.sessionId,
+            notebookSessionId: request.sessionId,
+            sessionCwd,
+            projectName
+          }),
+          ...this.createSessionMeta()
+        })
+        .start()
+
+      this.adoptSession(request.sessionId, adopted, sessionCwd, projectName)
+      this.emitState()
+
+      return { sessionId: request.sessionId, cwd: sessionCwd }
+    }
     // The SDK exposes public helpers for new sessions only. The runtime keeps this adapter
     // narrow so resume can reuse the same update routing surface as newly-created sessions.
     const session = (connection.agent as unknown as ClientContextSessionAttacher).attachSession({
@@ -418,6 +498,28 @@ class AcpRuntime {
     return this.disconnectCurrent(emitClosedStatus)
   }
 
+  // Applies an active-provider change without interrupting the user. The agent bakes its provider env in
+  // at spawn, so a new provider needs a reconnect — but if a prompt is running we defer the reconnect
+  // until the session goes idle. Because every provider shares one config dir, the reconnect resumes the
+  // conversation on the new provider with full context. Called when the active provider changes.
+  async requestProviderReconnect(): Promise<void> {
+    if (this.promptInFlightSessionIds.size > 0) {
+      this.pendingProviderReconnect = true
+      return
+    }
+
+    this.pendingProviderReconnect = false
+    await this.disconnect()
+  }
+
+  // If a provider reconnect was deferred while a prompt ran, apply it once nothing is in flight.
+  private maybeApplyPendingProviderReconnect(): void {
+    if (this.pendingProviderReconnect && this.promptInFlightSessionIds.size === 0) {
+      this.pendingProviderReconnect = false
+      void this.disconnect()
+    }
+  }
+
   private async disconnectCurrent(emitClosedStatus = true): Promise<AcpStateSnapshot> {
     this.permissionBroker.cancelAll()
     this.promptInFlightSessionIds.clear()
@@ -430,6 +532,7 @@ class AcpRuntime {
     this.sessionCwds.clear()
     this.sessionProjectNames.clear()
     this.artifactSessionIds.clear()
+    this.agentToAppSessionId.clear()
     this.currentSessionId = undefined
     this.supportsSessionClose = false
     this.supportsSessionResume = false
@@ -479,11 +582,6 @@ class AcpRuntime {
       throw new Error('ACP agent spawn configuration is not available.')
     }
 
-    // Remember the active provider's settings-scope restriction so sessions created on this connection
-    // load only the intended scopes (see createSessionMeta). Cleared to undefined for unrestricted
-    // providers so a later claude-default reconnect doesn't inherit a stale restriction.
-    this.activeSettingSources = config.settingSources
-
     return spawnClaudeAgentAcp(config)
   }
 
@@ -502,17 +600,21 @@ class AcpRuntime {
     this.currentSessionId = request.sessionId
     this.promptInFlightSessionIds.add(request.sessionId)
     this.emitState()
+    log.info('prompt start', {
+      sessionId: request.sessionId,
+      textLength: request.text?.length ?? 0
+    })
     let artifactRun: ActiveArtifactRun | undefined
 
     try {
       // Create a fresh run context before prompting so MCP writes can be attributed to this turn.
-      artifactRun = await this.activateArtifactRun(activeSession.sessionId)
-      const promptContent = await this.createPromptContent(activeSession.sessionId, request)
+      artifactRun = await this.activateArtifactRun(request.sessionId)
+      const promptContent = await this.createPromptContent(request.sessionId, request)
 
       this.pushEvent({
         kind: 'message',
         level: 'info',
-        sessionId: activeSession.sessionId,
+        sessionId: request.sessionId,
         role: 'user',
         text: request.text
       })
@@ -527,11 +629,15 @@ class AcpRuntime {
 
         if (message.kind === 'stop') {
           // Emit artifact metadata before stop so the renderer can attach files to the finished message.
-          await this.emitArtifactRunEvent(activeSession.sessionId, artifactRun)
+          await this.emitArtifactRunEvent(request.sessionId, artifactRun)
+          log.info('prompt stopped', {
+            sessionId: request.sessionId,
+            stopReason: message.stopReason
+          })
           this.pushEvent({
             kind: 'stop',
             level: 'info',
-            sessionId: activeSession.sessionId,
+            sessionId: request.sessionId,
             title: 'Prompt stopped',
             text: message.stopReason,
             raw: message.response
@@ -539,13 +645,17 @@ class AcpRuntime {
           return message.response
         }
 
-        this.handleSessionUpdate(message.notification)
+        log.debug('session update', { sessionId: request.sessionId })
+        // Route the update under the app-facing id so a session adopted onto a new agent (after a
+        // provider switch) still streams into the same conversation the renderer is watching.
+        this.handleSessionUpdate(message.notification, request.sessionId)
       }
     } catch (error) {
+      log.error('prompt failed', { sessionId: request.sessionId, error })
       this.pushEvent({
         kind: 'error',
         level: 'error',
-        sessionId: activeSession.sessionId,
+        sessionId: request.sessionId,
         title: 'Prompt failed',
         text: errorMessage(error)
       })
@@ -557,13 +667,15 @@ class AcpRuntime {
         this.pushEvent({
           kind: 'error',
           level: 'error',
-          sessionId: activeSession.sessionId,
+          sessionId: request.sessionId,
           title: 'Artifact cleanup failed',
           text: errorMessage(error)
         })
       }
       this.promptInFlightSessionIds.delete(request.sessionId)
       this.emitState()
+      // A provider switch requested mid-turn is applied now that the session is idle.
+      this.maybeApplyPendingProviderReconnect()
     }
   }
 
@@ -864,7 +976,7 @@ class AcpRuntime {
     sessionCwd: string
     projectName: string
   }): Promise<McpServer[]> {
-    return [
+    const servers = [
       ...this.createArtifactMcpServers(
         artifactSessionId,
         notebookSessionId,
@@ -873,19 +985,35 @@ class AcpRuntime {
       ),
       ...(await this.createNotebookMcpServers(notebookSessionId, sessionCwd, projectName))
     ]
+
+    // Log the MCP server launch specs (command + args, no secrets) — a bad command/entry path in a
+    // packaged build can make the agent stall while it waits on an MCP server that never starts.
+    log.info('session MCP servers', {
+      count: servers.length,
+      servers: servers.map((server) => {
+        const record = server as { name?: string; command?: string; args?: unknown }
+        return { name: record.name, command: record.command, args: record.args }
+      })
+    })
+
+    return servers
   }
 
-  // Builds Claude-specific session metadata: system-prompt guidance for artifact/notebook tooling, and
-  // (for isolated custom providers) a settingSources restriction so the user's global ~/.claude
-  // project/local settings can't override the injected provider endpoint. Returns `{}` when neither
-  // applies so the session is created with no extra `_meta`.
-  private createSessionMeta(): { _meta: Record<string, unknown> } | Record<string, never> {
+  // Builds Claude-specific session metadata: system-prompt guidance for artifact/notebook tooling, plus
+  // a settingSources restriction to the "user" scope (our app-owned CLAUDE_CONFIG_DIR). This is required:
+  // the "project"/"local" scopes are read from the workspace cwd's `.claude`, and when the cwd is under
+  // the home tree that resolves to the user's own ~/.claude — whose `env` block (e.g. a proxy
+  // ANTHROPIC_BASE_URL) would otherwise override the active provider's endpoint. Restricting to "user"
+  // loads only the clean app dir's settings + the app's own skills/plugins/commands.
+  private createSessionMeta(): { _meta: Record<string, unknown> } {
     const appendSections = [
       ...(this.artifactOptions ? [ARTIFACT_FILE_SYSTEM_PROMPT_APPEND] : []),
       ...(this.notebookOptions ? [NOTEBOOK_SYSTEM_PROMPT_APPEND] : [])
     ]
 
-    const meta: Record<string, unknown> = {}
+    const meta: Record<string, unknown> = {
+      claudeCode: { options: { settingSources: ['user'] } }
+    }
 
     if (appendSections.length > 0) {
       meta.systemPrompt = {
@@ -894,15 +1022,6 @@ class AcpRuntime {
         append: appendSections.join('\n\n')
       }
     }
-
-    // `_meta.claudeCode.options` is forwarded by the ACP agent into the SDK query options, where it
-    // overrides the agent's default settingSources of ["user","project","local"]. Restricting to
-    // ["user"] keeps only the isolated CLAUDE_CONFIG_DIR scope for custom providers.
-    if (this.activeSettingSources) {
-      meta.claudeCode = { options: { settingSources: [...this.activeSettingSources] } }
-    }
-
-    if (Object.keys(meta).length === 0) return {}
 
     return { _meta: meta }
   }
@@ -1013,8 +1132,14 @@ class AcpRuntime {
   }
 
   // Normalizes low-level session notifications into runtime/workspace events.
-  private handleSessionUpdate(notification: SessionNotification): void {
-    const event = toAcpRuntimeEvent(notification, this.nextEventId())
+  private handleSessionUpdate(notification: SessionNotification, appSessionId?: string): void {
+    // When a session was adopted onto a replaced agent, the agent labels updates with its own id;
+    // relabel to the app-facing id so events land in the conversation the renderer tracks.
+    const routed =
+      appSessionId && appSessionId !== notification.sessionId
+        ? { ...notification, sessionId: appSessionId }
+        : notification
+    const event = toAcpRuntimeEvent(routed, this.nextEventId())
 
     if ((event.kind === 'message' || event.kind === 'thought') && !event.text) {
       return
@@ -1026,11 +1151,15 @@ class AcpRuntime {
   // Captures process stderr/errors/exits and converts unexpected ones to events.
   private attachAgentProcessEvents(agentProcess: ChildProcessWithoutNullStreams): void {
     agentProcess.stderr.on('data', (data: Buffer) => {
+      const text = data.toString('utf8').trim()
+
+      // Always capture agent stderr in the log — it's the primary clue when a turn stalls or the
+      // agent misbehaves (auth loops, MCP connection failures, tool errors) in a packaged build.
+      if (text) log.warn('agent stderr', { text })
+
       if (this.expectedProcessExits.has(agentProcess)) {
         return
       }
-
-      const text = data.toString('utf8').trim()
 
       if (text) {
         this.pushEvent({
@@ -1080,6 +1209,7 @@ class AcpRuntime {
     this.sessionCwds.clear()
     this.sessionProjectNames.clear()
     this.artifactSessionIds.clear()
+    this.agentToAppSessionId.clear()
     this.currentSessionId = undefined
     this.supportsSessionClose = false
     this.connection = undefined

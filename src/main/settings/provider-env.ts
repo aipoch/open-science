@@ -15,50 +15,49 @@ export type ResolvedProvider = {
 }
 
 export type ProviderEnvOptions = {
-  // App storage root; custom providers get an isolated CLAUDE_CONFIG_DIR beneath it.
+  // App storage root; every provider runs under one app-owned CLAUDE_CONFIG_DIR beneath it.
   storageRoot: string
   // Absolute path to the detected claude executable.
   claudeExecutablePath: string
 }
 
-// The private config directory a custom provider uses so app runs never touch (or inherit) the
-// user's own ~/.claude auth. claude-default deliberately omits this to reuse the user's config.
-const getIsolatedClaudeConfigDir = (storageRoot: string): string => join(storageRoot, 'claude')
+// The single app-owned config directory every provider uses. Stable across provider switches so claude
+// keeps one session store, its skills/plugins/commands, and auth — instead of toggling between the
+// user's ~/.claude and a per-provider isolated dir (which lost history and customizations on switch).
+const getAppClaudeConfigDir = (storageRoot: string): string => join(storageRoot, 'claude')
 
-// Builds spawn env overrides for one provider. Empty/omitted fields are simply not set so callers
-// can merge this over process.env without erasing unrelated variables.
+// Builds spawn env overrides for one provider. All providers share the app-owned CLAUDE_CONFIG_DIR;
+// a provider only supplies credentials (endpoint / token / model). The "local" (claude-default)
+// provider supplies none here — it relies on the auth imported into the app dir. Empty/omitted fields
+// are simply not set so callers can merge this over process.env without erasing unrelated variables.
 const buildProviderEnv = (
   provider: ResolvedProvider,
   { storageRoot, claudeExecutablePath }: ProviderEnvOptions
 ): Record<string, string> => {
   const env: Record<string, string> = {
-    CLAUDE_CODE_EXECUTABLE: claudeExecutablePath
+    CLAUDE_CODE_EXECUTABLE: claudeExecutablePath,
+    CLAUDE_CONFIG_DIR: getAppClaudeConfigDir(storageRoot)
   }
 
-  // claude-default reuses the user's own ~/.claude auth: only an optional model override applies.
-  if (provider.type === 'claude-default') {
-    if (provider.model) env.ANTHROPIC_MODEL = provider.model
-
-    return env
-  }
-
-  // custom providers are fully isolated: gateway URL, key, model, and a private config directory.
-  // The base URL is normalized so a user-supplied trailing `/v1` isn't doubled by the client's own
-  // `/v1/messages` suffix (which would 404).
-  if (provider.baseUrl) {
-    const baseUrl = normalizeAnthropicBaseUrl(provider.baseUrl)
-
-    if (baseUrl) env.ANTHROPIC_BASE_URL = baseUrl
-  }
-
-  // Custom gateways authenticate with a bearer token (ANTHROPIC_AUTH_TOKEN).
-  if (provider.key) env.ANTHROPIC_AUTH_TOKEN = provider.key
-
+  // Model applies to both types (required for custom, optional override for local).
   if (provider.model) env.ANTHROPIC_MODEL = provider.model
 
-  env.CLAUDE_CONFIG_DIR = getIsolatedClaudeConfigDir(storageRoot)
+  if (provider.type === 'custom') {
+    // The base URL is normalized so a user-supplied trailing `/v1` isn't doubled by the client's own
+    // `/v1/messages` suffix (which would 404). Custom gateways authenticate with a bearer token.
+    if (provider.baseUrl) {
+      const baseUrl = normalizeAnthropicBaseUrl(provider.baseUrl)
+
+      if (baseUrl) env.ANTHROPIC_BASE_URL = baseUrl
+    }
+
+    if (provider.key) env.ANTHROPIC_AUTH_TOKEN = provider.key
+  }
+
+  // claude-default (local): no endpoint/token injected here — it uses the auth stored in the app dir
+  // (imported from ~/.claude, or written by an in-app `claude login`).
 
   return env
 }
 
-export { buildProviderEnv, getIsolatedClaudeConfigDir }
+export { buildProviderEnv, getAppClaudeConfigDir }

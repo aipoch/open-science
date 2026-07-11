@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execPath } from 'node:process'
@@ -22,7 +22,7 @@ vi.mock('electron', () => ({
 
 const { SettingsService } = await import('./service')
 const { SettingsRepository } = await import('./repository')
-const { getIsolatedClaudeConfigDir } = await import('./provider-env')
+const { getAppClaudeConfigDir } = await import('./provider-env')
 
 let storageRoot: string
 let repository: InstanceType<typeof SettingsRepository>
@@ -33,6 +33,8 @@ const createService = (
   new SettingsService({
     repository,
     storageRoot,
+    // Point at a non-existent user Claude dir so tests never read the real ~/.claude for local auth.
+    userClaudeDir: join(storageRoot, 'no-user-claude'),
     detectDeps: {
       env: {},
       homePath: '/home',
@@ -227,27 +229,60 @@ describe('SettingsService: preflight & spawn config', () => {
       ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
       ANTHROPIC_AUTH_TOKEN: 'test-key',
       ANTHROPIC_MODEL: 'm',
-      CLAUDE_CONFIG_DIR: getIsolatedClaudeConfigDir(storageRoot)
+      CLAUDE_CONFIG_DIR: getAppClaudeConfigDir(storageRoot)
     })
     // Custom providers always use the bearer token variable, never x-api-key.
     expect(config.envOverrides.ANTHROPIC_API_KEY).toBeUndefined()
-    // Custom providers restrict the session to the isolated "user" settings scope so the user's global
-    // ~/.claude project/local settings can't override the injected endpoint.
-    expect(config.settingSources).toEqual(['user'])
   })
 
-  it('leaves settingSources unset for a claude-default provider (reuses user settings)', async () => {
+  it('runs a local (claude-default) provider under the shared app config dir, no endpoint/token', async () => {
     const service = createService()
 
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
-    const created = (
-      await service.upsertProvider({ type: 'claude-default', name: 'Local' })
-    ).providers[0]
+    const created = (await service.upsertProvider({ type: 'claude-default', name: 'Local' }))
+      .providers[0]
     await service.setActiveProvider(created.id)
 
     const config = await service.resolveActiveSpawnConfig()
 
-    expect(config.settingSources).toBeUndefined()
+    // Same app config dir as custom providers (stable across switches); no injected endpoint/token —
+    // local uses the auth stored in the app dir.
+    expect(config.envOverrides.CLAUDE_CONFIG_DIR).toBe(getAppClaudeConfigDir(storageRoot))
+    expect(config.envOverrides.ANTHROPIC_BASE_URL).toBeUndefined()
+    expect(config.envOverrides.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+  })
+
+  it('injects the local login (~/.claude token) for a local provider at spawn time', async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-user-claude-'))
+    await mkdir(userClaudeDir, { recursive: true })
+    await writeFile(
+      join(userClaudeDir, 'settings.json'),
+      JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: 'sk-user', ANTHROPIC_BASE_URL: 'https://gw' } })
+    )
+
+    const service = new SettingsService({
+      repository,
+      storageRoot,
+      userClaudeDir,
+      detectDeps: {
+        env: {},
+        homePath: '/home',
+        isExecutable: () => Promise.resolve(true),
+        getVersion: () => Promise.resolve('2.1.0'),
+        resolveNpmBinDirs: () => Promise.resolve([])
+      }
+    })
+
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    const created = (await service.upsertProvider({ type: 'claude-default', name: 'Local' }))
+      .providers[0]
+    await service.setActiveProvider(created.id)
+
+    const config = await service.resolveActiveSpawnConfig()
+    await rm(userClaudeDir, { recursive: true, force: true })
+
+    expect(config.envOverrides.ANTHROPIC_AUTH_TOKEN).toBe('sk-user')
+    expect(config.envOverrides.ANTHROPIC_BASE_URL).toBe('https://gw')
   })
 
   it('throws a clear error when no active provider is configured', async () => {
@@ -255,5 +290,18 @@ describe('SettingsService: preflight & spawn config', () => {
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
 
     await expect(service.resolveActiveSpawnConfig()).rejects.toThrow(/active model provider/i)
+  })
+})
+
+describe('SettingsService: onboarding', () => {
+  it('marks onboarding complete and surfaces it in the snapshot', async () => {
+    const service = createService()
+
+    const snapshot = await service.markOnboardingComplete()
+    expect(snapshot.onboardingCompletedAt).toBeTypeOf('number')
+
+    // The persisted value is visible on a fresh read too.
+    const view = await service.getSettingsView()
+    expect(view.onboardingCompletedAt).toBe(snapshot.onboardingCompletedAt)
   })
 })

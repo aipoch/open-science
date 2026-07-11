@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildProviderEnv, getIsolatedClaudeConfigDir } from './provider-env'
+import { buildProviderEnv, getAppClaudeConfigDir } from './provider-env'
 
 const options = { storageRoot: '/root', claudeExecutablePath: '/bin/claude' }
 
 describe('provider-env', () => {
-  it('builds isolated env for a custom provider (always bearer)', () => {
+  it('builds env for a custom provider under the app config dir (always bearer)', () => {
     const env = buildProviderEnv(
       {
         type: 'custom',
@@ -18,10 +18,10 @@ describe('provider-env', () => {
 
     expect(env).toEqual({
       CLAUDE_CODE_EXECUTABLE: '/bin/claude',
-      ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
-      ANTHROPIC_AUTH_TOKEN: 'test-token',
+      CLAUDE_CONFIG_DIR: getAppClaudeConfigDir('/root'),
       ANTHROPIC_MODEL: 'claude-sonnet-4-5',
-      CLAUDE_CONFIG_DIR: getIsolatedClaudeConfigDir('/root')
+      ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
+      ANTHROPIC_AUTH_TOKEN: 'test-token'
     })
     // Custom providers never use x-api-key; the key is always sent as a bearer token.
     expect(env.ANTHROPIC_API_KEY).toBeUndefined()
@@ -42,21 +42,26 @@ describe('provider-env', () => {
     expect(env.ANTHROPIC_BASE_URL).toBe('https://api.anthropic.com')
   })
 
-  it('omits base URL and isolated config dir for claude-default with a model override', () => {
+  it('uses the shared app config dir for a local (claude-default) provider, no endpoint/token', () => {
     const env = buildProviderEnv({ type: 'claude-default', model: 'claude-opus' }, options)
 
     expect(env).toEqual({
       CLAUDE_CODE_EXECUTABLE: '/bin/claude',
+      CLAUDE_CONFIG_DIR: getAppClaudeConfigDir('/root'),
       ANTHROPIC_MODEL: 'claude-opus'
     })
+    // Local reuses the auth stored in the app dir, so no endpoint/token is injected here.
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined()
-    expect(env.CLAUDE_CONFIG_DIR).toBeUndefined()
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
   })
 
-  it('omits the model for claude-default when none is set', () => {
+  it('omits the model for a local provider when none is set', () => {
     const env = buildProviderEnv({ type: 'claude-default' }, options)
 
-    expect(env).toEqual({ CLAUDE_CODE_EXECUTABLE: '/bin/claude' })
+    expect(env).toEqual({
+      CLAUDE_CODE_EXECUTABLE: '/bin/claude',
+      CLAUDE_CONFIG_DIR: getAppClaudeConfigDir('/root')
+    })
     expect(env.ANTHROPIC_MODEL).toBeUndefined()
   })
 })

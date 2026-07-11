@@ -2,6 +2,7 @@ import { createDefaultNotebookRuntimeService, registerAcpIpcHandlers } from './a
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
 import { registerFileSaveHandlers } from './file-save'
+import { registerLogsIpcHandlers } from './logs-ipc'
 import { registerNotebookIpcHandlers } from './notebook/ipc'
 import { NotebookLocalRpcServer } from './notebook/local-rpc-server'
 import { registerProjectIpcHandlers } from './projects/ipc'
@@ -27,6 +28,7 @@ const registerIpcHandlers = ({ mainEntryPath }: IpcRegistrationOptions): void =>
   const settingsService = createDefaultSettingsService()
 
   registerFileSaveHandlers()
+  registerLogsIpcHandlers()
   const runtime = registerAcpIpcHandlers({
     mcpEntryPath: mainEntryPath,
     repository: artifactRepository,
@@ -35,11 +37,12 @@ const registerIpcHandlers = ({ mainEntryPath }: IpcRegistrationOptions): void =>
     notebookRpcServer,
     settingsService
   })
-  // Switching the active provider drops the agent connection so the next prompt reconnects with the
-  // new credentials (and resumes the active session through the existing resume path).
+  // Switching the active provider takes effect on the next reconnect. Defer that reconnect until any
+  // in-flight prompt finishes so switching never interrupts a running turn; the shared config dir keeps
+  // the conversation's context across the switch.
   registerSettingsIpcHandlers({
     service: settingsService,
-    onActiveProviderChanged: () => void runtime.disconnect()
+    onActiveProviderChanged: () => void runtime.requestProviderReconnect()
   })
   registerNotebookIpcHandlers(notebookService)
   registerArtifactIpcHandlers(artifactRepository, artifactRunRegistry)

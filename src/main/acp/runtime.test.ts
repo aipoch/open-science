@@ -53,6 +53,9 @@ const startFakeAgent = (
   sessionIds: string[],
   options: {
     supportsResume?: boolean
+    // When true, the resume handler rejects with the ACP "Resource not found" (-32002) — the signal a
+    // replaced agent (e.g. after a provider switch) gives for a session id it does not hold.
+    resumeNotFound?: boolean
     onPrompt?: (context: {
       sessionId: string
       text: string
@@ -102,6 +105,10 @@ const startFakeAgent = (
       return { sessionId }
     })
     .onRequest(acp.methods.agent.session.resume, (ctx) => {
+      if (options.resumeNotFound) {
+        throw acp.RequestError.resourceNotFound(ctx.params.sessionId)
+      }
+
       resumedSessions.push({
         sessionId: ctx.params.sessionId,
         cwd: ctx.params.cwd,
@@ -683,7 +690,9 @@ describe('ACP runtime session management', () => {
       {
         sessionId: 'remote-session-1',
         cwd: '/workspace',
-        mcpServers: []
+        mcpServers: [],
+        // Every session (new or resumed) is restricted to the app-owned "user" settings scope.
+        _meta: { claudeCode: { options: { settingSources: ['user'] } } }
       }
     ])
     expect(fakeAgent.prompts).toEqual([
@@ -697,6 +706,79 @@ describe('ACP runtime session management', () => {
         { sessionId: 'remote-session-1', text: 'reply for remote-session-1' }
       ])
     )
+  })
+
+  it('adopts a fresh session under the same id when a replaced agent no longer holds it', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['adopted-session-1'], { resumeNotFound: true })
+    const events: Array<{ sessionId?: string; text?: string }> = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: {
+        onEvent: (event) => events.push({ sessionId: event.sessionId, text: event.text })
+      }
+    })
+
+    // Resume fails (Resource not found) but is transparently adopted onto a new agent session, keeping
+    // the requested (app-facing) id so the conversation can continue after a provider switch.
+    const resumed = await runtime.resumeSession({
+      sessionId: 'switched-session',
+      cwd: '/workspace'
+    })
+    expect(resumed.sessionId).toBe('switched-session')
+
+    await runtime.sendPrompt({ sessionId: 'switched-session', text: 'keep going' })
+
+    // The new agent session (adopted-session-1) streamed a reply, relabeled to the app-facing id.
+    expect(fakeAgent.prompts).toEqual([{ sessionId: 'adopted-session-1', text: 'keep going' }])
+    expect(events).toEqual(
+      expect.arrayContaining([
+        { sessionId: 'switched-session', text: 'reply for adopted-session-1' }
+      ])
+    )
+  })
+
+  it('defers a provider reconnect until an in-flight prompt finishes', async () => {
+    const process = new FakeAgentProcess()
+    const gate = createDeferred()
+    startFakeAgent(process, ['s1'], { onPrompt: () => gate.promise })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+
+    // Start a prompt that stays in flight until the gate is released.
+    const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'hi' })
+
+    // A provider switch requested mid-turn must NOT disconnect the running agent.
+    await runtime.requestProviderReconnect()
+    expect(process.killed).toBe(false)
+
+    // Once the turn finishes, the deferred reconnect is applied (agent torn down for a fresh spawn).
+    gate.resolve()
+    await prompt
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(process.killed).toBe(true)
+  })
+
+  it('reconnects immediately when a provider switch happens with no prompt in flight', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.requestProviderReconnect()
+
+    expect(process.killed).toBe(true)
   })
 
   it('passes the artifact MCP server to new and resumed sessions', async () => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { UpsertProviderRequest } from '../../../../shared/settings'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -13,10 +13,7 @@ import {
 } from '../settings/provider-form-value'
 import { describeValidation } from '../settings/validation-message'
 
-type OnboardingWizardProps = {
-  // Called once both startup gates are satisfied so the app can enter the main UI.
-  onComplete: () => void
-}
+type WizardStep = 'claude' | 'provider'
 
 // Converts a form value into the upsert request the main process expects.
 const toUpsertRequest = (value: ProviderFormValue): UpsertProviderRequest => ({
@@ -27,9 +24,11 @@ const toUpsertRequest = (value: ProviderFormValue): UpsertProviderRequest => ({
   key: value.key || undefined
 })
 
-// First-run gate: install/detect claude, then configure and validate a model provider. Reuses the
-// same cards/form as the settings page so both surfaces stay in sync.
-const OnboardingWizard = ({ onComplete }: OnboardingWizardProps): React.JSX.Element => {
+// First-run gate: confirm/install claude, then configure and validate a model provider. Reuses the
+// same cards/form as the settings page so both surfaces stay in sync. Shown only on a genuine first
+// run (see startup-gate); once onboarding completes it never reappears — later issues are fixed in
+// Settings — so there is no recovery mode and no props.
+const OnboardingWizard = (): React.JSX.Element => {
   const claude = useSettingsStore((state) => state.claude)
   const preflight = useSettingsStore((state) => state.preflight)
   const isDetectingClaude = useSettingsStore((state) => state.isDetectingClaude)
@@ -41,16 +40,23 @@ const OnboardingWizard = ({ onComplete }: OnboardingWizardProps): React.JSX.Elem
   const detectClaude = useSettingsStore((state) => state.detectClaude)
   const installClaude = useSettingsStore((state) => state.installClaude)
   const saveAndActivateProvider = useSettingsStore((state) => state.saveAndActivateProvider)
+  const completeOnboarding = useSettingsStore((state) => state.completeOnboarding)
 
+  // Always confirm Claude first, even when already detected (the explicit first-run confirmation).
+  const [step, setStep] = useState<WizardStep>('claude')
   const [formValue, setFormValue] = useState<ProviderFormValue>(() =>
     createEmptyProviderFormValue()
   )
   const [isSaving, setIsSaving] = useState(false)
+  // Required-field errors stay hidden until the user first tries to submit, so an untouched form is
+  // not littered with "required" messages. A `*` on each label signals the requirement up front.
+  const [showProviderErrors, setShowProviderErrors] = useState(false)
   const [validationMessage, setValidationMessage] = useState<string | undefined>(undefined)
   const [validationOk, setValidationOk] = useState(false)
   const didAutoDetect = useRef(false)
 
-  // Load settings once, then auto-detect claude so a machine that already has it skips straight ahead.
+  // Load settings once, then auto-detect claude so the Claude step shows a fresh status. Detection no
+  // longer auto-advances: the user must explicitly confirm with Continue.
   useEffect(() => {
     void (async () => {
       await load()
@@ -62,23 +68,16 @@ const OnboardingWizard = ({ onComplete }: OnboardingWizardProps): React.JSX.Elem
     })()
   }, [load, detectClaude])
 
-  // Enter the app as soon as both gates are satisfied.
-  useEffect(() => {
-    if (preflight.claudeReady && preflight.activeProviderReady) {
-      onComplete()
-    }
-  }, [preflight.claudeReady, preflight.activeProviderReady, onComplete])
-
-  const step = useMemo<'claude' | 'provider'>(
-    () => (preflight.claudeReady ? 'provider' : 'claude'),
-    [preflight.claudeReady]
-  )
-
   // Onboarding always creates a provider, so required fields must be filled before it can continue.
   const formErrors = getProviderFormErrors(formValue)
-  const canContinue = !isSaving && !hasProviderFormErrors(formErrors)
 
   const handleSaveProvider = async (): Promise<void> => {
+    // First submit attempt surfaces any missing required fields instead of testing an incomplete draft.
+    if (hasProviderFormErrors(formErrors)) {
+      setShowProviderErrors(true)
+      return
+    }
+
     setIsSaving(true)
     setValidationMessage(undefined)
 
@@ -87,6 +86,12 @@ const OnboardingWizard = ({ onComplete }: OnboardingWizardProps): React.JSX.Elem
 
       setValidationOk(validation.ok)
       setValidationMessage(describeValidation(validation))
+
+      // A passing validation means both gates are satisfied: finish onboarding. The App gate then
+      // re-renders into Home once the marker lands.
+      if (validation.ok) {
+        await completeOnboarding()
+      }
     } catch (error) {
       setValidationOk(false)
       setValidationMessage(error instanceof Error ? error.message : 'Could not save provider.')
@@ -100,7 +105,7 @@ const OnboardingWizard = ({ onComplete }: OnboardingWizardProps): React.JSX.Elem
       <div className="mx-auto max-w-xl px-6 py-12">
         <h1 className="font-serif text-2xl font-medium">Welcome to Open Science</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Two quick steps and you are ready: install Claude, then connect a model.
+          Two quick steps and you are ready: confirm Claude, then connect a model.
         </p>
 
         <ol className="mt-6 flex items-center gap-3 text-xs text-muted-foreground">
@@ -110,19 +115,30 @@ const OnboardingWizard = ({ onComplete }: OnboardingWizardProps): React.JSX.Elem
         </ol>
 
         {step === 'claude' ? (
-          <section aria-label="Install Claude" className="mt-6 space-y-4">
+          <section aria-label="Confirm Claude" className="mt-6 space-y-4">
             <ClaudeStatusCard
               claude={claude}
               claudeReady={preflight.claudeReady}
               isDetecting={isDetectingClaude}
               onDetect={() => void detectClaude()}
             />
-            <ClaudeInstallCard
-              isInstalling={isInstalling}
-              installLogs={installLogs}
-              npmAvailable={npmAvailable}
-              onInstall={(source) => void installClaude(source)}
-            />
+            {/* Once a runnable claude is detected there's nothing to install — just confirm & continue. */}
+            {!preflight.claudeReady ? (
+              <ClaudeInstallCard
+                isInstalling={isInstalling}
+                installLogs={installLogs}
+                npmAvailable={npmAvailable}
+                onInstall={(source) => void installClaude(source)}
+              />
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setStep('provider')}
+              disabled={!preflight.claudeReady}
+              className="rounded-lg border border-primary bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+            >
+              Continue
+            </button>
           </section>
         ) : (
           <section aria-label="Configure model" className="mt-6 space-y-4">
@@ -135,7 +151,7 @@ const OnboardingWizard = ({ onComplete }: OnboardingWizardProps): React.JSX.Elem
             <ProviderForm
               value={formValue}
               onChange={(patch) => setFormValue((current) => ({ ...current, ...patch }))}
-              errors={formErrors}
+              errors={showProviderErrors ? formErrors : undefined}
               disabled={isSaving}
             />
             {validationMessage ? (
@@ -146,14 +162,23 @@ const OnboardingWizard = ({ onComplete }: OnboardingWizardProps): React.JSX.Elem
                 {validationMessage}
               </p>
             ) : null}
-            <button
-              type="button"
-              onClick={() => void handleSaveProvider()}
-              disabled={!canContinue}
-              className="rounded-lg border border-primary bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-            >
-              {isSaving ? 'Testing connection…' : 'Test connection & continue'}
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setStep('claude')}
+                className="rounded-lg border border-input px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSaveProvider()}
+                disabled={isSaving}
+                className="rounded-lg border border-primary bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+              >
+                {isSaving ? 'Testing connection…' : 'Test connection & continue'}
+              </button>
+            </div>
           </section>
         )}
       </div>

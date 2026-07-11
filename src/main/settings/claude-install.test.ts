@@ -12,16 +12,12 @@ class FakeChild extends EventEmitter {
 }
 
 describe('claude-install: command construction', () => {
-  it('runs npm against the China mirror registry', () => {
-    const spec = getInstallSpawnSpec('npm-mirror')
+  it('runs a plain global npm install without a mirror registry', () => {
+    const spec = getInstallSpawnSpec('npm')
 
     expect(spec.command).toBe('npm')
-    expect(spec.args).toEqual([
-      'i',
-      '-g',
-      '@anthropic-ai/claude-code',
-      '--registry=https://registry.npmmirror.com'
-    ])
+    expect(spec.args).toEqual(['i', '-g', '@anthropic-ai/claude-code'])
+    expect(spec.args.some((arg) => arg.includes('--registry'))).toBe(false)
   })
 
   it('pipes the official installer through a shell', () => {
@@ -37,7 +33,7 @@ describe('claude-install: run', () => {
     const child = new FakeChild()
     const logs: ClaudeInstallLogEvent[] = []
     const promise = runInstall({
-      source: 'npm-mirror',
+      source: 'npm',
       installId: 'install-1',
       onLog: (event) => logs.push(event),
       spawnImpl: () => child as never
@@ -59,7 +55,7 @@ describe('claude-install: run', () => {
   it('resolves not ok on a non-zero exit', async () => {
     const child = new FakeChild()
     const promise = runInstall({
-      source: 'npm-mirror',
+      source: 'npm',
       installId: 'install-2',
       onLog: () => undefined,
       spawnImpl: () => child as never
@@ -72,7 +68,7 @@ describe('claude-install: run', () => {
 
   it('reports a spawn failure without throwing', async () => {
     const result = await runInstall({
-      source: 'npm-mirror',
+      source: 'npm',
       installId: 'install-3',
       onLog: () => undefined,
       spawnImpl: () => {

@@ -126,4 +126,25 @@ describe('settings repository', () => {
     const settings = await repository.getSettings()
     expect(settings.providers.map((item) => item.id).sort()).toEqual(['p1', 'p2', 'p3'])
   })
+
+  it('stamps onboardingCompletedAt once and is idempotent', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    const first = await repository.markOnboardingComplete(1000)
+    expect(first.onboardingCompletedAt).toBe(1000)
+
+    // A second call must not overwrite or move the existing timestamp.
+    const second = await repository.markOnboardingComplete(2000)
+    expect(second.onboardingCompletedAt).toBe(1000)
+  })
+
+  it('preserves onboardingCompletedAt across a reload', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.markOnboardingComplete(1234)
+
+    const reloaded = await new SettingsRepository(root).getSettings()
+    expect(reloaded.onboardingCompletedAt).toBe(1234)
+  })
 })

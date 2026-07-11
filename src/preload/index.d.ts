@@ -19,6 +19,7 @@ import type {
   ReadArtifactPreviewRequest
 } from '../shared/artifacts'
 import type { SaveBlobFileRequest, SaveBlobFileResult } from '../shared/file-save'
+import type { OpenLogFileResult } from '../shared/logs'
 import type {
   AppendNotebookCodeCellRequest,
   BeginNotebookCodeCellRequest,
@@ -112,7 +113,12 @@ interface OpenScienceAPI {
     deleteProvider(request: DeleteProviderRequest): Promise<SettingsSnapshot>
     setActiveProvider(request: SetActiveProviderRequest): Promise<SettingsSnapshot>
     validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult>
+    markOnboardingComplete(): Promise<SettingsSnapshot>
     onInstallLog(listener: AcpListener<ClaudeInstallLogEvent>): RemoveListener
+  }
+  logs: {
+    getPath(): Promise<string | null>
+    openFile(): Promise<OpenLogFileResult>
   }
   projects: {
     list(): Promise<Project[]>

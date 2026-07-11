@@ -1,4 +1,4 @@
-import { BrowserWindow, shell, type BrowserWindowConstructorOptions } from 'electron'
+import { app, BrowserWindow, shell, type BrowserWindowConstructorOptions } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -50,6 +50,15 @@ const createMainWindow = (): BrowserWindow => {
     minHeight: 720,
     title: 'Open Science'
   })
+
+  // In dev, mirror the "(DEV)" app suffix in the title bar. The renderer's <title> overwrites the
+  // constructor title on load, so append the suffix whenever the page updates its title.
+  if (!app.isPackaged) {
+    window.on('page-title-updated', (event, pageTitle) => {
+      event.preventDefault()
+      window.setTitle(`${pageTitle} (DEV)`)
+    })
+  }
 
   loadRenderer(window)
   return window

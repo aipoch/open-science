@@ -9,6 +9,7 @@ import type {
   NpmAvailability
 } from '../../shared/settings'
 import { CLAUDE_INSTALL_SOURCES } from '../../shared/settings'
+import { augmentedPathEnv } from './shell-path'
 
 const execFileAsync = promisify(execFile)
 
@@ -16,17 +17,17 @@ const execFileAsync = promisify(execFile)
 // the UI can show live progress and never spin silently. Command construction is pure and testable;
 // the spawn is injectable for the same reason.
 
-// How a source is actually executed. The official script is piped through a shell; the npm mirror
-// install runs npm directly with the registry flag.
+// How a source is actually executed. The official script is piped through a shell; the npm source
+// runs a plain global install against the user's configured registry.
 type InstallSpawnSpec = {
   command: string
   args: string[]
 }
 
 const INSTALL_SPAWN_SPECS: Record<ClaudeInstallSource, InstallSpawnSpec> = {
-  'npm-mirror': {
+  npm: {
     command: 'npm',
-    args: ['i', '-g', '@anthropic-ai/claude-code', '--registry=https://registry.npmmirror.com']
+    args: ['i', '-g', '@anthropic-ai/claude-code']
   },
   'official-script': {
     command: 'bash',
@@ -50,9 +51,13 @@ export type RunInstallOptions = {
 const getInstallSpawnSpec = (source: ClaudeInstallSource): InstallSpawnSpec =>
   INSTALL_SPAWN_SPECS[source]
 
-// Real installer spawn with piped stdio.
+// Real installer spawn with piped stdio. PATH is augmented so a GUI-launched app can still find npm.
 const defaultInstallSpawn = (command: string, args: string[]): ChildProcessWithoutNullStreams =>
-  spawn(command, args, { stdio: 'pipe', windowsHide: true }) as ChildProcessWithoutNullStreams
+  spawn(command, args, {
+    stdio: 'pipe',
+    windowsHide: true,
+    env: augmentedPathEnv()
+  }) as ChildProcessWithoutNullStreams
 
 // Runs an install source to completion, forwarding every stdout/stderr chunk through onLog and
 // enforcing a timeout. Resolves (never rejects) with a structured result the service can act on.
@@ -123,9 +128,11 @@ const runInstall = ({
   })
 }
 
-// Reports whether npm is on PATH so the UI can default to/enable the npm-mirror source.
+// Reports whether npm is on PATH so the UI can default to/enable the npm source. PATH is augmented
+// with common node locations so a GUI-launched app doesn't falsely report npm as missing.
 const detectNpmAvailable = async (
-  runNpm: () => Promise<unknown> = () => execFileAsync('npm', ['--version'], { timeout: 10_000 })
+  runNpm: () => Promise<unknown> = () =>
+    execFileAsync('npm', ['--version'], { timeout: 10_000, env: augmentedPathEnv() })
 ): Promise<NpmAvailability> => {
   try {
     await runNpm()

@@ -80,6 +80,12 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     settings.activeProviderId = activeProviderId
   }
 
+  const onboardingCompletedAt = asNumber(value.onboardingCompletedAt)
+
+  if (onboardingCompletedAt !== undefined) {
+    settings.onboardingCompletedAt = onboardingCompletedAt
+  }
+
   return settings
 }
 
@@ -144,6 +150,15 @@ class SettingsRepository {
   // Records the detected claude executable metadata for later spawns.
   async setClaudeInfo(claude: ClaudeInfo): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, claude }))
+  }
+
+  // Stamps the onboarding-completed time exactly once; later calls leave the first value intact.
+  async markOnboardingComplete(timestamp: number): Promise<StoredSettings> {
+    return this.mutate((settings) =>
+      settings.onboardingCompletedAt === undefined
+        ? { ...settings, onboardingCompletedAt: timestamp }
+        : settings
+    )
   }
 
   // Serializes a read-modify-write cycle so concurrent callers cannot clobber each other.

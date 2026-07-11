@@ -23,6 +23,9 @@ export type StoredSettings = {
   claude?: ClaudeInfo
   activeProviderId?: string
   providers: StoredProvider[]
+  // Set once the first-run onboarding wizard has been completed (or auto-completed for an
+  // already-configured install). Absent means onboarding has never finished.
+  onboardingCompletedAt?: number
 }
 
 // Canonical empty settings used for a first run or an unreadable file.

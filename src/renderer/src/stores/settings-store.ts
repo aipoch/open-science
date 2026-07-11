@@ -19,19 +19,12 @@ type SaveProviderResult = {
   validation: ValidateProviderResult
 }
 
-// A planned provider switch: which provider to activate, which sessions are mid-turn, and whether the
-// caller must confirm the interruption first.
-type ProviderSwitchPlan = {
-  providerId: string
-  runningSessionIds: string[]
-  needsConfirm: boolean
-}
-
 type SettingsStoreData = {
   isLoaded: boolean
   claude: ClaudeInfo
   activeProviderId: string | undefined
   providers: ProviderView[]
+  onboardingCompletedAt: number | undefined
   preflight: Preflight
   // Latched true the first time both startup gates pass. Onboarding is a first-run gate, so once the
   // user has entered the app, later provider changes (which may momentarily flip a gate) must not send
@@ -59,13 +52,11 @@ type SettingsStore = SettingsStoreData & {
   saveAndActivateProvider: (request: UpsertProviderRequest) => Promise<SaveProviderResult>
   validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
   setActiveProvider: (providerId: string) => Promise<void>
-  // Reads the ACP runtime snapshot to decide whether switching needs an interrupt confirmation.
-  prepareProviderSwitch: (providerId: string) => Promise<ProviderSwitchPlan>
-  // Interrupts the given in-flight turns (existing cancel path), then switches the active provider.
-  interruptAndSetActiveProvider: (providerId: string, runningSessionIds: string[]) => Promise<void>
   deleteProvider: (providerId: string) => Promise<void>
   openSettings: () => void
   closeSettings: () => void
+  // Persists the first-run completion marker and caches it so the startup gate falls through to Home.
+  completeOnboarding: () => Promise<void>
 }
 
 const createInitialPreflight = (): Preflight => ({
@@ -82,6 +73,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   claude: {},
   activeProviderId: undefined,
   providers: [],
+  onboardingCompletedAt: undefined,
   preflight: createInitialPreflight(),
   hasEnteredApp: false,
   encryptionAvailable: true,
@@ -96,7 +88,8 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
 const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> => ({
   claude: snapshot.claude,
   activeProviderId: snapshot.activeProviderId,
-  providers: snapshot.providers
+  providers: snapshot.providers,
+  onboardingCompletedAt: snapshot.onboardingCompletedAt
 })
 
 // Finds the provider id affected by an upsert: the edited id, or the one new since `before`.
@@ -250,27 +243,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     await get().refreshPreflight()
   },
 
-  // Inspects the ACP runtime for in-flight turns so the caller can confirm before interrupting them.
-  prepareProviderSwitch: async (providerId) => {
-    const { promptInFlightSessionIds } = await window.api.acp.getState()
-
-    return {
-      providerId,
-      runningSessionIds: promptInFlightSessionIds,
-      needsConfirm: promptInFlightSessionIds.length > 0
-    }
-  },
-
-  // Interrupts each in-flight turn (reusing the existing acp cancel path), then switches the active
-  // provider. Interrupted turns are not auto-resumed; the user continues by sending a new message.
-  interruptAndSetActiveProvider: async (providerId, runningSessionIds) => {
-    for (const sessionId of runningSessionIds) {
-      await window.api.acp.cancel({ sessionId })
-    }
-
-    await get().setActiveProvider(providerId)
-  },
-
   deleteProvider: async (providerId) => {
     const snapshot = await window.api.settings.deleteProvider({ id: providerId })
 
@@ -280,7 +252,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   openSettings: () => set({ isSettingsOpen: true }),
 
-  closeSettings: () => set({ isSettingsOpen: false })
+  closeSettings: () => set({ isSettingsOpen: false }),
+
+  completeOnboarding: async () => {
+    const snapshot = await window.api.settings.markOnboardingComplete()
+
+    set(applySnapshot(snapshot))
+  }
 }))
 
-export type { ProviderSwitchPlan, SaveProviderResult }
+export type { SaveProviderResult }

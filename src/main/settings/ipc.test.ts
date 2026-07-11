@@ -27,7 +27,8 @@ type FakeSettingsService = Record<
   | 'upsertProvider'
   | 'deleteProvider'
   | 'setActiveProvider'
-  | 'validateProvider',
+  | 'validateProvider'
+  | 'markOnboardingComplete',
   ReturnType<typeof vi.fn>
 >
 
@@ -41,7 +42,8 @@ const createFakeService = (): FakeSettingsService => ({
   upsertProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   deleteProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   setActiveProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
-  validateProvider: vi.fn().mockResolvedValue({ ok: true, category: 'ok' })
+  validateProvider: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
+  markOnboardingComplete: vi.fn().mockResolvedValue({ claude: {}, providers: [] })
 })
 
 // Adapts the spy bag into the SettingsService shape the registration function expects.
@@ -65,7 +67,8 @@ describe('settings IPC handlers', () => {
       'settings:upsert-provider',
       'settings:delete-provider',
       'settings:set-active-provider',
-      'settings:validate-provider'
+      'settings:validate-provider',
+      'settings:mark-onboarding-complete'
     ]) {
       expect(handlers.has(channel)).toBe(true)
     }
@@ -84,6 +87,16 @@ describe('settings IPC handlers', () => {
 
     await invoke('settings:validate-provider', { providerId: 'p1' })
     expect(service.validateProvider).toHaveBeenCalledWith({ providerId: 'p1' })
+  })
+
+  it('routes mark-onboarding-complete to the service', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    registerSettingsIpcHandlers({ service: asService(service) })
+
+    await invoke('settings:mark-onboarding-complete')
+
+    expect(service.markOnboardingComplete).toHaveBeenCalledTimes(1)
   })
 
   it('drops the agent connection when the active provider changes', async () => {

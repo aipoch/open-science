@@ -17,10 +17,12 @@ import type {
 } from '../../shared/settings'
 import { resolveStorageRoot } from '../storage-root'
 import { createDefaultDetectDeps, detectClaude, type ClaudeDetectDeps } from './claude-detect'
+import { provisionAppClaudeConfigDir } from './claude-config-provision'
 import { detectNpmAvailable, runInstall } from './claude-install'
 import { encryptKey, isEncryptionAvailable, maskKey, tryDecryptKey } from './crypto'
+import { defaultUserClaudeDir, resolveLocalClaudeAuth } from './local-claude-auth'
 import { computePreflight } from './preflight'
-import { buildProviderEnv, type ResolvedProvider } from './provider-env'
+import { buildProviderEnv, getAppClaudeConfigDir, type ResolvedProvider } from './provider-env'
 import { SettingsRepository } from './repository'
 import type { StoredProvider, StoredSettings } from './types'
 import { validateProvider, type ClaudeProbeResult } from './validate'
@@ -46,16 +48,15 @@ const isTimeoutError = (error: unknown): boolean => {
 export type AgentSpawnConfig = {
   envOverrides: Record<string, string>
   executablePath: string
-  // Settings scopes the ACP session should load. Custom (isolated) providers restrict this to
-  // ["user"] so the user's global ~/.claude project/local settings can't override the injected
-  // endpoint; claude-default leaves it undefined to reuse the user's full settings.
-  settingSources?: readonly string[]
 }
 
 export type SettingsServiceOptions = {
   repository?: SettingsRepository
   storageRoot?: string
   detectDeps?: ClaudeDetectDeps
+  // The machine's own Claude config dir, read to reuse its login for the "local" provider. Injectable
+  // so tests don't touch the real ~/.claude.
+  userClaudeDir?: string
 }
 
 // Orchestrates the settings units (repository + crypto + detect/install + validate) behind one
@@ -65,12 +66,14 @@ class SettingsService {
   private readonly repository: SettingsRepository
   private readonly storageRoot: string
   private readonly detectDeps: ClaudeDetectDeps
+  private readonly userClaudeDir: string
   private providerSequence = 0
 
   constructor(options: SettingsServiceOptions = {}) {
     this.storageRoot = options.storageRoot ?? resolveStorageRoot()
     this.repository = options.repository ?? new SettingsRepository(this.storageRoot)
     this.detectDeps = options.detectDeps ?? createDefaultDetectDeps()
+    this.userClaudeDir = options.userClaudeDir ?? defaultUserClaudeDir()
   }
 
   // Returns the renderer-safe (masked) snapshot of settings.
@@ -80,7 +83,8 @@ class SettingsService {
     return {
       claude: settings.claude ?? {},
       activeProviderId: settings.activeProviderId,
-      providers: settings.providers.map((provider) => this.toProviderView(provider))
+      providers: settings.providers.map((provider) => this.toProviderView(provider)),
+      onboardingCompletedAt: settings.onboardingCompletedAt
     }
   }
 
@@ -123,6 +127,13 @@ class SettingsService {
     }
 
     return result
+  }
+
+  // Records that first-run onboarding finished so later launches skip the wizard.
+  async markOnboardingComplete(): Promise<SettingsSnapshot> {
+    await this.repository.markOnboardingComplete(Date.now())
+
+    return this.getSettingsView()
   }
 
   // Encrypts any new key, recomputes its mask, and inserts/updates the provider record.
@@ -220,7 +231,7 @@ class SettingsService {
     return isEncryptionAvailable()
   }
 
-  // Reports whether npm is on PATH so the installer UI can default to/enable the npm-mirror source.
+  // Reports whether npm is on PATH so the installer UI can default to/enable the npm source.
   async isNpmAvailable(): Promise<boolean> {
     const { available } = await detectNpmAvailable()
 
@@ -244,18 +255,26 @@ class SettingsService {
       throw new Error('No active model provider is configured. Configure one in settings.')
     }
 
+    // Ensure the app-owned config dir exists (and app assets are injected) before the agent spawns.
+    const appConfigDir = getAppClaudeConfigDir(this.storageRoot)
+    await provisionAppClaudeConfigDir(appConfigDir)
+
     const envOverrides = buildProviderEnv(this.resolveProvider(activeProvider), {
       storageRoot: this.storageRoot,
       claudeExecutablePath: executablePath
     })
 
-    // Custom providers are fully isolated: restrict the agent to the "user" settings scope (the
-    // isolated CLAUDE_CONFIG_DIR) so the user's global ~/.claude project/local settings — which may
-    // carry a proxy ANTHROPIC_BASE_URL env block — can't override the injected endpoint. claude-default
-    // reuses the user's full settings, so it leaves this unset.
-    const settingSources = activeProvider.type === 'custom' ? (['user'] as const) : undefined
+    // The "local" provider reuses the machine's own Claude login: inject its token/base URL (or copy
+    // OAuth credentials) at spawn time. Custom providers already carry their own credentials.
+    if (activeProvider.type === 'claude-default') {
+      const localAuth = await resolveLocalClaudeAuth({
+        userClaudeDir: this.userClaudeDir,
+        appConfigDir
+      })
+      Object.assign(envOverrides, localAuth)
+    }
 
-    return { envOverrides, executablePath, settingSources }
+    return { envOverrides, executablePath }
   }
 
   // Maps a stored provider to its masked renderer view, flagging custom keys that no longer decrypt.

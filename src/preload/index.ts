@@ -21,6 +21,7 @@ import type {
   ReadArtifactPreviewRequest
 } from '../shared/artifacts'
 import type { SaveBlobFileRequest, SaveBlobFileResult } from '../shared/file-save'
+import type { OpenLogFileResult } from '../shared/logs'
 import type {
   AppendNotebookCodeCellRequest,
   BeginNotebookCodeCellRequest,
@@ -126,7 +127,12 @@ type OpenScienceAPI = {
     deleteProvider: (request: DeleteProviderRequest) => Promise<SettingsSnapshot>
     setActiveProvider: (request: SetActiveProviderRequest) => Promise<SettingsSnapshot>
     validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
+    markOnboardingComplete: () => Promise<SettingsSnapshot>
     onInstallLog: (listener: AcpListener<ClaudeInstallLogEvent>) => RemoveListener
+  }
+  logs: {
+    getPath: () => Promise<string | null>
+    openFile: () => Promise<OpenLogFileResult>
   }
   projects: {
     list: () => Promise<Project[]>
@@ -251,8 +257,14 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('settings:set-active-provider', request) as Promise<SettingsSnapshot>,
     validateProvider: (request) =>
       ipcRenderer.invoke('settings:validate-provider', request) as Promise<ValidateProviderResult>,
+    markOnboardingComplete: () =>
+      ipcRenderer.invoke('settings:mark-onboarding-complete') as Promise<SettingsSnapshot>,
     // Streams live installer output while a one-click install runs.
     onInstallLog: (listener) => onIpcMessage('settings:install-log', listener)
+  },
+  logs: {
+    getPath: () => ipcRenderer.invoke('logs:get-path') as Promise<string | null>,
+    openFile: () => ipcRenderer.invoke('logs:open-file') as Promise<OpenLogFileResult>
   },
   projects: {
     // Project CRUD backed by the SQLite/Prisma layer (scope: projects only).

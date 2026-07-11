@@ -20,6 +20,13 @@ const fieldErrorClassName = 'text-xs text-destructive'
 const typeButtonBaseClassName =
   'flex-1 rounded-lg border px-3 py-2 text-left text-sm transition-colors'
 
+// Marks a required field next to its label. Purely visual; the actual guard lives in the form errors.
+const RequiredMark = (): React.JSX.Element => (
+  <span aria-hidden="true" className="ml-0.5 text-destructive">
+    *
+  </span>
+)
+
 // Provider fields that switch by type: custom exposes gateway/key/model, claude-default only a model
 // override. No plaintext key is ever rendered — the stored key surfaces only as a masked placeholder.
 const ProviderForm = ({
@@ -88,6 +95,7 @@ const ProviderForm = ({
           <div className="space-y-1.5">
             <label className={fieldLabelClassName} htmlFor="provider-base-url">
               Base URL
+              <RequiredMark />
             </label>
             <Input
               id="provider-base-url"
@@ -111,6 +119,7 @@ const ProviderForm = ({
           <div className="space-y-1.5">
             <label className={fieldLabelClassName} htmlFor="provider-key">
               API key
+              <RequiredMark />
             </label>
             <Input
               id="provider-key"
@@ -137,6 +146,7 @@ const ProviderForm = ({
           <div className="space-y-1.5">
             <label className={fieldLabelClassName} htmlFor="provider-model">
               Model
+              <RequiredMark />
             </label>
             <Input
               id="provider-model"

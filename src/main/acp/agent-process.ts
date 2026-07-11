@@ -2,7 +2,11 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 
+import { createLogger } from '../logger'
+import { augmentedPathEnv } from '../settings/shell-path'
+
 const nodeRequire = createRequire(import.meta.url)
+const log = createLogger('agent')
 
 // Resolves the packaged Claude ACP agent entry through Node's module resolver. This is a JS entry
 // executed by Electron-as-Node, not the native claude binary, so it stays bundled with the app.
@@ -16,12 +20,11 @@ const toUnpackedAsarPath = (filePath: string): string =>
 // Env vars carrying an Anthropic endpoint/credentials/model that an isolated provider must not inherit.
 const ANTHROPIC_ENV_PREFIX = 'ANTHROPIC_'
 
-// Builds the environment for the ACP agent child process. For an isolated (custom) provider —
-// signalled by an isolated CLAUDE_CONFIG_DIR among the overrides — inherited ANTHROPIC_* variables are
-// dropped before the provider's own overrides are applied. This keeps the parent's global endpoint or
-// credentials (e.g. a shell `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, or a proxy `ANTHROPIC_AUTH_TOKEN`)
-// from leaking into a provider that is meant to be fully self-contained; only what the provider sets
-// remains. claude-default (no isolated config dir) keeps the inherited env so it reuses the user's setup.
+// Builds the environment for the ACP agent child process. Every provider now runs under an app-owned
+// CLAUDE_CONFIG_DIR (present in envOverrides), so inherited ANTHROPIC_* variables are dropped before the
+// provider's own overrides are applied. This keeps a stray shell `ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY`
+// /`ANTHROPIC_AUTH_TOKEN` from leaking into the run; only what the provider sets (custom gateways) or the
+// app dir's stored auth (local) is used.
 const buildAgentSpawnEnv = (
   sourceEnv: NodeJS.ProcessEnv,
   envOverrides: Record<string, string>,
@@ -49,11 +52,6 @@ const buildAgentSpawnEnv = (
 export type SpawnClaudeAgentAcpOptions = {
   envOverrides?: Record<string, string>
   executablePath?: string
-  // For an isolated (custom) provider, the Claude Code settings scopes the session should load. When
-  // set to ["user"], the user's global ~/.claude project/local settings (which may carry a proxy
-  // ANTHROPIC_BASE_URL env block) are excluded so they can't override the injected provider endpoint.
-  // Consumed by the runtime when building session `_meta`, not by the spawn itself.
-  settingSources?: readonly string[]
 }
 
 // Starts the Claude ACP agent as a child process with pipe-based IO, injecting the active provider's
@@ -69,16 +67,43 @@ const spawnClaudeAgentAcp = ({
   }
 
   // Electron is the Node runtime available after packaging; this keeps dev and packaged paths aligned.
-  return spawn(process.execPath, [resolveClaudeAgentAcpEntry()], {
-    env: buildAgentSpawnEnv(process.env, envOverrides, executablePath),
+  // PATH is augmented with common CLI locations so a Finder-launched (packaged) app — whose PATH omits
+  // Homebrew/user bins — can still run claude and the tools it shells out to, instead of hanging.
+  const entryPath = resolveClaudeAgentAcpEntry()
+  const env = buildAgentSpawnEnv(augmentedPathEnv(process.env), envOverrides, executablePath)
+
+  // Opt-in deep diagnostics: launch the app with OPEN_SCIENCE_DEBUG_AGENT=1 to make the Claude Agent
+  // SDK emit its internals to stderr (captured into the log). Off by default so verbose turn detail is
+  // never written to disk without the user explicitly asking for it.
+  const debugAgent = process.env.OPEN_SCIENCE_DEBUG_AGENT === '1'
+
+  if (debugAgent) {
+    env.DEBUG_CLAUDE_AGENT_SDK = '1'
+  }
+
+  log.info('spawning ACP agent', {
+    executablePath,
+    entryPath,
+    isolated: 'CLAUDE_CONFIG_DIR' in envOverrides,
+    debug: debugAgent,
+    // Endpoint/model are not secret and pinpoint routing bugs; the token is never logged.
+    baseUrl: env.ANTHROPIC_BASE_URL,
+    model: env.ANTHROPIC_MODEL,
+    configDir: env.CLAUDE_CONFIG_DIR,
+    // PATH is not secret; provider credentials are never logged.
+    path: env.PATH
+  })
+
+  const child = spawn(process.execPath, [entryPath], {
+    env,
     stdio: 'pipe',
     windowsHide: true
   })
+
+  child.on('error', (error) => log.error('ACP agent process error', error))
+  child.on('exit', (code, signal) => log.info('ACP agent process exited', { code, signal }))
+
+  return child
 }
 
-export {
-  buildAgentSpawnEnv,
-  resolveClaudeAgentAcpEntry,
-  spawnClaudeAgentAcp,
-  toUnpackedAsarPath
-}
+export { buildAgentSpawnEnv, resolveClaudeAgentAcpEntry, spawnClaudeAgentAcp, toUnpackedAsarPath }

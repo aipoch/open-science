@@ -1,5 +1,6 @@
 appId: com.aipoch.open-science
 productName: Open Science
+copyright: Copyright © 2026 AIPOCH
 directories:
   buildResources: build
 # Apply a valid deep ad-hoc signature on macOS (no Developer ID available). Without this,

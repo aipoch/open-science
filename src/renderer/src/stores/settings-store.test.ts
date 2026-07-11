@@ -13,6 +13,7 @@ type SettingsApi = {
   validateProvider: ReturnType<typeof vi.fn>
   setActiveProvider: ReturnType<typeof vi.fn>
   deleteProvider: ReturnType<typeof vi.fn>
+  markOnboardingComplete: ReturnType<typeof vi.fn>
 }
 
 // Minimal window.api.acp surface the provider-switch flow reads/uses.
@@ -53,7 +54,10 @@ beforeEach(() => {
       callLog.push(`setActive:${request.id}`)
       return Promise.resolve({ ...snapshot([]), activeProviderId: request.id })
     }),
-    deleteProvider: vi.fn()
+    deleteProvider: vi.fn(),
+    markOnboardingComplete: vi
+      .fn()
+      .mockResolvedValue({ ...snapshot([]), onboardingCompletedAt: 4242 })
   }
   acp = {
     getState: vi.fn().mockResolvedValue({ promptInFlightSessionIds: [] }),
@@ -167,42 +171,19 @@ describe('settings store: hasEnteredApp latch (onboarding is first-run only)', (
   })
 })
 
-describe('settings store: provider switch flow', () => {
-  it('does not need confirmation when no session is running', async () => {
-    acp.getState.mockResolvedValue({ promptInFlightSessionIds: [] })
+describe('settings store: onboarding completion', () => {
+  it('completeOnboarding persists the marker and caches it locally', async () => {
+    await useSettingsStore.getState().completeOnboarding()
 
-    const plan = await useSettingsStore.getState().prepareProviderSwitch('p2')
-
-    expect(plan).toEqual({ providerId: 'p2', runningSessionIds: [], needsConfirm: false })
+    expect(api.markOnboardingComplete).toHaveBeenCalledTimes(1)
+    expect(useSettingsStore.getState().onboardingCompletedAt).toBe(4242)
   })
 
-  it('needs confirmation and reports the running sessions when a turn is in flight', async () => {
-    acp.getState.mockResolvedValue({ promptInFlightSessionIds: ['s1', 's2'] })
+  it('applySnapshot-driven load caches onboardingCompletedAt', async () => {
+    api.getSettings.mockResolvedValue({ ...snapshot([]), onboardingCompletedAt: 999 })
 
-    const plan = await useSettingsStore.getState().prepareProviderSwitch('p2')
+    await useSettingsStore.getState().load()
 
-    expect(plan).toEqual({
-      providerId: 'p2',
-      runningSessionIds: ['s1', 's2'],
-      needsConfirm: true
-    })
-  })
-
-  it('interrupts every running session before switching the active provider', async () => {
-    await useSettingsStore.getState().interruptAndSetActiveProvider('p2', ['s1', 's2'])
-
-    // Both cancels must precede the switch so the in-flight turns are interrupted first.
-    expect(callLog).toEqual(['cancel:s1', 'cancel:s2', 'setActive:p2'])
-    expect(acp.cancel).toHaveBeenCalledWith({ sessionId: 's1' })
-    expect(acp.cancel).toHaveBeenCalledWith({ sessionId: 's2' })
-    expect(api.setActiveProvider).toHaveBeenCalledWith({ id: 'p2' })
-    expect(useSettingsStore.getState().activeProviderId).toBe('p2')
-  })
-
-  it('switches directly with no cancels when there are no running sessions', async () => {
-    await useSettingsStore.getState().interruptAndSetActiveProvider('p2', [])
-
-    expect(acp.cancel).not.toHaveBeenCalled()
-    expect(callLog).toEqual(['setActive:p2'])
+    expect(useSettingsStore.getState().onboardingCompletedAt).toBe(999)
   })
 })
