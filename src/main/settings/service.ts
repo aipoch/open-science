@@ -363,7 +363,11 @@ class SettingsService {
     try {
       await execFileAsync(executablePath, ['-p', 'ok'], {
         env,
-        timeout: CLAUDE_PROBE_TIMEOUT_MS
+        timeout: CLAUDE_PROBE_TIMEOUT_MS,
+        // On Windows the detected claude is a `claude.cmd` shim, which execFile can't launch without a
+        // shell (spawn EINVAL); route the probe through the shell there.
+        shell: process.platform === 'win32',
+        windowsHide: true
       })
 
       return { ok: true }

@@ -75,3 +75,6 @@ local/
 .mcp/
 .serena/
 .taskmaster/
+
+# Locally downloaded CI build artifacts (Windows installer, etc.)
+dist-win-artifact/

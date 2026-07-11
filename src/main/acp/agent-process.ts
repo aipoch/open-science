@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 
 import { createLogger } from '../logger'
 import { augmentedPathEnv } from '../settings/shell-path'
+import { resolveClaudeExecutableForSpawn } from './claude-executable'
 
 const nodeRequire = createRequire(import.meta.url)
 const log = createLogger('agent')
@@ -70,7 +71,14 @@ const spawnClaudeAgentAcp = ({
   // PATH is augmented with common CLI locations so a Finder-launched (packaged) app — whose PATH omits
   // Homebrew/user bins — can still run claude and the tools it shells out to, instead of hanging.
   const entryPath = resolveClaudeAgentAcpEntry()
-  const env = buildAgentSpawnEnv(augmentedPathEnv(process.env), envOverrides, executablePath)
+  // On Windows, a `claude.cmd` shim can't be spawned by the SDK without a shell (spawn EINVAL); resolve
+  // it to the underlying cli.js so the SDK runs it via node. Native/Unix executables pass through.
+  const resolvedExecutablePath = resolveClaudeExecutableForSpawn(executablePath)
+  const env = buildAgentSpawnEnv(
+    augmentedPathEnv(process.env),
+    envOverrides,
+    resolvedExecutablePath
+  )
 
   // Opt-in deep diagnostics: launch the app with OPEN_SCIENCE_DEBUG_AGENT=1 to make the Claude Agent
   // SDK emit its internals to stderr (captured into the log). Off by default so verbose turn detail is
@@ -82,7 +90,8 @@ const spawnClaudeAgentAcp = ({
   }
 
   log.info('spawning ACP agent', {
-    executablePath,
+    executablePath: resolvedExecutablePath,
+    rawExecutablePath: executablePath,
     entryPath,
     isolated: 'CLAUDE_CONFIG_DIR' in envOverrides,
     debug: debugAgent,
