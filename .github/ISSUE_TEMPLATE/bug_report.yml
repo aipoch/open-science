@@ -1,0 +1,74 @@
+name: Bug report
+description: Report something that isn't working as expected
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Please fill out the
+        sections below so we can reproduce and fix the issue.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checklist
+      options:
+        - label: I searched existing issues and this has not been reported yet.
+          required: true
+        - label: I'm running a recent version of Open Science.
+          required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, including what you expected to happen.
+      placeholder: I expected X, but Y happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The exact steps needed to trigger the bug.
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. See error
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Windows
+        - Linux
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: app-version
+    attributes:
+      label: App version
+      description: Found in the app's About screen or the release you installed.
+      placeholder: e.g. 0.1.1
+    validations:
+      required: true
+  - type: input
+    id: provider-model
+    attributes:
+      label: Provider / model
+      description: Which AI provider and model were configured when the bug occurred?
+      placeholder: e.g. OpenAI gpt-4o, Anthropic claude-opus-4, local model, ...
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or screenshots
+      description: Paste any relevant log output or attach screenshots. Logs will be automatically formatted, so no need for backticks.
+      render: shell
+    validations:
+      required: false
