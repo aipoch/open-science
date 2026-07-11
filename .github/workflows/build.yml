@@ -119,6 +119,7 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.name }}
+          retention-days: 1
           path: |
             dist/*.dmg
             dist/*.zip
