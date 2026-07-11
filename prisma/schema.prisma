@@ -7,6 +7,11 @@
 
 generator client {
   provider = "prisma-client-js"
+  // Generate query engines for both macOS architectures so the x64 build can be cross-packaged on an
+  // Apple Silicon CI runner (the scarce Intel `macos-13` runner is no longer needed). "native" is the
+  // build host's engine (darwin-arm64 on mac CI, the distro engine on Linux); "darwin" adds x64 mac.
+  // The release build prunes engines it doesn't need per platform (see .github/workflows/build.yml).
+  binaryTargets = ["native", "darwin"]
 }
 
 datasource db {

@@ -54,6 +54,9 @@ extraResources:
 #   createDesktopShortcut: always
 mac:
   artifactName: ${name}-${version}-mac-${arch}.${ext}
+  # Minimum macOS to run the app (written to Info.plist LSMinimumSystemVersion). macOS 12 (Monterey)
+  # and up; below this the OS refuses to launch. Independent of the CI build runner's macOS version.
+  minimumSystemVersion: '12.0.0'
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     CFBundleName: Open Science

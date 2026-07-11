@@ -22,18 +22,26 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Both mac archs build on Apple Silicon (macos-14). x64 is cross-packaged here — electron
+          # downloads the x64 runtime, and the only per-arch native artifact we ship (the Prisma
+          # query engine) is provided by the schema's binaryTargets, then pruned below. This avoids
+          # the scarce Intel `macos-13` runner (long queues). engine_keep = substring of the Prisma
+          # engine filename to keep for this build.
           - name: macos-arm64
-            os: macos-14 # Apple Silicon
+            os: macos-14
             platform: mac
             eb_args: --mac --arm64
+            engine_keep: darwin-arm64
           - name: macos-x64
-            os: macos-13 # last Intel runner: gets darwin-x64 native deps natively
+            os: macos-14
             platform: mac
             eb_args: --mac --x64
+            engine_keep: darwin.dylib
           - name: linux-x64
             os: ubuntu-latest
             platform: linux
             eb_args: --linux
+            engine_keep: .so.node
 
     steps:
       - name: Checkout
@@ -48,6 +56,23 @@ jobs:
       # npm ci runs postinstall: prisma generate + electron-builder install-app-deps.
       - name: Install dependencies
         run: npm ci
+
+      # The schema's binaryTargets generates Prisma engines for several platforms; keep only the one
+      # this build ships so each installer stays lean. Fails loudly if the expected engine is missing.
+      - name: Prune foreign Prisma engines
+        shell: bash
+        run: |
+          keep='${{ matrix.engine_keep }}'
+          found=0
+          for f in node_modules/.prisma/client/libquery_engine-*; do
+            [ -e "$f" ] || continue
+            case "$f" in
+              *"$keep"*) found=1 ;;
+              *) echo "pruning $(basename "$f")"; rm -f "$f" ;;
+            esac
+          done
+          echo "remaining engines:"; ls -1 node_modules/.prisma/client/libquery_engine-* 2>/dev/null || true
+          [ "$found" = 1 ] || { echo "::error::no Prisma engine matching '$keep' was generated"; exit 1; }
 
       # Build the renderer + main (incl. typecheck), then package with electron-builder.
       #
