@@ -132,6 +132,30 @@ export const getClaudeInstallSources = (platform: string = 'linux'): ClaudeInsta
   ]
 }
 
+// Guidance for installing Node.js (which bundles npm) when the npm install source is unavailable.
+// The npm path to install claude needs Node present first; a non-developer often won't have it.
+export type NodeInstallHint = {
+  // Copyable one-line install command for this platform, when a reliable one exists.
+  command?: string
+  // Official download page for a manual (GUI) installer — always available as a fallback.
+  url: string
+}
+
+// Returns how to install Node.js on the given host platform. Windows uses winget (built into Windows
+// 10/11); macOS suggests Homebrew; Linux is too distro-specific for a single command, so only the
+// download page is offered. The installer bundles npm in every case.
+export const getNodeInstallHint = (platform: string = 'linux'): NodeInstallHint => {
+  if (platform === 'win32') {
+    return { command: 'winget install OpenJS.NodeJS.LTS', url: 'https://nodejs.org/en/download' }
+  }
+
+  if (platform === 'darwin') {
+    return { command: 'brew install node', url: 'https://nodejs.org/en/download' }
+  }
+
+  return { url: 'https://nodejs.org/en/download' }
+}
+
 export type InstallClaudeRequest = {
   source: ClaudeInstallSource
 }
