@@ -5,7 +5,7 @@ name: PR Check
 on:
   pull_request:
     branches:
-      - master
+      - main
     types: [opened, synchronize, reopened]
 
 # Cancel a still-running check from the same PR when a new push arrives, to save CI minutes.

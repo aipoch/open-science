@@ -23,7 +23,9 @@ files:
   # The bundled Claude native binary (~220MB) is never executed: the app spawns the ACP agent with
   # CLAUDE_CODE_EXECUTABLE pointing at the user's system-installed claude, and claude-agent-acp only
   # resolves this optional platform package when that env var is unset. Excluding it drops ~220MB.
-  - '!node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64{,/**/*}'
+  # Wildcard every platform variant (darwin-arm64/-x64, linux-*, win32-*) so the exclusion holds no
+  # matter which OS the release job builds on — npm only installs the one matching the build host.
+  - '!node_modules/@anthropic-ai/claude-agent-sdk-*{,/**/*}'
 asarUnpack:
   - resources/**
   # The ACP agent runs as a spawned child process, so its entry must live outside the asar.
@@ -39,14 +41,18 @@ extraResources:
     to: node_modules/.prisma
   - from: node_modules/@prisma/client
     to: node_modules/@prisma/client
-win:
-  executableName: open-science
-nsis:
-  artifactName: ${name}-${version}-setup.${ext}
-  shortcutName: ${productName}
-  uninstallDisplayName: ${productName}
-  createDesktopShortcut: always
+# Windows packaging is on hold — to be added later. To enable: uncomment win/nsis below, add a
+# windows job to .github/workflows/release.yml, and restore the "build:win" script in package.json.
+# win:
+#   executableName: open-science
+#   artifactName: ${name}-${version}-win-${arch}.${ext}
+# nsis:
+#   artifactName: ${name}-${version}-win-${arch}-setup.${ext}
+#   shortcutName: ${productName}
+#   uninstallDisplayName: ${productName}
+#   createDesktopShortcut: always
 mac:
+  artifactName: ${name}-${version}-mac-${arch}.${ext}
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     CFBundleName: Open Science
@@ -57,16 +63,17 @@ mac:
     NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
   notarize: false
 dmg:
-  artifactName: ${name}-${version}.${ext}
+  artifactName: ${name}-${version}-mac-${arch}.${ext}
 linux:
+  # snap is intentionally omitted: building it on a stock GitHub runner needs snapcraft + LXD and
+  # is flaky in CI. AppImage (portable, runs anywhere) + deb (Debian/Ubuntu) cover the common cases.
   target:
     - AppImage
-    - snap
     - deb
   maintainer: aipoch
   category: Utility
 appImage:
-  artifactName: ${name}-${version}.${ext}
+  artifactName: ${name}-${version}-linux-${arch}.${ext}
 npmRebuild: false
 publish:
   provider: github

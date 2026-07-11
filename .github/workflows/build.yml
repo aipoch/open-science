@@ -1,0 +1,90 @@
+name: Build
+
+# Reusable build workflow: packages the app for macOS (arm64 + x64) and Linux, each on its own
+# native runner, and uploads the installers as pipeline artifacts. Called by release.yml (stable,
+# on tag) and nightly.yml (rolling prerelease, on push to main) so the build matrix lives in one
+# place. Publishing is done by the caller, not here.
+#
+# Native deps need no cross-compilation tricks: `npm ci` on each runner installs the binaries that
+# match that OS (claude-agent-sdk optional package, Prisma query engine). macOS x64 therefore builds
+# on the Intel runner (macos-13); arm64 on Apple Silicon (macos-14).
+#
+# Windows is deferred — to add it later, append a `windows-latest` matrix entry (eb_args: --win).
+on:
+  workflow_call:
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Don't let one platform's failure cancel the others.
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-arm64
+            os: macos-14 # Apple Silicon
+            platform: mac
+            eb_args: --mac --arm64
+          - name: macos-x64
+            os: macos-13 # last Intel runner: gets darwin-x64 native deps natively
+            platform: mac
+            eb_args: --mac --x64
+          - name: linux-x64
+            os: ubuntu-latest
+            platform: linux
+            eb_args: --linux
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # npm ci runs postinstall: prisma generate + electron-builder install-app-deps.
+      - name: Install dependencies
+        run: npm ci
+
+      # Build the renderer + main (incl. typecheck), then package with electron-builder.
+      #
+      # macOS signing: electron-builder auto-imports CSC_LINK (base64 .p12) to sign, then notarizes
+      # when APPLE_ID creds are present. With no cert, signing is skipped and the afterPack hook
+      # (build/adhoc-sign.cjs) applies a valid ad-hoc signature so Gatekeeper shows the bypassable
+      # "unidentified developer" prompt instead of "damaged". Linux has no signing concept.
+      # All secrets are optional today — the build works with none set.
+      - name: Build & package
+        shell: bash
+        env:
+          # macOS Developer ID (real signing when present, ad-hoc fallback otherwise)
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          # macOS notarization (notarytool)
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          npm run build
+          if [ "${{ matrix.platform }}" = "mac" ] && [ -n "$CSC_LINK" ]; then
+            # Override the config's notarize:false once a real cert is configured.
+            npx electron-builder ${{ matrix.eb_args }} --publish never -c.mac.notarize=true
+          else
+            npx electron-builder ${{ matrix.eb_args }} --publish never
+          fi
+
+      # Upload only the distributables + electron-updater metadata for the caller's publish job.
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.blockmap
+            dist/latest*.yml
+          if-no-files-found: error

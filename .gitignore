@@ -53,8 +53,11 @@ Thumbs.db
 *.sublime-project
 *.sublime-workspace
 
-# Internal docs (not published to the repo)
+# Internal docs
 docs/internal/
+
+# Local-only scripts and tooling
+local/
 
 # Agent and AI assistant local state
 .codex/
