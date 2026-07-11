@@ -69,9 +69,15 @@ jobs:
         run: |
           npm run build
           if [ "${{ matrix.platform }}" = "mac" ] && [ -n "$CSC_LINK" ]; then
-            # Override the config's notarize:false once a real cert is configured.
+            # Real Developer ID cert present -> sign + notarize (override the config's notarize:false).
             npx electron-builder ${{ matrix.eb_args }} --publish never -c.mac.notarize=true
           else
+            # No cert: GitHub injects unset secrets as EMPTY strings, and electron-builder mis-reads an
+            # empty CSC_LINK as a certificate path — it resolves to the cwd and dies with
+            # "<repo path> not a file". Drop the empty vars and disable auto-discovery so electron-builder
+            # skips its own signing entirely; the afterPack hook (build/adhoc-sign.cjs) ad-hoc signs instead.
+            unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
             npx electron-builder ${{ matrix.eb_args }} --publish never
           fi
 
