@@ -66,6 +66,7 @@ jobs:
             right-click → Open, or run `xattr -dr com.apple.quarantine "<app>"`.
           files: |
             artifacts/*.dmg
+            artifacts/*.zip
             artifacts/*.exe
             artifacts/*.AppImage
             artifacts/*.deb

@@ -54,8 +54,10 @@ extraResources:
 win:
   executableName: open-science
   artifactName: ${name}-${version}-win-${arch}.${ext}
+  # nsis = the installer; zip = a portable, no-install build. Offer both, mirroring mac (dmg + zip).
   target:
     - nsis
+    - zip
 nsis:
   artifactName: ${name}-${version}-win-${arch}-setup.${ext}
   shortcutName: ${productName}

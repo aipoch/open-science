@@ -48,10 +48,11 @@ jobs:
             cat SHA256SUMS.txt
           fi
 
-      # Attach user-facing installers + checksums. Auto-update metadata (latest*.yml / blockmap /
-      # mac zip) is intentionally NOT published yet: arm64 and x64 build on separate runners and each
-      # emits its own latest-mac.yml (they'd collide on merge), and Squirrel.Mac can't auto-update an
-      # unsigned/ad-hoc build regardless. Revisit once a Developer ID cert is configured.
+      # Attach user-facing artifacts + checksums: installers (dmg/exe/AppImage/deb) and portable
+      # zips (mac + win). Auto-update metadata (latest*.yml / blockmap) is intentionally NOT published:
+      # the zips here are plain downloads, not update feeds — arm64/x64 build on separate runners and
+      # each emits its own latest-mac.yml (they'd collide), and Squirrel.Mac can't auto-update an
+      # unsigned build anyway. Revisit latest*.yml once a Developer ID cert is configured.
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -60,6 +61,7 @@ jobs:
           generate_release_notes: true
           files: |
             artifacts/*.dmg
+            artifacts/*.zip
             artifacts/*.exe
             artifacts/*.AppImage
             artifacts/*.deb
