@@ -1,0 +1,65 @@
+name: Release
+
+# Stable release: on a version tag (e.g. v0.1.0) build every platform and publish them to a single
+# GitHub Release. Also runnable manually from the Actions tab (builds + uploads artifacts; only a
+# tag run creates the Release). Nightly builds live in nightly.yml.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+# Required to create a Release and upload assets.
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Build the platform matrix (macOS arm64/x64 + Linux) via the reusable workflow. secrets: inherit
+  # forwards the optional signing/notarization secrets.
+  build:
+    uses: ./.github/workflows/build.yml
+    secrets: inherit
+
+  # Collect every platform's artifacts and publish them to the tag's Release in one shot (a single
+  # publish job avoids the race of multiple build jobs writing the same Release).
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true # flatten every platform's files into one directory
+
+      # One SHA256SUMS.txt covering all installers so users can verify downloads.
+      - name: Generate checksums
+        working-directory: artifacts
+        run: |
+          shopt -s nullglob
+          files=(*.dmg *.zip *.AppImage *.deb)
+          if [ ${#files[@]} -gt 0 ]; then
+            sha256sum "${files[@]}" > SHA256SUMS.txt
+            cat SHA256SUMS.txt
+          fi
+
+      # Attach user-facing installers + checksums. Auto-update metadata (latest*.yml / blockmap /
+      # mac zip) is intentionally NOT published yet: arm64 and x64 build on separate runners and each
+      # emits its own latest-mac.yml (they'd collide on merge), and Squirrel.Mac can't auto-update an
+      # unsigned/ad-hoc build regardless. Revisit once a Developer ID cert is configured.
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            artifacts/*.dmg
+            artifacts/*.AppImage
+            artifacts/*.deb
+            artifacts/SHA256SUMS.txt

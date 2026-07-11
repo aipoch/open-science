@@ -1,0 +1,71 @@
+name: Nightly
+
+# Rolling nightly build: every push to main rebuilds all platforms and refreshes a single
+# pre-release tagged `nightly`, so testers always have the latest main installers. This never
+# touches stable releases (see release.yml). Also runnable manually.
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# A newer push supersedes an in-flight nightly — no point finishing a stale one.
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    secrets: inherit
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: |
+          shopt -s nullglob
+          files=(*.dmg *.zip *.AppImage *.deb)
+          if [ ${#files[@]} -gt 0 ]; then
+            sha256sum "${files[@]}" > SHA256SUMS.txt
+            cat SHA256SUMS.txt
+          fi
+
+      # Delete the previous nightly release and its tag so the new one is a clean rolling snapshot
+      # pointing at the current commit (otherwise the tag would lag behind main).
+      - name: Reset nightly release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete nightly --cleanup-tag --yes || true
+
+      - name: Publish nightly pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          target_commitish: ${{ github.sha }}
+          name: Nightly (latest main)
+          prerelease: true
+          body: |
+            Automated build of the latest `main` (${{ github.sha }}).
+
+            ⚠️ Unstable pre-release. macOS builds are ad-hoc signed (not notarized): on first launch
+            right-click → Open, or run `xattr -dr com.apple.quarantine "<app>"`.
+          files: |
+            artifacts/*.dmg
+            artifacts/*.AppImage
+            artifacts/*.deb
+            artifacts/SHA256SUMS.txt
