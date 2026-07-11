@@ -42,16 +42,21 @@ extraResources:
     to: node_modules/.prisma
   - from: node_modules/@prisma/client
     to: node_modules/@prisma/client
-# Windows packaging is on hold — to be added later. To enable: uncomment win/nsis below, add a
-# windows job to .github/workflows/release.yml, and restore the "build:win" script in package.json.
-# win:
-#   executableName: open-science
-#   artifactName: ${name}-${version}-win-${arch}.${ext}
-# nsis:
-#   artifactName: ${name}-${version}-win-${arch}-setup.${ext}
-#   shortcutName: ${productName}
-#   uninstallDisplayName: ${productName}
-#   createDesktopShortcut: always
+# Windows: an NSIS installer. The build is unsigned (no Authenticode certificate), so SmartScreen
+# shows a bypassable "unknown publisher" prompt — the same trade-off as the unsigned macOS build. The
+# afterPack ad-hoc-sign hook is a no-op off macOS (it returns early), so it is safe on this target.
+win:
+  executableName: open-science
+  artifactName: ${name}-${version}-win-${arch}.${ext}
+  target:
+    - nsis
+nsis:
+  artifactName: ${name}-${version}-win-${arch}-setup.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+  oneClick: false
+  allowToChangeInstallationDirectory: true
 mac:
   artifactName: ${name}-${version}-mac-${arch}.${ext}
   # Minimum macOS to run the app (written to Info.plist LSMinimumSystemVersion). macOS 12 (Monterey)

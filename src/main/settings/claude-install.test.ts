@@ -13,18 +13,34 @@ class FakeChild extends EventEmitter {
 
 describe('claude-install: command construction', () => {
   it('runs a plain global npm install without a mirror registry', () => {
-    const spec = getInstallSpawnSpec('npm')
+    const spec = getInstallSpawnSpec('npm', 'linux')
 
     expect(spec.command).toBe('npm')
     expect(spec.args).toEqual(['i', '-g', '@anthropic-ai/claude-code'])
     expect(spec.args.some((arg) => arg.includes('--registry'))).toBe(false)
+    expect(spec.shell).toBeFalsy()
   })
 
-  it('pipes the official installer through a shell', () => {
-    const spec = getInstallSpawnSpec('official-script')
+  it('pipes the official installer through bash on Unix', () => {
+    const spec = getInstallSpawnSpec('official-script', 'linux')
 
     expect(spec.command).toBe('bash')
     expect(spec.args.at(-1)).toContain('curl -fsSL https://claude.ai/install.sh | bash')
+  })
+
+  it('runs npm through a shell on Windows (npm.cmd shim)', () => {
+    const spec = getInstallSpawnSpec('npm', 'win32')
+
+    expect(spec.command).toBe('npm')
+    expect(spec.args).toEqual(['i', '-g', '@anthropic-ai/claude-code'])
+    expect(spec.shell).toBe(true)
+  })
+
+  it('uses the PowerShell installer (install.ps1) on Windows', () => {
+    const spec = getInstallSpawnSpec('official-script', 'win32')
+
+    expect(spec.command).toBe('powershell')
+    expect(spec.args.at(-1)).toContain('irm https://claude.ai/install.ps1 | iex')
   })
 })
 

@@ -18,8 +18,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Build the platform matrix (macOS arm64/x64 + Linux) via the reusable workflow. secrets: inherit
-  # forwards the optional signing/notarization secrets.
+  # Build the platform matrix (macOS arm64/x64 + Linux + Windows x64) via the reusable workflow.
+  # secrets: inherit forwards the optional signing/notarization secrets.
   build:
     uses: ./.github/workflows/build.yml
     secrets: inherit
@@ -42,7 +42,7 @@ jobs:
         working-directory: artifacts
         run: |
           shopt -s nullglob
-          files=(*.dmg *.zip *.AppImage *.deb)
+          files=(*.dmg *.zip *.exe *.AppImage *.deb)
           if [ ${#files[@]} -gt 0 ]; then
             sha256sum "${files[@]}" > SHA256SUMS.txt
             cat SHA256SUMS.txt
@@ -60,6 +60,7 @@ jobs:
           generate_release_notes: true
           files: |
             artifacts/*.dmg
+            artifacts/*.exe
             artifacts/*.AppImage
             artifacts/*.deb
             artifacts/SHA256SUMS.txt

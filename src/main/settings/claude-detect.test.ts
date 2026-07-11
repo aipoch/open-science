@@ -15,6 +15,8 @@ const createDeps = (
 ): ClaudeDetectDeps => ({
   env: { PATH: '/usr/bin:/usr/local/bin' },
   homePath: '/home/user',
+  // Pinned so probe order is host-independent (tests run on macOS/Linux/Windows CI runners alike).
+  platform: 'linux',
   isExecutable: (path) => Promise.resolve(path in installed),
   getVersion: (path) => Promise.resolve(installed[path]),
   resolveNpmBinDirs: () => Promise.resolve([]),
@@ -81,5 +83,56 @@ describe('claude-detect', () => {
     const result = await detectClaude(deps)
 
     expect(result.found).toBe(true)
+  })
+
+  describe('windows', () => {
+    // Windows uses ; as the PATH delimiter and back-slash paths. join() on a posix test host emits
+    // forward slashes, so assert on the pieces produced by join() rather than literal separators.
+    const winDeps = (
+      installed: Record<string, string>,
+      overrides: Partial<ClaudeDetectDeps> = {}
+    ): ClaudeDetectDeps =>
+      createDeps(installed, {
+        platform: 'win32',
+        env: {
+          PATH: 'C:\\Windows;C:\\Users\\me\\bin',
+          APPDATA: 'C:\\Users\\me\\AppData\\Roaming',
+          LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local'
+        },
+        homePath: 'C:\\Users\\me',
+        ...overrides
+      })
+
+    it('probes %APPDATA%\\npm and %LOCALAPPDATA%\\Programs\\claude, not the Unix dirs', async () => {
+      const dirs = await collectCandidateDirs(winDeps({}))
+
+      expect(dirs).toContain(join('C:\\Users\\me\\AppData\\Roaming', 'npm'))
+      expect(dirs).toContain(join('C:\\Users\\me\\AppData\\Local', 'Programs', 'claude'))
+      expect(dirs).toContain(join('C:\\Users\\me', '.local', 'bin'))
+      expect(dirs).not.toContain('/opt/homebrew/bin')
+    })
+
+    it('finds claude.cmd ahead of the bare name', async () => {
+      const npmDir = join('C:\\Users\\me\\AppData\\Roaming', 'npm')
+      const result = await detectClaude(winDeps({ [join(npmDir, 'claude.cmd')]: '2.3.0' }))
+
+      expect(result).toEqual({ found: true, path: join(npmDir, 'claude.cmd'), version: '2.3.0' })
+    })
+
+    it('finds claude.exe when no .cmd shim exists', async () => {
+      const dir = join('C:\\Users\\me\\AppData\\Local', 'Programs', 'claude')
+      const result = await detectClaude(winDeps({ [join(dir, 'claude.exe')]: '2.4.0' }))
+
+      expect(result).toEqual({ found: true, path: join(dir, 'claude.exe'), version: '2.4.0' })
+    })
+
+    it('still probes the extensionless catch-all name', async () => {
+      // Place it in a well-known dir (not PATH) so the assertion is independent of the host's PATH
+      // delimiter, which is ':' on the posix machines this test suite also runs on.
+      const npmDir = join('C:\\Users\\me\\AppData\\Roaming', 'npm')
+      const result = await detectClaude(winDeps({ [join(npmDir, 'claude')]: '2.5.0' }))
+
+      expect(result).toEqual({ found: true, path: join(npmDir, 'claude'), version: '2.5.0' })
+    })
   })
 })

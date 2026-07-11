@@ -5,11 +5,10 @@ name: Build
 # on tag) and nightly.yml (rolling prerelease, on push to main) so the build matrix lives in one
 # place. Publishing is done by the caller, not here.
 #
-# Native deps need no cross-compilation tricks: `npm ci` on each runner installs the binaries that
-# match that OS (claude-agent-sdk optional package, Prisma query engine). macOS x64 therefore builds
-# on the Intel runner (macos-13); arm64 on Apple Silicon (macos-14).
-#
-# Windows is deferred — to add it later, append a `windows-latest` matrix entry (eb_args: --win).
+# `npm ci` on each runner installs the native binaries it needs (claude-agent-sdk optional package,
+# Prisma query engine). Both macOS archs build on Apple Silicon (macos-14) — x64 is cross-packaged and
+# its Prisma engine comes from binaryTargets, pruned per-arch below; Linux on ubuntu-latest; Windows
+# x64 on windows-latest.
 on:
   workflow_call:
 
@@ -42,6 +41,13 @@ jobs:
             platform: linux
             eb_args: --linux
             engine_keep: .so.node
+          - name: windows-x64
+            os: windows-latest
+            platform: win
+            eb_args: --win --x64
+            # Windows' native engine is `query_engine-windows.dll.node` (note: no `lib` prefix, and
+            # `.dll.node` rather than `.so/.dylib`), which the broadened prune glob below matches.
+            engine_keep: windows.dll
 
     steps:
       - name: Checkout
@@ -59,19 +65,21 @@ jobs:
 
       # The schema's binaryTargets generates Prisma engines for several platforms; keep only the one
       # this build ships so each installer stays lean. Fails loudly if the expected engine is missing.
+      # The glob is `*query_engine-*` (not `libquery_engine-*`) so it also matches Windows' engine,
+      # which is named `query_engine-windows.dll.node` without the `lib` prefix.
       - name: Prune foreign Prisma engines
         shell: bash
         run: |
           keep='${{ matrix.engine_keep }}'
           found=0
-          for f in node_modules/.prisma/client/libquery_engine-*; do
+          for f in node_modules/.prisma/client/*query_engine-*; do
             [ -e "$f" ] || continue
             case "$f" in
               *"$keep"*) found=1 ;;
               *) echo "pruning $(basename "$f")"; rm -f "$f" ;;
             esac
           done
-          echo "remaining engines:"; ls -1 node_modules/.prisma/client/libquery_engine-* 2>/dev/null || true
+          echo "remaining engines:"; ls -1 node_modules/.prisma/client/*query_engine-* 2>/dev/null || true
           [ "$found" = 1 ] || { echo "::error::no Prisma engine matching '$keep' was generated"; exit 1; }
 
       # Build the renderer + main (incl. typecheck), then package with electron-builder.
@@ -114,6 +122,7 @@ jobs:
           path: |
             dist/*.dmg
             dist/*.zip
+            dist/*.exe
             dist/*.AppImage
             dist/*.deb
             dist/*.blockmap

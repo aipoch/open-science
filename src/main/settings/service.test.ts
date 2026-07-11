@@ -38,6 +38,7 @@ const createService = (
     detectDeps: {
       env: {},
       homePath: '/home',
+      platform: 'linux',
       isExecutable: () => Promise.resolve(true),
       getVersion: () => Promise.resolve(detectResult.version),
       resolveNpmBinDirs: () => Promise.resolve([])
@@ -267,6 +268,7 @@ describe('SettingsService: preflight & spawn config', () => {
       detectDeps: {
         env: {},
         homePath: '/home',
+        platform: 'linux',
         isExecutable: () => Promise.resolve(true),
         getVersion: () => Promise.resolve('2.1.0'),
         resolveNpmBinDirs: () => Promise.resolve([])

@@ -8,7 +8,6 @@ import type {
   ClaudeInstallSource,
   NpmAvailability
 } from '../../shared/settings'
-import { CLAUDE_INSTALL_SOURCES } from '../../shared/settings'
 import { augmentedPathEnv } from './shell-path'
 
 const execFileAsync = promisify(execFile)
@@ -17,22 +16,48 @@ const execFileAsync = promisify(execFile)
 // the UI can show live progress and never spin silently. Command construction is pure and testable;
 // the spawn is injectable for the same reason.
 
-// How a source is actually executed. The official script is piped through a shell; the npm source
-// runs a plain global install against the user's configured registry.
+// How a source is actually executed. `shell` is set when the command must go through the OS shell:
+// the official script is always piped through one (bash/PowerShell), and on Windows even `npm` needs
+// a shell because it is an `npm.cmd` batch shim that spawn cannot launch directly.
 type InstallSpawnSpec = {
   command: string
   args: string[]
+  shell?: boolean
 }
 
-const INSTALL_SPAWN_SPECS: Record<ClaudeInstallSource, InstallSpawnSpec> = {
-  npm: {
-    command: 'npm',
-    args: ['i', '-g', '@anthropic-ai/claude-code']
-  },
-  'official-script': {
-    command: 'bash',
-    args: ['-lc', 'curl -fsSL https://claude.ai/install.sh | bash']
+// Builds the exact spawn command/args for a source on a given platform. Windows: npm runs through the
+// shell (npm.cmd), and the official installer is the PowerShell script (install.ps1); other platforms
+// keep npm bare and pipe the shell script through bash. All args are hard-coded constants, so shell
+// use here carries no injection risk.
+const getInstallSpawnSpec = (
+  source: ClaudeInstallSource,
+  platform: NodeJS.Platform = process.platform
+): InstallSpawnSpec => {
+  const isWindows = platform === 'win32'
+
+  if (source === 'npm') {
+    return {
+      command: 'npm',
+      args: ['i', '-g', '@anthropic-ai/claude-code'],
+      shell: isWindows
+    }
   }
+
+  return isWindows
+    ? {
+        command: 'powershell',
+        args: [
+          '-NoProfile',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-Command',
+          'irm https://claude.ai/install.ps1 | iex'
+        ]
+      }
+    : {
+        command: 'bash',
+        args: ['-lc', 'curl -fsSL https://claude.ai/install.sh | bash']
+      }
 }
 
 // Default guard so a hung network install cannot block the wizard forever.
@@ -43,19 +68,26 @@ export type RunInstallOptions = {
   installId: string
   onLog: (event: ClaudeInstallLogEvent) => void
   timeoutMs?: number
-  // Injectable spawn so tests can drive stdout/stderr/exit without a real process.
-  spawnImpl?: (command: string, args: string[]) => ChildProcessWithoutNullStreams
+  // Injectable spawn so tests can drive stdout/stderr/exit without a real process. `options` carries
+  // the spec's `shell` flag through to the real spawn.
+  spawnImpl?: (
+    command: string,
+    args: string[],
+    options?: { shell?: boolean }
+  ) => ChildProcessWithoutNullStreams
 }
 
-// Returns the exact spawn command/args for a source (also the source of the copyable display text).
-const getInstallSpawnSpec = (source: ClaudeInstallSource): InstallSpawnSpec =>
-  INSTALL_SPAWN_SPECS[source]
-
-// Real installer spawn with piped stdio. PATH is augmented so a GUI-launched app can still find npm.
-const defaultInstallSpawn = (command: string, args: string[]): ChildProcessWithoutNullStreams =>
+// Real installer spawn with piped stdio. PATH is augmented so a GUI-launched app can still find npm,
+// and `shell` is honoured so Windows npm.cmd / PowerShell specs run.
+const defaultInstallSpawn = (
+  command: string,
+  args: string[],
+  options?: { shell?: boolean }
+): ChildProcessWithoutNullStreams =>
   spawn(command, args, {
     stdio: 'pipe',
     windowsHide: true,
+    shell: options?.shell,
     env: augmentedPathEnv()
   }) as ChildProcessWithoutNullStreams
 
@@ -76,7 +108,7 @@ const runInstall = ({
     let child: ChildProcessWithoutNullStreams
 
     try {
-      child = spawnImpl(spec.command, spec.args)
+      child = spawnImpl(spec.command, spec.args, { shell: spec.shell })
     } catch (error) {
       resolve({
         installId,
@@ -132,7 +164,13 @@ const runInstall = ({
 // with common node locations so a GUI-launched app doesn't falsely report npm as missing.
 const detectNpmAvailable = async (
   runNpm: () => Promise<unknown> = () =>
-    execFileAsync('npm', ['--version'], { timeout: 10_000, env: augmentedPathEnv() })
+    execFileAsync('npm', ['--version'], {
+      timeout: 10_000,
+      // On Windows npm is an `npm.cmd` shim that execFile can't launch without a shell.
+      shell: process.platform === 'win32',
+      windowsHide: true,
+      env: augmentedPathEnv()
+    })
 ): Promise<NpmAvailability> => {
   try {
     await runNpm()
@@ -143,10 +181,4 @@ const detectNpmAvailable = async (
   }
 }
 
-export {
-  CLAUDE_INSTALL_SOURCES,
-  DEFAULT_INSTALL_TIMEOUT_MS,
-  detectNpmAvailable,
-  getInstallSpawnSpec,
-  runInstall
-}
+export { DEFAULT_INSTALL_TIMEOUT_MS, detectNpmAvailable, getInstallSpawnSpec, runInstall }

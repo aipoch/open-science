@@ -90,6 +90,9 @@ const onIpcMessage = <Payload>(channel: string, listener: AcpListener<Payload>):
 // Custom APIs for renderer
 type OpenScienceAPI = {
   saveBlobFile: (request: SaveBlobFileRequest) => Promise<SaveBlobFileResult>
+  // Host platform (process.platform), e.g. 'win32' | 'darwin' | 'linux'. Lets the renderer pick
+  // platform-correct copy such as the claude install command shown in the onboarding/settings card.
+  platform: string
   getRuntimeVersions: () => {
     electron: string
     chrome: string
@@ -199,6 +202,7 @@ type OpenScienceAPI = {
 const api: OpenScienceAPI = {
   saveBlobFile: (request) =>
     ipcRenderer.invoke('file:save-blob', request) as Promise<SaveBlobFileResult>,
+  platform: process.platform,
   getRuntimeVersions: () => ({
     electron: process.versions.electron,
     chrome: process.versions.chrome,

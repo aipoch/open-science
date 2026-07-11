@@ -107,21 +107,30 @@ export type ClaudeInstallSourceInfo = {
   requiresNpm: boolean
 }
 
-// The ordered install sources; a plain global npm install is the default when npm is available.
-export const CLAUDE_INSTALL_SOURCES: ClaudeInstallSourceInfo[] = [
-  {
-    id: 'npm',
-    label: 'npm (global install)',
-    displayCommand: 'npm i -g @anthropic-ai/claude-code',
-    requiresNpm: true
-  },
-  {
-    id: 'official-script',
-    label: 'Official install.sh',
-    displayCommand: 'curl -fsSL https://claude.ai/install.sh | bash',
-    requiresNpm: false
-  }
-]
+// The ordered install sources for a given host platform; a plain global npm install is the default
+// when npm is available. The npm command is identical everywhere, but the official installer differs:
+// Windows uses the PowerShell script (install.ps1), other platforms use the shell script (install.sh).
+// Pass the host platform (e.g. `window.api.platform`) so the copyable command matches what runs.
+export const getClaudeInstallSources = (platform: string = 'linux'): ClaudeInstallSourceInfo[] => {
+  const isWindows = platform === 'win32'
+
+  return [
+    {
+      id: 'npm',
+      label: 'npm (global install)',
+      displayCommand: 'npm i -g @anthropic-ai/claude-code',
+      requiresNpm: true
+    },
+    {
+      id: 'official-script',
+      label: isWindows ? 'Official install.ps1' : 'Official install.sh',
+      displayCommand: isWindows
+        ? 'irm https://claude.ai/install.ps1 | iex'
+        : 'curl -fsSL https://claude.ai/install.sh | bash',
+      requiresNpm: false
+    }
+  ]
+}
 
 export type InstallClaudeRequest = {
   source: ClaudeInstallSource

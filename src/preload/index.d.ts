@@ -76,6 +76,8 @@ type AcpListener<Payload> = (payload: Payload) => void
 
 interface OpenScienceAPI {
   saveBlobFile(request: SaveBlobFileRequest): Promise<SaveBlobFileResult>
+  // Host platform (process.platform), e.g. 'win32' | 'darwin' | 'linux'.
+  platform: string
   getRuntimeVersions(): {
     electron: string
     chrome: string

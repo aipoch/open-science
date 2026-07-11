@@ -39,7 +39,7 @@ jobs:
         working-directory: artifacts
         run: |
           shopt -s nullglob
-          files=(*.dmg *.zip *.AppImage *.deb)
+          files=(*.dmg *.zip *.exe *.AppImage *.deb)
           if [ ${#files[@]} -gt 0 ]; then
             sha256sum "${files[@]}" > SHA256SUMS.txt
             cat SHA256SUMS.txt
@@ -66,6 +66,7 @@ jobs:
             right-click → Open, or run `xattr -dr com.apple.quarantine "<app>"`.
           files: |
             artifacts/*.dmg
+            artifacts/*.exe
             artifacts/*.AppImage
             artifacts/*.deb
             artifacts/SHA256SUMS.txt

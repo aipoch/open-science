@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { createInterface, type Interface } from 'node:readline'
 
+import { resolvePythonCommand } from './python-command'
 import type {
   NotebookExecutionRequest,
   NotebookExecutionResult,
@@ -148,7 +149,13 @@ class NotebookPythonExecutor implements NotebookExecutor {
   private passthroughStdout: string[] = []
   private passthroughStderr: string[] = []
 
-  constructor(private readonly command = 'python3') {}
+  // Leading args (e.g. the Windows `py` launcher's `-3`) prepended before the bridge invocation.
+  private baseArgs: string[] = []
+
+  // An explicit command (tests, or a known interpreter) is used as-is; when omitted, the interpreter
+  // is resolved per platform on first launch (py -> python -> python3 on Windows, python3 -> python
+  // elsewhere).
+  constructor(private command?: string) {}
 
   // Sends code to the bridge and resolves with the matching JSON response.
   async execute(request: NotebookExecutionRequest): Promise<NotebookExecutionResult> {
@@ -227,7 +234,15 @@ class NotebookPythonExecutor implements NotebookExecutor {
       return this.child
     }
 
-    const child = spawn(this.command, ['-u', '-c', PYTHON_BRIDGE], {
+    // Resolve the interpreter once, lazily, so a GUI-launched app on Windows finds `py`/`python`
+    // instead of a non-existent `python3`.
+    if (!this.command) {
+      const resolved = await resolvePythonCommand()
+      this.command = resolved.command
+      this.baseArgs = resolved.baseArgs
+    }
+
+    const child = spawn(this.command, [...this.baseArgs, '-u', '-c', PYTHON_BRIDGE], {
       cwd: this.currentCwd ?? request.cwd,
       env: {
         ...process.env,
