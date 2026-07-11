@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Discussions
+    url: https://github.com/aipoch/open-science/discussions
+    about: Ask questions, share ideas, and talk through open-ended topics here.
+  - name: Discord community
+    url: https://discord.gg/85dKfuGM9
+    about: Chat with the community and the maintainers in real time.

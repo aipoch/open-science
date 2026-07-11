@@ -1,0 +1,47 @@
+name: Feature request
+description: Suggest an idea or improvement for Open Science
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea? We'd love to hear it. For open-ended ideas or questions,
+        consider starting a [Discussion](https://github.com/aipoch/open-science/discussions)
+        instead — it's a better fit for conversation.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checklist
+      options:
+        - label: I searched existing issues and discussions and this hasn't been proposed yet.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the problem or limitation you're running into. Focus on the "why".
+      placeholder: I'm always frustrated when ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe what you'd like to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any alternative solutions or workarounds you've thought about.
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else that would help — mockups, links, use cases.
+    validations:
+      required: false
