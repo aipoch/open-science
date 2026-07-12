@@ -120,6 +120,8 @@ describe('settings store: saveAndActivateProvider', () => {
 
     expect(result.validation.ok).toBe(false)
     expect(api.setActiveProvider).not.toHaveBeenCalled()
+    // The failed provider is kept (flagged as unverified), not rolled back.
+    expect(api.deleteProvider).not.toHaveBeenCalled()
   })
 
   it('resolves the edited id directly instead of diffing', async () => {
@@ -132,6 +134,48 @@ describe('settings store: saveAndActivateProvider', () => {
 
     expect(providerId).toBe('p_existing')
     expect(api.validateProvider).toHaveBeenCalledWith({ providerId: 'p_existing' })
+  })
+})
+
+describe('settings store: saveProvider keeps a provider whose test fails', () => {
+  it('does not delete a new provider when validation fails, and refreshes to surface the failure', async () => {
+    api.upsertProvider.mockResolvedValue(snapshot([providerView('p_new')]))
+    api.validateProvider.mockResolvedValue({
+      ok: false,
+      category: 'auth'
+    } as ValidateProviderResult)
+    // The post-validate refresh returns the persisted provider (now carrying the recorded failure).
+    api.getSettings.mockResolvedValue(snapshot([providerView('p_new')]))
+
+    const result = await useSettingsStore.getState().saveProvider({
+      type: 'custom',
+      name: 'Gateway',
+      baseUrl: 'https://g/v1',
+      key: 'k'
+    })
+
+    expect(result.validation.ok).toBe(false)
+    expect(result.providerId).toBe('p_new')
+    expect(api.deleteProvider).not.toHaveBeenCalled()
+    // The kept provider stays in the renderer cache after the refresh.
+    expect(useSettingsStore.getState().providers).toHaveLength(1)
+  })
+
+  it('keeps an existing provider when an edit fails validation', async () => {
+    api.upsertProvider.mockResolvedValue(snapshot([providerView('p_existing')]))
+    api.validateProvider.mockResolvedValue({
+      ok: false,
+      category: 'auth'
+    } as ValidateProviderResult)
+    api.getSettings.mockResolvedValue(snapshot([providerView('p_existing')]))
+
+    const result = await useSettingsStore
+      .getState()
+      .saveProvider({ id: 'p_existing', type: 'custom', name: 'Renamed' })
+
+    expect(result.validation.ok).toBe(false)
+    expect(result.providerId).toBe('p_existing')
+    expect(api.deleteProvider).not.toHaveBeenCalled()
   })
 })
 
@@ -276,6 +320,35 @@ describe('selectProviderModelOptions', () => {
       { providerId: 'c', providerName: 'GW', providerType: 'custom', model: 'm' },
       // A provider with no concrete model still yields one selectable "default" entry (empty model).
       { providerId: 'local', providerName: 'Local', providerType: 'claude-default', model: '' }
+    ])
+  })
+
+  it('excludes a provider whose last test failed so it cannot be selected as a model source', () => {
+    const options = selectProviderModelOptions([
+      {
+        id: 'ok',
+        type: 'custom',
+        name: 'Good',
+        model: 'm',
+        models: ['m'],
+        hasKey: true,
+        needsKey: false,
+        lastValidatedAt: 200
+      },
+      {
+        id: 'bad',
+        type: 'custom',
+        name: 'Broken',
+        model: 'm',
+        models: ['m'],
+        hasKey: true,
+        needsKey: false,
+        lastValidationFailure: { at: 300, category: 'auth' }
+      }
+    ])
+
+    expect(options).toEqual([
+      { providerId: 'ok', providerName: 'Good', providerType: 'custom', model: 'm' }
     ])
   })
 })

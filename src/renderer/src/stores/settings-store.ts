@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 import type { OfficialVendorId } from '../../../shared/provider-registry'
+import { providerValidationFailed } from '../../../shared/settings'
 import type {
   ClaudeDetectResult,
   ClaudeInfo,
@@ -115,19 +116,22 @@ export type ProviderModelOption = {
 
 // Flattens providers into the composer's (provider, model) options: one per catalog model for an
 // official vendor, the single model for a custom provider, and one default entry for a provider that
-// exposes no concrete model. Pure so the composer and its tests can share it.
+// exposes no concrete model. Providers whose last test failed are excluded so a broken provider can't
+// be picked as a model source. Pure so the composer and its tests can share it.
 export const selectProviderModelOptions = (providers: ProviderView[]): ProviderModelOption[] =>
-  providers.flatMap((provider) => {
-    const models = provider.models.length > 0 ? provider.models : ['']
+  providers
+    .filter((provider) => !providerValidationFailed(provider))
+    .flatMap((provider) => {
+      const models = provider.models.length > 0 ? provider.models : ['']
 
-    return models.map((model) => ({
-      providerId: provider.id,
-      providerName: provider.name,
-      providerType: provider.type,
-      vendorId: provider.vendorId,
-      model
-    }))
-  })
+      return models.map((model) => ({
+        providerId: provider.id,
+        providerName: provider.name,
+        providerType: provider.type,
+        vendorId: provider.vendorId,
+        model
+      }))
+    })
 
 // Finds the provider id affected by an upsert: the edited id, or the one new since `before`.
 const resolveUpsertedProviderId = (
@@ -242,7 +246,9 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
     const validation = await window.api.settings.validateProvider({ providerId })
 
-    // Refresh so the validated-at timestamp / masked key reflect the latest stored state.
+    // Refresh so the validated-at time / recorded failure / masked key reflect the latest stored
+    // state. A failed test keeps the provider (flagged as unverified in the list and excluded from the
+    // model pickers); it is not rolled back, so the user can fix the key and retry.
     set(applySnapshot(await window.api.settings.getSettings()))
     await get().refreshPreflight()
 
@@ -264,7 +270,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   validateProvider: async (request) => {
     const result = await window.api.settings.validateProvider(request)
 
-    if (result.ok) {
+    // Refresh whenever a saved provider was tested, pass or fail: success stamps lastValidatedAt, a
+    // failure records the reason and surfaces the "unverified" warning. Draft validations (no
+    // providerId) change nothing stored, so they skip the refresh.
+    if (request.providerId) {
       set(applySnapshot(await window.api.settings.getSettings()))
       await get().refreshPreflight()
     }

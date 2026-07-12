@@ -157,7 +157,7 @@ describe('SettingsService: validation', () => {
     expect((await repository.getSettings()).providers[0].lastValidatedAt).toBeGreaterThan(0)
   })
 
-  it('does not record validation on failure', async () => {
+  it('records the failure (not lastValidatedAt) for a saved provider on failure', async () => {
     const service = createService()
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 401 }))
 
@@ -174,7 +174,62 @@ describe('SettingsService: validation', () => {
     const result = await service.validateProvider({ providerId: created.id })
 
     expect(result).toMatchObject({ ok: false, category: 'auth' })
-    expect((await repository.getSettings()).providers[0].lastValidatedAt).toBeUndefined()
+
+    const stored = (await repository.getSettings()).providers[0]
+
+    expect(stored.lastValidatedAt).toBeUndefined()
+    expect(stored.lastValidationFailure).toMatchObject({ category: 'auth' })
+    expect(stored.lastValidationFailure?.at).toBeGreaterThan(0)
+  })
+
+  it('clears a recorded failure once a later validation succeeds', async () => {
+    const service = createService()
+    const fetchMock = vi.fn().mockResolvedValue({ status: 401 })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const created = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'G',
+        baseUrl: 'https://g/v1',
+        model: 'm',
+        key: 'k'
+      })
+    ).providers[0]
+
+    await service.validateProvider({ providerId: created.id })
+    expect((await repository.getSettings()).providers[0].lastValidationFailure).toBeDefined()
+
+    fetchMock.mockResolvedValue({ status: 200 })
+    await service.validateProvider({ providerId: created.id })
+
+    const stored = (await repository.getSettings()).providers[0]
+
+    expect(stored.lastValidationFailure).toBeUndefined()
+    expect(stored.lastValidatedAt).toBeGreaterThan(0)
+  })
+
+  it('drops a recorded failure when credentials change on edit', async () => {
+    const service = createService()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 401 }))
+
+    const created = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'G',
+        baseUrl: 'https://g/v1',
+        model: 'm',
+        key: 'k'
+      })
+    ).providers[0]
+
+    await service.validateProvider({ providerId: created.id })
+    expect((await repository.getSettings()).providers[0].lastValidationFailure).toBeDefined()
+
+    // Editing with a new key changes credentials, so the stale failure is dropped (re-test needed).
+    await service.upsertProvider({ id: created.id, type: 'custom', name: 'G', key: 'k2' })
+
+    expect((await repository.getSettings()).providers[0].lastValidationFailure).toBeUndefined()
   })
 })
 

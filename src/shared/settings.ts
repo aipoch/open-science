@@ -27,6 +27,15 @@ export type ClaudeDetectResult = {
   version?: string
 }
 
+// A recorded failed validation, kept so the list can flag a provider as unverified and say why
+// (e.g. "auth failed"). Cleared whenever a later validation of the same credentials succeeds.
+export type ProviderValidationFailure = {
+  at: number
+  category: ValidationCategory
+  status?: number
+  message?: string
+}
+
 // Renderer-facing provider view: masked and stripped of every secret field.
 export type ProviderView = {
   id: string
@@ -47,7 +56,21 @@ export type ProviderView = {
   // True when a stored key could not be decrypted and must be re-entered before use.
   needsKey: boolean
   lastValidatedAt?: number
+  // Present when the most recent validation failed and no later one has succeeded. Drives the
+  // "unverified" warning in the provider list.
+  lastValidationFailure?: ProviderValidationFailure
 }
+
+// True when a provider's most recent validation failed (and no later one succeeded). A failed
+// provider is flagged in the settings list and excluded from the model pickers, so it can't be
+// picked as a model source until it passes a test. Shared by main and renderer for one rule.
+export const providerValidationFailed = (provider: {
+  lastValidatedAt?: number
+  lastValidationFailure?: ProviderValidationFailure
+}): boolean =>
+  provider.lastValidationFailure !== undefined &&
+  (provider.lastValidatedAt === undefined ||
+    provider.lastValidationFailure.at >= provider.lastValidatedAt)
 
 // Full renderer snapshot of settings state.
 export type SettingsSnapshot = {

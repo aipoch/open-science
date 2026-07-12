@@ -114,6 +114,56 @@ describe('settings repository', () => {
     expect(settings.claude).toEqual({ resolvedPath: '/bin/claude' })
   })
 
+  it('round-trips a recorded validation failure across a reload', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.upsertProvider(
+      provider({
+        lastValidationFailure: {
+          at: 1717000000000,
+          category: 'auth',
+          status: 401,
+          message: 'nope'
+        }
+      })
+    )
+
+    const reloaded = await new SettingsRepository(root).getSettings()
+    expect(reloaded.providers[0].lastValidationFailure).toEqual({
+      at: 1717000000000,
+      category: 'auth',
+      status: 401,
+      message: 'nope'
+    })
+  })
+
+  it('drops a malformed validation failure (bad category or missing timestamp) on load', async () => {
+    const root = await createStorageRoot()
+
+    await writeFile(
+      join(root, 'settings.json'),
+      JSON.stringify({
+        version: 2,
+        providers: [
+          {
+            id: 'a',
+            type: 'custom',
+            name: 'A',
+            lastValidationFailure: { at: 1, category: 'bogus' }
+          },
+          { id: 'b', type: 'custom', name: 'B', lastValidationFailure: { category: 'auth' } }
+        ]
+      }),
+      'utf8'
+    )
+
+    const settings = await new SettingsRepository(root).getSettings()
+    expect(settings.providers.map((item) => item.id)).toEqual(['a', 'b'])
+    expect(settings.providers[0].lastValidationFailure).toBeUndefined()
+    expect(settings.providers[1].lastValidationFailure).toBeUndefined()
+  })
+
   it('serializes concurrent mutations without losing writes', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 

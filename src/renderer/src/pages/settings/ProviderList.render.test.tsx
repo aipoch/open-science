@@ -131,6 +131,23 @@ describe('ProviderList', () => {
     expect(container.textContent).toContain('Key needs re-entry')
   })
 
+  it('flags a provider whose last test failed with the reason', () => {
+    renderList([
+      provider({ lastValidatedAt: 1, lastValidationFailure: { at: 2, category: 'auth' } })
+    ])
+
+    expect(container.textContent).toContain('authentication rejected')
+  })
+
+  it('does not flag a provider whose latest validation succeeded', () => {
+    // A stale failure older than the last success is not a warning.
+    renderList([
+      provider({ lastValidatedAt: 5, lastValidationFailure: { at: 2, category: 'auth' } })
+    ])
+
+    expect(container.textContent).not.toContain('Test failed')
+  })
+
   it('shows only the model for a local Claude provider and never a key row', () => {
     renderList([
       provider({

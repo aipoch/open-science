@@ -1,4 +1,4 @@
-import type { ClaudeInfo, ProviderType } from '../../shared/settings'
+import type { ClaudeInfo, ProviderType, ProviderValidationFailure } from '../../shared/settings'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { OfficialVendorId } from '../../shared/provider-registry'
 
@@ -23,6 +23,9 @@ export type StoredProvider = {
   keyRef?: string
   keyMask?: string
   lastValidatedAt?: number
+  // Recorded when a validation fails; cleared on the next success or a credential change. Kept so the
+  // "unverified" warning and the model-picker gating survive a restart.
+  lastValidationFailure?: ProviderValidationFailure
 }
 
 // The whole settings.json document.

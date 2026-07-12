@@ -1,7 +1,8 @@
-import { Pencil, PlugZap, Trash2 } from 'lucide-react'
+import { Pencil, PlugZap, TriangleAlert, Trash2 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
-import type { ProviderView } from '../../../../shared/settings'
+import type { ProviderValidationFailure, ProviderView } from '../../../../shared/settings'
+import { providerValidationFailed } from '../../../../shared/settings'
 import { getOfficialVendor } from '../../../../shared/provider-registry'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -26,6 +27,24 @@ type IconActionButtonProps = {
   onClick: () => void
   disabled?: boolean
   danger?: boolean
+}
+
+// Concise, actionable reason for a failed connection test, shown on the unverified warning.
+const describeValidationFailure = (failure: ProviderValidationFailure): string => {
+  switch (failure.category) {
+    case 'auth':
+      return 'Test failed: authentication rejected — check the API key.'
+    case 'network':
+      return 'Test failed: could not reach the endpoint — check the base URL/connection.'
+    case 'bad-url':
+      return 'Test failed: the base URL looks invalid.'
+    case 'model-not-found':
+      return 'Test failed: the configured model was not found.'
+    case 'timeout':
+      return 'Test failed: the connection timed out.'
+    default:
+      return failure.message ? `Test failed: ${failure.message}` : 'Connection test failed.'
+  }
 }
 
 // Human label for a provider type badge: the vendor name for official providers, else a type name.
@@ -93,6 +112,11 @@ const ProviderList = ({
         {providers.map((provider) => {
           const isActiveSource = provider.id === activeProviderId
           const isBusy = provider.id === busyProviderId
+          // A failed test flags the provider as unverified: it shows a warning here and is excluded
+          // from the model pickers until a later test passes.
+          const failure = providerValidationFailed(provider)
+            ? provider.lastValidationFailure
+            : undefined
           // The provider sourcing the selected model (and the last remaining one) can't be deleted:
           // removing it would leave no model to run, so its delete action stays disabled.
           const canDelete = !isActiveSource && providers.length > 1
@@ -112,6 +136,23 @@ const ProviderList = ({
                       />
                       {describeType(provider)}
                     </span>
+                    {failure ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span
+                            className="inline-flex shrink-0 text-amber-500"
+                            aria-label={describeValidationFailure(failure)}
+                          >
+                            <TriangleAlert
+                              className="size-3.5"
+                              strokeWidth={2}
+                              aria-hidden="true"
+                            />
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>{describeValidationFailure(failure)}</TooltipContent>
+                      </Tooltip>
+                    ) : null}
                   </div>
                   <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
                     {provider.type === 'claude-default' ? (
@@ -135,6 +176,11 @@ const ProviderList = ({
                         ) : null}
                       </>
                     )}
+                    {failure ? (
+                      <div className="text-amber-600 dark:text-amber-500">
+                        {describeValidationFailure(failure)}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </div>
