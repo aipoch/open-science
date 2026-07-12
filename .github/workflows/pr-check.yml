@@ -7,6 +7,13 @@ on:
     branches:
       - main
     types: [opened, synchronize, reopened]
+    # Docs-only PRs don't affect lint/typecheck/test/build, so don't spend runners on them.
+    # `main` isn't branch-protected, so a skipped check can't block the merge.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
 
 # Cancel a still-running check from the same PR when a new push arrives, to save CI minutes.
 concurrency:
