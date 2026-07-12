@@ -30,6 +30,13 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
+    # Job-level permissions fully override the workflow-level block, so contents:write is restated
+    # alongside the two scopes the SLSA attestation needs: id-token to sign via Sigstore OIDC, and
+    # attestations to write the provenance record.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Download all build artifacts
         uses: actions/download-artifact@v8
@@ -47,6 +54,21 @@ jobs:
             sha256sum "${files[@]}" > SHA256SUMS.txt
             cat SHA256SUMS.txt
           fi
+
+      # Sign a SLSA build-provenance attestation for the exact installer bytes about to be published,
+      # so users can prove each download was built by this workflow from this commit (verify with
+      # `gh attestation verify <file> --repo <owner>/<repo>`). SHA256SUMS.txt is excluded — it's a
+      # digest list, not a build product. The attestation lives in the repo's Attestations, not as a
+      # Release asset, so it doesn't clutter the download list.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            artifacts/*.dmg
+            artifacts/*.zip
+            artifacts/*.exe
+            artifacts/*.AppImage
+            artifacts/*.deb
 
       # Attach user-facing artifacts + checksums: installers (dmg/exe/AppImage/deb) and portable
       # zips (mac + win). Auto-update metadata (latest*.yml / blockmap) is intentionally NOT published:

@@ -61,6 +61,8 @@ The fastest path if you just want to use it — no Node, no Git, nothing to buil
 
 3. Open the downloaded file and install it like any other app.
 
+> Security-conscious? Each release ships a `SHA256SUMS.txt` and a signed build-provenance attestation, so you can confirm a download is intact **and** was built by this repo's CI. See [Verifying your download](SECURITY.md#verifying-your-download).
+
 Builds aren't signed with a paid Apple/Microsoft certificate yet, so on first launch your OS shows an "unverified developer" (macOS) or "unknown publisher" (Windows) prompt — this is expected, not a corrupted download. See the [macOS Gatekeeper note](#building-from-source-macos-gatekeeper-note) for the one-time steps to open it. Want the bleeding edge instead? The **Nightly (latest main)** pre-release tracks the newest commits.
 
 > To run agent sessions, the app uses your existing Claude Code login (reused automatically if you have one) or a custom model gateway you set up in-app — it manages this auth in its own config dir and ignores `ANTHROPIC_*` variables from your shell.
