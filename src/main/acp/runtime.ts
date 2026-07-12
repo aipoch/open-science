@@ -606,6 +606,7 @@ class AcpRuntime {
       textLength: request.text?.length ?? 0
     })
     let artifactRun: ActiveArtifactRun | undefined
+    let artifactEmitted = false
 
     try {
       // Create a fresh run context before prompting so MCP writes can be attributed to this turn.
@@ -631,6 +632,7 @@ class AcpRuntime {
         if (message.kind === 'stop') {
           // Emit artifact metadata before stop so the renderer can attach files to the finished message.
           await this.emitArtifactRunEvent(request.sessionId, artifactRun)
+          artifactEmitted = true
           log.info('prompt stopped', {
             sessionId: request.sessionId,
             stopReason: message.stopReason
@@ -662,6 +664,18 @@ class AcpRuntime {
       })
       throw error
     } finally {
+      // A turn that fails or is aborted never reaches the stop branch; still surface any files it
+      // wrote so they are attached to a message instead of being orphaned in the pending directory.
+      if (!artifactEmitted) {
+        try {
+          await this.emitArtifactRunEvent(request.sessionId, artifactRun)
+        } catch (error) {
+          log.error('artifact emit after prompt failure failed', {
+            sessionId: request.sessionId,
+            error
+          })
+        }
+      }
       try {
         await this.clearArtifactRun(artifactRun)
       } catch (error) {

@@ -1204,6 +1204,83 @@ describe('ACP runtime session management', () => {
     ])
   })
 
+  it('emits an artifact event for pending files even when the prompt fails', async () => {
+    const storageRoot = await createTemporaryRoot()
+    const repository = new ArtifactRepository(storageRoot)
+    const process = new FakeAgentProcess()
+    const events: Array<{
+      kind: string
+      sessionId?: string
+      runId?: string
+      artifactClaimId?: string
+      artifactCount?: number
+    }> = []
+    let currentRunFile = ''
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: async () => {
+        const context = JSON.parse(await readFile(currentRunFile, 'utf8')) as { runId: string }
+
+        await repository.writePendingFile({
+          projectName: 'default-project',
+          sessionId: getEnvValue(
+            fakeAgent.newSessions[0].mcpServers[0],
+            'OPEN_SCIENCE_ARTIFACT_SESSION_ID'
+          ),
+          runId: context.runId,
+          filename: 'result.txt',
+          source: { kind: 'inline', content: 'artifact content', encoding: 'utf8' }
+        })
+
+        // Fail the turn after the file was written so it never reaches a clean stop.
+        throw new Error('agent exploded mid-turn')
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      artifacts: {
+        storageRoot,
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        mcpCommand: '/usr/bin/electron',
+        repository
+      },
+      callbacks: {
+        onEvent: (event) => {
+          if (event.kind === 'artifact') {
+            events.push({
+              kind: event.kind,
+              sessionId: event.sessionId,
+              runId: event.runId,
+              artifactClaimId: event.artifactClaimId,
+              artifactCount: event.artifacts?.length
+            })
+          }
+        }
+      }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    currentRunFile = getEnvValue(
+      fakeAgent.newSessions[0].mcpServers[0],
+      'OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE'
+    )
+    await expect(
+      runtime.sendPrompt({ sessionId: 'remote-session-1', text: 'make a file' })
+    ).rejects.toThrow()
+
+    expect(events).toEqual([
+      {
+        kind: 'artifact',
+        sessionId: 'remote-session-1',
+        runId: expect.stringMatching(/^artifact-run-/),
+        artifactClaimId: expect.stringMatching(/^artifact-claim-/),
+        artifactCount: 1
+      }
+    ])
+  })
+
   it('cleans up prompt in-flight state when artifact run activation fails', async () => {
     const storageRoot = await createTemporaryRoot()
     const blockedStorageRoot = join(storageRoot, 'storage-file')
