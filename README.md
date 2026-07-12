@@ -40,9 +40,24 @@
 
 ## Quick Start
 
-Two ways to get the app running — pick whichever matches how you work.
+Three ways to get the app running — pick whichever matches how you work.
 
-### Option 1 — Hand it to an AI agent
+### Option 1 — Download a prebuilt app (no toolchain required)
+
+The fastest path if you just want to use it: grab the latest installer from the [**Releases**](https://github.com/aipoch/open-science/releases/latest) page.
+
+| Platform | Download |
+| --- | --- |
+| macOS (Apple Silicon) | `open-science-<version>-mac-arm64.dmg` |
+| macOS (Intel) | `open-science-<version>-mac-x64.dmg` |
+| Windows (x64) | `open-science-<version>-win-x64-setup.exe` |
+| Linux | `open-science-<version>-linux-x86_64.AppImage` or `open-science_<version>_amd64.deb` |
+
+Builds aren't signed with a paid Apple/Microsoft certificate yet, so on first launch your OS shows an "unverified developer" (macOS) or "unknown publisher" (Windows) prompt — this is expected, not a corrupted download. See the [macOS Gatekeeper note](#building-from-source-macos-gatekeeper-note) for the one-time steps to open it. Want the bleeding edge instead? The **Nightly (latest main)** pre-release tracks the newest commits.
+
+> To run agent sessions, the app uses your existing Claude Code login (reused automatically if you have one) or a custom model gateway you set up in-app — it manages this auth in its own config dir and ignores `ANTHROPIC_*` variables from your shell.
+
+### Option 2 — Hand it to an AI agent
 
 If you use a coding agent (Claude Code, Codex, WorkBuddy, Cursor, …), one sentence is enough — the agent will clone, install, and launch it on its own:
 
@@ -50,7 +65,7 @@ If you use a coding agent (Claude Code, Codex, WorkBuddy, Cursor, …), one sent
 
 That's genuinely all the context an agent needs today: it's a standard Electron + npm project, `npm install` handles every setup step (Prisma client generation, native Electron dependencies) automatically via `postinstall`, and `npm run dev` opens the desktop window.
 
-### Option 2 — Manual setup
+### Option 3 — Run from source
 
 Prerequisites: [Node.js](https://nodejs.org/) (LTS or newer) with npm, and Git. Optional: `python3` on your `PATH` if you want the built-in notebook kernel to execute code.
 
@@ -71,7 +86,7 @@ npm run dev
 
 > **Tip:** on a cold first launch the window occasionally fails to appear even though the process is running — just `Ctrl+C` and run `npm run dev` again.
 
-To run agent sessions inside the app, the bundled Claude ACP agent picks up your existing Claude Code login (or `ANTHROPIC_API_KEY`) from your environment. To package an installable app instead of running from source, see [Getting Started](#getting-started).
+To run agent sessions inside the app, sign in with your Claude Code login (reused automatically if you already have one) or configure a custom model gateway in the app's settings; the app keeps this auth in its own config dir rather than reading `ANTHROPIC_*` variables from your shell. To package an installable app instead of running from source, see [Getting Started](#getting-started).
 
 
 ## Why
@@ -120,7 +135,7 @@ So let's be direct about where each project actually stands, instead of hand-wav
 | **Compute**                       | SSH/HPC access plus Modal for on-demand GPUs                              | Pluggable compute fabric — any HPC scheduler, any cloud GPU provider (planned)                                                                                          |
 | **Reviewer / verification agent** | Yes, shipping today                                                       | Yes, planned as an open, inspectable layer ([Phase 4](#roadmap))                                                                                                        |
 | **Customization**                 | Configure agents inside Anthropic's product surface                       | Every layer — gateway, skill runtime, compute broker, reviewer — is inspectable and replaceable                                                                         |
-| **Maturity**                      | A shipping, polished product, in use today                                | Pre-alpha: architecture and vision stage (see [Roadmap](#roadmap))                                                                                                      |
+| **Maturity**                      | A shipping, polished product, in use today                                | Early alpha: working core loop with downloadable desktop builds; the differentiating layers are still ahead (see [Roadmap](#roadmap))                                                                                                      |
 
 The Maturity row matters most, so we won't bury it: if you need a working AI research assistant today, Claude Science is the more capable choice. Open Science's advantage isn't feature parity yet — it's the structural ceiling underneath.
 
@@ -364,10 +379,10 @@ Apache License 2.0 — see [LICENSE](LICENSE).
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=aipoch%2Fopen-science&type=date&legend=top-left">
+<a href="https://star-history.com/#aipoch/open-science&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=aipoch/open-science&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=aipoch/open-science&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=aipoch/open-science&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=aipoch/open-science&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=aipoch/open-science&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=aipoch/open-science&type=Date" />
  </picture>
 </a>

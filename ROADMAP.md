@@ -51,6 +51,7 @@ The current codebase is an early, working implementation of the first stretch of
 - ✅ Artifact file storage organized by session / message / run
 - ✅ Rich in-app file previews (CSV, FASTA, HTML, image, JSON, Markdown, plain text, notebook cells)
 - ✅ Attachment uploads and a permission-approval UI for tool calls
+- ✅ Packaged desktop installers for macOS (Apple Silicon + Intel), Windows, and Linux, plus a nightly build channel off `main`
 
 **Not yet built — the hardest, most differentiating work is still ahead:**
 - ⬜ A model-agnostic gateway; the runtime today is Claude-specific via ACP, not yet multi-LLM
@@ -97,7 +98,7 @@ flowchart LR
 ```
 
 - **Phase 0 — Vision & Architecture (done).** This roadmap, the [PRD](docs/PRD.md), the design system, and initial community formation.
-- **Phase 1 — Core Loop (in progress).** Desktop shell, single-agent runtime, project/session persistence, a single execution kernel, artifact storage, and rich in-app previews — all shipping today. Still open in this phase: a model-agnostic gateway, a CLI/SDK entry point, and a file-based skill runtime.
+- **Phase 1 — Core Loop (in progress).** Desktop shell, single-agent runtime, project/session persistence, a single execution kernel, artifact storage, rich in-app previews, and packaged installers for macOS/Windows/Linux — all shipping today. Still open in this phase: a model-agnostic gateway, a CLI/SDK entry point, and a file-based skill runtime.
 - **Phase 2 — Reproducibility & Multi-Agent.** Artifact versioning with a full provenance chain; additional kernels (R, a REPL control plane) and environment management; specialist sub-agents alongside the generalist coordinator. This is the project's core differentiation from a generic coding agent, and the highest-priority phase for contributors who want to make the biggest structural dent.
 - **Phase 3 — Knowledge & Connectors.** A skills commons with versioned, forkable skills and lexical discovery; pre-built connectors to open scientific databases and literature; savable "specialist" roles (instructions + skills + connectors + permissions bundled together).
 - **Phase 4 — Compute & Trust.** Remote compute as a first-class primitive (SSH/Slurm/cloud GPU) with async job notifications and sub-agent fan-out; a reviewer/verifier agent; the full security stack (scoped permissions, network allowlisting, directory-level file sandboxing, a credential vault); a pluggable multi-agent-framework backend so the runtime isn't locked to one agent implementation.
