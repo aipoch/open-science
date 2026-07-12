@@ -63,6 +63,8 @@ docs/internal/
 local/
 
 # Agent and AI assistant local state
+.codegraph/
+.mcp.json
 .codex/
 .claude/
 .ai/

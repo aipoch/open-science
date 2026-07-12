@@ -44,6 +44,7 @@ The current codebase is an early, working implementation of the first stretch of
 
 **Working today:**
 - ✅ Agent runtime with a full plan/execute/tool-call loop, wrapped over the Agent Client Protocol (ACP)
+- ✅ Multi-provider model configuration with per-model selection — built-in vendors (Claude, DeepSeek, GLM, MiniMax, Kimi) plus custom gateways and local Claude, all over Anthropic-compatible endpoints, with live catalog refresh and mid-run switching
 - ✅ Electron + React + TypeScript desktop shell with a shadcn-based design system
 - ✅ Parallel multi-session workspace with typed tool-activity visualization (diffs, code blocks, web search rows)
 - ✅ Project layer with per-project, per-file session storage, migration from the legacy single-file format, and a home page
@@ -54,7 +55,7 @@ The current codebase is an early, working implementation of the first stretch of
 - ✅ Packaged desktop installers for macOS (Apple Silicon + Intel), Windows, and Linux, plus a nightly build channel off `main`
 
 **Not yet built — the hardest, most differentiating work is still ahead:**
-- ⬜ A model-agnostic gateway; the runtime today is Claude-specific via ACP, not yet multi-LLM
+- ⬜ A truly model-agnostic gateway; multi-provider selection ships today (see below), but every provider is reached over an Anthropic-compatible endpoint — native non-Anthropic protocols (e.g. OpenAI's own API) are not yet wired
 - ⬜ Artifact versioning and a provenance chain (code + execution log + dependency graph + environment snapshot + conversation context) tied to every output
 - ⬜ Additional execution kernels (R, a REPL control plane) and Conda-style environment management
 - ⬜ A skills commons and pre-built life-science data connectors
@@ -70,7 +71,7 @@ The product is organized into cooperating layers (see [`docs/PRD.md`](docs/PRD.m
 | Layer | Target capability | Current state | Status |
 | --- | --- | --- | --- |
 | **Agent Harness & Shell** | Planning/execution/reflection loop, multi-session UI, skill discovery, async notifications | Single-agent loop via ACP, parallel session mounting, typed tool-activity visualization; no skill discovery or notification bus yet | 🟡 |
-| **Model Layer** | Pluggable gateway across model vendors and locally-hosted models, per-agent routing | Not implemented; the runtime is wired to one agent backend today | ⬜ |
+| **Model Layer** | Pluggable gateway across model vendors and locally-hosted models, per-agent routing | Multi-provider config with per-model selection (built-in vendors + custom gateways + local Claude), but every provider is reached over an Anthropic-compatible endpoint; no native non-Anthropic protocols or per-agent routing yet | 🟡 |
 | **Project & Session Organization** | Durable per-project workspaces, session history, fast resume | Project CRUD, per-project/per-file session storage with migration, home page with recents | ✅ |
 | **Multi-Kernel Execution Engine** | Interchangeable Python / R / shell kernels with cross-kernel handoff | One persistent Python kernel with durable run history; no R or REPL control-plane kernel yet | 🟡 |
 | **Environment Management** | Create, switch, snapshot, and register reproducible compute environments | Uses a single managed runtime directory; no environment CRUD or snapshotting | ⬜ |
@@ -98,7 +99,7 @@ flowchart LR
 ```
 
 - **Phase 0 — Vision & Architecture (done).** This roadmap, the [PRD](docs/PRD.md), the design system, and initial community formation.
-- **Phase 1 — Core Loop (in progress).** Desktop shell, single-agent runtime, project/session persistence, a single execution kernel, artifact storage, rich in-app previews, and packaged installers for macOS/Windows/Linux — all shipping today. Still open in this phase: a model-agnostic gateway, a CLI/SDK entry point, and a file-based skill runtime.
+- **Phase 1 — Core Loop (in progress).** Desktop shell, single-agent runtime, project/session persistence, a single execution kernel, artifact storage, rich in-app previews, and packaged installers for macOS/Windows/Linux — all shipping today. Multi-provider model configuration with per-model selection also ships now, though only across Anthropic-compatible endpoints. Still open in this phase: a truly model-agnostic gateway (native non-Anthropic protocols), a CLI/SDK entry point, and a file-based skill runtime.
 - **Phase 2 — Reproducibility & Multi-Agent.** Artifact versioning with a full provenance chain; additional kernels (R, a REPL control plane) and environment management; specialist sub-agents alongside the generalist coordinator. This is the project's core differentiation from a generic coding agent, and the highest-priority phase for contributors who want to make the biggest structural dent.
 - **Phase 3 — Knowledge & Connectors.** A skills commons with versioned, forkable skills and lexical discovery; pre-built connectors to open scientific databases and literature; savable "specialist" roles (instructions + skills + connectors + permissions bundled together).
 - **Phase 4 — Compute & Trust.** Remote compute as a first-class primitive (SSH/Slurm/cloud GPU) with async job notifications and sub-agent fan-out; a reviewer/verifier agent; the full security stack (scoped permissions, network allowlisting, directory-level file sandboxing, a credential vault); a pluggable multi-agent-framework backend so the runtime isn't locked to one agent implementation.
