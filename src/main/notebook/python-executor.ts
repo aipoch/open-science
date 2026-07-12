@@ -9,6 +9,16 @@ import type {
   NotebookExecutor
 } from './runtime-service'
 
+// Longest shutdown() waits for the killed interpreter to actually exit before giving up, so a
+// wedged child can never hang app teardown.
+const SHUTDOWN_EXIT_GRACE_MS = 5_000
+
+// Resolves after ms; the timer is unref'd so the fallback alone never keeps the process alive.
+const delay = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms).unref?.()
+  })
+
 // Small stdin/stdout bridge that keeps Python globals alive across executions in one process.
 const PYTHON_BRIDGE = String.raw`
 import json
@@ -216,11 +226,23 @@ class NotebookPythonExecutor implements NotebookExecutor {
     this.readline?.close()
     this.readline = undefined
 
-    if (this.child && !this.child.killed) {
-      this.child.kill()
+    const child = this.child
+    this.child = undefined
+
+    if (child && !child.killed) {
+      // Wait for the OS to actually reap the process before returning. On Windows the file handles
+      // the interpreter holds under the cwd/runtime/data dirs are released only once it has fully
+      // exited, so a caller (or test) that deletes those dirs right after shutdown would otherwise
+      // hit EBUSY. The race guards against a wedged process never emitting 'exit'.
+      const exited = new Promise<void>((resolve) => {
+        child.once('exit', () => resolve())
+        child.once('close', () => resolve())
+      })
+
+      child.kill()
+      await Promise.race([exited, delay(SHUTDOWN_EXIT_GRACE_MS)])
     }
 
-    this.child = undefined
     this.currentCwd = undefined
     this.passthroughStdout = []
     this.passthroughStderr = []

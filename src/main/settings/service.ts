@@ -294,7 +294,11 @@ class SettingsService {
         : undefined
 
     if (!modelsUrl) {
-      return { ok: false, category: 'unknown', message: 'This provider has no model-list endpoint.' }
+      return {
+        ok: false,
+        category: 'unknown',
+        message: 'This provider has no model-list endpoint.'
+      }
     }
 
     const result = await listProviderModels({

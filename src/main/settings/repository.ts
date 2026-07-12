@@ -59,7 +59,9 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
   const lastValidatedAt = asNumber(value.lastValidatedAt)
   // Keep only a clean list of non-empty string model ids.
   const fetchedModels = Array.isArray(value.fetchedModels)
-    ? value.fetchedModels.filter((entry): entry is string => typeof entry === 'string' && entry !== '')
+    ? value.fetchedModels.filter(
+        (entry): entry is string => typeof entry === 'string' && entry !== ''
+      )
     : undefined
 
   if (baseUrl) provider.baseUrl = baseUrl

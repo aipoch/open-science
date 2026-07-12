@@ -27,7 +27,9 @@ const PLIST_BUDDY = '/usr/libexec/PlistBuddy'
 
 const readKey = (key) => {
   try {
-    return execFileSync(PLIST_BUDDY, ['-c', `Print :${key}`, plistPath], { encoding: 'utf8' }).trim()
+    return execFileSync(PLIST_BUDDY, ['-c', `Print :${key}`, plistPath], {
+      encoding: 'utf8'
+    }).trim()
   } catch {
     return ''
   }

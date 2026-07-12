@@ -1,4 +1,4 @@
-import { join } from 'node:path'
+import { posix, win32 } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -45,12 +45,12 @@ describe('claude-detect', () => {
     const npmBin = '/home/user/.nvm/bin'
     const result = await detectClaude(
       createDeps(
-        { [join(npmBin, 'claude')]: '2.2.0' },
+        { [posix.join(npmBin, 'claude')]: '2.2.0' },
         { resolveNpmBinDirs: () => Promise.resolve([npmBin]) }
       )
     )
 
-    expect(result).toEqual({ found: true, path: join(npmBin, 'claude'), version: '2.2.0' })
+    expect(result).toEqual({ found: true, path: posix.join(npmBin, 'claude'), version: '2.2.0' })
   })
 
   it('skips a path that exists but cannot report a version', async () => {
@@ -86,8 +86,8 @@ describe('claude-detect', () => {
   })
 
   describe('windows', () => {
-    // Windows uses ; as the PATH delimiter and back-slash paths. join() on a posix test host emits
-    // forward slashes, so assert on the pieces produced by join() rather than literal separators.
+    // platform: 'win32' makes the module use win32 path semantics (';' delimiter, back-slash joins)
+    // regardless of the host, so assert with win32.join to get the same separators the code produces.
     const winDeps = (
       installed: Record<string, string>,
       overrides: Partial<ClaudeDetectDeps> = {}
@@ -106,33 +106,37 @@ describe('claude-detect', () => {
     it('probes %APPDATA%\\npm and %LOCALAPPDATA%\\Programs\\claude, not the Unix dirs', async () => {
       const dirs = await collectCandidateDirs(winDeps({}))
 
-      expect(dirs).toContain(join('C:\\Users\\me\\AppData\\Roaming', 'npm'))
-      expect(dirs).toContain(join('C:\\Users\\me\\AppData\\Local', 'Programs', 'claude'))
-      expect(dirs).toContain(join('C:\\Users\\me', '.local', 'bin'))
+      expect(dirs).toContain(win32.join('C:\\Users\\me\\AppData\\Roaming', 'npm'))
+      expect(dirs).toContain(win32.join('C:\\Users\\me\\AppData\\Local', 'Programs', 'claude'))
+      expect(dirs).toContain(win32.join('C:\\Users\\me', '.local', 'bin'))
       expect(dirs).not.toContain('/opt/homebrew/bin')
     })
 
     it('finds claude.cmd ahead of the bare name', async () => {
-      const npmDir = join('C:\\Users\\me\\AppData\\Roaming', 'npm')
-      const result = await detectClaude(winDeps({ [join(npmDir, 'claude.cmd')]: '2.3.0' }))
+      const npmDir = win32.join('C:\\Users\\me\\AppData\\Roaming', 'npm')
+      const result = await detectClaude(winDeps({ [win32.join(npmDir, 'claude.cmd')]: '2.3.0' }))
 
-      expect(result).toEqual({ found: true, path: join(npmDir, 'claude.cmd'), version: '2.3.0' })
+      expect(result).toEqual({
+        found: true,
+        path: win32.join(npmDir, 'claude.cmd'),
+        version: '2.3.0'
+      })
     })
 
     it('finds claude.exe when no .cmd shim exists', async () => {
-      const dir = join('C:\\Users\\me\\AppData\\Local', 'Programs', 'claude')
-      const result = await detectClaude(winDeps({ [join(dir, 'claude.exe')]: '2.4.0' }))
+      const dir = win32.join('C:\\Users\\me\\AppData\\Local', 'Programs', 'claude')
+      const result = await detectClaude(winDeps({ [win32.join(dir, 'claude.exe')]: '2.4.0' }))
 
-      expect(result).toEqual({ found: true, path: join(dir, 'claude.exe'), version: '2.4.0' })
+      expect(result).toEqual({ found: true, path: win32.join(dir, 'claude.exe'), version: '2.4.0' })
     })
 
     it('still probes the extensionless catch-all name', async () => {
-      // Place it in a well-known dir (not PATH) so the assertion is independent of the host's PATH
-      // delimiter, which is ':' on the posix machines this test suite also runs on.
-      const npmDir = join('C:\\Users\\me\\AppData\\Roaming', 'npm')
-      const result = await detectClaude(winDeps({ [join(npmDir, 'claude')]: '2.5.0' }))
+      // Place it in a well-known dir (not PATH) so the assertion does not depend on how PATH is
+      // split; the win32 delimiter is exercised by the collectCandidateDirs case above.
+      const npmDir = win32.join('C:\\Users\\me\\AppData\\Roaming', 'npm')
+      const result = await detectClaude(winDeps({ [win32.join(npmDir, 'claude')]: '2.5.0' }))
 
-      expect(result).toEqual({ found: true, path: join(npmDir, 'claude'), version: '2.5.0' })
+      expect(result).toEqual({ found: true, path: win32.join(npmDir, 'claude'), version: '2.5.0' })
     })
   })
 })

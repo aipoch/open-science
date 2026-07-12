@@ -255,12 +255,13 @@ describe('session persistence repository (per-session files)', () => {
   })
 
   it('keeps session data in ~/.open-science under the user home directory by default', () => {
-    expect(getSessionPersistenceDir('/Users/example')).toBe('/Users/example/.open-science')
+    // Build the expectation with join() so the separator matches the host the test runs on.
+    expect(getSessionPersistenceDir('/Users/example')).toBe(join('/Users/example', '.open-science'))
   })
 
   it('uses the isolated dev directory name when requested', () => {
     expect(getSessionPersistenceDir('/Users/example', DEV_SESSION_DIR_NAME)).toBe(
-      '/Users/example/.open-science-project'
+      join('/Users/example', '.open-science-project')
     )
   })
 })

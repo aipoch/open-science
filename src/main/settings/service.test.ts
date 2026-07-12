@@ -420,7 +420,10 @@ describe('SettingsService: official vendors', () => {
 
   it('reports a refresh failure without changing the bundled catalog', async () => {
     const service = createService()
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 401, json: () => Promise.resolve({}) }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ status: 401, json: () => Promise.resolve({}) })
+    )
 
     const created = (
       await service.upsertProvider({

@@ -234,8 +234,20 @@ describe('selectProviderModelOptions', () => {
     ])
 
     expect(options).toEqual([
-      { providerId: 'off', providerName: 'GLM', providerType: 'official', vendorId: 'zhipu', model: 'glm-5.2' },
-      { providerId: 'off', providerName: 'GLM', providerType: 'official', vendorId: 'zhipu', model: 'glm-4.7' }
+      {
+        providerId: 'off',
+        providerName: 'GLM',
+        providerType: 'official',
+        vendorId: 'zhipu',
+        model: 'glm-5.2'
+      },
+      {
+        providerId: 'off',
+        providerName: 'GLM',
+        providerType: 'official',
+        vendorId: 'zhipu',
+        model: 'glm-4.7'
+      }
     ])
   })
 

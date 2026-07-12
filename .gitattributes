@@ -1,0 +1,4 @@
+# Normalize line endings to LF in the working tree on every platform. Without this, the Windows CI
+# runner (core.autocrlf=true) checks text files out as CRLF, and prettier then flags the trailing
+# CR ("Delete ␍") on files like build/*.cjs. text=auto lets git leave detected-binary files alone.
+* text=auto eol=lf
