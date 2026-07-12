@@ -21,6 +21,8 @@ const toUpsertRequest = (value: ProviderFormValue): UpsertProviderRequest => ({
   name: value.name,
   baseUrl: value.baseUrl,
   model: value.model,
+  vendorId: value.vendorId,
+  region: value.region,
   key: value.key || undefined
 })
 

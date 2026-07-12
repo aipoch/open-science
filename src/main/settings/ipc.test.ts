@@ -107,7 +107,7 @@ describe('settings IPC handlers', () => {
 
     await invoke('settings:set-active-provider', { id: 'p1' })
 
-    expect(service.setActiveProvider).toHaveBeenCalledWith('p1')
+    expect(service.setActiveProvider).toHaveBeenCalledWith('p1', undefined)
     expect(onActiveProviderChanged).toHaveBeenCalledOnce()
   })
 

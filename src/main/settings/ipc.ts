@@ -3,6 +3,7 @@ import { BrowserWindow, ipcMain } from 'electron'
 import type {
   DeleteProviderRequest,
   InstallClaudeRequest,
+  RefreshProviderModelsRequest,
   SetActiveProviderRequest,
   UpsertProviderRequest,
   ValidateProviderRequest
@@ -61,7 +62,7 @@ const registerSettingsIpcHandlers = ({
   ipcMain.handle(
     'settings:set-active-provider',
     async (_event, request: SetActiveProviderRequest) => {
-      const snapshot = await service.setActiveProvider(request.id)
+      const snapshot = await service.setActiveProvider(request.id, request.model)
 
       // Switching providers requires a fresh agent process so the new credentials take effect.
       onActiveProviderChanged?.()
@@ -71,6 +72,10 @@ const registerSettingsIpcHandlers = ({
   )
   ipcMain.handle('settings:validate-provider', (_event, request: ValidateProviderRequest) =>
     service.validateProvider(request)
+  )
+  ipcMain.handle(
+    'settings:refresh-provider-models',
+    (_event, request: RefreshProviderModelsRequest) => service.refreshProviderModels(request)
   )
   ipcMain.handle('settings:mark-onboarding-complete', () => service.markOnboardingComplete())
 }

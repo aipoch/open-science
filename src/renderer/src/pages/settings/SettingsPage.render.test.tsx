@@ -73,6 +73,32 @@ describe('SettingsPage layout', () => {
     expect(document.body.textContent).toContain('Providers')
   })
 
+  it('opens Add provider as a sub-page with a back control, and returns on back', () => {
+    act(() => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+
+    const clickByText = (text: string): void => {
+      const button = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (candidate) => candidate.textContent?.trim() === text
+      )
+      act(() => button?.click())
+    }
+
+    clickByText('Add provider')
+
+    // The sub-page shows a back control and the provider-type dropdown, hiding the Claude section.
+    expect(document.body.querySelector('[aria-label="Back to providers"]')).not.toBeNull()
+    expect(document.body.querySelector('[aria-label="Provider type"]')).not.toBeNull()
+    expect(document.body.querySelector('section[aria-label="Claude"]')).toBeNull()
+
+    // Going back restores the provider list view.
+    const back = document.body.querySelector<HTMLButtonElement>('[aria-label="Back to providers"]')
+    act(() => back?.click())
+    expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
+    expect(document.body.querySelector('[aria-label="Provider type"]')).toBeNull()
+  })
+
   it('switches to the General panel and shows the diagnostic log file', async () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)

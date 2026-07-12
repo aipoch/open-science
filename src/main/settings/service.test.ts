@@ -295,6 +295,175 @@ describe('SettingsService: preflight & spawn config', () => {
   })
 })
 
+describe('SettingsService: official vendors', () => {
+  it('stores vendor/region + key and exposes the vendor catalog in the view', async () => {
+    const service = createService()
+
+    const snapshot = await service.upsertProvider({
+      type: 'official',
+      name: 'MiniMax',
+      vendorId: 'minimax',
+      region: 'china',
+      key: 'sk-mm'
+    })
+
+    const view = snapshot.providers[0]
+    expect(view).toMatchObject({
+      type: 'official',
+      vendorId: 'minimax',
+      region: 'china',
+      hasKey: true
+    })
+    // Catalog comes from the registry, not the user; base URL is not stored on the record.
+    expect(view.models).toContain('MiniMax-M3[1m]')
+    expect(view.baseUrl).toBeUndefined()
+
+    const stored = (await repository.getSettings()).providers[0]
+    expect(stored.keyRef?.startsWith('enc:')).toBe(true)
+    expect(JSON.stringify(stored)).not.toContain('sk-mm')
+  })
+
+  it('rejects an official provider with no vendor or no key', async () => {
+    const service = createService()
+
+    await expect(
+      service.upsertProvider({ type: 'official', name: 'No vendor', key: 'k' })
+    ).rejects.toThrow(/vendor is required/i)
+    await expect(
+      service.upsertProvider({ type: 'official', name: 'No key', vendorId: 'deepseek' })
+    ).rejects.toThrow(/api key is required/i)
+
+    expect((await repository.getSettings()).providers).toEqual([])
+  })
+
+  it('does not store a per-official model; the catalog + global selection cover it', async () => {
+    const service = createService()
+    const created = (
+      await service.upsertProvider({ type: 'official', name: 'GLM', vendorId: 'zhipu', key: 'k' })
+    ).providers[0]
+
+    // No model is persisted on the provider; the composer/selector picks from the registry catalog.
+    expect(created.model).toBeUndefined()
+    expect(created.models).toContain('glm-5.2')
+  })
+
+  it('activates a chosen catalog model, falling back to the default for an unknown one', async () => {
+    const service = createService()
+    const created = (
+      await service.upsertProvider({ type: 'official', name: 'GLM', vendorId: 'zhipu', key: 'k' })
+    ).providers[0]
+
+    // A model in the catalog is honored.
+    let snapshot = await service.setActiveProvider(created.id, 'glm-4.7')
+    expect(snapshot.activeModel).toBe('glm-4.7')
+
+    // An unknown model falls back to the vendor's first catalog entry.
+    snapshot = await service.setActiveProvider(created.id, 'not-a-model')
+    expect(snapshot.activeModel).toBe('glm-5.2')
+
+    // No model given also defaults to the first catalog entry.
+    snapshot = await service.setActiveProvider(created.id)
+    expect(snapshot.activeModel).toBe('glm-5.2')
+  })
+
+  it('builds spawn env from the registry base URL and the active model', async () => {
+    const service = createService()
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    const created = (
+      await service.upsertProvider({
+        type: 'official',
+        name: 'DeepSeek',
+        vendorId: 'deepseek',
+        key: 'sk-ds'
+      })
+    ).providers[0]
+    await service.setActiveProvider(created.id, 'deepseek-v4-flash')
+
+    const config = await service.resolveActiveSpawnConfig()
+
+    expect(config.envOverrides).toMatchObject({
+      ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic',
+      ANTHROPIC_AUTH_TOKEN: 'sk-ds',
+      ANTHROPIC_MODEL: 'deepseek-v4-flash'
+    })
+  })
+
+  it('refreshes models from the vendor and persists them over the bundled catalog', async () => {
+    const service = createService()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        status: 200,
+        json: () => Promise.resolve({ data: [{ id: 'deepseek-v5' }, { id: 'deepseek-v4-pro' }] })
+      })
+    )
+
+    const created = (
+      await service.upsertProvider({
+        type: 'official',
+        name: 'DeepSeek',
+        vendorId: 'deepseek',
+        key: 'k'
+      })
+    ).providers[0]
+    // Before refresh the view exposes the bundled catalog.
+    expect(created.models).toContain('deepseek-v4-pro')
+    expect(created.models).not.toContain('deepseek-v5')
+
+    const result = await service.refreshProviderModels({ providerId: created.id })
+    expect(result).toMatchObject({ ok: true, models: ['deepseek-v5', 'deepseek-v4-pro'] })
+
+    // The fetched list now backs the provider view (and persists).
+    const view = (await service.getSettingsView()).providers[0]
+    expect(view.models).toEqual(['deepseek-v5', 'deepseek-v4-pro'])
+  })
+
+  it('reports a refresh failure without changing the bundled catalog', async () => {
+    const service = createService()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 401, json: () => Promise.resolve({}) }))
+
+    const created = (
+      await service.upsertProvider({
+        type: 'official',
+        name: 'DeepSeek',
+        vendorId: 'deepseek',
+        key: 'k'
+      })
+    ).providers[0]
+
+    const result = await service.refreshProviderModels({ providerId: created.id })
+    expect(result).toMatchObject({ ok: false, category: 'auth' })
+
+    // Catalog unchanged.
+    expect((await service.getSettingsView()).providers[0].models).toContain('deepseek-v4-pro')
+  })
+
+  it('hides refresh for a vendor without a model-list endpoint', async () => {
+    const service = createService()
+    const created = (
+      await service.upsertProvider({ type: 'official', name: 'GLM', vendorId: 'zhipu', key: 'k' })
+    ).providers[0]
+
+    const result = await service.refreshProviderModels({ providerId: created.id })
+    expect(result.ok).toBe(false)
+    expect(result.message).toMatch(/no model-list endpoint/i)
+  })
+
+  it('validates an official draft against the vendor endpoint', async () => {
+    const service = createService()
+    const fetchMock = vi.fn().mockResolvedValue({ status: 200 })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await service.validateProvider({
+      draft: { type: 'official', vendorId: 'deepseek', key: 'sk-ds' }
+    })
+
+    expect(result.ok).toBe(true)
+    // The probe hits the registry base URL (+ the client's /v1/messages suffix).
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/anthropic/v1/messages')
+  })
+})
+
 describe('SettingsService: onboarding', () => {
   it('marks onboarding complete and surfaces it in the snapshot', async () => {
     const service = createService()

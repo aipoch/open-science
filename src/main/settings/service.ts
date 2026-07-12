@@ -9,12 +9,22 @@ import type {
   ClaudeInstallResult,
   InstallClaudeRequest,
   Preflight,
+  ProviderDraft,
   ProviderView,
+  RefreshProviderModelsRequest,
+  RefreshProviderModelsResult,
   SettingsSnapshot,
   UpsertProviderRequest,
   ValidateProviderRequest,
   ValidateProviderResult
 } from '../../shared/settings'
+import {
+  defaultVendorModel,
+  getOfficialVendor,
+  isOfficialVendorId,
+  resolveVendorBaseUrl,
+  resolveVendorModelsUrl
+} from '../../shared/provider-registry'
 import { resolveStorageRoot } from '../storage-root'
 import { createDefaultDetectDeps, detectClaude, type ClaudeDetectDeps } from './claude-detect'
 import { provisionAppClaudeConfigDir } from './claude-config-provision'
@@ -22,10 +32,11 @@ import { detectNpmAvailable, runInstall } from './claude-install'
 import { encryptKey, isEncryptionAvailable, maskKey, tryDecryptKey } from './crypto'
 import { defaultUserClaudeDir, resolveLocalClaudeAuth } from './local-claude-auth'
 import { computePreflight } from './preflight'
+import { listProviderModels } from './list-models'
 import { buildProviderEnv, getAppClaudeConfigDir, type ResolvedProvider } from './provider-env'
 import { SettingsRepository } from './repository'
 import type { StoredProvider, StoredSettings } from './types'
-import { validateProvider, type ClaudeProbeResult } from './validate'
+import { classifyStatus, validateProvider, type ClaudeProbeResult } from './validate'
 
 const execFileAsync = promisify(execFile)
 
@@ -83,6 +94,7 @@ class SettingsService {
     return {
       claude: settings.claude ?? {},
       activeProviderId: settings.activeProviderId,
+      activeModel: settings.activeModel,
       providers: settings.providers.map((provider) => this.toProviderView(provider)),
       onboardingCompletedAt: settings.onboardingCompletedAt
     }
@@ -149,22 +161,11 @@ class SettingsService {
       name: request.name?.trim() || existing?.name || 'Untitled provider'
     }
 
-    // Model applies to both types (required for custom, optional override for claude-default).
-    const model = request.model?.trim() || existing?.model
-
-    if (request.type === 'custom') {
-      const baseUrl = request.baseUrl?.trim() || existing?.baseUrl
-      // A key is present if one is provided now or a ciphertext was stored earlier (edit case).
+    // Both custom and official gateways authenticate with a bearer key; carry it (or keep the stored
+    // ciphertext on edit) via one shared helper.
+    const carryKey = (): boolean => {
       const hasKey = Boolean(request.key) || Boolean(existing?.keyRef)
 
-      // Required-field guard: never persist an incomplete custom provider, even if the UI is bypassed.
-      if (!baseUrl) throw new Error('Base URL is required for a custom provider.')
-      if (!model) throw new Error('Model is required for a custom provider.')
-      if (!hasKey) throw new Error('API key is required for a custom provider.')
-
-      provider.baseUrl = baseUrl
-
-      // A provided key is (re-)encrypted; an omitted key keeps the previously stored ciphertext.
       if (request.key) {
         provider.keyRef = encryptKey(request.key)
         provider.keyMask = maskKey(request.key)
@@ -172,14 +173,59 @@ class SettingsService {
         provider.keyRef = existing.keyRef
         provider.keyMask = existing.keyMask
       }
+
+      return hasKey
     }
 
-    if (model) provider.model = model
+    // Tracks whether credentials/endpoint changed, which invalidates a prior validation.
+    let credentialsChanged = false
 
-    // Editing credentials invalidates a prior validation; a re-test is required before it re-gates.
-    const keyChanged = request.type === 'custom' && Boolean(request.key)
+    if (request.type === 'official') {
+      // Base URL and model catalog come from the registry; the provider only stores which vendor
+      // (and, for multi-region vendors, which endpoint) plus the key.
+      const vendorId = isOfficialVendorId(request.vendorId) ? request.vendorId : existing?.vendorId
 
-    if (existing?.lastValidatedAt !== undefined && !keyChanged) {
+      if (!vendorId) throw new Error('A vendor is required for an official provider.')
+
+      const region = request.region ?? existing?.region
+
+      // Official providers store no model of their own: the catalog is fixed by the registry and the
+      // chosen model is the global selection (activeModel). Only vendor/region/key are persisted.
+      provider.vendorId = vendorId
+      if (region) provider.region = region
+      // Keep any live-fetched models across an edit, unless the vendor itself changed (then they're
+      // stale and will be re-fetched on demand).
+      if (existing?.fetchedModels && vendorId === existing.vendorId) {
+        provider.fetchedModels = existing.fetchedModels
+      }
+
+      if (!carryKey()) throw new Error('API key is required for an official provider.')
+
+      credentialsChanged =
+        Boolean(request.key) ||
+        provider.vendorId !== existing?.vendorId ||
+        provider.region !== existing?.region
+    } else if (request.type === 'custom') {
+      const baseUrl = request.baseUrl?.trim() || existing?.baseUrl
+      const model = request.model?.trim() || existing?.model
+
+      // Required-field guard: never persist an incomplete custom provider, even if the UI is bypassed.
+      if (!baseUrl) throw new Error('Base URL is required for a custom provider.')
+      if (!model) throw new Error('Model is required for a custom provider.')
+      if (!carryKey()) throw new Error('API key is required for a custom provider.')
+
+      provider.baseUrl = baseUrl
+      provider.model = model
+      credentialsChanged = Boolean(request.key)
+    } else {
+      // claude-default: optional model override, no credentials of its own.
+      const model = request.model?.trim() || existing?.model
+
+      if (model) provider.model = model
+    }
+
+    // A re-test is required before a changed provider can re-gate onboarding.
+    if (existing?.lastValidatedAt !== undefined && !credentialsChanged) {
       provider.lastValidatedAt = existing.lastValidatedAt
     }
 
@@ -194,8 +240,14 @@ class SettingsService {
     return this.getSettingsView()
   }
 
-  async setActiveProvider(id: string): Promise<SettingsSnapshot> {
-    await this.repository.setActiveProvider(id)
+  // Activates a provider and the model to run within it. An omitted/unknown model falls back to the
+  // provider's default (its stored model, or the vendor's first catalog entry).
+  async setActiveProvider(id: string, model?: string): Promise<SettingsSnapshot> {
+    const settings = await this.repository.getSettings()
+    const provider = settings.providers.find((candidate) => candidate.id === id)
+    const resolvedModel = this.resolveActiveModel(provider, model)
+
+    await this.repository.setActiveProvider(id, resolvedModel)
 
     return this.getSettingsView()
   }
@@ -224,6 +276,43 @@ class SettingsService {
     }
 
     return result
+  }
+
+  // Fetches a saved provider's live model list from the vendor and, on success, persists it as the
+  // provider's models (overriding the bundled catalog). Failures leave the bundled catalog in place.
+  async refreshProviderModels(
+    request: RefreshProviderModelsRequest
+  ): Promise<RefreshProviderModelsResult> {
+    const settings = await this.repository.getSettings()
+    const stored = settings.providers.find((provider) => provider.id === request.providerId)
+
+    if (!stored) return { ok: false, category: 'unknown', message: 'Provider not found.' }
+
+    const modelsUrl =
+      stored.type === 'official' && stored.vendorId
+        ? resolveVendorModelsUrl(stored.vendorId, stored.region)
+        : undefined
+
+    if (!modelsUrl) {
+      return { ok: false, category: 'unknown', message: 'This provider has no model-list endpoint.' }
+    }
+
+    const result = await listProviderModels({
+      url: modelsUrl,
+      key: this.resolveProvider(stored).key
+    })
+
+    if (!result.ok || !result.models) {
+      return {
+        ok: false,
+        category: result.status ? classifyStatus(result.status) : 'network',
+        message: result.message
+      }
+    }
+
+    await this.repository.upsertProvider({ ...stored, fetchedModels: result.models })
+
+    return { ok: true, category: 'ok', models: result.models }
   }
 
   // Reports whether the OS keychain is usable so the UI can warn before a save is attempted.
@@ -259,10 +348,13 @@ class SettingsService {
     const appConfigDir = getAppClaudeConfigDir(this.storageRoot)
     await provisionAppClaudeConfigDir(appConfigDir)
 
-    const envOverrides = buildProviderEnv(this.resolveProvider(activeProvider), {
-      storageRoot: this.storageRoot,
-      claudeExecutablePath: executablePath
-    })
+    const envOverrides = buildProviderEnv(
+      this.resolveProvider(activeProvider, settings.activeModel),
+      {
+        storageRoot: this.storageRoot,
+        claudeExecutablePath: executablePath
+      }
+    )
 
     // The "local" provider reuses the machine's own Claude login: inject its token/base URL (or copy
     // OAuth credentials) at spawn time. Custom providers already carry their own credentials.
@@ -280,8 +372,9 @@ class SettingsService {
   // Maps a stored provider to its masked renderer view, flagging custom keys that no longer decrypt.
   private toProviderView(provider: StoredProvider): ProviderView {
     const hasKey = Boolean(provider.keyRef)
+    // custom and official both require a decryptable key; claude-default carries none.
     const needsKey =
-      provider.type === 'custom' && hasKey && tryDecryptKey(provider.keyRef) === undefined
+      provider.type !== 'claude-default' && hasKey && tryDecryptKey(provider.keyRef) === undefined
 
     return {
       id: provider.id,
@@ -289,6 +382,9 @@ class SettingsService {
       name: provider.name,
       baseUrl: provider.baseUrl,
       model: provider.model,
+      vendorId: provider.vendorId,
+      region: provider.region,
+      models: this.availableModels(provider),
       maskedKey: provider.keyMask,
       hasKey,
       needsKey,
@@ -296,20 +392,83 @@ class SettingsService {
     }
   }
 
-  // Credentials usable: claude-default always; custom needs a key that still decrypts.
+  // Credentials usable: claude-default always; custom/official need a key that still decrypts.
   private isProviderKeyUsable(provider: StoredProvider): boolean {
     if (provider.type === 'claude-default') return true
 
     return Boolean(provider.keyRef) && tryDecryptKey(provider.keyRef) !== undefined
   }
 
+  // Models selectable for a provider: the vendor catalog for official providers, else the single
+  // configured model (custom always has one; claude-default may carry an override).
+  private availableModels(provider: StoredProvider): string[] {
+    if (provider.type === 'official' && provider.vendorId) {
+      // Live-fetched models (via "refresh from vendor") take precedence over the bundled catalog.
+      if (provider.fetchedModels && provider.fetchedModels.length > 0) return provider.fetchedModels
+
+      return getOfficialVendor(provider.vendorId)?.models ?? []
+    }
+
+    return provider.model ? [provider.model] : []
+  }
+
+  // Picks the model to activate: the requested one when the provider offers it, else the first
+  // available (falling back to a provider's own stored model).
+  private resolveActiveModel(
+    provider: StoredProvider | undefined,
+    requested?: string
+  ): string | undefined {
+    if (!provider) return undefined
+
+    const available = this.availableModels(provider)
+
+    if (requested && available.includes(requested)) return requested
+    // Prefer the provider's chosen default (custom's only model, or an official vendor's picked one).
+    if (provider.model && available.includes(provider.model)) return provider.model
+
+    return available[0] ?? provider.model
+  }
+
   // Decrypts a stored provider into the spawn/validation shape (plaintext key held only transiently).
-  private resolveProvider(provider: StoredProvider): ResolvedProvider {
+  // Official vendors reuse the custom HTTP/bearer path: base URL comes from the registry and the model
+  // defaults to the vendor's first catalog entry unless a specific one is passed as the override.
+  private resolveProvider(provider: StoredProvider, modelOverride?: string): ResolvedProvider {
+    const key = provider.keyRef ? tryDecryptKey(provider.keyRef) : undefined
+
+    if (provider.type === 'official' && provider.vendorId) {
+      return {
+        type: 'custom',
+        baseUrl: resolveVendorBaseUrl(provider.vendorId, provider.region),
+        model: modelOverride ?? defaultVendorModel(provider.vendorId),
+        key
+      }
+    }
+
     return {
       type: provider.type,
       baseUrl: provider.baseUrl,
-      model: provider.model,
-      key: provider.keyRef ? tryDecryptKey(provider.keyRef) : undefined
+      model: modelOverride ?? provider.model,
+      key
+    }
+  }
+
+  // Resolves an unsaved draft into the validation shape, mapping an official draft to the custom path
+  // with the vendor's registry base URL + default model.
+  private resolveDraft(draft: ProviderDraft): ResolvedProvider {
+    if (draft.type === 'official' && isOfficialVendorId(draft.vendorId)) {
+      return {
+        type: 'custom',
+        baseUrl: resolveVendorBaseUrl(draft.vendorId, draft.region),
+        model: draft.model ?? defaultVendorModel(draft.vendorId),
+        key: draft.key
+      }
+    }
+
+    return {
+      type: draft.type,
+      baseUrl: draft.baseUrl,
+      model: draft.model,
+      key: draft.key
     }
   }
 
@@ -325,14 +484,7 @@ class SettingsService {
     }
 
     if (request.draft) {
-      return {
-        provider: {
-          type: request.draft.type,
-          baseUrl: request.draft.baseUrl,
-          model: request.draft.model,
-          key: request.draft.key
-        }
-      }
+      return { provider: this.resolveDraft(request.draft) }
     }
 
     return undefined

@@ -1,4 +1,9 @@
 import type { ProviderType } from '../../../../shared/settings'
+import {
+  OFFICIAL_VENDORS,
+  getOfficialVendor,
+  type OfficialVendorId
+} from '../../../../shared/provider-registry'
 
 // Editable value for the provider form, kept in its own module so the component file only exports a
 // component (satisfying react-refresh) while the wizard and settings page share this shape/factory.
@@ -7,6 +12,10 @@ export type ProviderFormValue = {
   name: string
   baseUrl: string
   model: string
+  // Set when type is 'official': the chosen vendor and (for multi-region vendors) the endpoint. Base
+  // URL and the model catalog then come from the registry rather than these free-text fields.
+  vendorId?: OfficialVendorId
+  region?: string
   // Plaintext only while the user is typing a new key; empty means "keep the stored key".
   key: string
 }
@@ -23,26 +32,30 @@ export const createEmptyProviderFormValue = (
   ...overrides
 })
 
-// Per-field validation errors for a custom provider draft. claude-default has no required fields.
+// Per-field validation errors. Custom needs base URL/model/key; official needs only a key (base URL
+// and model come from the registry); claude-default has no required fields.
 export type ProviderFormErrors = {
   baseUrl?: string
   key?: string
   model?: string
 }
 
-// Computes required-field errors for a custom draft. On edit, an already-stored key satisfies the key
+// Computes required-field errors for a draft. On edit, an already-stored key satisfies the key
 // requirement, so the user can leave the key blank to keep it.
 export const getProviderFormErrors = (
   value: ProviderFormValue,
   options: { hasStoredKey?: boolean } = {}
 ): ProviderFormErrors => {
-  if (value.type !== 'custom') return {}
-
   const errors: ProviderFormErrors = {}
 
-  if (!value.baseUrl.trim()) errors.baseUrl = 'Base URL is required.'
-  if (!value.model.trim()) errors.model = 'Model is required.'
-  if (!value.key.trim() && !options.hasStoredKey) errors.key = 'API key is required.'
+  if (value.type === 'custom') {
+    if (!value.baseUrl.trim()) errors.baseUrl = 'Base URL is required.'
+    if (!value.model.trim()) errors.model = 'Model is required.'
+    if (!value.key.trim() && !options.hasStoredKey) errors.key = 'API key is required.'
+  } else if (value.type === 'official') {
+    // No model is chosen at add time: the vendor catalog + the global model selection cover that.
+    if (!value.key.trim() && !options.hasStoredKey) errors.key = 'API key is required.'
+  }
 
   return errors
 }
@@ -50,3 +63,67 @@ export const getProviderFormErrors = (
 // True when a draft has at least one required-field error (blocks save/test).
 export const hasProviderFormErrors = (errors: ProviderFormErrors): boolean =>
   Object.keys(errors).length > 0
+
+// Grouping for the provider-type picker. 'api' = official vendors via their standard API key;
+// 'other' = the custom gateway and local Claude. ('coding' — subscription coding plans — is reserved
+// for once those endpoints are wired up.)
+export type ProviderKindGroup = 'coding' | 'api' | 'other'
+
+// A selectable option in the provider-type dropdown. Official vendors are keyed `official:<vendorId>`.
+export type ProviderKind = {
+  key: string
+  label: string
+  description: string
+  group: ProviderKindGroup
+}
+
+export const PROVIDER_KINDS: ProviderKind[] = [
+  ...OFFICIAL_VENDORS.map((vendor): ProviderKind => ({
+    key: `official:${vendor.id}`,
+    label: vendor.label,
+    description: 'API key — models provided',
+    group: 'api'
+  })),
+  {
+    key: 'custom',
+    label: 'Custom Gateway',
+    description: 'Anthropic /v1/messages-compatible base URL, key, and model',
+    group: 'other'
+  },
+  {
+    key: 'claude-default',
+    label: 'Local Claude',
+    description: "Reuse this machine's Claude login",
+    group: 'other'
+  }
+]
+
+// The patch applied to the form value when a provider-kind is picked. Switching to an official vendor
+// seeds its default region + model; switching away clears vendor-only fields.
+export const providerKindPatch = (key: string): Partial<ProviderFormValue> => {
+  if (key === 'claude-default') {
+    return { type: 'claude-default', vendorId: undefined, region: undefined, model: '' }
+  }
+
+  if (key.startsWith('official:')) {
+    const vendorId = key.slice('official:'.length) as OfficialVendorId
+    const vendor = getOfficialVendor(vendorId)
+
+    // No per-provider model: the vendor catalog is fixed and the chosen model is the global selection.
+    return { type: 'official', vendorId, region: vendor?.regions?.[0]?.id, model: '' }
+  }
+
+  return { type: 'custom', vendorId: undefined, region: undefined, model: '' }
+}
+
+// Maps the current form value back to its provider-kind key (the dropdown's selected value).
+export const selectedKindKey = (value: ProviderFormValue): string => {
+  if (value.type === 'custom') return 'custom'
+  if (value.type === 'claude-default') return 'claude-default'
+
+  return value.vendorId ? `official:${value.vendorId}` : 'custom'
+}
+
+// Maps a provider's type + vendor to its icon key ('custom' | 'claude-default' | 'official:<id>').
+export const providerKindKey = (type: ProviderType, vendorId?: OfficialVendorId): string =>
+  type === 'official' && vendorId ? `official:${vendorId}` : type

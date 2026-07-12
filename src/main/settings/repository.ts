@@ -3,11 +3,12 @@ import { join } from 'node:path'
 
 import type { ClaudeInfo, ProviderType } from '../../shared/settings'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
+import { isOfficialVendorId } from '../../shared/provider-registry'
 import { createEmptySettings, type StoredProvider, type StoredSettings } from './types'
 
 const SETTINGS_FILE = 'settings.json'
 
-const PROVIDER_TYPES = new Set<ProviderType>(['custom', 'claude-default'])
+const PROVIDER_TYPES = new Set<ProviderType>(['custom', 'claude-default', 'official'])
 
 // Checks for plain JSON objects so untrusted settings payloads can be sanitized safely.
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -43,15 +44,29 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
 
   if (!id || !type || !PROVIDER_TYPES.has(type) || name === undefined) return undefined
 
+  // An official provider without a recognizable vendor is unusable (no base URL/catalog to resolve),
+  // so drop the corrupt record rather than keep a provider that can never spawn or validate.
+  const vendorId = isOfficialVendorId(value.vendorId) ? value.vendorId : undefined
+
+  if (type === 'official' && !vendorId) return undefined
+
   const provider: StoredProvider = { id, type, name }
   const baseUrl = asString(value.baseUrl)
   const model = asString(value.model)
+  const region = asString(value.region)
   const keyRef = asString(value.keyRef)
   const keyMask = asString(value.keyMask)
   const lastValidatedAt = asNumber(value.lastValidatedAt)
+  // Keep only a clean list of non-empty string model ids.
+  const fetchedModels = Array.isArray(value.fetchedModels)
+    ? value.fetchedModels.filter((entry): entry is string => typeof entry === 'string' && entry !== '')
+    : undefined
 
   if (baseUrl) provider.baseUrl = baseUrl
   if (model) provider.model = model
+  if (vendorId) provider.vendorId = vendorId
+  if (region) provider.region = region
+  if (fetchedModels && fetchedModels.length > 0) provider.fetchedModels = fetchedModels
   if (keyRef) provider.keyRef = keyRef
   if (keyMask) provider.keyMask = keyMask
   if (lastValidatedAt !== undefined) provider.lastValidatedAt = lastValidatedAt
@@ -78,6 +93,13 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   if (claude) settings.claude = claude
   if (activeProviderId && providers.some((provider) => provider.id === activeProviderId)) {
     settings.activeProviderId = activeProviderId
+
+    // activeModel migration: v2 stores it explicitly; a pre-v2 file has none, so backfill from the
+    // active provider's own model (which was the only model it could run).
+    const activeProvider = providers.find((provider) => provider.id === activeProviderId)
+    const activeModel = asString(value.activeModel) ?? activeProvider?.model
+
+    if (activeModel) settings.activeModel = activeModel
   }
 
   const onboardingCompletedAt = asNumber(value.onboardingCompletedAt)
@@ -125,25 +147,31 @@ class SettingsRepository {
     })
   }
 
-  // Removes a provider and clears the active pointer when it referenced the removed provider.
+  // Removes a provider and clears the active pointer (and model) when it referenced the removed one.
   async deleteProvider(id: string): Promise<StoredSettings> {
     return this.mutate((settings) => {
       const providers = settings.providers.filter((provider) => provider.id !== id)
-      const activeProviderId =
-        settings.activeProviderId === id ? undefined : settings.activeProviderId
+      const clearedActive = settings.activeProviderId === id
+      const activeProviderId = clearedActive ? undefined : settings.activeProviderId
+      const activeModel = clearedActive ? undefined : settings.activeModel
 
-      return { ...settings, providers, activeProviderId }
+      return { ...settings, providers, activeProviderId, activeModel }
     })
   }
 
-  // Sets (or clears) the single active provider pointer, ignoring ids that do not exist.
-  async setActiveProvider(id: string | undefined): Promise<StoredSettings> {
+  // Sets (or clears) the active provider pointer and its model, ignoring ids that do not exist. The
+  // caller (service) resolves the concrete model, so an undefined model here clears it.
+  async setActiveProvider(id: string | undefined, model?: string): Promise<StoredSettings> {
     return this.mutate((settings) => {
       if (id !== undefined && !settings.providers.some((provider) => provider.id === id)) {
         return settings
       }
 
-      return { ...settings, activeProviderId: id }
+      return {
+        ...settings,
+        activeProviderId: id,
+        activeModel: id === undefined ? undefined : model
+      }
     })
   }
 

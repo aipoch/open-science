@@ -53,14 +53,57 @@ describe('ProviderForm field switching', () => {
     expect(container.querySelector('[aria-label="Model"]')).not.toBeNull()
   })
 
-  it('reports a type change through onChange', () => {
-    const onChange = vi.fn()
-    render(createEmptyProviderFormValue({ type: 'custom' }), { onChange })
+  it('surfaces the provider-type picker with the current selection', () => {
+    // The picker is a styled (non-native) control; option/selection behavior is unit-tested via
+    // providerKindPatch, so here we just assert the trigger renders the current kind.
+    render(createEmptyProviderFormValue({ type: 'official', vendorId: 'deepseek' }))
+    const trigger = container.querySelector('[aria-label="Provider type"]')
 
-    const localButton = container.querySelector<HTMLButtonElement>('button[aria-pressed="false"]')
-    act(() => localButton?.click())
+    expect(trigger?.tagName).toBe('BUTTON')
+    expect(trigger?.textContent).toContain('DeepSeek')
+  })
 
-    expect(onChange).toHaveBeenCalledWith({ type: 'claude-default' })
+  it('shows a key field but no base URL or model control for an official vendor', () => {
+    render(createEmptyProviderFormValue({ type: 'official', vendorId: 'deepseek' }))
+
+    expect(container.querySelector('[aria-label="API key"]')).not.toBeNull()
+    // Official vendors expose neither a base URL nor a model control at add time — Add is add & test;
+    // the model is chosen from the global selector afterwards.
+    expect(container.querySelector('[aria-label="Base URL"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Model"]')).toBeNull()
+    // The supported models are shown read-only as reference tags.
+    expect(container.textContent).toContain('Supported models')
+    expect(container.textContent).toContain('deepseek-v4-pro')
+  })
+
+  it('shows a region-specific "get a key" link for an official vendor', () => {
+    render(createEmptyProviderFormValue({ type: 'official', vendorId: 'zhipu', region: 'china' }))
+    const link = Array.from(container.querySelectorAll<HTMLAnchorElement>('a')).find((anchor) =>
+      anchor.textContent?.includes('Get an API key')
+    )
+
+    // China GLM points at the BigModel console, not Z.AI's.
+    expect(link?.getAttribute('href')).toBe('https://open.bigmodel.cn/usercenter/apikeys')
+    expect(link?.getAttribute('target')).toBe('_blank')
+  })
+
+  it('shows no "get a key" link for a custom provider', () => {
+    render(createEmptyProviderFormValue({ type: 'custom' }))
+    const link = Array.from(container.querySelectorAll<HTMLAnchorElement>('a')).find((anchor) =>
+      anchor.textContent?.includes('Get an API key')
+    )
+
+    expect(link).toBeUndefined()
+  })
+
+  it('shows an endpoint selector only for a multi-region official vendor', () => {
+    render(
+      createEmptyProviderFormValue({ type: 'official', vendorId: 'minimax', region: 'global' })
+    )
+    expect(container.querySelector('[aria-label="Endpoint"]')).not.toBeNull()
+
+    render(createEmptyProviderFormValue({ type: 'official', vendorId: 'deepseek' }))
+    expect(container.querySelector('[aria-label="Endpoint"]')).toBeNull()
   })
 
   it('never renders a stored plaintext key: the key input stays empty and masked-only', () => {

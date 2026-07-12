@@ -1,0 +1,93 @@
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger
+} from '@/components/ui/select'
+import { selectProviderModelOptions, useSettingsStore } from '@/stores/settings-store'
+import { ProviderKindIcon } from './provider-icons'
+import { providerKindKey } from './provider-form-value'
+
+// Separator for the composite (providerId, model) select value. This unit-separator control char
+// never appears in provider ids or model names, so splitting on it is unambiguous.
+const SEP = '␟'
+
+// The single "active model" selector for settings: one selected model, grouped and tagged by its
+// source provider. Mirrors the composer picker (both drive activeProviderId + activeModel), so
+// changing it here changes what the composer shows and vice versa. Hidden until a model exists.
+const ActiveModelSelect = (): React.JSX.Element | null => {
+  const providers = useSettingsStore((state) => state.providers)
+  const activeProviderId = useSettingsStore((state) => state.activeProviderId)
+  const activeModel = useSettingsStore((state) => state.activeModel)
+  const setActiveProvider = useSettingsStore((state) => state.setActiveProvider)
+
+  const options = selectProviderModelOptions(providers)
+
+  if (options.length === 0) return null
+
+  const activeKeyModel = activeModel ?? ''
+  const current = options.find(
+    (option) => option.providerId === activeProviderId && option.model === activeKeyModel
+  )
+
+  const groups = providers
+    .map((provider) => ({
+      provider,
+      options: options.filter((option) => option.providerId === provider.id)
+    }))
+    .filter((group) => group.options.length > 0)
+
+  return (
+    <Select
+      value={current ? `${current.providerId}${SEP}${current.model}` : undefined}
+      onValueChange={(value) => {
+        const [providerId, model] = value.split(SEP)
+        void setActiveProvider(providerId, model)
+      }}
+    >
+      <SelectTrigger aria-label="Active model">
+        <span className="flex items-center gap-2 truncate">
+          {current ? (
+            <>
+              <ProviderKindIcon
+                kindKey={providerKindKey(current.providerType, current.vendorId)}
+                className="size-4"
+              />
+              <span className="truncate">
+                {current.model || current.providerName}
+                <span className="ml-1.5 text-muted-foreground">· {current.providerName}</span>
+              </span>
+            </>
+          ) : (
+            'Select a model'
+          )}
+        </span>
+      </SelectTrigger>
+      <SelectContent>
+        {groups.map((group) => (
+          <SelectGroup key={group.provider.id}>
+            <SelectLabel>{group.provider.name}</SelectLabel>
+            {group.options.map((option) => (
+              <SelectItem
+                key={`${option.providerId}${SEP}${option.model}`}
+                value={`${option.providerId}${SEP}${option.model}`}
+                icon={
+                  <ProviderKindIcon
+                    kindKey={providerKindKey(option.providerType, option.vendorId)}
+                    className="size-4"
+                  />
+                }
+              >
+                {option.model || option.providerName}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        ))}
+      </SelectContent>
+    </Select>
+  )
+}
+
+export { ActiveModelSelect }

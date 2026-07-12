@@ -63,6 +63,8 @@ import type {
   DeleteProviderRequest,
   InstallClaudeRequest,
   Preflight,
+  RefreshProviderModelsRequest,
+  RefreshProviderModelsResult,
   SetActiveProviderRequest,
   SettingsSnapshot,
   UpsertProviderRequest,
@@ -135,6 +137,9 @@ type OpenScienceAPI = {
     deleteProvider: (request: DeleteProviderRequest) => Promise<SettingsSnapshot>
     setActiveProvider: (request: SetActiveProviderRequest) => Promise<SettingsSnapshot>
     validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
+    refreshProviderModels: (
+      request: RefreshProviderModelsRequest
+    ) => Promise<RefreshProviderModelsResult>
     markOnboardingComplete: () => Promise<SettingsSnapshot>
     onInstallLog: (listener: AcpListener<ClaudeInstallLogEvent>) => RemoveListener
   }
@@ -275,6 +280,11 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('settings:set-active-provider', request) as Promise<SettingsSnapshot>,
     validateProvider: (request) =>
       ipcRenderer.invoke('settings:validate-provider', request) as Promise<ValidateProviderResult>,
+    refreshProviderModels: (request) =>
+      ipcRenderer.invoke(
+        'settings:refresh-provider-models',
+        request
+      ) as Promise<RefreshProviderModelsResult>,
     markOnboardingComplete: () =>
       ipcRenderer.invoke('settings:mark-onboarding-complete') as Promise<SettingsSnapshot>,
     // Streams live installer output while a one-click install runs.

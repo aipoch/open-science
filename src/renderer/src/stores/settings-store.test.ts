@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { SettingsSnapshot, ValidateProviderResult } from '../../../shared/settings'
-import { createInitialSettingsState, useSettingsStore } from './settings-store'
+import {
+  createInitialSettingsState,
+  selectProviderModelOptions,
+  useSettingsStore
+} from './settings-store'
 
 // Minimal window.api.settings surface the store calls.
 type SettingsApi = {
@@ -11,6 +15,7 @@ type SettingsApi = {
   isNpmAvailable: ReturnType<typeof vi.fn>
   upsertProvider: ReturnType<typeof vi.fn>
   validateProvider: ReturnType<typeof vi.fn>
+  refreshProviderModels: ReturnType<typeof vi.fn>
   setActiveProvider: ReturnType<typeof vi.fn>
   deleteProvider: ReturnType<typeof vi.fn>
   markOnboardingComplete: ReturnType<typeof vi.fn>
@@ -32,6 +37,8 @@ const providerView = (id: string): SettingsSnapshot['providers'][number] => ({
   id,
   type: 'custom',
   name: 'Gateway',
+  model: 'claude-sonnet-4-5',
+  models: ['claude-sonnet-4-5'],
   hasKey: true,
   needsKey: false
 })
@@ -50,6 +57,7 @@ beforeEach(() => {
     isNpmAvailable: vi.fn().mockResolvedValue(true),
     upsertProvider: vi.fn(),
     validateProvider: vi.fn(),
+    refreshProviderModels: vi.fn(),
     setActiveProvider: vi.fn().mockImplementation((request: { id: string }) => {
       callLog.push(`setActive:${request.id}`)
       return Promise.resolve({ ...snapshot([]), activeProviderId: request.id })
@@ -185,5 +193,99 @@ describe('settings store: onboarding completion', () => {
     await useSettingsStore.getState().load()
 
     expect(useSettingsStore.getState().onboardingCompletedAt).toBe(999)
+  })
+})
+
+describe('settings store: provider/model selection', () => {
+  it('passes the chosen model to the IPC and caches activeModel', async () => {
+    api.setActiveProvider.mockResolvedValue({
+      ...snapshot([providerView('p1')]),
+      activeProviderId: 'p1',
+      activeModel: 'glm-4.7'
+    })
+
+    await useSettingsStore.getState().setActiveProvider('p1', 'glm-4.7')
+
+    expect(api.setActiveProvider).toHaveBeenCalledWith({ id: 'p1', model: 'glm-4.7' })
+    expect(useSettingsStore.getState().activeModel).toBe('glm-4.7')
+  })
+
+  it('treats an empty model as "no specific model" (provider default)', async () => {
+    api.setActiveProvider.mockResolvedValue(snapshot([providerView('p1')]))
+
+    await useSettingsStore.getState().setActiveProvider('p1', '')
+
+    expect(api.setActiveProvider).toHaveBeenCalledWith({ id: 'p1', model: undefined })
+  })
+})
+
+describe('selectProviderModelOptions', () => {
+  it('emits one option per catalog model for an official provider', () => {
+    const options = selectProviderModelOptions([
+      {
+        id: 'off',
+        type: 'official',
+        name: 'GLM',
+        vendorId: 'zhipu',
+        models: ['glm-5.2', 'glm-4.7'],
+        hasKey: true,
+        needsKey: false
+      }
+    ])
+
+    expect(options).toEqual([
+      { providerId: 'off', providerName: 'GLM', providerType: 'official', vendorId: 'zhipu', model: 'glm-5.2' },
+      { providerId: 'off', providerName: 'GLM', providerType: 'official', vendorId: 'zhipu', model: 'glm-4.7' }
+    ])
+  })
+
+  it('emits one option for a custom provider and a default entry for a modelless provider', () => {
+    const options = selectProviderModelOptions([
+      {
+        id: 'c',
+        type: 'custom',
+        name: 'GW',
+        model: 'm',
+        models: ['m'],
+        hasKey: true,
+        needsKey: false
+      },
+      {
+        id: 'local',
+        type: 'claude-default',
+        name: 'Local',
+        models: [],
+        hasKey: false,
+        needsKey: false
+      }
+    ])
+
+    expect(options).toEqual([
+      { providerId: 'c', providerName: 'GW', providerType: 'custom', model: 'm' },
+      // A provider with no concrete model still yields one selectable "default" entry (empty model).
+      { providerId: 'local', providerName: 'Local', providerType: 'claude-default', model: '' }
+    ])
+  })
+})
+
+describe('settings store: refreshProviderModels', () => {
+  it('refreshes the cache from the snapshot when the vendor fetch succeeds', async () => {
+    api.refreshProviderModels.mockResolvedValue({ ok: true, category: 'ok', models: ['m1', 'm2'] })
+    api.getSettings.mockResolvedValue(snapshot([providerView('p1')]))
+
+    const result = await useSettingsStore.getState().refreshProviderModels('p1')
+
+    expect(result.ok).toBe(true)
+    expect(api.refreshProviderModels).toHaveBeenCalledWith({ providerId: 'p1' })
+    expect(useSettingsStore.getState().providers.map((p) => p.id)).toEqual(['p1'])
+  })
+
+  it('leaves the cache untouched when the fetch fails', async () => {
+    api.refreshProviderModels.mockResolvedValue({ ok: false, category: 'auth', message: 'nope' })
+
+    const result = await useSettingsStore.getState().refreshProviderModels('p1')
+
+    expect(result.ok).toBe(false)
+    expect(api.getSettings).not.toHaveBeenCalled()
   })
 })

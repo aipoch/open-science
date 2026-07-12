@@ -1,18 +1,21 @@
-import { CheckCircle2, Pencil, PlugZap, Trash2 } from 'lucide-react'
+import { Pencil, PlugZap, Trash2 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 import type { ProviderView } from '../../../../shared/settings'
+import { getOfficialVendor } from '../../../../shared/provider-registry'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { ProviderKindIcon } from './provider-icons'
+import { providerKindKey } from './provider-form-value'
 
 type ProviderListProps = {
   providers: ProviderView[]
-  // Id of the currently selected provider (the one requests are routed through).
+  // Provider that sources the currently selected model. Not shown as an "active provider"; used only
+  // to keep the in-use provider from being deleted (which would leave no selectable model).
   activeProviderId: string | undefined
   busyProviderId?: string
   onEdit: (provider: ProviderView) => void
   onDelete: (provider: ProviderView) => void
-  onSetActive: (provider: ProviderView) => void
   onTest: (provider: ProviderView) => void
 }
 
@@ -25,9 +28,15 @@ type IconActionButtonProps = {
   danger?: boolean
 }
 
-// Human label for a provider type badge.
-const describeType = (type: ProviderView['type']): string =>
-  type === 'custom' ? 'Custom' : 'Local Claude'
+// Human label for a provider type badge: the vendor name for official providers, else a type name.
+const describeType = (provider: ProviderView): string => {
+  if (provider.type === 'custom') return 'Custom'
+  if (provider.type === 'claude-default') return 'Local Claude'
+
+  return provider.vendorId
+    ? (getOfficialVendor(provider.vendorId)?.label ?? 'Official')
+    : 'Official'
+}
 
 // An icon-only row action with a hover tooltip. The label is exposed via aria-label for accessibility
 // and shown on hover via the shared tooltip so the actions row stays compact.
@@ -68,7 +77,6 @@ const ProviderList = ({
   busyProviderId,
   onEdit,
   onDelete,
-  onSetActive,
   onTest
 }: ProviderListProps): React.JSX.Element => {
   if (providers.length === 0) {
@@ -83,11 +91,11 @@ const ProviderList = ({
     <TooltipProvider delayDuration={200}>
       <ul className="space-y-2">
         {providers.map((provider) => {
-          const isSelected = provider.id === activeProviderId
+          const isActiveSource = provider.id === activeProviderId
           const isBusy = provider.id === busyProviderId
-          // The selected provider (and the last remaining one) can't be deleted: removing the active
-          // provider would drop the app back to onboarding, so its delete action stays disabled.
-          const canDelete = !isSelected && providers.length > 1
+          // The provider sourcing the selected model (and the last remaining one) can't be deleted:
+          // removing it would leave no model to run, so its delete action stays disabled.
+          const canDelete = !isActiveSource && providers.length > 1
 
           return (
             <li key={provider.id} className="rounded-xl border border-border p-3">
@@ -97,15 +105,27 @@ const ProviderList = ({
                     <span className="truncate text-sm font-medium text-foreground">
                       {provider.name}
                     </span>
-                    <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                      {describeType(provider.type)}
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                      <ProviderKindIcon
+                        kindKey={providerKindKey(provider.type, provider.vendorId)}
+                        className="size-3"
+                      />
+                      {describeType(provider)}
                     </span>
                   </div>
                   <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
-                    {provider.type === 'custom' ? (
+                    {provider.type === 'claude-default' ? (
+                      // Local Claude reuses the machine's own auth: show only the model (never a key).
+                      <div className="truncate">Model: {provider.model || 'default'}</div>
+                    ) : (
+                      // custom + official both authenticate with a key; official's models come from its
+                      // catalog (shown as a count) rather than a single stored model.
                       <>
-                        {provider.model ? (
+                        {provider.type === 'custom' && provider.model ? (
                           <div className="truncate">Model: {provider.model}</div>
+                        ) : null}
+                        {provider.type === 'official' && provider.models.length > 0 ? (
+                          <div className="truncate">{provider.models.length} models</div>
                         ) : null}
                         {provider.maskedKey ? (
                           <div className="font-mono">Key: {provider.maskedKey}</div>
@@ -114,30 +134,11 @@ const ProviderList = ({
                           <div className="text-destructive">Key needs re-entry</div>
                         ) : null}
                       </>
-                    ) : (
-                      // Local Claude reuses the machine's own auth: show only the model (never a key).
-                      <div className="truncate">Model: {provider.model || 'default'}</div>
                     )}
                   </div>
                 </div>
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                {/* First action is always the select control: a marker when selected, a button otherwise. */}
-                {isSelected ? (
-                  <span className="inline-flex items-center gap-1 rounded-lg bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
-                    <CheckCircle2 className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                    Selected
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={isBusy}
-                    onClick={() => onSetActive(provider)}
-                    className="rounded-lg border border-primary px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/10 disabled:opacity-50"
-                  >
-                    Select
-                  </button>
-                )}
                 <IconActionButton
                   label="Test connection"
                   icon={PlugZap}

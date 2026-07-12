@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  PROVIDER_KINDS,
   createEmptyProviderFormValue,
   getProviderFormErrors,
-  hasProviderFormErrors
+  hasProviderFormErrors,
+  providerKindPatch,
+  selectedKindKey
 } from './provider-form-value'
 
 describe('getProviderFormErrors', () => {
@@ -47,5 +50,52 @@ describe('getProviderFormErrors', () => {
 
     expect(errors).toEqual({})
     expect(hasProviderFormErrors(errors)).toBe(false)
+  })
+})
+
+describe('provider-kind helpers', () => {
+  it('lists official vendors under the API group and custom/local under Other', () => {
+    const apiKeys = PROVIDER_KINDS.filter((kind) => kind.group === 'api').map((kind) => kind.key)
+    const otherKeys = PROVIDER_KINDS.filter((kind) => kind.group === 'other').map(
+      (kind) => kind.key
+    )
+
+    expect(apiKeys).toContain('official:deepseek')
+    expect(apiKeys).toContain('official:moonshot')
+    expect(otherKeys).toEqual(['custom', 'claude-default'])
+  })
+
+  it('seeds region (no per-provider model) when picking an official vendor', () => {
+    expect(providerKindPatch('official:minimax')).toEqual({
+      type: 'official',
+      vendorId: 'minimax',
+      region: 'global',
+      model: ''
+    })
+  })
+
+  it('clears vendor-only fields when picking custom or local', () => {
+    expect(providerKindPatch('custom')).toEqual({
+      type: 'custom',
+      vendorId: undefined,
+      region: undefined,
+      model: ''
+    })
+    expect(providerKindPatch('claude-default')).toEqual({
+      type: 'claude-default',
+      vendorId: undefined,
+      region: undefined,
+      model: ''
+    })
+  })
+
+  it('round-trips a value back to its picker key', () => {
+    expect(selectedKindKey(createEmptyProviderFormValue({ type: 'custom' }))).toBe('custom')
+    expect(selectedKindKey(createEmptyProviderFormValue({ type: 'claude-default' }))).toBe(
+      'claude-default'
+    )
+    expect(
+      selectedKindKey(createEmptyProviderFormValue({ type: 'official', vendorId: 'zhipu' }))
+    ).toBe('official:zhipu')
   })
 })

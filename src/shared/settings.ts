@@ -4,11 +4,15 @@
 // masked provider view (never keyRef or plaintext keys) and sends drafts that carry a plaintext key
 // only while the user is actively typing one in.
 
-// Settings file schema version; bumped when the on-disk shape changes.
-export const SETTINGS_FILE_VERSION = 1
+import type { OfficialVendorId } from './provider-registry'
 
-// A provider either targets a custom Anthropic-compatible gateway or reuses the local claude auth.
-export type ProviderType = 'custom' | 'claude-default'
+// Settings file schema version; bumped when the on-disk shape changes. v2 adds official-vendor
+// providers (vendorId/region) and a per-selection activeModel alongside activeProviderId.
+export const SETTINGS_FILE_VERSION = 2
+
+// A provider targets a custom Anthropic-compatible gateway, a built-in official vendor (base URL +
+// model catalog from the registry), or reuses the local claude auth.
+export type ProviderType = 'custom' | 'claude-default' | 'official'
 
 // Detected claude executable metadata, persisted so later spawns skip re-detection.
 export type ClaudeInfo = {
@@ -30,9 +34,15 @@ export type ProviderView = {
   name: string
   baseUrl?: string
   model?: string
+  // Set for official-vendor providers: which vendor and (where applicable) which regional endpoint.
+  vendorId?: OfficialVendorId
+  region?: string
+  // Models selectable for this provider in the composer: the vendor catalog for official providers,
+  // or the single configured model for custom/claude-default. Derived from the registry in main.
+  models: string[]
   // A short, non-secret hint like "sk-…abcd" for display only.
   maskedKey?: string
-  // True when a key is stored (custom providers). Lets the form show "leave blank to keep".
+  // True when a key is stored (custom/official providers). Lets the form show "leave blank to keep".
   hasKey: boolean
   // True when a stored key could not be decrypted and must be re-entered before use.
   needsKey: boolean
@@ -43,6 +53,9 @@ export type ProviderView = {
 export type SettingsSnapshot = {
   claude: ClaudeInfo
   activeProviderId?: string
+  // The active model within the active provider. For custom/claude-default this mirrors the provider's
+  // own model; for official providers it's the chosen catalog entry. Undefined until a provider exists.
+  activeModel?: string
   providers: ProviderView[]
   // Timestamp of first-run onboarding completion; undefined until it finishes at least once.
   onboardingCompletedAt?: number
@@ -61,6 +74,10 @@ export type ProviderDraft = {
   name?: string
   baseUrl?: string
   model?: string
+  // Set when type is 'official': the chosen vendor and (where applicable) region. Base URL and model
+  // catalog then come from the registry rather than the draft's baseUrl.
+  vendorId?: OfficialVendorId
+  region?: string
   key?: string
 }
 
@@ -75,6 +92,10 @@ export type DeleteProviderRequest = {
 
 export type SetActiveProviderRequest = {
   id: string
+  // Optional model to activate within the provider. Omitted (e.g. selecting a provider without a
+  // specific model) falls back to the provider's default: its stored model or the vendor's first
+  // catalog entry.
+  model?: string
 }
 
 // Validation may target a saved provider (key resolved from storage) or an unsaved draft.
@@ -91,6 +112,21 @@ export type ValidateProviderResult = {
   ok: boolean
   category: ValidationCategory
   status?: number
+  message?: string
+}
+
+// Request to refresh a saved provider's model list from the vendor's live API (fills the bundled
+// catalog with the account's current models).
+export type RefreshProviderModelsRequest = {
+  providerId: string
+}
+
+// Outcome of a model-list refresh. On success `models` is the fetched list (also persisted on the
+// provider); on failure the caller keeps the bundled catalog and can surface `message`.
+export type RefreshProviderModelsResult = {
+  ok: boolean
+  models?: string[]
+  category: ValidationCategory
   message?: string
 }
 

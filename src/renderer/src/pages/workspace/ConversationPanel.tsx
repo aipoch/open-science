@@ -17,6 +17,7 @@ import { ResizablePanel } from '@/components/ui/resizable'
 import { cn } from '@/lib/utils'
 import type { ChatSession } from '@/stores/session-store'
 
+import { ComposerModelPicker } from './ComposerModelPicker'
 import { submitMessageDraftFromKeyDown } from './message-draft-keyboard'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
@@ -283,6 +284,9 @@ const ConversationPanel = ({
                           tabIndex={-1}
                           onChange={handleAttachmentInputChange}
                         />
+
+                        {/* Model/provider switcher; hides itself unless more than one is configured. */}
+                        <ComposerModelPicker />
 
                         <div className="flex-1" />
 

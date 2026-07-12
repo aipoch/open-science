@@ -35,7 +35,7 @@ describe('settings repository', () => {
   it('returns empty settings when nothing is stored yet', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 
-    await expect(repository.getSettings()).resolves.toEqual({ version: 1, providers: [] })
+    await expect(repository.getSettings()).resolves.toEqual({ version: 2, providers: [] })
   })
 
   it('writes settings.json atomically and reads it back', async () => {
@@ -48,7 +48,7 @@ describe('settings repository', () => {
     const raw = JSON.parse(await readFile(join(root, 'settings.json'), 'utf8')) as {
       version: number
     }
-    expect(raw.version).toBe(1)
+    expect(raw.version).toBe(2)
 
     const settings = await repository.getSettings()
     expect(settings.claude).toEqual({ resolvedPath: '/bin/claude', version: '2.1.0' })
@@ -146,5 +146,90 @@ describe('settings repository', () => {
 
     const reloaded = await new SettingsRepository(root).getSettings()
     expect(reloaded.onboardingCompletedAt).toBe(1234)
+  })
+})
+
+describe('settings repository: v2 official providers & activeModel migration', () => {
+  it('backfills activeModel from the active provider when a pre-v2 file omits it', async () => {
+    const root = await createStorageRoot()
+
+    await writeFile(
+      join(root, 'settings.json'),
+      JSON.stringify({
+        version: 1,
+        activeProviderId: 'p1',
+        providers: [
+          { id: 'p1', type: 'custom', name: 'G', baseUrl: 'https://g', model: 'legacy-m' }
+        ]
+      }),
+      'utf8'
+    )
+
+    const settings = await new SettingsRepository(root).getSettings()
+    expect(settings.version).toBe(2)
+    expect(settings.activeModel).toBe('legacy-m')
+  })
+
+  it('keeps an explicit activeModel from a v2 file', async () => {
+    const root = await createStorageRoot()
+
+    await writeFile(
+      join(root, 'settings.json'),
+      JSON.stringify({
+        version: 2,
+        activeProviderId: 'p1',
+        activeModel: 'glm-4.7',
+        providers: [{ id: 'p1', type: 'official', name: 'GLM', vendorId: 'zhipu', keyRef: 'enc:x' }]
+      }),
+      'utf8'
+    )
+
+    const settings = await new SettingsRepository(root).getSettings()
+    expect(settings.activeModel).toBe('glm-4.7')
+    expect(settings.providers[0]).toMatchObject({ type: 'official', vendorId: 'zhipu' })
+  })
+
+  it('drops an official provider with an unknown or missing vendor', async () => {
+    const root = await createStorageRoot()
+
+    await writeFile(
+      join(root, 'settings.json'),
+      JSON.stringify({
+        version: 2,
+        providers: [
+          { id: 'ok', type: 'official', name: 'DeepSeek', vendorId: 'deepseek', keyRef: 'enc:x' },
+          { id: 'bad1', type: 'official', name: 'Bogus', vendorId: 'openai', keyRef: 'enc:x' },
+          { id: 'bad2', type: 'official', name: 'No vendor', keyRef: 'enc:x' }
+        ]
+      }),
+      'utf8'
+    )
+
+    const settings = await new SettingsRepository(root).getSettings()
+    expect(settings.providers.map((item) => item.id)).toEqual(['ok'])
+  })
+
+  it('clears activeModel when the active provider is deleted', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    await repository.upsertProvider(provider())
+    await repository.setActiveProvider('p1', 'm')
+    expect((await repository.getSettings()).activeModel).toBe('m')
+
+    await repository.deleteProvider('p1')
+    expect((await repository.getSettings()).activeModel).toBeUndefined()
+  })
+
+  it('persists the active provider + model across a reload (app restart)', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.upsertProvider(provider())
+    await repository.setActiveProvider('p1', 'my-model')
+
+    // A fresh repository on the same storage dir models an app restart: the selection is read back.
+    const reloaded = await new SettingsRepository(root).getSettings()
+    expect(reloaded.activeProviderId).toBe('p1')
+    expect(reloaded.activeModel).toBe('my-model')
   })
 })

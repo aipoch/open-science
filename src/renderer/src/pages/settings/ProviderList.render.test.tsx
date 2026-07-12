@@ -26,6 +26,7 @@ const provider = (overrides: Partial<ProviderView> = {}): ProviderView => ({
   name: 'Gateway',
   baseUrl: 'https://g/v1',
   model: 'claude-sonnet-4-5',
+  models: ['claude-sonnet-4-5'],
   maskedKey: 'sk-a…wxyz',
   hasKey: true,
   needsKey: false,
@@ -43,7 +44,6 @@ const renderList = (providers: ProviderView[], activeId?: string): void => {
         activeProviderId={activeId}
         onEdit={noop}
         onDelete={noop}
-        onSetActive={noop}
         onTest={noop}
       />
     )
@@ -66,32 +66,16 @@ describe('ProviderList', () => {
     expect(container.textContent).not.toContain('sk-abcdefwxyz')
   })
 
-  it('leads an unselected row with a Select button, never Test connection', () => {
-    renderList([provider()])
-
-    const buttons = Array.from(container.querySelectorAll('button'))
-    // The first action must be Select; Test connection must never be first.
-    expect(buttons[0]?.textContent?.trim()).toBe('Select')
-    expect(buttons[0]?.getAttribute('aria-label')).not.toBe('Test connection')
-
-    const selectIndex = buttons.findIndex((button) => button.textContent?.trim() === 'Select')
-    const testIndex = buttons.findIndex(
-      (button) => button.getAttribute('aria-label') === 'Test connection'
-    )
-    expect(selectIndex).toBe(0)
-    expect(testIndex).toBeGreaterThan(selectIndex)
-  })
-
-  it('marks the selected provider with a Selected badge and no Select button (no "Active" wording)', () => {
+  it('does not show any provider-level active/select control (selection is by model)', () => {
     renderList([provider()], 'p1')
 
-    expect(container.textContent).toContain('Selected')
-    // "Active" is intentionally avoided because it implies availability, not selection.
-    expect(container.textContent).not.toContain('Active')
-    const selectButton = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Select'
+    // No per-provider "Select"/"Selected" control, and no "active provider" wording.
+    const labels = Array.from(container.querySelectorAll('button')).map((button) =>
+      button.textContent?.trim()
     )
-    expect(selectButton).toBeUndefined()
+    expect(labels).not.toContain('Select')
+    expect(container.textContent).not.toContain('Selected')
+    expect(container.textContent).not.toContain('Active')
   })
 
   it('renders edit/delete/test as icon-only buttons with accessible labels', () => {

@@ -61,6 +61,8 @@ import type {
   DeleteProviderRequest,
   InstallClaudeRequest,
   Preflight,
+  RefreshProviderModelsRequest,
+  RefreshProviderModelsResult,
   SetActiveProviderRequest,
   SettingsSnapshot,
   UpsertProviderRequest,
@@ -120,6 +122,9 @@ interface OpenScienceAPI {
     deleteProvider(request: DeleteProviderRequest): Promise<SettingsSnapshot>
     setActiveProvider(request: SetActiveProviderRequest): Promise<SettingsSnapshot>
     validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult>
+    refreshProviderModels(
+      request: RefreshProviderModelsRequest
+    ): Promise<RefreshProviderModelsResult>
     markOnboardingComplete(): Promise<SettingsSnapshot>
     onInstallLog(listener: AcpListener<ClaudeInstallLogEvent>): RemoveListener
   }

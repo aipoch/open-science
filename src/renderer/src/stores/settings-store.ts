@@ -1,12 +1,15 @@
 import { create } from 'zustand'
 
+import type { OfficialVendorId } from '../../../shared/provider-registry'
 import type {
   ClaudeDetectResult,
   ClaudeInfo,
   ClaudeInstallResult,
   ClaudeInstallSource,
   Preflight,
+  ProviderType,
   ProviderView,
+  RefreshProviderModelsResult,
   SettingsSnapshot,
   UpsertProviderRequest,
   ValidateProviderRequest,
@@ -23,6 +26,8 @@ type SettingsStoreData = {
   isLoaded: boolean
   claude: ClaudeInfo
   activeProviderId: string | undefined
+  // Active model within the active provider; undefined means the provider's own default.
+  activeModel: string | undefined
   providers: ProviderView[]
   onboardingCompletedAt: number | undefined
   preflight: Preflight
@@ -51,7 +56,11 @@ type SettingsStore = SettingsStoreData & {
   // Combined onboarding flow: persist + validate + activate only on success.
   saveAndActivateProvider: (request: UpsertProviderRequest) => Promise<SaveProviderResult>
   validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
-  setActiveProvider: (providerId: string) => Promise<void>
+  // Fetches a saved provider's live model list from the vendor and refreshes the cache on success.
+  refreshProviderModels: (providerId: string) => Promise<RefreshProviderModelsResult>
+  // Activates a provider and, optionally, a specific model within it (composer model switch). An
+  // omitted model lets main fall back to the provider's default.
+  setActiveProvider: (providerId: string, model?: string) => Promise<void>
   deleteProvider: (providerId: string) => Promise<void>
   openSettings: () => void
   closeSettings: () => void
@@ -72,6 +81,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   isLoaded: false,
   claude: {},
   activeProviderId: undefined,
+  activeModel: undefined,
   providers: [],
   onboardingCompletedAt: undefined,
   preflight: createInitialPreflight(),
@@ -88,9 +98,36 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
 const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> => ({
   claude: snapshot.claude,
   activeProviderId: snapshot.activeProviderId,
+  activeModel: snapshot.activeModel,
   providers: snapshot.providers,
   onboardingCompletedAt: snapshot.onboardingCompletedAt
 })
+
+// A single selectable (provider, model) entry for the composer picker. `model` is '' for a provider
+// with no concrete model (a claude-default without an override), meaning "use the provider default".
+export type ProviderModelOption = {
+  providerId: string
+  providerName: string
+  providerType: ProviderType
+  vendorId?: OfficialVendorId
+  model: string
+}
+
+// Flattens providers into the composer's (provider, model) options: one per catalog model for an
+// official vendor, the single model for a custom provider, and one default entry for a provider that
+// exposes no concrete model. Pure so the composer and its tests can share it.
+export const selectProviderModelOptions = (providers: ProviderView[]): ProviderModelOption[] =>
+  providers.flatMap((provider) => {
+    const models = provider.models.length > 0 ? provider.models : ['']
+
+    return models.map((model) => ({
+      providerId: provider.id,
+      providerName: provider.name,
+      providerType: provider.type,
+      vendorId: provider.vendorId,
+      model
+    }))
+  })
 
 // Finds the provider id affected by an upsert: the edited id, or the one new since `before`.
 const resolveUpsertedProviderId = (
@@ -235,9 +272,24 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     return result
   },
 
-  // Switches the active provider (main drops the agent connection so the next prompt reconnects).
-  setActiveProvider: async (providerId) => {
-    const snapshot = await window.api.settings.setActiveProvider({ id: providerId })
+  // Fetches a provider's live models from the vendor; on success the persisted list is reflected here.
+  refreshProviderModels: async (providerId) => {
+    const result = await window.api.settings.refreshProviderModels({ providerId })
+
+    if (result.ok) {
+      set(applySnapshot(await window.api.settings.getSettings()))
+    }
+
+    return result
+  },
+
+  // Switches the active provider/model (main drops the agent connection so the next prompt reconnects).
+  // An empty model string is treated as "no specific model" so main uses the provider default.
+  setActiveProvider: async (providerId, model) => {
+    const snapshot = await window.api.settings.setActiveProvider({
+      id: providerId,
+      model: model || undefined
+    })
 
     set(applySnapshot(snapshot))
     await get().refreshPreflight()
