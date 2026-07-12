@@ -440,8 +440,9 @@ describe('artifact repository', () => {
   })
 
   it('derives the project artifact directory from the app storage root', () => {
+    // Build the expectation with join() so the separator matches the host the test runs on.
     expect(getProjectArtifactDir('/Users/example/.open-science', 'default-project')).toBe(
-      '/Users/example/.open-science/artifacts/default-project'
+      join('/Users/example/.open-science', 'artifacts', 'default-project')
     )
   })
 })

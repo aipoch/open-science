@@ -4,7 +4,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -338,7 +338,9 @@ describe('ACP runtime session management', () => {
     const serialized = JSON.stringify(receivedPrompts[0])
     expect(serialized).not.toContain(rawBase64)
     expect(receivedPrompts[0].some((block) => block.type === 'image')).toBe(false)
-  })
+    // Headroom for the one-time dynamic import of the large pdfjs-dist bundle, whose ESM resolution
+    // is markedly slower on a cold Windows CI runner and can exceed the 5s default there.
+  }, 30000)
 
   it('allows prompts from different sessions to run concurrently', async () => {
     const process = new FakeAgentProcess()
@@ -501,8 +503,8 @@ describe('ACP runtime session management', () => {
     initializeCanFinish.resolve(undefined)
 
     await expect(Promise.all([firstSession, secondSession])).resolves.toEqual([
-      { sessionId: 'remote-session-1', cwd: '/workspace' },
-      { sessionId: 'remote-session-2', cwd: '/workspace' }
+      { sessionId: 'remote-session-1', cwd: resolve('/workspace') },
+      { sessionId: 'remote-session-2', cwd: resolve('/workspace') }
     ])
     expect(spawnCount).toBe(1)
     expect(runtime.getSnapshot().sessionIds).toEqual(['remote-session-1', 'remote-session-2'])
@@ -568,7 +570,7 @@ describe('ACP runtime session management', () => {
 
     expect(session).toEqual({
       sessionId: 'remote-session-2',
-      cwd: '/second-workspace'
+      cwd: resolve('/second-workspace')
     })
     expect(spawnCount).toBe(2)
     expect(runtime.getSnapshot()).toMatchObject({
@@ -740,7 +742,7 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.resumedSessions).toEqual([
       {
         sessionId: 'remote-session-1',
-        cwd: '/workspace',
+        cwd: resolve('/workspace'),
         mcpServers: [],
         // Every session (new or resumed) is restricted to the app-owned "user" settings scope.
         _meta: { claudeCode: { options: { settingSources: ['user'] } } }
@@ -974,7 +976,7 @@ describe('ACP runtime session management', () => {
     ).toMatch(/^notebook-session-/)
     expect(
       getEnvValue(fakeAgent.newSessions[0].mcpServers[0], 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD')
-    ).toBe('/workspace')
+    ).toBe(resolve('/workspace'))
     expect(aliases).toEqual([
       {
         aliasSessionId: getEnvValue(
@@ -1045,8 +1047,8 @@ describe('ACP runtime session management', () => {
     expect(
       JSON.parse(getEnvValue(artifactServer, 'OPEN_SCIENCE_ARTIFACT_ALLOWED_IMPORT_ROOTS'))
     ).toEqual([
-      '/workspace',
-      `/Users/example/.open-science/notebooks/default-project/${notebookSessionId}`
+      resolve('/workspace'),
+      join('/Users/example/.open-science', 'notebooks', 'default-project', notebookSessionId)
     ])
   })
 

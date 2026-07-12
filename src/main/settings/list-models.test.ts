@@ -21,7 +21,8 @@ describe('listProviderModels', () => {
   it('requests the given models URL with auth and returns the parsed ids', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({
       status: 200,
-      json: () => Promise.resolve({ data: [{ id: 'deepseek-v4-pro' }, { id: 'deepseek-v4-flash' }] })
+      json: () =>
+        Promise.resolve({ data: [{ id: 'deepseek-v4-pro' }, { id: 'deepseek-v4-flash' }] })
     })
 
     const result = await listProviderModels(

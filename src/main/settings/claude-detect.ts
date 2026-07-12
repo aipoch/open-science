@@ -1,7 +1,7 @@
 import { access } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { homedir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
@@ -29,6 +29,12 @@ export type ClaudeDetectDeps = {
   resolveNpmBinDirs: () => Promise<string[]>
 }
 
+// Path semantics follow the injected platform, not the host running the code. Production wires
+// deps.platform to process.platform (so this is a no-op there), but pinning it lets the unit tests
+// exercise the win32 rules deterministically on a posix CI runner and vice versa.
+const pathFor = (platform: NodeJS.Platform): path.PlatformPath =>
+  platform === 'win32' ? path.win32 : path.posix
+
 // Candidate binary filenames for claude, in probe order. Windows resolves a bare command through
 // PATHEXT, so an npm-installed `claude.cmd`, a native `claude.exe`, or a `.bat` shim must each be
 // tried explicitly; the extensionless name is kept last as a catch-all. Unix has only `claude`.
@@ -40,10 +46,11 @@ const claudeBinaryNames = (platform: NodeJS.Platform): string[] =>
 // target on every OS) is added separately by collectCandidateDirs.
 const wellKnownDirs = (platform: NodeJS.Platform, env: NodeJS.ProcessEnv): string[] => {
   if (platform === 'win32') {
+    const p = pathFor(platform)
     const dirs: string[] = []
 
-    if (env.APPDATA) dirs.push(join(env.APPDATA, 'npm'))
-    if (env.LOCALAPPDATA) dirs.push(join(env.LOCALAPPDATA, 'Programs', 'claude'))
+    if (env.APPDATA) dirs.push(p.join(env.APPDATA, 'npm'))
+    if (env.LOCALAPPDATA) dirs.push(p.join(env.LOCALAPPDATA, 'Programs', 'claude'))
 
     return dirs
   }
@@ -53,9 +60,10 @@ const wellKnownDirs = (platform: NodeJS.Platform, env: NodeJS.ProcessEnv): strin
 
 // Builds the ordered list of directories to search for the claude binary.
 const collectCandidateDirs = async (deps: ClaudeDetectDeps): Promise<string[]> => {
-  const pathDirs = (deps.env.PATH ?? '').split(delimiter).filter((dir) => dir.length > 0)
+  const p = pathFor(deps.platform)
+  const pathDirs = (deps.env.PATH ?? '').split(p.delimiter).filter((dir) => dir.length > 0)
   const npmBinDirs = await deps.resolveNpmBinDirs().catch(() => [])
-  const localBin = join(deps.homePath, '.local', 'bin')
+  const localBin = p.join(deps.homePath, '.local', 'bin')
 
   // De-duplicate while preserving first-seen order so the first real hit wins.
   return Array.from(
@@ -68,12 +76,13 @@ const collectCandidateDirs = async (deps: ClaudeDetectDeps): Promise<string[]> =
 const detectClaude = async (
   deps: ClaudeDetectDeps = createDefaultDetectDeps()
 ): Promise<ClaudeDetectResult> => {
+  const p = pathFor(deps.platform)
   const candidateDirs = await collectCandidateDirs(deps)
   const binaryNames = claudeBinaryNames(deps.platform)
 
   for (const dir of candidateDirs) {
     for (const name of binaryNames) {
-      const candidate = join(dir, name)
+      const candidate = p.join(dir, name)
 
       if (!(await deps.isExecutable(candidate))) continue
 
@@ -154,7 +163,7 @@ const resolveNpmBinDirs = (platform: NodeJS.Platform) => async (): Promise<strin
 
     if (!prefix) return []
 
-    return platform === 'win32' ? [prefix] : [join(prefix, 'bin')]
+    return platform === 'win32' ? [prefix] : [pathFor(platform).join(prefix, 'bin')]
   } catch {
     return []
   }

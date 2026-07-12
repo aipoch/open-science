@@ -15,9 +15,15 @@ const createStorageRoot = async (): Promise<string> => {
 
 const hasPython3 = (): boolean => spawnSync('python3', ['--version']).status === 0
 
+// Spawning python cold on a Windows CI runner (interpreter start + first imports like matplotlib) is
+// well over the 5s vitest default, so the process-backed cases get generous headroom.
+const PYTHON_TEST_TIMEOUT_MS = 30_000
+
 afterEach(async () => {
   if (storageRoot) {
-    await rm(storageRoot, { recursive: true, force: true })
+    // Retry the removal: on Windows a just-killed interpreter can briefly keep a handle on the temp
+    // tree, so the first rmdir may fail with EBUSY before the OS releases it.
+    await rm(storageRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     storageRoot = undefined
   }
 })
@@ -41,35 +47,39 @@ describe('notebook Python executor', () => {
 
   const itWithPython = hasPython3() ? it : it.skip
 
-  itWithPython('keeps Python variables across executions in one executor', async () => {
-    const root = await createStorageRoot()
-    const executor = new NotebookPythonExecutor('python3')
+  itWithPython(
+    'keeps Python variables across executions in one executor',
+    async () => {
+      const root = await createStorageRoot()
+      const executor = new NotebookPythonExecutor('python3')
 
-    try {
-      const first = await executor.execute({
-        code: 'x = 41',
-        cwd: root,
-        notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
-        dataRoot: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
-        runtimeRoot: join(root, 'runtime')
-      })
-      const second = await executor.execute({
-        code: 'print(x + 1)',
-        cwd: root,
-        notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
-        dataRoot: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
-        runtimeRoot: join(root, 'runtime')
-      })
+      try {
+        const first = await executor.execute({
+          code: 'x = 41',
+          cwd: root,
+          notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
+          dataRoot: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
+          runtimeRoot: join(root, 'runtime')
+        })
+        const second = await executor.execute({
+          code: 'print(x + 1)',
+          cwd: root,
+          notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
+          dataRoot: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
+          runtimeRoot: join(root, 'runtime')
+        })
 
-      expect(first.status).toBe('completed')
-      expect(second).toMatchObject({
-        status: 'completed',
-        stdout: '42\n'
-      })
-    } finally {
-      await executor.shutdown()
-    }
-  })
+        expect(first.status).toBe('completed')
+        expect(second).toMatchObject({
+          status: 'completed',
+          stdout: '42\n'
+        })
+      } finally {
+        await executor.shutdown()
+      }
+    },
+    PYTHON_TEST_TIMEOUT_MS
+  )
 
   itWithPython(
     'runs with a non-interactive matplotlib backend so no GUI window opens',
@@ -90,32 +100,37 @@ describe('notebook Python executor', () => {
       } finally {
         await executor.shutdown()
       }
-    }
+    },
+    PYTHON_TEST_TIMEOUT_MS
   )
 
-  itWithPython('returns a timeout execution result when code exceeds timeoutMs', async () => {
-    const root = await createStorageRoot()
-    const executor = new NotebookPythonExecutor('python3')
+  itWithPython(
+    'returns a timeout execution result when code exceeds timeoutMs',
+    async () => {
+      const root = await createStorageRoot()
+      const executor = new NotebookPythonExecutor('python3')
 
-    try {
-      const result = await executor.execute({
-        code: 'import time\ntime.sleep(1)',
-        cwd: root,
-        notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
-        dataRoot: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
-        runtimeRoot: join(root, 'runtime'),
-        timeoutMs: 10
-      })
+      try {
+        const result = await executor.execute({
+          code: 'import time\ntime.sleep(1)',
+          cwd: root,
+          notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
+          dataRoot: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
+          runtimeRoot: join(root, 'runtime'),
+          timeoutMs: 10
+        })
 
-      expect(result).toMatchObject({
-        status: 'timeout',
-        stdout: ''
-      })
-      expect(result.stderr).toContain('timed out')
-    } finally {
-      await executor.shutdown()
-    }
-  })
+        expect(result).toMatchObject({
+          status: 'timeout',
+          stdout: ''
+        })
+        expect(result.stderr).toContain('timed out')
+      } finally {
+        await executor.shutdown()
+      }
+    },
+    PYTHON_TEST_TIMEOUT_MS
+  )
 
   itWithPython(
     'captures direct subprocess stdout instead of treating it as bridge JSON',
@@ -143,6 +158,7 @@ describe('notebook Python executor', () => {
       } finally {
         await executor.shutdown()
       }
-    }
+    },
+    PYTHON_TEST_TIMEOUT_MS
   )
 })
