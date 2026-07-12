@@ -27,7 +27,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.55.0",
-    "@agentclientprotocol/sdk": "^1.1.0",
+    "@agentclientprotocol/sdk": "^1.2.1",
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
