@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 
 import type { ClaudeInstallSource } from '../../../../shared/settings'
 import { getClaudeInstallSources, getNodeInstallHint } from '../../../../shared/settings'
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 
 type ClaudeInstallCardProps = {
   isInstalling: boolean
@@ -29,27 +30,32 @@ const ClaudeInstallCard = ({
   const selectedSource = installSources.find((item) => item.id === source)
   const npmMissing = source === 'npm' && !npmAvailable
 
+  // Option label with an inline "(npm not found)" hint for sources that need npm when it's missing.
+  const sourceLabel = (item: (typeof installSources)[number]): string =>
+    `${item.label}${item.requiresNpm && !npmAvailable ? ' (npm not found)' : ''}`
+
   return (
     <div className="rounded-xl border border-border p-4">
       <div className="space-y-1.5">
         <label className="text-xs font-medium text-muted-foreground" htmlFor="install-source">
           Install source
         </label>
-        <select
-          id="install-source"
-          aria-label="Install source"
+        <Select
           value={source}
           disabled={isInstalling}
-          onChange={(event) => setSource(event.target.value as ClaudeInstallSource)}
-          className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring"
+          onValueChange={(next) => setSource(next as ClaudeInstallSource)}
         >
-          {installSources.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.label}
-              {item.requiresNpm && !npmAvailable ? ' (npm not found)' : ''}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger id="install-source" aria-label="Install source">
+            <span className="truncate">{selectedSource ? sourceLabel(selectedSource) : ''}</span>
+          </SelectTrigger>
+          <SelectContent>
+            {installSources.map((item) => (
+              <SelectItem key={item.id} value={item.id}>
+                {sourceLabel(item)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {selectedSource ? (

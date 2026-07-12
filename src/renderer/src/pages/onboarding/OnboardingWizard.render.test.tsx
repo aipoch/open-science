@@ -126,7 +126,7 @@ describe('OnboardingWizard', () => {
     })
 
     // Nothing to install when claude is already runnable — the install source picker is gone.
-    expect(container.querySelector('select[aria-label="Install source"]')).toBeNull()
+    expect(container.querySelector('[role="combobox"][aria-label="Install source"]')).toBeNull()
   })
 
   it('shows the install source UI when Claude is missing', async () => {
@@ -138,7 +138,7 @@ describe('OnboardingWizard', () => {
       root.render(<OnboardingWizard />)
     })
 
-    expect(container.querySelector('select[aria-label="Install source"]')).not.toBeNull()
+    expect(container.querySelector('[role="combobox"][aria-label="Install source"]')).not.toBeNull()
   })
 
   it('defers required-field errors until the first submit attempt', async () => {
