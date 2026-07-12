@@ -194,11 +194,19 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     set({ isDetectingClaude: true })
 
     try {
-      const result = await window.api.settings.detectClaude()
+      // Re-detect claude and npm together so a mid-onboarding Node.js install is picked up by the same
+      // Re-detect action. npm has no separate refresh; it was previously latched at load() only, so
+      // users who installed Node.js after opening onboarding were stuck until an app restart.
+      const [result, npmAvailable] = await Promise.all([
+        window.api.settings.detectClaude(),
+        window.api.settings.isNpmAvailable()
+      ])
 
-      if (result.found && result.path) {
-        set({ claude: { resolvedPath: result.path, version: result.version } })
-      }
+      set(() =>
+        result.found && result.path
+          ? { npmAvailable, claude: { resolvedPath: result.path, version: result.version } }
+          : { npmAvailable }
+      )
 
       await get().refreshPreflight()
 

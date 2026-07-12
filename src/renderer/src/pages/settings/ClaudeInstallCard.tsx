@@ -89,7 +89,7 @@ const ClaudeInstallCard = ({
             <a href={nodeHint.url} target="_blank" rel="noreferrer" className="underline">
               {nodeHint.url}
             </a>
-            , then restart the app so npm is detected.
+            , then re-detect above so npm is picked up.
           </p>
         </div>
       ) : null}

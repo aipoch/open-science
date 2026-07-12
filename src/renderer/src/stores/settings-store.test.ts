@@ -13,6 +13,7 @@ type SettingsApi = {
   getPreflight: ReturnType<typeof vi.fn>
   isEncryptionAvailable: ReturnType<typeof vi.fn>
   isNpmAvailable: ReturnType<typeof vi.fn>
+  detectClaude: ReturnType<typeof vi.fn>
   upsertProvider: ReturnType<typeof vi.fn>
   validateProvider: ReturnType<typeof vi.fn>
   refreshProviderModels: ReturnType<typeof vi.fn>
@@ -55,6 +56,7 @@ beforeEach(() => {
     getPreflight: vi.fn().mockResolvedValue({ claudeReady: true, activeProviderReady: true }),
     isEncryptionAvailable: vi.fn().mockResolvedValue(true),
     isNpmAvailable: vi.fn().mockResolvedValue(true),
+    detectClaude: vi.fn().mockResolvedValue({ found: false }),
     upsertProvider: vi.fn(),
     validateProvider: vi.fn(),
     refreshProviderModels: vi.fn(),
@@ -238,6 +240,19 @@ describe('settings store: hasEnteredApp latch (onboarding is first-run only)', (
     await useSettingsStore.getState().load()
 
     expect(useSettingsStore.getState().hasEnteredApp).toBe(true)
+  })
+})
+
+describe('settings store: detectClaude refreshes npm', () => {
+  it('re-checks npm availability so a mid-onboarding Node.js install is picked up', async () => {
+    // Start from the "npm missing" state a genuine first run without Node.js would have.
+    useSettingsStore.setState({ npmAvailable: false })
+    api.isNpmAvailable.mockResolvedValue(true)
+
+    await useSettingsStore.getState().detectClaude()
+
+    expect(api.isNpmAvailable).toHaveBeenCalledTimes(1)
+    expect(useSettingsStore.getState().npmAvailable).toBe(true)
   })
 })
 

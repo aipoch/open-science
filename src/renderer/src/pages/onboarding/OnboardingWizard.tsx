@@ -133,14 +133,16 @@ const OnboardingWizard = (): React.JSX.Element => {
                 onInstall={(source) => void installClaude(source)}
               />
             ) : null}
-            <button
-              type="button"
-              onClick={() => setStep('provider')}
-              disabled={!preflight.claudeReady}
-              className="rounded-lg border border-primary bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-            >
-              Continue
-            </button>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setStep('provider')}
+                disabled={!preflight.claudeReady}
+                className="rounded-lg border border-primary bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+              >
+                Continue
+              </button>
+            </div>
           </section>
         ) : (
           <section aria-label="Configure model" className="mt-6 space-y-4">
@@ -164,7 +166,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                 {validationMessage}
               </p>
             ) : null}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center justify-end gap-3">
               <button
                 type="button"
                 onClick={() => setStep('claude')}
