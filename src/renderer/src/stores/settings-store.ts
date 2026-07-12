@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 import type { OfficialVendorId } from '../../../shared/provider-registry'
+import { providerValidationFailed } from '../../../shared/settings'
 import type {
   ClaudeDetectResult,
   ClaudeInfo,
@@ -51,6 +52,9 @@ type SettingsStore = SettingsStoreData & {
   detectClaude: () => Promise<ClaudeDetectResult>
   installClaude: (source: ClaudeInstallSource) => Promise<ClaudeInstallResult>
   clearInstallLogs: () => void
+  // Persists the draft (create/update) without testing it, returning the affected provider id. The
+  // Settings page uses this to return to the list immediately, then tests in the background.
+  persistProvider: (request: UpsertProviderRequest) => Promise<string>
   // Persists the draft and validates it, without changing the active provider.
   saveProvider: (request: UpsertProviderRequest) => Promise<SaveProviderResult>
   // Combined onboarding flow: persist + validate + activate only on success.
@@ -115,19 +119,22 @@ export type ProviderModelOption = {
 
 // Flattens providers into the composer's (provider, model) options: one per catalog model for an
 // official vendor, the single model for a custom provider, and one default entry for a provider that
-// exposes no concrete model. Pure so the composer and its tests can share it.
+// exposes no concrete model. Providers whose last test failed are excluded so a broken provider can't
+// be picked as a model source. Pure so the composer and its tests can share it.
 export const selectProviderModelOptions = (providers: ProviderView[]): ProviderModelOption[] =>
-  providers.flatMap((provider) => {
-    const models = provider.models.length > 0 ? provider.models : ['']
+  providers
+    .filter((provider) => !providerValidationFailed(provider))
+    .flatMap((provider) => {
+      const models = provider.models.length > 0 ? provider.models : ['']
 
-    return models.map((model) => ({
-      providerId: provider.id,
-      providerName: provider.name,
-      providerType: provider.type,
-      vendorId: provider.vendorId,
-      model
-    }))
-  })
+      return models.map((model) => ({
+        providerId: provider.id,
+        providerName: provider.name,
+        providerType: provider.type,
+        vendorId: provider.vendorId,
+        model
+      }))
+    })
 
 // Finds the provider id affected by an upsert: the edited id, or the one new since `before`.
 const resolveUpsertedProviderId = (
@@ -227,6 +234,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   clearInstallLogs: () => set({ installLogs: [] }),
 
+  // Persists a provider draft (create/update) and refreshes derived state, without testing it.
+  persistProvider: async (request) => {
+    const before = get().providers
+    const afterUpsert = await window.api.settings.upsertProvider(request)
+
+    set(applySnapshot(afterUpsert))
+    await get().refreshPreflight()
+
+    return resolveUpsertedProviderId(request, before, afterUpsert.providers) ?? ''
+  },
+
   // Persists a provider draft and validates it (without activating), refreshing derived state.
   saveProvider: async (request) => {
     const before = get().providers
@@ -242,7 +260,9 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
     const validation = await window.api.settings.validateProvider({ providerId })
 
-    // Refresh so the validated-at timestamp / masked key reflect the latest stored state.
+    // Refresh so the validated-at time / recorded failure / masked key reflect the latest stored
+    // state. A failed test keeps the provider (flagged as unverified in the list and excluded from the
+    // model pickers); it is not rolled back, so the user can fix the key and retry.
     set(applySnapshot(await window.api.settings.getSettings()))
     await get().refreshPreflight()
 
@@ -264,7 +284,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   validateProvider: async (request) => {
     const result = await window.api.settings.validateProvider(request)
 
-    if (result.ok) {
+    // Refresh whenever a saved provider was tested, pass or fail: success stamps lastValidatedAt, a
+    // failure records the reason and surfaces the "unverified" warning. Draft validations (no
+    // providerId) change nothing stored, so they skip the refresh.
+    if (request.providerId) {
       set(applySnapshot(await window.api.settings.getSettings()))
       await get().refreshPreflight()
     }

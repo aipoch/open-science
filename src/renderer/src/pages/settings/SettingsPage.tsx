@@ -17,7 +17,6 @@ import {
   type ProviderFormValue
 } from './provider-form-value'
 import { ProviderList } from './ProviderList'
-import { describeValidation } from './validation-message'
 
 type SettingsPageProps = {
   open: boolean
@@ -78,7 +77,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const load = useSettingsStore((state) => state.load)
   const detectClaude = useSettingsStore((state) => state.detectClaude)
   const installClaude = useSettingsStore((state) => state.installClaude)
-  const saveProvider = useSettingsStore((state) => state.saveProvider)
+  const persistProvider = useSettingsStore((state) => state.persistProvider)
   const deleteProvider = useSettingsStore((state) => state.deleteProvider)
   const validateProvider = useSettingsStore((state) => state.validateProvider)
   const refreshProviderModels = useSettingsStore((state) => state.refreshProviderModels)
@@ -132,12 +131,17 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
     setStatusMessage(undefined)
 
     try {
-      const { validation } = await saveProvider(toUpsertRequest(formValue, editingProvider?.id))
+      // Persist first and return to the provider list immediately — don't hold the form open waiting
+      // for the connection test. The test then runs in the background and its result (green check or
+      // warning) lands on the provider's card.
+      const providerId = await persistProvider(toUpsertRequest(formValue, editingProvider?.id))
 
-      setStatusOk(validation.ok)
-      setStatusMessage(describeValidation(validation))
+      setFormTarget(null)
 
-      if (validation.ok) setFormTarget(null)
+      if (providerId) {
+        setBusyProviderId(providerId)
+        void validateProvider({ providerId }).finally(() => setBusyProviderId(undefined))
+      }
     } catch (error) {
       setStatusOk(false)
       setStatusMessage(error instanceof Error ? error.message : 'Could not save provider.')
@@ -168,13 +172,11 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
 
   const handleTest = async (provider: ProviderView): Promise<void> => {
     setBusyProviderId(provider.id)
-    setStatusMessage(undefined)
 
     try {
-      const validation = await validateProvider({ providerId: provider.id })
-
-      setStatusOk(validation.ok)
-      setStatusMessage(`${provider.name}: ${describeValidation(validation)}`)
+      // The pass/fail result is reflected on the provider's card (green check or warning), not as a
+      // separate status line.
+      await validateProvider({ providerId: provider.id })
     } finally {
       setBusyProviderId(undefined)
     }
@@ -307,7 +309,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                       disabled={!canSave}
                       className="rounded-lg border border-primary bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
                     >
-                      {isSaving ? 'Saving…' : 'Save & Test'}
+                      {isSaving ? 'Saving…' : 'Save'}
                     </button>
                   </div>
                 </div>
@@ -354,14 +356,6 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                       </div>
                     ) : null}
 
-                    {statusMessage ? (
-                      <p
-                        className={`mb-3 text-sm ${statusOk ? 'text-primary' : 'text-destructive'}`}
-                        role="alert"
-                      >
-                        {statusMessage}
-                      </p>
-                    ) : null}
                     <ProviderList
                       providers={providers}
                       activeProviderId={activeProviderId}

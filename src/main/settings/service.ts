@@ -229,6 +229,12 @@ class SettingsService {
       provider.lastValidatedAt = existing.lastValidatedAt
     }
 
+    // Carry a prior failure only while credentials are unchanged; a credential change invalidates it
+    // (the provider must be re-tested), so it drops and the warning clears until the next test.
+    if (existing?.lastValidationFailure !== undefined && !credentialsChanged) {
+      provider.lastValidationFailure = existing.lastValidationFailure
+    }
+
     await this.repository.upsertProvider(provider)
 
     return this.getSettingsView()
@@ -268,11 +274,24 @@ class SettingsService {
           : undefined
     })
 
-    if (result.ok && resolved.storedId) {
-      await this.repository.upsertProvider({
-        ...settings.providers.find((provider) => provider.id === resolved.storedId)!,
-        lastValidatedAt: Date.now()
-      })
+    if (resolved.storedId) {
+      const stored = settings.providers.find((provider) => provider.id === resolved.storedId)!
+
+      // Success stamps the validated time and clears any prior failure. A failure keeps the provider
+      // but records why, so the list can flag it and the model pickers exclude it until it passes.
+      await this.repository.upsertProvider(
+        result.ok
+          ? { ...stored, lastValidatedAt: Date.now(), lastValidationFailure: undefined }
+          : {
+              ...stored,
+              lastValidationFailure: {
+                at: Date.now(),
+                category: result.category,
+                status: result.status,
+                message: result.message
+              }
+            }
+      )
     }
 
     return result
@@ -392,7 +411,8 @@ class SettingsService {
       maskedKey: provider.keyMask,
       hasKey,
       needsKey,
-      lastValidatedAt: provider.lastValidatedAt
+      lastValidatedAt: provider.lastValidatedAt,
+      lastValidationFailure: provider.lastValidationFailure
     }
   }
 

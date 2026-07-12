@@ -36,12 +36,13 @@ const provider = (overrides: Partial<ProviderView> = {}): ProviderView => ({
 
 const noop = vi.fn()
 
-const renderList = (providers: ProviderView[], activeId?: string): void => {
+const renderList = (providers: ProviderView[], activeId?: string, busyId?: string): void => {
   act(() => {
     root.render(
       <ProviderList
         providers={providers}
         activeProviderId={activeId}
+        busyProviderId={busyId}
         onEdit={noop}
         onDelete={noop}
         onTest={noop}
@@ -129,6 +130,37 @@ describe('ProviderList', () => {
     renderList([provider({ needsKey: true })])
 
     expect(container.textContent).toContain('Key needs re-entry')
+  })
+
+  it('flags a provider whose last test failed with the reason', () => {
+    renderList([
+      provider({ lastValidatedAt: 1, lastValidationFailure: { at: 2, category: 'auth' } })
+    ])
+
+    expect(container.textContent).toContain('authentication rejected')
+  })
+
+  it('does not flag a provider whose latest validation succeeded', () => {
+    // A stale failure older than the last success is not a warning.
+    renderList([
+      provider({ lastValidatedAt: 5, lastValidationFailure: { at: 2, category: 'auth' } })
+    ])
+
+    expect(container.textContent).not.toContain('Test failed')
+  })
+
+  it('marks a provider whose test passed with a verified check', () => {
+    renderList([provider({ lastValidatedAt: 5 })])
+
+    expect(container.querySelector('[aria-label="Connection verified"]')).not.toBeNull()
+    expect(container.textContent).not.toContain('Test failed')
+  })
+
+  it('shows a testing state (and no check/warning) while a provider is being validated', () => {
+    renderList([provider({ id: 'p1', lastValidatedAt: 5 })], undefined, 'p1')
+
+    expect(container.textContent).toContain('Testing…')
+    expect(container.querySelector('[aria-label="Connection verified"]')).toBeNull()
   })
 
   it('shows only the model for a local Claude provider and never a key row', () => {

@@ -67,6 +67,21 @@ describe('settings repository', () => {
     expect(settings.providers[0].name).toBe('Renamed')
   })
 
+  it('keeps provider order stable when an existing provider is updated in place', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    await repository.upsertProvider(provider({ id: 'p1', name: 'One' }))
+    await repository.upsertProvider(provider({ id: 'p2', name: 'Two' }))
+    await repository.upsertProvider(provider({ id: 'p3', name: 'Three' }))
+
+    // Editing p1 (or recording a test result on it) must not move it to the end of the list.
+    await repository.upsertProvider(provider({ id: 'p1', name: 'One (edited)' }))
+
+    const settings = await repository.getSettings()
+    expect(settings.providers.map((item) => item.id)).toEqual(['p1', 'p2', 'p3'])
+    expect(settings.providers[0].name).toBe('One (edited)')
+  })
+
   it('clears the active pointer when the active provider is deleted', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 
@@ -112,6 +127,56 @@ describe('settings repository', () => {
     expect(settings.providers.map((item) => item.id)).toEqual(['p1'])
     expect(settings.providers[0]).not.toHaveProperty('secretPlaintext')
     expect(settings.claude).toEqual({ resolvedPath: '/bin/claude' })
+  })
+
+  it('round-trips a recorded validation failure across a reload', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.upsertProvider(
+      provider({
+        lastValidationFailure: {
+          at: 1717000000000,
+          category: 'auth',
+          status: 401,
+          message: 'nope'
+        }
+      })
+    )
+
+    const reloaded = await new SettingsRepository(root).getSettings()
+    expect(reloaded.providers[0].lastValidationFailure).toEqual({
+      at: 1717000000000,
+      category: 'auth',
+      status: 401,
+      message: 'nope'
+    })
+  })
+
+  it('drops a malformed validation failure (bad category or missing timestamp) on load', async () => {
+    const root = await createStorageRoot()
+
+    await writeFile(
+      join(root, 'settings.json'),
+      JSON.stringify({
+        version: 2,
+        providers: [
+          {
+            id: 'a',
+            type: 'custom',
+            name: 'A',
+            lastValidationFailure: { at: 1, category: 'bogus' }
+          },
+          { id: 'b', type: 'custom', name: 'B', lastValidationFailure: { category: 'auth' } }
+        ]
+      }),
+      'utf8'
+    )
+
+    const settings = await new SettingsRepository(root).getSettings()
+    expect(settings.providers.map((item) => item.id)).toEqual(['a', 'b'])
+    expect(settings.providers[0].lastValidationFailure).toBeUndefined()
+    expect(settings.providers[1].lastValidationFailure).toBeUndefined()
   })
 
   it('serializes concurrent mutations without losing writes', async () => {

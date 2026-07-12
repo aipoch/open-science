@@ -1,7 +1,12 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import type { ClaudeInfo, ProviderType } from '../../shared/settings'
+import type {
+  ClaudeInfo,
+  ProviderType,
+  ProviderValidationFailure,
+  ValidationCategory
+} from '../../shared/settings'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import { isOfficialVendorId } from '../../shared/provider-registry'
 import { createEmptySettings, type StoredProvider, type StoredSettings } from './types'
@@ -9,6 +14,16 @@ import { createEmptySettings, type StoredProvider, type StoredSettings } from '.
 const SETTINGS_FILE = 'settings.json'
 
 const PROVIDER_TYPES = new Set<ProviderType>(['custom', 'claude-default', 'official'])
+
+const VALIDATION_CATEGORIES = new Set<ValidationCategory>([
+  'ok',
+  'network',
+  'auth',
+  'model-not-found',
+  'bad-url',
+  'timeout',
+  'unknown'
+])
 
 // Checks for plain JSON objects so untrusted settings payloads can be sanitized safely.
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -34,6 +49,26 @@ const sanitizeClaudeInfo = (value: unknown): ClaudeInfo | undefined => {
   return Object.keys(info).length > 0 ? info : undefined
 }
 
+// Rebuilds a recorded validation failure, dropping it unless it has a numeric timestamp and a known
+// category (status/message are optional). Without this the field would be stripped on every read.
+const sanitizeValidationFailure = (value: unknown): ProviderValidationFailure | undefined => {
+  if (!isRecord(value)) return undefined
+
+  const at = asNumber(value.at)
+  const category = asString(value.category) as ValidationCategory | undefined
+
+  if (at === undefined || !category || !VALIDATION_CATEGORIES.has(category)) return undefined
+
+  const failure: ProviderValidationFailure = { at, category }
+  const status = asNumber(value.status)
+  const message = asString(value.message)
+
+  if (status !== undefined) failure.status = status
+  if (message) failure.message = message
+
+  return failure
+}
+
 // Rebuilds one provider record, dropping unknown fields and records missing required identity.
 const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
   if (!isRecord(value)) return undefined
@@ -57,6 +92,7 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
   const keyRef = asString(value.keyRef)
   const keyMask = asString(value.keyMask)
   const lastValidatedAt = asNumber(value.lastValidatedAt)
+  const lastValidationFailure = sanitizeValidationFailure(value.lastValidationFailure)
   // Keep only a clean list of non-empty string model ids.
   const fetchedModels = Array.isArray(value.fetchedModels)
     ? value.fetchedModels.filter(
@@ -72,6 +108,7 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
   if (keyRef) provider.keyRef = keyRef
   if (keyMask) provider.keyMask = keyMask
   if (lastValidatedAt !== undefined) provider.lastValidatedAt = lastValidatedAt
+  if (lastValidationFailure) provider.lastValidationFailure = lastValidationFailure
 
   return provider
 }
@@ -138,12 +175,16 @@ class SettingsRepository {
     }
   }
 
-  // Inserts or replaces a provider by id, then returns the persisted document.
+  // Inserts or replaces a provider by id, then returns the persisted document. An existing provider is
+  // replaced in place so the list keeps its creation order (editing or re-testing must not reorder it);
+  // a new provider is appended.
   async upsertProvider(provider: StoredProvider): Promise<StoredSettings> {
     return this.mutate((settings) => {
-      const providers = settings.providers.filter((existing) => existing.id !== provider.id)
+      const index = settings.providers.findIndex((existing) => existing.id === provider.id)
+      const providers = [...settings.providers]
 
-      providers.push(provider)
+      if (index >= 0) providers[index] = provider
+      else providers.push(provider)
 
       return { ...settings, providers }
     })
