@@ -20,6 +20,28 @@ type ConversationItem = ConversationMessageItem | ConversationActivityItem
 
 const KNOWN_TITLE_TOOL_NAMES = new Set(['ToolSearch'])
 
+// Claude Code namespaces MCP tools as mcp__<server>__<tool>; this is the notebook server's prefix.
+const NOTEBOOK_PROVIDER_TOOL_PREFIX = 'mcp__open-science-notebook__'
+
+// Maps a notebook MCP tool to a clean human label so rows read as notebook actions, not raw
+// mcp__open-science-notebook__* names. Returns undefined for non-notebook tools.
+const formatNotebookToolName = (providerToolName: string): string | undefined => {
+  if (!providerToolName.startsWith(NOTEBOOK_PROVIDER_TOOL_PREFIX)) return undefined
+
+  switch (providerToolName.slice(NOTEBOOK_PROVIDER_TOOL_PREFIX.length)) {
+    case 'notebook_execute':
+      return 'Notebook cell'
+    case 'notebook_state':
+      return 'Notebook state'
+    case 'notebook_restart':
+      return 'Notebook restart'
+    case 'notebook_shutdown':
+      return 'Notebook shutdown'
+    default:
+      return 'Notebook'
+  }
+}
+
 // Treats pending and in-progress tool calls as live activity rows.
 const isActivityActive = (activity: ToolActivity): boolean =>
   activity.status === 'pending' || activity.status === 'in_progress'
@@ -54,7 +76,7 @@ const formatActivityToolName = (activity: ToolActivity): string => {
   const providerToolName = trimDetail(activity.providerToolName)
   const title = trimDetail(activity.title)
 
-  if (providerToolName) return providerToolName
+  if (providerToolName) return formatNotebookToolName(providerToolName) ?? providerToolName
   if (title && KNOWN_TITLE_TOOL_NAMES.has(title)) return title
 
   return formatToolKindName(activity.toolKind)
@@ -97,5 +119,11 @@ const createConversationItems = (session: ChatSession | undefined): Conversation
   })
 }
 
-export { createConversationItems, formatActivityTitle, isActivityActive }
+export {
+  NOTEBOOK_PROVIDER_TOOL_PREFIX,
+  createConversationItems,
+  formatActivityTitle,
+  formatNotebookToolName,
+  isActivityActive
+}
 export type { ConversationItem }

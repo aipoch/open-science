@@ -233,6 +233,20 @@ class NotebookRunRepository {
     return nextDocument
   }
 
+  // Reads an existing history document without creating one, returning null when none exists yet.
+  // Used to detect notebooks that predate the current app launch so the UI can rehydrate entries.
+  async findExisting(projectName: string, sessionId: string): Promise<NotebookRunDocument | null> {
+    try {
+      return await this.loadExisting(projectName, sessionId)
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        return null
+      }
+
+      throw error
+    }
+  }
+
   // Loads a history document that must already exist for mutating operations.
   private async loadExisting(projectName: string, sessionId: string): Promise<NotebookRunDocument> {
     const safeProjectName = assertSafeNotebookPathSegment(projectName)

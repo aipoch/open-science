@@ -1,6 +1,10 @@
 import type { ToolActivity } from '@/stores/session-store'
 
-import { isActivityActive, type ConversationItem } from './workspace-conversation-items'
+import {
+  NOTEBOOK_PROVIDER_TOOL_PREFIX,
+  isActivityActive,
+  type ConversationItem
+} from './workspace-conversation-items'
 import { isEditActivity } from './workspace-tool-activity-details'
 import { hasWebSearchContentEvidence } from './workspace-web-search-details'
 
@@ -116,6 +120,7 @@ type ActivityCategory =
   | 'environment'
   | 'call'
   | 'artifact'
+  | 'notebook'
   | 'other'
 
 // Provider tool names that behave like shell/interpreter commands regardless of ACP tool kind.
@@ -143,6 +148,7 @@ const ACTIVITY_CATEGORY_ORDER: ActivityCategory[] = [
   'environment',
   'call',
   'artifact',
+  'notebook',
   'other'
 ]
 
@@ -161,6 +167,8 @@ const categorizeActivity = (
 
   const providerName = getNormalizedProviderName(activity)
 
+  // A notebook_execute call is one cell run; summarize it as such instead of a generic tool.
+  if (providerName === `${NOTEBOOK_PROVIDER_TOOL_PREFIX}notebook_execute`) return 'notebook'
   if (providerName === 'skill') return 'skill'
   if (providerName === 'save_artifacts' || providerName.includes('artifact')) return 'artifact'
   if (providerName === 'manage_packages' || providerName.includes('package')) return 'environment'
@@ -200,6 +208,8 @@ const formatCategoryClause = (category: ActivityCategory, count: number): string
       return count === 1 ? 'made a call' : `made ${count} calls`
     case 'artifact':
       return count === 1 ? 'saved a file' : `saved ${count} files`
+    case 'notebook':
+      return count === 1 ? 'ran a notebook cell' : `ran ${count} notebook cells`
     default:
       return count === 1 ? 'ran a tool' : `ran ${count} tools`
   }

@@ -362,6 +362,36 @@ class NotebookRuntimeService {
     }
   }
 
+  // Resolves the durable reference for a session, preferring the live runtime session but falling
+  // back to persisted run.json so notebook entries survive an app relaunch without re-running code.
+  async getSessionReference(
+    request: NotebookSessionRequest
+  ): Promise<NotebookSessionReference | null> {
+    const existing = this.sessions.get(request.sessionId)
+
+    if (existing) {
+      return this.toSessionReference(existing)
+    }
+
+    const projectName = request.projectName ?? this.options.projectName
+    const document = await this.repository.findExisting(projectName, request.sessionId)
+
+    if (!document) {
+      return null
+    }
+
+    // Roots come from run.json normalization so a rehydrated entry matches the live one exactly.
+    return {
+      sessionId: request.sessionId,
+      projectName,
+      workspaceCwd: document.workspaceCwd,
+      notebookSessionRoot: document.notebookSessionRoot,
+      dataRoot: document.dataRoot,
+      runtimeRoot: document.kernel.runtimeRoot,
+      runJsonPath: getNotebookRunJsonPath(this.options.storageRoot, projectName, request.sessionId)
+    }
+  }
+
   // Replaces the interpreter process while preserving cells and durable run history.
   async restart(request: NotebookSessionRequest): Promise<NotebookSessionState> {
     const session = await this.ensureSession(request)

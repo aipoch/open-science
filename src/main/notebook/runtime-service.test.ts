@@ -297,4 +297,72 @@ describe('notebook runtime service', () => {
     expect(changedSessions).toContain('agent-session')
     expect(changedSessions.filter((sessionId) => sessionId === 'agent-session').length).toBe(5)
   })
+
+  it('returns null when a session has no persisted notebook run history', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      storageRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+
+    const reference = await service.getSessionReference({
+      projectName: 'default-project',
+      sessionId: 'never-used',
+      workspaceCwd: '/workspace'
+    })
+
+    expect(reference).toBeNull()
+  })
+
+  it('rebuilds a session reference from persisted run.json without a live runtime session', async () => {
+    const root = await createStorageRoot()
+
+    // Execute against one service instance, then throw it away to simulate an app restart.
+    const firstService = new NotebookRuntimeService({
+      storageRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: 'done\n',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => undefined
+      })
+    })
+
+    await firstService.execute({
+      projectName: 'default-project',
+      sessionId: 'restored-session',
+      workspaceCwd: '/workspace',
+      code: "print('done')"
+    })
+
+    // A fresh service has no in-memory session, mirroring the state after relaunch.
+    const restartedService = new NotebookRuntimeService({
+      storageRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+
+    const reference = await restartedService.getSessionReference({
+      sessionId: 'restored-session',
+      workspaceCwd: '/workspace'
+    })
+
+    expect(reference).toMatchObject({
+      sessionId: 'restored-session',
+      projectName: 'default-project',
+      workspaceCwd: '/workspace',
+      notebookSessionRoot: join(root, 'notebooks', 'default-project', 'restored-session'),
+      dataRoot: join(root, 'notebooks', 'default-project', 'restored-session', 'data'),
+      runtimeRoot: join(root, 'runtime'),
+      runJsonPath: join(root, 'notebooks', 'default-project', 'restored-session', 'run.json')
+    })
+  })
 })

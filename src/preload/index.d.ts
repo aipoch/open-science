@@ -30,6 +30,7 @@ import type {
   ExecuteNotebookCodeRequest,
   FinishNotebookCodeCellRequest,
   NotebookRunSummary,
+  NotebookSessionReference,
   NotebookSessionRequest,
   NotebookSessionState,
   RunNotebookCellRequest
@@ -158,6 +159,7 @@ interface OpenScienceAPI {
   }
   notebook: {
     state(request: NotebookSessionRequest): Promise<NotebookSessionState>
+    getReference(request: NotebookSessionRequest): Promise<NotebookSessionReference | null>
     beginCodeCell(request: BeginNotebookCodeCellRequest): Promise<{
       sessionId: string
       cellId: string

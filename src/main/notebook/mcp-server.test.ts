@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { NOTEBOOK_SYSTEM_PROMPT_APPEND, createNotebookMcpServerConfig } from './mcp-server'
+import {
+  NOTEBOOK_RPC_TOOLS,
+  NOTEBOOK_SYSTEM_PROMPT_APPEND,
+  createNotebookMcpServerConfig
+} from './mcp-server'
 
 describe('notebook MCP server config', () => {
   it('builds an ACP stdio MCP server config scoped to the notebook runtime RPC endpoint', () => {
@@ -47,5 +51,23 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain(
       'for binary final outputs, read base64 content'
     )
+  })
+
+  it('directs the agent to run code as one notebook_execute call per cell', () => {
+    // The single-step execute tool keeps each cell to one permission prompt and one activity row,
+    // instead of the old begin/append/finish/run streaming sequence.
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('notebook_execute')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('append code deltas')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('finish the cell')
+  })
+
+  it('exposes only the single-step execute tool for writing and running code', () => {
+    const toolNames = NOTEBOOK_RPC_TOOLS.map((tool) => tool.name)
+
+    expect(toolNames).toContain('notebook_execute')
+    expect(toolNames).not.toContain('notebook_begin_code_cell')
+    expect(toolNames).not.toContain('notebook_append_code_cell')
+    expect(toolNames).not.toContain('notebook_finish_code_cell')
+    expect(toolNames).not.toContain('notebook_run_cell')
   })
 })

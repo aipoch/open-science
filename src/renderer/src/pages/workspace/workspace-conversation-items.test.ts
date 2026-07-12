@@ -123,6 +123,30 @@ describe('workspace conversation items', () => {
     ).toBe('Used tool: Grep')
   })
 
+  it('renders notebook MCP tools with a clean label instead of the raw provider name', () => {
+    expect(
+      formatActivityTitle(
+        createActivity({
+          id: 'tool-notebook-1',
+          status: 'completed',
+          providerToolName: 'mcp__open-science-notebook__notebook_execute',
+          toolKind: 'other'
+        })
+      )
+    ).toBe('Used tool: Notebook cell')
+
+    expect(
+      formatActivityTitle(
+        createActivity({
+          id: 'tool-notebook-2',
+          status: 'in_progress',
+          providerToolName: 'mcp__open-science-notebook__notebook_restart',
+          toolKind: 'other'
+        })
+      )
+    ).toBe('Using tool: Notebook restart')
+  })
+
   it('falls back to readable tool kind names for unnamed tools', () => {
     expect(
       formatActivityTitle(

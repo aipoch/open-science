@@ -5,7 +5,10 @@ import { ChevronRight } from 'lucide-react'
 import { WorkspaceToolActivityRow } from './WorkspaceToolActivityRow'
 import { WorkspaceToolDetailsRow } from './WorkspaceToolDetailsRow'
 import { WorkspaceWebSearchActivityRow } from './WorkspaceWebSearchActivityRow'
-import { buildToolActivityDetails } from './workspace-tool-activity-details'
+import {
+  buildToolActivityDetails,
+  isNotebookExecuteActivity
+} from './workspace-tool-activity-details'
 import {
   formatActivityGroupTitle,
   formatStepCount,
@@ -75,7 +78,9 @@ const WorkspaceActivityGroup = ({
                   const isSearch = isSearchActivity(activity, group.activities, activityIndex)
                   const searchDetails = isSearch ? formatWebSearchDetails(activity) : undefined
                   const toolDetails = isSearch ? undefined : buildToolActivityDetails(activity)
-                  const isRowExpanded = expansionOverrides[activity.id] ?? false
+                  // Notebook cells lead with their code, so show it unfolded unless the user collapsed it.
+                  const isRowExpanded =
+                    expansionOverrides[activity.id] ?? isNotebookExecuteActivity(activity)
 
                   return (
                     <div key={activity.id} className="w-full overflow-hidden">

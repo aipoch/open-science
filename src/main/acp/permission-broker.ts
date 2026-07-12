@@ -10,9 +10,21 @@ type PendingPermission = {
 
 type EmitPermissionRequest = (request: AcpPermissionRequest) => void
 
+// Claude Code namespaces MCP tools as mcp__<server>__<tool>; this is the notebook server's prefix.
+// Notebook tool calls carry this prefix as their permission title (see runtime notes).
+const NOTEBOOK_TOOL_TITLE_PREFIX = 'mcp__open-science-notebook__'
+
+const ALLOW_ALWAYS_OPTION_KIND = 'allow_always'
+const ALLOW_ONCE_OPTION_KIND = 'allow_once'
+
+// Auto-allow is scoped to the local notebook the user opted into; shell/edit tools always prompt.
+const isNotebookToolTitle = (title: string): boolean => title.startsWith(NOTEBOOK_TOOL_TITLE_PREFIX)
+
 // Tracks permission requests until the renderer chooses an outcome.
 class AcpPermissionBroker {
   private pendingRequests = new Map<string, PendingPermission>()
+  // Per-session set of notebook tool titles the user chose to always allow this session.
+  private alwaysAllowedNotebookTools = new Map<string, Set<string>>()
 
   // Accepts the callback used to publish new permission requests to listeners.
   constructor(private readonly emitPermissionRequest: EmitPermissionRequest) {}
@@ -39,6 +51,15 @@ class AcpPermissionBroker {
       raw: params
     }
 
+    // A prior "Always" choice on this notebook tool auto-approves without prompting again.
+    const autoAllowOptionId = this.resolveAutoAllowOptionId(request)
+
+    if (autoAllowOptionId) {
+      return Promise.resolve({
+        outcome: { outcome: 'selected', optionId: autoAllowOptionId }
+      })
+    }
+
     // The returned promise is held open until the UI selects or cancels an option.
     return new Promise((resolve) => {
       this.pendingRequests.set(requestId, { request, resolve })
@@ -61,6 +82,9 @@ class AcpPermissionBroker {
       return true
     }
 
+    // "Always" on a notebook tool suppresses future prompts for that same tool this session.
+    this.rememberAlwaysAllowed(pending.request, response.optionId)
+
     pending.resolve({
       outcome: {
         outcome: 'selected',
@@ -71,6 +95,35 @@ class AcpPermissionBroker {
     return true
   }
 
+  // Returns an allow option id when this notebook tool was already always-allowed, else undefined.
+  private resolveAutoAllowOptionId(request: AcpPermissionRequest): string | undefined {
+    if (!isNotebookToolTitle(request.title)) return undefined
+    if (!this.alwaysAllowedNotebookTools.get(request.sessionId)?.has(request.title)) {
+      return undefined
+    }
+
+    // Prefer a one-shot allow so the agent still governs the always-allow lifecycle itself.
+    const allowOption =
+      request.options.find((option) => option.kind.toLowerCase() === ALLOW_ONCE_OPTION_KIND) ??
+      request.options.find((option) => option.kind.toLowerCase() === ALLOW_ALWAYS_OPTION_KIND)
+
+    return allowOption?.optionId
+  }
+
+  // Records the notebook tool as always-allowed when the user picked its allow_always option.
+  private rememberAlwaysAllowed(request: AcpPermissionRequest, optionId: string): void {
+    if (!isNotebookToolTitle(request.title)) return
+
+    const chosen = request.options.find((option) => option.optionId === optionId)
+
+    if (chosen?.kind.toLowerCase() !== ALLOW_ALWAYS_OPTION_KIND) return
+
+    const allowed = this.alwaysAllowedNotebookTools.get(request.sessionId) ?? new Set<string>()
+
+    allowed.add(request.title)
+    this.alwaysAllowedNotebookTools.set(request.sessionId, allowed)
+  }
+
   // Cancels every pending request during full runtime teardown.
   cancelAll(): void {
     const pendingRequests = Array.from(this.pendingRequests.keys())
@@ -78,6 +131,8 @@ class AcpPermissionBroker {
     for (const requestId of pendingRequests) {
       this.respond({ requestId, cancelled: true })
     }
+
+    this.alwaysAllowedNotebookTools.clear()
   }
 
   // Cancels pending requests for one session while leaving other sessions intact.

@@ -6,6 +6,7 @@ import type {
   ExecuteNotebookCodeRequest,
   FinishNotebookCodeCellRequest,
   NotebookRunSummary,
+  NotebookSessionReference,
   NotebookSessionRequest,
   NotebookSessionState,
   RunNotebookCellRequest
@@ -14,6 +15,7 @@ import type { NotebookRuntimeService } from './runtime-service'
 
 type NotebookHandlers = {
   state: (request: NotebookSessionRequest) => Promise<NotebookSessionState>
+  reference: (request: NotebookSessionRequest) => Promise<NotebookSessionReference | null>
   beginCodeCell: (
     request: BeginNotebookCodeCellRequest
   ) => ReturnType<NotebookRuntimeService['beginCodeCell']>
@@ -32,6 +34,7 @@ type NotebookHandlers = {
 // Builds a small delegating surface so tests can validate IPC behavior without Electron wiring.
 const createNotebookHandlers = (service: NotebookRuntimeService): NotebookHandlers => ({
   state: (request) => service.state(request),
+  reference: (request) => service.getSessionReference(request),
   beginCodeCell: (request) => service.beginCodeCell(request),
   appendCodeCell: (request) => service.appendCodeCell(request),
   finishCodeCell: (request) => service.finishCodeCell(request),
@@ -47,6 +50,9 @@ const registerNotebookIpcHandlers = (service: NotebookRuntimeService): void => {
 
   ipcMain.handle('notebook:state', (_event, request: NotebookSessionRequest) =>
     handlers.state(request)
+  )
+  ipcMain.handle('notebook:reference', (_event, request: NotebookSessionRequest) =>
+    handlers.reference(request)
   )
   ipcMain.handle('notebook:begin-code-cell', (_event, request: BeginNotebookCodeCellRequest) =>
     handlers.beginCodeCell(request)

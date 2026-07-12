@@ -71,6 +71,28 @@ describe('notebook Python executor', () => {
     }
   })
 
+  itWithPython(
+    'runs with a non-interactive matplotlib backend so no GUI window opens',
+    async () => {
+      const root = await createStorageRoot()
+      const executor = new NotebookPythonExecutor('python3')
+
+      try {
+        const result = await executor.execute({
+          code: 'import os\nprint(os.environ.get("MPLBACKEND"))',
+          cwd: root,
+          notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
+          dataRoot: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
+          runtimeRoot: join(root, 'runtime')
+        })
+
+        expect(result).toMatchObject({ status: 'completed', stdout: 'Agg\n' })
+      } finally {
+        await executor.shutdown()
+      }
+    }
+  )
+
   itWithPython('returns a timeout execution result when code exceeds timeoutMs', async () => {
     const root = await createStorageRoot()
     const executor = new NotebookPythonExecutor('python3')

@@ -32,6 +32,7 @@ import type {
   ExecuteNotebookCodeRequest,
   FinishNotebookCodeCellRequest,
   NotebookRunSummary,
+  NotebookSessionReference,
   NotebookSessionRequest,
   NotebookSessionState,
   RunNotebookCellRequest
@@ -177,6 +178,8 @@ type OpenScienceAPI = {
   }
   notebook: {
     state: (request: NotebookSessionRequest) => Promise<NotebookSessionState>
+    // Resolves an existing notebook entry for a session without creating one, or null when absent.
+    getReference: (request: NotebookSessionRequest) => Promise<NotebookSessionReference | null>
     beginCodeCell: (request: BeginNotebookCodeCellRequest) => Promise<{
       sessionId: string
       cellId: string
@@ -320,6 +323,8 @@ const api: OpenScienceAPI = {
     // Notebook commands stay behind typed IPC so renderer code never talks to local RPC directly.
     state: (request) =>
       ipcRenderer.invoke('notebook:state', request) as Promise<NotebookSessionState>,
+    getReference: (request) =>
+      ipcRenderer.invoke('notebook:reference', request) as Promise<NotebookSessionReference | null>,
     beginCodeCell: (request) =>
       ipcRenderer.invoke('notebook:begin-code-cell', request) as Promise<{
         sessionId: string

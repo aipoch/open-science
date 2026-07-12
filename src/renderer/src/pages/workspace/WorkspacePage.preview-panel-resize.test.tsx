@@ -151,7 +151,8 @@ describe('WorkspacePage preview panel resize sync', () => {
     vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
     window.api = {
       notebook: {
-        onAvailable: vi.fn(() => vi.fn())
+        onAvailable: vi.fn(() => vi.fn()),
+        getReference: vi.fn(() => Promise.resolve(null))
       }
     } as never
     container = document.createElement('div')

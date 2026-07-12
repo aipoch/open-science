@@ -5,7 +5,8 @@ import type { ToolActivity } from '@/stores/session-store'
 import {
   buildToolActivityDetails,
   getToolDisplayName,
-  isEditActivity
+  isEditActivity,
+  isNotebookExecuteActivity
 } from './workspace-tool-activity-details'
 
 const createActivity = (overrides: Partial<ToolActivity>): ToolActivity => ({
@@ -160,6 +161,81 @@ describe('workspace tool activity details', () => {
     expect(details?.sections[0]).toMatchObject({ kind: 'code', label: 'Input', language: 'json' })
     expect(details?.sections[0].kind === 'code' && details.sections[0].text).toContain('"table"')
     expect(details?.sections[1]).toMatchObject({ label: 'Output', text: '5 rows returned' })
+  })
+
+  it('detects the notebook execute tool so its row can default to expanded', () => {
+    expect(
+      isNotebookExecuteActivity(
+        createActivity({ providerToolName: 'mcp__open-science-notebook__notebook_execute' })
+      )
+    ).toBe(true)
+    expect(
+      isNotebookExecuteActivity(
+        createActivity({ providerToolName: 'mcp__open-science-notebook__notebook_state' })
+      )
+    ).toBe(false)
+    expect(isNotebookExecuteActivity(createActivity({ providerToolName: 'Bash' }))).toBe(false)
+  })
+
+  it('renders a notebook cell as Python code plus output, not the raw run summary', () => {
+    const runSummary = {
+      runId: 'notebook-run-1',
+      status: 'completed',
+      script: 'import numpy as np\nprint(np.sin(0))',
+      text: { stdout: '0.0\n', stderr: '', traceback: '', plain: ['0.0'] },
+      outputs: []
+    }
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      toolKind: 'other',
+      rawInput: { code: 'import numpy as np\nprint(np.sin(0))' },
+      toolContent: [
+        { type: 'content', content: { type: 'text', text: JSON.stringify(runSummary) } }
+      ]
+    })
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.displayName).toBe('Notebook cell')
+    expect(details?.sections[0]).toMatchObject({
+      kind: 'code',
+      label: 'Code',
+      language: 'python',
+      text: 'import numpy as np\nprint(np.sin(0))'
+    })
+    expect(details?.sections[1]).toMatchObject({
+      label: 'Output',
+      text: '0.0',
+      collapsible: true
+    })
+    // The code section stays open; only the output collapses.
+    expect(details?.sections[0]).toMatchObject({ label: 'Code' })
+    expect((details?.sections[0] as { collapsible?: boolean }).collapsible).toBeFalsy()
+  })
+
+  it('falls back to the run summary script when notebook input code is unavailable', () => {
+    const runSummary = {
+      status: 'failed',
+      script: "raise ValueError('boom')",
+      text: { stdout: '', stderr: 'ValueError: boom', traceback: 'Traceback...\nValueError: boom' }
+    }
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      toolKind: 'other',
+      toolContent: [
+        { type: 'content', content: { type: 'text', text: JSON.stringify(runSummary) } }
+      ]
+    })
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.metaLabel).toBe('failed')
+    expect(details?.sections[0]).toMatchObject({
+      label: 'Code',
+      language: 'python',
+      text: "raise ValueError('boom')"
+    })
+    expect(details?.sections[1]?.kind === 'code' && details.sections[1].text).toContain(
+      'ValueError: boom'
+    )
   })
 
   it('summarizes an artifact-write MCP tool without echoing file content', () => {

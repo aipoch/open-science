@@ -268,6 +268,42 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     }
   }, [upsertPreviewItem])
 
+  // The availability event only fires while the agent is live, so a session opened after relaunch
+  // would lose its notebook entry until the next call. Probe persisted run.json on selection to
+  // restore the composer entry immediately for any session that has used the notebook before.
+  const activeSessionId = activeSession?.id
+  const activeSessionCwd = activeSession?.cwd
+  // Notebooks are stored per project id (notebooks/<projectId>/<sessionId>), so the probe must pass
+  // the session's project or it would look under the default project name and never find run.json.
+  const activeSessionProjectId = activeSession?.projectId
+  useEffect(() => {
+    if (!activeSessionId) return
+
+    let cancelled = false
+
+    void window.api.notebook
+      .getReference({
+        sessionId: activeSessionId,
+        workspaceCwd: activeSessionCwd ?? '',
+        projectName: activeSessionProjectId
+      })
+      .then((reference) => {
+        if (cancelled || !reference) return
+
+        // Never clobber a reference the live availability event may have set in the meantime.
+        setNotebookReferences((references) =>
+          references[activeSessionId] ? references : { ...references, [activeSessionId]: reference }
+        )
+      })
+      .catch((error) => {
+        console.warn('Notebook reference hydration failed', error)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeSessionId, activeSessionCwd, activeSessionProjectId])
+
   // Resizable drag/collapse state is mirrored back into the transient preview workbench store.
   const syncPreviewPanelResize = (
     panelSize: PanelSize,

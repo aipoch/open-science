@@ -12,7 +12,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Notebook tool instructions (only applies when using open-science-notebook tools).',
   'Use the `open-science-notebook` tools when you need to write or run Python code in the shared local notebook interpreter.',
   'Notebook preview is only for code and execution results; keep chat, explanation, and diagnosis in the chat area.',
-  'When writing code to the notebook, begin a code cell, append code deltas, finish the cell, then run it explicitly.',
+  'To write and run code, use the `notebook_execute` tool: it writes one Python code cell and runs it in the shared interpreter in a single step. Treat each `notebook_execute` call as one notebook cell, and use several calls for several cells. Reuse a `cellId` to overwrite and rerun that cell.',
   'After each run, inspect the returned run summary, including stdout, stderr, traceback, outputs, artifacts, workingFiles, cwdBefore, and cwdAfter.',
   'If the result is not the expected user outcome, analyze the returned facts, modify code or environment, and run again.',
   'If you decide a missing package, dependency, Python executable, executor, interpreter, kernel, or runtime component must be installed, place installation contents under `~/.open-science/runtime/` and continue with that runtime.',
@@ -42,26 +42,6 @@ type NotebookMcpEnvironment = NotebookRpcConnection & {
 type NotebookMcpServerConfigRequest = NotebookMcpEnvironment & {
   command: string
   entryPath: string
-}
-
-const beginCodeCellToolSchema = {
-  cellId: z.string().min(1).optional()
-}
-
-const appendCodeCellToolSchema = {
-  writeId: z.string().min(1),
-  cellId: z.string().min(1),
-  delta: z.string()
-}
-
-const finishCodeCellToolSchema = {
-  writeId: z.string().min(1),
-  cellId: z.string().min(1)
-}
-
-const runCellToolSchema = {
-  cellId: z.string().min(1),
-  timeoutMs: z.number().int().positive().optional()
 }
 
 const executeToolSchema = {
@@ -200,41 +180,10 @@ const registerNotebookRpcTool = (
 // Tool definitions stay data-driven so schema, title, and RPC method cannot drift independently.
 const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
   {
-    name: 'notebook_begin_code_cell',
-    title: 'Begin notebook code cell',
-    description:
-      'Begin streaming Python code into the shared notebook. The app locks the target cell while code is being written.',
-    method: 'beginCodeCell',
-    inputSchema: beginCodeCellToolSchema
-  },
-  {
-    name: 'notebook_append_code_cell',
-    title: 'Append notebook code cell',
-    description:
-      'Append raw Python code text to the active notebook cell. Do not send chat text or Markdown.',
-    method: 'appendCodeCell',
-    inputSchema: appendCodeCellToolSchema
-  },
-  {
-    name: 'notebook_finish_code_cell',
-    title: 'Finish notebook code cell',
-    description: 'Finish agent code streaming and release the notebook write lock.',
-    method: 'finishCodeCell',
-    inputSchema: finishCodeCellToolSchema
-  },
-  {
-    name: 'notebook_run_cell',
-    title: 'Run notebook code cell',
-    description:
-      'Run an existing notebook cell in the shared local Python interpreter and return the full run summary.',
-    method: 'runCell',
-    inputSchema: runCellToolSchema
-  },
-  {
     name: 'notebook_execute',
     title: 'Execute notebook Python code',
     description:
-      'Convenience tool that writes one Python code cell, runs it, and returns the full run summary.',
+      'Write one Python code cell and run it in the shared local interpreter, returning the full run summary. Each call is one notebook cell; reuse a cellId to overwrite and rerun that cell.',
     method: 'execute',
     inputSchema: executeToolSchema
   },
@@ -291,6 +240,7 @@ const runNotebookMcpServer = async (
 export {
   NOTEBOOK_MCP_SERVER_ARG,
   NOTEBOOK_MCP_SERVER_NAME,
+  NOTEBOOK_RPC_TOOLS,
   NOTEBOOK_SYSTEM_PROMPT_APPEND,
   callNotebookRpc,
   createNotebookMcpEnvironmentFromProcess,

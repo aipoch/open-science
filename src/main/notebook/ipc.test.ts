@@ -7,6 +7,7 @@ describe('notebook IPC handlers', () => {
   it('delegates renderer notebook commands to the shared runtime service', async () => {
     const service = {
       state: vi.fn().mockResolvedValue({ sessionId: 'session-1', cells: [] }),
+      getSessionReference: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
       execute: vi.fn().mockResolvedValue({
         runId: 'run-1',
         status: 'completed',
@@ -22,6 +23,7 @@ describe('notebook IPC handlers', () => {
     const handlers = createNotebookHandlers(service)
 
     await handlers.state({ sessionId: 'session-1', workspaceCwd: '/workspace' })
+    await handlers.reference({ sessionId: 'session-1', workspaceCwd: '/workspace' })
     await handlers.execute({
       sessionId: 'session-1',
       workspaceCwd: '/workspace',
@@ -64,6 +66,10 @@ describe('notebook IPC handlers', () => {
       source: 'user'
     })
     expect(service.shutdown).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    })
+    expect(service.getSessionReference).toHaveBeenCalledWith({
       sessionId: 'session-1',
       workspaceCwd: '/workspace'
     })

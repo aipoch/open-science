@@ -246,6 +246,9 @@ class NotebookPythonExecutor implements NotebookExecutor {
       cwd: this.currentCwd ?? request.cwd,
       env: {
         ...process.env,
+        // Force a non-interactive matplotlib backend so plt.show() never opens a GUI window in
+        // this headless notebook runtime; respect an explicitly configured backend if present.
+        MPLBACKEND: process.env.MPLBACKEND || 'Agg',
         OPEN_SCIENCE_NOTEBOOK_DIR: request.notebookSessionRoot,
         OPEN_SCIENCE_NOTEBOOK_DATA_DIR: request.dataRoot,
         OPEN_SCIENCE_RUNTIME_DIR: request.runtimeRoot

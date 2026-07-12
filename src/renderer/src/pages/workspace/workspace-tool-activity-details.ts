@@ -9,6 +9,8 @@ type ToolCodeSection = {
   language?: string
   text: string
   truncated?: boolean
+  // When true the section renders behind a default-collapsed toggle (e.g. notebook cell output).
+  collapsible?: boolean
 }
 
 type ToolDiffSection = {
@@ -443,6 +445,84 @@ const buildArtifactDetails = (activity: ToolActivity): ToolActivityDetails | und
   }
 }
 
+// Detects the notebook execute MCP tool so its cell can render as code plus output.
+const isNotebookExecuteActivity = (activity: ToolActivity): boolean => {
+  const providerName = trimDetail(activity.providerToolName)?.toLowerCase() ?? ''
+
+  return providerName.includes('open-science-notebook') && providerName.endsWith('notebook_execute')
+}
+
+// Reads the notebook run summary the execute tool returns as JSON content (or raw output).
+const parseNotebookRunSummary = (activity: ToolActivity): Record<string, unknown> | undefined => {
+  for (const text of collectToolTexts(activity)) {
+    try {
+      const parsed: unknown = JSON.parse(text)
+
+      if (isRecord(parsed)) return parsed
+    } catch {
+      // Not a JSON payload; keep scanning the remaining content blocks.
+    }
+  }
+
+  return isRecord(activity.rawOutput) ? activity.rawOutput : undefined
+}
+
+// Prefers the executed code from tool input, falling back to the script echoed in the run summary.
+const getNotebookCode = (
+  activity: ToolActivity,
+  summary: Record<string, unknown> | undefined
+): string | undefined => {
+  if (isRecord(activity.rawInput) && typeof activity.rawInput.code === 'string') {
+    const code = trimDetail(activity.rawInput.code)
+
+    if (code) return code
+  }
+
+  return summary && typeof summary.script === 'string' ? trimDetail(summary.script) : undefined
+}
+
+// Joins the run summary's textual streams into one readable output block.
+const getNotebookOutput = (summary: Record<string, unknown> | undefined): string | undefined => {
+  const text = summary && isRecord(summary.text) ? summary.text : undefined
+
+  if (!text) return undefined
+
+  const stdout = typeof text.stdout === 'string' ? text.stdout.trimEnd() : ''
+  const stderr = typeof text.stderr === 'string' ? text.stderr.trimEnd() : ''
+  const traceback = typeof text.traceback === 'string' ? text.traceback.trimEnd() : ''
+  // Traceback usually duplicates stderr, so only append it when it adds new information.
+  const parts = [stdout, stderr, stderr.includes(traceback) ? '' : traceback].filter(Boolean)
+
+  return parts.length > 0 ? parts.join('\n') : undefined
+}
+
+// Renders a notebook cell as its Python code plus execution output, not the raw summary JSON.
+const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
+  const summary = parseNotebookRunSummary(activity)
+  const code = getNotebookCode(activity, summary)
+  const sections: ToolDetailSection[] = []
+  const codeSection = code ? createCodeSection('Code', code, 'python') : undefined
+
+  if (codeSection) sections.push(codeSection)
+
+  const output = getNotebookOutput(summary)
+  const outputSection = output ? createCodeSection('Output', output) : undefined
+
+  // The code leads the cell; keep the output tucked behind a collapsed toggle like the sidebar.
+  if (outputSection) sections.push({ ...outputSection, collapsible: true })
+
+  // Without at least the code there is nothing notebook-specific to show; use the generic view.
+  if (sections.length === 0) return undefined
+
+  const status = summary && typeof summary.status === 'string' ? summary.status : undefined
+
+  return {
+    displayName: 'Notebook cell',
+    metaLabel: status,
+    sections
+  }
+}
+
 // Detects Claude's tool-discovery (ToolSearch) rows by provider name or synthetic title.
 const isToolSearchActivity = (activity: ToolActivity): boolean => {
   const providerName = trimDetail(activity.providerToolName)?.toLowerCase()
@@ -549,6 +629,10 @@ const buildToolActivityDetails = (activity: ToolActivity): ToolActivityDetails |
   if (isArtifactWriteActivity(activity)) return buildArtifactDetails(activity)
   // File edits prefer a diff view, falling back to raw input/output when no diff is provided.
   if (isEditActivity(activity)) return buildDiffDetails(activity) ?? buildGenericDetails(activity)
+  // Notebook cells show their Python code and output rather than the raw run-summary JSON.
+  if (isNotebookExecuteActivity(activity)) {
+    return buildNotebookDetails(activity) ?? buildGenericDetails(activity)
+  }
   if (activity.toolKind === 'execute') return buildExecuteDetails(activity)
   // Tool-discovery steps summarize the tools they found rather than repeating "ToolSearch".
   if (isToolSearchActivity(activity)) return buildToolSearchDetails(activity)
@@ -558,5 +642,5 @@ const buildToolActivityDetails = (activity: ToolActivity): ToolActivityDetails |
   return buildGenericDetails(activity)
 }
 
-export { buildToolActivityDetails, getToolDisplayName, isEditActivity }
-export type { ToolActivityDetails, ToolDetailSection, ToolDiffSection }
+export { buildToolActivityDetails, getToolDisplayName, isEditActivity, isNotebookExecuteActivity }
+export type { ToolActivityDetails, ToolCodeSection, ToolDetailSection, ToolDiffSection }
