@@ -19,6 +19,12 @@ export const isImageArtifact = (artifact: MessageArtifact): boolean => {
   return /\.(avif|gif|jpe?g|png|svg|webp)$/i.test(getArtifactName(artifact))
 }
 
+export const isPdfArtifact = (artifact: MessageArtifact): boolean => {
+  if (artifact.mimeType === 'application/pdf') return true
+
+  return /\.pdf$/i.test(getArtifactName(artifact))
+}
+
 export const shouldReadArtifactPreview = (artifact: MessageArtifact): boolean => {
   const extension = getArtifactExtension(artifact)
   const mimeType = artifact.mimeType ?? ''

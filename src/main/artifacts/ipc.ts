@@ -3,7 +3,9 @@ import { ipcMain, shell } from 'electron'
 import type { ArtifactFile, ArtifactPreviewResult } from '../../shared/artifacts'
 import type {
   FinalizeRunArtifactsRequest,
+  ManagedFileBytesResult,
   OpenArtifactFileRequest,
+  ReadArtifactBytesRequest,
   ReadArtifactPreviewRequest
 } from '../../shared/artifacts'
 import { resolveStorageRoot } from '../storage-root'
@@ -14,6 +16,7 @@ type ArtifactHandlers = {
   finalizeRunArtifacts: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
   openFile: (request: OpenArtifactFileRequest) => Promise<void>
   readPreview: (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
+  readBytes: (request: ReadArtifactBytesRequest) => Promise<ManagedFileBytesResult>
 }
 
 type ArtifactHandlerDependencies = {
@@ -73,7 +76,8 @@ const createArtifactHandlers = (
         throw new Error(openError)
       }
     },
-    readPreview: (request) => repository.readManagedFilePreview(request)
+    readPreview: (request) => repository.readManagedFilePreview(request),
+    readBytes: (request) => repository.readManagedFileBytes(request)
   }
 }
 
@@ -132,6 +136,9 @@ const registerArtifactIpcHandlers = (
   )
   ipcMain.handle('artifacts:read-preview', (_event, request: ReadArtifactPreviewRequest) =>
     handlers.readPreview(request)
+  )
+  ipcMain.handle('artifacts:read-bytes', (_event, request: ReadArtifactBytesRequest) =>
+    handlers.readBytes(request)
   )
 }
 

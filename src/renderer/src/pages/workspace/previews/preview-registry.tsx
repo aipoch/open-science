@@ -6,6 +6,7 @@ import { ImagePreviewRenderer } from './renderers/ImagePreview'
 import { JsonPreviewRenderer } from './renderers/JsonPreview'
 import { MarkdownPreviewRenderer } from './renderers/MarkdownPreview'
 import { PdbPreviewRenderer } from './renderers/PdbPreview'
+import { PdfPreviewRenderer } from './renderers/PdfPreview'
 import { TextPreviewRenderer } from './renderers/TextPreview'
 
 // Keeps the registry as the single routing point while avoiding dynamic component creation in render.
@@ -30,6 +31,7 @@ export const renderPreviewFile = ({
     case 'text':
       return <TextPreviewRenderer item={item} />
     case 'pdf':
+      return <PdfPreviewRenderer item={item} />
     case 'unknown':
       return undefined
   }

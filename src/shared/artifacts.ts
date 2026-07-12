@@ -64,6 +64,17 @@ export type ArtifactPreviewResult = {
   truncated: boolean
 }
 
+// Renderer request for the full bytes of one managed artifact (e.g. to render a PDF thumbnail).
+export type ReadArtifactBytesRequest = {
+  path: string
+}
+
+// Full-file bytes for a managed artifact, base64-encoded so it survives IPC structured cloning.
+export type ManagedFileBytesResult = {
+  data: string
+  size: number
+}
+
 // Repository request that moves pending run files into a durable message directory.
 export type MovePendingRunArtifactsRequest = {
   projectName: string

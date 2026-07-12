@@ -18,8 +18,10 @@ import type {
   ArtifactPreviewResult,
   ListPendingRunArtifactsRequest,
   ListProjectMessageArtifactsRequest,
+  ManagedFileBytesResult,
   MovePendingRunArtifactsRequest,
   OpenArtifactFileRequest,
+  ReadArtifactBytesRequest,
   ReadArtifactPreviewRequest,
   WritePendingArtifactFileRequest
 } from '../../shared/artifacts'
@@ -29,6 +31,8 @@ const ARTIFACTS_DIR = 'artifacts'
 const PENDING_DIR = '.pending'
 const METADATA_DIR = '.metadata'
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+// Hard ceiling for reading a whole artifact into memory (e.g. for PDF thumbnails) to avoid OOM.
+const MAX_ARTIFACT_BYTES_READ = 100 * 1024 * 1024
 
 type ArtifactMetadata = {
   mimeType?: string
@@ -330,6 +334,20 @@ class ArtifactRepository {
   ): Promise<ArtifactPreviewResult> {
     const filePath = await this.resolveManagedFilePath(request)
     return readBoundedManagedFilePreview(filePath, request, 'Invalid artifact preview encoding.')
+  }
+
+  // Reads a whole managed artifact as base64 bytes for viewers (e.g. PDF thumbnails) that need the
+  // full file rather than a bounded text/image preview. Path safety is enforced before any read.
+  async readManagedFileBytes(request: ReadArtifactBytesRequest): Promise<ManagedFileBytesResult> {
+    const filePath = await this.resolveManagedFilePath(request)
+    const fileStat = await stat(filePath)
+
+    if (fileStat.size > MAX_ARTIFACT_BYTES_READ) {
+      throw new Error('Artifact is too large to read into memory.')
+    }
+
+    const buffer = await readFile(filePath)
+    return { data: buffer.toString('base64'), size: buffer.byteLength }
   }
 
   // Builds the temporary directory for files generated during one active assistant turn.

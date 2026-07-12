@@ -33,6 +33,15 @@ files:
   # Wildcard every platform variant (darwin-arm64/-x64, linux-*, win32-*) so the exclusion holds no
   # matter which OS the release job builds on — npm only installs the one matching the build host.
   - '!node_modules/@anthropic-ai/claude-agent-sdk-*{,/**/*}'
+  # pdfjs-dist ships several redundant copies. The main process only loads `legacy/build` (text
+  # extraction) and needs `cmaps`/`standard_fonts` for CJK/CID PDFs; the renderer bundles its own
+  # copy via Vite. Drop the modern build, viewer, image decoders, TS types, and source maps
+  # (~16MB) so the packaged app carries only what runs.
+  - '!node_modules/pdfjs-dist/build{,/**/*}'
+  - '!node_modules/pdfjs-dist/web{,/**/*}'
+  - '!node_modules/pdfjs-dist/image_decoders{,/**/*}'
+  - '!node_modules/pdfjs-dist/types{,/**/*}'
+  - '!node_modules/pdfjs-dist/**/*.map'
 asarUnpack:
   - resources/**
   # The ACP agent runs as a spawned child process, so its entry must live outside the asar.

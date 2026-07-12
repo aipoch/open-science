@@ -2,9 +2,17 @@ import type { ChatSession } from '@/stores/session-store'
 import { File, FileArchive, FileCode2, FileImage, FileSpreadsheet, FileText } from 'lucide-react'
 import { parse } from 'papaparse'
 
+import type { PreviewFileSource } from '@/stores/preview-workbench-store'
+
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
-import { getArtifactExtension, getArtifactName, isImageArtifact } from './artifact-preview-utils'
+import {
+  getArtifactExtension,
+  getArtifactName,
+  isImageArtifact,
+  isPdfArtifact
+} from './artifact-preview-utils'
 import { getImageMimeTypeForExtension } from './preview-support'
+import { PdfThumbnail } from './previews/renderers/PdfThumbnail'
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
 type ArtifactIconKind = 'archive' | 'code' | 'file' | 'image' | 'spreadsheet' | 'text'
@@ -270,12 +278,19 @@ const FileTypePreview = ({ artifact }: { artifact: MessageArtifact }): React.JSX
 
 export const ArtifactPreview = ({
   artifact,
-  preview
+  preview,
+  source = 'artifact'
 }: {
   artifact: MessageArtifact
   preview?: ArtifactPreviewResult
+  source?: PreviewFileSource
 }): React.JSX.Element => {
   const artifactName = getArtifactName(artifact)
+
+  // PDFs render their first page as a thumbnail; the component fetches its own full bytes.
+  if (isPdfArtifact(artifact)) {
+    return <PdfThumbnail path={artifact.path} name={artifactName} source={source} />
+  }
 
   if (isImageArtifact(artifact)) {
     const mimeType = getImageMimeType(artifact)

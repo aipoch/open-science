@@ -129,6 +129,7 @@ const FileTile = ({
   name,
   previewArtifact,
   preview,
+  source,
   size,
   timestamp,
   previewLabel,
@@ -137,6 +138,7 @@ const FileTile = ({
   name: string
   previewArtifact: MessageArtifact
   preview?: ArtifactPreviewResult
+  source: 'artifact' | 'upload'
   size?: number
   timestamp?: number
   previewLabel: string
@@ -158,7 +160,7 @@ const FileTile = ({
         data-testid="project-file-preview"
         className="h-[82px] w-full overflow-hidden bg-bg-200"
       >
-        <ArtifactPreview artifact={previewArtifact} preview={preview} />
+        <ArtifactPreview artifact={previewArtifact} preview={preview} source={source} />
       </span>
       <span
         data-testid="project-file-meta"
@@ -460,6 +462,7 @@ const ProjectFilesView = (): React.JSX.Element => {
                     name={file.name}
                     previewArtifact={createUploadPreviewArtifact(file)}
                     preview={filePreviews[file.id]}
+                    source="upload"
                     size={file.size}
                     timestamp={file.timestamp}
                     previewLabel={`Preview uploaded file ${file.name}`}
@@ -499,6 +502,7 @@ const ProjectFilesView = (): React.JSX.Element => {
                           name={file.name}
                           previewArtifact={file.artifact}
                           preview={filePreviews[file.id]}
+                          source="artifact"
                           size={file.size}
                           timestamp={file.artifact.mtimeMs}
                           previewLabel={`Preview generated file ${file.name}`}

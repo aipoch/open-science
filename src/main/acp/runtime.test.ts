@@ -289,6 +289,57 @@ describe('ACP runtime session management', () => {
     ).resolves.toBe('hello from upload')
   })
 
+  it('sends PDFs as extracted text, never as an inlined base64 file', async () => {
+    const root = await createTemporaryRoot()
+    const uploadRepository = new UploadRepository(root)
+    // Non-PDF bytes make extraction fail deterministically; the block must still be text, not the file.
+    const stagedAttachments = await uploadRepository.stageFiles({
+      files: [
+        {
+          name: 'doc.pdf',
+          mimeType: 'application/pdf',
+          content: Buffer.from('not a real pdf payload').toString('base64')
+        }
+      ]
+    })
+    const process = new FakeAgentProcess()
+    const receivedPrompts: ContentBlock[][] = []
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: ({ prompt }) => {
+        receivedPrompts.push(prompt)
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      uploads: { repository: uploadRepository }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'summarize this pdf',
+      attachments: stagedAttachments
+    })
+
+    expect(receivedPrompts).toHaveLength(1)
+    const pdfBlock = receivedPrompts[0][1]
+    expect(pdfBlock.type).toBe('resource')
+    expect(pdfBlock).toMatchObject({
+      type: 'resource',
+      resource: {
+        mimeType: 'text/plain',
+        uri: expect.stringContaining('/uploads/default-project/remote-session-1/doc.pdf')
+      }
+    })
+    // The raw file bytes must never be inlined as base64 anywhere in the prompt.
+    const rawBase64 = Buffer.from('not a real pdf payload').toString('base64')
+    const serialized = JSON.stringify(receivedPrompts[0])
+    expect(serialized).not.toContain(rawBase64)
+    expect(receivedPrompts[0].some((block) => block.type === 'image')).toBe(false)
+  })
+
   it('allows prompts from different sessions to run concurrently', async () => {
     const process = new FakeAgentProcess()
     const promptCanStopBySession = new Map<string, ReturnType<typeof createDeferred>>()

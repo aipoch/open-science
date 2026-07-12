@@ -1,5 +1,5 @@
 import { constants } from 'node:fs'
-import { copyFile, mkdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
@@ -8,13 +8,17 @@ import {
   DEFAULT_UPLOAD_PROJECT_NAME,
   PENDING_UPLOAD_SESSION_ID,
   type DeleteUploadRequest,
+  type ReadUploadBytesRequest,
   type StageUploadFilesRequest,
+  type UploadBytesResult,
   type UploadedAttachment
 } from '../../shared/uploads'
 import { readBoundedManagedFilePreview } from '../managed-file-preview'
 
 const UPLOADS_DIR = 'uploads'
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+// Hard ceiling for reading a whole upload into memory (e.g. for PDF preview) to avoid OOM.
+const MAX_UPLOAD_BYTES_READ = 100 * 1024 * 1024
 
 type CreateAttachmentInput = {
   id: string
@@ -178,6 +182,20 @@ class UploadRepository {
   ): Promise<ArtifactPreviewResult> {
     const filePath = await this.resolveManagedUploadPath(request)
     return readBoundedManagedFilePreview(filePath, request, 'Invalid upload preview encoding.')
+  }
+
+  // Reads a whole managed upload as base64 bytes for viewers (e.g. PDF preview) that need the full
+  // file rather than a bounded text/image preview. Path safety is enforced before any read.
+  async readManagedUploadBytes(request: ReadUploadBytesRequest): Promise<UploadBytesResult> {
+    const filePath = await this.resolveManagedUploadPath(request)
+    const fileStat = await stat(filePath)
+
+    if (fileStat.size > MAX_UPLOAD_BYTES_READ) {
+      throw new Error('Upload is too large to read into memory.')
+    }
+
+    const buffer = await readFile(filePath)
+    return { data: buffer.toString('base64'), size: buffer.byteLength }
   }
 
   // Converts one pending attachment record into a durable session-owned upload record.

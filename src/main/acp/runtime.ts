@@ -44,6 +44,7 @@ import {
 import { getNotebookSessionRoot } from '../notebook/repository'
 import type { UploadRepository } from '../uploads/repository'
 import type { UploadedAttachment } from '../../shared/uploads'
+import { buildImageContentData, extractPdfText } from '../uploads/attachment-media'
 
 type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateSnapshot) => void
@@ -790,13 +791,21 @@ class AcpRuntime {
     const uri = pathToFileURL(filePath).href
 
     // Images are embedded as base64 so vision-capable agents receive the actual pixels.
+    // Large images are downscaled/re-encoded first so one upload cannot overflow the request.
     if (attachment.mimeType?.startsWith('image/')) {
-      return {
-        type: 'image',
-        data: (await readFile(filePath)).toString('base64'),
-        mimeType: attachment.mimeType ?? 'application/octet-stream',
-        uri
-      }
+      const { data, mimeType } = await buildImageContentData(
+        filePath,
+        attachment.mimeType,
+        attachment.size
+      )
+
+      return { type: 'image', data, mimeType, uri }
+    }
+
+    // PDFs are never inlined as base64 (a 20MB file overflows the 32MB request limit); instead we
+    // extract selectable text so the model reads readable content. Page images are a future option.
+    if (this.isPdfAttachment(attachment)) {
+      return this.createPdfContentBlock(attachment, filePath, uri)
     }
 
     // Small text-like files are embedded for direct reading; oversized text falls through to a link.
@@ -822,6 +831,49 @@ class AcpRuntime {
       title: attachment.originalName || attachment.name,
       mimeType: attachment.mimeType,
       size: attachment.size
+    }
+  }
+
+  // Recognizes PDFs by MIME type or extension since the renderer does not always send a MIME type.
+  private isPdfAttachment(attachment: UploadedAttachment): boolean {
+    if (attachment.mimeType === 'application/pdf') return true
+
+    const name = attachment.originalName || attachment.name
+    return name.toLowerCase().endsWith('.pdf')
+  }
+
+  // Turns a PDF into a text resource block, degrading to an explanatory note when extraction fails
+  // or yields nothing (e.g. scanned/image-only PDFs) rather than ever inlining the raw file.
+  private async createPdfContentBlock(
+    attachment: UploadedAttachment,
+    filePath: string,
+    uri: string
+  ): Promise<ContentBlock> {
+    const name = attachment.originalName || attachment.name
+
+    const toResource = (text: string): ContentBlock => ({
+      type: 'resource',
+      resource: { uri, mimeType: 'text/plain', text }
+    })
+
+    try {
+      const { text, pageCount, truncated } = await extractPdfText(filePath)
+
+      if (!text) {
+        return toResource(
+          `[No selectable text could be extracted from "${name}" (${pageCount} page(s)). It may be a scanned or image-only PDF.]`
+        )
+      }
+
+      const header = `[PDF text extracted from "${name}" — ${pageCount} page(s)${
+        truncated ? ', truncated' : ''
+      }]`
+
+      return toResource(`${header}\n\n${text}`)
+    } catch (error) {
+      return toResource(
+        `[Failed to extract text from "${name}": ${errorMessage(error)}. The PDF was not sent to avoid exceeding the request size limit.]`
+      )
     }
   }
 

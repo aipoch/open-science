@@ -24,6 +24,7 @@ const PREVIEW_SUPPORTED_EXTENSIONS: Record<string, PreviewFileFormat> = {
   markdown: 'markdown',
   md: 'markdown',
   pdb: 'pdb',
+  pdf: 'pdf',
   bash: 'text',
   conf: 'text',
   config: 'text',
@@ -64,6 +65,7 @@ const getPreviewFormatForMimeType = (mimeType: string): PreviewFileFormat => {
   ) {
     return 'pdb'
   }
+  if (normalizedMimeType === 'application/pdf') return 'pdf'
   if (normalizedMimeType.startsWith('text/')) return 'text'
 
   return 'unknown'
