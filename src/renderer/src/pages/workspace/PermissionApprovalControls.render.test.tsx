@@ -47,13 +47,14 @@ const renderControls = (): string =>
   )
 
 describe('PermissionApprovalControls', () => {
-  it('clips the permission command and keeps details off action labels', () => {
+  it('shows the full command with copy and keeps details off action labels', () => {
     const html = renderControls()
 
-    expect(html).toContain(`title="${longRequestTitle}"`)
+    expect(html).toContain(longRequestTitle)
+    expect(html).toContain('whitespace-pre-wrap break-words')
+    expect(html).toContain('aria-label="Copy command"')
     expect(html).not.toContain(`title="${longAlwaysOptionName}"`)
     expect(html).toContain('flex min-w-0 flex-col items-stretch gap-2 overflow-hidden')
-    expect(html).toContain('w-full min-w-0 overflow-hidden text-ellipsis whitespace-nowrap')
     expect(html).toContain('Always</span>')
     expect(html).not.toContain(`>${longAlwaysOptionName}</span>`)
   })
