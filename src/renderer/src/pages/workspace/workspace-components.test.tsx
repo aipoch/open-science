@@ -274,7 +274,7 @@ describe('conversation message scroller integration', () => {
       'className="flex min-w-0 flex-col items-stretch gap-2 overflow-hidden"'
     )
     expect(permissionApprovalControlsSource).toContain(
-      'className="w-full min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"'
+      'max-h-48 min-w-0 flex-1 overflow-auto whitespace-pre-wrap break-words'
     )
     expect(permissionApprovalControlsSource).toContain(
       'className="flex flex-wrap items-center justify-end gap-1 w-full overflow-hidden"'
