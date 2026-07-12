@@ -5,6 +5,9 @@ node_modules/
 dist/
 out/
 release/
+
+# Test coverage reports
+coverage/
 *.asar
 *.blockmap
 

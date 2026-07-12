@@ -13,8 +13,37 @@ on:
   workflow_call:
 
 jobs:
+  # Gate every packaged build on the quality suite so nightly (push to main) and release (tag) can
+  # never publish installers that were never tested. Runs once on Apple Silicon to match the
+  # release/verification environment (see pr-check.yml for why macOS). The build matrix `needs` this.
+  verify:
+    name: Verify (lint + typecheck + test)
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test (with coverage)
+        run: npm run test:coverage
+
   build:
     name: Build ${{ matrix.name }}
+    needs: verify
     runs-on: ${{ matrix.os }}
     strategy:
       # Don't let one platform's failure cancel the others.

@@ -1,11 +1,11 @@
 name: Claude PR Review
 
-# PR 提交/更新时用 Claude 自动做代码审查，并在 PR 下留下审查评论。
-# 需要在仓库 Secrets 配置 ANTHROPIC_API_KEY。未配置时该 job 会跳过，不阻塞 PR。
+# Auto-review PRs with Claude and post the review as a PR comment. Requires ANTHROPIC_API_KEY in
+# repo Secrets; skips (does not block) when disabled via the ENABLE_CLAUDE_REVIEW variable.
 on:
   pull_request:
     branches:
-      - master
+      - main
     types: [opened, synchronize, reopened]
 
 concurrency:
@@ -20,7 +20,7 @@ permissions:
 jobs:
   review:
     runs-on: ubuntu-latest
-    # 没配 ANTHROPIC_API_KEY 就不跑，避免报错阻塞（人工/CI 门禁仍然生效）。
+    # Toggle off by setting repo variable ENABLE_CLAUDE_REVIEW=false; manual/CI gates still apply.
     if: ${{ vars.ENABLE_CLAUDE_REVIEW != 'false' }}
     steps:
       - name: Checkout
@@ -30,19 +30,21 @@ jobs:
 
       - name: Claude review
         uses: anthropics/claude-code-action@v1
+        # Optional custom endpoint; when set it overrides the default and is used with the API key below.
+        env:
+          ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          # 让 Claude 读取本次 PR 的 diff 并写审查评论。
           prompt: |
-            请审查当前这个 Pull Request（仓库 ${{ github.repository }}，PR #${{ github.event.pull_request.number }}）。
-            这是一个 Electron + React + TypeScript 的桌面客户端项目。请重点关注：
-            - 逻辑正确性与潜在 bug、边界条件、错误处理
-            - 主进程/渲染进程边界、IPC、原生依赖（prisma、claude-agent-sdk）相关的安全与稳定性
-            - 类型安全、明显的性能问题、资源泄漏
-            - 是否可能破坏打包/签名/自动更新流程
-            用中文审查。先给一句总体结论（可否合并 / 需修改），再按文件列出具体问题（附行号与修改建议）。
-            没有问题就明确说明通过。请通过 `gh pr comment` 把审查意见发布为 PR 评论。
-          # 允许 Claude 使用 gh CLI 读取 diff 和发表评论。
+            Review this Pull Request (repo ${{ github.repository }}, PR #${{ github.event.pull_request.number }}).
+            This is an Electron + React + TypeScript desktop client. Focus on:
+            - Logic correctness, potential bugs, edge cases, error handling
+            - Main/renderer boundary, IPC, and native deps (prisma, claude-agent-sdk) — safety and stability
+            - Type safety, obvious performance issues, resource leaks
+            - Whether it could break the packaging/signing/auto-update flow
+            Review in English. Start with a one-line verdict (mergeable / needs changes), then list concrete
+            issues per file (with line numbers and suggested fixes). If nothing is wrong, say so explicitly.
+            Post the review as a PR comment via `gh pr comment`.
           claude_args: |
             --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Read,Grep,Glob"
