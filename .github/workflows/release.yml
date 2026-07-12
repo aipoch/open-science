@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all build artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true # flatten every platform's files into one directory
@@ -54,7 +54,7 @@ jobs:
       # each emits its own latest-mac.yml (they'd collide), and Squirrel.Mac can't auto-update an
       # unsigned build anyway. Revisit latest*.yml once a Developer ID cert is configured.
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           draft: false
           prerelease: false

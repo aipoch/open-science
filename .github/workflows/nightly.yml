@@ -30,7 +30,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Download all build artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
@@ -53,7 +53,7 @@ jobs:
         run: gh release delete nightly --cleanup-tag --yes || true
 
       - name: Publish nightly pre-release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: nightly
           target_commitish: ${{ github.sha }}
