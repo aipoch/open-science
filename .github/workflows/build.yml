@@ -11,6 +11,13 @@ name: Build
 # x64 on windows-latest.
 on:
   workflow_call:
+    inputs:
+      nightly:
+        description: >-
+          Mark artifacts as a nightly build: appends `-nightly.<short-sha>` to the version so
+          nightly installers get distinct filenames (and in-app version) from stable releases.
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -101,9 +108,17 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           npm run build
+          # Nightly: override the packaged version with `<base>-nightly.<short-sha>` (valid semver
+          # prerelease). Every artifactName template uses ${version}, so this alone makes nightly
+          # filenames distinct from stable ones and ties each build to its commit.
+          eb_ver=()
+          if [ "${{ inputs.nightly }}" = "true" ]; then
+            base=$(node -p "require('./package.json').version")
+            eb_ver=(-c.extraMetadata.version="${base}-nightly.${GITHUB_SHA::7}")
+          fi
           if [ "${{ matrix.platform }}" = "mac" ] && [ -n "$CSC_LINK" ]; then
             # Real Developer ID cert present -> sign + notarize (override the config's notarize:false).
-            npx electron-builder ${{ matrix.eb_args }} --publish never -c.mac.notarize=true
+            npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" --publish never -c.mac.notarize=true
           else
             # No cert: GitHub injects unset secrets as EMPTY strings, and electron-builder mis-reads an
             # empty CSC_LINK as a certificate path — it resolves to the cwd and dies with
@@ -111,7 +126,7 @@ jobs:
             # skips its own signing entirely; the afterPack hook (build/adhoc-sign.cjs) ad-hoc signs instead.
             unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
             export CSC_IDENTITY_AUTO_DISCOVERY=false
-            npx electron-builder ${{ matrix.eb_args }} --publish never
+            npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" --publish never
           fi
 
       # Upload only the distributables + electron-updater metadata for the caller's publish job.
