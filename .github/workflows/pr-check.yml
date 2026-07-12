@@ -18,10 +18,19 @@ permissions:
 
 jobs:
   verify:
-    # Matches the release environment: the project has an arm64-only native dependency, so
-    # verification runs on Apple Silicon to avoid a mismatch between what's tested on Linux
-    # (missing the darwin native package) and what's actually released.
-    runs-on: macos-14
+    name: Verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Don't let one platform's failure hide another's.
+      fail-fast: false
+      matrix:
+        # macOS is the release/verification target and the only platform with the project's
+        # arm64-only darwin native dependency present, so it runs the FULL gate (test + coverage +
+        # build). Linux/Windows validate the platform-independent code paths (lint + typecheck are
+        # hard-gated everywhere); their test leg is advisory (continue-on-error) because the missing
+        # darwin native package can trip suites that reach the ACP/native layer — see the test steps.
+        os: [macos-14, ubuntu-latest, windows-latest]
+
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -36,15 +45,45 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Lint + typecheck are platform-independent and hard-gated on all three OSes: they catch
+      # cross-platform compile/type/style regressions that the macOS-only test run would miss.
       - name: Lint
         run: npm run lint
 
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Test
+      # Full test suite + coverage gate on macOS (thresholds live in vitest.config.ts).
+      - name: Test (with coverage)
+        if: matrix.os == 'macos-14'
+        run: npm run test:coverage
+
+      # Cross-platform test signal, advisory only: a failure here is surfaced in the PR but does not
+      # block merge, because the darwin-only native dependency is absent on Linux/Windows and can fail
+      # suites that touch it. Promote to a hard gate once those suites are made platform-independent.
+      - name: Test (advisory)
+        if: matrix.os != 'macos-14'
+        continue-on-error: true
         run: npm run test
 
-      # Build only, no packaging (electron-vite build), to surface compile errors early.
+      - name: Upload coverage report
+        if: matrix.os == 'macos-14'
+        uses: actions/upload-artifact@v7
+        with:
+          # Whole report dir: browsable HTML (open index.html) plus lcov.info for tooling.
+          name: coverage-report
+          path: coverage/
+          retention-days: 5
+          if-no-files-found: warn
+
+      # Build only, no packaging (electron-vite build), to surface compile errors early. Full
+      # packaging is validated in build.yml. Runs on macOS only (the release target).
       - name: Build
+        if: matrix.os == 'macos-14'
         run: npm run build
+
+      # Non-blocking dependency audit: surfaces known-vulnerable deps in the PR log without gating
+      # merge. Dependabot (see dependabot.yml) tracks lockfile drift and opens update PRs.
+      - name: Audit dependencies (advisory)
+        if: matrix.os == 'macos-14'
+        run: npm audit --audit-level=high || true
