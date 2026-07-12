@@ -1,3 +1,6 @@
+import { Check, Copy } from 'lucide-react'
+import { useCallback, useState } from 'react'
+
 import type { AcpPermissionRequest } from '../../../../shared/acp'
 
 type PermissionApprovalControlsProps = {
@@ -47,6 +50,45 @@ const getOrderedPermissionOptions = (options: PermissionOption[]): PermissionOpt
       permissionActionOrder[getPermissionActionKind(rightOption)]
   )
 
+// Shows the full command being approved. Permission is security-sensitive, so the command must be
+// fully readable: newlines are preserved and long lines wrap, with a scroll cap for very long
+// commands and a copy button so users can review it verbatim before allowing.
+const PermissionCommandBlock = ({ command }: { command: string }): React.JSX.Element => {
+  const [copied, setCopied] = useState(false)
+
+  const copyCommand = useCallback(async (): Promise<void> => {
+    if (!navigator.clipboard?.writeText) return
+
+    try {
+      await navigator.clipboard.writeText(command)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Clipboard may be unavailable in sandboxed contexts.
+    }
+  }, [command])
+
+  return (
+    <div className="flex min-w-0 items-start gap-2">
+      <pre className="max-h-48 min-w-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-md border border-amber-200 bg-white/70 px-2 py-1 font-mono text-[11px] leading-5 text-amber-900">
+        {command}
+      </pre>
+      <button
+        type="button"
+        className="inline-flex shrink-0 items-center gap-1 rounded-md border border-amber-300 bg-white px-2 py-1 text-[12px] hover:bg-amber-100"
+        aria-label={copied ? 'Copied command' : 'Copy command'}
+        onClick={() => void copyCommand()}
+      >
+        {copied ? (
+          <Check className="size-3.5" aria-hidden />
+        ) : (
+          <Copy className="size-3.5" aria-hidden />
+        )}
+      </button>
+    </div>
+  )
+}
+
 const PermissionApprovalControls = ({
   requests,
   onRespond
@@ -60,12 +102,7 @@ const PermissionApprovalControls = ({
           key={request.requestId}
           className="flex min-w-0 flex-col items-stretch gap-2 overflow-hidden"
         >
-          <span
-            className="w-full min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
-            title={request.title}
-          >
-            {request.title}
-          </span>
+          <PermissionCommandBlock command={request.title} />
           <span className="flex flex-wrap items-center justify-end gap-1 w-full overflow-hidden">
             {getOrderedPermissionOptions(request.options).map((option) => {
               const actionKind = getPermissionActionKind(option)
