@@ -51,6 +51,20 @@ shasum -a 256 open-science-<version>-mac-arm64.dmg
 # compare the output against the matching line in SHA256SUMS.txt
 ```
 
+The checksum proves the file is intact; **build provenance** proves where it came
+from. Every tagged release attaches a signed [SLSA provenance][slsa] attestation
+tying each installer to the exact commit and CI run that produced it. Verify it with
+the [GitHub CLI](https://cli.github.com/):
+
+```bash
+gh attestation verify open-science-<version>-mac-arm64.dmg --repo aipoch/open-science
+```
+
+A passing check means the binary was built by this repository's Release workflow from
+a specific commit — not repackaged by a third party. (Nightly builds are not attested.)
+
+[slsa]: https://slsa.dev/spec/v1.0/provenance
+
 Builds are **not** signed with a paid Apple/Microsoft certificate yet, so your OS
 will show an "unverified developer" (macOS) or "unknown publisher" (Windows) prompt
 on first launch. That prompt is expected and is **not** evidence of tampering — but
