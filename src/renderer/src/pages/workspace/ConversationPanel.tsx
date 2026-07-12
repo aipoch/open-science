@@ -285,10 +285,11 @@ const ConversationPanel = ({
                           onChange={handleAttachmentInputChange}
                         />
 
-                        {/* Model/provider switcher; hides itself unless more than one is configured. */}
-                        <ComposerModelPicker />
-
                         <div className="flex-1" />
+
+                        {/* Model/provider switcher; hides itself unless more than one is configured.
+                            Grouped on the right with Send, mirroring the reference composer layout. */}
+                        <ComposerModelPicker />
 
                         {activeSession?.status === 'running' ||
                         activeSession?.status === 'waiting-permission' ? (

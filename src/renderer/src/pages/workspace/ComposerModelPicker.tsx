@@ -1,4 +1,4 @@
-import { ChevronDown } from 'lucide-react'
+import { Check, ChevronDown } from 'lucide-react'
 
 import {
   DropdownMenu,
@@ -18,7 +18,7 @@ import {
 } from '@/stores/settings-store'
 
 const triggerClassName =
-  'flex h-8 max-w-[220px] items-center gap-1 rounded-md border border-border-200 px-2 text-xs text-text-100 hover:bg-bg-200 disabled:cursor-not-allowed disabled:opacity-50 transition-colors'
+  'flex h-8 max-w-[220px] items-center gap-1 rounded-md px-2.5 text-sm text-text-300 hover:bg-bg-200 hover:text-text-100 disabled:cursor-not-allowed disabled:opacity-50 transition-colors'
 
 // Label for an option: the model name, or the provider name when the option carries no concrete model
 // (a claude-default without an override).
@@ -65,7 +65,7 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
         <span className="truncate">
           {current ? (
             <>
-              {optionLabel(current)}
+              <span className="font-medium text-text-100">{optionLabel(current)}</span>
               {current.model ? (
                 <span className="ml-1.5 text-text-300">· {current.providerName}</span>
               ) : null}
@@ -76,7 +76,7 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
         </span>
         <ChevronDown className="size-3.5 shrink-0" aria-hidden="true" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="max-h-[320px] overflow-y-auto">
+      <DropdownMenuContent align="end" className="max-h-[320px] min-w-[15rem] overflow-y-auto">
         {groups.map((group) => (
           <DropdownMenuGroup key={group.provider.id}>
             <DropdownMenuLabel>{group.provider.name}</DropdownMenuLabel>
@@ -87,14 +87,23 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
               return (
                 <DropdownMenuItem
                   key={`${option.providerId}:${option.model}`}
+                  role="menuitemradio"
+                  aria-checked={isActive}
                   onSelect={() => void setActiveProvider(option.providerId, option.model)}
-                  className={cn('gap-2', isActive && 'bg-bg-200 font-medium')}
+                  className={cn('gap-2', isActive && 'font-medium')}
                 >
                   <ProviderKindIcon
                     kindKey={providerKindKey(option.providerType, option.vendorId)}
-                    className="size-4"
+                    className="size-4 shrink-0"
                   />
-                  {optionLabel(option)}
+                  <span className="min-w-0 flex-1 truncate">{optionLabel(option)}</span>
+                  {isActive ? (
+                    <Check
+                      className="size-4 shrink-0 text-action-primary"
+                      strokeWidth={2}
+                      aria-hidden="true"
+                    />
+                  ) : null}
                 </DropdownMenuItem>
               )
             })}
