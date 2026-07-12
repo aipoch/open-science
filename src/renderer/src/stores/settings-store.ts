@@ -52,6 +52,9 @@ type SettingsStore = SettingsStoreData & {
   detectClaude: () => Promise<ClaudeDetectResult>
   installClaude: (source: ClaudeInstallSource) => Promise<ClaudeInstallResult>
   clearInstallLogs: () => void
+  // Persists the draft (create/update) without testing it, returning the affected provider id. The
+  // Settings page uses this to return to the list immediately, then tests in the background.
+  persistProvider: (request: UpsertProviderRequest) => Promise<string>
   // Persists the draft and validates it, without changing the active provider.
   saveProvider: (request: UpsertProviderRequest) => Promise<SaveProviderResult>
   // Combined onboarding flow: persist + validate + activate only on success.
@@ -230,6 +233,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   },
 
   clearInstallLogs: () => set({ installLogs: [] }),
+
+  // Persists a provider draft (create/update) and refreshes derived state, without testing it.
+  persistProvider: async (request) => {
+    const before = get().providers
+    const afterUpsert = await window.api.settings.upsertProvider(request)
+
+    set(applySnapshot(afterUpsert))
+    await get().refreshPreflight()
+
+    return resolveUpsertedProviderId(request, before, afterUpsert.providers) ?? ''
+  },
 
   // Persists a provider draft and validates it (without activating), refreshing derived state.
   saveProvider: async (request) => {

@@ -1,4 +1,4 @@
-import { Pencil, PlugZap, TriangleAlert, Trash2 } from 'lucide-react'
+import { CircleCheck, Pencil, PlugZap, TriangleAlert, Trash2 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 import type { ProviderValidationFailure, ProviderView } from '../../../../shared/settings'
@@ -117,6 +117,8 @@ const ProviderList = ({
           const failure = providerValidationFailed(provider)
             ? provider.lastValidationFailure
             : undefined
+          // A passing test shows a green check. Suppressed while a test is in flight.
+          const isVerified = !failure && !isBusy && provider.lastValidatedAt !== undefined
           // The provider sourcing the selected model (and the last remaining one) can't be deleted:
           // removing it would leave no model to run, so its delete action stays disabled.
           const canDelete = !isActiveSource && providers.length > 1
@@ -136,7 +138,9 @@ const ProviderList = ({
                       />
                       {describeType(provider)}
                     </span>
-                    {failure ? (
+                    {isBusy ? (
+                      <span className="shrink-0 text-[10px] text-muted-foreground">Testing…</span>
+                    ) : failure ? (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <span
@@ -151,6 +155,18 @@ const ProviderList = ({
                           </span>
                         </TooltipTrigger>
                         <TooltipContent>{describeValidationFailure(failure)}</TooltipContent>
+                      </Tooltip>
+                    ) : isVerified ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span
+                            className="inline-flex shrink-0 text-emerald-500"
+                            aria-label="Connection verified"
+                          >
+                            <CircleCheck className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>Connection verified</TooltipContent>
                       </Tooltip>
                     ) : null}
                   </div>

@@ -137,6 +137,24 @@ describe('settings store: saveAndActivateProvider', () => {
   })
 })
 
+describe('settings store: persistProvider', () => {
+  it('persists a new provider and returns its id without testing it', async () => {
+    api.upsertProvider.mockResolvedValue(snapshot([providerView('p_new')]))
+
+    const providerId = await useSettingsStore.getState().persistProvider({
+      type: 'custom',
+      name: 'Gateway',
+      baseUrl: 'https://g/v1',
+      key: 'k'
+    })
+
+    expect(providerId).toBe('p_new')
+    // Persisting does not run the connection test — the Settings page tests in the background.
+    expect(api.validateProvider).not.toHaveBeenCalled()
+    expect(useSettingsStore.getState().providers).toHaveLength(1)
+  })
+})
+
 describe('settings store: saveProvider keeps a provider whose test fails', () => {
   it('does not delete a new provider when validation fails, and refreshes to surface the failure', async () => {
     api.upsertProvider.mockResolvedValue(snapshot([providerView('p_new')]))

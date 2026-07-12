@@ -67,6 +67,21 @@ describe('settings repository', () => {
     expect(settings.providers[0].name).toBe('Renamed')
   })
 
+  it('keeps provider order stable when an existing provider is updated in place', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    await repository.upsertProvider(provider({ id: 'p1', name: 'One' }))
+    await repository.upsertProvider(provider({ id: 'p2', name: 'Two' }))
+    await repository.upsertProvider(provider({ id: 'p3', name: 'Three' }))
+
+    // Editing p1 (or recording a test result on it) must not move it to the end of the list.
+    await repository.upsertProvider(provider({ id: 'p1', name: 'One (edited)' }))
+
+    const settings = await repository.getSettings()
+    expect(settings.providers.map((item) => item.id)).toEqual(['p1', 'p2', 'p3'])
+    expect(settings.providers[0].name).toBe('One (edited)')
+  })
+
   it('clears the active pointer when the active provider is deleted', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 

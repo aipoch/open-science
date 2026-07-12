@@ -175,12 +175,16 @@ class SettingsRepository {
     }
   }
 
-  // Inserts or replaces a provider by id, then returns the persisted document.
+  // Inserts or replaces a provider by id, then returns the persisted document. An existing provider is
+  // replaced in place so the list keeps its creation order (editing or re-testing must not reorder it);
+  // a new provider is appended.
   async upsertProvider(provider: StoredProvider): Promise<StoredSettings> {
     return this.mutate((settings) => {
-      const providers = settings.providers.filter((existing) => existing.id !== provider.id)
+      const index = settings.providers.findIndex((existing) => existing.id === provider.id)
+      const providers = [...settings.providers]
 
-      providers.push(provider)
+      if (index >= 0) providers[index] = provider
+      else providers.push(provider)
 
       return { ...settings, providers }
     })
