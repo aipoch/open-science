@@ -19,6 +19,8 @@ import type { ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
+import { GitHubStarBadge } from '@/components/GitHubStarBadge'
+import { APP } from '../../../../shared/app-config'
 import type { Project } from '../../../../shared/projects'
 
 import { DeleteProjectDialog } from './DeleteProjectDialog'
@@ -206,12 +208,18 @@ const HomePage = (): React.JSX.Element => {
       <div className="mx-auto max-w-[1080px] px-8 py-7 pb-16">
         <header className="flex items-center justify-between">
           <div>
-            <div className="font-serif text-[26px] font-medium leading-none tracking-[-0.02em] text-text-000">
+            <a
+              href={APP.links.website}
+              target="_blank"
+              rel="noreferrer"
+              className="font-serif text-[26px] font-medium leading-none tracking-[-0.02em] text-text-000 transition-colors duration-150 ease-out hover:text-text-100"
+            >
               Open Science
-            </div>
+            </a>
             <div className="mt-1 text-[11px] text-text-100">Beta</div>
           </div>
           <div className="flex items-center gap-2">
+            <GitHubStarBadge />
             <button
               type="button"
               aria-label="Model settings"

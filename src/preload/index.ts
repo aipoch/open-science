@@ -142,6 +142,9 @@ type OpenScienceAPI = {
     getPath: () => Promise<string | null>
     openFile: () => Promise<OpenLogFileResult>
   }
+  github: {
+    getStars: () => Promise<number | null>
+  }
   projects: {
     list: () => Promise<Project[]>
     get: (id: string) => Promise<Project | null>
@@ -280,6 +283,9 @@ const api: OpenScienceAPI = {
   logs: {
     getPath: () => ipcRenderer.invoke('logs:get-path') as Promise<string | null>,
     openFile: () => ipcRenderer.invoke('logs:open-file') as Promise<OpenLogFileResult>
+  },
+  github: {
+    getStars: () => ipcRenderer.invoke('github:get-stars') as Promise<number | null>
   },
   projects: {
     // Project CRUD backed by the SQLite/Prisma layer (scope: projects only).

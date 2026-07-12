@@ -127,6 +127,9 @@ interface OpenScienceAPI {
     getPath(): Promise<string | null>
     openFile(): Promise<OpenLogFileResult>
   }
+  github: {
+    getStars(): Promise<number | null>
+  }
   projects: {
     list(): Promise<Project[]>
     get(id: string): Promise<Project | null>

@@ -2,6 +2,7 @@ import { createDefaultNotebookRuntimeService, registerAcpIpcHandlers } from './a
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
 import { registerFileSaveHandlers } from './file-save'
+import { registerGithubIpcHandlers } from './github-ipc'
 import { registerLogsIpcHandlers } from './logs-ipc'
 import { registerNotebookIpcHandlers } from './notebook/ipc'
 import { NotebookLocalRpcServer } from './notebook/local-rpc-server'
@@ -29,6 +30,7 @@ const registerIpcHandlers = ({ mainEntryPath }: IpcRegistrationOptions): void =>
 
   registerFileSaveHandlers()
   registerLogsIpcHandlers()
+  registerGithubIpcHandlers()
   const runtime = registerAcpIpcHandlers({
     mcpEntryPath: mainEntryPath,
     repository: artifactRepository,
