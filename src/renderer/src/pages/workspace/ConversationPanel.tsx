@@ -11,7 +11,7 @@ import {
   Square,
   X
 } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useRef } from 'react'
 
 import { ResizablePanel } from '@/components/ui/resizable'
 import { cn } from '@/lib/utils'
@@ -19,7 +19,7 @@ import type { ChatSession } from '@/stores/session-store'
 
 import { ComposerDropOverlay } from './ComposerDropOverlay'
 import { ComposerEditor } from './composer/ComposerEditor'
-import { docFromText, docToSkillIds, docToText, type ComposerDoc } from './composer/composer-doc'
+import { docToSkillIds, type ComposerDoc } from './composer/composer-doc'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 import { useFileDropZone } from './useFileDropZone'
@@ -62,7 +62,7 @@ const formatAttachmentSize = (size: number): string => {
 
 type ConversationPanelProps = {
   activeSession: ChatSession | undefined
-  messageDraft: string
+  draftDoc: ComposerDoc
   canSendMessage: boolean
   canEditDraft: boolean
   actionError: string | null
@@ -71,7 +71,7 @@ type ConversationPanelProps = {
   isUploadingAttachments: boolean
   notebookReference: NotebookSessionReference | undefined
   pendingPermissions: AcpPermissionRequest[]
-  onMessageDraftChange: (value: string) => void
+  onDraftDocChange: (doc: ComposerDoc) => void
   onSendMessage: (forcedSkillIds: string[]) => void
   onStageAttachmentFiles: (files: File[]) => void
   onRemoveAttachment: (attachment: UploadedAttachment) => void
@@ -84,7 +84,7 @@ type ConversationPanelProps = {
 // Middle chat surface owns the visible conversation and local message composer UI.
 const ConversationPanel = ({
   activeSession,
-  messageDraft,
+  draftDoc,
   canSendMessage,
   canEditDraft,
   actionError,
@@ -93,7 +93,7 @@ const ConversationPanel = ({
   isUploadingAttachments,
   notebookReference,
   pendingPermissions,
-  onMessageDraftChange,
+  onDraftDocChange,
   onSendMessage,
   onStageAttachmentFiles,
   onRemoveAttachment,
@@ -104,19 +104,6 @@ const ConversationPanel = ({
 }: ConversationPanelProps): React.JSX.Element => {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
-  // Local doc mirrors the composer's rich content (text runs + skill chips). The persisted draft
-  // stays a plain string, so we derive it via docToText on every edit and hydrate from it on reset.
-  const [doc, setDoc] = useState<ComposerDoc>(() => docFromText(messageDraft))
-
-  // Keep the doc in sync when the draft string changes externally (send reset to '', restore on
-  // failure, session switch). Using the setState-during-render pattern instead of an effect keeps
-  // us within the repo's react-hooks/set-state-in-effect rule.
-  const [lastDraft, setLastDraft] = useState(messageDraft)
-  if (lastDraft !== messageDraft) {
-    setLastDraft(messageDraft)
-    if (messageDraft !== docToText(doc)) setDoc(docFromText(messageDraft))
-  }
-
   // Drag-and-drop shares the same staging callback as the picker and paste paths.
   const { isDragging, dropZoneProps } = useFileDropZone({
     enabled: canEditDraft,
@@ -126,7 +113,7 @@ const ConversationPanel = ({
   // Submits the current doc, passing the ids of any skills picked as inline chips.
   const handleSubmit = (): void => {
     if (!canEditDraft) return
-    onSendMessage(docToSkillIds(doc))
+    onSendMessage(docToSkillIds(draftDoc))
   }
 
   // Converts the hidden file input selection into the shared staging callback.
@@ -276,11 +263,8 @@ const ConversationPanel = ({
                       <div className="relative min-w-0 flex-1">
                         {/* Draft editing waits for persistence hydration to avoid targeting the wrong session. */}
                         <ComposerEditor
-                          doc={doc}
-                          onDocChange={(next) => {
-                            setDoc(next)
-                            onMessageDraftChange(docToText(next))
-                          }}
+                          doc={draftDoc}
+                          onDocChange={onDraftDocChange}
                           onSubmit={handleSubmit}
                           onPaste={handleMessageDraftPaste}
                           disabled={!canEditDraft}

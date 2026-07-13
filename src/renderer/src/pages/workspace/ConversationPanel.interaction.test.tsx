@@ -5,6 +5,7 @@ import type { PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ConversationPanel } from './ConversationPanel'
+import { emptyDoc } from './composer/composer-doc'
 
 // React's act() refuses to run unless the environment opts in to act-aware scheduling.
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -40,7 +41,7 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
     root.render(
       <ConversationPanel
         activeSession={undefined}
-        messageDraft=""
+        draftDoc={emptyDoc}
         canSendMessage={false}
         canEditDraft
         actionError={null}
@@ -49,7 +50,7 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
         isUploadingAttachments={false}
         notebookReference={undefined}
         pendingPermissions={[]}
-        onMessageDraftChange={vi.fn()}
+        onDraftDocChange={vi.fn()}
         onSendMessage={vi.fn()}
         onStageAttachmentFiles={onStageAttachmentFiles}
         onRemoveAttachment={vi.fn()}
@@ -174,9 +175,9 @@ describe('ConversationPanel composer intake', () => {
     expect(onSendMessage).toHaveBeenCalledWith([])
   })
 
-  it('persists typed text as a plain-string draft via onMessageDraftChange', () => {
-    const onMessageDraftChange = vi.fn()
-    renderPanel({ onMessageDraftChange })
+  it('persists typed text as a doc via onDraftDocChange', () => {
+    const onDraftDocChange = vi.fn()
+    renderPanel({ onDraftDocChange })
 
     const editor = getComposerEditor()
     editor.textContent = 'hello'
@@ -184,6 +185,6 @@ describe('ConversationPanel composer intake', () => {
       editor.dispatchEvent(new Event('input', { bubbles: true }))
     })
 
-    expect(onMessageDraftChange).toHaveBeenCalledWith('hello')
+    expect(onDraftDocChange).toHaveBeenCalledWith({ nodes: [{ type: 'text', text: 'hello' }] })
   })
 })

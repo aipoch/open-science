@@ -20,6 +20,7 @@ import { useSessionStore } from '@/stores/session-store'
 import type { StageUploadFile, UploadedAttachment } from '../../../../shared/uploads'
 
 import { planComposerAttachmentIntake } from './composer-attachment-intake'
+import { docIsEmpty, docToText, emptyDoc, type ComposerDoc } from './composer/composer-doc'
 import { ConversationPanel } from './ConversationPanel'
 import { DeleteSessionDialog } from './DeleteSessionDialog'
 import { PreviewPanel } from './PreviewPanel'
@@ -34,6 +35,9 @@ type WorkspacePageProps = {
 // Converts unknown async failures into composer-visible text.
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
+
+// Stable draft-map key for the "new conversation" composer, which has no selected session id.
+const NEW_CONVERSATION_DRAFT_KEY = '__new_conversation__'
 
 const PREVIEW_PANEL_DEFAULT_SIZE = 40
 const PREVIEW_PANEL_DEFAULT_SIZE_CSS = `${PREVIEW_PANEL_DEFAULT_SIZE}%`
@@ -129,7 +133,13 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     deleteRuntimeSession,
     respondToPermission
   } = useWorkspaceAgentRuntime()
-  const [messageDraft, setMessageDraft] = useState('')
+  const [draftDoc, setDraftDoc] = useState<ComposerDoc>(emptyDoc)
+  // Unsent composer state (rich doc + staged attachments) is kept per session (and per new conversation)
+  // so switching away and back restores it. The active key's state is live; this map holds inactive keys.
+  const composerDraftsRef = useRef<
+    Record<string, { doc: ComposerDoc; attachments: UploadedAttachment[] }>
+  >({})
+  const previousDraftKeyRef = useRef<string>(selectedSessionId ?? NEW_CONVERSATION_DRAFT_KEY)
   const [attachments, setAttachments] = useState<UploadedAttachment[]>([])
   const [isUploadingAttachments, setIsUploadingAttachments] = useState(false)
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
@@ -155,7 +165,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const canSendMessage =
     isSessionPersistenceReady &&
     !isUploadingAttachments &&
-    (messageDraft.trim().length > 0 || attachments.length > 0) &&
+    (!docIsEmpty(draftDoc) || attachments.length > 0) &&
     activeSession?.status !== 'running' &&
     activeSession?.status !== 'waiting-permission'
   const visibleActionError = attachmentError ?? (activeSession ? null : actionError)
@@ -254,6 +264,24 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     []
   )
 
+  // Save the outgoing draft and load the incoming one whenever the selected session changes, covering
+  // every selection path (session list, new conversation, project switch, deletes) in one place.
+  useEffect(() => {
+    const currentDraftKey = selectedSessionId ?? NEW_CONVERSATION_DRAFT_KEY
+    const previousDraftKey = previousDraftKeyRef.current
+
+    if (currentDraftKey === previousDraftKey) return
+
+    composerDraftsRef.current[previousDraftKey] = { doc: draftDoc, attachments }
+    const nextDraft = composerDraftsRef.current[currentDraftKey] ?? {
+      doc: emptyDoc,
+      attachments: []
+    }
+    setDraftDoc(nextDraft.doc)
+    setAttachments(nextDraft.attachments)
+    previousDraftKeyRef.current = currentDraftKey
+  }, [selectedSessionId, draftDoc, attachments])
+
   // The first agent-side notebook call promotes a notebook entry into the composer status bar.
   useEffect(() => {
     const removeNotebookAvailableListener = window.api.notebook.onAvailable((notebook) => {
@@ -344,22 +372,16 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const openNewConversation = (): void => {
     if (!isSessionPersistenceReady) return
 
-    // Staged files belong to the current draft, not the next new conversation.
-    deleteAttachmentFiles(attachments)
-    setAttachments([])
+    // The draft effect saves the outgoing doc/attachments and restores the new-conversation state.
     setAttachmentError(null)
     clearSelection()
-    setMessageDraft('')
   }
 
   // Synchronizes the hidden chat session id with the selected session list item.
   const openSession = (sessionId: string): void => {
-    // Switching sessions abandons unsent attachments so they cannot leak into another chat.
-    deleteAttachmentFiles(attachments)
-    setAttachments([])
+    // The draft effect saves the outgoing doc/attachments and restores the target session's state.
     setAttachmentError(null)
     selectSession(sessionId)
-    setMessageDraft('')
   }
 
   // Converts selected or pasted files into app-managed uploads before they appear in the composer.
@@ -411,11 +433,14 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const sendCurrentMessage = (forcedSkillIds: string[]): void => {
     if (!canSendMessage) return
 
-    const draft = messageDraft
+    const doc = draftDoc
     const attachmentsForSend = attachments
 
-    // Optimistically clear composer state; failed sends restore both text and attachments below.
-    setMessageDraft('')
+    // Optimistically clear composer state; failed sends restore both doc and attachments below. Staged
+    // files are consumed (moved into the session dir) by the runtime, so they are not deleted here.
+    setDraftDoc(emptyDoc)
+    // Drop the stored draft for this key so a sent message never lingers as a restorable draft.
+    delete composerDraftsRef.current[selectedSessionId ?? NEW_CONVERSATION_DRAFT_KEY]
     setAttachments([])
     setAttachmentError(null)
 
@@ -423,7 +448,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     // with the active project (both as the durable projectId and the MCP storage projectName).
     void sendMessage({
       sessionId: activeSession?.id,
-      text: draft,
+      text: docToText(doc),
       attachments: attachmentsForSend,
       cwd: activeSession?.cwd,
       projectId: activeSession?.projectId ?? scopedProjectId,
@@ -431,7 +456,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
       forcedSkillIds
     }).then((result) => {
       if (!result) {
-        setMessageDraft(draft)
+        setDraftDoc(doc)
         setAttachments(attachmentsForSend)
       }
     })
@@ -466,6 +491,16 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     const deletedSessionId = sessionToDelete.id
 
     setSessionToDelete(undefined)
+    // The session's unsent draft is abandoned, so drop it and delete its now-orphaned staged files.
+    const storedDraft = composerDraftsRef.current[deletedSessionId]
+    if (storedDraft) deleteAttachmentFiles(storedDraft.attachments)
+    delete composerDraftsRef.current[deletedSessionId]
+    // The active session's live draft is not in the map yet, so clear and delete its files directly.
+    if (deletedSessionId === selectedSessionId) {
+      deleteAttachmentFiles(attachments)
+      setAttachments([])
+      setDraftDoc(emptyDoc)
+    }
     void deleteRuntimeSession(deletedSessionId)
   }
 
@@ -521,7 +556,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
         >
           <ConversationPanel
             activeSession={activeSession}
-            messageDraft={messageDraft}
+            draftDoc={draftDoc}
             canSendMessage={canSendMessage}
             canEditDraft={canEditDraft}
             actionError={visibleActionError}
@@ -530,7 +565,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
             isUploadingAttachments={isUploadingAttachments}
             notebookReference={activeNotebookReference}
             pendingPermissions={visiblePermissionRequests}
-            onMessageDraftChange={setMessageDraft}
+            onDraftDocChange={setDraftDoc}
             onSendMessage={sendCurrentMessage}
             onStageAttachmentFiles={stageAttachmentFiles}
             onRemoveAttachment={removeComposerAttachment}

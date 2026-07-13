@@ -461,9 +461,9 @@ describe('conversation composer editor integration', () => {
     expect(conversationPanelSource).toContain(
       "import { ComposerEditor } from './composer/ComposerEditor'"
     )
-    expect(conversationPanelSource).toContain('onSendMessage(docToSkillIds(doc))')
+    expect(conversationPanelSource).toContain('onSendMessage(docToSkillIds(draftDoc))')
     expect(conversationPanelSource).toContain('onSubmit={handleSubmit}')
-    expect(conversationPanelSource).toContain('onDocChange={(next) => {')
+    expect(conversationPanelSource).toContain('onDocChange={onDraftDocChange}')
   })
 })
 
