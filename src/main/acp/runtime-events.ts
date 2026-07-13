@@ -19,9 +19,10 @@ const trimProviderValue = (value: unknown): string | undefined => {
   return trimmedValue ? trimmedValue : undefined
 }
 
-// Extracts a safe tool identity from ACP extension metadata without exposing arguments.
-const extractProviderToolName = (update: SessionNotification['update']): string | undefined => {
-  const meta = (update as { _meta?: unknown })._meta
+// Extracts a safe tool identity (e.g. "WebFetch") from ACP extension metadata without exposing
+// arguments. Accepts anything carrying `_meta`, so both stream updates and permission tool calls reuse it.
+const extractProviderToolName = (source: { _meta?: unknown } | undefined): string | undefined => {
+  const meta = source?._meta
 
   if (!isRecord(meta)) return undefined
 
@@ -208,4 +209,4 @@ const toAcpRuntimeEvent = (
   }
 }
 
-export { extractToolFailureText, toAcpRuntimeEvent }
+export { extractProviderToolName, extractToolFailureText, toAcpRuntimeEvent }

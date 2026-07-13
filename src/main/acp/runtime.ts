@@ -30,7 +30,11 @@ import type {
 } from '../../shared/acp'
 import { spawnClaudeAgentAcp, type SpawnClaudeAgentAcpOptions } from './agent-process'
 import { createLogger } from '../logger'
-import { extractToolFailureText, toAcpRuntimeEvent } from './runtime-events'
+import {
+  extractProviderToolName,
+  extractToolFailureText,
+  toAcpRuntimeEvent
+} from './runtime-events'
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 import { AcpPermissionBroker } from './permission-broker'
 import { createArtifactMcpServerConfig } from '../artifacts/mcp-server'
@@ -1285,9 +1289,10 @@ class AcpRuntime {
     params: RequestPermissionRequest
   ): Promise<RequestPermissionResponse> {
     // Fork point: a WebFetch/server-side tool that never reaches this line means the "Internal error"
-    // originated elsewhere. Debug level keeps it out of normal runs; ids and a count are enough to trace.
+    // originated elsewhere. Debug level keeps it out of normal runs. Log the tool identity (name/kind),
+    // never the title — a WebFetch title is the full URL with query params (user data).
     log.debug('permission request received', {
-      title: params.toolCall?.title,
+      tool: extractProviderToolName(params.toolCall) ?? params.toolCall?.kind,
       toolCallId: params.toolCall?.toolCallId,
       sessionId: params.sessionId,
       optionCount: params.options?.length
@@ -1302,7 +1307,7 @@ class AcpRuntime {
     } catch (error) {
       log.error('permission request failed', {
         message: errorMessage(error),
-        title: params.toolCall?.title,
+        tool: extractProviderToolName(params.toolCall) ?? params.toolCall?.kind,
         toolCallId: params.toolCall?.toolCallId,
         sessionId: params.sessionId
       })
