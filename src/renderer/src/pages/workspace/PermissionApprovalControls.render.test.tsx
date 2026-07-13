@@ -46,6 +46,20 @@ const renderControls = (): string =>
     <PermissionApprovalControls requests={[permissionRequest]} onRespond={() => undefined} />
   )
 
+// A second queued request whose command/controls must stay hidden while the first is answered.
+const secondRequestTitle = 'Second queued command that must not render yet'
+const secondPermissionRequest: AcpPermissionRequest = {
+  requestId: 'permission-2',
+  sessionId: 'session-1',
+  toolCallId: 'tool-2',
+  title: secondRequestTitle,
+  options: [
+    { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+    { optionId: 'reject-once', name: 'Reject once', kind: 'reject_once' }
+  ],
+  raw: {}
+}
+
 describe('PermissionApprovalControls', () => {
   it('shows the full command with copy and keeps details off action labels', () => {
     const html = renderControls()
@@ -78,5 +92,17 @@ describe('PermissionApprovalControls', () => {
     expect(html).toContain('border border-amber-300 bg-white')
     expect(html).toContain('hover:bg-amber-100')
     expect(html).toContain('flex flex-wrap items-center justify-end gap-1 w-full overflow-hidden')
+  })
+
+  it('serializes prompts by rendering only the first pending request', () => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[permissionRequest, secondPermissionRequest]}
+        onRespond={() => undefined}
+      />
+    )
+
+    expect(html).toContain(longRequestTitle)
+    expect(html).not.toContain(secondRequestTitle)
   })
 })

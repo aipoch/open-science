@@ -18,11 +18,14 @@ const createPermissionRequest = (sessionId = 'session-1'): RequestPermissionRequ
 })
 
 // Builds a notebook tool permission request that also offers an "always allow" option.
-const createNotebookPermissionRequest = (sessionId = 'session-1'): RequestPermissionRequest => ({
+const createNotebookPermissionRequest = (
+  sessionId = 'session-1',
+  title = 'mcp__open-science-notebook__notebook_execute'
+): RequestPermissionRequest => ({
   sessionId,
   toolCall: {
     toolCallId: `tool-${Math.random()}`,
-    title: 'mcp__open-science-notebook__notebook_execute',
+    title,
     status: 'pending'
   },
   options: [
@@ -31,6 +34,34 @@ const createNotebookPermissionRequest = (sessionId = 'session-1'): RequestPermis
     { optionId: 'reject-once', name: 'Reject once', kind: 'reject_once' }
   ]
 })
+
+// Builds a built-in tool request; provider tool name and execute kind emulate Claude Code metadata.
+const createToolPermissionRequest = (
+  options: {
+    sessionId?: string
+    title?: string
+    providerToolName?: string
+    kind?: RequestPermissionRequest['toolCall']['kind']
+  } = {}
+): RequestPermissionRequest => {
+  const { sessionId = 'session-1', title = 'Run tool', providerToolName, kind } = options
+
+  return {
+    sessionId,
+    toolCall: {
+      toolCallId: `tool-${Math.random()}`,
+      title,
+      status: 'pending',
+      kind,
+      _meta: providerToolName ? { claudeCode: { toolName: providerToolName } } : undefined
+    },
+    options: [
+      { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+      { optionId: 'allow-always', name: 'Always', kind: 'allow_always' },
+      { optionId: 'reject-once', name: 'Reject once', kind: 'reject_once' }
+    ]
+  }
+}
 
 describe('ACP permission broker', () => {
   it('emits a serializable permission request and resolves the selected option', async () => {
@@ -125,5 +156,111 @@ describe('ACP permission broker', () => {
         outcome: 'cancelled'
       }
     })
+  })
+
+  it('remembers Always for a built-in tool by tool name, while a different tool still prompts', async () => {
+    const emittedRequests: string[] = []
+    const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))
+
+    // Always on Write auto-approves later Write calls (different file title, same tool category).
+    const firstWrite = broker.requestPermission(
+      createToolPermissionRequest({ title: 'Write report.md', providerToolName: 'Write' })
+    )
+    broker.respond({ requestId: emittedRequests[0], optionId: 'allow-always' })
+    await firstWrite
+
+    const secondWrite = broker.requestPermission(
+      createToolPermissionRequest({ title: 'Write notes.md', providerToolName: 'Write' })
+    )
+    await expect(secondWrite).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(emittedRequests).toHaveLength(1)
+
+    // A different built-in (Edit) is a different category and still prompts.
+    broker.requestPermission(
+      createToolPermissionRequest({ title: 'Edit report.md', providerToolName: 'Edit' })
+    )
+    expect(emittedRequests).toHaveLength(2)
+  })
+
+  it('remembers Always for shell by leading executable, not the full command', async () => {
+    const emittedRequests: string[] = []
+    const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))
+
+    const firstBash = broker.requestPermission(
+      createToolPermissionRequest({ title: 'python a.py', providerToolName: 'Bash' })
+    )
+    broker.respond({ requestId: emittedRequests[0], optionId: 'allow-always' })
+    await firstBash
+
+    // Same executable, different arguments auto-approves.
+    const secondBash = broker.requestPermission(
+      createToolPermissionRequest({ title: 'python b.py', providerToolName: 'Bash' })
+    )
+    await expect(secondBash).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(emittedRequests).toHaveLength(1)
+
+    // A different executable still prompts.
+    broker.requestPermission(
+      createToolPermissionRequest({ title: 'rm -rf x', providerToolName: 'Bash' })
+    )
+    expect(emittedRequests).toHaveLength(2)
+  })
+
+  it('routes execute-kind shell calls by signature even without a provider tool name', async () => {
+    const emittedRequests: string[] = []
+    const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))
+
+    const firstBash = broker.requestPermission(
+      createToolPermissionRequest({ title: 'FOO=bar node build.js', kind: 'execute' })
+    )
+    broker.respond({ requestId: emittedRequests[0], optionId: 'allow-always' })
+    await firstBash
+
+    // Leading env assignments are skipped, so `node ...` groups under the same signature.
+    const secondBash = broker.requestPermission(
+      createToolPermissionRequest({ title: 'node serve.js', kind: 'execute' })
+    )
+    await expect(secondBash).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(emittedRequests).toHaveLength(1)
+  })
+
+  it('keeps prompting for a different notebook sub-tool after Always on another', async () => {
+    const emittedRequests: string[] = []
+    const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))
+
+    const firstResponse = broker.requestPermission(
+      createNotebookPermissionRequest('session-1', 'mcp__open-science-notebook__notebook_execute')
+    )
+    broker.respond({ requestId: emittedRequests[0], optionId: 'allow-always' })
+    await firstResponse
+
+    // A different notebook sub-tool is a distinct category and still prompts.
+    broker.requestPermission(
+      createNotebookPermissionRequest('session-1', 'mcp__open-science-notebook__notebook_edit')
+    )
+    expect(emittedRequests).toHaveLength(2)
+  })
+
+  it('does not remember Always across sessions for built-in tools', async () => {
+    const emittedRequests: string[] = []
+    const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))
+
+    const firstWrite = broker.requestPermission(
+      createToolPermissionRequest({ sessionId: 'session-1', providerToolName: 'Write' })
+    )
+    broker.respond({ requestId: emittedRequests[0], optionId: 'allow-always' })
+    await firstWrite
+
+    // The same category in a different session must still prompt.
+    broker.requestPermission(
+      createToolPermissionRequest({ sessionId: 'session-2', providerToolName: 'Write' })
+    )
+    expect(emittedRequests).toHaveLength(2)
   })
 })

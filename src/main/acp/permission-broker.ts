@@ -2,29 +2,73 @@ import type { RequestPermissionRequest, RequestPermissionResponse } from '@agent
 import { randomUUID } from 'node:crypto'
 
 import type { AcpPermissionRequest, AcpPermissionResponse } from '../../shared/acp'
+import { extractProviderToolName } from './runtime-events'
 
 type PendingPermission = {
   request: AcpPermissionRequest
+  categoryKey: string
   resolve: (response: RequestPermissionResponse) => void
 }
 
 type EmitPermissionRequest = (request: AcpPermissionRequest) => void
 
-// Claude Code namespaces MCP tools as mcp__<server>__<tool>; this is the notebook server's prefix.
-// Notebook tool calls carry this prefix as their permission title (see runtime notes).
-const NOTEBOOK_TOOL_TITLE_PREFIX = 'mcp__open-science-notebook__'
+// Claude Code namespaces MCP tools as mcp__<server>__<tool>; notebook and other MCP tool calls carry
+// this prefix as their permission title, so their title alone is a stable per-tool category key.
+const MCP_TOOL_TITLE_PREFIX = 'mcp__'
 
 const ALLOW_ALWAYS_OPTION_KIND = 'allow_always'
 const ALLOW_ONCE_OPTION_KIND = 'allow_once'
 
-// Auto-allow is scoped to the local notebook the user opted into; shell/edit tools always prompt.
-const isNotebookToolTitle = (title: string): boolean => title.startsWith(NOTEBOOK_TOOL_TITLE_PREFIX)
+// Trivial `KEY=VALUE` env assignment prefixing a shell command (e.g. `FOO=bar python a.py`). Values
+// containing whitespace/quotes are not covered (already split away) and fall back to the raw token.
+const ENV_ASSIGNMENT_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=[^\s]*$/
+
+// Strips a single matching pair of surrounding quotes from a shell token.
+const stripSurroundingQuotes = (token: string): string => {
+  const match = token.match(/^(["'])(.*)\1$/)
+
+  return match ? match[2] : token
+}
+
+// Derives the command signature (leading executable) used to group shell/execute permissions. Leading
+// trivial env assignments are skipped so `FOO=bar python a.py` still groups under `python`.
+const leadingExecutable = (command: string): string => {
+  const tokens = command.trim().split(/\s+/)
+  let index = 0
+
+  while (index < tokens.length - 1 && ENV_ASSIGNMENT_PATTERN.test(tokens[index])) {
+    index += 1
+  }
+
+  return stripSurroundingQuotes(tokens[index] ?? command.trim())
+}
+
+// Derives a session-scoped "Always" category key from a permission request (first match wins):
+// 1. MCP/notebook tool (title starts with mcp__): keyed by title (the tool name, no args).
+// 2. Shell/execute tool (provider tool name Bash, or execute kind): keyed by leading executable.
+// 3. Other built-ins (Write/Edit/WebFetch/…): keyed by provider tool name (falls back to title).
+// The mcp__ check runs before the execute branch so a notebook execute-cell is not misrouted to Bash.
+const resolveCategoryKey = (params: RequestPermissionRequest): string => {
+  const { toolCall } = params
+  const title = toolCall.title ?? toolCall.toolCallId
+  const providerToolName = extractProviderToolName(toolCall)
+
+  if (title.startsWith(MCP_TOOL_TITLE_PREFIX)) {
+    return `tool:${title}`
+  }
+
+  if (providerToolName === 'Bash' || toolCall.kind === 'execute') {
+    return `bash:${leadingExecutable(title)}`
+  }
+
+  return `tool:${providerToolName ?? title}`
+}
 
 // Tracks permission requests until the renderer chooses an outcome.
 class AcpPermissionBroker {
   private pendingRequests = new Map<string, PendingPermission>()
-  // Per-session set of notebook tool titles the user chose to always allow this session.
-  private alwaysAllowedNotebookTools = new Map<string, Set<string>>()
+  // Per-session set of category keys the user chose to always allow this session.
+  private alwaysAllowedCategories = new Map<string, Set<string>>()
 
   // Accepts the callback used to publish new permission requests to listeners.
   constructor(private readonly emitPermissionRequest: EmitPermissionRequest) {}
@@ -51,8 +95,10 @@ class AcpPermissionBroker {
       raw: params
     }
 
-    // A prior "Always" choice on this notebook tool auto-approves without prompting again.
-    const autoAllowOptionId = this.resolveAutoAllowOptionId(request)
+    const categoryKey = resolveCategoryKey(params)
+
+    // A prior "Always" choice on this category auto-approves without prompting again.
+    const autoAllowOptionId = this.resolveAutoAllowOptionId(request, categoryKey)
 
     if (autoAllowOptionId) {
       return Promise.resolve({
@@ -62,7 +108,7 @@ class AcpPermissionBroker {
 
     // The returned promise is held open until the UI selects or cancels an option.
     return new Promise((resolve) => {
-      this.pendingRequests.set(requestId, { request, resolve })
+      this.pendingRequests.set(requestId, { request, categoryKey, resolve })
       this.emitPermissionRequest(request)
     })
   }
@@ -82,8 +128,8 @@ class AcpPermissionBroker {
       return true
     }
 
-    // "Always" on a notebook tool suppresses future prompts for that same tool this session.
-    this.rememberAlwaysAllowed(pending.request, response.optionId)
+    // "Always" on a tool suppresses future prompts for that same category this session.
+    this.rememberAlwaysAllowed(pending.request, pending.categoryKey, response.optionId)
 
     pending.resolve({
       outcome: {
@@ -95,10 +141,12 @@ class AcpPermissionBroker {
     return true
   }
 
-  // Returns an allow option id when this notebook tool was already always-allowed, else undefined.
-  private resolveAutoAllowOptionId(request: AcpPermissionRequest): string | undefined {
-    if (!isNotebookToolTitle(request.title)) return undefined
-    if (!this.alwaysAllowedNotebookTools.get(request.sessionId)?.has(request.title)) {
+  // Returns an allow option id when this category was already always-allowed, else undefined.
+  private resolveAutoAllowOptionId(
+    request: AcpPermissionRequest,
+    categoryKey: string
+  ): string | undefined {
+    if (!this.alwaysAllowedCategories.get(request.sessionId)?.has(categoryKey)) {
       return undefined
     }
 
@@ -110,18 +158,20 @@ class AcpPermissionBroker {
     return allowOption?.optionId
   }
 
-  // Records the notebook tool as always-allowed when the user picked its allow_always option.
-  private rememberAlwaysAllowed(request: AcpPermissionRequest, optionId: string): void {
-    if (!isNotebookToolTitle(request.title)) return
-
+  // Records the category as always-allowed when the user picked its allow_always option.
+  private rememberAlwaysAllowed(
+    request: AcpPermissionRequest,
+    categoryKey: string,
+    optionId: string
+  ): void {
     const chosen = request.options.find((option) => option.optionId === optionId)
 
     if (chosen?.kind.toLowerCase() !== ALLOW_ALWAYS_OPTION_KIND) return
 
-    const allowed = this.alwaysAllowedNotebookTools.get(request.sessionId) ?? new Set<string>()
+    const allowed = this.alwaysAllowedCategories.get(request.sessionId) ?? new Set<string>()
 
-    allowed.add(request.title)
-    this.alwaysAllowedNotebookTools.set(request.sessionId, allowed)
+    allowed.add(categoryKey)
+    this.alwaysAllowedCategories.set(request.sessionId, allowed)
   }
 
   // Cancels every pending request during full runtime teardown.
@@ -132,7 +182,7 @@ class AcpPermissionBroker {
       this.respond({ requestId, cancelled: true })
     }
 
-    this.alwaysAllowedNotebookTools.clear()
+    this.alwaysAllowedCategories.clear()
   }
 
   // Cancels pending requests for one session while leaving other sessions intact.
@@ -147,4 +197,4 @@ class AcpPermissionBroker {
   }
 }
 
-export { AcpPermissionBroker }
+export { AcpPermissionBroker, resolveCategoryKey }

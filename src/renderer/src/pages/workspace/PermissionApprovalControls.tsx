@@ -93,48 +93,45 @@ const PermissionApprovalControls = ({
   requests,
   onRespond
 }: PermissionApprovalControlsProps): React.JSX.Element | null => {
-  if (requests.length === 0) return null
+  // Serialize prompts: show only the oldest pending request. The rest stay queued in the broker and
+  // surface one at a time as each is answered, so parallel tool calls don't stack simultaneous prompts.
+  const request = requests[0]
+
+  if (!request) return null
 
   return (
     <div className="mb-2 w-full max-w-full space-y-2 overflow-hidden rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-5 text-amber-900">
-      {requests.map((request) => (
-        <div
-          key={request.requestId}
-          className="flex min-w-0 flex-col items-stretch gap-2 overflow-hidden"
-        >
-          <PermissionCommandBlock command={request.title} />
-          <span className="flex flex-wrap items-center justify-end gap-1 w-full overflow-hidden">
-            {getOrderedPermissionOptions(request.options).map((option) => {
-              const actionKind = getPermissionActionKind(option)
-              const actionLabel = getPermissionActionLabel(option, actionKind)
+      <div className="flex min-w-0 flex-col items-stretch gap-2 overflow-hidden">
+        <PermissionCommandBlock command={request.title} />
+        <span className="flex flex-wrap items-center justify-end gap-1 w-full overflow-hidden">
+          {getOrderedPermissionOptions(request.options).map((option) => {
+            const actionKind = getPermissionActionKind(option)
+            const actionLabel = getPermissionActionLabel(option, actionKind)
 
-              return (
-                <button
-                  key={option.optionId}
-                  type="button"
-                  className="max-w-full break-words rounded-md border border-amber-300 bg-white px-2 py-1 text-[12px] hover:bg-amber-100"
-                  aria-label={`${actionLabel}: ${request.title}`}
-                  onClick={() => onRespond(request.requestId, option.optionId)}
-                >
-                  <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-                    {actionLabel}
-                  </span>
-                </button>
-              )
-            })}
-            <button
-              type="button"
-              className="max-w-full break-words rounded-md px-2 py-1 text-[12px] hover:bg-amber-100"
-              aria-label={`Cancel: ${request.title}`}
-              onClick={() => onRespond(request.requestId)}
-            >
-              <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-                Cancel
-              </span>
-            </button>
-          </span>
-        </div>
-      ))}
+            return (
+              <button
+                key={option.optionId}
+                type="button"
+                className="max-w-full break-words rounded-md border border-amber-300 bg-white px-2 py-1 text-[12px] hover:bg-amber-100"
+                aria-label={`${actionLabel}: ${request.title}`}
+                onClick={() => onRespond(request.requestId, option.optionId)}
+              >
+                <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                  {actionLabel}
+                </span>
+              </button>
+            )
+          })}
+          <button
+            type="button"
+            className="max-w-full break-words rounded-md px-2 py-1 text-[12px] hover:bg-amber-100"
+            aria-label={`Cancel: ${request.title}`}
+            onClick={() => onRespond(request.requestId)}
+          >
+            <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">Cancel</span>
+          </button>
+        </span>
+      </div>
     </div>
   )
 }
