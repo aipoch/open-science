@@ -268,7 +268,9 @@ class SettingsService {
 
   // Imports a skill from an uploaded .zip / .skill bundle, returning the outcome + refreshed list.
   async importSkillZip(request: ImportSkillZipRequest): Promise<ImportSkillResult> {
-    const outcome = await this.userSkills.importFromZip(Buffer.from(request.dataBase64, 'base64'))
+    const outcome = await this.userSkills.importFromZip(Buffer.from(request.dataBase64, 'base64'), {
+      replaceId: request.replaceId
+    })
 
     return { status: outcome.status, id: outcome.id, skills: await this.listSkills() }
   }

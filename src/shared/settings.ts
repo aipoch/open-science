@@ -309,10 +309,13 @@ export type ImportSkillRequest = {
   url: string
 }
 
-// Import a skill from an uploaded .zip / .skill bundle (base64-encoded archive bytes).
+// Import a skill from an uploaded .zip / .skill bundle (base64-encoded archive bytes). When
+// `replaceId` is set, the bundle overwrites that already-imported skill in place instead of being
+// imported as a new (possibly suffixed) skill.
 export type ImportSkillZipRequest = {
   dataBase64: string
   filename?: string
+  replaceId?: string
 }
 
 // Parse an uploaded .zip / .skill bundle without importing it, for a confirm-before-import preview.
@@ -320,13 +323,16 @@ export type PreviewSkillZipRequest = {
   dataBase64: string
 }
 
-// The parsed contents of a bundle: the skill's name/description, the files it contains, and whether an
-// identical bundle was already imported (same content signature).
+// The parsed contents of a bundle: the skill's name/description, the files it contains, whether an
+// identical bundle was already imported (same content signature), and — when the name collides with
+// exactly one existing imported skill of different content — the id of that skill, offered as a
+// replace target.
 export type SkillBundlePreview = {
   name: string
   description: string
   files: string[]
   alreadyImported: boolean
+  replaceableId?: string
 }
 
 // Scan a GitHub repo (owner/repo, owner/repo@ref, or a URL) for skill directories.

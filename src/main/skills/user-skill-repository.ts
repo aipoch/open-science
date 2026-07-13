@@ -266,7 +266,9 @@ class UserSkillRepository {
   }
 
   // Parses a bundle for a confirm-before-import preview: extracts it, reads the SKILL.md frontmatter,
-  // lists the files, and flags whether the identical bundle was already imported. Writes nothing.
+  // lists the files, flags whether the identical bundle was already imported, and — when its name
+  // collides with exactly one existing imported skill of different content — offers that skill's id as
+  // a replace target. Writes nothing.
   async previewZip(zip: Buffer): Promise<SkillBundlePreview> {
     const files = normalizeBundle(extractZip(zip))
     const skillMd = files.find((file) => file.relativePath.toLowerCase() === 'skill.md')
@@ -276,24 +278,51 @@ class UserSkillRepository {
     const name = fields.name?.trim()
     if (!name) throw new Error("The bundle's SKILL.md needs a name in its frontmatter.")
 
-    const existingSlug = await this.findImportedSlugBySignature(signatureOf(files))
+    const alreadyImported = Boolean(await this.findImportedSlugBySignature(signatureOf(files)))
+    const replaceableId = alreadyImported ? undefined : await this.replaceableImportedId(name)
 
     return {
       name,
       description: fields.description ?? '',
       files: files.map((file) => file.relativePath).sort(),
-      alreadyImported: Boolean(existingSlug)
+      alreadyImported,
+      replaceableId
     }
   }
 
-  // Imports a .zip / .skill bundle that contains a SKILL.md. Dedups by content signature: re-importing
-  // the same bundle is a no-op; a bundle with a name already taken gets a suffixed slug.
-  async importFromZip(zip: Buffer): Promise<ImportOutcome> {
+  // The id of the single imported skill sharing this display name, or undefined when there is none or
+  // the name is ambiguous (more than one). Only imported skills are replace targets — never a
+  // personal/featured skill that happens to share a name.
+  private async replaceableImportedId(name: string): Promise<string | undefined> {
+    const target = name.trim().toLowerCase()
+    const matches = (await this.list()).filter(
+      (skill) => skill.source === 'imported' && skill.name.trim().toLowerCase() === target
+    )
+    return matches.length === 1 ? matches[0].id : undefined
+  }
+
+  // Imports a .zip / .skill bundle that contains a SKILL.md. With `replaceId`, the bundle overwrites
+  // that already-imported skill in place. Otherwise it dedups by content signature (re-importing the
+  // same bundle is a no-op) and a bundle whose name is already taken gets a suffixed slug.
+  async importFromZip(zip: Buffer, options: { replaceId?: string } = {}): Promise<ImportOutcome> {
     const files = normalizeBundle(extractZip(zip))
     const skillMd = files.find((file) => file.relativePath.toLowerCase() === 'skill.md')
     if (!skillMd) throw new Error('The bundle must contain a SKILL.md.')
 
     const signature = signatureOf(files)
+
+    if (options.replaceId !== undefined) {
+      const parsed = parseUserSkillId(options.replaceId)
+      if (
+        !parsed ||
+        parsed.source !== 'imported' ||
+        !(await this.slugTaken('imported', parsed.slug))
+      ) {
+        throw new Error(`Not an imported skill to replace: ${options.replaceId}`)
+      }
+      await this.writeImported(parsed.slug, files, '', signature)
+      return { status: 'updated', id: `imported-${parsed.slug}` }
+    }
 
     const existingSlug = await this.findImportedSlugBySignature(signature)
     if (existingSlug) {

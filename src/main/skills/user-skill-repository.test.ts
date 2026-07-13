@@ -310,6 +310,65 @@ describe('UserSkillRepository', () => {
     await expect(repo.previewZip(zip)).rejects.toThrow(/needs a name/)
   })
 
+  // Builds a one-file bundle named "Shared" with a controllable body (so signatures differ).
+  const sharedBundle = (body: string): Buffer =>
+    buildZip([
+      {
+        path: 'pack/SKILL.md',
+        content: Buffer.from(`---\nname: Shared\ndescription: d\n---\n${body}`)
+      }
+    ])
+
+  it('offers a replace target when the name matches one imported skill of different content', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    await repo.importFromZip(sharedBundle('v1'))
+
+    // Same name, different content -> replaceable in place.
+    const preview = await repo.previewZip(sharedBundle('v2'))
+    expect(preview.alreadyImported).toBe(false)
+    expect(preview.replaceableId).toBe('imported-shared')
+
+    // The exact same bundle -> a no-op, so no replace is offered.
+    const exact = await repo.previewZip(sharedBundle('v1'))
+    expect(exact.alreadyImported).toBe(true)
+    expect(exact.replaceableId).toBeUndefined()
+  })
+
+  it('does not offer a replace target when two imported skills share the name (ambiguous)', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    await repo.importFromZip(sharedBundle('v1'))
+    await repo.importFromZip(sharedBundle('v2')) // second "Shared" -> imported-shared-2
+
+    const preview = await repo.previewZip(sharedBundle('v3'))
+    expect(preview.replaceableId).toBeUndefined()
+  })
+
+  it('replaces an imported skill in place when given a replaceId', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+    const first = await repo.importFromZip(sharedBundle('original'))
+    expect(first).toEqual({ status: 'imported', id: 'imported-shared' })
+
+    const replaced = await repo.importFromZip(sharedBundle('updated'), {
+      replaceId: 'imported-shared'
+    })
+    expect(replaced).toEqual({ status: 'updated', id: 'imported-shared' })
+
+    // No new skill was created and the file content was overwritten in place.
+    expect((await repo.list()).map((skill) => skill.id)).toEqual(['imported-shared'])
+    expect(await repo.body('imported-shared')).toContain('updated')
+  })
+
+  it('rejects a replaceId that is not an existing imported skill', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    await expect(
+      repo.importFromZip(sharedBundle('x'), { replaceId: 'imported-missing' })
+    ).rejects.toThrow(/Not an imported skill to replace/)
+    await expect(
+      repo.importFromZip(sharedBundle('x'), { replaceId: 'personal-shared' })
+    ).rejects.toThrow(/Not an imported skill to replace/)
+  })
+
   it('imports a GitHub skill and dedups re-imports (unchanged vs updated)', async () => {
     const repo = new UserSkillRepository(await makeStorage())
     const skillMd = ['---', 'name: Foo', 'description: An imported skill.', '---', 'body'].join(

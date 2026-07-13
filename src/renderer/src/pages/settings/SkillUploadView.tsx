@@ -29,6 +29,7 @@ type Pending =
       description: string
       files: string[]
       alreadyImported: boolean
+      replaceableId?: string
     }
   | { kind: 'markdown'; fileName: string; name: string; description: string; body: string }
 
@@ -113,14 +114,15 @@ const SkillUploadView = ({
     setMessage('Unsupported file — upload a .md file or a .zip/.skill bundle.')
   }
 
-  // Commits the previewed upload: importing a bundle or creating a skill from the markdown.
-  const confirm = async (): Promise<void> => {
+  // Commits the previewed upload: importing a bundle (optionally replacing an existing imported skill
+  // when `replaceId` is given) or creating a skill from the markdown.
+  const confirm = async (replaceId?: string): Promise<void> => {
     if (!pending || busy) return
     setBusy(true)
     setMessage(null)
     try {
       if (pending.kind === 'bundle') {
-        await importSkillZip(pending.base64)
+        await importSkillZip(pending.base64, replaceId)
       } else {
         await createSkill({
           name: pending.name,
@@ -157,6 +159,9 @@ const SkillUploadView = ({
       (skill) => skill.name.trim().toLowerCase() === pending.name.trim().toLowerCase()
     )
     const duplicate = exactDuplicate || nameTaken
+    // The name collides with exactly one existing imported skill (different content): let the user
+    // replace it in place or import a copy, instead of silently creating a suffixed duplicate.
+    const replaceId = pending.kind === 'bundle' ? pending.replaceableId : undefined
 
     return (
       <div className="max-w-2xl p-5">
@@ -213,14 +218,35 @@ const SkillUploadView = ({
         {message ? <ErrorBanner message={message} /> : null}
 
         <div className="mt-4 flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void confirm()}
-            disabled={busy}
-            className="inline-flex h-8 items-center rounded-lg border border-border bg-card px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-          >
-            {busy ? 'Importing…' : 'Import'}
-          </button>
+          {replaceId ? (
+            <>
+              <button
+                type="button"
+                onClick={() => void confirm(replaceId)}
+                disabled={busy}
+                className="inline-flex h-8 items-center rounded-lg border border-border bg-card px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+              >
+                {busy ? 'Importing…' : `Replace "${pending.name}"`}
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirm()}
+                disabled={busy}
+                className="inline-flex h-8 items-center rounded-lg px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+              >
+                Import as a copy
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void confirm()}
+              disabled={busy}
+              className="inline-flex h-8 items-center rounded-lg border border-border bg-card px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+            >
+              {busy ? 'Importing…' : 'Import'}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => {
@@ -238,7 +264,9 @@ const SkillUploadView = ({
             <Info className="size-3.5 shrink-0" aria-hidden="true" />
             {exactDuplicate
               ? 'This exact bundle is already imported — re-importing is a no-op.'
-              : `A skill named "${pending.name}" already exists.`}
+              : replaceId
+                ? `A skill named "${pending.name}" is already imported — replace it or import a copy.`
+                : `A skill named "${pending.name}" already exists.`}
           </p>
         ) : null}
       </div>
