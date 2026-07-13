@@ -97,7 +97,8 @@ class SkillRegistry {
       }
     }
 
-    return skills
+    // Featured skills always display alphabetically by name; the manifest order is not significant.
+    return skills.sort((a, b) => a.name.localeCompare(b.name))
   }
 
   async body(id: string): Promise<string> {

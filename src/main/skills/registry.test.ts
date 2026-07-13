@@ -79,4 +79,36 @@ describe('SkillRegistry', () => {
     const root = await mkdtemp(join(tmpdir(), 'skills-empty-'))
     expect(await new SkillRegistry(root).list()).toEqual([])
   })
+
+  it('sorts featured skills alphabetically by name regardless of manifest order', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skills-sort-'))
+    const seed = [
+      { id: 'charlie', name: 'Charlie' },
+      { id: 'alpha', name: 'Alpha' },
+      { id: 'bravo', name: 'Bravo' }
+    ]
+    for (const { id, name } of seed) {
+      await mkdir(join(root, id), { recursive: true })
+      await writeFile(
+        join(root, id, 'SKILL.md'),
+        ['---', `name: ${name}`, `description: ${name} skill.`, '---', '', `# ${name}`].join('\n'),
+        'utf8'
+      )
+    }
+    await writeFile(
+      join(root, 'manifest.json'),
+      JSON.stringify({
+        version: 1,
+        skills: seed.map(({ id, name }) => ({
+          id,
+          name,
+          source: 'featured',
+          updatedAt: '2026-01-01T00:00:00.000Z'
+        }))
+      }),
+      'utf8'
+    )
+    const skills = await new SkillRegistry(root).list()
+    expect(skills.map((skill) => skill.name)).toEqual(['Alpha', 'Bravo', 'Charlie'])
+  })
 })
