@@ -59,6 +59,7 @@ Thumbs.db
 
 # Internal docs
 docs/internal/
+docs/superpowers/
 
 # Local-only scripts and tooling
 local/

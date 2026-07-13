@@ -145,7 +145,7 @@ So let's be direct about where each project actually stands, instead of hand-wav
 | **Compute**                       | SSH/HPC access plus Modal for on-demand GPUs                              | Pluggable compute fabric — any HPC scheduler, any cloud GPU provider (planned)                                                                                          |
 | **Reviewer / verification agent** | Yes, shipping today                                                       | Yes, planned as an open, inspectable layer ([Phase 4](#roadmap))                                                                                                        |
 | **Customization**                 | Configure agents inside Anthropic's product surface                       | Every layer — gateway, skill runtime, compute broker, reviewer — is inspectable and replaceable                                                                         |
-| **Maturity**                      | A shipping, polished product, in use today                                | Early alpha: working core loop with downloadable desktop builds; the differentiating layers are still ahead (see [Roadmap](#roadmap))                                                                                                      |
+| **Maturity**                      | A shipping, polished product, in use today                                | Early alpha: working core loop with downloadable desktop builds, plus first-cut agent skills and life-science / MCP data connectors; the deeper differentiating layers are still ahead (see [Roadmap](#roadmap))                                                                                                      |
 
 The Maturity row matters most, so we won't bury it: if you need a working AI research assistant today, Claude Science is the more capable choice. Open Science's advantage isn't feature parity yet — it's the structural ceiling underneath.
 
@@ -233,8 +233,8 @@ flowchart TB
     end
 
     Core --> Models["Model Layer (planned)<br/>Claude · GPT · Gemini · DeepSeek · Qwen · local"]
-    Core --> Skills["Skills Commons (planned)<br/>versioned, forkable agent skills"]
-    Core --> Data["Data & Knowledge Layer (planned)<br/>PubMed · UniProt · PDB · ChEMBL · GEO · private data"]
+    Core --> Skills["Skills Commons (early)<br/>versioned, forkable agent skills"]
+    Core --> Data["Data & Knowledge Layer (early)<br/>PubMed · UniProt · PDB · ChEMBL · GEO · private data"]
     Core --> Compute["Compute Fabric (planned)<br/>laptop → HPC/Slurm → cloud GPU"]
 
     Specialists --> Artifacts["Scientific Artifacts & Notebooks (shipping)<br/>notebook kernel · file previews · artifact storage"]
@@ -246,8 +246,8 @@ flowchart TB
 
 - **Agent Harness / Orchestration Core.** A coordinating agent that plans multi-step research tasks and executes tool calls, with typed activity visualization and a permission gate for higher-risk actions. _Shipping today_ via an Agent Client Protocol (ACP) runtime. Specialist sub-agents (genomics, proteomics, structural biology, cheminformatics, and — unlike most current tools in this space — non-life-science domains like social science and economics) and a dedicated reviewer agent are planned.
 - **Model Layer.** A unified gateway in front of any LLM provider or self-hosted model, with per-agent routing — a cheap fast model for grunt-work sub-tasks, a frontier model for synthesis and writing, a local model for anything that can't leave the building. _Planned_ — today's runtime is wired to a single agent backend.
-- **Skills Commons.** An open, versioned registry of agent skills — protocol design, statistical review, literature synthesis, figure generation, and domain-specific analysis pipelines — designed to interoperate with [aipoch/medical-research-skills](https://github.com/aipoch/medical-research-skills) as its first and largest skill pack. _Planned._
-- **Data & Knowledge Layer.** Connectors to the open scientific commons — PubMed/PMC, UniProt, PDB, Ensembl, Reactome, ClinVar, ChEMBL, GEO, arXiv/bioRxiv/medRxiv, OpenAlex — plus a connector framework for institutional and proprietary datasets that never leave the researcher's access boundary. _Planned._
+- **Skills Commons.** An open, versioned registry of agent skills — protocol design, statistical review, literature synthesis, figure generation, and domain-specific analysis pipelines — designed to interoperate with [aipoch/medical-research-skills](https://github.com/aipoch/medical-research-skills) as its first and largest skill pack. _Early:_ file-based skill management ships today — create, edit, and import (zip) skills and pull them into a session through a `/` selector — but the open, shareable public commons is still planned.
+- **Data & Knowledge Layer.** Connectors to the open scientific commons — PubMed/PMC, UniProt, PDB, Ensembl, Reactome, ClinVar, ChEMBL, GEO, arXiv/bioRxiv/medRxiv, OpenAlex — plus a connector framework for institutional and proprietary datasets that never leave the researcher's access boundary. _Early:_ a first set of life-science data connectors and support for custom MCP servers ship today (callable from agent sessions behind the permission gate); broader coverage and the general connector framework are planned.
 - **Compute Fabric.** A broker that scales a job from a laptop kernel, to an institutional Slurm/HPC cluster, to on-demand cloud GPUs, with job submission, monitoring, and cost guardrails handled automatically instead of hand-written SSH scripts. _Planned_ — all execution today runs locally.
 - **Scientific Artifacts & Notebooks.** _Shipping today_: a persistent Python notebook kernel with durable run history, artifact file storage organized by project/session/message/run, and in-app rendering for CSV, FASTA, HTML, image, JSON, Markdown, and text files. Native structure/genome/chemical viewers and reproducible manuscript/figure generation with inline citations are planned.
 - **Verification & Provenance Layer.** A lineage graph connecting every claim back to the figure, code, and dataset version that generated it, with automated checks for citation accuracy, unit consistency, and statistical-method appropriateness. _Planned._
@@ -255,7 +255,7 @@ flowchart TB
 
 ## Current Status
 
-Open Science is **early alpha**. The core "plan → execute → produce → preview" loop — desktop app, agent runtime, notebook execution, artifact storage, in-app previews — works end to end today. The properties that would make this a genuinely differentiated, science-grade tool — multi-model routing, provenance, a connector ecosystem, remote compute, a skills commons — are mostly still ahead. We'd rather ship a slower, honest path to the full vision than fake a finished product.
+Open Science is **early alpha**. The core "plan → execute → produce → preview" loop — desktop app, agent runtime, notebook execution, artifact storage, in-app previews — works end to end today, and a first layer of the differentiating capabilities has started to land: file-based agent skills and an initial set of life-science / MCP data connectors. The properties that would make this a genuinely differentiated, science-grade tool — multi-model routing, provenance, remote compute, and a public skills commons — are mostly still ahead. We'd rather ship a slower, honest path to the full vision than fake a finished product.
 
 The authoritative, kept-up-to-date breakdown of what's shipping versus still ahead lives in `ROADMAP.md`, not here, so this list doesn't quietly drift out of sync as the project moves:
 

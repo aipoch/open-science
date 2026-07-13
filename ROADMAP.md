@@ -40,7 +40,7 @@ flowchart LR
 
 ## Where We Are Today
 
-The current codebase is an early, working implementation of the first stretch of Horizon 1 and Horizon 2 — a single-agent desktop workbench with real project/session persistence, a notebook execution kernel, and an artifact library, running today (not "coming soon"). It's honest to describe it as **early alpha**: the core "plan → execute → produce → preview" loop works end to end, but the properties that would make this a genuinely open, science-grade tool — reproducibility guarantees, multi-model routing, a connector ecosystem, remote compute, a skills commons — are mostly still ahead of us.
+The current codebase is an early, working implementation of the first stretch of Horizon 1 and Horizon 2 — a single-agent desktop workbench with real project/session persistence, a notebook execution kernel, an artifact library, file-based agent skills, and a first set of scientific data connectors, running today (not "coming soon"). It's honest to describe it as **early alpha**: the core "plan → execute → produce → preview" loop works end to end, but the properties that would make this a genuinely open, science-grade tool — reproducibility guarantees, multi-model routing, remote compute, and a public skills commons — are mostly still ahead of us.
 
 **Working today:**
 - ✅ Agent runtime with a full plan/execute/tool-call loop, wrapped over the Agent Client Protocol (ACP)
@@ -52,13 +52,15 @@ The current codebase is an early, working implementation of the first stretch of
 - ✅ Artifact file storage organized by session / message / run
 - ✅ Rich in-app file previews (CSV, FASTA, HTML, image, JSON, Markdown, plain text, notebook cells)
 - ✅ Attachment uploads and a permission-approval UI for tool calls
+- ✅ File-based agent skills — create, edit, and import (zip) skills, pull them into a session through a `/` selector in the composer, with materialized skill directories kept read-only
+- ✅ A first set of life-science data connectors plus custom MCP servers, callable from agent sessions behind the permission gate
 - ✅ Packaged desktop installers for macOS (Apple Silicon + Intel), Windows, and Linux, plus a nightly build channel off `main`
 
 **Not yet built — the hardest, most differentiating work is still ahead:**
 - ⬜ A truly model-agnostic gateway; multi-provider selection ships today (see below), but every provider is reached over an Anthropic-compatible endpoint — native non-Anthropic protocols (e.g. OpenAI's own API) are not yet wired
 - ⬜ Artifact versioning and a provenance chain (code + execution log + dependency graph + environment snapshot + conversation context) tied to every output
 - ⬜ Additional execution kernels (R, a REPL control plane) and Conda-style environment management
-- ⬜ A skills commons and pre-built life-science data connectors
+- ⬜ A public skills commons — versioned, forkable, shareable skills with lexical discovery; local file-based skill management ships today (see above), the shared commons and a broader connector framework do not
 - ⬜ Remote compute (SSH / Slurm / cloud GPU), an async notification bus, and sub-agent fan-out
 - ⬜ Network sandboxing, a credential vault, and scoped (single-use / session / project / global) permissions
 - ⬜ A reviewer / verifier agent that checks citations, units, and statistical methods before output ships
@@ -77,11 +79,11 @@ The product is organized into cooperating layers (see [`docs/PRD.md`](docs/PRD.m
 | **Environment Management** | Create, switch, snapshot, and register reproducible compute environments | Uses a single managed runtime directory; no environment CRUD or snapshotting | ⬜ |
 | **Artifacts & Provenance** | Versioned outputs with full lineage (code, logs, dependencies, environment, conversation) | Artifact files saved and organized by session/message/run; no versioning or lineage tracking yet | 🟡 |
 | **File Preview & Viewers** | Native, in-app rendering of scientific artifacts | Multi-format renderers (CSV, FASTA, HTML, image, JSON, Markdown, text) plus a project file library and notebook preview | ✅ |
-| **Skills Commons** | Versioned, forkable, file-based skills with lexical discovery and explicit loading | Not implemented | ⬜ |
-| **Data & MCP Connectors** | Pre-built connectors to open scientific databases, callable from an isolated execution context | Internal MCP infrastructure exists for artifacts/notebook tooling; no external data connectors yet | 🟡 |
+| **Skills Commons** | Versioned, forkable, file-based skills with lexical discovery and explicit loading | File-based skill management (create/edit/import, `/`-selector discovery in the composer, read-only materialized dirs); no public registry, sharing, or version pinning yet | 🟡 |
+| **Data & MCP Connectors** | Pre-built connectors to open scientific databases, callable from an isolated execution context | A first set of life-science data connectors plus custom MCP server support, callable from agent sessions behind the permission gate; breadth is still early and there is no general connector framework yet | 🟡 |
 | **Remote Compute & Async Tasks** | Job submission to HPC/cloud, async completion notifications, parallel sub-agent fan-out | Not implemented; all execution is local and synchronous today | ⬜ |
 | **Security & Permissions** | Scoped permission gates, network allowlisting, directory-level file access control, credential vault | Tool-call permission gate with an approval UI; no scoping tiers, network sandbox, or credential vault | 🟡 |
-| **Context Management** | Layered system rules, attachment ingestion, skill-aware context injection, history compaction | File/attachment upload wired into prompts; no automatic skill injection or compaction yet | 🟡 |
+| **Context Management** | Layered system rules, attachment ingestion, skill-aware context injection, history compaction | File/attachment upload wired into prompts and explicit `/`-selector skill injection; no automatic skill-aware injection or history compaction yet | 🟡 |
 | **Interactive Annotations** | Spatially-anchored feedback on images, PDFs, text, and HTML surfaces | Not implemented | ⬜ |
 
 ## Delivery Phases
@@ -99,9 +101,9 @@ flowchart LR
 ```
 
 - **Phase 0 — Vision & Architecture (done).** This roadmap, the [PRD](docs/PRD.md), the design system, and initial community formation.
-- **Phase 1 — Core Loop (in progress).** Desktop shell, single-agent runtime, project/session persistence, a single execution kernel, artifact storage, rich in-app previews, and packaged installers for macOS/Windows/Linux — all shipping today. Multi-provider model configuration with per-model selection also ships now, though only across Anthropic-compatible endpoints. Still open in this phase: a truly model-agnostic gateway (native non-Anthropic protocols), a CLI/SDK entry point, and a file-based skill runtime.
+- **Phase 1 — Core Loop (in progress).** Desktop shell, single-agent runtime, project/session persistence, a single execution kernel, artifact storage, rich in-app previews, file-based agent skills, a first set of life-science / MCP data connectors, and packaged installers for macOS/Windows/Linux — all shipping today. Multi-provider model configuration with per-model selection also ships now, though only across Anthropic-compatible endpoints. Still open in this phase: a truly model-agnostic gateway (native non-Anthropic protocols) and a CLI/SDK entry point.
 - **Phase 2 — Reproducibility & Multi-Agent.** Artifact versioning with a full provenance chain; additional kernels (R, a REPL control plane) and environment management; specialist sub-agents alongside the generalist coordinator. This is the project's core differentiation from a generic coding agent, and the highest-priority phase for contributors who want to make the biggest structural dent.
-- **Phase 3 — Knowledge & Connectors.** A skills commons with versioned, forkable skills and lexical discovery; pre-built connectors to open scientific databases and literature; savable "specialist" roles (instructions + skills + connectors + permissions bundled together).
+- **Phase 3 — Knowledge & Connectors.** A public skills commons with versioned, forkable skills and lexical discovery; a broader connector framework reaching more open scientific databases and literature; savable "specialist" roles (instructions + skills + connectors + permissions bundled together). Early pieces have already landed in Phase 1 — local file-based skill management and a first set of data / MCP connectors — but the shared commons and the general connector framework remain.
 - **Phase 4 — Compute & Trust.** Remote compute as a first-class primitive (SSH/Slurm/cloud GPU) with async job notifications and sub-agent fan-out; a reviewer/verifier agent; the full security stack (scoped permissions, network allowlisting, directory-level file sandboxing, a credential vault); a pluggable multi-agent-framework backend so the runtime isn't locked to one agent implementation.
 - **Phase 5 — Commons & Interaction.** A public skills marketplace, an optional hosted offering, and institutional governance/audit features; spatially-anchored annotations; interactive scientific viewers; dynamic, skill-aware context injection and history compaction.
 
