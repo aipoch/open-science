@@ -126,6 +126,7 @@ const ARTIFACT_FILE_SYSTEM_PROMPT_APPEND = [
   'Do not save generated user-facing files directly into the workspace or current directory unless the user explicitly asks to modify project files.',
   'Pass only the filename, MIME type, and either inline content or a local source path to `write_artifact_file`; the app assigns the project, session, run, and final message location.',
   'After using the tool, mention the generated filename rather than an absolute filesystem path. The app will display the generated file list below your message.',
+  'Never write files inside a skill directory — loaded skills are read-only; route any file a skill generates through `write_artifact_file`.',
   '</open_science_artifact_instructions>'
 ].join('\n')
 

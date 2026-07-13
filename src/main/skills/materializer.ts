@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { chmod, cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { createLogger } from '../logger'
@@ -13,6 +13,40 @@ const OS_SKILL_PREFIX = 'os-'
 // Tracks the version (updatedAt) last materialized per managed dir so unchanged skills are skipped
 // instead of recopied on every spawn. Not a skill dir, so the claude skill loader ignores it.
 const VERSION_MANIFEST = '.os-versions.json'
+
+// Recursively chmods a materialized skill tree. Read-only keeps the agent from writing generated files
+// into a loaded skill dir; writable is applied before removal since a read-only dir cannot have its
+// children unlinked. Best-effort: logs and continues on error, and no-ops when the dir is absent.
+// POSIX-enforced only — on Windows a read-only directory does not enforce write-containment.
+async function chmodTree(dir: string, mode: 'readonly' | 'writable'): Promise<void> {
+  const dirMode = mode === 'readonly' ? 0o555 : 0o755
+  const fileMode = mode === 'readonly' ? 0o444 : 0o644
+  let entries
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+    log.warn('failed to read skill dir for chmod', { dir, error })
+    return
+  }
+  for (const entry of entries) {
+    const child = join(dir, entry.name)
+    if (entry.isDirectory()) {
+      await chmodTree(child, mode)
+    } else {
+      try {
+        await chmod(child, fileMode)
+      } catch (error) {
+        log.warn('failed to chmod skill file', { child, error })
+      }
+    }
+  }
+  try {
+    await chmod(dir, dirMode)
+  } catch (error) {
+    log.warn('failed to chmod skill dir', { dir, error })
+  }
+}
 
 // Writes an enabled skill set into a framework's config dir. One implementation per agent framework.
 interface SkillMaterializer {
@@ -41,8 +75,11 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
     // Remove managed dirs that should no longer exist (disabled or removed skills).
     for (const name of existing) {
       if (name.startsWith(OS_SKILL_PREFIX) && !wanted.has(name)) {
+        const stale = join(skillsDir, name)
         try {
-          await rm(join(skillsDir, name), { recursive: true, force: true })
+          // Restore write bits first: a read-only dir cannot have its children unlinked.
+          await chmodTree(stale, 'writable')
+          await rm(stale, { recursive: true, force: true })
         } catch (error) {
           log.warn('failed to remove stale skill dir', { name, error })
         }
@@ -59,13 +96,24 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
 
       const target = join(skillsDir, name)
       try {
+        // Restore write bits before removal in case a prior sync left the dir read-only.
+        await chmodTree(target, 'writable')
         await rm(target, { recursive: true, force: true })
         await cp(skill.sourceDir, target, { recursive: true, force: true })
+        // Loaded skills are read-only so the agent cannot write generated files into them.
+        await chmodTree(target, 'readonly')
         versions[name] = version
       } catch (error) {
         log.warn('failed to materialize skill', { id: skill.id, error })
         delete versions[name]
       }
+    }
+
+    // Ensure every managed dir is read-only, including ones skipped as unchanged above — otherwise a
+    // skill materialized as writable by an earlier version would stay writable until its version bumps.
+    // chmod is idempotent and cheap, so re-applying it to unchanged dirs is safe.
+    for (const name of wanted.keys()) {
+      await chmodTree(join(skillsDir, name), 'readonly')
     }
 
     await this.writeVersions(skillsDir, versions)
