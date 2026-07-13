@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef } from 'react'
 
 import type { AcpPermissionRequest, AcpRuntimeEvent } from '../../../../shared/acp'
+import {
+  DEFAULT_PERMISSION_PROFILE,
+  type PermissionProfileId,
+  type SessionPermissionProfileState
+} from '../../../../shared/permission-profiles'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import { useSessionStore } from '../../stores/session-store'
 import { useAcpRuntime } from './useAcpRuntime'
@@ -15,6 +20,7 @@ type SendWorkspaceMessageInput = {
   projectId?: string
   // Storage project the artifact/notebook MCP servers write under (usually the same value).
   projectName?: string
+  permissionProfile?: PermissionProfileId
   // Skills the user picked in the composer; force-loaded and nudged for this turn only.
   forcedSkillIds?: string[]
 }
@@ -164,10 +170,19 @@ const startPendingSessionPrompt = (
   attachments: UploadedAttachment[],
   cwd: string | undefined,
   projectName: string | undefined,
+  permissionProfile: PermissionProfileId,
   forcedSkillIds: string[] | undefined
 ): void => {
   void (async () => {
-    const createdSession = await runtime.createSession(cwd, projectName).catch(() => undefined)
+    let createdSession
+
+    try {
+      createdSession = await runtime.createSession(cwd, projectName, permissionProfile)
+    } catch (error) {
+      useSessionStore.getState().failRun(pending.sessionId, getErrorMessage(error))
+      return
+    }
+
     const runtimeSessionId = createdSession?.sessionId
 
     if (!runtimeSessionId) {
@@ -224,6 +239,7 @@ const sendWorkspaceMessage = async (
     cwd,
     projectId,
     projectName,
+    permissionProfile,
     forcedSkillIds
   }: SendWorkspaceMessageInput
 ): Promise<SendWorkspaceMessageResult | undefined> => {
@@ -266,6 +282,7 @@ const sendWorkspaceMessage = async (
         attachments,
         retryCwd,
         sessionProjectName,
+        currentSession.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
         forcedSkillIds
       )
       return appended
@@ -299,7 +316,12 @@ const sendWorkspaceMessage = async (
     // Persisted sessions are marked running locally before async resume closes duplicate submits.
     if (resumeCwd) {
       try {
-        await runtime.resumeSession(targetSessionId, resumeCwd, sessionProjectName)
+        await runtime.resumeSession(
+          targetSessionId,
+          resumeCwd,
+          sessionProjectName,
+          currentSession?.permissionProfile ?? permissionProfile
+        )
       } catch (error) {
         useSessionStore.getState().failRun(targetSessionId, getResumeFailureMessage(error))
         return appended
@@ -343,7 +365,8 @@ const sendWorkspaceMessage = async (
     content,
     attachments,
     cwd: targetCwd ?? runtime.state.cwd,
-    projectId
+    projectId,
+    permissionProfile
   })
 
   if (!pending) return undefined
@@ -356,6 +379,7 @@ const sendWorkspaceMessage = async (
     attachments,
     targetCwd ?? runtime.state.cwd,
     projectName,
+    permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
     forcedSkillIds
   )
 
@@ -367,10 +391,12 @@ const useWorkspaceAgentRuntime = (): {
   actionError: string | null
   isConnecting: boolean
   pendingPermissions: AcpPermissionRequest[]
+  permissionProfiles: Record<string, SessionPermissionProfileState>
   sendMessage: (input: SendWorkspaceMessageInput) => Promise<SendWorkspaceMessageResult | undefined>
   cancelRun: (sessionId: string) => Promise<void>
   deleteRuntimeSession: (sessionId: string) => Promise<void>
   respondToPermission: (requestId: string, optionId?: string) => Promise<void>
+  setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => Promise<boolean>
 } => {
   const runtime = useAcpRuntime()
   const eventProcessor = useRef(createWorkspaceRuntimeEventProcessor())
@@ -435,14 +461,32 @@ const useWorkspaceAgentRuntime = (): {
     [runtime]
   )
 
+  // Applies attached-session mode changes before persisting the selection. Detached sessions store
+  // the preference now and reapply it during resume before their next prompt.
+  const setPermissionProfile = useCallback(
+    async (sessionId: string, profile: PermissionProfileId): Promise<boolean> => {
+      if (runtime.state.sessionIds.includes(sessionId)) {
+        const snapshot = await runtime.setPermissionProfile(sessionId, profile)
+
+        if (!snapshot) return false
+      }
+
+      useSessionStore.getState().setPermissionProfile(sessionId, profile)
+      return true
+    },
+    [runtime]
+  )
+
   return {
     actionError: runtime.actionError,
     isConnecting: runtime.isConnecting,
     pendingPermissions: runtime.state.pendingPermissions,
+    permissionProfiles: runtime.state.permissionProfiles,
     sendMessage,
     cancelRun,
     deleteRuntimeSession,
-    respondToPermission
+    respondToPermission,
+    setPermissionProfile
   }
 }
 

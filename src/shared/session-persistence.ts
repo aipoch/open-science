@@ -1,4 +1,9 @@
 import type { UploadedAttachment } from './uploads'
+import {
+  DEFAULT_PERMISSION_PROFILE,
+  normalizePermissionProfile,
+  type PermissionProfileId
+} from './permission-profiles'
 
 // One JSON file per session (sessions/<projectId>/<sessionId>.json) carries this envelope version.
 export const SESSION_FILE_VERSION = 1
@@ -84,6 +89,8 @@ export type PersistedChatSession = {
   title: string
   cwd: string
   status: PersistedSessionStatus
+  // Per-conversation approval posture. Older session files omit it and safely restore to Ask.
+  permissionProfile?: PermissionProfileId
   messages: PersistedChatMessage[]
   activities?: PersistedToolActivity[]
   activeRun?: PersistedActiveRun
@@ -515,6 +522,10 @@ const sanitizeSession = (session: unknown): PersistedChatSession | undefined => 
     title: asString(session.title) ?? id,
     cwd: asString(session.cwd) ?? '',
     status: asSessionStatus(session.status),
+    permissionProfile:
+      session.permissionProfile === undefined
+        ? DEFAULT_PERMISSION_PROFILE
+        : normalizePermissionProfile(session.permissionProfile),
     messages: Array.isArray(session.messages)
       ? session.messages.map(sanitizeMessage).filter((item): item is PersistedChatMessage => !!item)
       : [],

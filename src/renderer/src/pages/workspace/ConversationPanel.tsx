@@ -1,5 +1,9 @@
 import type { AcpPermissionRequest } from '../../../../shared/acp'
 import type { NotebookSessionReference } from '../../../../shared/notebook'
+import type {
+  PermissionProfileId,
+  SessionPermissionProfileState
+} from '../../../../shared/permission-profiles'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import {
   ArrowUp,
@@ -22,6 +26,7 @@ import type { ChatSession } from '@/stores/session-store'
 import { ComposerEditor } from './composer/ComposerEditor'
 import { docToSkillIds, type ComposerDoc } from './composer/composer-doc'
 import { ComposerModelPicker } from './ComposerModelPicker'
+import { ComposerPermissionProfilePicker } from './ComposerPermissionProfilePicker'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
 
@@ -71,6 +76,9 @@ type ConversationPanelProps = {
   isUploadingAttachments: boolean
   notebookReference: NotebookSessionReference | undefined
   pendingPermissions: AcpPermissionRequest[]
+  permissionProfile: PermissionProfileId
+  permissionProfileState: SessionPermissionProfileState | undefined
+  canChangePermissionProfile: boolean
   onDraftDocChange: (doc: ComposerDoc) => void
   onSendMessage: (forcedSkillIds: string[]) => void
   onStageAttachmentFiles: (files: File[]) => void
@@ -79,6 +87,7 @@ type ConversationPanelProps = {
   onOpenNotebook: (notebook: NotebookSessionReference) => void
   onTogglePreviewPanel: () => void
   onRespondToPermission: (requestId: string, optionId?: string) => void
+  onPermissionProfileChange: (profile: PermissionProfileId) => void
 }
 
 // Middle chat surface owns the visible conversation and local message composer UI.
@@ -93,6 +102,9 @@ const ConversationPanel = ({
   isUploadingAttachments,
   notebookReference,
   pendingPermissions,
+  permissionProfile,
+  permissionProfileState,
+  canChangePermissionProfile,
   onDraftDocChange,
   onSendMessage,
   onStageAttachmentFiles,
@@ -100,7 +112,8 @@ const ConversationPanel = ({
   onCancelRun,
   onOpenNotebook,
   onTogglePreviewPanel,
-  onRespondToPermission
+  onRespondToPermission,
+  onPermissionProfileChange
 }: ConversationPanelProps): React.JSX.Element => {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -293,6 +306,13 @@ const ConversationPanel = ({
                           className="hidden"
                           tabIndex={-1}
                           onChange={handleAttachmentInputChange}
+                        />
+
+                        <ComposerPermissionProfilePicker
+                          value={permissionProfile}
+                          state={permissionProfileState}
+                          disabled={!canChangePermissionProfile}
+                          onChange={onPermissionProfileChange}
                         />
 
                         <div className="flex-1" />

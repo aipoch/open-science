@@ -50,6 +50,9 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
         isUploadingAttachments={false}
         notebookReference={undefined}
         pendingPermissions={[]}
+        permissionProfile="ask"
+        permissionProfileState={undefined}
+        canChangePermissionProfile
         onDraftDocChange={vi.fn()}
         onSendMessage={vi.fn()}
         onStageAttachmentFiles={onStageAttachmentFiles}
@@ -58,6 +61,7 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
         onOpenNotebook={vi.fn()}
         onTogglePreviewPanel={vi.fn()}
         onRespondToPermission={vi.fn()}
+        onPermissionProfileChange={vi.fn()}
         {...props}
       />
     )

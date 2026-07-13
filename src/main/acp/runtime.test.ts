@@ -1,5 +1,5 @@
 import * as acp from '@agentclientprotocol/sdk'
-import type { ContentBlock } from '@agentclientprotocol/sdk'
+import type { ContentBlock, SessionModeState } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -53,6 +53,7 @@ const startFakeAgent = (
   sessionIds: string[],
   options: {
     supportsResume?: boolean
+    modes?: SessionModeState
     // When true, the resume handler rejects with the ACP "Resource not found" (-32002) — the signal a
     // replaced agent (e.g. after a provider switch) gives for a session id it does not hold.
     resumeNotFound?: boolean
@@ -67,6 +68,8 @@ const startFakeAgent = (
   newSessions: Array<{ cwd: string; mcpServers: unknown[]; _meta?: unknown }>
   resumedSessions: Array<{ sessionId: string; cwd: string; mcpServers: unknown[]; _meta?: unknown }>
   closedSessions: string[]
+  modeChanges: Array<{ sessionId: string; modeId: string }>
+  actions: string[]
 } => {
   const prompts: Array<{ sessionId: string; text: string }> = []
   const newSessions: Array<{ cwd: string; mcpServers: unknown[]; _meta?: unknown }> = []
@@ -77,6 +80,8 @@ const startFakeAgent = (
     _meta?: unknown
   }> = []
   const closedSessions: string[] = []
+  const modeChanges: Array<{ sessionId: string; modeId: string }> = []
+  const actions: string[] = []
   let sessionIndex = 0
 
   acp
@@ -102,7 +107,7 @@ const startFakeAgent = (
       const sessionId = sessionIds[sessionIndex]
       sessionIndex += 1
 
-      return { sessionId }
+      return { sessionId, modes: options.modes }
     })
     .onRequest(acp.methods.agent.session.resume, (ctx) => {
       if (options.resumeNotFound) {
@@ -116,6 +121,11 @@ const startFakeAgent = (
         ...(ctx.params._meta === undefined ? {} : { _meta: ctx.params._meta })
       })
 
+      return { modes: options.modes }
+    })
+    .onRequest(acp.methods.agent.session.setMode, (ctx) => {
+      modeChanges.push({ sessionId: ctx.params.sessionId, modeId: ctx.params.modeId })
+      actions.push(`mode:${ctx.params.modeId}`)
       return {}
     })
     .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
@@ -125,6 +135,7 @@ const startFakeAgent = (
         .join('')
 
       prompts.push({ sessionId: ctx.params.sessionId, text })
+      actions.push(`prompt:${text}`)
       await options.onPrompt?.({ sessionId: ctx.params.sessionId, text, prompt: ctx.params.prompt })
       // Stream one assistant chunk through the client callback path before stopping.
       await ctx.client.notify(acp.methods.client.session.update, {
@@ -153,8 +164,16 @@ const startFakeAgent = (
       )
     )
 
-  return { prompts, newSessions, resumedSessions, closedSessions }
+  return { prompts, newSessions, resumedSessions, closedSessions, modeChanges, actions }
 }
+
+const createModes = (
+  ids: string[],
+  currentModeId: string = ids[0] ?? 'default'
+): SessionModeState => ({
+  currentModeId,
+  availableModes: ids.map((id) => ({ id, name: id }))
+})
 
 let temporaryRoot: string | undefined
 
@@ -192,6 +211,70 @@ afterEach(async () => {
 })
 
 describe('ACP runtime session management', () => {
+  it('applies native Full access before the first prompt', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['full-session'], {
+      modes: createModes(['default', 'bypassPermissions'])
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'full' })
+
+    expect(runtime.getSnapshot().permissionProfiles[session.sessionId]).toMatchObject({
+      selectedProfile: 'full',
+      effectiveProfile: 'full',
+      currentModeId: 'bypassPermissions',
+      fullAccessAvailable: true
+    })
+    expect(fakeAgent.modeChanges).toEqual([
+      { sessionId: 'full-session', modeId: 'bypassPermissions' }
+    ])
+
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'continue' })
+
+    expect(fakeAgent.actions).toEqual(['mode:bypassPermissions', 'prompt:continue'])
+  })
+
+  it('reports conservative Auto when the Agent has no native auto mode', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['auto-session'], {
+      modes: createModes(['default', 'bypassPermissions'])
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'auto' })
+
+    expect(fakeAgent.modeChanges).toEqual([])
+    expect(runtime.getSnapshot().permissionProfiles[session.sessionId]).toMatchObject({
+      selectedProfile: 'auto',
+      currentModeId: 'default',
+      autoReviewStrategy: 'conservative'
+    })
+  })
+
+  it('rejects Full access when native bypass is not advertised', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['full-session'], { modes: createModes(['default']) })
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await expect(
+      runtime.createSession({ cwd: '/workspace', permissionProfile: 'full' })
+    ).rejects.toThrow('Full access is not available')
+    expect(runtime.getSnapshot().sessionIds).toEqual([])
+  })
+
   it('creates protocol sessions and routes prompts by session id', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['remote-session-1', 'remote-session-2'])

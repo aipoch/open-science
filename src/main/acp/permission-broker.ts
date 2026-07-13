@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 
 import type { AcpPermissionRequest, AcpPermissionResponse } from '../../shared/acp'
 import { extractProviderToolName } from './runtime-events'
+import { resolveAutomaticPermission, type PermissionPolicyContext } from './permission-policy'
 
 type PendingPermission = {
   request: AcpPermissionRequest
@@ -78,8 +79,17 @@ class AcpPermissionBroker {
     return Array.from(this.pendingRequests.values(), ({ request }) => request)
   }
 
+  hasPendingForSession(sessionId: string): boolean {
+    return Array.from(this.pendingRequests.values()).some(
+      ({ request }) => request.sessionId === sessionId
+    )
+  }
+
   // Stores a permission request and resolves it later from a renderer response.
-  requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
+  requestPermission(
+    params: RequestPermissionRequest,
+    policyContext?: PermissionPolicyContext
+  ): Promise<RequestPermissionResponse> {
     const requestId = randomUUID()
     const request: AcpPermissionRequest = {
       requestId,
@@ -87,6 +97,10 @@ class AcpPermissionBroker {
       toolCallId: params.toolCall.toolCallId,
       title: params.toolCall.title ?? params.toolCall.toolCallId,
       status: params.toolCall.status ?? undefined,
+      providerToolName: extractProviderToolName(params.toolCall),
+      toolKind: params.toolCall.kind ?? undefined,
+      toolLocations: params.toolCall.locations ?? undefined,
+      rawInput: params.toolCall.rawInput,
       options: params.options.map((option) => ({
         optionId: option.optionId,
         name: option.name,
@@ -96,6 +110,15 @@ class AcpPermissionBroker {
     }
 
     const categoryKey = resolveCategoryKey(params)
+
+    // A model-independent fallback auto-reviews only structured, workspace-contained low-risk tools.
+    const automaticOptionId = resolveAutomaticPermission(params, policyContext)
+
+    if (automaticOptionId) {
+      return Promise.resolve({
+        outcome: { outcome: 'selected', optionId: automaticOptionId }
+      })
+    }
 
     // A prior "Always" choice on this category auto-approves without prompting again.
     const autoAllowOptionId = this.resolveAutoAllowOptionId(request, categoryKey)

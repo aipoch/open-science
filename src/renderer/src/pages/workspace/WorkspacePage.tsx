@@ -3,6 +3,10 @@ import { animate } from 'motion'
 import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
 
 import type { NotebookSessionReference } from '../../../../shared/notebook'
+import {
+  DEFAULT_PERMISSION_PROFILE,
+  type PermissionProfileId
+} from '../../../../shared/permission-profiles'
 import { ResizableHandle, ResizablePanelGroup } from '@/components/ui/resizable'
 import { useWorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { usePreviewPersistence } from '@/lib/preview-persistence/preview-persistence'
@@ -128,12 +132,16 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const {
     actionError,
     pendingPermissions,
+    permissionProfiles,
     sendMessage,
     cancelRun,
     deleteRuntimeSession,
-    respondToPermission
+    respondToPermission,
+    setPermissionProfile
   } = useWorkspaceAgentRuntime()
   const [draftDoc, setDraftDoc] = useState<ComposerDoc>(emptyDoc)
+  const [newConversationPermissionProfile, setNewConversationPermissionProfile] =
+    useState<PermissionProfileId>(DEFAULT_PERMISSION_PROFILE)
   // Unsent composer state (rich doc + staged attachments) is kept per session (and per new conversation)
   // so switching away and back restores it. The active key's state is live; this map holds inactive keys.
   const composerDraftsRef = useRef<
@@ -159,6 +167,11 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     [activeSession?.id, pendingPermissions]
   )
   const activeNotebookReference = activeSession ? notebookReferences[activeSession.id] : undefined
+  const activePermissionProfile =
+    activeSession?.permissionProfile ?? newConversationPermissionProfile
+  const activePermissionProfileState = activeSession
+    ? permissionProfiles?.[activeSession.id]
+    : undefined
   // Composer controls follow only the selected session and persistence readiness.
   const canEditDraft = isSessionPersistenceReady
   // Sending is disabled while the current session is running or awaiting a decision.
@@ -166,6 +179,10 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     isSessionPersistenceReady &&
     !isUploadingAttachments &&
     (!docIsEmpty(draftDoc) || attachments.length > 0) &&
+    activeSession?.status !== 'running' &&
+    activeSession?.status !== 'waiting-permission'
+  const canChangePermissionProfile =
+    isSessionPersistenceReady &&
     activeSession?.status !== 'running' &&
     activeSession?.status !== 'waiting-permission'
   const visibleActionError = attachmentError ?? (activeSession ? null : actionError)
@@ -374,6 +391,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
 
     // The draft effect saves the outgoing doc/attachments and restores the new-conversation state.
     setAttachmentError(null)
+    setNewConversationPermissionProfile(DEFAULT_PERMISSION_PROFILE)
     clearSelection()
   }
 
@@ -453,6 +471,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
       cwd: activeSession?.cwd,
       projectId: activeSession?.projectId ?? scopedProjectId,
       projectName: activeSession?.projectId ?? scopedProjectId,
+      permissionProfile: activePermissionProfile,
       forcedSkillIds
     }).then((result) => {
       if (!result) {
@@ -519,6 +538,19 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     void respondToPermission(requestId, optionId)
   }
 
+  // Runtime mode is changed before the durable session preference, so a failed capability check
+  // leaves the current selection untouched. New conversations apply their choice during creation.
+  const changePermissionProfile = (profile: PermissionProfileId): void => {
+    if (!canChangePermissionProfile) return
+
+    if (!activeSession) {
+      setNewConversationPermissionProfile(profile)
+      return
+    }
+
+    void setPermissionProfile(activeSession.id, profile)
+  }
+
   // Opens the right preview on demand instead of stealing focus when the agent first uses notebook.
   const openNotebookPreview = (notebook: NotebookSessionReference): void => {
     upsertAndActivatePreviewItem(createNotebookPreviewItem(notebook))
@@ -565,6 +597,9 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
             isUploadingAttachments={isUploadingAttachments}
             notebookReference={activeNotebookReference}
             pendingPermissions={visiblePermissionRequests}
+            permissionProfile={activePermissionProfile}
+            permissionProfileState={activePermissionProfileState}
+            canChangePermissionProfile={canChangePermissionProfile}
             onDraftDocChange={setDraftDoc}
             onSendMessage={sendCurrentMessage}
             onStageAttachmentFiles={stageAttachmentFiles}
@@ -573,6 +608,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
             onOpenNotebook={openNotebookPreview}
             onTogglePreviewPanel={togglePreviewPanel}
             onRespondToPermission={respondToVisiblePermission}
+            onPermissionProfileChange={changePermissionProfile}
           />
 
           <ResizableHandle

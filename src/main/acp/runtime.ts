@@ -7,6 +7,7 @@ import type {
   PromptResponse,
   RequestPermissionRequest,
   RequestPermissionResponse,
+  SessionModeState,
   SessionNotification
 } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -26,8 +27,15 @@ import type {
   AcpPermissionResponse,
   AcpPromptRequest,
   AcpResumeSessionRequest,
+  AcpSetPermissionProfileRequest,
   AcpStateSnapshot
 } from '../../shared/acp'
+import {
+  DEFAULT_PERMISSION_PROFILE,
+  normalizePermissionProfile,
+  type PermissionProfileId,
+  type SessionPermissionProfileState
+} from '../../shared/permission-profiles'
 import { spawnClaudeAgentAcp, type SpawnClaudeAgentAcpOptions } from './agent-process'
 import { createLogger } from '../logger'
 import {
@@ -37,6 +45,10 @@ import {
 } from './runtime-events'
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 import { AcpPermissionBroker } from './permission-broker'
+import {
+  applyCurrentModeUpdate,
+  resolvePermissionProfileApplication
+} from './permission-profile-controller'
 import { createArtifactMcpServerConfig } from '../artifacts/mcp-server'
 import { ArtifactRepository, getArtifactCurrentRunFilePath } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
@@ -113,7 +125,7 @@ type AcpRuntimeNotebookOptions = {
 
 type SessionAttachmentResponse = {
   sessionId: string
-  modes?: unknown
+  modes?: SessionModeState | null
   configOptions?: unknown
   _meta?: unknown
 }
@@ -191,6 +203,7 @@ class AcpRuntime {
   // Per-session artifact/notebook storage project; keeps run activation and claims in the same subtree.
   private readonly sessionProjectNames = new Map<string, string>()
   private readonly promptInFlightSessionIds = new Set<string>()
+  private readonly permissionProfiles = new Map<string, SessionPermissionProfileState>()
   // A provider change requested while a prompt was running, applied when the session next goes idle.
   private pendingProviderReconnect = false
   private pendingSkillsReload = false
@@ -256,9 +269,38 @@ class AcpRuntime {
       error: this.error,
       events: [...this.events],
       pendingPermissions: this.permissionBroker.getPendingRequests(),
+      permissionProfiles: Object.fromEntries(this.permissionProfiles),
       promptInFlight: promptInFlightSessionIds.length > 0,
       promptInFlightSessionIds
     }
+  }
+
+  // Resolves an application profile against per-session ACP capabilities and applies the real Agent
+  // mode before any prompt is sent. The selected/effective projection is then shared with the UI and
+  // the conservative fallback reviewer.
+  private async configurePermissionProfile(
+    appSessionId: string,
+    session: ActiveSession,
+    profile: PermissionProfileId
+  ): Promise<void> {
+    const application = resolvePermissionProfileApplication(profile, session.modes)
+
+    if (application.modeId && application.modeId !== session.modes?.currentModeId) {
+      if (!this.connection) throw new Error('ACP connection is not available.')
+
+      await this.connection.agent.request(acp.methods.agent.session.setMode, {
+        sessionId: session.sessionId,
+        modeId: application.modeId
+      })
+    }
+
+    this.permissionProfiles.set(appSessionId, application.state)
+    log.info('permission profile applied', {
+      sessionId: appSessionId,
+      selectedProfile: profile,
+      effectiveMode: application.state.currentModeId,
+      autoReviewStrategy: application.state.autoReviewStrategy
+    })
   }
 
   // Starts a fresh agent process connection and initializes protocol capabilities.
@@ -393,6 +435,17 @@ class AcpRuntime {
       })
       .start()
 
+    try {
+      await this.configurePermissionProfile(
+        session.sessionId,
+        session,
+        normalizePermissionProfile(request.permissionProfile)
+      )
+    } catch (error) {
+      session.dispose()
+      throw error
+    }
+
     this.sessions.set(session.sessionId, session)
     this.sessionCwds.set(session.sessionId, sessionCwd)
     this.sessionProjectNames.set(session.sessionId, projectName)
@@ -441,7 +494,18 @@ class AcpRuntime {
     const projectName = this.normalizeProjectName(request.projectName)
 
     // If the runtime already attached this session, only refresh routing metadata.
-    if (this.sessions.has(request.sessionId)) {
+    const attachedSession = this.sessions.get(request.sessionId)
+
+    if (attachedSession) {
+      await this.configurePermissionProfile(
+        request.sessionId,
+        attachedSession,
+        normalizePermissionProfile(
+          request.permissionProfile ??
+            this.permissionProfiles.get(request.sessionId)?.selectedProfile ??
+            DEFAULT_PERMISSION_PROFILE
+        )
+      )
       this.currentSessionId = request.sessionId
       this.cwd = sessionCwd
       this.sessionCwds.set(request.sessionId, sessionCwd)
@@ -494,6 +558,17 @@ class AcpRuntime {
         })
         .start()
 
+      try {
+        await this.configurePermissionProfile(
+          request.sessionId,
+          adopted,
+          normalizePermissionProfile(request.permissionProfile)
+        )
+      } catch (error) {
+        adopted.dispose()
+        throw error
+      }
+
       this.adoptSession(request.sessionId, adopted, sessionCwd, projectName)
       this.emitState()
 
@@ -505,6 +580,17 @@ class AcpRuntime {
       sessionId: request.sessionId,
       ...resumeResponse
     })
+
+    try {
+      await this.configurePermissionProfile(
+        request.sessionId,
+        session,
+        normalizePermissionProfile(request.permissionProfile)
+      )
+    } catch (error) {
+      session.dispose()
+      throw error
+    }
 
     this.sessions.set(request.sessionId, session)
     this.sessionCwds.set(request.sessionId, sessionCwd)
@@ -522,6 +608,25 @@ class AcpRuntime {
     this.emitState()
 
     return { sessionId: request.sessionId, cwd: sessionCwd }
+  }
+
+  // Changes approval behavior only while the conversation is idle. Applying the ACP mode before the
+  // next prompt guarantees Full access cannot show a first-tool permission race.
+  async setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<AcpStateSnapshot> {
+    const session = this.sessions.get(request.sessionId)
+
+    if (!session) throw new Error(`ACP session not found: ${request.sessionId}`)
+    if (this.promptInFlightSessionIds.has(request.sessionId)) {
+      throw new Error('Permission profile cannot be changed while the Agent is running.')
+    }
+    if (this.permissionBroker.hasPendingForSession(request.sessionId)) {
+      throw new Error('Resolve the pending permission request before changing profiles.')
+    }
+
+    await this.configurePermissionProfile(request.sessionId, session, request.profile)
+    this.emitState()
+
+    return this.getSnapshot()
   }
 
   // Tears down every local session route and closes the underlying agent process.
@@ -587,6 +692,7 @@ class AcpRuntime {
     this.sessions.clear()
     this.sessionCwds.clear()
     this.sessionProjectNames.clear()
+    this.permissionProfiles.clear()
     this.artifactSessionIds.clear()
     this.agentToAppSessionId.clear()
     this.currentSessionId = undefined
@@ -667,10 +773,18 @@ class AcpRuntime {
         // Capture routing before the disconnect clears it, so the resume lands on the same conversation.
         const sessionCwd = this.sessionCwds.get(request.sessionId) ?? this.cwd
         const projectName = this.resolveSessionProjectName(request.sessionId)
+        const permissionProfile =
+          this.permissionProfiles.get(request.sessionId)?.selectedProfile ??
+          DEFAULT_PERMISSION_PROFILE
         this.skillsHooks.setTurnForced(forced)
         didForceReload = true
         await this.disconnect(false)
-        await this.resumeSession({ sessionId: request.sessionId, cwd: sessionCwd, projectName })
+        await this.resumeSession({
+          sessionId: request.sessionId,
+          cwd: sessionCwd,
+          projectName,
+          permissionProfile
+        })
 
         const reloaded = this.sessions.get(request.sessionId)
         if (!reloaded) {
@@ -830,6 +944,7 @@ class AcpRuntime {
       this.sessions.delete(request.sessionId)
       this.sessionCwds.delete(request.sessionId)
       this.sessionProjectNames.delete(request.sessionId)
+      this.permissionProfiles.delete(request.sessionId)
       this.artifactSessionIds.delete(request.sessionId)
       this.promptInFlightSessionIds.delete(request.sessionId)
       this.currentSessionId =
@@ -1322,11 +1437,22 @@ class AcpRuntime {
     })
 
     try {
-      if (!this.sessions.has(params.sessionId)) {
-        throw new Error(`Unknown ACP session: ${params.sessionId}`)
+      const appSessionId = this.agentToAppSessionId.get(params.sessionId) ?? params.sessionId
+
+      if (!this.sessions.has(appSessionId)) {
+        throw new Error(`Unknown ACP session: ${appSessionId}`)
       }
 
-      return await this.permissionBroker.requestPermission(params)
+      const profileState = this.permissionProfiles.get(appSessionId)
+
+      return await this.permissionBroker.requestPermission(
+        appSessionId === params.sessionId ? params : { ...params, sessionId: appSessionId },
+        {
+          profile: profileState?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
+          autoReviewStrategy: profileState?.autoReviewStrategy,
+          cwd: this.sessionCwds.get(appSessionId)
+        }
+      )
     } catch (error) {
       log.error('permission request failed', {
         message: errorMessage(error),
@@ -1346,6 +1472,19 @@ class AcpRuntime {
       appSessionId && appSessionId !== notification.sessionId
         ? { ...notification, sessionId: appSessionId }
         : notification
+
+    if (routed.update.sessionUpdate === 'current_mode_update') {
+      const profileState = this.permissionProfiles.get(routed.sessionId)
+
+      if (profileState) {
+        this.permissionProfiles.set(
+          routed.sessionId,
+          applyCurrentModeUpdate(profileState, routed.update.currentModeId)
+        )
+        this.emitState()
+      }
+    }
+
     const event = toAcpRuntimeEvent(routed, this.nextEventId())
 
     // Tool results (e.g. WebFetch's claude.ai domain-safety preflight, a failed Bash command) stream as

@@ -89,6 +89,35 @@ const PermissionCommandBlock = ({ command }: { command: string }): React.JSX.Ele
   )
 }
 
+const getPermissionRiskLabel = (request: AcpPermissionRequest): string => {
+  if (request.providerToolName === 'notebook_execute') return 'Notebook execution'
+
+  switch (request.toolKind) {
+    case 'execute':
+      return 'Command execution'
+    case 'edit':
+    case 'delete':
+    case 'move':
+      return 'File change'
+    case 'fetch':
+      return 'Network access'
+    case 'read':
+    case 'search':
+      return 'File access'
+    default:
+      return 'Tool access'
+  }
+}
+
+const getNotebookCode = (request: AcpPermissionRequest): string | undefined => {
+  if (request.providerToolName !== 'notebook_execute') return undefined
+  if (!request.rawInput || typeof request.rawInput !== 'object') return undefined
+
+  const code = (request.rawInput as Record<string, unknown>).code
+
+  return typeof code === 'string' && code.trim() ? code : undefined
+}
+
 const PermissionApprovalControls = ({
   requests,
   onRespond
@@ -99,10 +128,21 @@ const PermissionApprovalControls = ({
 
   if (!request) return null
 
+  const notebookCode = getNotebookCode(request)
+
   return (
     <div className="mb-2 w-full max-w-full space-y-2 overflow-hidden rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-5 text-amber-900">
       <div className="flex min-w-0 flex-col items-stretch gap-2 overflow-hidden">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="font-semibold">{getPermissionRiskLabel(request)}</span>
+          {request.toolLocations?.length ? (
+            <span className="min-w-0 truncate text-[11px] text-amber-800">
+              {request.toolLocations.map((location) => location.path).join(', ')}
+            </span>
+          ) : null}
+        </div>
         <PermissionCommandBlock command={request.title} />
+        {notebookCode ? <PermissionCommandBlock command={notebookCode} /> : null}
         <span className="flex flex-wrap items-center justify-end gap-1 w-full overflow-hidden">
           {getOrderedPermissionOptions(request.options).map((option) => {
             const actionKind = getPermissionActionKind(option)

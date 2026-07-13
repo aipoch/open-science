@@ -64,6 +64,43 @@ const createToolPermissionRequest = (
 }
 
 describe('ACP permission broker', () => {
+  it('preserves structured tool metadata for risk-aware approval UI', () => {
+    const emitted: Array<Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]> = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const request = createToolPermissionRequest({
+      title: 'Edit results.csv',
+      providerToolName: 'Edit',
+      kind: 'edit'
+    })
+    request.toolCall.locations = [{ path: '/workspace/results.csv' }]
+    request.toolCall.rawInput = { file_path: '/workspace/results.csv', value: 'updated' }
+
+    void broker.requestPermission(request)
+
+    expect(emitted[0]).toMatchObject({
+      providerToolName: 'Edit',
+      toolKind: 'edit',
+      toolLocations: [{ path: '/workspace/results.csv' }],
+      rawInput: { file_path: '/workspace/results.csv', value: 'updated' }
+    })
+  })
+
+  it('auto-approves only conservative Auto operations accepted by policy', async () => {
+    const emittedRequests: string[] = []
+    const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))
+    const request = createToolPermissionRequest({ kind: 'read' })
+    request.toolCall.locations = [{ path: 'data/results.csv' }]
+
+    await expect(
+      broker.requestPermission(request, {
+        profile: 'auto',
+        autoReviewStrategy: 'conservative',
+        cwd: '/workspace'
+      })
+    ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'allow-once' } })
+    expect(emittedRequests).toEqual([])
+  })
+
   it('emits a serializable permission request and resolves the selected option', async () => {
     const emittedRequests: string[] = []
     const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))
