@@ -1,5 +1,5 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -42,6 +42,28 @@ describe('ACP workspace filesystem adapter', () => {
     })
 
     await expect(readFile(filePath, 'utf8')).resolves.toBe('saved')
+  })
+
+  it('rejects reads inside a protected directory even when within the workspace', async () => {
+    workspaceRoot = await mkdtemp(join(tmpdir(), 'open-science-acp-'))
+    const protectedRoot = join(workspaceRoot, 'claude')
+    const skillFile = join(protectedRoot, 'skills', 'os-demo', 'SKILL.md')
+    await mkdir(dirname(skillFile), { recursive: true })
+    await writeFile(skillFile, 'secret skill body', 'utf8')
+
+    // The protected root is inside the workspace, so containment passes; the protected guard blocks it.
+    await expect(
+      readWorkspaceTextFile(workspaceRoot, { sessionId: 'session-1', path: skillFile }, [
+        protectedRoot
+      ])
+    ).rejects.toThrow(/protected application directory/)
+
+    // A file outside the protected root still reads.
+    const ok = join(workspaceRoot, 'notes.txt')
+    await writeFile(ok, 'hello', 'utf8')
+    await expect(
+      readWorkspaceTextFile(workspaceRoot, { sessionId: 'session-1', path: ok }, [protectedRoot])
+    ).resolves.toEqual({ content: 'hello' })
   })
 
   it('rejects writes outside the workspace', async () => {

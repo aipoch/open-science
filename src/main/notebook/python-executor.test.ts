@@ -1,6 +1,6 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -46,6 +46,47 @@ describe('notebook Python executor', () => {
   })
 
   const itWithPython = hasPython3() ? it : it.skip
+
+  itWithPython(
+    'blocks reading files inside a protected directory but allows others',
+    async () => {
+      const root = await createStorageRoot()
+      const protectedDir = join(root, 'claude')
+      const secret = join(protectedDir, 'skills', 'os-demo', 'SKILL.md')
+      await mkdir(dirname(secret), { recursive: true })
+      await writeFile(secret, 'secret skill body', 'utf8')
+      const executor = new NotebookPythonExecutor('python3')
+
+      const base = {
+        cwd: root,
+        notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
+        dataRoot: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
+        runtimeRoot: join(root, 'runtime'),
+        protectedDirs: [protectedDir]
+      }
+
+      try {
+        const blocked = await executor.execute({
+          ...base,
+          code: `open(${JSON.stringify(secret)}).read()`
+        })
+        expect(blocked.status).toBe('failed')
+        expect(blocked.traceback).toContain('PermissionError')
+
+        // A file outside the protected directory still reads normally.
+        const allowedFile = join(root, 'ok.txt')
+        await writeFile(allowedFile, 'fine', 'utf8')
+        const allowed = await executor.execute({
+          ...base,
+          code: `print(open(${JSON.stringify(allowedFile)}).read())`
+        })
+        expect(allowed).toMatchObject({ status: 'completed', stdout: 'fine\n' })
+      } finally {
+        await executor.shutdown()
+      }
+    },
+    PYTHON_TEST_TIMEOUT_MS
+  )
 
   itWithPython(
     'keeps Python variables across executions in one executor',

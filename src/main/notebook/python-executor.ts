@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { delimiter } from 'node:path'
 import { createInterface, type Interface } from 'node:readline'
 
 import { resolvePythonCommand } from './python-command'
@@ -53,6 +54,34 @@ class _Host:
         if body.get("error"):
             raise RuntimeError("host.mcp error: " + str(body["error"]))
         return body["result"]
+
+# Block reads of app-owned protected directories (e.g. the CLAUDE_CONFIG_DIR holding materialized
+# skill files) so their contents can't be surfaced through notebook code. CPython audit hooks cannot
+# be removed once installed, so in-process reads (open/io.open/os.open/pathlib) are reliably blocked;
+# a separately spawned subprocess is the residual gap (see the read-guard spec).
+_protected_dirs = [
+    os.path.abspath(entry)
+    for entry in os.environ.get("OPEN_SCIENCE_PROTECTED_DIRS", "").split(os.pathsep)
+    if entry
+]
+
+
+def _protected_paths_audit(event, args):
+    if event != "open" or not _protected_dirs or not args:
+        return
+    target = args[0]
+    if target is None or isinstance(target, int):
+        return
+    try:
+        resolved = os.path.abspath(os.fspath(target))
+    except (TypeError, ValueError):
+        return
+    for directory in _protected_dirs:
+        if resolved == directory or resolved.startswith(directory + os.sep):
+            raise PermissionError("Access to protected application files is not allowed.")
+
+
+sys.addaudithook(_protected_paths_audit)
 
 # Reuse a single global namespace so variables survive across notebook runs.
 globals_ns = {"__name__": "__main__"}
@@ -305,7 +334,9 @@ class NotebookPythonExecutor implements NotebookExecutor {
         ...(request.mcpRpcEndpoint
           ? { OPEN_SCIENCE_MCP_RPC_ENDPOINT: request.mcpRpcEndpoint }
           : {}),
-        ...(request.mcpRpcToken ? { OPEN_SCIENCE_MCP_RPC_TOKEN: request.mcpRpcToken } : {})
+        ...(request.mcpRpcToken ? { OPEN_SCIENCE_MCP_RPC_TOKEN: request.mcpRpcToken } : {}),
+        // App-owned directories the notebook kernel must not read (e.g. materialized skill files).
+        OPEN_SCIENCE_PROTECTED_DIRS: (request.protectedDirs ?? []).join(delimiter)
       }
     })
 
