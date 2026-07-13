@@ -78,6 +78,18 @@ import type {
   SkillBundlePreview,
   ScanRepoRequest,
   ScanRepoResult,
+  ConnectorsSnapshot,
+  ConnectorDetailView,
+  SetConnectorEnabledRequest,
+  SetConnectorAutoAllowRequest,
+  SetToolPermissionRequest,
+  SetNcbiCredentialsRequest,
+  AddCustomServerRequest,
+  SetCustomServerEnabledRequest,
+  RemoveCustomServerRequest,
+  UpdateCustomServerRequest,
+  ConnectorApprovalRequest,
+  RespondApprovalRequest,
   UpsertProviderRequest,
   ValidateProviderRequest,
   ValidateProviderResult
@@ -149,6 +161,18 @@ interface OpenScienceAPI {
     importSkillZip(request: ImportSkillZipRequest): Promise<ImportSkillResult>
     previewSkillZip(request: PreviewSkillZipRequest): Promise<SkillBundlePreview>
     scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult>
+    listConnectors(): Promise<ConnectorsSnapshot>
+    getConnectorDetail(id: string): Promise<ConnectorDetailView>
+    setConnectorEnabled(request: SetConnectorEnabledRequest): Promise<ConnectorsSnapshot>
+    setConnectorAutoAllow(request: SetConnectorAutoAllowRequest): Promise<ConnectorsSnapshot>
+    setToolPermission(request: SetToolPermissionRequest): Promise<ConnectorDetailView>
+    setNcbiCredentials(request: SetNcbiCredentialsRequest): Promise<ConnectorsSnapshot>
+    addCustomServer(request: AddCustomServerRequest): Promise<ConnectorsSnapshot>
+    setCustomServerEnabled(request: SetCustomServerEnabledRequest): Promise<ConnectorsSnapshot>
+    removeCustomServer(request: RemoveCustomServerRequest): Promise<ConnectorsSnapshot>
+    updateCustomServer(request: UpdateCustomServerRequest): Promise<ConnectorsSnapshot>
+    onConnectorApprovalRequest(listener: AcpListener<ConnectorApprovalRequest>): RemoveListener
+    respondConnectorApproval(request: RespondApprovalRequest): Promise<void>
     onInstallLog(listener: AcpListener<ClaudeInstallLogEvent>): RemoveListener
   }
   logs: {

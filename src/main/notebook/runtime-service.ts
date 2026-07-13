@@ -28,6 +28,9 @@ type NotebookExecutionRequest = {
   dataRoot: string
   runtimeRoot: string
   timeoutMs?: number
+  // Connector RPC connection injected into the kernel spawn env for host.mcp().
+  mcpRpcEndpoint?: string
+  mcpRpcToken?: string
 }
 
 type NotebookExecutionResult = {
@@ -50,12 +53,21 @@ type NotebookRuntimeServiceCallbacks = {
   onNotebookChanged?: (event: NotebookSessionReference) => void
 }
 
+// The connector RPC endpoint/token injected into a kernel's spawn env for host.mcp(). The token is
+// stable for the lifetime of the local RPC server that issues it, so resolving it again on every run
+// is cheap and always yields the same value the already-spawned kernel captured at its own spawn time.
+type McpRpcConnection = { endpoint: string; token: string }
+
 type NotebookRuntimeServiceOptions = {
   storageRoot: string
   projectName: string
   repository?: NotebookRunRepository
   executorFactory?: (sessionId: string) => NotebookExecutor
   callbacks?: NotebookRuntimeServiceCallbacks
+  // Resolves the connector RPC connection to inject into the kernel spawn env. Usually set after
+  // construction via setMcpRpcConnectionResolver, since the RPC server is constructed with this
+  // service as a dependency (constructing them in the other order would cycle).
+  getMcpRpcConnection?: () => Promise<McpRpcConnection>
 }
 
 type RuntimeSession = {
@@ -115,9 +127,17 @@ class NotebookRuntimeService {
   private readonly sessions = new Map<string, RuntimeSession>()
   private readonly announcedAgentSessionIds = new Set<string>()
   private runSequence = 0
+  private mcpRpcConnectionResolver: (() => Promise<McpRpcConnection>) | undefined
 
   constructor(private readonly options: NotebookRuntimeServiceOptions) {
     this.repository = options.repository ?? new NotebookRunRepository(options.storageRoot)
+    this.mcpRpcConnectionResolver = options.getMcpRpcConnection
+  }
+
+  // Wires the connector RPC connection lookup after construction (the local RPC server that provides
+  // it is itself constructed with this service as a dependency, so it cannot be passed in up front).
+  setMcpRpcConnectionResolver(resolver: () => Promise<McpRpcConnection>): void {
+    this.mcpRpcConnectionResolver = resolver
   }
 
   // Starts an exclusive agent/user write stream into a cell and locks notebook editing.
@@ -256,6 +276,9 @@ class NotebookRuntimeService {
       run: runningRun
     })
     this.notifyNotebookChanged(session)
+    // Resolved fresh per run, but backed by the RPC server's cached start promise so it settles to the
+    // same stable {endpoint, token} an already-spawned kernel captured at its own spawn time.
+    const mcpRpc = await this.resolveMcpRpcConnection()
     // Every execution result, including errors, is normalized into data for agent analysis.
     const result = await session.executor
       .execute({
@@ -264,7 +287,9 @@ class NotebookRuntimeService {
         notebookSessionRoot: session.notebookSessionRoot,
         dataRoot: session.dataRoot,
         runtimeRoot: session.runtimeRoot,
-        timeoutMs: request.timeoutMs
+        timeoutMs: request.timeoutMs,
+        mcpRpcEndpoint: mcpRpc?.endpoint,
+        mcpRpcToken: mcpRpc?.token
       })
       .catch((error: unknown) => errorToExecutionResult(error, cwdBefore))
     // Replace the running record instead of appending so each run id has one durable entry.
@@ -462,6 +487,18 @@ class NotebookRuntimeService {
   // Builds the interpreter backend, allowing tests to inject a fake executor.
   private createExecutor(sessionId: string): NotebookExecutor {
     return this.options.executorFactory?.(sessionId) ?? new NotebookPythonExecutor()
+  }
+
+  // Best-effort lookup of the connector RPC connection: host.mcp() is unavailable (rather than the
+  // whole cell failing) when no resolver is wired or the RPC server fails to start.
+  private async resolveMcpRpcConnection(): Promise<McpRpcConnection | undefined> {
+    if (!this.mcpRpcConnectionResolver) return undefined
+
+    try {
+      return await this.mcpRpcConnectionResolver()
+    } catch {
+      return undefined
+    }
   }
 
   // Verifies that streamed writes are still targeting the currently locked cell.

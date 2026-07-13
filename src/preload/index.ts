@@ -80,6 +80,18 @@ import type {
   SkillBundlePreview,
   ScanRepoRequest,
   ScanRepoResult,
+  ConnectorsSnapshot,
+  ConnectorDetailView,
+  SetConnectorEnabledRequest,
+  SetConnectorAutoAllowRequest,
+  SetToolPermissionRequest,
+  SetNcbiCredentialsRequest,
+  AddCustomServerRequest,
+  SetCustomServerEnabledRequest,
+  RemoveCustomServerRequest,
+  UpdateCustomServerRequest,
+  ConnectorApprovalRequest,
+  RespondApprovalRequest,
   UpsertProviderRequest,
   ValidateProviderRequest,
   ValidateProviderResult
@@ -164,6 +176,18 @@ type OpenScienceAPI = {
     importSkillZip: (request: ImportSkillZipRequest) => Promise<ImportSkillResult>
     previewSkillZip: (request: PreviewSkillZipRequest) => Promise<SkillBundlePreview>
     scanRepoSkills: (request: ScanRepoRequest) => Promise<ScanRepoResult>
+    listConnectors: () => Promise<ConnectorsSnapshot>
+    getConnectorDetail: (id: string) => Promise<ConnectorDetailView>
+    setConnectorEnabled: (request: SetConnectorEnabledRequest) => Promise<ConnectorsSnapshot>
+    setConnectorAutoAllow: (request: SetConnectorAutoAllowRequest) => Promise<ConnectorsSnapshot>
+    setToolPermission: (request: SetToolPermissionRequest) => Promise<ConnectorDetailView>
+    setNcbiCredentials: (request: SetNcbiCredentialsRequest) => Promise<ConnectorsSnapshot>
+    addCustomServer: (request: AddCustomServerRequest) => Promise<ConnectorsSnapshot>
+    setCustomServerEnabled: (request: SetCustomServerEnabledRequest) => Promise<ConnectorsSnapshot>
+    removeCustomServer: (request: RemoveCustomServerRequest) => Promise<ConnectorsSnapshot>
+    updateCustomServer: (request: UpdateCustomServerRequest) => Promise<ConnectorsSnapshot>
+    onConnectorApprovalRequest: (listener: AcpListener<ConnectorApprovalRequest>) => RemoveListener
+    respondConnectorApproval: (request: RespondApprovalRequest) => Promise<void>
     onInstallLog: (listener: AcpListener<ClaudeInstallLogEvent>) => RemoveListener
   }
   logs: {
@@ -329,6 +353,36 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('settings:preview-skill-zip', request) as Promise<SkillBundlePreview>,
     scanRepoSkills: (request: ScanRepoRequest) =>
       ipcRenderer.invoke('settings:scan-repo-skills', request) as Promise<ScanRepoResult>,
+    listConnectors: () =>
+      ipcRenderer.invoke('settings:list-connectors') as Promise<ConnectorsSnapshot>,
+    getConnectorDetail: (id: string) =>
+      ipcRenderer.invoke('settings:get-connector-detail', id) as Promise<ConnectorDetailView>,
+    setConnectorEnabled: (request: SetConnectorEnabledRequest) =>
+      ipcRenderer.invoke('settings:set-connector-enabled', request) as Promise<ConnectorsSnapshot>,
+    setConnectorAutoAllow: (request: SetConnectorAutoAllowRequest) =>
+      ipcRenderer.invoke(
+        'settings:set-connector-auto-allow',
+        request
+      ) as Promise<ConnectorsSnapshot>,
+    setToolPermission: (request: SetToolPermissionRequest) =>
+      ipcRenderer.invoke('settings:set-tool-permission', request) as Promise<ConnectorDetailView>,
+    setNcbiCredentials: (request: SetNcbiCredentialsRequest) =>
+      ipcRenderer.invoke('settings:set-ncbi-credentials', request) as Promise<ConnectorsSnapshot>,
+    addCustomServer: (request: AddCustomServerRequest) =>
+      ipcRenderer.invoke('settings:add-custom-server', request) as Promise<ConnectorsSnapshot>,
+    setCustomServerEnabled: (request: SetCustomServerEnabledRequest) =>
+      ipcRenderer.invoke(
+        'settings:set-custom-server-enabled',
+        request
+      ) as Promise<ConnectorsSnapshot>,
+    removeCustomServer: (request: RemoveCustomServerRequest) =>
+      ipcRenderer.invoke('settings:remove-custom-server', request) as Promise<ConnectorsSnapshot>,
+    updateCustomServer: (request: UpdateCustomServerRequest) =>
+      ipcRenderer.invoke('settings:update-custom-server', request) as Promise<ConnectorsSnapshot>,
+    // Fires when a connector call needs the user's approval (external data-egress gate).
+    onConnectorApprovalRequest: (listener) => onIpcMessage('connectors:approval-request', listener),
+    respondConnectorApproval: (request: RespondApprovalRequest) =>
+      ipcRenderer.invoke('connectors:approval-respond', request) as Promise<void>,
     // Streams live installer output while a one-click install runs.
     onInstallLog: (listener) => onIpcMessage('settings:install-log', listener)
   },

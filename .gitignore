@@ -84,3 +84,6 @@ local/
 
 # Locally downloaded CI build artifacts (Windows installer, etc.)
 dist-win-artifact/
+
+# SDD scratch (progress ledger, task briefs, reports) — worktree-local, not tracked
+.superpowers/

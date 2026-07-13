@@ -18,6 +18,10 @@ import { ClaudeInstallCard } from './ClaudeInstallCard'
 import { ClaudeStatusCard } from './ClaudeStatusCard'
 import { GeneralPanel } from './GeneralPanel'
 import { SkillsPanel, type SkillsView } from './SkillsPanel'
+import { ConnectorsPanel, type ConnectorsView } from './ConnectorsPanel'
+import { ConnectorDetailView } from './ConnectorDetailView'
+import { ConnectorAddForm } from './ConnectorAddForm'
+import { ConnectorsNavIcon } from './connector-icons'
 import { resolveVendorModelsUrl } from '../../../../shared/provider-registry'
 import { ActiveModelSelect } from './ActiveModelSelect'
 import { ProviderForm } from './ProviderForm'
@@ -64,18 +68,21 @@ const toUpsertRequest = (
 
 // Left-nav panels, grouped in the sidebar. "Capabilities" holds agent extensions (Skills); "Workspace"
 // holds environment/config (Model manages Claude + providers, General holds app settings incl. logs).
-type SettingsPanelId = 'model' | 'skills' | 'general'
+type SettingsPanelId = 'model' | 'skills' | 'connectors' | 'general'
 
 type SettingsPanel = {
   id: SettingsPanelId
   label: string
-  Icon: typeof SlidersHorizontal
+  Icon: React.ComponentType<{ className?: string }>
 }
 
 const SETTINGS_GROUPS: ReadonlyArray<{ label: string; panels: ReadonlyArray<SettingsPanel> }> = [
   {
     label: 'Capabilities',
-    panels: [{ id: 'skills', label: 'Skills', Icon: ScrollText }]
+    panels: [
+      { id: 'skills', label: 'Skills', Icon: ScrollText },
+      { id: 'connectors', label: 'Connectors', Icon: ConnectorsNavIcon }
+    ]
   },
   {
     label: 'Workspace',
@@ -92,13 +99,20 @@ const SETTINGS_PANELS: ReadonlyArray<SettingsPanel> = SETTINGS_GROUPS.flatMap(
 )
 
 // One entry in the settings back/forward history: the active panel plus each panel's current sub-view
-// (skills: list / detail / create / edit / import; model: list / create / edit).
-type NavLocation = { panel: SettingsPanelId; skills: SkillsView; model: ModelView }
+// (skills: list / detail / create / edit / import; model: list / create / edit; connectors: list /
+// detail / add / edit). `connectors` is optional so panel switches that don't touch it stay terse.
+type NavLocation = {
+  panel: SettingsPanelId
+  skills: SkillsView
+  model: ModelView
+  connectors?: ConnectorsView
+}
 
 const INITIAL_LOCATION: NavLocation = {
   panel: 'model',
   skills: { kind: 'list' },
-  model: { kind: 'list' }
+  model: { kind: 'list' },
+  connectors: { kind: 'list' }
 }
 
 // App-level model settings surface. Reuses the onboarding cards/form; manages providers (CRUD +
@@ -127,6 +141,8 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   // Whether the dialog is enlarged to near-fullscreen via the maximize control.
   const [isExpanded, setIsExpanded] = useState(false)
   const skills = useSettingsStore((state) => state.skills)
+  const connectors = useSettingsStore((state) => state.connectors)
+  const customServers = useSettingsStore((state) => state.customServers)
   const [formValue, setFormValue] = useState<ProviderFormValue>(() =>
     createEmptyProviderFormValue()
   )
@@ -145,11 +161,13 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const activePanel = currentLocation.panel
   const skillsView = currentLocation.skills
   const modelView = currentLocation.model
+  const connectorsView: ConnectorsView = currentLocation.connectors ?? { kind: 'list' }
   const canGoBack = historyIndex > 0
   const canGoForward = historyIndex < history.length - 1
 
   // Pushes a new location, dropping any forward entries.
   const navigate = (location: NavLocation): void => {
+    const nextConnectors = location.connectors ?? { kind: 'list' }
     if (
       location.panel === activePanel &&
       location.skills.kind === skillsView.kind &&
@@ -157,7 +175,10 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
         ('id' in skillsView ? skillsView.id : undefined) &&
       location.model.kind === modelView.kind &&
       ('providerId' in location.model ? location.model.providerId : undefined) ===
-        ('providerId' in modelView ? modelView.providerId : undefined)
+        ('providerId' in modelView ? modelView.providerId : undefined) &&
+      nextConnectors.kind === connectorsView.kind &&
+      ('id' in nextConnectors ? nextConnectors.id : undefined) ===
+        ('id' in connectorsView ? connectorsView.id : undefined)
     ) {
       return
     }
@@ -167,7 +188,11 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
 
   // Navigates within the skills panel (list/detail/create/edit/import) as a history entry.
   const navigateSkills = (skills: SkillsView): void =>
-    navigate({ panel: 'skills', skills, model: modelView })
+    navigate({ panel: 'skills', skills, model: modelView, connectors: connectorsView })
+
+  // Navigates within the connectors panel (list/detail/add/edit) as a history entry.
+  const navigateConnectors = (connectors: ConnectorsView): void =>
+    navigate({ panel: 'connectors', skills: skillsView, model: modelView, connectors })
 
   // Shared header breadcrumb for a drilled-in sub-view (null when on a panel's list, so the plain
   // panel title shows). Covers both the skills and model panels.
@@ -203,6 +228,24 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
         rootLabel: 'Model',
         rootTo: { panel: 'model', skills: currentLocation.skills, model: { kind: 'list' } },
         leaf: modelView.kind === 'create' ? 'Add provider' : `Edit ${name}`.trim()
+      }
+    }
+    if (activePanel === 'connectors' && connectorsView.kind !== 'list') {
+      const leaf =
+        connectorsView.kind === 'add'
+          ? 'Add connector'
+          : connectorsView.kind === 'edit'
+            ? `Edit ${customServers.find((s) => s.id === connectorsView.id)?.name ?? 'connector'}`.trim()
+            : (connectors.find((c) => c.id === connectorsView.id)?.displayName ?? '')
+      return {
+        rootLabel: 'Connectors',
+        rootTo: {
+          panel: 'connectors',
+          skills: currentLocation.skills,
+          model: currentLocation.model,
+          connectors: { kind: 'list' }
+        },
+        leaf
       }
     }
     return null
@@ -454,6 +497,24 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
             <div className="min-h-0 flex-1 overflow-y-auto">
               {activePanel === 'skills' ? (
                 <SkillsPanel view={skillsView} onNavigate={navigateSkills} />
+              ) : activePanel === 'connectors' ? (
+                connectorsView.kind === 'detail' ? (
+                  <ConnectorDetailView id={connectorsView.id} />
+                ) : connectorsView.kind === 'add' ? (
+                  <ConnectorAddForm
+                    initialTransport={connectorsView.transport}
+                    onDone={() => navigateConnectors({ kind: 'list' })}
+                    onCancel={() => navigateConnectors({ kind: 'list' })}
+                  />
+                ) : connectorsView.kind === 'edit' ? (
+                  <ConnectorAddForm
+                    editServer={customServers.find((s) => s.id === connectorsView.id)}
+                    onDone={() => navigateConnectors({ kind: 'list' })}
+                    onCancel={() => navigateConnectors({ kind: 'list' })}
+                  />
+                ) : (
+                  <ConnectorsPanel onNavigate={navigateConnectors} />
+                )
               ) : activePanel === 'general' ? (
                 <GeneralPanel />
               ) : isProviderFormOpen ? (

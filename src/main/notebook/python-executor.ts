@@ -26,9 +26,37 @@ import os
 import sys
 import tempfile
 import traceback
+import urllib.error
+import urllib.request
+
+class _Host:
+    # Control-plane bridge to the main process connector service.
+    def mcp(self, server, method, **kwargs):
+        endpoint = os.environ.get("OPEN_SCIENCE_MCP_RPC_ENDPOINT")
+        token = os.environ.get("OPEN_SCIENCE_MCP_RPC_TOKEN")
+        if not endpoint:
+            raise RuntimeError("host.mcp is unavailable: connector RPC endpoint not set")
+        payload = json.dumps({"method": "mcpCall", "params": {"server": server, "method": method, "args": kwargs}}).encode("utf-8")
+        req = urllib.request.Request(endpoint, data=payload, method="POST",
+            headers={"content-type": "application/json", "authorization": "Bearer " + (token or "")})
+        try:
+            with urllib.request.urlopen(req) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            # urlopen raises on non-2xx before the body is read as a normal response, so the error
+            # detail from the RPC server's JSON body must be pulled out of the exception instead.
+            try:
+                parsed = json.loads(e.read().decode("utf-8"))
+            except Exception:
+                parsed = {}
+            raise RuntimeError(parsed.get("error") or ("host.mcp HTTP " + str(e.code)))
+        if body.get("error"):
+            raise RuntimeError("host.mcp error: " + str(body["error"]))
+        return body["result"]
 
 # Reuse a single global namespace so variables survive across notebook runs.
 globals_ns = {"__name__": "__main__"}
+globals_ns["host"] = _Host()
 # Keep protocol responses on the original stdout even if executed code changes file descriptor 1.
 protocol_stdout = os.fdopen(os.dup(1), "w", buffering=1)
 
@@ -273,7 +301,11 @@ class NotebookPythonExecutor implements NotebookExecutor {
         MPLBACKEND: process.env.MPLBACKEND || 'Agg',
         OPEN_SCIENCE_NOTEBOOK_DIR: request.notebookSessionRoot,
         OPEN_SCIENCE_NOTEBOOK_DATA_DIR: request.dataRoot,
-        OPEN_SCIENCE_RUNTIME_DIR: request.runtimeRoot
+        OPEN_SCIENCE_RUNTIME_DIR: request.runtimeRoot,
+        ...(request.mcpRpcEndpoint
+          ? { OPEN_SCIENCE_MCP_RPC_ENDPOINT: request.mcpRpcEndpoint }
+          : {}),
+        ...(request.mcpRpcToken ? { OPEN_SCIENCE_MCP_RPC_TOKEN: request.mcpRpcToken } : {})
       }
     })
 

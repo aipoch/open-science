@@ -359,3 +359,110 @@ export type ImportSkillResult = {
   id: string
   skills: SkillView[]
 }
+
+// --- Connectors ---------------------------------------------------------------------------------
+
+// Per-tool permission. 'ask' is reserved for the future per-call approval flow and is not yet
+// functional — the UI renders it disabled and only 'allow'/'block' persist (to blockedToolIds).
+export type ToolPermission = 'allow' | 'ask' | 'block'
+
+// One tool within a connector, with its current permission (derived: 'block' if blocklisted).
+export type ConnectorToolView = {
+  id: string // "<connector>/<method>"
+  method: string
+  description: string
+  permission: ToolPermission
+}
+
+// Which section a bundled connector belongs to in the settings list.
+export type ConnectorGroup = 'featured' | 'directory'
+
+// Renderer-safe view of one bundled connector (no tool schemas).
+export type ConnectorView = {
+  id: string
+  displayName: string
+  description: string
+  sources: string[]
+  requiresNcbi: boolean
+  enabled: boolean // !disabledConnectorIds.includes(id)
+  autoAllow: boolean // autoAllowIds.includes(id) — "Skip approvals"
+  group: ConnectorGroup
+}
+
+// A connector view plus its tools and metadata, for the detail page.
+export type ConnectorDetailView = ConnectorView & {
+  useWhen: string
+  termsUrl?: string
+  tools: ConnectorToolView[]
+}
+
+// NCBI / research-service credential state surfaced to the renderer (never the plaintext key).
+export type NcbiCredentialsView = { contactEmail?: string; hasApiKey: boolean }
+
+// Transport for a user-added custom MCP server: stdio (local command) or a remote HTTP variant.
+export type CustomServerTransport = 'stdio' | 'streamable_http' | 'sse'
+
+// Renderer-safe view of one user-added custom MCP server (no secret env/header values).
+export type CustomServerView = {
+  id: string
+  name: string
+  description?: string
+  transport: CustomServerTransport
+  enabled: boolean
+  // Display-only config summary (the command that runs, its args, or the remote URL). env/headers
+  // are intentionally omitted — they may hold secrets and stay write-only from the UI.
+  command?: string
+  args?: string[]
+  url?: string
+}
+
+// The connectors list plus custom servers and shared credential state, returned by list/mutation calls.
+export type ConnectorsSnapshot = {
+  connectors: ConnectorView[]
+  customServers: CustomServerView[]
+  ncbi: NcbiCredentialsView
+}
+
+export type SetConnectorEnabledRequest = { id: string; enabled: boolean }
+export type SetConnectorAutoAllowRequest = { id: string; autoAllow: boolean }
+export type SetToolPermissionRequest = { toolId: string; permission: ToolPermission }
+export type SetNcbiCredentialsRequest = { contactEmail?: string; apiKey?: string }
+
+// Add a custom MCP server. stdio requires `command`; the remote transports require `url`.
+export type AddCustomServerRequest = {
+  name: string
+  description?: string
+  transport: CustomServerTransport
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  url?: string
+  headers?: Record<string, string>
+}
+export type SetCustomServerEnabledRequest = { id: string; enabled: boolean }
+export type RemoveCustomServerRequest = { id: string }
+
+// Edit an existing custom MCP server. The name is immutable (it is the server's identity — host.mcp
+// routing, skill-doc name, and per-tool policy keys all depend on it). Omitted env/headers keep the
+// stored values; providing them replaces the set.
+export type UpdateCustomServerRequest = {
+  id: string
+  description?: string
+  transport: CustomServerTransport
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  url?: string
+  headers?: Record<string, string>
+}
+
+// A per-call approval request for a connector tool invocation (external data-egress gate). Sent from
+// main to the renderer, which shows an approval card and responds with a decision.
+export type ConnectorApprovalRequest = {
+  id: string
+  connector: string // bundled connector id or custom server name
+  method: string
+  argsPreview: string // truncated JSON preview of the call arguments
+}
+export type ApprovalDecision = 'allow' | 'deny'
+export type RespondApprovalRequest = { id: string; decision: ApprovalDecision }

@@ -9,7 +9,13 @@ import type {
 } from '../../shared/settings'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import { isOfficialVendorId } from '../../shared/provider-registry'
-import { createEmptySettings, type StoredProvider, type StoredSettings } from './types'
+import {
+  createEmptySettings,
+  type StoredConnectors,
+  type StoredCustomMcpServer,
+  type StoredProvider,
+  type StoredSettings
+} from './types'
 
 const SETTINGS_FILE = 'settings.json'
 
@@ -34,6 +40,30 @@ const asString = (value: unknown): string | undefined =>
 
 const asNumber = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined
+
+const asStringArray = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []
+
+const asBoolean = (value: unknown): boolean | undefined =>
+  typeof value === 'boolean' ? value : undefined
+
+// Rebuilds a record<string,string>, dropping any key whose value isn't a string. Returns undefined
+// for a non-record input or when nothing survives.
+const asStringRecord = (value: unknown): Record<string, string> | undefined => {
+  if (!isRecord(value)) return undefined
+
+  const entries = Object.entries(value).filter(
+    (entry): entry is [string, string] => typeof entry[1] === 'string'
+  )
+
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined
+}
+
+const CUSTOM_MCP_TRANSPORTS = new Set<StoredCustomMcpServer['transport']>([
+  'stdio',
+  'streamable_http',
+  'sse'
+])
 
 // Rebuilds claude metadata from allowed fields only.
 const sanitizeClaudeInfo = (value: unknown): ClaudeInfo | undefined => {
@@ -113,6 +143,78 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
   return provider
 }
 
+// Rebuilds one custom MCP server, dropping unknown fields and records missing required identity.
+// Phase 1 only wires up the stdio transport end-to-end, so stdio additionally requires a non-empty
+// `command`; `url` is accepted (for the remote transports) but not yet validated further.
+export const sanitizeCustomMcpServer = (value: unknown): StoredCustomMcpServer | undefined => {
+  if (!isRecord(value)) return undefined
+
+  const id = asString(value.id)
+  const name = asString(value.name)
+  const transport = asString(value.transport) as StoredCustomMcpServer['transport'] | undefined
+  const enabled = asBoolean(value.enabled)
+
+  if (
+    !id ||
+    !name ||
+    !transport ||
+    !CUSTOM_MCP_TRANSPORTS.has(transport) ||
+    enabled === undefined
+  ) {
+    return undefined
+  }
+
+  const command = asString(value.command)
+  const url = asString(value.url)
+
+  if (transport === 'stdio' && !command) return undefined
+  if ((transport === 'streamable_http' || transport === 'sse') && !url) return undefined
+
+  const server: StoredCustomMcpServer = { id, name, transport, enabled }
+
+  if (command) server.command = command
+  const args = asStringArray(value.args)
+  if (args.length) server.args = args
+  const env = asStringRecord(value.env)
+  if (env) server.env = env
+  if (url) server.url = url
+  const headers = asStringRecord(value.headers)
+  if (headers) server.headers = headers
+  const trustedAt = asNumber(value.trustedAt)
+  if (trustedAt !== undefined) server.trustedAt = trustedAt
+  const description = asString(value.description)
+  if (description) server.description = description
+
+  return server
+}
+
+// Rebuilds the connectors block from allowed fields only.
+export const sanitizeConnectors = (value: unknown): StoredConnectors | undefined => {
+  if (!isRecord(value)) return undefined
+  const connectors: StoredConnectors = {
+    enabledIds: asStringArray(value.enabledIds),
+    autoAllowIds: asStringArray(value.autoAllowIds)
+  }
+  const contactEmail = asString(value.contactEmail)
+  const ncbiApiKeyRef = asString(value.ncbiApiKeyRef)
+  if (contactEmail) connectors.contactEmail = contactEmail
+  if (ncbiApiKeyRef) connectors.ncbiApiKeyRef = ncbiApiKeyRef
+  const blockedToolIds = asStringArray(value.blockedToolIds)
+  if (blockedToolIds.length) connectors.blockedToolIds = blockedToolIds
+  const askToolIds = asStringArray(value.askToolIds)
+  if (askToolIds.length) connectors.askToolIds = askToolIds
+  const disabledConnectorIds = asStringArray(value.disabledConnectorIds)
+  if (disabledConnectorIds.length)
+    connectors.disabledConnectorIds = [...new Set(disabledConnectorIds)]
+  const customMcpServers = Array.isArray(value.customMcpServers)
+    ? value.customMcpServers
+        .map(sanitizeCustomMcpServer)
+        .filter((server): server is StoredCustomMcpServer => !!server)
+    : []
+  if (customMcpServers.length) connectors.customMcpServers = customMcpServers
+  return connectors
+}
+
 // Rebuilds the whole settings document, keeping activeProviderId only when it points at a provider.
 const sanitizeSettings = (value: unknown): StoredSettings => {
   if (!isRecord(value)) return createEmptySettings()
@@ -160,6 +262,10 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   if (disabledSkillIds.length > 0) {
     settings.disabledSkillIds = disabledSkillIds
   }
+
+  const connectors = sanitizeConnectors(value.connectors)
+
+  if (connectors) settings.connectors = connectors
 
   return settings
 }
@@ -259,6 +365,113 @@ class SettingsRepository {
       return disabledSkillIds.length > 0
         ? { ...settings, disabledSkillIds }
         : { ...settings, disabledSkillIds: undefined }
+    })
+  }
+
+  // Adds or removes a bundled connector id from the disabled set (default-on model).
+  async setConnectorDisabled(id: string, disabled: boolean): Promise<StoredSettings> {
+    return this.mutateConnectors((connectors) => {
+      const set = new Set(connectors.disabledConnectorIds ?? [])
+      if (disabled) set.add(id)
+      else set.delete(id)
+      connectors.disabledConnectorIds = set.size > 0 ? [...set] : undefined
+    })
+  }
+
+  // Adds or removes a connector id from the "skip approvals" auto-allow set.
+  async setConnectorAutoAllow(id: string, autoAllow: boolean): Promise<StoredSettings> {
+    return this.mutateConnectors((connectors) => {
+      const set = new Set(connectors.autoAllowIds ?? [])
+      if (autoAllow) set.add(id)
+      else set.delete(id)
+      connectors.autoAllowIds = [...set]
+    })
+  }
+
+  // Adds or removes a "<connector>/<method>" id from the per-tool blocklist.
+  async setToolBlocked(toolId: string, blocked: boolean): Promise<StoredSettings> {
+    return this.mutateConnectors((connectors) => {
+      const set = new Set(connectors.blockedToolIds ?? [])
+      if (blocked) set.add(toolId)
+      else set.delete(toolId)
+      connectors.blockedToolIds = set.size > 0 ? [...set] : undefined
+    })
+  }
+
+  // Sets a tool's full policy (ask / blocked) in one write. A tool is never in both sets; a tool in
+  // neither is at the default (allow, no prompt).
+  async setToolPolicy(toolId: string, ask: boolean, blocked: boolean): Promise<StoredSettings> {
+    return this.mutateConnectors((connectors) => {
+      const askSet = new Set(connectors.askToolIds ?? [])
+      const block = new Set(connectors.blockedToolIds ?? [])
+      if (ask) askSet.add(toolId)
+      else askSet.delete(toolId)
+      if (blocked) block.add(toolId)
+      else block.delete(toolId)
+      connectors.askToolIds = askSet.size > 0 ? [...askSet] : undefined
+      connectors.blockedToolIds = block.size > 0 ? [...block] : undefined
+    })
+  }
+
+  // Sets or clears the shared research-service contact email and the NCBI API key reference.
+  async setNcbiCredentials(
+    contactEmail: string | undefined,
+    apiKeyRef: string | undefined
+  ): Promise<StoredSettings> {
+    return this.mutateConnectors((connectors) => {
+      connectors.contactEmail = contactEmail || undefined
+      connectors.ncbiApiKeyRef = apiKeyRef || undefined
+    })
+  }
+
+  // Appends a fully-formed custom MCP server record.
+  async addCustomServer(server: StoredCustomMcpServer): Promise<StoredSettings> {
+    return this.mutateConnectors((connectors) => {
+      connectors.customMcpServers = [...(connectors.customMcpServers ?? []), server]
+    })
+  }
+
+  // Removes a custom MCP server by id (and any stale per-tool blocks under its name).
+  async removeCustomServer(id: string): Promise<StoredSettings> {
+    return this.mutateConnectors((connectors) => {
+      const removed = (connectors.customMcpServers ?? []).find((s) => s.id === id)
+      connectors.customMcpServers = (connectors.customMcpServers ?? []).filter((s) => s.id !== id)
+      if (removed && connectors.blockedToolIds) {
+        const prefix = `${removed.name}/`
+        const kept = connectors.blockedToolIds.filter((t) => !t.startsWith(prefix))
+        connectors.blockedToolIds = kept.length > 0 ? kept : undefined
+      }
+    })
+  }
+
+  // Enables or disables one custom MCP server by id.
+  async setCustomServerEnabled(id: string, enabled: boolean): Promise<StoredSettings> {
+    return this.mutateConnectors((connectors) => {
+      connectors.customMcpServers = (connectors.customMcpServers ?? []).map((s) =>
+        s.id === id ? { ...s, enabled } : s
+      )
+    })
+  }
+
+  // Replaces one custom MCP server record (identity fields must be preserved by the caller).
+  async updateCustomServer(id: string, server: StoredCustomMcpServer): Promise<StoredSettings> {
+    return this.mutateConnectors((connectors) => {
+      connectors.customMcpServers = (connectors.customMcpServers ?? []).map((s) =>
+        s.id === id ? server : s
+      )
+    })
+  }
+
+  // Read-modify-write over the connectors block, seeding an empty block on first mutation.
+  private mutateConnectors(fn: (connectors: StoredConnectors) => void): Promise<StoredSettings> {
+    return this.mutate((settings) => {
+      const connectors: StoredConnectors = {
+        enabledIds: [],
+        autoAllowIds: [],
+        ...settings.connectors
+      }
+      fn(connectors)
+      return { ...settings, connectors }
     })
   }
 

@@ -28,6 +28,44 @@ export type StoredProvider = {
   lastValidationFailure?: ProviderValidationFailure
 }
 
+// A user-added custom MCP server. Phase 1 = stdio (local command). Phase 2 adds the remote
+// transports (streamable_http / sse) with static auth `headers` (e.g. Authorization). OAuth and a
+// dynamic headers-helper command are a later task. Env/header values are stored as-is for now —
+// sensitive values are the caller's responsibility.
+export type StoredCustomMcpServer = {
+  id: string
+  name: string
+  transport: 'stdio' | 'streamable_http' | 'sse'
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  url?: string
+  // Static auth headers (e.g. Authorization) sent with every request on remote transports.
+  headers?: Record<string, string>
+  enabled: boolean
+  // Timestamp of the user's explicit add-time trust confirmation (see plan §3.5).
+  trustedAt?: number
+  description?: string
+}
+
+// Connector enablement and non-secret settings. `ncbiApiKeyRef` is a safeStorage ciphertext
+// reference, like `StoredProvider.keyRef`; the plaintext key never lives here.
+export type StoredConnectors = {
+  enabledIds: string[]
+  autoAllowIds: string[]
+  contactEmail?: string
+  ncbiApiKeyRef?: string
+  // Fully-qualified "<connector>/<method>" ids denied by policy; allow by default otherwise.
+  blockedToolIds?: string[]
+  // Fully-qualified "<connector>/<method>" ids that require per-call approval (opt-in). Tools default
+  // to allow (no prompt); this is the set the user switched to "Ask each time".
+  askToolIds?: string[]
+  // Ids of bundled connectors the user turned OFF. Absent/empty means every bundled connector is
+  // enabled (default-on), mirroring disabledSkillIds. This is the authoritative bundled gate.
+  disabledConnectorIds?: string[]
+  customMcpServers?: StoredCustomMcpServer[]
+}
+
 // The whole settings.json document.
 export type StoredSettings = {
   version: typeof SETTINGS_FILE_VERSION
@@ -43,6 +81,7 @@ export type StoredSettings = {
   // Ids of bundled skills the user turned OFF. Absent/empty means every bundled skill is enabled
   // (default-on), so new bundled skills are enabled automatically.
   disabledSkillIds?: string[]
+  connectors?: StoredConnectors
 }
 
 // Canonical empty settings used for a first run or an unreadable file.
