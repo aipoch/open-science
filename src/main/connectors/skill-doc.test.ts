@@ -32,4 +32,10 @@ describe('renderSkillDoc', () => {
     const md = renderSkillDoc('pubmed')
     expect(md).toContain('result = host.mcp(server, method, {...})')
   })
+  it('documents the return shape so agents need not probe it', () => {
+    const md = renderSkillDoc('pubmed')
+    expect(md).toContain('**Returns:**')
+    // A return-shape field absent from the input schema — proves the Returns block is rendered.
+    expect(md).toContain('"pmid"')
+  })
 })

@@ -14,6 +14,9 @@ export type ToolDescriptor = {
   connector: string
   description: string
   input: Record<string, unknown> // JSON Schema for the tool args (also used by docs)
+  // Human-readable shape of the returned value, shown as a "Returns:" block in the skill doc so an
+  // agent knows the result structure without running a probe cell. Free-form (prose or a shape sketch).
+  returns?: string
   required?: string[]
   format?: 'json' | 'text'
   url?: (args: Record<string, unknown>) => string

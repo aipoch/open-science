@@ -8,13 +8,16 @@ export const PUBMED_TOOLS: ToolDescriptor[] = [
   {
     id: 'pubmed_search',
     connector: 'pubmed',
-    description: 'Search PubMed; returns total count and article titles/dates.',
+    description:
+      'Search PubMed (biomedical & life-sciences literature) for articles matching a query; returns the total match count plus the top article titles/dates. Search-only: it does NOT return abstracts, authors, or journals, and there is no fetch-by-PMID tool in this connector. PubMed does not index physics / CS / math / pure-chemistry papers (use other connectors for those).',
     input: {
       type: 'object',
       properties: { term: { type: 'string' }, retmax: { type: 'integer', default: 5 } },
       required: ['term']
     },
     required: ['term'],
+    returns:
+      '`{ "term": str, "count": int, "articles": [ { "pmid": str, "title": str, "date": str } ] }` — up to `retmax` articles (default 5); `count` is the total number of PubMed matches and is usually far larger than the returned list. `articles` is `[]` when nothing matches.',
     run: async (ctx, a) => {
       const q = ncbiEtiquette(ctx.credentials)
       const es = (await ctx.fetchJson(

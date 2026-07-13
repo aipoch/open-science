@@ -73,6 +73,7 @@ export function renderSkillDoc(connectorId: string): string {
     .map(
       (t) =>
         `### ${t.id}\n\n${t.description}\n\n\`\`\`json\n${JSON.stringify(t.input, null, 2)}\n\`\`\`\n\n` +
+        (t.returns ? `**Returns:** ${t.returns}\n\n` : '') +
         renderExample(connectorId, t.id, t.input)
     )
     .join('\n')
