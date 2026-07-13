@@ -140,6 +140,23 @@ describe('ProviderList', () => {
     expect(container.textContent).toContain('authentication rejected')
   })
 
+  it('shows the Local Claude probe message instead of referring to an API key', () => {
+    renderList([
+      provider({
+        type: 'claude-default',
+        name: 'Local Claude',
+        lastValidationFailure: {
+          at: 2,
+          category: 'auth',
+          message: 'Local Claude could not authenticate. Run `claude` in a terminal and log in.'
+        }
+      })
+    ])
+
+    expect(container.textContent).toContain('Run `claude` in a terminal')
+    expect(container.textContent).not.toContain('check the API key')
+  })
+
   it('does not flag a provider whose latest validation succeeded', () => {
     // A stale failure older than the last success is not a warning.
     renderList([

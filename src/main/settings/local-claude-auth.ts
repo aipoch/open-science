@@ -17,6 +17,14 @@ export type LocalClaudeAuthEnv = {
   ANTHROPIC_AUTH_TOKEN?: string
 }
 
+export type LocalClaudeAuthResolution = {
+  envOverrides: LocalClaudeAuthEnv
+  // Recent Claude Code builds can keep OAuth only in the OS credential store. That login is scoped to
+  // Claude's implicit default config context and becomes invisible as soon as CLAUDE_CONFIG_DIR is set,
+  // even when it points at ~/.claude. In that case the caller must omit CLAUDE_CONFIG_DIR entirely.
+  useDefaultConfigDir: boolean
+}
+
 const fileExists = async (path: string): Promise<boolean> => {
   try {
     await access(path, constants.F_OK)
@@ -54,18 +62,18 @@ export type ResolveLocalClaudeAuthOptions = {
   appConfigDir: string
 }
 
-// Returns spawn-env overrides for the local provider, copying OAuth credentials into the app dir when
-// there is no token to inject. Best-effort: any failure yields no overrides rather than throwing.
+// Resolves how the local provider should reuse the machine login. Portable auth stays in the app-owned
+// config context; OS-credential-store auth falls back to Claude's implicit default config context.
 const resolveLocalClaudeAuth = async ({
   userClaudeDir,
   appConfigDir
-}: ResolveLocalClaudeAuthOptions): Promise<LocalClaudeAuthEnv> => {
+}: ResolveLocalClaudeAuthOptions): Promise<LocalClaudeAuthResolution> => {
   const { token, baseUrl } = await readUserClaudeEnv(userClaudeDir)
 
   if (token) {
     const env: LocalClaudeAuthEnv = { ANTHROPIC_AUTH_TOKEN: token }
     if (baseUrl) env.ANTHROPIC_BASE_URL = baseUrl
-    return env
+    return { envOverrides: env, useDefaultConfigDir: false }
   }
 
   // No token → reuse the OAuth login by copying its credentials into the app config dir. claude only
@@ -75,15 +83,34 @@ const resolveLocalClaudeAuth = async ({
   if (await fileExists(credentialsSource)) {
     try {
       await copyFile(credentialsSource, join(appConfigDir, '.credentials.json'))
+      return { envOverrides: {}, useDefaultConfigDir: false }
     } catch {
-      // A failed copy just means local login isn't available; surface nothing here.
+      // Fall through to the default config context, where Claude can still read its native auth store.
     }
   }
 
-  return {}
+  // No portable token/file usually means OAuth lives in Keychain/Credential Manager/libsecret. Do not
+  // copy or expose that secret; let Claude access it through its normal, implicit config context.
+  return { envOverrides: {}, useDefaultConfigDir: true }
+}
+
+// Applies the resolution to a provider env. Deleting (rather than rewriting) CLAUDE_CONFIG_DIR is
+// intentional: current Claude Code treats any explicit value as a separate auth context.
+const applyLocalClaudeAuth = async (
+  providerEnv: Record<string, string>,
+  options: ResolveLocalClaudeAuthOptions
+): Promise<Record<string, string>> => {
+  const resolution = await resolveLocalClaudeAuth(options)
+  const env: Record<string, string> = { ...providerEnv, ...resolution.envOverrides }
+
+  if (resolution.useDefaultConfigDir) {
+    delete env.CLAUDE_CONFIG_DIR
+  }
+
+  return env
 }
 
 // The machine's own Claude config dir.
 const defaultUserClaudeDir = (): string => join(homedir(), '.claude')
 
-export { defaultUserClaudeDir, resolveLocalClaudeAuth }
+export { applyLocalClaudeAuth, defaultUserClaudeDir, resolveLocalClaudeAuth }
