@@ -63,10 +63,10 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
   })
 }
 
-const getSection = (): HTMLElement => {
-  const section = container.querySelector('section[data-session-id]')
-  if (!section) throw new Error('conversation section not found')
-  return section as HTMLElement
+const getComposerForm = (): HTMLElement => {
+  const form = container.querySelector('form')
+  if (!form) throw new Error('composer form not found')
+  return form as HTMLElement
 }
 
 const dispatchPaste = (files: File[]): boolean => {
@@ -85,7 +85,7 @@ const dispatchDrag = (type: string, dataTransferTypes: string[], files: File[] =
     value: { types: dataTransferTypes, files, dropEffect: 'none' }
   })
   act(() => {
-    getSection().dispatchEvent(event)
+    getComposerForm().dispatchEvent(event)
   })
 }
 

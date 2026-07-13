@@ -144,12 +144,10 @@ const ConversationPanel = ({
   return (
     <ResizablePanel id="main-content" defaultSize="60%" minSize="30%">
       <section
-        className="relative flex h-full min-w-0 flex-col overflow-hidden bg-bg-10 p-2 pl-4"
+        className="flex h-full min-w-0 flex-col overflow-hidden bg-bg-10 p-2 pl-4"
         data-session-id={activeSession?.id ?? ''}
         data-agent-running={activeSession?.status === 'running' ? 'true' : 'false'}
-        {...dropZoneProps}
       >
-        {isDragging ? <ComposerDropOverlay /> : null}
         <header className="flex shrink-0 items-center gap-2 px-4 pb-3 pt-1">
           <h1 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-text-000">
             {activeSession?.title ?? 'New conversation'}
@@ -218,7 +216,10 @@ const ConversationPanel = ({
                   <form
                     className="relative z-10 flex flex-col gap-2 rounded-2xl bg-bg-000 px-3 py-2 shadow-card-opaque transition-shadow duration-[180ms] ease-out"
                     onSubmit={onSendMessage}
+                    {...dropZoneProps}
                   >
+                    {/* File-drag overlay is scoped to the composer input card only. */}
+                    {isDragging ? <ComposerDropOverlay /> : null}
                     <div className="flex flex-col gap-2">
                       {attachments.length > 0 ? (
                         <div className="flex max-h-[92px] flex-wrap gap-2 overflow-y-auto border-b border-border-200 pb-2">
