@@ -44,6 +44,21 @@ describe('renderCustomSkillDoc', () => {
     const frontmatter = md.slice(0, md.indexOf('---', 3))
     expect(frontmatter).toContain('Use when the user asks about widgets.')
   })
+
+  it('renders a concrete dict example from a custom tool inputSchema', () => {
+    const md = renderCustomSkillDoc({ name: 'myserver' }, [
+      {
+        name: 'lookup',
+        description: 'Look up a record',
+        inputSchema: {
+          type: 'object',
+          properties: { id: { type: 'string' }, limit: { type: 'integer', default: 10 } },
+          required: ['id']
+        }
+      }
+    ])
+    expect(md).toContain('result = host.mcp("myserver", "lookup", {"id": "...", "limit": 10})')
+  })
 })
 
 describe('syncCustomServerSkillDocs', () => {

@@ -20,4 +20,16 @@ describe('renderSkillDoc', () => {
   it('throws for an unknown connector', () => {
     expect(() => renderSkillDoc('nope')).toThrow()
   })
+  it('renders a concrete, copyable dict example built from the tool schema', () => {
+    // The example mirrors the JSON Schema shown above it: required fields plus any defaulted field,
+    // passed as a dict, assigned to a variable to demonstrate the synchronous return.
+    const md = renderSkillDoc('pubmed')
+    expect(md).toContain(
+      'result = host.mcp("pubmed", "pubmed_search", {"term": "...", "retmax": 5})'
+    )
+  })
+  it('frames the calling convention positively (assign the sync dict result)', () => {
+    const md = renderSkillDoc('pubmed')
+    expect(md).toContain('result = host.mcp(server, method, {...})')
+  })
 })
