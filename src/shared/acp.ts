@@ -1,6 +1,7 @@
 import type { ToolCallContent, ToolCallLocation, ToolKind } from '@agentclientprotocol/sdk'
 import type { ArtifactFile } from './artifacts'
 import type { UploadedAttachment } from './uploads'
+import type { PermissionProfileId, SessionPermissionProfileState } from './permission-profiles'
 
 export type AcpConnectionStatus = 'idle' | 'connecting' | 'connected' | 'error' | 'closed'
 
@@ -60,6 +61,10 @@ export type AcpPermissionRequest = {
   toolCallId: string
   title: string
   status?: string
+  providerToolName?: string
+  toolKind?: ToolKind
+  toolLocations?: ToolCallLocation[]
+  rawInput?: unknown
   options: AcpPermissionOption[]
   raw: unknown
 }
@@ -72,6 +77,7 @@ export type AcpStateSnapshot = {
   error?: string
   events: AcpRuntimeEvent[]
   pendingPermissions: AcpPermissionRequest[]
+  permissionProfiles: Record<string, SessionPermissionProfileState>
   promptInFlight: boolean
   promptInFlightSessionIds: string[]
 }
@@ -84,6 +90,7 @@ export type AcpCreateSessionRequest = {
   cwd?: string
   // Scopes generated artifacts / notebooks to a project's storage subtree. Defaults per runtime.
   projectName?: string
+  permissionProfile?: PermissionProfileId
 }
 
 export type AcpCreateSessionResponse = {
@@ -95,6 +102,12 @@ export type AcpResumeSessionRequest = {
   sessionId: string
   cwd: string
   projectName?: string
+  permissionProfile?: PermissionProfileId
+}
+
+export type AcpSetPermissionProfileRequest = {
+  sessionId: string
+  profile: PermissionProfileId
 }
 
 export type AcpPromptRequest = {

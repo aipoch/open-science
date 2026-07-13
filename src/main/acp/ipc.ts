@@ -12,6 +12,7 @@ import type {
   AcpPermissionResponse,
   AcpPromptRequest,
   AcpResumeSessionRequest,
+  AcpSetPermissionProfileRequest,
   AcpStateSnapshot
 } from '../../shared/acp'
 import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../../shared/artifacts'
@@ -129,6 +130,9 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntime => {
   )
   ipcMain.handle('acp:respond-permission', (_event, response: AcpPermissionResponse) =>
     runtime.respondToPermission(response)
+  )
+  ipcMain.handle('acp:set-permission-profile', (_event, request: AcpSetPermissionProfileRequest) =>
+    runtime.setPermissionProfile(request)
   )
 
   return runtime

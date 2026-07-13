@@ -1095,6 +1095,24 @@ describe('session store', () => {
     expect(persisted).not.toHaveProperty('isPending')
   })
 
+  it('stores and persists the conversation approval profile', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Run this',
+      cwd: '/workspace/project',
+      projectId: 'project-a',
+      permissionProfile: 'auto'
+    })
+
+    expect(useSessionStore.getState().sessions[0].permissionProfile).toBe('auto')
+
+    useSessionStore.getState().setPermissionProfile('transport-session-1', 'full')
+
+    expect(toPersistedSession(useSessionStore.getState().sessions[0]).permissionProfile).toBe(
+      'full'
+    )
+  })
+
   it('marks unbound pending sessions so persistence can skip them', () => {
     useSessionStore.getState().appendPendingUserMessage({
       content: 'Save after ACP creates the session',

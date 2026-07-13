@@ -11,6 +11,7 @@ import type {
   AcpPermissionResponse,
   AcpPromptRequest,
   AcpResumeSessionRequest,
+  AcpSetPermissionProfileRequest,
   AcpStateSnapshot
 } from '../shared/acp'
 import type {
@@ -140,6 +141,7 @@ type OpenScienceAPI = {
     cancel: (request: AcpCancelPromptRequest) => Promise<AcpStateSnapshot>
     deleteSession: (request: AcpDeleteSessionRequest) => Promise<AcpStateSnapshot>
     respondToPermission: (response: AcpPermissionResponse) => Promise<AcpStateSnapshot>
+    setPermissionProfile: (request: AcpSetPermissionProfileRequest) => Promise<AcpStateSnapshot>
     onState: (listener: AcpListener<AcpStateSnapshot>) => RemoveListener
     onEvent: (listener: AcpListener<AcpRuntimeEvent>) => RemoveListener
     onPermissionRequest: (listener: AcpListener<AcpPermissionRequest>) => RemoveListener
@@ -290,6 +292,8 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('acp:delete-session', request) as Promise<AcpStateSnapshot>,
     respondToPermission: (response) =>
       ipcRenderer.invoke('acp:respond-permission', response) as Promise<AcpStateSnapshot>,
+    setPermissionProfile: (request) =>
+      ipcRenderer.invoke('acp:set-permission-profile', request) as Promise<AcpStateSnapshot>,
     onState: (listener) => onIpcMessage('acp:state', listener),
     onEvent: (listener) => onIpcMessage('acp:event', listener),
     onPermissionRequest: (listener) => onIpcMessage('acp:permission-request', listener)

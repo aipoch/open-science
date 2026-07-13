@@ -8,6 +8,10 @@ import type {
 
 import type { ArtifactFile } from '../../../shared/artifacts'
 import {
+  DEFAULT_PERMISSION_PROFILE,
+  type PermissionProfileId
+} from '../../../shared/permission-profiles'
+import {
   sanitizeToolActivity,
   type PersistedActiveRun,
   type PersistedArtifact,
@@ -47,7 +51,11 @@ export type ToolActivity = {
   createdAt: number
   updatedAt: number
 }
-export type ChatSession = Omit<PersistedChatSession, 'messages' | 'activities'> & {
+export type ChatSession = Omit<
+  PersistedChatSession,
+  'messages' | 'activities' | 'permissionProfile'
+> & {
+  permissionProfile?: PermissionProfileId
   messages: ChatMessage[]
   activities?: ToolActivity[]
   isPending?: boolean
@@ -64,6 +72,7 @@ type AppendUserMessageInput = {
   attachments?: PersistedUploadedAttachment[]
   cwd?: string
   projectId?: string
+  permissionProfile?: PermissionProfileId
   isPending?: boolean
 }
 
@@ -72,6 +81,7 @@ type AppendPendingUserMessageInput = {
   attachments?: PersistedUploadedAttachment[]
   cwd?: string
   projectId?: string
+  permissionProfile?: PermissionProfileId
 }
 
 type BindPendingSessionInput = {
@@ -147,6 +157,7 @@ type SessionStore = SessionStoreData & {
   upsertToolActivity: (input: UpsertToolActivityInput) => void
   setPermissionPending: (sessionId: string) => void
   clearPermissionPending: (sessionId: string) => void
+  setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => void
   renameSession: (sessionId: string, title: string) => void
   deleteSession: (sessionId: string) => void
   removeSessionsForProject: (projectId: string) => void
@@ -202,6 +213,7 @@ const hydrateToolActivity = (activity: PersistedToolActivity): ToolActivity => (
 // Maps a persisted session (with bounded activities) back into the in-memory chat session shape.
 const hydrateSession = (session: PersistedChatSession): ChatSession => ({
   ...session,
+  permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
   activities: session.activities?.map(hydrateToolActivity)
 })
 
@@ -431,7 +443,15 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   // Appends a user prompt, creating the session if this is its first message.
-  appendUserMessage: ({ sessionId, content, attachments = [], cwd, projectId, isPending }) => {
+  appendUserMessage: ({
+    sessionId,
+    content,
+    attachments = [],
+    cwd,
+    projectId,
+    permissionProfile,
+    isPending
+  }) => {
     const trimmedContent = content.trim()
     const uploads = attachments.map(createPersistedUpload)
 
@@ -472,6 +492,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         title: createTitleFromMessage(trimmedContent || createTitleFromUploads(uploads)),
         cwd: cwd ?? '',
         status: 'running',
+        permissionProfile: permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
         messages: [userMessage],
         activeRun,
         createdAt: now,
@@ -488,13 +509,14 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   // Creates a visible local conversation before ACP returns the durable session id.
-  appendPendingUserMessage: ({ content, attachments = [], cwd, projectId }) => {
+  appendPendingUserMessage: ({ content, attachments = [], cwd, projectId, permissionProfile }) => {
     return get().appendUserMessage({
       sessionId: createPendingSessionId(),
       content,
       attachments,
       cwd,
       projectId,
+      permissionProfile,
       isPending: true
     })
   },
@@ -971,6 +993,21 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           ? {
               ...session,
               status: session.activeRun ? 'running' : 'idle',
+              updatedAt: Date.now()
+            }
+          : session
+      )
+    }))
+  },
+
+  // Stores the approval posture with the conversation so resumes and provider switches reapply it.
+  setPermissionProfile: (sessionId, profile) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              permissionProfile: profile,
               updatedAt: Date.now()
             }
           : session

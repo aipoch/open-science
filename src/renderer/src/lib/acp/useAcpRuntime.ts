@@ -3,8 +3,10 @@ import type {
   AcpPermissionResponse,
   AcpPromptRequest,
   AcpResumeSessionRequest,
+  AcpSetPermissionProfileRequest,
   AcpStateSnapshot
 } from '../../../../shared/acp'
+import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react'
 
 // Provides a stable renderer fallback before the first main-process snapshot arrives.
@@ -14,6 +16,7 @@ const emptyAcpState: AcpStateSnapshot = {
   sessionIds: [],
   events: [],
   pendingPermissions: [],
+  permissionProfiles: {},
   promptInFlight: false,
   promptInFlightSessionIds: []
 }
@@ -36,11 +39,16 @@ const useAcpRuntime = (): {
   isDisconnecting: boolean
   connect: (cwd?: string) => Promise<AcpStateSnapshot | undefined>
   disconnect: () => Promise<AcpStateSnapshot | undefined>
-  createSession: (cwd?: string, projectName?: string) => Promise<AcpCreateSessionResponse>
+  createSession: (
+    cwd?: string,
+    projectName?: string,
+    permissionProfile?: PermissionProfileId
+  ) => Promise<AcpCreateSessionResponse>
   resumeSession: (
     sessionId: AcpResumeSessionRequest['sessionId'],
     cwd: AcpResumeSessionRequest['cwd'],
-    projectName?: string
+    projectName?: string,
+    permissionProfile?: PermissionProfileId
   ) => Promise<AcpCreateSessionResponse>
   deleteSession: (sessionId: string) => Promise<AcpStateSnapshot | undefined>
   cancel: (sessionId: string) => Promise<AcpStateSnapshot | undefined>
@@ -53,6 +61,10 @@ const useAcpRuntime = (): {
   respondToPermission: (
     requestId: string,
     optionId?: string
+  ) => Promise<AcpStateSnapshot | undefined>
+  setPermissionProfile: (
+    sessionId: string,
+    profile: PermissionProfileId
   ) => Promise<AcpStateSnapshot | undefined>
 } => {
   const [state, setState] = useState<AcpStateSnapshot>(emptyAcpState)
@@ -154,8 +166,10 @@ const useAcpRuntime = (): {
 
   // Creates a protocol session and returns the runtime-provided id.
   const createSession = useCallback(
-    (cwd?: string, projectName?: string) =>
-      runValueAction(setIsConnecting, () => window.api.acp.createSession({ cwd, projectName })),
+    (cwd?: string, projectName?: string, permissionProfile?: PermissionProfileId) =>
+      runValueAction(setIsConnecting, () =>
+        window.api.acp.createSession({ cwd, projectName, permissionProfile })
+      ),
     [runValueAction]
   )
 
@@ -164,10 +178,11 @@ const useAcpRuntime = (): {
     (
       sessionId: AcpResumeSessionRequest['sessionId'],
       cwd: AcpResumeSessionRequest['cwd'],
-      projectName?: string
+      projectName?: string,
+      permissionProfile?: PermissionProfileId
     ) =>
       runValueAction(setIsConnecting, () =>
-        window.api.acp.resumeSession({ sessionId, cwd, projectName })
+        window.api.acp.resumeSession({ sessionId, cwd, projectName, permissionProfile })
       ),
     [runValueAction]
   )
@@ -219,6 +234,15 @@ const useAcpRuntime = (): {
     [runSnapshotAction]
   )
 
+  const setPermissionProfile = useCallback(
+    (sessionId: string, profile: PermissionProfileId) => {
+      const request: AcpSetPermissionProfileRequest = { sessionId, profile }
+
+      return runSnapshotAction(undefined, () => window.api.acp.setPermissionProfile(request))
+    },
+    [runSnapshotAction]
+  )
+
   return {
     state,
     actionError,
@@ -231,7 +255,8 @@ const useAcpRuntime = (): {
     deleteSession,
     cancel,
     sendPrompt,
-    respondToPermission
+    respondToPermission,
+    setPermissionProfile
   }
 }
 

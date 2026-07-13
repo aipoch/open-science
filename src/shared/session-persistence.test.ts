@@ -6,7 +6,7 @@ import {
   type PersistedChatSession
 } from './session-persistence'
 
-const createSessionWithActivity = (activity: unknown): unknown => ({
+const createSessionWithActivity = (activity: unknown): Record<string, unknown> => ({
   id: 'session-1',
   projectId: 'project-a',
   title: 'Session',
@@ -142,5 +142,22 @@ describe('normalizeSessionFile with activities', () => {
     })
 
     expect(session?.activities).toBeUndefined()
+    expect(session?.permissionProfile).toBe('ask')
+  })
+
+  it('keeps known approval profiles and safely defaults unknown values', () => {
+    const full = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      permissionProfile: 'full'
+    })
+    const unknown = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      permissionProfile: 'untrusted-profile'
+    })
+
+    expect(full?.permissionProfile).toBe('full')
+    expect(unknown?.permissionProfile).toBe('ask')
   })
 })

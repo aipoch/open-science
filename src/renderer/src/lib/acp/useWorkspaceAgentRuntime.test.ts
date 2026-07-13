@@ -24,6 +24,7 @@ const createSnapshot = (sessionIds: string[] = []): AcpStateSnapshot => ({
   sessionIds,
   events: [],
   pendingPermissions: [],
+  permissionProfiles: {},
   promptInFlight: false,
   promptInFlightSessionIds: []
 })
@@ -216,7 +217,7 @@ describe('workspace agent message sending', () => {
       cwd: '/workspace/project'
     })
 
-    expect(runtime.createSession).toHaveBeenCalledWith('/workspace/project', undefined)
+    expect(runtime.createSession).toHaveBeenCalledWith('/workspace/project', undefined, 'ask')
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       id: sent?.sessionId,
