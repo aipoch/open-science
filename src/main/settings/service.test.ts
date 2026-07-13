@@ -29,13 +29,18 @@ let storageRoot: string
 let repository: InstanceType<typeof SettingsRepository>
 
 const createService = (
-  detectResult = { found: true, path: '/bin/claude', version: '2.1.0' }
+  detectResult = { found: true, path: '/bin/claude', version: '2.1.0' },
+  options: {
+    userClaudeDir?: string
+    executeClaudeProbe?: (executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>
+  } = {}
 ): InstanceType<typeof SettingsService> =>
   new SettingsService({
     repository,
     storageRoot,
     // Point at a non-existent user Claude dir so tests never read the real ~/.claude for local auth.
-    userClaudeDir: join(storageRoot, 'no-user-claude'),
+    userClaudeDir: options.userClaudeDir ?? join(storageRoot, 'no-user-claude'),
+    executeClaudeProbe: options.executeClaudeProbe,
     detectDeps: {
       env: {},
       homePath: '/home',
@@ -138,6 +143,21 @@ describe('SettingsService: providers', () => {
 })
 
 describe('SettingsService: validation', () => {
+  it('tests Local Claude in the implicit default config when auth is OS-store-only', async () => {
+    const probe = vi.fn<(executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>>()
+    probe.mockResolvedValue(undefined)
+    const service = createService(undefined, { executeClaudeProbe: probe })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+
+    const result = await service.validateProvider({ draft: { type: 'claude-default' } })
+
+    expect(result).toMatchObject({ ok: true, category: 'ok' })
+    expect(probe).toHaveBeenCalledOnce()
+    const probeEnv = probe.mock.calls[0][1]
+    // No portable token/credentials fixture exists, so Claude must be allowed to use its native login.
+    expect(Object.hasOwn(probeEnv, 'CLAUDE_CONFIG_DIR')).toBe(false)
+  })
+
   it('records lastValidatedAt for a saved provider on success', async () => {
     const service = createService()
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 200 }))
@@ -292,7 +312,7 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(config.envOverrides.ANTHROPIC_API_KEY).toBeUndefined()
   })
 
-  it('runs a local (claude-default) provider under the shared app config dir, no endpoint/token', async () => {
+  it("uses Claude's implicit default config for a local provider with OS-store-only auth", async () => {
     const service = createService()
 
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
@@ -302,9 +322,9 @@ describe('SettingsService: preflight & spawn config', () => {
 
     const config = await service.resolveActiveSpawnConfig()
 
-    // Same app config dir as custom providers (stable across switches); no injected endpoint/token —
-    // local uses the auth stored in the app dir.
-    expect(config.envOverrides.CLAUDE_CONFIG_DIR).toBe(getAppClaudeConfigDir(storageRoot))
+    // No portable auth fixture exists, so the explicit app config is removed. This lets Claude Code
+    // reuse native credential stores that are available only in its implicit default context.
+    expect(config.envOverrides.CLAUDE_CONFIG_DIR).toBeUndefined()
     expect(config.envOverrides.ANTHROPIC_BASE_URL).toBeUndefined()
     expect(config.envOverrides.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
   })

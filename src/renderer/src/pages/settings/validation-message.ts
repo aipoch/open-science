@@ -21,6 +21,12 @@ const MESSAGE_CATEGORIES = new Set<ValidationCategory>(['network', 'timeout', 'u
 const describeValidation = (result: ValidateProviderResult): string => {
   const base = CATEGORY_MESSAGES[result.category]
 
+  // Local Claude has no API-key field. Its subprocess probe supplies a controlled, actionable auth
+  // message, so prefer that over the generic gateway wording used for HTTP 401/403 responses.
+  if (result.category === 'auth' && result.message) {
+    return result.message
+  }
+
   if (result.message && MESSAGE_CATEGORIES.has(result.category)) {
     return `${base} (${result.message})`
   }

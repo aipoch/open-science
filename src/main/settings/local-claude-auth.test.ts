@@ -33,8 +33,11 @@ describe('resolveLocalClaudeAuth', () => {
     )
 
     await expect(resolveLocalClaudeAuth({ userClaudeDir, appConfigDir })).resolves.toEqual({
-      ANTHROPIC_AUTH_TOKEN: 'sk-user',
-      ANTHROPIC_BASE_URL: 'https://gw'
+      envOverrides: {
+        ANTHROPIC_AUTH_TOKEN: 'sk-user',
+        ANTHROPIC_BASE_URL: 'https://gw'
+      },
+      useDefaultConfigDir: false
     })
   })
 
@@ -43,18 +46,21 @@ describe('resolveLocalClaudeAuth', () => {
     await writeFile(join(userClaudeDir, 'settings.json'), JSON.stringify({ env: {} }))
     await writeFile(join(userClaudeDir, '.credentials.json'), '{"oauth":"secret"}')
 
-    const env = await resolveLocalClaudeAuth({ userClaudeDir, appConfigDir })
+    const resolution = await resolveLocalClaudeAuth({ userClaudeDir, appConfigDir })
 
-    expect(env).toEqual({})
+    expect(resolution).toEqual({ envOverrides: {}, useDefaultConfigDir: false })
     // The OAuth credentials were copied into the app config dir for claude to use.
     await expect(readFile(join(appConfigDir, '.credentials.json'), 'utf8')).resolves.toContain(
       'oauth'
     )
   })
 
-  it('returns no overrides and does not throw when ~/.claude has neither', async () => {
+  it('falls back to the implicit default config when portable auth is unavailable', async () => {
     const { userClaudeDir, appConfigDir } = await setup()
 
-    await expect(resolveLocalClaudeAuth({ userClaudeDir, appConfigDir })).resolves.toEqual({})
+    await expect(resolveLocalClaudeAuth({ userClaudeDir, appConfigDir })).resolves.toEqual({
+      envOverrides: {},
+      useDefaultConfigDir: true
+    })
   })
 })

@@ -33,7 +33,9 @@ type IconActionButtonProps = {
 const describeValidationFailure = (failure: ProviderValidationFailure): string => {
   switch (failure.category) {
     case 'auth':
-      return 'Test failed: authentication rejected — check the API key.'
+      return failure.message
+        ? `Test failed: ${failure.message}`
+        : 'Test failed: authentication rejected — check the API key.'
     case 'network':
       return 'Test failed: could not reach the endpoint — check the base URL/connection.'
     case 'bad-url':

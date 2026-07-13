@@ -43,7 +43,7 @@ import { createDefaultDetectDeps, detectClaude, type ClaudeDetectDeps } from './
 import { provisionAppClaudeConfigDir } from './claude-config-provision'
 import { detectNpmAvailable, runInstall } from './claude-install'
 import { encryptKey, isEncryptionAvailable, maskKey, tryDecryptKey } from './crypto'
-import { defaultUserClaudeDir, resolveLocalClaudeAuth } from './local-claude-auth'
+import { applyLocalClaudeAuth, defaultUserClaudeDir } from './local-claude-auth'
 import { computePreflight } from './preflight'
 import { listProviderModels } from './list-models'
 import { buildProviderEnv, getAppClaudeConfigDir, type ResolvedProvider } from './provider-env'
@@ -58,6 +58,19 @@ const execFileAsync = promisify(execFile)
 
 // Hard ceiling for the claude-default probe so a stuck local claude can never hang the wizard.
 const CLAUDE_PROBE_TIMEOUT_MS = 20_000
+
+type ExecuteClaudeProbe = (executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>
+
+const executeClaudeProbe: ExecuteClaudeProbe = async (executablePath, env) => {
+  await execFileAsync(executablePath, ['-p', 'ok'], {
+    env,
+    timeout: CLAUDE_PROBE_TIMEOUT_MS,
+    // On Windows the detected claude is a `claude.cmd` shim, which execFile can't launch without a
+    // shell (spawn EINVAL); route the probe through the shell there.
+    shell: process.platform === 'win32',
+    windowsHide: true
+  })
+}
 
 // Detects a child-process timeout (SIGTERM kill or ETIMEDOUT) so the probe can report it distinctly.
 const isTimeoutError = (error: unknown): boolean => {
@@ -88,6 +101,8 @@ export type SettingsServiceOptions = {
   skillRegistry?: SkillRegistry
   // Writable personal/imported skill store, injectable so tests can use a temp storage root.
   userSkills?: UserSkillRepository
+  // One-shot Claude command runner, injectable so validation tests can inspect the exact auth env.
+  executeClaudeProbe?: ExecuteClaudeProbe
 }
 
 // Orchestrates the settings units (repository + crypto + detect/install + validate) behind one
@@ -100,6 +115,7 @@ class SettingsService {
   private readonly userClaudeDir: string
   private readonly skillRegistry: SkillRegistry
   private readonly userSkills: UserSkillRepository
+  private readonly executeClaudeProbe: ExecuteClaudeProbe
   private providerSequence = 0
 
   constructor(options: SettingsServiceOptions = {}) {
@@ -109,6 +125,7 @@ class SettingsService {
     this.userClaudeDir = options.userClaudeDir ?? defaultUserClaudeDir()
     this.skillRegistry = options.skillRegistry ?? new SkillRegistry()
     this.userSkills = options.userSkills ?? new UserSkillRepository(this.storageRoot)
+    this.executeClaudeProbe = options.executeClaudeProbe ?? executeClaudeProbe
   }
 
   // Returns the renderer-safe (masked) snapshot of settings.
@@ -511,7 +528,7 @@ class SettingsService {
       disabledSkillIds: settings.disabledSkillIds
     })
 
-    const envOverrides = buildProviderEnv(
+    let envOverrides = buildProviderEnv(
       this.resolveProvider(activeProvider, settings.activeModel),
       {
         storageRoot: this.storageRoot,
@@ -520,13 +537,13 @@ class SettingsService {
     )
 
     // The "local" provider reuses the machine's own Claude login: inject its token/base URL (or copy
-    // OAuth credentials) at spawn time. Custom providers already carry their own credentials.
+    // OAuth credentials) at spawn time. OS-store-only OAuth falls back to Claude's implicit default
+    // config context, because setting CLAUDE_CONFIG_DIR makes that native login invisible.
     if (activeProvider.type === 'claude-default') {
-      const localAuth = await resolveLocalClaudeAuth({
+      envOverrides = await applyLocalClaudeAuth(envOverrides, {
         userClaudeDir: this.userClaudeDir,
         appConfigDir
       })
-      Object.assign(envOverrides, localAuth)
     }
 
     return { envOverrides, executablePath }
@@ -654,7 +671,6 @@ class SettingsService {
     return undefined
   }
 
-  // One-shot `claude -p "ok"` probe for claude-default validation, using the isolated/default env.
   // One-shot `claude -p "ok"` probe for claude-default validation, using the isolated/default env. A
   // hard timeout guarantees the wizard never hangs on a claude that never returns; a timeout is
   // reported distinctly so the UI can say "timed out" rather than "auth failed".
@@ -668,29 +684,39 @@ class SettingsService {
       return { ok: false, message: 'Claude executable is not configured.' }
     }
 
-    const env = {
-      ...process.env,
-      ...buildProviderEnv(provider, {
+    const appConfigDir = getAppClaudeConfigDir(this.storageRoot)
+    await provisionAppClaudeConfigDir(appConfigDir, {
+      skills: await this.skillCatalog(),
+      disabledSkillIds: settings.disabledSkillIds
+    })
+
+    const envOverrides = await applyLocalClaudeAuth(
+      buildProviderEnv(provider, {
         storageRoot: this.storageRoot,
         claudeExecutablePath: executablePath
-      })
+      }),
+      { userClaudeDir: this.userClaudeDir, appConfigDir }
+    )
+    const env = {
+      ...process.env,
+      ...envOverrides
     }
 
+    // The native-auth fallback requires the variable to be absent, including from the parent process.
+    if (!('CLAUDE_CONFIG_DIR' in envOverrides)) delete env.CLAUDE_CONFIG_DIR
+
     try {
-      await execFileAsync(executablePath, ['-p', 'ok'], {
-        env,
-        timeout: CLAUDE_PROBE_TIMEOUT_MS,
-        // On Windows the detected claude is a `claude.cmd` shim, which execFile can't launch without a
-        // shell (spawn EINVAL); route the probe through the shell there.
-        shell: process.platform === 'win32',
-        windowsHide: true
-      })
+      await this.executeClaudeProbe(executablePath, env)
 
       return { ok: true }
     } catch (error) {
       return isTimeoutError(error)
         ? { ok: false, timedOut: true, message: 'Local claude did not respond in time.' }
-        : { ok: false, message: 'Local claude could not complete a request.' }
+        : {
+            ok: false,
+            message:
+              'Local Claude could not authenticate. Run `claude` in a terminal and log in, then try again.'
+          }
     }
   }
 

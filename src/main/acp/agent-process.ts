@@ -21,11 +21,9 @@ const toUnpackedAsarPath = (filePath: string): string =>
 // Env vars carrying an Anthropic endpoint/credentials/model that an isolated provider must not inherit.
 const ANTHROPIC_ENV_PREFIX = 'ANTHROPIC_'
 
-// Builds the environment for the ACP agent child process. Every provider now runs under an app-owned
-// CLAUDE_CONFIG_DIR (present in envOverrides), so inherited ANTHROPIC_* variables are dropped before the
-// provider's own overrides are applied. This keeps a stray shell `ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY`
-// /`ANTHROPIC_AUTH_TOKEN` from leaking into the run; only what the provider sets (custom gateways) or the
-// app dir's stored auth (local) is used.
+// Builds the environment for the ACP agent child process. Isolated providers carry CLAUDE_CONFIG_DIR,
+// so inherited ANTHROPIC_* variables are dropped before their own overrides are applied. A local provider
+// with OS-store-only OAuth deliberately omits CLAUDE_CONFIG_DIR and reuses Claude's default auth context.
 const buildAgentSpawnEnv = (
   sourceEnv: NodeJS.ProcessEnv,
   envOverrides: Record<string, string>,
@@ -36,6 +34,9 @@ const buildAgentSpawnEnv = (
 
   for (const [key, value] of Object.entries(sourceEnv)) {
     if (isolated && key.startsWith(ANTHROPIC_ENV_PREFIX)) continue
+    // A non-isolated local provider must use Claude's implicit default context. Inheriting an explicit
+    // CLAUDE_CONFIG_DIR would recreate the same native-credential lookup failure we are avoiding.
+    if (!isolated && key === 'CLAUDE_CONFIG_DIR') continue
     base[key] = value
   }
 
