@@ -48,20 +48,12 @@ describe('provider registry', () => {
     expect(resolveVendorBaseUrl('zhipu', 'china')).toBe('https://open.bigmodel.cn/api/anthropic')
   })
 
-  it('routes Kimi (Moonshot) to the .ai/.cn Anthropic hosts by region', () => {
-    expect(vendorHasRegions('moonshot')).toBe(true)
-    expect(resolveVendorBaseUrl('moonshot', 'global')).toBe('https://api.moonshot.ai/anthropic')
-    expect(resolveVendorBaseUrl('moonshot', 'china')).toBe('https://api.moonshot.cn/anthropic')
-    expect(defaultVendorModel('moonshot')).toBe('kimi-k2.7-code')
-  })
-
   it('exposes the first catalog entry as the default model', () => {
     expect(defaultVendorModel('zhipu')).toBe('glm-5.2')
   })
 
   it('exposes a model-list URL only for vendors that provide one', () => {
     expect(resolveVendorModelsUrl('deepseek')).toBe('https://api.deepseek.com/v1/models')
-    expect(resolveVendorModelsUrl('moonshot', 'china')).toBe('https://api.moonshot.cn/v1/models')
     // GLM/MiniMax don't expose a model-list endpoint yet, so refresh is hidden for them.
     expect(resolveVendorModelsUrl('zhipu')).toBeUndefined()
     expect(resolveVendorModelsUrl('minimax')).toBeUndefined()

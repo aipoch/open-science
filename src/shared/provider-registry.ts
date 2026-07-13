@@ -7,7 +7,7 @@
 // that shifts over time — update the lists here as vendors publish new models. Only vendors with a
 // documented Anthropic-compatible endpoint belong here (e.g. OpenAI's native API does not qualify).
 
-export type OfficialVendorId = 'anthropic' | 'deepseek' | 'zhipu' | 'minimax' | 'moonshot'
+export type OfficialVendorId = 'anthropic' | 'deepseek' | 'zhipu' | 'minimax'
 
 // A selectable endpoint for vendors that publish more than one host — e.g. a Global vs. China region
 // (MiniMax) or a separate overseas/domestic console (GLM's Z.AI vs. BigModel). Each carries its own
@@ -102,29 +102,6 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       }
     ],
     models: ['MiniMax-M3', 'MiniMax-M3[1m]', 'MiniMax-M2.7', 'MiniMax-M2.5']
-  },
-  {
-    id: 'moonshot',
-    label: 'Kimi (Moonshot)',
-    // Moonshot serves overseas from api.moonshot.ai and mainland China from api.moonshot.cn; both
-    // expose the same Anthropic route at /anthropic (i.e. /anthropic/v1/messages).
-    regions: [
-      {
-        id: 'global',
-        label: 'Global',
-        baseUrl: 'https://api.moonshot.ai/anthropic',
-        apiKeyUrl: 'https://platform.moonshot.ai/console/api-keys',
-        modelsListUrl: 'https://api.moonshot.ai/v1/models'
-      },
-      {
-        id: 'china',
-        label: 'China',
-        baseUrl: 'https://api.moonshot.cn/anthropic',
-        apiKeyUrl: 'https://platform.moonshot.cn/console/api-keys',
-        modelsListUrl: 'https://api.moonshot.cn/v1/models'
-      }
-    ],
-    models: ['kimi-k2.7-code', 'kimi-k2.6', 'kimi-k2.5']
   }
 ]
 

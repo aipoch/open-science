@@ -4,7 +4,6 @@ import { cn } from '@/lib/utils'
 import claudeLogo from '@/assets/provider-icons/claude.svg'
 import deepseekLogo from '@/assets/provider-icons/deepseek.svg'
 import minimaxLogo from '@/assets/provider-icons/minimax.svg'
-import moonshotLogo from '@/assets/provider-icons/moonshot.svg'
 import type { OfficialVendorId } from '../../../../shared/provider-registry'
 
 // Official vendor brand marks, bundled as assets. GLM/Z.AI isn't included yet — drop its official SVG
@@ -13,8 +12,7 @@ import type { OfficialVendorId } from '../../../../shared/provider-registry'
 const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   anthropic: claudeLogo,
   deepseek: deepseekLogo,
-  minimax: minimaxLogo,
-  moonshot: moonshotLogo
+  minimax: minimaxLogo
 }
 
 // Renders the icon for a provider-kind key ('custom', 'claude-default', or `official:<vendorId>`).
