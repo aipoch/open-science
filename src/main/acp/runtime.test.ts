@@ -744,8 +744,16 @@ describe('ACP runtime session management', () => {
         sessionId: 'remote-session-1',
         cwd: resolve('/workspace'),
         mcpServers: [],
-        // Every session (new or resumed) is restricted to the app-owned "user" settings scope.
-        _meta: { claudeCode: { options: { settingSources: ['user'] } } }
+        // Every session (new or resumed) is restricted to the app-owned "user" settings scope, and
+        // carries the always-on skill-privacy guardrail in its system prompt.
+        _meta: {
+          claudeCode: { options: { settingSources: ['user'] } },
+          systemPrompt: {
+            type: 'preset',
+            preset: 'claude_code',
+            append: expect.stringContaining('open_science_skill_privacy_instructions')
+          }
+        }
       }
     ])
     expect(fakeAgent.prompts).toEqual([
@@ -921,6 +929,17 @@ describe('ACP runtime session management', () => {
         type: 'preset',
         preset: 'claude_code',
         append: expect.stringContaining('write_artifact_file')
+      }
+    })
+    // The skill-privacy guardrail is appended to the system prompt on both create and resume.
+    expect(fakeAgent.newSessions[0]._meta).toMatchObject({
+      systemPrompt: {
+        append: expect.stringContaining('open_science_skill_privacy_instructions')
+      }
+    })
+    expect(fakeAgent.resumedSessions[0]._meta).toMatchObject({
+      systemPrompt: {
+        append: expect.stringContaining('open_science_skill_privacy_instructions')
       }
     })
   })
