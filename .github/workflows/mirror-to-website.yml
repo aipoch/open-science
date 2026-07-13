@@ -1,0 +1,108 @@
+# Mirror a published GitHub Release to the website's S3-compatible storage + CDN. Decoupled downstream
+# consumer of release.yml: GitHub Release stays the single source of truth, this job re-publishes its
+# installers to a fast, in-country endpoint and writes version.json (website + in-app update prompt).
+name: Mirror to website
+
+on:
+  # Auto-run once a Release is published; also runnable by hand to backfill or re-mirror a past tag.
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to mirror (e.g. v0.1.2)'
+        required: true
+
+# Only needs to read Release assets; it never writes back to the repo.
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (for the manifest script)
+        uses: actions/checkout@v4
+
+      # Tag from the Release event, or the manual input; version is the tag without a leading 'v'.
+      - name: Resolve tag and version
+        id: ref
+        run: |
+          tag="${{ github.event.release.tag_name || inputs.tag }}"
+          if [ -z "$tag" ]; then
+            echo "No tag resolved from event or input" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      # Pull every installer + SHA256SUMS.txt for the tag. GH_TOKEN authenticates gh with the repo.
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${{ steps.ref.outputs.tag }}" --repo "${{ github.repository }}" --dir dist-assets
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Build version.json from the downloaded files. Missing platforms warn (not fail) inside the
+      # script, so a partial release still yields a usable manifest.
+      - name: Generate version.json
+        env:
+          DIST_DIR: dist-assets
+          OUTPUT: version.json
+          VERSION: ${{ steps.ref.outputs.version }}
+          CDN_BASE_URL: ${{ vars.CDN_BASE_URL }}
+          S3_PREFIX: ${{ vars.S3_PREFIX }}
+          NOTES: ${{ github.event.release.body }}
+          RELEASE_DATE: ${{ github.event.release.published_at }}
+        run: node scripts/generate-version-manifest.mjs
+
+      # aws-cli talks to any S3-compatible endpoint via --endpoint-url. Credentials/region come from
+      # secrets/vars — nothing about the storage backend is hardcoded here.
+      - name: Configure AWS credentials
+        env:
+          S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          S3_REGION: ${{ vars.S3_REGION }}
+        run: |
+          aws configure set aws_access_key_id "$S3_ACCESS_KEY_ID"
+          aws configure set aws_secret_access_key "$S3_SECRET_ACCESS_KEY"
+          aws configure set default.region "$S3_REGION"
+
+      # Installers go to an immutable, per-version path: re-running the same tag overwrites identical
+      # bytes (idempotent backfill), and the versioned path never needs CDN invalidation. version.json
+      # is excluded here and published separately as the one mutable object.
+      - name: Sync installers to versioned path
+        env:
+          S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+          S3_BUCKET: ${{ vars.S3_BUCKET }}
+          S3_PREFIX: ${{ vars.S3_PREFIX }}
+          VERSION: ${{ steps.ref.outputs.version }}
+        run: |
+          aws --endpoint-url "$S3_ENDPOINT" s3 sync dist-assets/ \
+            "s3://$S3_BUCKET/$S3_PREFIX/releases/$VERSION/" --exclude "version.json"
+
+      # The single mutable manifest, overwritten on every release; website + app read this path.
+      - name: Upload version.json
+        env:
+          S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+          S3_BUCKET: ${{ vars.S3_BUCKET }}
+          S3_PREFIX: ${{ vars.S3_PREFIX }}
+        run: |
+          aws --endpoint-url "$S3_ENDPOINT" s3 cp version.json \
+            "s3://$S3_BUCKET/$S3_PREFIX/version.json"
+
+      # Pluggable CDN invalidation: only version.json can change, so only it is invalidated. Skipped
+      # entirely when no CDN credential is configured (e.g. MinIO-only setups), keeping the CDN vendor
+      # out of the hard dependency path. Swap the command body for your CDN's API when enabling.
+      - name: Invalidate CDN cache for version.json
+        if: ${{ secrets.CDN_API_TOKEN != '' }}
+        env:
+          CDN_API_TOKEN: ${{ secrets.CDN_API_TOKEN }}
+          S3_PREFIX: ${{ vars.S3_PREFIX }}
+        run: |
+          echo "Invalidating $S3_PREFIX/version.json via CDN API"
+          # TODO(sub-project): call the configured CDN's purge API for /$S3_PREFIX/version.json.
