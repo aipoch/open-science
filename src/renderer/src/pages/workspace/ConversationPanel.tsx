@@ -13,16 +13,16 @@ import {
 } from 'lucide-react'
 import { useRef } from 'react'
 
+import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { ResizablePanel } from '@/components/ui/resizable'
+import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { cn } from '@/lib/utils'
 import type { ChatSession } from '@/stores/session-store'
 
-import { ComposerDropOverlay } from './ComposerDropOverlay'
 import { ComposerEditor } from './composer/ComposerEditor'
 import { docToSkillIds, type ComposerDoc } from './composer/composer-doc'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
-import { useFileDropZone } from './useFileDropZone'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
 
 const composerInteractiveTransitionClassName = 'transition-colors duration-200 ease-out'
@@ -219,7 +219,9 @@ const ConversationPanel = ({
                     {...dropZoneProps}
                   >
                     {/* File-drag overlay is scoped to the composer input card only. */}
-                    {isDragging ? <ComposerDropOverlay /> : null}
+                    {isDragging ? (
+                      <FileDropOverlay label="Drop files to attach" className="rounded-2xl" />
+                    ) : null}
                     <div className="flex flex-col gap-2">
                       {attachments.length > 0 ? (
                         <div className="flex max-h-[92px] flex-wrap gap-2 overflow-y-auto border-b border-border-200 pb-2">

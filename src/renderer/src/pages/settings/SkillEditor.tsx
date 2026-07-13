@@ -2,7 +2,9 @@ import { FileUp, Upload, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import type { SkillReference } from '../../../../shared/settings'
+import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { Input } from '@/components/ui/input'
+import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { useSettingsStore } from '@/stores/settings-store'
 
 export type SkillDraft = {
@@ -123,12 +125,17 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
     input.click()
   }
 
+  // Loads the first dropped text file into the body — the drop counterpart of uploadContent().
+  const dropContent = async (files: File[]): Promise<void> => {
+    handleBodyChange(await files[0].text())
+    setContentMode('write')
+  }
+
   // Adds one or more supporting files to the references list (base64-encoded), replacing any
   // existing entry with the same name.
-  const addReferences = async (files: FileList | null): Promise<void> => {
-    if (!files) return
+  const addReferences = async (files: File[]): Promise<void> => {
     const added = await Promise.all(
-      Array.from(files).map(async (file) => ({
+      files.map(async (file) => ({
         path: file.name,
         dataBase64: await fileToBase64(file)
       }))
@@ -138,6 +145,16 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
       ...added
     ])
   }
+
+  // Each content area is its own drop zone with an independent overlay state.
+  const contentDrop = useFileDropZone({
+    enabled: true,
+    onFiles: (files) => void dropContent(files)
+  })
+  const referenceDrop = useFileDropZone({
+    enabled: true,
+    onFiles: (files) => void addReferences(files)
+  })
 
   const handleSave = async (): Promise<void> => {
     if (!canSave) return
@@ -288,8 +305,12 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
               <button
                 type="button"
                 onClick={uploadContent}
-                className="mt-4 flex w-full flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-8 text-center transition-colors hover:bg-muted/50"
+                {...contentDrop.dropZoneProps}
+                className="relative mt-4 flex w-full flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-8 text-center transition-colors hover:bg-muted/50"
               >
+                {contentDrop.isDragging ? (
+                  <FileDropOverlay label="Drop to upload" className="rounded-lg" />
+                ) : null}
                 <Upload className="size-5 text-muted-foreground" aria-hidden="true" />
                 <span className="text-sm font-medium text-foreground">
                   Upload a SKILL.md or text file
@@ -309,13 +330,19 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
               Supporting files (scripts, templates, data) the skill can read at runtime.
             </p>
 
-            <label className="mt-4 flex cursor-pointer flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-6 text-center transition-colors hover:bg-muted/50">
+            <label
+              {...referenceDrop.dropZoneProps}
+              className="relative mt-4 flex cursor-pointer flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-6 text-center transition-colors hover:bg-muted/50"
+            >
+              {referenceDrop.isDragging ? (
+                <FileDropOverlay label="Drop reference files" className="rounded-lg" />
+              ) : null}
               <input
                 type="file"
                 multiple
                 aria-label="Add reference files"
                 className="hidden"
-                onChange={(event) => void addReferences(event.target.files)}
+                onChange={(event) => void addReferences(Array.from(event.target.files ?? []))}
               />
               <FileUp className="size-5 text-muted-foreground" aria-hidden="true" />
               <span className="text-sm font-medium text-foreground">

@@ -1,6 +1,8 @@
 import { AlertTriangle, FileText, Info, Upload } from 'lucide-react'
 import { useState } from 'react'
 
+import { FileDropOverlay } from '@/components/FileDropOverlay'
+import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { useSettingsStore } from '@/stores/settings-store'
 
 // A danger banner for a parse/validation failure (invalid bundle, missing SKILL.md, no name, ...).
@@ -140,11 +142,11 @@ const SkillUploadView = ({
     event.target.value = ''
   }
 
-  const onDrop = (event: React.DragEvent<HTMLLabelElement>): void => {
-    event.preventDefault()
-    const file = event.dataTransfer.files?.[0]
-    if (file) void handleFile(file)
-  }
+  // Drag-and-drop shares the same parse path as the picker; the overlay signals the drop target.
+  const { isDragging, dropZoneProps } = useFileDropZone({
+    enabled: !busy,
+    onFiles: (files) => void handleFile(files[0])
+  })
 
   // Confirmation page: the parsed skill and its files, then Import / Cancel.
   if (pending) {
@@ -251,10 +253,10 @@ const SkillUploadView = ({
       </p>
 
       <label
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={onDrop}
-        className="mt-4 flex cursor-pointer flex-col items-center gap-3 rounded-lg border border-dashed border-border bg-muted/20 px-6 py-10 text-center transition-colors hover:bg-muted/40"
+        {...dropZoneProps}
+        className="relative mt-4 flex cursor-pointer flex-col items-center gap-3 rounded-lg border border-dashed border-border bg-muted/20 px-6 py-10 text-center transition-colors hover:bg-muted/40"
       >
+        {isDragging ? <FileDropOverlay label="Drop to upload" className="rounded-lg" /> : null}
         <input
           type="file"
           accept=".md,.zip,.skill"

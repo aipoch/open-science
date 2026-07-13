@@ -250,7 +250,7 @@ describe('SkillsPanel (sub-views)', () => {
       type: 'text/markdown'
     })
     const dropEvent = new Event('drop', { bubbles: true })
-    Object.defineProperty(dropEvent, 'dataTransfer', { value: { files: [file] } })
+    Object.defineProperty(dropEvent, 'dataTransfer', { value: { types: ['Files'], files: [file] } })
 
     await act(async () => {
       label?.dispatchEvent(dropEvent)
