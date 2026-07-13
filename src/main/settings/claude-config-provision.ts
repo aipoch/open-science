@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { ClaudeCodeSkillMaterializer, type SkillMaterializer } from '../skills/materializer'
@@ -11,6 +11,46 @@ import { SkillRegistry, type BundledSkill } from '../skills/registry'
 // Subdirs claude loads app-scoped assets from. App-owned; never synced with ~/.claude.
 const APP_ASSET_SUBDIRS = ['skills', 'plugins', 'commands'] as const
 
+// The agent's own file tools must not read (or search) the app config dir — it holds the materialized
+// skill files, whose (bundled / MCP) contents must never be surfaced verbatim into the conversation.
+// Skill *loading* is internal to the agent and unaffected by these tool-level deny rules. The kernel
+// (bash/subprocess) is guarded separately; see the notebook audit hook and read-guard spec.
+const GUARDED_FILE_TOOLS = ['Read', 'Edit', 'Glob', 'Grep'] as const
+
+// Builds the claude-code permission deny rules that fence the agent's file tools out of `configDir`.
+// Claude Code permission paths are gitignore-style with forward slashes, where a `//<abs>` prefix
+// denotes an absolute filesystem path. Normalize Windows backslashes and collapse the leading slash
+// so both POSIX (`/Users/…` -> `//Users/…`) and Windows (`C:\…` -> `//C:/…`) yield the `//` form.
+const configDenyRules = (configDir: string): string[] => {
+  const abs = configDir.replace(/\\/g, '/').replace(/^\/+/, '')
+  return GUARDED_FILE_TOOLS.map((tool) => `${tool}(//${abs}/**)`)
+}
+
+// Writes/merges `<configDir>/settings.json` so its permissions.deny includes the guard rules, keeping
+// any settings and deny entries already present. Loaded because the agent runs with settingSources:
+// ['user'], i.e. this app-owned config dir is the user scope.
+const writeGuardSettings = async (configDir: string): Promise<void> => {
+  const settingsPath = join(configDir, 'settings.json')
+
+  let settings: Record<string, unknown> = {}
+  try {
+    const parsed = JSON.parse(await readFile(settingsPath, 'utf8')) as unknown
+    if (typeof parsed === 'object' && parsed !== null) settings = parsed as Record<string, unknown>
+  } catch {
+    settings = {}
+  }
+
+  const permissions =
+    typeof settings.permissions === 'object' && settings.permissions !== null
+      ? (settings.permissions as Record<string, unknown>)
+      : {}
+  const existingDeny = Array.isArray(permissions.deny) ? (permissions.deny as string[]) : []
+  const deny = [...new Set([...existingDeny, ...configDenyRules(configDir)])]
+
+  settings.permissions = { ...permissions, deny }
+  await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
+}
+
 type ProvisionOptions = {
   // The full skill catalog (featured + imported + personal). Defaults to bundled skills only.
   skills?: BundledSkill[]
@@ -18,9 +58,9 @@ type ProvisionOptions = {
   disabledSkillIds?: string[]
 }
 
-// Ensures the app config dir + asset subdirs exist, then materializes the enabled skill set into
-// `<configDir>/skills`. Idempotent and safe to call before each agent spawn. Skill materialization
-// failures are swallowed by the materializer so a bad skill never blocks the spawn.
+// Ensures the app config dir + asset subdirs exist, writes the file-tool deny rules, then materializes
+// the enabled skill set into `<configDir>/skills`. Idempotent and safe to call before each agent spawn.
+// Skill materialization failures are swallowed by the materializer so a bad skill never blocks the spawn.
 const provisionAppClaudeConfigDir = async (
   configDir: string,
   options: ProvisionOptions = {}
@@ -30,6 +70,8 @@ const provisionAppClaudeConfigDir = async (
     APP_ASSET_SUBDIRS.map((sub) => mkdir(join(configDir, sub), { recursive: true }))
   )
 
+  await writeGuardSettings(configDir)
+
   const materializer = options.materializer ?? new ClaudeCodeSkillMaterializer()
   const skills = options.skills ?? (await new SkillRegistry().list())
   const disabled = new Set(options.disabledSkillIds ?? [])
@@ -38,4 +80,4 @@ const provisionAppClaudeConfigDir = async (
   await materializer.sync(configDir, enabled)
 }
 
-export { APP_ASSET_SUBDIRS, provisionAppClaudeConfigDir }
+export { APP_ASSET_SUBDIRS, configDenyRules, provisionAppClaudeConfigDir }

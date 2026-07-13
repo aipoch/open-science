@@ -46,6 +46,7 @@ import {
   type NotebookRpcConnection
 } from '../notebook/mcp-server'
 import { getNotebookSessionRoot } from '../notebook/repository'
+import { getAppClaudeConfigDir } from '../settings/provider-env'
 import type { UploadRepository } from '../uploads/repository'
 import type { UploadedAttachment } from '../../shared/uploads'
 import { buildImageContentData, extractPdfText } from '../uploads/attachment-media'
@@ -1009,7 +1010,11 @@ class AcpRuntime {
         this.handlePermissionRequest(ctx.params)
       )
       .onRequest(acp.methods.client.fs.readTextFile, (ctx) =>
-        readWorkspaceTextFile(this.resolveSessionCwd(ctx.params.sessionId), ctx.params)
+        readWorkspaceTextFile(
+          this.resolveSessionCwd(ctx.params.sessionId),
+          ctx.params,
+          this.protectedReadRoots()
+        )
       )
       .onRequest(acp.methods.client.fs.writeTextFile, (ctx) =>
         writeWorkspaceTextFile(this.resolveSessionCwd(ctx.params.sessionId), ctx.params)
@@ -1026,6 +1031,12 @@ class AcpRuntime {
     }
 
     return sessionCwd
+  }
+
+  // App-owned directories the agent's Read tool must never read: the CLAUDE_CONFIG_DIR holds the
+  // materialized skill files, whose (bundled/MCP) contents must not be surfaced into the conversation.
+  private protectedReadRoots(): string[] {
+    return this.artifactOptions ? [getAppClaudeConfigDir(this.artifactOptions.storageRoot)] : []
   }
 
   // Creates an app-owned artifact session id so new ACP sessions never decide their storage directory.

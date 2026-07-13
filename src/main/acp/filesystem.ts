@@ -7,7 +7,7 @@ import type {
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-import { assertWorkspacePath } from './workspace-path'
+import { assertWorkspacePath, isPathInsideWorkspace } from './workspace-path'
 
 // Returns the requested line window while preserving full content by default.
 const sliceLines = (content: string, line?: number | null, limit?: number | null): string => {
@@ -22,13 +22,28 @@ const sliceLines = (content: string, line?: number | null, limit?: number | null
   return lines.slice(startIndex, endIndex).join('\n')
 }
 
-// Reads a text file after constraining the requested path to the active workspace.
+// Rejects reads that resolve inside an app-owned protected directory — e.g. the CLAUDE_CONFIG_DIR
+// that holds materialized skill files — so bundled skill contents can never be surfaced verbatim
+// through the Read tool. (Workspace containment already blocks most of these; this is belt-and-
+// suspenders for sessions whose cwd is unusually broad.)
+const assertNotProtected = (filePath: string, protectedRoots: string[]): void => {
+  for (const root of protectedRoots) {
+    if (isPathInsideWorkspace(root, filePath)) {
+      throw new Error('This file belongs to a protected application directory and cannot be read.')
+    }
+  }
+}
+
+// Reads a text file after constraining the requested path to the active workspace and rejecting
+// app-owned protected directories.
 const readWorkspaceTextFile = async (
   workspaceRoot: string,
-  params: ReadTextFileRequest
+  params: ReadTextFileRequest,
+  protectedRoots: string[] = []
 ): Promise<ReadTextFileResponse> => {
   // ACP paths are absolute, but resolve again here so path traversal is checked in one place.
   const filePath = assertWorkspacePath(workspaceRoot, params.path)
+  assertNotProtected(filePath, protectedRoots)
   const content = await readFile(filePath, 'utf8')
 
   return {

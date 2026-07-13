@@ -20,6 +20,7 @@ import type {
 } from '../../shared/notebook'
 import { NotebookPythonExecutor } from './python-executor'
 import { NotebookRunRepository, getNotebookRunJsonPath, getRuntimeRoot } from './repository'
+import { getAppClaudeConfigDir } from '../settings/provider-env'
 
 type NotebookExecutionRequest = {
   code: string
@@ -27,6 +28,8 @@ type NotebookExecutionRequest = {
   notebookSessionRoot: string
   dataRoot: string
   runtimeRoot: string
+  // App-owned directories the kernel must not read (e.g. the CLAUDE_CONFIG_DIR with skill files).
+  protectedDirs?: string[]
   timeoutMs?: number
   // Connector RPC connection injected into the kernel spawn env for host.mcp().
   mcpRpcEndpoint?: string
@@ -287,6 +290,7 @@ class NotebookRuntimeService {
         notebookSessionRoot: session.notebookSessionRoot,
         dataRoot: session.dataRoot,
         runtimeRoot: session.runtimeRoot,
+        protectedDirs: [getAppClaudeConfigDir(this.options.storageRoot)],
         timeoutMs: request.timeoutMs,
         mcpRpcEndpoint: mcpRpc?.endpoint,
         mcpRpcToken: mcpRpc?.token
