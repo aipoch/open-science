@@ -56,12 +56,6 @@
       "updatedAt": "2026-07-12T00:00:00.000Z"
     },
     {
-      "id": "mindmap",
-      "name": "Mind Map",
-      "source": "featured",
-      "updatedAt": "2026-07-12T00:00:00.000Z"
-    },
-    {
       "id": "pdf-extract",
       "name": "PDF Extract",
       "source": "featured",
