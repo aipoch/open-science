@@ -30,7 +30,7 @@ import type {
 } from '../../shared/acp'
 import { spawnClaudeAgentAcp, type SpawnClaudeAgentAcpOptions } from './agent-process'
 import { createLogger } from '../logger'
-import { toAcpRuntimeEvent } from './runtime-events'
+import { extractToolFailureText, toAcpRuntimeEvent } from './runtime-events'
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 import { AcpPermissionBroker } from './permission-broker'
 import { createArtifactMcpServerConfig } from '../artifacts/mcp-server'
@@ -1319,6 +1319,19 @@ class AcpRuntime {
         ? { ...notification, sessionId: appSessionId }
         : notification
     const event = toAcpRuntimeEvent(routed, this.nextEventId())
+
+    // Tool results (e.g. WebFetch's claude.ai domain-safety preflight, a failed Bash command) stream as
+    // tool_call_update content, which the session-update log omits — so a tool that runs and fails leaves
+    // no trace. Surface failures with the tool name and a bounded, text-only reason; never the arguments,
+    // raw output, or the URL/command-bearing title, to keep user data out of the log.
+    if (event.kind === 'tool' && event.status === 'failed') {
+      log.warn('tool call failed', {
+        tool: event.providerToolName ?? event.toolKind,
+        toolCallId: event.toolCallId,
+        sessionId: event.sessionId,
+        reason: extractToolFailureText(event.toolContent)
+      })
+    }
 
     if ((event.kind === 'message' || event.kind === 'thought') && !event.text) {
       return

@@ -1,6 +1,10 @@
-import type { ContentBlock, SessionNotification } from '@agentclientprotocol/sdk'
+import type { ContentBlock, SessionNotification, ToolCallContent } from '@agentclientprotocol/sdk'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
+
+// Bounds how much of a failed tool's result text reaches the log, so large or sensitive tool output
+// cannot flood it. Tuned to fit a typical error message (e.g. WebFetch's domain-safety preflight).
+const TOOL_FAILURE_TEXT_LIMIT = 300
 
 // Narrows protocol extension values before reading provider-specific metadata.
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -76,6 +80,23 @@ const contentToText = (content: ContentBlock): string => {
     default:
       return '[content]'
   }
+}
+
+// Extracts a bounded, text-only reason from a failed tool call's content for logging. Only text blocks
+// are read (never raw arguments, diffs, or terminal output) and the result is truncated, so a failure is
+// diagnosable without spilling large or sensitive tool output into the log.
+const extractToolFailureText = (content: ToolCallContent[] | undefined): string | undefined => {
+  if (!content) return undefined
+
+  const text = content
+    .map((item) => (item.type === 'content' ? contentToText(item.content) : ''))
+    .filter(Boolean)
+    .join(' ')
+    .trim()
+
+  if (!text) return undefined
+
+  return text.length > TOOL_FAILURE_TEXT_LIMIT ? `${text.slice(0, TOOL_FAILURE_TEXT_LIMIT)}…` : text
 }
 
 // Normalizes protocol session notifications into a renderer-friendly event shape.
@@ -187,4 +208,4 @@ const toAcpRuntimeEvent = (
   }
 }
 
-export { toAcpRuntimeEvent }
+export { extractToolFailureText, toAcpRuntimeEvent }

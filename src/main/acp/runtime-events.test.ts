@@ -1,7 +1,7 @@
-import type { SessionNotification } from '@agentclientprotocol/sdk'
+import type { SessionNotification, ToolCallContent } from '@agentclientprotocol/sdk'
 import { describe, expect, it } from 'vitest'
 
-import { toAcpRuntimeEvent } from './runtime-events'
+import { extractToolFailureText, toAcpRuntimeEvent } from './runtime-events'
 
 describe('ACP runtime event normalization', () => {
   it('maps assistant text chunks into readable runtime events', () => {
@@ -165,5 +165,38 @@ describe('ACP runtime event normalization', () => {
       terminalOutput: 'hello world',
       terminalExitCode: 0
     })
+  })
+})
+
+describe('extractToolFailureText', () => {
+  const textContent = (text: string): ToolCallContent => ({
+    type: 'content',
+    content: { type: 'text', text }
+  })
+
+  it('joins text blocks and ignores non-text content to keep raw output out of the log', () => {
+    const content: ToolCallContent[] = [
+      textContent('Unable to verify if domain example.com is safe to fetch.'),
+      { type: 'terminal', terminalId: 'term-1' } as unknown as ToolCallContent
+    ]
+
+    expect(extractToolFailureText(content)).toBe(
+      'Unable to verify if domain example.com is safe to fetch.'
+    )
+  })
+
+  it('truncates long reasons so large tool output cannot flood the log', () => {
+    const result = extractToolFailureText([textContent('x'.repeat(500))])
+
+    expect(result).toHaveLength(301)
+    expect(result?.endsWith('…')).toBe(true)
+  })
+
+  it('returns undefined when there is no content or no text', () => {
+    expect(extractToolFailureText(undefined)).toBeUndefined()
+    expect(extractToolFailureText([])).toBeUndefined()
+    expect(
+      extractToolFailureText([{ type: 'terminal', terminalId: 't' } as unknown as ToolCallContent])
+    ).toBeUndefined()
   })
 })
