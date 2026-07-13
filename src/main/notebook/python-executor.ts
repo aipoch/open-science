@@ -31,13 +31,24 @@ import urllib.error
 import urllib.request
 
 class _Host:
-    # Control-plane bridge to the main process connector service.
-    def mcp(self, server, method, **kwargs):
+    # Control-plane bridge to the main process connector service. Tool arguments accept either a
+    # positional dict (host.mcp("s", "m", {...})) or keyword arguments (host.mcp("s", "m", term=...));
+    # server/method/args are positional-only so a tool whose own argument is named one of these still
+    # routes through **kwargs.
+    def mcp(self, server, method, args=None, /, **kwargs):
+        if args is not None:
+            if not isinstance(args, dict):
+                raise TypeError("host.mcp arguments must be a dict or keyword arguments")
+            if kwargs:
+                raise TypeError("host.mcp: pass arguments as a dict or as keywords, not both")
+            call_args = args
+        else:
+            call_args = kwargs
         endpoint = os.environ.get("OPEN_SCIENCE_MCP_RPC_ENDPOINT")
         token = os.environ.get("OPEN_SCIENCE_MCP_RPC_TOKEN")
         if not endpoint:
             raise RuntimeError("host.mcp is unavailable: connector RPC endpoint not set")
-        payload = json.dumps({"method": "mcpCall", "params": {"server": server, "method": method, "args": kwargs}}).encode("utf-8")
+        payload = json.dumps({"method": "mcpCall", "params": {"server": server, "method": method, "args": call_args}}).encode("utf-8")
         req = urllib.request.Request(endpoint, data=payload, method="POST",
             headers={"content-type": "application/json", "authorization": "Bearer " + (token or "")})
         try:

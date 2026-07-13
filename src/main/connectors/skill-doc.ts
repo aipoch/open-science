@@ -2,7 +2,7 @@ import { CONNECTOR_CATALOG } from './catalog'
 import { getConnectorTools } from './registry'
 
 const CONVENTIONS = [
-  'Reach this service ONLY via `host.mcp(server, method, **kwargs)` from the notebook kernel.',
+  'Reach this service ONLY via `host.mcp(server, method, **kwargs)` from the notebook kernel — arguments may also be passed as a dict: `host.mcp(server, method, {...})`. It is synchronous; do not `await` it.',
   'Do NOT reimplement these calls with raw HTTP (urllib / requests / httpx / fetch) or hit the upstream endpoints directly — that bypasses the approval gate, per-tool policy, credentials, and rate limits, and can leak project data.',
   'Prefer bulk/list tools over per-item loops — the upstream API is rate-limited and shared across subagents.',
   'Pass large results between cells via `./handoff/*.json`, not the model context.'
