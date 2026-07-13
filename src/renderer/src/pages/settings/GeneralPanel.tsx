@@ -1,6 +1,7 @@
 import { ExternalLink, Globe } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
+import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { APP } from '../../../../shared/app-config'
 
@@ -88,14 +89,7 @@ const GeneralPanel = (): React.JSX.Element => {
 
         <p className="mt-3 text-xs text-muted-foreground">
           Something not working as expected?{' '}
-          <a
-            href={APP.links.githubIssues}
-            target="_blank"
-            rel="noreferrer"
-            className="font-medium text-foreground underline underline-offset-2 transition-colors hover:text-text-000"
-          >
-            Open an issue on GitHub
-          </a>{' '}
+          <ExternalTextLink href={APP.links.githubIssues}>Open an issue on GitHub</ExternalTextLink>{' '}
           and attach the log above.
         </p>
 

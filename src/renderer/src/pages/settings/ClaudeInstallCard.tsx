@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 
+import { ExternalTextLink } from '@/components/ExternalTextLink'
 import type { ClaudeInstallSource } from '../../../../shared/settings'
 import { getClaudeInstallSources, getNodeInstallHint } from '../../../../shared/settings'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
@@ -86,10 +87,8 @@ const ClaudeInstallCard = ({
           ) : null}
           <p className="text-muted-foreground">
             Or download it from{' '}
-            <a href={nodeHint.url} target="_blank" rel="noreferrer" className="underline">
-              {nodeHint.url}
-            </a>
-            , then re-detect above so npm is picked up.
+            <ExternalTextLink href={nodeHint.url}>{nodeHint.url}</ExternalTextLink>, then re-detect
+            above so npm is picked up.
           </p>
         </div>
       ) : null}

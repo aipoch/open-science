@@ -1,3 +1,4 @@
+import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -88,14 +89,9 @@ const ProviderForm = ({
           <RequiredMark />
         </label>
         {apiKeyUrl ? (
-          <a
-            href={apiKeyUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="text-xs font-medium text-primary underline underline-offset-2 hover:text-primary/80"
-          >
-            Get an API key ↗
-          </a>
+          <ExternalTextLink href={apiKeyUrl} className="text-xs">
+            Get an API key
+          </ExternalTextLink>
         ) : null}
       </div>
       <Input

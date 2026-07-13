@@ -365,6 +365,12 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Compact button: `h-8 px-3 rounded-md text-xs font-medium`; the top create button is `32px` tall.
 - Icon button: usually `size-8 rounded-md`; top bars and viewer toolbar buttons may use `size-7`.
 
+### External Link
+
+- Links that leave the app use the shared `ExternalTextLink` component: an underlined `text-primary` label trailed by a lucide `ArrowUpRight` icon. Do not use a bare `<a>` or a Unicode `↗`.
+- Navigation: it renders `<a target="_blank" rel="noreferrer">`; the main process (`setWindowOpenHandler` → `shell.openExternal`) opens these in the system browser, never in an app window.
+- In-app / agent-markdown prose links keep the inline Activity Stream style and do not get the arrow.
+
 ### Card / Panel
 
 - Home list rows do not need a heavy outer card; the row itself uses `rounded-lg hover:bg-accent`.
