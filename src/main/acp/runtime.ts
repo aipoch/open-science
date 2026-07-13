@@ -1277,15 +1277,37 @@ class AcpRuntime {
     })
   }
 
-  // Hands permission requests to the broker so the renderer can answer later.
-  private handlePermissionRequest(
+  // Hands permission requests to the broker so the renderer can answer later. Any failure is logged with
+  // its real message before it propagates: the ACP SDK collapses a thrown handler error into a bare
+  // -32603 "Internal error" (real detail buried in `data.details`), so this is the only place the true
+  // cause is captured in the app log. The error is rethrown unchanged to preserve protocol behavior.
+  private async handlePermissionRequest(
     params: RequestPermissionRequest
   ): Promise<RequestPermissionResponse> {
-    if (!this.sessions.has(params.sessionId)) {
-      throw new Error(`Unknown ACP session: ${params.sessionId}`)
-    }
+    // Fork point: a WebFetch/server-side tool that never reaches this line means the "Internal error"
+    // originated elsewhere. Debug level keeps it out of normal runs; ids and a count are enough to trace.
+    log.debug('permission request received', {
+      title: params.toolCall?.title,
+      toolCallId: params.toolCall?.toolCallId,
+      sessionId: params.sessionId,
+      optionCount: params.options?.length
+    })
 
-    return this.permissionBroker.requestPermission(params)
+    try {
+      if (!this.sessions.has(params.sessionId)) {
+        throw new Error(`Unknown ACP session: ${params.sessionId}`)
+      }
+
+      return await this.permissionBroker.requestPermission(params)
+    } catch (error) {
+      log.error('permission request failed', {
+        message: errorMessage(error),
+        title: params.toolCall?.title,
+        toolCallId: params.toolCall?.toolCallId,
+        sessionId: params.sessionId
+      })
+      throw error
+    }
   }
 
   // Normalizes low-level session notifications into runtime/workspace events.

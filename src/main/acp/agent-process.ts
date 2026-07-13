@@ -100,6 +100,12 @@ const spawnClaudeAgentAcp = ({
     baseUrl: env.ANTHROPIC_BASE_URL,
     model: env.ANTHROPIC_MODEL,
     configDir: env.CLAUDE_CONFIG_DIR,
+    // Proxy presence only (never the values): a Finder-launched packaged app inherits no login shell, so
+    // these being false is the usual cause of in-app network failures (curl/WebFetch) while the terminal works.
+    hasHttpProxy: Boolean(env.http_proxy || env.HTTP_PROXY),
+    hasHttpsProxy: Boolean(env.https_proxy || env.HTTPS_PROXY),
+    hasAllProxy: Boolean(env.all_proxy || env.ALL_PROXY),
+    hasNoProxy: Boolean(env.no_proxy || env.NO_PROXY),
     // PATH is not secret; provider credentials are never logged.
     path: env.PATH
   })
