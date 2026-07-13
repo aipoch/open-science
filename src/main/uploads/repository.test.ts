@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
+import { MAX_UPLOAD_FILE_BYTES, PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
 import { UploadRepository } from './repository'
 
 let storageRoot: string | undefined
@@ -49,6 +49,18 @@ describe('upload repository', () => {
       join(root, 'uploads', 'default-project', PENDING_UPLOAD_SESSION_ID, 'paste.png')
     )
     await expect(readFile(attachment.path, 'utf8')).resolves.toBe('png-bytes')
+  })
+
+  it('rejects staging a file whose content exceeds the size limit', async () => {
+    const root = await createStorageRoot()
+    const repository = new UploadRepository(root)
+    const oversized = Buffer.alloc(MAX_UPLOAD_FILE_BYTES + 1)
+
+    await expect(
+      repository.stageFiles({
+        files: [{ name: 'huge.bin', content: oversized.toString('base64') }]
+      })
+    ).rejects.toThrow(/maximum allowed size/)
   })
 
   it('finalizes pending uploads into the real session directory without changing ids', async () => {

@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto'
 import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../../shared/artifacts'
 import {
   DEFAULT_UPLOAD_PROJECT_NAME,
+  MAX_UPLOAD_FILE_BYTES,
   PENDING_UPLOAD_SESSION_ID,
   type DeleteUploadRequest,
   type ReadUploadBytesRequest,
@@ -107,10 +108,17 @@ class UploadRepository {
       request.files.map(async (file) => {
         // Preserve the original display name separately from the sanitized filesystem name.
         const originalName = file.name.trim() || 'upload'
+        const content = Buffer.from(file.content, 'base64')
+
+        // Authoritative per-file size guard so no entry point can persist an oversized upload.
+        if (content.byteLength > MAX_UPLOAD_FILE_BYTES) {
+          throw new Error(`Upload exceeds the maximum allowed size: ${originalName}`)
+        }
+
         const { filename, filePath } = await this.writeUniqueFile(
           directory,
           toSafeUploadFilename(originalName),
-          Buffer.from(file.content, 'base64')
+          content
         )
 
         return this.createAttachment({

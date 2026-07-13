@@ -5,6 +5,11 @@ export const DEFAULT_UPLOAD_PROJECT_NAME = DEFAULT_ARTIFACT_PROJECT_NAME
 // New-conversation uploads are staged here until the runtime returns a durable session id.
 export const PENDING_UPLOAD_SESSION_ID = '.pending'
 
+// Per-file 50 MB cap enforced in both the composer and the main-process staging entry.
+export const MAX_UPLOAD_FILE_BYTES = 50 * 1024 * 1024
+// Composer total attachment cap; enforced renderer-side since main is stateless about composer state.
+export const MAX_COMPOSER_ATTACHMENTS = 10
+
 export type StageUploadFile = {
   name: string
   content: string
