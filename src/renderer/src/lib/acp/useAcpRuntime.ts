@@ -47,7 +47,8 @@ const useAcpRuntime = (): {
   sendPrompt: (
     sessionId: string,
     text: string,
-    attachments?: AcpPromptRequest['attachments']
+    attachments?: AcpPromptRequest['attachments'],
+    forcedSkillIds?: string[]
   ) => Promise<AcpStateSnapshot | undefined>
   respondToPermission: (
     requestId: string,
@@ -189,10 +190,17 @@ const useAcpRuntime = (): {
     (
       sessionId: AcpPromptRequest['sessionId'],
       text: AcpPromptRequest['text'],
-      attachments?: AcpPromptRequest['attachments']
+      attachments?: AcpPromptRequest['attachments'],
+      forcedSkillIds?: string[]
     ) =>
       runSnapshotAction(undefined, () =>
-        window.api.acp.sendPrompt({ sessionId, text, attachments })
+        window.api.acp.sendPrompt({
+          sessionId,
+          text,
+          attachments,
+          // Omit the field entirely when no skills were picked so the request stays minimal.
+          ...(forcedSkillIds && forcedSkillIds.length > 0 ? { forcedSkillIds } : {})
+        })
       ),
     [runSnapshotAction]
   )

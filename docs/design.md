@@ -519,6 +519,13 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Composer area uses a top fade `bg-gradient-to-t from-bg-10 to-bg-10/0`.
 - Message scroller and preview panel both use `bg-bg-10`.
 
+#### Composer skill selector
+
+- The composer input is a `contenteditable` editor (`role="textbox" aria-multiline`), not a textarea, so it can hold inline non-editable mention chips. Placeholder via `empty:before:content-[attr(data-placeholder)]` in a muted `text-text-300`: `Ask anything — / for skills`. Only `/` skills is wired; `@`/`#`/`⌘K` are reserved for later and are not advertised in the placeholder.
+- Typing `/` at a word boundary opens a **skill popup** above the input: `absolute bottom-full mb-1 z-50 bg-bg-000 border-0.5 border-border-200 rounded-xl shadow p-1.5 min-w-[320px] max-w-[440px] max-h-[min(45vh,18rem)]`. It is a `role="listbox"` of `role="option"` rows — name (`font-medium text-sm truncate`) + source badge (`text-[10px] px-1.5 py-0.5 rounded bg-accent text-accent-foreground`) + 2-line description (`text-xs text-text-300 line-clamp-2`); active row `bg-bg-200 !text-text-000`. A footer hint bar shows `↑↓ navigate · Enter select · Esc close`.
+- Selecting inserts an inline **skill chip**: `inline-flex items-center px-1.5 py-0.5 mx-0.5 bg-accent text-accent-foreground rounded text-sm font-medium select-all`, `contenteditable="false"`, label `/<Name>`, carrying `data-mention-type="skill" data-skill-id`. Backspace deletes the whole chip; chips are atomic to caret motion.
+- On send, chips serialize to `/<Name>` inline in the visible message, and their skill ids are carried as `forcedSkillIds`: the agent prompt is prefixed with a steering nudge naming the skills, and any picked skill toggled off in Settings is force-loaded for that turn only (the message text the user sees is unchanged).
+
 ### Settings
 
 - Use a large `Dialog`; the default panel is bordered `rounded-xl border border-border bg-card shadow-dialog`. A maximize control enlarges it to `h-[80vh] w-[80vw]`; the restored size follows content density.

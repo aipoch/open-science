@@ -15,6 +15,8 @@ type SendWorkspaceMessageInput = {
   projectId?: string
   // Storage project the artifact/notebook MCP servers write under (usually the same value).
   projectName?: string
+  // Skills the user picked in the composer; force-loaded and nudged for this turn only.
+  forcedSkillIds?: string[]
 }
 
 type SendWorkspaceMessageResult = {
@@ -161,7 +163,8 @@ const startPendingSessionPrompt = (
   content: string,
   attachments: UploadedAttachment[],
   cwd: string | undefined,
-  projectName: string | undefined
+  projectName: string | undefined,
+  forcedSkillIds: string[] | undefined
 ): void => {
   void (async () => {
     const createdSession = await runtime.createSession(cwd, projectName).catch(() => undefined)
@@ -197,7 +200,7 @@ const startPendingSessionPrompt = (
     }
 
     void runtime
-      .sendPrompt(runtimeSessionId, content, promptAttachments)
+      .sendPrompt(runtimeSessionId, content, promptAttachments, forcedSkillIds)
       .then((snapshot) => {
         if (!snapshot) {
           useSessionStore.getState().failRun(runtimeSessionId, 'Agent run failed')
@@ -214,7 +217,15 @@ const startPendingSessionPrompt = (
 // Records the user's prompt before slow runtime work continues.
 const sendWorkspaceMessage = async (
   runtime: WorkspaceMessageRuntime,
-  { sessionId, text, attachments = [], cwd, projectId, projectName }: SendWorkspaceMessageInput
+  {
+    sessionId,
+    text,
+    attachments = [],
+    cwd,
+    projectId,
+    projectName,
+    forcedSkillIds
+  }: SendWorkspaceMessageInput
 ): Promise<SendWorkspaceMessageResult | undefined> => {
   const content = text.trim()
 
@@ -254,7 +265,8 @@ const sendWorkspaceMessage = async (
         content,
         attachments,
         retryCwd,
-        sessionProjectName
+        sessionProjectName,
+        forcedSkillIds
       )
       return appended
     }
@@ -312,7 +324,7 @@ const sendWorkspaceMessage = async (
 
     // The hook returns after local state is updated; event listeners handle the streamed result.
     void runtime
-      .sendPrompt(targetSessionId, content, promptAttachments)
+      .sendPrompt(targetSessionId, content, promptAttachments, forcedSkillIds)
       .then((snapshot) => {
         if (!snapshot) {
           useSessionStore.getState().failRun(targetSessionId, 'Agent run failed')
@@ -343,7 +355,8 @@ const sendWorkspaceMessage = async (
     content,
     attachments,
     targetCwd ?? runtime.state.cwd,
-    projectName
+    projectName,
+    forcedSkillIds
   )
 
   return pending

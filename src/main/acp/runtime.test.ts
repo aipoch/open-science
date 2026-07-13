@@ -6,7 +6,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpRuntime } from './runtime'
 import { ArtifactRepository } from '../artifacts/repository'
@@ -1445,5 +1445,146 @@ describe('ACP runtime session management', () => {
 
     expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([])
     expect(prompts).toEqual(['first prompt'])
+  })
+})
+
+describe('ACP runtime skill force-load + nudge', () => {
+  // Builds a spawner that returns a fresh fake agent per connect, so a force-load reconnect can spawn a
+  // second working agent. All agent handles are collected so tests can assert prompts across reconnects.
+  const createFreshAgentSpawner = (): {
+    spawn: () => ChildProcessWithoutNullStreams
+    agents: Array<ReturnType<typeof startFakeAgent>>
+    spawnCount: () => number
+  } => {
+    const agents: Array<ReturnType<typeof startFakeAgent>> = []
+    let count = 0
+
+    return {
+      spawn: () => {
+        count += 1
+        const process = new FakeAgentProcess()
+        agents.push(startFakeAgent(process, ['remote-session-1']))
+        return asAgentProcess(process)
+      },
+      agents,
+      spawnCount: () => count
+    }
+  }
+
+  // A stub of the settings-service skill hooks with per-call spies for assertions.
+  const createSkillsHooks = (options: {
+    needForceLoad: string[]
+    names: Record<string, string>
+  }): {
+    needForceLoad: ReturnType<typeof vi.fn<(ids: string[]) => Promise<string[]>>>
+    setTurnForced: ReturnType<typeof vi.fn<(ids: string[]) => void>>
+    clearTurnForced: ReturnType<typeof vi.fn<() => void>>
+    namesForIds: ReturnType<typeof vi.fn<(ids: string[]) => Promise<string[]>>>
+  } => ({
+    needForceLoad: vi.fn<(ids: string[]) => Promise<string[]>>(async () => options.needForceLoad),
+    setTurnForced: vi.fn<(ids: string[]) => void>(),
+    clearTurnForced: vi.fn<() => void>(),
+    namesForIds: vi.fn<(ids: string[]) => Promise<string[]>>(async (ids: string[]) =>
+      ids.map((id) => options.names[id]).filter((name): name is string => name !== undefined)
+    )
+  })
+
+  it('respawns and nudges when a picked skill is disabled, then restores after the turn', async () => {
+    const spawner = createFreshAgentSpawner()
+    const hooks = createSkillsHooks({
+      needForceLoad: ['research'],
+      names: { research: 'Deep Research' }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: spawner.spawn,
+      skills: hooks
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    expect(spawner.spawnCount()).toBe(1)
+
+    await runtime.sendPrompt({
+      sessionId: 'remote-session-1',
+      text: 'summarize the paper',
+      forcedSkillIds: ['research']
+    })
+
+    // The picked skill was marked forced and the agent respawned before the prompt (resume path).
+    expect(hooks.setTurnForced).toHaveBeenCalledWith(['research'])
+    expect(spawner.spawnCount()).toBe(2)
+    expect(spawner.agents[1].resumedSessions).toHaveLength(1)
+
+    // The nudge is prepended to the text the agent receives (on the respawned agent).
+    expect(spawner.agents[1].prompts).toEqual([
+      {
+        sessionId: 'remote-session-1',
+        text: 'Use the following skill(s) for this task: Deep Research.\n\nsummarize the paper'
+      }
+    ])
+
+    // After the turn the force set is cleared and a restore reconnect is scheduled (agent torn down).
+    expect(hooks.clearTurnForced).toHaveBeenCalledTimes(1)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(runtime.getSnapshot().status).toBe('closed')
+  })
+
+  it('nudges without any reconnect when every picked skill is already enabled', async () => {
+    const spawner = createFreshAgentSpawner()
+    const hooks = createSkillsHooks({
+      needForceLoad: [],
+      names: { research: 'Deep Research' }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: spawner.spawn,
+      skills: hooks
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: 'remote-session-1',
+      text: 'summarize the paper',
+      forcedSkillIds: ['research']
+    })
+
+    // No disabled picks → no respawn and no force set toggling, but the nudge is still prepended.
+    expect(hooks.setTurnForced).not.toHaveBeenCalled()
+    expect(hooks.clearTurnForced).not.toHaveBeenCalled()
+    expect(spawner.spawnCount()).toBe(1)
+    expect(spawner.agents[0].prompts).toEqual([
+      {
+        sessionId: 'remote-session-1',
+        text: 'Use the following skill(s) for this task: Deep Research.\n\nsummarize the paper'
+      }
+    ])
+  })
+
+  it('leaves the prompt untouched when no skills are picked', async () => {
+    const spawner = createFreshAgentSpawner()
+    const hooks = createSkillsHooks({
+      needForceLoad: ['research'],
+      names: { research: 'Deep Research' }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: spawner.spawn,
+      skills: hooks
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: 'remote-session-1', text: 'plain prompt' })
+
+    // With no forcedSkillIds, none of the skill hooks run and the text is unchanged.
+    expect(hooks.needForceLoad).not.toHaveBeenCalled()
+    expect(hooks.namesForIds).not.toHaveBeenCalled()
+    expect(hooks.setTurnForced).not.toHaveBeenCalled()
+    expect(spawner.spawnCount()).toBe(1)
+    expect(spawner.agents[0].prompts).toEqual([
+      { sessionId: 'remote-session-1', text: 'plain prompt' }
+    ])
   })
 })

@@ -11,23 +11,21 @@ import {
   Square,
   X
 } from 'lucide-react'
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 
 import { ResizablePanel } from '@/components/ui/resizable'
 import { cn } from '@/lib/utils'
 import type { ChatSession } from '@/stores/session-store'
 
 import { ComposerDropOverlay } from './ComposerDropOverlay'
+import { ComposerEditor } from './composer/ComposerEditor'
+import { docFromText, docToSkillIds, docToText, type ComposerDoc } from './composer/composer-doc'
 import { ComposerModelPicker } from './ComposerModelPicker'
-import { submitMessageDraftFromKeyDown } from './message-draft-keyboard'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 import { useFileDropZone } from './useFileDropZone'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
 
 const composerInteractiveTransitionClassName = 'transition-colors duration-200 ease-out'
-
-const composerTextareaClassName =
-  'min-h-[36px] max-h-[200px] w-full resize-none overflow-y-auto bg-transparent py-1.5 text-[15px] leading-relaxed text-text-000 outline-none placeholder:text-text-100'
 
 const composerIconButtonClassName = cn(
   'flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-200 hover:text-text-100 disabled:cursor-not-allowed disabled:opacity-50',
@@ -74,7 +72,7 @@ type ConversationPanelProps = {
   notebookReference: NotebookSessionReference | undefined
   pendingPermissions: AcpPermissionRequest[]
   onMessageDraftChange: (value: string) => void
-  onSendMessage: (event: React.FormEvent<HTMLFormElement>) => void
+  onSendMessage: (forcedSkillIds: string[]) => void
   onStageAttachmentFiles: (files: File[]) => void
   onRemoveAttachment: (attachment: UploadedAttachment) => void
   onCancelRun: () => void
@@ -106,15 +104,29 @@ const ConversationPanel = ({
 }: ConversationPanelProps): React.JSX.Element => {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
+  // Local doc mirrors the composer's rich content (text runs + skill chips). The persisted draft
+  // stays a plain string, so we derive it via docToText on every edit and hydrate from it on reset.
+  const [doc, setDoc] = useState<ComposerDoc>(() => docFromText(messageDraft))
+
+  // Keep the doc in sync when the draft string changes externally (send reset to '', restore on
+  // failure, session switch). Using the setState-during-render pattern instead of an effect keeps
+  // us within the repo's react-hooks/set-state-in-effect rule.
+  const [lastDraft, setLastDraft] = useState(messageDraft)
+  if (lastDraft !== messageDraft) {
+    setLastDraft(messageDraft)
+    if (messageDraft !== docToText(doc)) setDoc(docFromText(messageDraft))
+  }
+
   // Drag-and-drop shares the same staging callback as the picker and paste paths.
   const { isDragging, dropZoneProps } = useFileDropZone({
     enabled: canEditDraft,
     onFiles: onStageAttachmentFiles
   })
 
-  // Keeps keyboard submission behavior colocated with the composer while the helper owns rules.
-  const handleMessageDraftKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
-    submitMessageDraftFromKeyDown(event, canSendMessage)
+  // Submits the current doc, passing the ids of any skills picked as inline chips.
+  const handleSubmit = (): void => {
+    if (!canEditDraft) return
+    onSendMessage(docToSkillIds(doc))
   }
 
   // Converts the hidden file input selection into the shared staging callback.
@@ -130,7 +142,7 @@ const ConversationPanel = ({
   }
 
   // Treats pasted clipboard files exactly like selected files, then keeps text paste behavior intact.
-  const handleMessageDraftPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>): void => {
+  const handleMessageDraftPaste = (event: React.ClipboardEvent<HTMLDivElement>): void => {
     if (!canEditDraft) return
 
     const files = Array.from(event.clipboardData.files)
@@ -212,10 +224,11 @@ const ConversationPanel = ({
                     className="relative -mb-8 rounded-2xl bg-bg-200 pb-8 shadow-card"
                   />
 
-                  {/* Composer keeps draft input local until submit delegates to the session store. */}
+                  {/* Composer keeps draft input local until submit delegates to the session store.
+                      Enter-to-send is owned by ComposerEditor; the form only guards native submit. */}
                   <form
                     className="relative z-10 flex flex-col gap-2 rounded-2xl bg-bg-000 px-3 py-2 shadow-card-opaque transition-shadow duration-[180ms] ease-out"
-                    onSubmit={onSendMessage}
+                    onSubmit={(event) => event.preventDefault()}
                     {...dropZoneProps}
                   >
                     {/* File-drag overlay is scoped to the composer input card only. */}
@@ -262,15 +275,17 @@ const ConversationPanel = ({
 
                       <div className="relative min-w-0 flex-1">
                         {/* Draft editing waits for persistence hydration to avoid targeting the wrong session. */}
-                        <textarea
-                          value={messageDraft}
-                          onChange={(event) => onMessageDraftChange(event.target.value)}
-                          onKeyDown={handleMessageDraftKeyDown}
+                        <ComposerEditor
+                          doc={doc}
+                          onDocChange={(next) => {
+                            setDoc(next)
+                            onMessageDraftChange(docToText(next))
+                          }}
+                          onSubmit={handleSubmit}
                           onPaste={handleMessageDraftPaste}
                           disabled={!canEditDraft}
-                          className={composerTextareaClassName}
-                          placeholder="Ask anything"
-                          aria-label="Ask anything"
+                          placeholder="Ask anything — / for skills"
+                          ariaLabel="Ask anything"
                         />
                       </div>
 
@@ -313,7 +328,8 @@ const ConversationPanel = ({
                           </button>
                         ) : (
                           <button
-                            type="submit"
+                            type="button"
+                            onClick={handleSubmit}
                             disabled={!canSendMessage}
                             className={composerSendButtonClassName}
                             aria-label="Send message"

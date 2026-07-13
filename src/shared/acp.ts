@@ -101,6 +101,8 @@ export type AcpPromptRequest = {
   sessionId: string
   text: string
   attachments?: UploadedAttachment[]
+  // Skills the user explicitly picked in the composer; the runtime force-loads and nudges them.
+  forcedSkillIds?: string[]
 }
 
 export type AcpCancelPromptRequest = {

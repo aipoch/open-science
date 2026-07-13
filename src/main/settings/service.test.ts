@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execPath } from 'node:process'
@@ -633,5 +633,57 @@ describe('SettingsService: skills', () => {
 
     skills = await service.deleteSkill({ id: 'personal-my-skill' })
     expect(skills.map((skill) => skill.id)).toEqual(['demo'])
+  })
+
+  it('force-loads a disabled picked skill for the turn without mutating stored settings', async () => {
+    const service = await createSkillService()
+
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    const created = (await service.upsertProvider({ type: 'claude-default', name: 'Local' }))
+      .providers[0]
+    await service.setActiveProvider(created.id)
+    await service.setSkillEnabled({ id: 'demo', enabled: false })
+
+    const skillDir = join(getAppClaudeConfigDir(storageRoot), 'skills', 'os-demo')
+    const exists = async (path: string): Promise<boolean> =>
+      readFile(join(path, 'SKILL.md'), 'utf8').then(
+        () => true,
+        () => false
+      )
+
+    // Disabled: the skill is not materialized on a normal spawn.
+    await service.resolveActiveSpawnConfig()
+    expect(await exists(skillDir)).toBe(false)
+
+    // Turn-forced: the disabled skill is materialized for this spawn only.
+    service.setTurnForcedSkillIds(['demo'])
+    await service.resolveActiveSpawnConfig()
+    expect(await exists(skillDir)).toBe(true)
+
+    // The stored disabled set is untouched, so the skill still lists as disabled.
+    const skills = await service.listSkills()
+    expect(skills.find((skill) => skill.id === 'demo')?.enabled).toBe(false)
+
+    // Clearing the force set removes it again on the next spawn.
+    service.clearTurnForcedSkillIds()
+    await service.resolveActiveSpawnConfig()
+    expect(await exists(skillDir)).toBe(false)
+  })
+
+  it('reports only disabled picks as needing force-load and maps ids to names', async () => {
+    const service = await createSkillService()
+
+    await service.createSkill({ name: 'My Skill', description: 'Mine.', body: '# Mine' })
+    await service.setSkillEnabled({ id: 'demo', enabled: false })
+
+    // Only the disabled pick (demo) needs a respawn; the enabled personal skill does not.
+    expect(await service.skillsNeedingForceLoad(['demo', 'personal-my-skill'])).toEqual(['demo'])
+    expect(await service.skillsNeedingForceLoad(['personal-my-skill'])).toEqual([])
+
+    // Names resolve in the given id order, skipping unknown ids.
+    expect(await service.skillNamesForIds(['personal-my-skill', 'demo', 'nope'])).toEqual([
+      'My Skill',
+      'Demo'
+    ])
   })
 })

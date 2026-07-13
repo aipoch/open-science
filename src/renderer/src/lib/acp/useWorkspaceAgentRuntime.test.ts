@@ -252,7 +252,8 @@ describe('workspace agent message sending', () => {
     expect(runtime.sendPrompt).toHaveBeenCalledWith(
       'transport-session-1',
       'Help me inspect this notebook',
-      []
+      [],
+      undefined
     )
   })
 
@@ -311,9 +312,12 @@ describe('workspace agent message sending', () => {
         })
       ]
     })
-    expect(runtime.sendPrompt).toHaveBeenCalledWith('transport-session-1', '', [
-      finalizedAttachment
-    ])
+    expect(runtime.sendPrompt).toHaveBeenCalledWith(
+      'transport-session-1',
+      '',
+      [finalizedAttachment],
+      undefined
+    )
   })
 
   it('retries ACP session creation for an unbound pending conversation', async () => {
@@ -354,7 +358,12 @@ describe('workspace agent message sending', () => {
 
     expect(runtime.resumeSession).not.toHaveBeenCalled()
     expect(runtime.createSession).toHaveBeenCalledTimes(2)
-    expect(runtime.sendPrompt).toHaveBeenCalledWith('transport-session-1', 'Try again', [])
+    expect(runtime.sendPrompt).toHaveBeenCalledWith(
+      'transport-session-1',
+      'Try again',
+      [],
+      undefined
+    )
     expect(useSessionStore.getState().selectedSessionId).toBe('transport-session-1')
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       id: 'transport-session-1',

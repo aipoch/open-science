@@ -453,21 +453,17 @@ describe('conversation message scroller integration', () => {
   })
 })
 
-describe('conversation composer keyboard integration', () => {
-  // The textarea delegates keyboard submit behavior to the tested composer helper.
-  it('wires the draft textarea to the Enter submit keyboard handler', () => {
+describe('conversation composer editor integration', () => {
+  // The composer is a contenteditable ComposerEditor that owns Enter-to-send and skill chips.
+  it('wires the ComposerEditor submit path to the skill-id send handler', () => {
     const conversationPanelSource = readFileSync(conversationPanelPath, 'utf8')
 
     expect(conversationPanelSource).toContain(
-      "import { submitMessageDraftFromKeyDown } from './message-draft-keyboard'"
+      "import { ComposerEditor } from './composer/ComposerEditor'"
     )
-    expect(conversationPanelSource).toContain(
-      'const handleMessageDraftKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {'
-    )
-    expect(conversationPanelSource).toContain(
-      'submitMessageDraftFromKeyDown(event, canSendMessage)'
-    )
-    expect(conversationPanelSource).toContain('onKeyDown={handleMessageDraftKeyDown}')
+    expect(conversationPanelSource).toContain('onSendMessage(docToSkillIds(doc))')
+    expect(conversationPanelSource).toContain('onSubmit={handleSubmit}')
+    expect(conversationPanelSource).toContain('onDocChange={(next) => {')
   })
 })
 

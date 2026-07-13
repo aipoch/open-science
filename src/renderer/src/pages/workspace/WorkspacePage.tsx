@@ -407,9 +407,8 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   }
 
   // Sends the current draft only after hydration so restored selection cannot overwrite intent.
-  const sendCurrentMessage = (event: React.FormEvent<HTMLFormElement>): void => {
-    event.preventDefault()
-
+  // ConversationPanel owns preventDefault and passes the skills picked as inline chips.
+  const sendCurrentMessage = (forcedSkillIds: string[]): void => {
     if (!canSendMessage) return
 
     const draft = messageDraft
@@ -428,7 +427,8 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
       attachments: attachmentsForSend,
       cwd: activeSession?.cwd,
       projectId: activeSession?.projectId ?? scopedProjectId,
-      projectName: activeSession?.projectId ?? scopedProjectId
+      projectName: activeSession?.projectId ?? scopedProjectId,
+      forcedSkillIds
     }).then((result) => {
       if (!result) {
         setMessageDraft(draft)

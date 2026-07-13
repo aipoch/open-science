@@ -63,6 +63,20 @@ type AcpRuntimeOptions = {
   artifacts?: AcpRuntimeArtifactOptions
   uploads?: AcpRuntimeUploadOptions
   notebook?: AcpRuntimeNotebookOptions
+  skills?: AcpRuntimeSkillsOptions
+}
+
+// Turn-scoped skill force-load hooks, wired from the settings service. Optional so tests that construct
+// the runtime without them are unaffected; every usage guards on presence.
+type AcpRuntimeSkillsOptions = {
+  // Returns the subset of forced ids that are currently disabled (i.e. need a respawn to materialize).
+  needForceLoad: (ids: string[]) => Promise<string[]>
+  // Marks these ids force-loaded for the next spawn's provisioning.
+  setTurnForced: (ids: string[]) => void
+  // Clears the turn-scoped force-load set so later spawns use the normal enabled set.
+  clearTurnForced: () => void
+  // Resolves picked ids to display names for the steering nudge.
+  namesForIds: (ids: string[]) => Promise<string[]>
 }
 
 type AcpRuntimeArtifactOptions = {
@@ -168,6 +182,7 @@ class AcpRuntime {
   private readonly permissionBroker: AcpPermissionBroker
   private readonly callbacks: AcpRuntimeCallbacks
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
+  private readonly skillsHooks: AcpRuntimeSkillsOptions | undefined
   private readonly artifactOptions: AcpRuntimeArtifactOptions | undefined
   private readonly notebookOptions: AcpRuntimeNotebookOptions | undefined
   private readonly artifactRepository: ArtifactRepository | undefined
@@ -183,6 +198,7 @@ class AcpRuntime {
     this.cwd = resolve(options.defaultCwd)
     this.callbacks = options.callbacks ?? {}
     this.spawnAgent = options.spawnAgent
+    this.skillsHooks = options.skills
     this.artifactOptions = options.artifacts
     this.notebookOptions = options.notebook
     this.artifactRepository = options.artifacts
@@ -611,7 +627,7 @@ class AcpRuntime {
 
   // Sends one prompt turn to the targeted session and streams updates until stop.
   async sendPrompt(request: AcpPromptRequest): Promise<PromptResponse> {
-    const activeSession = this.sessions.get(request.sessionId)
+    let activeSession = this.sessions.get(request.sessionId)
 
     if (!activeSession) {
       throw new Error(`ACP session not found: ${request.sessionId}`)
@@ -619,6 +635,33 @@ class AcpRuntime {
 
     if (this.promptInFlightSessionIds.has(request.sessionId)) {
       throw new Error('An ACP prompt is already running for this session')
+    }
+
+    // Turn-scoped skill force-load: a skill the user picked but has toggled off must run this turn only.
+    // If any pick is currently disabled, mark the picks forced and respawn the agent (drop the connection,
+    // then resume the same session) so the fresh spawn's provisioning materializes them with full context
+    // restored. Picks that are already enabled need no respawn. Restored to the normal set after the turn.
+    const forced = request.forcedSkillIds ?? []
+    let didForceReload = false
+
+    if (this.skillsHooks && forced.length > 0) {
+      const toForce = await this.skillsHooks.needForceLoad(forced)
+
+      if (toForce.length > 0) {
+        // Capture routing before the disconnect clears it, so the resume lands on the same conversation.
+        const sessionCwd = this.sessionCwds.get(request.sessionId) ?? this.cwd
+        const projectName = this.resolveSessionProjectName(request.sessionId)
+        this.skillsHooks.setTurnForced(forced)
+        didForceReload = true
+        await this.disconnect(false)
+        await this.resumeSession({ sessionId: request.sessionId, cwd: sessionCwd, projectName })
+
+        const reloaded = this.sessions.get(request.sessionId)
+        if (!reloaded) {
+          throw new Error(`ACP session not found after force-load: ${request.sessionId}`)
+        }
+        activeSession = reloaded
+      }
     }
 
     this.currentSessionId = request.sessionId
@@ -634,7 +677,13 @@ class AcpRuntime {
     try {
       // Create a fresh run context before prompting so MCP writes can be attributed to this turn.
       artifactRun = await this.activateArtifactRun(request.sessionId)
-      const promptContent = await this.createPromptContent(request.sessionId, request)
+      // Prepend a short steering nudge naming the picked skills. It goes only into the content sent to
+      // the agent; the user-facing message event keeps the original text (which already shows /Name).
+      const promptText = await this.applySkillNudge(request.text, forced)
+      const promptContent = await this.createPromptContent(request.sessionId, {
+        ...request,
+        text: promptText
+      })
 
       this.pushEvent({
         kind: 'message',
@@ -712,6 +761,13 @@ class AcpRuntime {
       }
       this.promptInFlightSessionIds.delete(request.sessionId)
       this.emitState()
+      // A disabled skill forced for this turn is restored now: clear the force set, then schedule a
+      // reconnect so the NEXT prompt respawns with the normal enabled set. Ordering matters — the clear
+      // must happen before the reconnect is applied so the fresh spawn no longer sees the forced ids.
+      if (didForceReload && this.skillsHooks) {
+        this.skillsHooks.clearTurnForced()
+        this.pendingSkillsReload = true
+      }
       // A provider switch requested mid-turn is applied now that the session is idle.
       this.maybeApplyPendingProviderReconnect()
     }
@@ -789,6 +845,17 @@ class AcpRuntime {
     this.emitState()
 
     return this.getSnapshot()
+  }
+
+  // Prepends a one-line steering nudge naming the picked skills to the prompt text. No-op when no skills
+  // were picked or no hooks are wired. It is prompt text, not a system directive, per the design.
+  private async applySkillNudge(text: string, forcedSkillIds: string[]): Promise<string> {
+    if (!this.skillsHooks || forcedSkillIds.length === 0) return text
+
+    const names = await this.skillsHooks.namesForIds(forcedSkillIds)
+    if (names.length === 0) return text
+
+    return `Use the following skill(s) for this task: ${names.join(', ')}.\n\n${text}`
   }
 
   // Turns the renderer prompt plus upload references into the ACP prompt payload.

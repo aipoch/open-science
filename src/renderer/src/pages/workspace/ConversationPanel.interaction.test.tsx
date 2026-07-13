@@ -69,12 +69,19 @@ const getComposerForm = (): HTMLElement => {
   return form as HTMLElement
 }
 
+const getComposerEditor = (): HTMLElement => {
+  const editor = container.querySelector('[role="textbox"]')
+  if (!editor) throw new Error('composer editor not found')
+  return editor as HTMLElement
+}
+
 const dispatchPaste = (files: File[]): boolean => {
-  const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+  const editor = getComposerEditor()
   const event = new Event('paste', { bubbles: true, cancelable: true })
-  Object.defineProperty(event, 'clipboardData', { value: { files } })
+  // The editor also reads text/plain, so the mock clipboard exposes both files and getData.
+  Object.defineProperty(event, 'clipboardData', { value: { files, getData: () => '' } })
   act(() => {
-    textarea.dispatchEvent(event)
+    editor.dispatchEvent(event)
   })
   return event.defaultPrevented
 }
@@ -151,5 +158,32 @@ describe('ConversationPanel composer intake', () => {
 
     dispatchDrag('dragenter', ['Files'])
     expect(hasDropOverlay()).toBe(false)
+  })
+
+  it('submits on Enter through the editor with the picked skill ids', () => {
+    const onSendMessage = vi.fn()
+    renderPanel({ onSendMessage })
+
+    const editor = getComposerEditor()
+    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    act(() => {
+      editor.dispatchEvent(event)
+    })
+
+    // A plain-text draft carries no chips, so the send handler receives an empty id list.
+    expect(onSendMessage).toHaveBeenCalledWith([])
+  })
+
+  it('persists typed text as a plain-string draft via onMessageDraftChange', () => {
+    const onMessageDraftChange = vi.fn()
+    renderPanel({ onMessageDraftChange })
+
+    const editor = getComposerEditor()
+    editor.textContent = 'hello'
+    act(() => {
+      editor.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    expect(onMessageDraftChange).toHaveBeenCalledWith('hello')
   })
 })

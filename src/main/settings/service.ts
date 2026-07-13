@@ -117,6 +117,9 @@ class SettingsService {
   private readonly userSkills: UserSkillRepository
   private readonly executeClaudeProbe: ExecuteClaudeProbe
   private providerSequence = 0
+  // Skills force-loaded for the current turn: subtracted from the stored disabled set at spawn time so
+  // a picked-but-disabled skill materializes for this prompt only, without mutating stored settings.
+  private turnForcedSkillIds = new Set<string>()
 
   constructor(options: SettingsServiceOptions = {}) {
     this.storageRoot = options.storageRoot ?? resolveStorageRoot()
@@ -157,6 +160,33 @@ class SettingsService {
     const disabled = new Set(settings.disabledSkillIds ?? [])
 
     return skills.map((skill) => this.toSkillView(skill, disabled))
+  }
+
+  // Sets the skills to force-load for the current turn (picked in the composer). Cleared after the turn.
+  setTurnForcedSkillIds(ids: string[]): void {
+    this.turnForcedSkillIds = new Set(ids)
+  }
+
+  // Clears the turn-scoped force-load set so later spawns use the normal enabled set.
+  clearTurnForcedSkillIds(): void {
+    this.turnForcedSkillIds.clear()
+  }
+
+  // Returns the subset of forced ids that are currently disabled in settings — i.e. the picks that need
+  // a respawn to materialize. Enabled picks are already present and need no reconnect.
+  async skillsNeedingForceLoad(forcedIds: string[]): Promise<string[]> {
+    const settings = await this.repository.getSettings()
+    const disabled = new Set(settings.disabledSkillIds ?? [])
+
+    return forcedIds.filter((id) => disabled.has(id))
+  }
+
+  // Maps skill ids to their display names in the given order, skipping unknown ids. Used for the nudge.
+  async skillNamesForIds(ids: string[]): Promise<string[]> {
+    const skills = await this.skillCatalog()
+    const nameById = new Map(skills.map((skill) => [skill.id, skill.name]))
+
+    return ids.map((id) => nameById.get(id)).filter((name): name is string => name !== undefined)
   }
 
   // Returns one skill's view plus its SKILL.md body for the detail view (any source).
@@ -521,11 +551,15 @@ class SettingsService {
 
     // Ensure the app-owned config dir exists (and app assets are injected) before the agent spawns. The
     // enabled skill set (featured + imported + personal) is materialized here, so a toggle/create/import
-    // takes effect on the next spawn.
+    // takes effect on the next spawn. Any skill force-loaded for the current turn is subtracted from the
+    // disabled set so a picked-but-disabled skill materializes for this prompt without mutating settings.
     const appConfigDir = getAppClaudeConfigDir(this.storageRoot)
+    const disabledSkillIds = (settings.disabledSkillIds ?? []).filter(
+      (id) => !this.turnForcedSkillIds.has(id)
+    )
     await provisionAppClaudeConfigDir(appConfigDir, {
       skills: await this.skillCatalog(),
-      disabledSkillIds: settings.disabledSkillIds
+      disabledSkillIds
     })
 
     let envOverrides = buildProviderEnv(

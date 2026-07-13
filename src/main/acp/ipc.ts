@@ -64,6 +64,14 @@ const createRuntime = ({
     defaultCwd: homedir(),
     // Read the active provider's credentials/model on every connect so provider switches apply.
     resolveSpawnConfig: () => settingsService.resolveActiveSpawnConfig(),
+    // Turn-scoped skill force-load: the runtime uses these to respawn with a picked-but-disabled skill
+    // for one prompt and to build the steering nudge naming the picked skills.
+    skills: {
+      needForceLoad: (ids) => settingsService.skillsNeedingForceLoad(ids),
+      setTurnForced: (ids) => settingsService.setTurnForcedSkillIds(ids),
+      clearTurnForced: () => settingsService.clearTurnForcedSkillIds(),
+      namesForIds: (ids) => settingsService.skillNamesForIds(ids)
+    },
     artifacts: {
       // Reuse the session persistence root so chat state and generated files move together.
       storageRoot,
