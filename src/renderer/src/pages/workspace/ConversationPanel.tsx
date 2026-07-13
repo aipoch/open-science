@@ -17,9 +17,11 @@ import { ResizablePanel } from '@/components/ui/resizable'
 import { cn } from '@/lib/utils'
 import type { ChatSession } from '@/stores/session-store'
 
+import { ComposerDropOverlay } from './ComposerDropOverlay'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { submitMessageDraftFromKeyDown } from './message-draft-keyboard'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
+import { useFileDropZone } from './useFileDropZone'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
 
 const composerInteractiveTransitionClassName = 'transition-colors duration-200 ease-out'
@@ -104,6 +106,12 @@ const ConversationPanel = ({
 }: ConversationPanelProps): React.JSX.Element => {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
+  // Drag-and-drop shares the same staging callback as the picker and paste paths.
+  const { isDragging, dropZoneProps } = useFileDropZone({
+    enabled: canEditDraft,
+    onFiles: onStageAttachmentFiles
+  })
+
   // Keeps keyboard submission behavior colocated with the composer while the helper owns rules.
   const handleMessageDraftKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     submitMessageDraftFromKeyDown(event, canSendMessage)
@@ -121,27 +129,27 @@ const ConversationPanel = ({
     }
   }
 
-  // Treats pasted clipboard images exactly like selected files, then keeps text paste behavior intact.
+  // Treats pasted clipboard files exactly like selected files, then keeps text paste behavior intact.
   const handleMessageDraftPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>): void => {
     if (!canEditDraft) return
 
-    const imageFiles = Array.from(event.clipboardData.files).filter((file) =>
-      file.type.startsWith('image/')
-    )
+    const files = Array.from(event.clipboardData.files)
 
-    if (imageFiles.length === 0) return
+    if (files.length === 0) return
 
     event.preventDefault()
-    onStageAttachmentFiles(imageFiles)
+    onStageAttachmentFiles(files)
   }
 
   return (
     <ResizablePanel id="main-content" defaultSize="60%" minSize="30%">
       <section
-        className="flex h-full min-w-0 flex-col overflow-hidden bg-bg-10 p-2 pl-4"
+        className="relative flex h-full min-w-0 flex-col overflow-hidden bg-bg-10 p-2 pl-4"
         data-session-id={activeSession?.id ?? ''}
         data-agent-running={activeSession?.status === 'running' ? 'true' : 'false'}
+        {...dropZoneProps}
       >
+        {isDragging ? <ComposerDropOverlay /> : null}
         <header className="flex shrink-0 items-center gap-2 px-4 pb-3 pt-1">
           <h1 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-text-000">
             {activeSession?.title ?? 'New conversation'}
