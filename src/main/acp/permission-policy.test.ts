@@ -4,21 +4,26 @@ import { describe, expect, it } from 'vitest'
 import {
   canConservativelyAutoApprove,
   isWithinWorkspace,
+  resolveAllowOptionId,
   resolveAutomaticPermission
 } from './permission-policy'
 
 const createPermissionRequest = (
   kind: ToolKind,
-  locations?: Array<{ path: string }>
+  locations?: Array<{ path: string }>,
+  overrides?: {
+    title?: string
+    options?: RequestPermissionRequest['options']
+  }
 ): RequestPermissionRequest => ({
   sessionId: 'session-1',
   toolCall: {
     toolCallId: 'tool-1',
-    title: 'Tool call',
+    title: overrides?.title ?? 'Tool call',
     kind,
     locations
   },
-  options: [
+  options: overrides?.options ?? [
     { optionId: 'allow', name: 'Allow once', kind: 'allow_once' },
     { optionId: 'reject', name: 'Reject', kind: 'reject_once' }
   ]
@@ -62,6 +67,52 @@ describe('permission policy', () => {
         '/workspace/project'
       )
     ).toBe(false)
+  })
+
+  it('never auto-approves MCP tools even when they report a workspace-contained low-risk kind', () => {
+    expect(
+      canConservativelyAutoApprove(
+        createPermissionRequest('read', [{ path: 'results/output.csv' }], {
+          title: 'mcp__pencil__batch_get'
+        }),
+        '/workspace/project'
+      )
+    ).toBe(false)
+    expect(
+      canConservativelyAutoApprove(
+        createPermissionRequest('edit', [{ path: 'design.pen' }], {
+          title: 'mcp__pencil__batch_design'
+        }),
+        '/workspace/project'
+      )
+    ).toBe(false)
+  })
+
+  it('grants a single-use approval only, never escalating to allow_always', () => {
+    const request = createPermissionRequest('read', [{ path: 'data/input.csv' }])
+
+    expect(resolveAllowOptionId(request)).toBe('allow')
+    expect(
+      resolveAllowOptionId(
+        createPermissionRequest('read', [{ path: 'data/input.csv' }], {
+          options: [
+            { optionId: 'always', name: 'Allow always', kind: 'allow_always' },
+            { optionId: 'once', name: 'Allow once', kind: 'allow_once' },
+            { optionId: 'reject', name: 'Reject', kind: 'reject_once' }
+          ]
+        })
+      )
+    ).toBe('once')
+    expect(
+      resolveAllowOptionId(
+        createPermissionRequest('read', [{ path: 'data/input.csv' }], {
+          options: [
+            { optionId: 'always', name: 'Allow always', kind: 'allow_always' },
+            { optionId: 'reject', name: 'Reject', kind: 'reject_once' }
+          ]
+        })
+      )
+    ).toBeUndefined()
   })
 
   it('activates fallback review only for conservative Auto', () => {
