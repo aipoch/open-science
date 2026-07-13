@@ -1,5 +1,5 @@
 import { FileUp, Upload, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import type { SkillReference } from '../../../../shared/settings'
 import { Input } from '@/components/ui/input'
@@ -10,8 +10,13 @@ export type SkillDraft = {
   name: string
   description: string
   body: string
+  slug?: string
   references?: SkillReference[]
 }
+
+// Reserved id namespaces a user-authored skill may not claim (mirrors the main-process rule):
+// `os-` is the app's own materialized prefix, `mcp-` is reserved for MCP-provided skills.
+const RESERVED_SLUG_PREFIXES = ['os-', 'mcp-']
 
 // Reads a File as base64 (for binary-safe reference transport to the main process).
 const fileToBase64 = (file: File): Promise<string> =>
@@ -58,14 +63,40 @@ type SkillEditorProps = {
 // Create/edit form for a personal skill: Identity (name/id/description) + Content (SKILL.md body).
 // Pasting a full SKILL.md with a frontmatter block auto-fills name/description.
 const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX.Element => {
+  const isCreate = !initial.id
+  const skills = useSettingsStore((state) => state.skills)
   const [name, setName] = useState(initial.name)
   const [description, setDescription] = useState(initial.description)
   const [body, setBody] = useState(initial.body)
   const [contentMode, setContentMode] = useState<'write' | 'upload'>('write')
-  const [references, setReferences] = useState<{ name: string; dataBase64: string }[]>([])
+  const [references, setReferences] = useState<{ path: string; dataBase64?: string }[]>(() =>
+    (initial.references ?? []).map((ref) => ({ path: ref.path, dataBase64: ref.dataBase64 }))
+  )
+  const [slug, setSlug] = useState('')
+  const [slugTouched, setSlugTouched] = useState(false)
   const [saving, setSaving] = useState(false)
 
-  const canSave = name.trim().length > 0 && body.trim().length > 0 && !saving
+  // The effective id: the user's typed value once they edit it, otherwise derived from the name.
+  const currentSlug = isCreate && !slugTouched ? toSlug(name) : slug
+
+  // Validates the chosen id against the same rules the main process enforces, plus a live
+  // collision check against already-loaded personal skills. Only meaningful when creating.
+  const slugError = useMemo((): string | null => {
+    if (!isCreate) return null
+    if (!currentSlug) return 'Skill ID is required.'
+    if (!/^[a-z0-9-]+$/.test(currentSlug)) {
+      return 'Only lowercase letters, numbers, and hyphens.'
+    }
+    if (RESERVED_SLUG_PREFIXES.some((prefix) => currentSlug.startsWith(prefix))) {
+      return `Can't start with ${RESERVED_SLUG_PREFIXES.join(' or ')}.`
+    }
+    if (skills.some((entry) => entry.id === `personal-${currentSlug}`)) {
+      return 'A skill with this ID already exists.'
+    }
+    return null
+  }, [isCreate, currentSlug, skills])
+
+  const canSave = name.trim().length > 0 && body.trim().length > 0 && !slugError && !saving
 
   const handleBodyChange = (value: string): void => {
     const parsed = consumeFrontmatter(value)
@@ -92,17 +123,18 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
     input.click()
   }
 
-  // Adds one or more supporting files to the references list (base64-encoded).
+  // Adds one or more supporting files to the references list (base64-encoded), replacing any
+  // existing entry with the same name.
   const addReferences = async (files: FileList | null): Promise<void> => {
     if (!files) return
     const added = await Promise.all(
       Array.from(files).map(async (file) => ({
-        name: file.name,
+        path: file.name,
         dataBase64: await fileToBase64(file)
       }))
     )
     setReferences((prev) => [
-      ...prev.filter((ref) => !added.some((a) => a.name === ref.name)),
+      ...prev.filter((ref) => !added.some((a) => a.path === ref.path)),
       ...added
     ])
   }
@@ -116,7 +148,8 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
         name: name.trim(),
         description: description.trim(),
         body,
-        references: references.map((ref) => ({ path: ref.name, dataBase64: ref.dataBase64 }))
+        slug: isCreate ? currentSlug : undefined,
+        references: references.map((ref) => ({ path: ref.path, dataBase64: ref.dataBase64 }))
       })
     } finally {
       setSaving(false)
@@ -146,13 +179,34 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                 <span className="text-sm font-medium text-foreground">Skill ID</span>
                 <Input
                   aria-label="Skill ID"
-                  value={initial.id ? initial.id.replace(/^personal-/, '') : toSlug(name)}
-                  readOnly
-                  className="font-mono text-muted-foreground"
+                  value={isCreate ? currentSlug : (initial.id ?? '').replace(/^personal-/, '')}
+                  onChange={
+                    isCreate
+                      ? (event) => {
+                          setSlugTouched(true)
+                          setSlug(event.target.value.toLowerCase())
+                        }
+                      : undefined
+                  }
+                  readOnly={!isCreate}
+                  aria-invalid={slugError ? true : undefined}
+                  className={`font-mono ${
+                    isCreate
+                      ? slugError
+                        ? 'border-danger-000 text-foreground'
+                        : 'text-foreground'
+                      : 'text-muted-foreground'
+                  }`}
                 />
-                <span className="text-xs text-muted-foreground">
-                  Derived from the name — lowercase a–z, 0–9, hyphens.
-                </span>
+                {slugError ? (
+                  <span className="text-xs text-danger-000">{slugError}</span>
+                ) : (
+                  <span className="text-xs text-muted-foreground">
+                    {isCreate
+                      ? 'Used as the folder name — lowercase a–z, 0–9, hyphens. Locked after creation.'
+                      : 'The skill ID is fixed after creation.'}
+                  </span>
+                )}
               </label>
               <label className="flex flex-col gap-1.5">
                 <span className="text-sm font-medium text-foreground">Description</span>
@@ -275,15 +329,15 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
             {references.length > 0 ? (
               <ul className="mt-3 flex flex-col divide-y divide-border">
                 {references.map((ref) => (
-                  <li key={ref.name} className="flex items-center gap-2 py-2 text-sm">
+                  <li key={ref.path} className="flex items-center gap-2 py-2 text-sm">
                     <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">
-                      references/{ref.name}
+                      references/{ref.path}
                     </span>
                     <button
                       type="button"
-                      aria-label={`Remove ${ref.name}`}
+                      aria-label={`Remove ${ref.path}`}
                       onClick={() =>
-                        setReferences((prev) => prev.filter((item) => item.name !== ref.name))
+                        setReferences((prev) => prev.filter((item) => item.path !== ref.path))
                       }
                       className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
                     >
@@ -336,7 +390,8 @@ const SkillEditLoader = ({ skillId, onDone }: SkillEditLoaderProps): React.JSX.E
           id: detail.id,
           name: detail.name,
           description: detail.description,
-          body: detail.body
+          body: detail.body,
+          references: detail.references.map((ref) => ({ path: ref.path }))
         })
       }
     })

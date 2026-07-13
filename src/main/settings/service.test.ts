@@ -635,6 +635,37 @@ describe('SettingsService: skills', () => {
     expect(skills.map((skill) => skill.id)).toEqual(['demo'])
   })
 
+  it('creates with a custom slug and reconciles references reported by the detail view', async () => {
+    const service = await createSkillService()
+    const b64 = (text: string): string => Buffer.from(text).toString('base64')
+
+    await service.createSkill({
+      name: 'Ref Skill',
+      description: 'd',
+      body: '# body',
+      slug: 'ref-skill-id',
+      references: [
+        { path: 'keep.py', dataBase64: b64('keep') },
+        { path: 'drop.py', dataBase64: b64('drop') }
+      ]
+    })
+
+    let detail = await service.getSkillDetail('personal-ref-skill-id')
+    expect(detail.references.map((ref) => ref.path)).toEqual(['drop.py', 'keep.py'])
+
+    // Editing keeps one file, drops one, and adds one.
+    await service.updateSkill({
+      id: 'personal-ref-skill-id',
+      name: 'Ref Skill',
+      description: 'd',
+      body: '# body',
+      references: [{ path: 'keep.py' }, { path: 'new.py', dataBase64: b64('new') }]
+    })
+
+    detail = await service.getSkillDetail('personal-ref-skill-id')
+    expect(detail.references.map((ref) => ref.path)).toEqual(['keep.py', 'new.py'])
+  })
+
   it('force-loads a disabled picked skill for the turn without mutating stored settings', async () => {
     const service = await createSkillService()
 

@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
-import { access } from 'node:fs/promises'
+import { access, readdir } from 'node:fs/promises'
 import { constants } from 'node:fs'
+import { join } from 'node:path'
 import { promisify } from 'node:util'
 
 import type {
@@ -203,8 +204,23 @@ class SettingsService {
 
     const disabled = new Set(settings.disabledSkillIds ?? [])
     const { body } = await readSkillFile(skill.sourceDir)
+    const references = await this.listSkillReferences(skill.sourceDir)
 
-    return { ...this.toSkillView(skill, disabled), body }
+    return { ...this.toSkillView(skill, disabled), body, references }
+  }
+
+  // Lists the file names directly under a skill's `references/` directory (empty when absent).
+  private async listSkillReferences(sourceDir: string): Promise<{ path: string }[]> {
+    try {
+      const entries = await readdir(join(sourceDir, 'references'), { withFileTypes: true })
+
+      return entries
+        .filter((entry) => entry.isFile())
+        .map((entry) => ({ path: entry.name }))
+        .sort((a, b) => a.path.localeCompare(b.path))
+    } catch {
+      return []
+    }
   }
 
   // Toggles a skill and returns the refreshed list. The agent picks up the change on its next reconnect
@@ -217,7 +233,7 @@ class SettingsService {
 
   // Creates a personal skill from the in-app editor, returning the refreshed list.
   async createSkill(request: CreateSkillRequest): Promise<SkillView[]> {
-    await this.userSkills.createPersonal(request)
+    await this.userSkills.createPersonal(request, request.slug)
 
     return this.listSkills()
   }

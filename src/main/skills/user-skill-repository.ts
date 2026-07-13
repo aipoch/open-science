@@ -30,6 +30,21 @@ const USER_SOURCES: ReadonlyArray<Extract<SkillSource, 'imported' | 'personal'>>
 // Only lowercase slugs so a skill id maps 1:1 to a safe directory name.
 const SAFE_SLUG = /^[a-z0-9-]+$/
 
+// Reserved id namespaces a user-authored skill may not claim: `os-` is the app's own materialized
+// prefix and `mcp-` is reserved for MCP-provided skills.
+const RESERVED_SLUG_PREFIXES = ['os-', 'mcp-'] as const
+
+// Validates a user-chosen slug, throwing a user-facing error for empty, unsafe, or reserved values.
+const assertUsableSlug = (slug: string): void => {
+  if (!slug) throw new Error('Skill ID is required.')
+  if (!SAFE_SLUG.test(slug)) {
+    throw new Error('Skill ID may only contain lowercase letters, numbers, and hyphens.')
+  }
+  if (RESERVED_SLUG_PREFIXES.some((prefix) => slug.startsWith(prefix))) {
+    throw new Error(`Skill ID may not start with ${RESERVED_SLUG_PREFIXES.join(' or ')}.`)
+  }
+}
+
 // Builds a filesystem-safe slug from a display name (e.g. "My Skill!" -> "my-skill").
 const toSlug = (name: string): string =>
   name
@@ -165,8 +180,21 @@ class UserSkillRepository {
     return (await readSkillFile(this.skillDir(parsed.source, parsed.slug))).body
   }
 
-  // Creates a personal skill, returning its new id. Slug collisions get a numeric suffix.
-  async createPersonal(input: WriteSkillInput): Promise<string> {
+  // Creates a personal skill, returning its new id. With an explicit `requestedSlug`, that slug is
+  // used verbatim (validated, and rejected if already taken); otherwise a slug is derived from the
+  // name and collisions get a numeric suffix.
+  async createPersonal(input: WriteSkillInput, requestedSlug?: string): Promise<string> {
+    if (requestedSlug !== undefined) {
+      const slug = requestedSlug.trim()
+      assertUsableSlug(slug)
+      if (await this.slugTaken('personal', slug)) {
+        throw new Error(`A skill with ID "${slug}" already exists.`)
+      }
+      await this.writeSkill('personal', slug, input)
+
+      return `personal-${slug}`
+    }
+
     const base = toSlug(input.name) || 'skill'
     const slug = await this.uniqueSlug('personal', base)
     await this.writeSkill('personal', slug, input)
@@ -387,6 +415,16 @@ class UserSkillRepository {
     }
   }
 
+  // Whether a slug's directory already exists under the source.
+  private async slugTaken(source: (typeof USER_SOURCES)[number], slug: string): Promise<boolean> {
+    try {
+      const slugs = await readdir(this.sourceDir(source))
+      return slugs.includes(slug)
+    } catch {
+      return false
+    }
+  }
+
   // Writes a SKILL.md with a minimal frontmatter block (name/description) followed by the body.
   private async writeSkill(
     source: (typeof USER_SOURCES)[number],
@@ -406,13 +444,35 @@ class UserSkillRepository {
 
     await writeFile(join(dir, 'SKILL.md'), contents, 'utf8')
 
-    // Write any supporting files under references/, using each file's basename as a safe path.
-    for (const reference of input.references ?? []) {
-      const name = reference.path.split(/[\\/]/).pop() ?? ''
-      if (!name || !/^[A-Za-z0-9._-]+$/.test(name)) continue
-      const target = join(dir, 'references', name)
-      await mkdir(dirname(target), { recursive: true })
-      await writeFile(target, Buffer.from(reference.dataBase64, 'base64'))
+    // Reconcile the references/ dir to the desired set when references are provided (an array — even
+    // empty — reconciles; `undefined` leaves the dir untouched). A reference with `dataBase64` is
+    // written (created or replaced); one without it is an existing file to keep as-is. Any file not in
+    // the desired set is removed, so the editor's removals delete the file on disk.
+    if (input.references !== undefined) {
+      const refsDir = join(dir, 'references')
+      const desired = new Map<string, SkillReference>()
+      for (const reference of input.references) {
+        const name = reference.path.split(/[\\/]/).pop() ?? ''
+        if (!name || !/^[A-Za-z0-9._-]+$/.test(name)) continue
+        desired.set(name, reference)
+      }
+
+      let existing: string[] = []
+      try {
+        existing = await readdir(refsDir)
+      } catch {
+        existing = []
+      }
+      for (const name of existing) {
+        if (!desired.has(name)) await rm(join(refsDir, name), { recursive: true, force: true })
+      }
+
+      for (const [name, reference] of desired) {
+        if (reference.dataBase64 === undefined) continue
+        const target = join(refsDir, name)
+        await mkdir(dirname(target), { recursive: true })
+        await writeFile(target, Buffer.from(reference.dataBase64, 'base64'))
+      }
     }
   }
 }

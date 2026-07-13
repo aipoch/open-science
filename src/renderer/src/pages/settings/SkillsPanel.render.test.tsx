@@ -162,6 +162,7 @@ describe('SkillsPanel (sub-views)', () => {
       name: 'My New Skill',
       description: '',
       body: '# Body',
+      slug: 'my-new-skill',
       references: []
     })
   })

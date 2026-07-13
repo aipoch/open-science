@@ -163,6 +163,62 @@ describe('UserSkillRepository', () => {
     expect(written).toBe('print(1)')
   })
 
+  it('honors an explicit slug and rejects collisions, reserved prefixes, and invalid ids', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+
+    const id = await repo.createPersonal({ name: 'Anything', description: 'd', body: 'x' }, 'my-id')
+    expect(id).toBe('personal-my-id')
+
+    // Colliding with the just-created slug is rejected (no silent suffix).
+    await expect(
+      repo.createPersonal({ name: 'Other', description: 'd', body: 'y' }, 'my-id')
+    ).rejects.toThrow(/already exists/)
+
+    // Reserved built-in / MCP prefixes are rejected.
+    await expect(
+      repo.createPersonal({ name: 'x', description: 'd', body: 'x' }, 'os-thing')
+    ).rejects.toThrow(/os- or mcp-/)
+    await expect(
+      repo.createPersonal({ name: 'x', description: 'd', body: 'x' }, 'mcp-thing')
+    ).rejects.toThrow(/os- or mcp-/)
+
+    // Unsafe characters are rejected.
+    await expect(
+      repo.createPersonal({ name: 'x', description: 'd', body: 'x' }, 'Bad ID')
+    ).rejects.toThrow(/lowercase/)
+  })
+
+  it('reconciles references on update: keeps untouched, adds new, deletes removed', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+    const b64 = (text: string): string => Buffer.from(text).toString('base64')
+
+    const id = await repo.createPersonal({
+      name: 'Refs',
+      description: 'd',
+      body: 'x',
+      references: [
+        { path: 'keep.py', dataBase64: b64('keep') },
+        { path: 'drop.py', dataBase64: b64('drop') }
+      ]
+    })
+
+    await repo.updatePersonal(id, {
+      name: 'Refs',
+      description: 'd',
+      body: 'x',
+      references: [
+        { path: 'keep.py' }, // no base64 -> keep the existing file
+        { path: 'new.py', dataBase64: b64('new') } // new file
+      ]
+    })
+
+    const dir = join(storage, 'skills', 'personal', 'refs', 'references')
+    expect(await readFile(join(dir, 'keep.py'), 'utf8')).toBe('keep')
+    expect(await readFile(join(dir, 'new.py'), 'utf8')).toBe('new')
+    await expect(readFile(join(dir, 'drop.py'), 'utf8')).rejects.toThrow()
+  })
+
   it('lists imported skills with their frontmatter metadata', async () => {
     const storage = await makeStorage()
     const dir = join(storage, 'skills', 'imported', 'foo')

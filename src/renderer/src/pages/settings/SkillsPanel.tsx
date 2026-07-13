@@ -115,6 +115,7 @@ const SkillsPanel = ({ view, onNavigate }: SkillsPanelProps): React.JSX.Element 
             name: draft.name,
             description: draft.description,
             body: draft.body,
+            slug: draft.slug,
             references: draft.references
           })
           onNavigate({ kind: 'list' })

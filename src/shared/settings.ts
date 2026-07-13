@@ -257,9 +257,16 @@ export type SkillView = {
   thirdParty?: string
 }
 
-// A skill view plus its SKILL.md body (frontmatter stripped), for the detail view.
+// A skill view plus its SKILL.md body (frontmatter stripped) and the names of any files under its
+// `references/` directory, for the detail/edit view.
 export type SkillDetailView = SkillView & {
   body: string
+  references: SkillReferenceInfo[]
+}
+
+// A reference file's name (basename under `references/`), without its content.
+export type SkillReferenceInfo = {
+  path: string
 }
 
 export type SetSkillEnabledRequest = {
@@ -267,17 +274,20 @@ export type SetSkillEnabledRequest = {
   enabled: boolean
 }
 
-// A supporting file bundled under the skill's `references/` directory (base64-encoded for transport).
+// A supporting file bundled under the skill's `references/` directory. `dataBase64` carries new file
+// content; when omitted (on edit), it means "keep the existing file with this path unchanged".
 export type SkillReference = {
   path: string
-  dataBase64: string
+  dataBase64?: string
 }
 
-// Create a personal (user-authored) skill from the in-app editor.
+// Create a personal (user-authored) skill from the in-app editor. `slug` is the user-chosen Skill ID
+// (without the `personal-` prefix); when omitted, it is derived from the name.
 export type CreateSkillRequest = {
   name: string
   description: string
   body: string
+  slug?: string
   references?: SkillReference[]
 }
 
