@@ -19,6 +19,7 @@ import type { ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
 import type { StageUploadFile, UploadedAttachment } from '../../../../shared/uploads'
 
+import { planComposerAttachmentIntake } from './composer-attachment-intake'
 import { ConversationPanel } from './ConversationPanel'
 import { DeleteSessionDialog } from './DeleteSessionDialog'
 import { PreviewPanel } from './PreviewPanel'
@@ -365,14 +366,20 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const stageAttachmentFiles = (files: File[]): void => {
     if (!canEditDraft || files.length === 0) return
 
-    setAttachmentError(null)
+    // Enforce the size and count limits up front so rejected files are never read or uploaded.
+    const { accepted, error } = planComposerAttachmentIntake(files, attachments.length)
+
+    setAttachmentError(error)
+
+    if (accepted.length === 0) return
+
     setIsUploadingAttachments(true)
 
     void (async () => {
       try {
         // Browser File objects cannot cross IPC directly, so send base64 content plus metadata.
         const stagedFiles: StageUploadFile[] = await Promise.all(
-          files.map(async (file, index) => ({
+          accepted.map(async (file, index) => ({
             name: getUploadFilename(file, index),
             mimeType: file.type || undefined,
             content: await readFileAsBase64(file)
