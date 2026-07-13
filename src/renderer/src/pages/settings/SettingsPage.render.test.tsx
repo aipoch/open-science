@@ -38,6 +38,21 @@ const installApi = (): void => {
         author: 'Test Author',
         license: 'Test License',
         body: '# Alpha body'
+      }),
+      listConnectors: vi.fn().mockResolvedValue({
+        connectors: [
+          {
+            id: 'chemistry',
+            displayName: 'Chemistry',
+            description: 'Small-molecule chemistry via PubChem.',
+            sources: ['PubChem'],
+            requiresNcbi: false,
+            enabled: true,
+            autoAllow: false
+          }
+        ],
+        customServers: [],
+        ncbi: { hasApiKey: false }
       })
     },
     acp: {
@@ -82,10 +97,11 @@ describe('SettingsPage layout', () => {
     expect(nav?.textContent).toContain('Capabilities')
     expect(nav?.textContent).toContain('Workspace')
     const navItems = nav?.querySelectorAll('li') ?? []
-    expect(navItems).toHaveLength(3)
+    expect(navItems).toHaveLength(4)
     expect(navItems[0]?.textContent).toContain('Skills')
-    expect(navItems[1]?.textContent).toContain('Model')
-    expect(navItems[2]?.textContent).toContain('General')
+    expect(navItems[1]?.textContent).toContain('Connectors')
+    expect(navItems[2]?.textContent).toContain('Model')
+    expect(navItems[3]?.textContent).toContain('General')
     // Model is the default active panel.
     expect(nav?.querySelector('[aria-current="page"]')?.textContent).toContain('Model')
 
@@ -166,6 +182,30 @@ describe('SettingsPage layout', () => {
       (window as unknown as { api: { logs: { openFile: ReturnType<typeof vi.fn> } } }).api.logs
         .openFile
     ).toHaveBeenCalledTimes(1)
+  })
+
+  it('switches to the Connectors panel and lists bundled connectors', async () => {
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+
+    const connectorsTab = Array.from(
+      document.body.querySelectorAll('nav[aria-label="Settings"] button')
+    ).find((button) => /connectors/i.test(button.textContent ?? '')) as
+      HTMLButtonElement | undefined
+    expect(connectorsTab).not.toBeUndefined()
+
+    await act(async () => {
+      connectorsTab?.click()
+    })
+
+    // The Connectors panel loads and renders the bundled connector rows + contact-email section.
+    expect(
+      (window as unknown as { api: { settings: { listConnectors: ReturnType<typeof vi.fn> } } }).api
+        .settings.listConnectors
+    ).toHaveBeenCalled()
+    expect(document.body.textContent).toContain('Chemistry')
+    expect(document.body.textContent).toContain('Contact email')
   })
 
   it('shows a breadcrumb in the header when a skill detail is open, and returns on breadcrumb click', async () => {

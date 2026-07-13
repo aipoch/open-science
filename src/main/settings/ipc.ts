@@ -11,7 +11,15 @@ import type {
   InstallClaudeRequest,
   RefreshProviderModelsRequest,
   SetActiveProviderRequest,
+  AddCustomServerRequest,
+  RemoveCustomServerRequest,
+  SetCustomServerEnabledRequest,
+  UpdateCustomServerRequest,
+  SetConnectorAutoAllowRequest,
+  SetConnectorEnabledRequest,
+  SetNcbiCredentialsRequest,
   SetSkillEnabledRequest,
+  SetToolPermissionRequest,
   UpdateSkillRequest,
   UpsertProviderRequest,
   ValidateProviderRequest
@@ -27,6 +35,8 @@ export type SettingsIpcOptions = {
   onActiveProviderChanged?: () => void
   // Called after a skill is toggled so the ACP runtime reloads skills on its next reconnect.
   onSkillsChanged?: () => void
+  // Called after a connector/tool/credential change so bundled + custom skill docs re-sync.
+  onConnectorsChanged?: () => void
 }
 
 // Streams one install log line to every open renderer window.
@@ -43,7 +53,8 @@ const broadcastInstallLog = (payload: unknown): void => {
 const registerSettingsIpcHandlers = ({
   service = createDefaultSettingsService(),
   onActiveProviderChanged,
-  onSkillsChanged
+  onSkillsChanged,
+  onConnectorsChanged
 }: SettingsIpcOptions = {}): void => {
   ipcMain.handle('settings:get-preflight', () => service.getPreflight())
   ipcMain.handle('settings:get-settings', () => service.getSettingsView())
@@ -131,6 +142,72 @@ const registerSettingsIpcHandlers = ({
   )
   ipcMain.handle('settings:scan-repo-skills', (_event, request: ScanRepoRequest) =>
     service.scanRepoSkills(request)
+  )
+
+  ipcMain.handle('settings:list-connectors', () => service.listConnectors())
+  ipcMain.handle('settings:get-connector-detail', (_event, id: string) =>
+    service.getConnectorDetail(id)
+  )
+  ipcMain.handle(
+    'settings:set-connector-enabled',
+    async (_event, request: SetConnectorEnabledRequest) => {
+      const snapshot = await service.setConnectorEnabled(request)
+      onConnectorsChanged?.()
+      return snapshot
+    }
+  )
+  ipcMain.handle(
+    'settings:set-connector-auto-allow',
+    async (_event, request: SetConnectorAutoAllowRequest) => {
+      const snapshot = await service.setConnectorAutoAllow(request)
+      onConnectorsChanged?.()
+      return snapshot
+    }
+  )
+  ipcMain.handle(
+    'settings:set-tool-permission',
+    async (_event, request: SetToolPermissionRequest) => {
+      const detail = await service.setToolPermission(request)
+      onConnectorsChanged?.()
+      return detail
+    }
+  )
+  ipcMain.handle(
+    'settings:set-ncbi-credentials',
+    async (_event, request: SetNcbiCredentialsRequest) => {
+      const snapshot = await service.setNcbiCredentials(request)
+      onConnectorsChanged?.()
+      return snapshot
+    }
+  )
+  ipcMain.handle('settings:add-custom-server', async (_event, request: AddCustomServerRequest) => {
+    const snapshot = await service.addCustomServer(request)
+    onConnectorsChanged?.()
+    return snapshot
+  })
+  ipcMain.handle(
+    'settings:set-custom-server-enabled',
+    async (_event, request: SetCustomServerEnabledRequest) => {
+      const snapshot = await service.setCustomServerEnabled(request)
+      onConnectorsChanged?.()
+      return snapshot
+    }
+  )
+  ipcMain.handle(
+    'settings:remove-custom-server',
+    async (_event, request: RemoveCustomServerRequest) => {
+      const snapshot = await service.removeCustomServer(request)
+      onConnectorsChanged?.()
+      return snapshot
+    }
+  )
+  ipcMain.handle(
+    'settings:update-custom-server',
+    async (_event, request: UpdateCustomServerRequest) => {
+      const snapshot = await service.updateCustomServer(request)
+      onConnectorsChanged?.()
+      return snapshot
+    }
   )
 }
 

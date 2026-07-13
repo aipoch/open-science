@@ -4,6 +4,7 @@ import { useSessionPersistence } from '@/lib/session-persistence/session-persist
 import { HomePage } from '@/pages/home/HomePage'
 import { OnboardingWizard } from '@/pages/onboarding/OnboardingWizard'
 import { resolveStartupView, shouldMarkOnboardingComplete } from '@/pages/onboarding/startup-gate'
+import { ConnectorApprovalDialog } from '@/pages/settings/ConnectorApprovalDialog'
 import { SettingsPage } from '@/pages/settings/SettingsPage'
 import { WorkspacePage } from '@/pages/workspace/WorkspacePage'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -24,6 +25,14 @@ const App = (): React.JSX.Element | null => {
   const completeOnboarding = useSettingsStore((state) => state.completeOnboarding)
   const isSettingsOpen = useSettingsStore((state) => state.isSettingsOpen)
   const closeSettings = useSettingsStore((state) => state.closeSettings)
+  const enqueueApproval = useSettingsStore((state) => state.enqueueApproval)
+
+  // Subscribe once to connector approval requests from the main-process gate; they surface as a
+  // modal the user must answer before the held connector call proceeds.
+  useEffect(
+    () => window.api.settings.onConnectorApprovalRequest(enqueueApproval),
+    [enqueueApproval]
+  )
 
   // Load the project list once on startup so Home can render immediately after hydration.
   useEffect(() => {
@@ -70,6 +79,7 @@ const App = (): React.JSX.Element | null => {
         <WorkspacePage isSessionPersistenceReady={isSessionPersistenceReady} />
       )}
       <SettingsPage open={isSettingsOpen} onClose={closeSettings} />
+      <ConnectorApprovalDialog />
     </>
   )
 }

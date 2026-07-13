@@ -1,6 +1,17 @@
+import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
+
+import { BrowserWindow, ipcMain } from 'electron'
+
 import { createDefaultNotebookRuntimeService, registerAcpIpcHandlers } from './acp/ipc'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
+import { ApprovalBroker } from './connectors/approval-broker'
+import { toCustomMcpConfig, selectEnabledCustomServers } from './connectors/custom-mcp-bootstrap'
+import { McpClientManager } from './connectors/mcp-client-manager'
+import { ALL_CONNECTOR_IDS } from './connectors/registry'
+import { ConnectorService } from './connectors/service'
+import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './connectors/provision'
 import { registerFileSaveHandlers } from './file-save'
 import { registerGithubIpcHandlers } from './github-ipc'
 import { registerLogsIpcHandlers } from './logs-ipc'
@@ -8,12 +19,59 @@ import { registerNotebookIpcHandlers } from './notebook/ipc'
 import { NotebookLocalRpcServer } from './notebook/local-rpc-server'
 import { registerProjectIpcHandlers } from './projects/ipc'
 import { registerSessionPersistenceIpcHandlers } from './session-persistence/ipc'
+import { tryDecryptKey } from './settings/crypto'
 import { registerSettingsIpcHandlers } from './settings/ipc'
-import { createDefaultSettingsService } from './settings/service'
+import { getAppClaudeConfigDir } from './settings/provider-env'
+import { createDefaultSettingsService, type SettingsService } from './settings/service'
+import type { StoredConnectors } from './settings/types'
+import { resolveStorageRoot } from './storage-root'
 import { createDefaultUploadRepository, registerUploadIpcHandlers } from './uploads/ipc'
 
 type IpcRegistrationOptions = {
   mainEntryPath: string
+}
+
+// Builds a short, human-readable preview of a connector call's arguments for the approval card.
+const previewArgs = (args: Record<string, unknown>): string => {
+  let json: string
+  try {
+    json = JSON.stringify(args)
+  } catch {
+    json = '{…}'
+  }
+  return json.length > 300 ? `${json.slice(0, 300)}…` : json
+}
+
+// Reads the connectors settings block and refreshes the mcp-<connector>/mcp-<server> skill docs to
+// match — both the bundled catalog and any enabled custom MCP servers (stdio + remote). Called at
+// startup;
+// a future connectors-settings mutation (Plan 2/5 UI) should call this again so enable/disable
+// (bundled or custom) takes effect without an app restart. Never throws — a bad read or a
+// misconfigured/unreachable custom server (e.g. bad command) is logged and leaves the previous
+// snapshot and on-disk docs in place rather than breaking bootstrap.
+const refreshConnectorSkillDocs = async (
+  settingsService: SettingsService,
+  storageRoot: string,
+  mcpClientManager: McpClientManager,
+  onSnapshot: (connectors: StoredConnectors | undefined) => void
+): Promise<void> => {
+  try {
+    const connectors = await settingsService.getConnectors()
+
+    onSnapshot(connectors)
+    const skillsDir = join(getAppClaudeConfigDir(storageRoot), 'skills')
+
+    // Opt-out model: every bundled connector is enabled unless explicitly disabled.
+    const disabled = new Set(connectors?.disabledConnectorIds ?? [])
+    const enabledIds = ALL_CONNECTOR_IDS.filter((id) => !disabled.has(id))
+
+    await syncConnectorSkillDocs(skillsDir, enabledIds)
+    await syncCustomServerSkillDocs(skillsDir, selectEnabledCustomServers(connectors), (server) =>
+      mcpClientManager.listTools(toCustomMcpConfig(server))
+    )
+  } catch (error) {
+    console.error('Failed to sync connector skill docs:', error)
+  }
 }
 
 // Registers every main-process IPC surface used by the renderer.
@@ -24,9 +82,55 @@ const registerIpcHandlers = ({ mainEntryPath }: IpcRegistrationOptions): void =>
   // Share one upload repository so composer staging, prompt finalization, and previews agree.
   const uploadRepository = createDefaultUploadRepository()
   const notebookService = createDefaultNotebookRuntimeService()
-  const notebookRpcServer = new NotebookLocalRpcServer(notebookService)
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const settingsService = createDefaultSettingsService()
+
+  // Read fresh on every call so a future connectors-settings mutation (Plan 2 UI) only needs to call
+  // refreshConnectorSkillDocs again to take effect, without reconstructing the connector service.
+  let connectorsSnapshot: StoredConnectors | undefined
+  // One MCP client manager backs both dispatch (ConnectorService.call → custom server) and skill-doc
+  // generation (listTools) for user-added custom MCP servers (stdio + remote). It lazily connects per
+  // server, so constructing it here does not spawn anything until a custom server is actually used.
+  const mcpClientManager = new McpClientManager()
+  // Bridges un-trusted connector calls to the renderer approval card. A tool call that isn't
+  // pre-allowed or skip-approved is held here until the user decides (or it auto-denies on timeout).
+  const approvalBroker = new ApprovalBroker({
+    generateId: () => randomUUID(),
+    broadcast: (request) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.webContents.send('connectors:approval-request', request)
+      }
+    }
+  })
+  const connectorService = new ConnectorService({
+    getConnectors: () => connectorsSnapshot,
+    resolveApiKey: (ref) => tryDecryptKey(ref),
+    mcpClientManager,
+    requestApproval: ({ connector, method, args }) =>
+      approvalBroker.request({ connector, method, argsPreview: previewArgs(args) })
+  })
+  const notebookRpcServer = new NotebookLocalRpcServer(notebookService, { connectorService })
+  // The RPC server needs the runtime service to dispatch to, and the runtime service needs the RPC
+  // server's (lazily-started) connection for host.mcp() env injection — wire the second half here to
+  // avoid a construction cycle.
+  notebookService.setMcpRpcConnectionResolver(() => notebookRpcServer.ensureStarted())
+
+  // The renderer's approval card responds here; the broker resolves the held connector call.
+  ipcMain.handle(
+    'connectors:approval-respond',
+    (_event, request: { id: string; decision: 'allow' | 'deny' }) => {
+      approvalBroker.respond(request.id, request.decision)
+    }
+  )
+
+  void refreshConnectorSkillDocs(
+    settingsService,
+    resolveStorageRoot(),
+    mcpClientManager,
+    (connectors) => {
+      connectorsSnapshot = connectors
+    }
+  )
 
   registerFileSaveHandlers()
   registerLogsIpcHandlers()
@@ -45,7 +149,18 @@ const registerIpcHandlers = ({ mainEntryPath }: IpcRegistrationOptions): void =>
   registerSettingsIpcHandlers({
     service: settingsService,
     onActiveProviderChanged: () => void runtime.requestProviderReconnect(),
-    onSkillsChanged: () => void runtime.requestSkillsReload()
+    onSkillsChanged: () => void runtime.requestSkillsReload(),
+    // Re-sync bundled + custom skill docs and refresh the in-memory snapshot the connector
+    // service reads, so a connector/tool/credential change takes effect without an app restart.
+    onConnectorsChanged: () =>
+      void refreshConnectorSkillDocs(
+        settingsService,
+        resolveStorageRoot(),
+        mcpClientManager,
+        (connectors) => {
+          connectorsSnapshot = connectors
+        }
+      )
   })
   registerNotebookIpcHandlers(notebookService)
   registerArtifactIpcHandlers(artifactRepository, artifactRunRegistry)

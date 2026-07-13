@@ -298,6 +298,47 @@ describe('notebook runtime service', () => {
     expect(changedSessions.filter((sessionId) => sessionId === 'agent-session').length).toBe(5)
   })
 
+  it('threads the resolved mcp RPC connection into the execute request env', async () => {
+    const root = await createStorageRoot()
+    const executions: NotebookExecutionRequest[] = []
+    const service = new NotebookRuntimeService({
+      storageRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => {
+          executions.push(request)
+          return {
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }
+        },
+        shutdown: async () => undefined
+      })
+    })
+
+    service.setMcpRpcConnectionResolver(async () => ({
+      endpoint: 'http://127.0.0.1:1/x',
+      token: 'tok'
+    }))
+
+    await service.execute({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      code: "print('hi')"
+    })
+
+    expect(executions[0]).toMatchObject({
+      mcpRpcEndpoint: 'http://127.0.0.1:1/x',
+      mcpRpcToken: 'tok'
+    })
+  })
+
   it('returns null when a session has no persisted notebook run history', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({

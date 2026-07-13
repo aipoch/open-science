@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { SettingsSnapshot, ValidateProviderResult } from '../../../shared/settings'
+import type {
+  SettingsSnapshot,
+  ValidateProviderResult,
+  ConnectorView
+} from '../../../shared/settings'
 import {
   createInitialSettingsState,
   selectProviderModelOptions,
@@ -22,6 +26,17 @@ type SettingsApi = {
   markOnboardingComplete: ReturnType<typeof vi.fn>
   listSkills: ReturnType<typeof vi.fn>
   setSkillEnabled: ReturnType<typeof vi.fn>
+  listConnectors: ReturnType<typeof vi.fn>
+  getConnectorDetail: ReturnType<typeof vi.fn>
+  setConnectorEnabled: ReturnType<typeof vi.fn>
+  setConnectorAutoAllow: ReturnType<typeof vi.fn>
+  setToolPermission: ReturnType<typeof vi.fn>
+  setNcbiCredentials: ReturnType<typeof vi.fn>
+  addCustomServer: ReturnType<typeof vi.fn>
+  setCustomServerEnabled: ReturnType<typeof vi.fn>
+  removeCustomServer: ReturnType<typeof vi.fn>
+  updateCustomServer: ReturnType<typeof vi.fn>
+  respondConnectorApproval: ReturnType<typeof vi.fn>
 }
 
 // Minimal window.api.acp surface the provider-switch flow reads/uses.
@@ -71,7 +86,34 @@ beforeEach(() => {
       .fn()
       .mockResolvedValue({ ...snapshot([]), onboardingCompletedAt: 4242 }),
     listSkills: vi.fn().mockResolvedValue([]),
-    setSkillEnabled: vi.fn().mockResolvedValue([])
+    setSkillEnabled: vi.fn().mockResolvedValue([]),
+    listConnectors: vi
+      .fn()
+      .mockResolvedValue({ connectors: [], customServers: [], ncbi: { hasApiKey: false } }),
+    getConnectorDetail: vi.fn(),
+    setConnectorEnabled: vi
+      .fn()
+      .mockResolvedValue({ connectors: [], customServers: [], ncbi: { hasApiKey: false } }),
+    setConnectorAutoAllow: vi
+      .fn()
+      .mockResolvedValue({ connectors: [], customServers: [], ncbi: { hasApiKey: false } }),
+    setToolPermission: vi.fn(),
+    setNcbiCredentials: vi
+      .fn()
+      .mockResolvedValue({ connectors: [], customServers: [], ncbi: { hasApiKey: false } }),
+    addCustomServer: vi
+      .fn()
+      .mockResolvedValue({ connectors: [], customServers: [], ncbi: { hasApiKey: false } }),
+    setCustomServerEnabled: vi
+      .fn()
+      .mockResolvedValue({ connectors: [], customServers: [], ncbi: { hasApiKey: false } }),
+    removeCustomServer: vi
+      .fn()
+      .mockResolvedValue({ connectors: [], customServers: [], ncbi: { hasApiKey: false } }),
+    updateCustomServer: vi
+      .fn()
+      .mockResolvedValue({ connectors: [], customServers: [], ncbi: { hasApiKey: false } }),
+    respondConnectorApproval: vi.fn().mockResolvedValue(undefined)
   }
   acp = {
     getState: vi.fn().mockResolvedValue({ promptInFlightSessionIds: [] }),
@@ -439,5 +481,125 @@ describe('settings store: refreshProviderModels', () => {
     await useSettingsStore.getState().setSkillEnabled('demo', false)
     expect(api.setSkillEnabled).toHaveBeenCalledWith({ id: 'demo', enabled: false })
     expect(useSettingsStore.getState().skills[0].enabled).toBe(false)
+  })
+})
+
+describe('settings store: connectors slice', () => {
+  const connectorView = (id: string, enabled: boolean): ConnectorView => ({
+    id,
+    displayName: 'PubMed',
+    description: '',
+    sources: [],
+    requiresNcbi: true,
+    enabled,
+    autoAllow: false,
+    group: 'featured'
+  })
+
+  it('loadConnectors populates connectors and ncbi from the snapshot', async () => {
+    api.listConnectors.mockResolvedValue({
+      connectors: [connectorView('pubmed', true)],
+      customServers: [],
+      ncbi: { contactEmail: 'a@b.com', hasApiKey: true }
+    })
+
+    await useSettingsStore.getState().loadConnectors()
+
+    expect(useSettingsStore.getState().connectors[0].id).toBe('pubmed')
+    expect(useSettingsStore.getState().ncbi).toEqual({ contactEmail: 'a@b.com', hasApiKey: true })
+  })
+
+  it('setConnectorEnabled flips optimistically then reconciles from the returned snapshot', async () => {
+    api.listConnectors.mockResolvedValue({
+      connectors: [connectorView('pubmed', true)],
+      customServers: [],
+      ncbi: { hasApiKey: false }
+    })
+    api.setConnectorEnabled.mockResolvedValue({
+      connectors: [connectorView('pubmed', false)],
+      customServers: [],
+      ncbi: { hasApiKey: false }
+    })
+
+    await useSettingsStore.getState().loadConnectors()
+    expect(useSettingsStore.getState().connectors[0].enabled).toBe(true)
+
+    await useSettingsStore.getState().setConnectorEnabled('pubmed', false)
+    expect(api.setConnectorEnabled).toHaveBeenCalledWith({ id: 'pubmed', enabled: false })
+    expect(useSettingsStore.getState().connectors[0].enabled).toBe(false)
+  })
+
+  it('setNcbiCredentials reconciles the ncbi credential state', async () => {
+    api.setNcbiCredentials.mockResolvedValue({
+      connectors: [],
+      customServers: [],
+      ncbi: { contactEmail: 'me@lab.org', hasApiKey: true }
+    })
+
+    await useSettingsStore
+      .getState()
+      .setNcbiCredentials({ contactEmail: 'me@lab.org', apiKey: 'k' })
+
+    expect(api.setNcbiCredentials).toHaveBeenCalledWith({
+      contactEmail: 'me@lab.org',
+      apiKey: 'k'
+    })
+    expect(useSettingsStore.getState().ncbi).toEqual({
+      contactEmail: 'me@lab.org',
+      hasApiKey: true
+    })
+  })
+
+  it('addCustomServer and removeCustomServer reconcile the custom-server list', async () => {
+    const server = {
+      id: 'srv-1',
+      name: 'my-mem',
+      transport: 'stdio' as const,
+      enabled: true,
+      command: 'npx'
+    }
+    api.addCustomServer.mockResolvedValue({
+      connectors: [],
+      customServers: [server],
+      ncbi: { hasApiKey: false }
+    })
+    api.removeCustomServer.mockResolvedValue({
+      connectors: [],
+      customServers: [],
+      ncbi: { hasApiKey: false }
+    })
+
+    await useSettingsStore
+      .getState()
+      .addCustomServer({ name: 'my-mem', transport: 'stdio', command: 'npx' })
+    expect(api.addCustomServer).toHaveBeenCalledWith({
+      name: 'my-mem',
+      transport: 'stdio',
+      command: 'npx'
+    })
+    expect(useSettingsStore.getState().customServers).toEqual([server])
+
+    await useSettingsStore.getState().removeCustomServer('srv-1')
+    expect(api.removeCustomServer).toHaveBeenCalledWith({ id: 'srv-1' })
+    expect(useSettingsStore.getState().customServers).toEqual([])
+  })
+
+  it('enqueues an approval request and responds, clearing it from the queue', async () => {
+    const request = {
+      id: 'req-1',
+      connector: 'biomart',
+      method: 'get_data',
+      argsPreview: '{"x":1}'
+    }
+    useSettingsStore.getState().enqueueApproval(request)
+    expect(useSettingsStore.getState().pendingApprovals).toEqual([request])
+
+    // Duplicate ids are ignored.
+    useSettingsStore.getState().enqueueApproval(request)
+    expect(useSettingsStore.getState().pendingApprovals).toHaveLength(1)
+
+    await useSettingsStore.getState().respondApproval('req-1', 'allow')
+    expect(api.respondConnectorApproval).toHaveBeenCalledWith({ id: 'req-1', decision: 'allow' })
+    expect(useSettingsStore.getState().pendingApprovals).toEqual([])
   })
 })

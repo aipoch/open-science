@@ -14,6 +14,9 @@ import type { NotebookRuntimeService } from './runtime-service'
 type NotebookLocalRpcServerOptions = {
   token?: string
   host?: string
+  connectorService?: {
+    call(server: string, method: string, args: Record<string, unknown>): Promise<unknown>
+  }
 }
 
 type NotebookRpcPayload = {
@@ -53,6 +56,7 @@ const assertSessionParams = (params: Record<string, unknown>): void => {
 class NotebookLocalRpcServer {
   private readonly token: string
   private readonly host: string
+  private readonly connectorService: NotebookLocalRpcServerOptions['connectorService']
   private server: Server | undefined
   private startPromise: Promise<NotebookRpcConnection> | undefined
   private readonly sessionAliases = new Map<string, string>()
@@ -63,6 +67,7 @@ class NotebookLocalRpcServer {
   ) {
     this.token = options.token ?? randomUUID()
     this.host = options.host ?? '127.0.0.1'
+    this.connectorService = options.connectorService
   }
 
   // Starts the server once on an ephemeral port and returns the connection details for MCP env.
@@ -146,6 +151,15 @@ class NotebookLocalRpcServer {
 
   // Maps the narrow RPC method names to strongly-typed runtime service calls.
   private async dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
+    // mcpCall is not session-scoped, so it bypasses assertSessionParams below.
+    if (method === 'mcpCall') {
+      if (!this.connectorService) throw new Error('Connector service is not configured.')
+      const server = typeof params.server === 'string' ? params.server : ''
+      const toolMethod = typeof params.method === 'string' ? params.method : ''
+      const args = isRecord(params.args) ? params.args : {}
+      return this.connectorService.call(server, toolMethod, args)
+    }
+
     assertSessionParams(params)
 
     const handlers: Record<string, (request: Record<string, unknown>) => Promise<unknown>> = {
