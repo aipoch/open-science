@@ -297,4 +297,27 @@ describe('settings repository: v2 official providers & activeModel migration', (
     expect(reloaded.activeProviderId).toBe('p1')
     expect(reloaded.activeModel).toBe('my-model')
   })
+
+  it('persists and clears disabledSkillIds via setSkillEnabled', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    await repository.setSkillEnabled('citation-formatter', false)
+    expect((await repository.getSettings()).disabledSkillIds).toEqual(['citation-formatter'])
+
+    // Re-enabling removes the id (and drops the field when the set becomes empty).
+    await repository.setSkillEnabled('citation-formatter', true)
+    expect((await repository.getSettings()).disabledSkillIds).toBeUndefined()
+  })
+
+  it('drops non-string / duplicate disabledSkillIds on read', async () => {
+    const root = await createStorageRoot()
+
+    await writeFile(
+      join(root, 'settings.json'),
+      JSON.stringify({ version: 2, providers: [], disabledSkillIds: ['a', 'a', 3, '', 'b'] }),
+      'utf8'
+    )
+
+    expect((await new SettingsRepository(root).getSettings()).disabledSkillIds).toEqual(['a', 'b'])
+  })
 })

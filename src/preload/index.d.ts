@@ -64,7 +64,20 @@ import type {
   RefreshProviderModelsRequest,
   RefreshProviderModelsResult,
   SetActiveProviderRequest,
+  SetSkillEnabledRequest,
   SettingsSnapshot,
+  SkillDetailView,
+  SkillView,
+  CreateSkillRequest,
+  UpdateSkillRequest,
+  DeleteSkillRequest,
+  ImportSkillRequest,
+  ImportSkillResult,
+  ImportSkillZipRequest,
+  PreviewSkillZipRequest,
+  SkillBundlePreview,
+  ScanRepoRequest,
+  ScanRepoResult,
   UpsertProviderRequest,
   ValidateProviderRequest,
   ValidateProviderResult
@@ -126,6 +139,16 @@ interface OpenScienceAPI {
       request: RefreshProviderModelsRequest
     ): Promise<RefreshProviderModelsResult>
     markOnboardingComplete(): Promise<SettingsSnapshot>
+    listSkills(): Promise<SkillView[]>
+    getSkillDetail(id: string): Promise<SkillDetailView>
+    setSkillEnabled(request: SetSkillEnabledRequest): Promise<SkillView[]>
+    createSkill(request: CreateSkillRequest): Promise<SkillView[]>
+    updateSkill(request: UpdateSkillRequest): Promise<SkillView[]>
+    deleteSkill(request: DeleteSkillRequest): Promise<SkillView[]>
+    importSkill(request: ImportSkillRequest): Promise<ImportSkillResult>
+    importSkillZip(request: ImportSkillZipRequest): Promise<ImportSkillResult>
+    previewSkillZip(request: PreviewSkillZipRequest): Promise<SkillBundlePreview>
+    scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult>
     onInstallLog(listener: AcpListener<ClaudeInstallLogEvent>): RemoveListener
   }
   logs: {

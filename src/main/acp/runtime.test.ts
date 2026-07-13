@@ -834,6 +834,46 @@ describe('ACP runtime session management', () => {
     expect(process.killed).toBe(true)
   })
 
+  it('reloads skills immediately when no prompt is in flight', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.requestSkillsReload()
+
+    expect(process.killed).toBe(true)
+  })
+
+  it('defers a skills reload until an in-flight prompt finishes', async () => {
+    const process = new FakeAgentProcess()
+    const gate = createDeferred()
+    startFakeAgent(process, ['s1'], { onPrompt: () => gate.promise })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+
+    const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'hi' })
+
+    // A skill toggle mid-turn must NOT disconnect the running agent.
+    await runtime.requestSkillsReload()
+    expect(process.killed).toBe(false)
+
+    // Once the turn finishes, the deferred reload is applied (agent torn down for a fresh spawn).
+    gate.resolve()
+    await prompt
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(process.killed).toBe(true)
+  })
+
   it('passes the artifact MCP server to new and resumed sessions', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['remote-session-1'])

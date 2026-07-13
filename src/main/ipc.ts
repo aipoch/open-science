@@ -44,7 +44,8 @@ const registerIpcHandlers = ({ mainEntryPath }: IpcRegistrationOptions): void =>
   // the conversation's context across the switch.
   registerSettingsIpcHandlers({
     service: settingsService,
-    onActiveProviderChanged: () => void runtime.requestProviderReconnect()
+    onActiveProviderChanged: () => void runtime.requestProviderReconnect(),
+    onSkillsChanged: () => void runtime.requestSkillsReload()
   })
   registerNotebookIpcHandlers(notebookService)
   registerArtifactIpcHandlers(artifactRepository, artifactRunRegistry)

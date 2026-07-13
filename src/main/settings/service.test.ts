@@ -17,12 +17,13 @@ vi.mock('electron', () => ({
       return decoded.slice('cipher:'.length)
     }
   },
-  app: { getPath: () => '/home', isPackaged: false }
+  app: { getPath: () => '/home', getAppPath: () => '/home/no-such-app-root', isPackaged: false }
 }))
 
 const { SettingsService } = await import('./service')
 const { SettingsRepository } = await import('./repository')
 const { getAppClaudeConfigDir } = await import('./provider-env')
+const { SkillRegistry } = await import('../skills/registry')
 
 let storageRoot: string
 let repository: InstanceType<typeof SettingsRepository>
@@ -532,5 +533,85 @@ describe('SettingsService: onboarding', () => {
     // The persisted value is visible on a fresh read too.
     const view = await service.getSettingsView()
     expect(view.onboardingCompletedAt).toBe(snapshot.onboardingCompletedAt)
+  })
+})
+
+describe('SettingsService: skills', () => {
+  // Seeds a bundled-skills root with one "demo" skill + manifest for an injectable registry.
+  const seedBundle = async (): Promise<string> => {
+    const bundle = await mkdtemp(join(tmpdir(), 'os-skills-bundle-'))
+    await mkdir(join(bundle, 'demo'), { recursive: true })
+    await writeFile(
+      join(bundle, 'demo', 'SKILL.md'),
+      ['---', 'name: demo', 'description: A demo skill.', '---', '', 'demo body'].join('\n'),
+      'utf8'
+    )
+    await writeFile(
+      join(bundle, 'manifest.json'),
+      JSON.stringify({
+        version: 1,
+        skills: [
+          { id: 'demo', name: 'Demo', source: 'featured', updatedAt: '2026-01-01T00:00:00.000Z' }
+        ]
+      }),
+      'utf8'
+    )
+    return bundle
+  }
+
+  const createSkillService = async (): Promise<InstanceType<typeof SettingsService>> =>
+    new SettingsService({
+      repository,
+      storageRoot,
+      userClaudeDir: join(storageRoot, 'no-user-claude'),
+      skillRegistry: new SkillRegistry(await seedBundle())
+    })
+
+  it('lists skills with enabled reflecting disabledSkillIds and returns detail body', async () => {
+    const service = await createSkillService()
+
+    let skills = await service.listSkills()
+    expect(skills).toEqual([
+      expect.objectContaining({
+        id: 'demo',
+        name: 'Demo',
+        description: 'A demo skill.',
+        enabled: true
+      })
+    ])
+
+    skills = await service.setSkillEnabled({ id: 'demo', enabled: false })
+    expect(skills[0].enabled).toBe(false)
+
+    const detail = await service.getSkillDetail('demo')
+    expect(detail.body).toContain('demo body')
+  })
+
+  it('creates, edits, and deletes a personal skill alongside featured skills', async () => {
+    const service = await createSkillService()
+
+    let skills = await service.createSkill({
+      name: 'My Skill',
+      description: 'Mine.',
+      body: '# Mine'
+    })
+    // Featured (demo) + the new personal skill, both enabled by default.
+    expect(skills.map((skill) => skill.id).sort()).toEqual(['demo', 'personal-my-skill'])
+    const personal = skills.find((skill) => skill.id === 'personal-my-skill')
+    expect(personal).toMatchObject({ source: 'personal', enabled: true })
+
+    const detail = await service.getSkillDetail('personal-my-skill')
+    expect(detail.body).toContain('# Mine')
+
+    skills = await service.updateSkill({
+      id: 'personal-my-skill',
+      name: 'My Skill',
+      description: 'Edited.',
+      body: '# Edited'
+    })
+    expect(skills.find((skill) => skill.id === 'personal-my-skill')?.description).toBe('Edited.')
+
+    skills = await service.deleteSkill({ id: 'personal-my-skill' })
+    expect(skills.map((skill) => skill.id)).toEqual(['demo'])
   })
 })

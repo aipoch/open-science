@@ -40,6 +40,9 @@ export type StoredSettings = {
   // Set once the first-run onboarding wizard has been completed (or auto-completed for an
   // already-configured install). Absent means onboarding has never finished.
   onboardingCompletedAt?: number
+  // Ids of bundled skills the user turned OFF. Absent/empty means every bundled skill is enabled
+  // (default-on), so new bundled skills are enabled automatically.
+  disabledSkillIds?: string[]
 }
 
 // Canonical empty settings used for a first run or an unreadable file.

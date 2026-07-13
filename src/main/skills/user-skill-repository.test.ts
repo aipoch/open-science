@@ -1,0 +1,326 @@
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { deflateRawSync } from 'node:zlib'
+
+import { describe, expect, it } from 'vitest'
+
+import { UserSkillRepository, parseUserSkillId, toSlug } from './user-skill-repository'
+import type { FetchLike } from './github-import'
+
+const makeStorage = async (): Promise<string> => mkdtemp(join(tmpdir(), 'user-skills-'))
+
+// Fake GitHub fetch returning one skill dir (SKILL.md + run.py) with controllable contents.
+const fakeFetch =
+  (skillMd: string): FetchLike =>
+  async (url: string) => {
+    if (url.includes('/contents/')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => [
+          {
+            type: 'file',
+            name: 'SKILL.md',
+            path: 'pack/foo/SKILL.md',
+            download_url: 'https://raw/SKILL.md'
+          }
+        ],
+        arrayBuffer: async () => new ArrayBuffer(0)
+      }
+    }
+    const bytes = new TextEncoder().encode(skillMd)
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+      arrayBuffer: async () =>
+        bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+    }
+  }
+
+const SKILL_URL = 'https://github.com/acme/skills/tree/main/pack/foo'
+
+// CRC-32 + a minimal valid zip builder so importFromZip is tested against a real byte layout.
+const crc32 = (buffer: Buffer): number => {
+  let crc = 0xffffffff
+  for (let i = 0; i < buffer.length; i += 1) {
+    let c = (crc ^ buffer[i]) & 0xff
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
+    crc = (crc >>> 8) ^ c
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+const buildZip = (inputs: { path: string; content: Buffer }[]): Buffer => {
+  const locals: Buffer[] = []
+  const centrals: Buffer[] = []
+  let offset = 0
+  for (const input of inputs) {
+    const nameBuf = Buffer.from(input.path, 'utf8')
+    const stored = deflateRawSync(input.content)
+    const crc = crc32(input.content)
+    const local = Buffer.alloc(30 + nameBuf.length)
+    local.writeUInt32LE(0x04034b50, 0)
+    local.writeUInt16LE(8, 8)
+    local.writeUInt32LE(crc, 14)
+    local.writeUInt32LE(stored.length, 18)
+    local.writeUInt32LE(input.content.length, 22)
+    local.writeUInt16LE(nameBuf.length, 26)
+    nameBuf.copy(local, 30)
+    locals.push(local, stored)
+    const central = Buffer.alloc(46 + nameBuf.length)
+    central.writeUInt32LE(0x02014b50, 0)
+    central.writeUInt16LE(8, 10)
+    central.writeUInt32LE(crc, 16)
+    central.writeUInt32LE(stored.length, 20)
+    central.writeUInt32LE(input.content.length, 24)
+    central.writeUInt16LE(nameBuf.length, 28)
+    central.writeUInt32LE(offset, 42)
+    nameBuf.copy(central, 46)
+    centrals.push(central)
+    offset += local.length + stored.length
+  }
+  const localBuf = Buffer.concat(locals)
+  const centralBuf = Buffer.concat(centrals)
+  const eocd = Buffer.alloc(22)
+  eocd.writeUInt32LE(0x06054b50, 0)
+  eocd.writeUInt16LE(inputs.length, 8)
+  eocd.writeUInt16LE(inputs.length, 10)
+  eocd.writeUInt32LE(centralBuf.length, 12)
+  eocd.writeUInt32LE(localBuf.length, 16)
+  return Buffer.concat([localBuf, centralBuf, eocd])
+}
+
+describe('toSlug / parseUserSkillId', () => {
+  it('builds safe slugs and round-trips ids', () => {
+    expect(toSlug('My Skill!')).toBe('my-skill')
+    expect(parseUserSkillId('personal-my-skill')).toEqual({ source: 'personal', slug: 'my-skill' })
+    expect(parseUserSkillId('imported-foo')).toEqual({ source: 'imported', slug: 'foo' })
+    expect(parseUserSkillId('citation-formatter')).toBeNull()
+  })
+})
+
+describe('UserSkillRepository', () => {
+  it('creates, lists, reads, updates, and deletes a personal skill', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+
+    const id = await repo.createPersonal({
+      name: 'My Skill',
+      description: 'Does a thing.',
+      body: '# My Skill\nBody.'
+    })
+    expect(id).toBe('personal-my-skill')
+
+    const listed = await repo.list()
+    expect(listed).toHaveLength(1)
+    expect(listed[0]).toMatchObject({
+      id: 'personal-my-skill',
+      name: 'My Skill',
+      description: 'Does a thing.',
+      source: 'personal'
+    })
+
+    expect(await repo.body(id)).toContain('# My Skill')
+
+    await repo.updatePersonal(id, {
+      name: 'My Skill',
+      description: 'Updated.',
+      body: '# Updated body'
+    })
+    expect((await repo.list())[0].description).toBe('Updated.')
+    expect(await repo.body(id)).toContain('# Updated body')
+
+    await repo.delete(id)
+    expect(await repo.list()).toEqual([])
+  })
+
+  it('gives colliding names a numeric suffix', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+
+    const first = await repo.createPersonal({ name: 'Dup', description: 'a', body: 'x' })
+    const second = await repo.createPersonal({ name: 'Dup', description: 'b', body: 'y' })
+
+    expect(first).toBe('personal-dup')
+    expect(second).toBe('personal-dup-2')
+  })
+
+  it('writes reference files under references/ when creating a skill', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+
+    await repo.createPersonal({
+      name: 'With Refs',
+      description: 'd',
+      body: 'x',
+      references: [{ path: 'helper.py', dataBase64: Buffer.from('print(1)').toString('base64') }]
+    })
+
+    const written = await readFile(
+      join(storage, 'skills', 'personal', 'with-refs', 'references', 'helper.py'),
+      'utf8'
+    )
+    expect(written).toBe('print(1)')
+  })
+
+  it('lists imported skills with their frontmatter metadata', async () => {
+    const storage = await makeStorage()
+    const dir = join(storage, 'skills', 'imported', 'foo')
+    await mkdir(dir, { recursive: true })
+    await writeFile(
+      join(dir, 'SKILL.md'),
+      ['---', 'name: Foo', 'description: An imported skill.', 'license: MIT', '---', 'body'].join(
+        '\n'
+      ),
+      'utf8'
+    )
+
+    const listed = await new UserSkillRepository(storage).list()
+    expect(listed).toHaveLength(1)
+    expect(listed[0]).toMatchObject({
+      id: 'imported-foo',
+      name: 'Foo',
+      source: 'imported',
+      license: 'MIT'
+    })
+  })
+
+  it('returns empty when no user skills exist', async () => {
+    expect(await new UserSkillRepository(await makeStorage()).list()).toEqual([])
+  })
+
+  it('imports a .zip bundle (SKILL.md + files) and dedups an identical re-import', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+    const zip = buildZip([
+      { path: 'my-bundle/SKILL.md', content: Buffer.from('---\nname: Bundled\n---\nbody') },
+      { path: 'my-bundle/scripts/run.py', content: Buffer.from('print(1)') }
+    ])
+
+    const first = await repo.importFromZip(zip)
+    expect(first).toEqual({ status: 'imported', id: 'imported-bundled' })
+
+    const listed = await repo.list()
+    expect(listed.map((skill) => skill.id)).toEqual(['imported-bundled'])
+    expect(listed[0]).toMatchObject({ name: 'Bundled', source: 'imported' })
+
+    // The wrapper prefix is stripped, so the script lands under references-free root path.
+    const script = await readFile(
+      join(storage, 'skills', 'imported', 'bundled', 'scripts', 'run.py'),
+      'utf8'
+    )
+    expect(script).toBe('print(1)')
+
+    // Same content re-imported is a no-op.
+    expect((await repo.importFromZip(zip)).status).toBe('unchanged')
+  })
+
+  it('rejects a zip bundle without a SKILL.md', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const zip = buildZip([{ path: 'readme.md', content: Buffer.from('nope') }])
+    await expect(repo.importFromZip(zip)).rejects.toThrow(/SKILL\.md/)
+  })
+
+  it('previews a bundle without writing it, and flags an identical already-imported bundle', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const zip = buildZip([
+      {
+        path: 'my-bundle/SKILL.md',
+        content: Buffer.from('---\nname: Bundled\ndescription: A test bundle.\n---\nbody')
+      },
+      { path: 'my-bundle/scripts/run.py', content: Buffer.from('print(1)') }
+    ])
+
+    const preview = await repo.previewZip(zip)
+    expect(preview).toEqual({
+      name: 'Bundled',
+      description: 'A test bundle.',
+      files: ['SKILL.md', 'scripts/run.py'],
+      alreadyImported: false
+    })
+    // Preview writes nothing.
+    expect(await repo.list()).toHaveLength(0)
+
+    // After importing, the same bundle previews as already imported.
+    await repo.importFromZip(zip)
+    expect((await repo.previewZip(zip)).alreadyImported).toBe(true)
+  })
+
+  it('rejects a preview whose SKILL.md has no name', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const zip = buildZip([
+      { path: 'thing/SKILL.md', content: Buffer.from('---\ndescription: no name here\n---\nbody') }
+    ])
+    await expect(repo.previewZip(zip)).rejects.toThrow(/needs a name/)
+  })
+
+  it('imports a GitHub skill and dedups re-imports (unchanged vs updated)', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const skillMd = ['---', 'name: Foo', 'description: An imported skill.', '---', 'body'].join(
+      '\n'
+    )
+
+    const first = await repo.importFromGitHub(SKILL_URL, fakeFetch(skillMd))
+    expect(first).toEqual({ status: 'imported', id: 'imported-foo' })
+
+    const listed = await repo.list()
+    expect(listed.map((skill) => skill.id)).toEqual(['imported-foo'])
+    expect(listed[0]).toMatchObject({ name: 'Foo', source: 'imported' })
+
+    // Re-importing the same URL with identical content is a no-op.
+    const again = await repo.importFromGitHub(SKILL_URL, fakeFetch(skillMd))
+    expect(again.status).toBe('unchanged')
+
+    // Re-importing after upstream changed refreshes in place.
+    const changed = ['---', 'name: Foo', 'description: Now updated.', '---', 'body2'].join('\n')
+    const updated = await repo.importFromGitHub(SKILL_URL, fakeFetch(changed))
+    expect(updated).toEqual({ status: 'updated', id: 'imported-foo' })
+    expect((await repo.list())[0].description).toBe('Now updated.')
+  })
+
+  it('marks scanned candidates already imported by URL or by same name', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const skillMd = ['---', 'name: Foo', 'description: An imported skill.', '---', 'body'].join(
+      '\n'
+    )
+
+    // Import a skill from a "foo" folder, then scan a DIFFERENT repo that also has a "foo" folder.
+    await repo.importFromGitHub(SKILL_URL, fakeFetch(skillMd))
+
+    const treeFetch: FetchLike = async (url: string) => {
+      const body = url.includes('/git/trees/')
+        ? {
+            tree: [
+              { path: 'pack/foo/SKILL.md', type: 'blob' },
+              { path: 'bar/SKILL.md', type: 'blob' }
+            ]
+          }
+        : { default_branch: 'main' }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => body,
+        arrayBuffer: async () => new ArrayBuffer(0)
+      }
+    }
+
+    const scanned = await repo.scanRepo('other/repo', treeFetch)
+    const byName = Object.fromEntries(scanned.map((skill) => [skill.name, skill.alreadyImported]))
+    // "foo" is a different repo (different URL) but the same folder name -> flagged by name.
+    expect(byName).toEqual({ foo: true, bar: false })
+  })
+
+  it('writes frontmatter that the reader can parse back', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+    const id = await repo.createPersonal({ name: 'Round Trip', description: 'desc', body: 'hello' })
+
+    const raw = await readFile(
+      join(storage, 'skills', 'personal', 'round-trip', 'SKILL.md'),
+      'utf8'
+    )
+    expect(raw).toContain('name: Round Trip')
+    expect(raw).toContain('description: desc')
+    expect(await repo.body(id)).toBe('hello')
+  })
+})

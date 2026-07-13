@@ -1,12 +1,43 @@
-import { mkdtemp, readdir, rm, stat } from 'node:fs/promises'
+import { mkdtemp, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { SkillRegistry } from '../skills/registry'
+import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import { APP_ASSET_SUBDIRS, provisionAppClaudeConfigDir } from './claude-config-provision'
 
+// The default (no-registry) call path builds a SkillRegistry() that resolves the bundled-skills root via
+// electron's app; point it at a nonexistent dir so the registry lists nothing instead of touching a real
+// app path in the node test environment.
+vi.mock('electron', () => ({
+  app: { getAppPath: () => join(tmpdir(), 'os-no-such-app-root') }
+}))
+
 let root: string | undefined
+
+// Seeds a bundled-skills root with one "demo" skill + manifest so provisioning has something to copy.
+const seedBundle = async (): Promise<string> => {
+  const bundle = await mkdtemp(join(tmpdir(), 'bundle-'))
+  await mkdir(join(bundle, 'demo'), { recursive: true })
+  await writeFile(
+    join(bundle, 'demo', 'SKILL.md'),
+    ['---', 'name: demo', 'description: d', '---', 'body'].join('\n'),
+    'utf8'
+  )
+  await writeFile(
+    join(bundle, 'manifest.json'),
+    JSON.stringify({
+      version: 1,
+      skills: [
+        { id: 'demo', name: 'Demo', source: 'featured', updatedAt: '2026-01-01T00:00:00.000Z' }
+      ]
+    }),
+    'utf8'
+  )
+  return bundle
+}
 
 afterEach(async () => {
   if (root) {
@@ -35,5 +66,30 @@ describe('provisionAppClaudeConfigDir', () => {
 
     await provisionAppClaudeConfigDir(configDir)
     await expect(provisionAppClaudeConfigDir(configDir)).resolves.toBeUndefined()
+  })
+
+  it('materializes enabled bundled skills, honoring disabledSkillIds', async () => {
+    root = await mkdtemp(join(tmpdir(), 'os-claude-config-'))
+    const configDir = join(root, 'claude')
+    const registry = new SkillRegistry(await seedBundle())
+    const skills = await registry.list()
+
+    await provisionAppClaudeConfigDir(configDir, {
+      skills,
+      materializer: new ClaudeCodeSkillMaterializer(),
+      disabledSkillIds: []
+    })
+    expect(
+      (await readdir(join(configDir, 'skills'))).filter((name) => !name.startsWith('.'))
+    ).toEqual(['os-demo'])
+
+    await provisionAppClaudeConfigDir(configDir, {
+      skills,
+      materializer: new ClaudeCodeSkillMaterializer(),
+      disabledSkillIds: ['demo']
+    })
+    expect(
+      (await readdir(join(configDir, 'skills'))).filter((name) => !name.startsWith('.'))
+    ).toEqual([])
   })
 })

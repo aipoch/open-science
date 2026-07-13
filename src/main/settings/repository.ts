@@ -147,6 +147,20 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     settings.onboardingCompletedAt = onboardingCompletedAt
   }
 
+  const disabledSkillIds = Array.isArray(value.disabledSkillIds)
+    ? [
+        ...new Set(
+          value.disabledSkillIds.filter(
+            (entry): entry is string => typeof entry === 'string' && entry !== ''
+          )
+        )
+      ]
+    : []
+
+  if (disabledSkillIds.length > 0) {
+    settings.disabledSkillIds = disabledSkillIds
+  }
+
   return settings
 }
 
@@ -230,6 +244,22 @@ class SettingsRepository {
         ? { ...settings, onboardingCompletedAt: timestamp }
         : settings
     )
+  }
+
+  // Adds or removes a skill id from the disabled set (default-on model), returning the new document.
+  async setSkillEnabled(id: string, enabled: boolean): Promise<StoredSettings> {
+    return this.mutate((settings) => {
+      const current = new Set(settings.disabledSkillIds ?? [])
+
+      if (enabled) current.delete(id)
+      else current.add(id)
+
+      const disabledSkillIds = [...current]
+
+      return disabledSkillIds.length > 0
+        ? { ...settings, disabledSkillIds }
+        : { ...settings, disabledSkillIds: undefined }
+    })
   }
 
   // Serializes a read-modify-write cycle so concurrent callers cannot clobber each other.

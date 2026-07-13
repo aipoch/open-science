@@ -66,7 +66,20 @@ import type {
   RefreshProviderModelsRequest,
   RefreshProviderModelsResult,
   SetActiveProviderRequest,
+  SetSkillEnabledRequest,
   SettingsSnapshot,
+  SkillDetailView,
+  SkillView,
+  CreateSkillRequest,
+  UpdateSkillRequest,
+  DeleteSkillRequest,
+  ImportSkillRequest,
+  ImportSkillResult,
+  ImportSkillZipRequest,
+  PreviewSkillZipRequest,
+  SkillBundlePreview,
+  ScanRepoRequest,
+  ScanRepoResult,
   UpsertProviderRequest,
   ValidateProviderRequest,
   ValidateProviderResult
@@ -141,6 +154,16 @@ type OpenScienceAPI = {
       request: RefreshProviderModelsRequest
     ) => Promise<RefreshProviderModelsResult>
     markOnboardingComplete: () => Promise<SettingsSnapshot>
+    listSkills: () => Promise<SkillView[]>
+    getSkillDetail: (id: string) => Promise<SkillDetailView>
+    setSkillEnabled: (request: SetSkillEnabledRequest) => Promise<SkillView[]>
+    createSkill: (request: CreateSkillRequest) => Promise<SkillView[]>
+    updateSkill: (request: UpdateSkillRequest) => Promise<SkillView[]>
+    deleteSkill: (request: DeleteSkillRequest) => Promise<SkillView[]>
+    importSkill: (request: ImportSkillRequest) => Promise<ImportSkillResult>
+    importSkillZip: (request: ImportSkillZipRequest) => Promise<ImportSkillResult>
+    previewSkillZip: (request: PreviewSkillZipRequest) => Promise<SkillBundlePreview>
+    scanRepoSkills: (request: ScanRepoRequest) => Promise<ScanRepoResult>
     onInstallLog: (listener: AcpListener<ClaudeInstallLogEvent>) => RemoveListener
   }
   logs: {
@@ -287,6 +310,25 @@ const api: OpenScienceAPI = {
       ) as Promise<RefreshProviderModelsResult>,
     markOnboardingComplete: () =>
       ipcRenderer.invoke('settings:mark-onboarding-complete') as Promise<SettingsSnapshot>,
+    listSkills: () => ipcRenderer.invoke('settings:list-skills') as Promise<SkillView[]>,
+    getSkillDetail: (id: string) =>
+      ipcRenderer.invoke('settings:get-skill-detail', id) as Promise<SkillDetailView>,
+    setSkillEnabled: (request: SetSkillEnabledRequest) =>
+      ipcRenderer.invoke('settings:set-skill-enabled', request) as Promise<SkillView[]>,
+    createSkill: (request: CreateSkillRequest) =>
+      ipcRenderer.invoke('settings:create-skill', request) as Promise<SkillView[]>,
+    updateSkill: (request: UpdateSkillRequest) =>
+      ipcRenderer.invoke('settings:update-skill', request) as Promise<SkillView[]>,
+    deleteSkill: (request: DeleteSkillRequest) =>
+      ipcRenderer.invoke('settings:delete-skill', request) as Promise<SkillView[]>,
+    importSkill: (request: ImportSkillRequest) =>
+      ipcRenderer.invoke('settings:import-skill', request) as Promise<ImportSkillResult>,
+    importSkillZip: (request: ImportSkillZipRequest) =>
+      ipcRenderer.invoke('settings:import-skill-zip', request) as Promise<ImportSkillResult>,
+    previewSkillZip: (request: PreviewSkillZipRequest) =>
+      ipcRenderer.invoke('settings:preview-skill-zip', request) as Promise<SkillBundlePreview>,
+    scanRepoSkills: (request: ScanRepoRequest) =>
+      ipcRenderer.invoke('settings:scan-repo-skills', request) as Promise<ScanRepoResult>,
     // Streams live installer output while a one-click install runs.
     onInstallLog: (listener) => onIpcMessage('settings:install-log', listener)
   },

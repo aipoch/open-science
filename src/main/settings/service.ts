@@ -7,13 +7,26 @@ import type {
   ClaudeDetectResult,
   ClaudeInstallLogEvent,
   ClaudeInstallResult,
+  CreateSkillRequest,
+  DeleteSkillRequest,
   InstallClaudeRequest,
   Preflight,
   ProviderDraft,
   ProviderView,
   RefreshProviderModelsRequest,
   RefreshProviderModelsResult,
+  SetSkillEnabledRequest,
   SettingsSnapshot,
+  SkillDetailView,
+  SkillView,
+  ImportSkillRequest,
+  ImportSkillResult,
+  ImportSkillZipRequest,
+  PreviewSkillZipRequest,
+  SkillBundlePreview,
+  ScanRepoRequest,
+  ScanRepoResult,
+  UpdateSkillRequest,
   UpsertProviderRequest,
   ValidateProviderRequest,
   ValidateProviderResult
@@ -35,6 +48,9 @@ import { computePreflight } from './preflight'
 import { listProviderModels } from './list-models'
 import { buildProviderEnv, getAppClaudeConfigDir, type ResolvedProvider } from './provider-env'
 import { SettingsRepository } from './repository'
+import { SkillRegistry, type BundledSkill } from '../skills/registry'
+import { UserSkillRepository } from '../skills/user-skill-repository'
+import { readSkillFile } from '../skills/skill-files'
 import type { StoredProvider, StoredSettings } from './types'
 import { classifyStatus, validateProvider, type ClaudeProbeResult } from './validate'
 
@@ -68,6 +84,10 @@ export type SettingsServiceOptions = {
   // The machine's own Claude config dir, read to reuse its login for the "local" provider. Injectable
   // so tests don't touch the real ~/.claude.
   userClaudeDir?: string
+  // Bundled-skill source, injectable so tests can point at a seeded temp dir instead of app resources.
+  skillRegistry?: SkillRegistry
+  // Writable personal/imported skill store, injectable so tests can use a temp storage root.
+  userSkills?: UserSkillRepository
 }
 
 // Orchestrates the settings units (repository + crypto + detect/install + validate) behind one
@@ -78,6 +98,8 @@ class SettingsService {
   private readonly storageRoot: string
   private readonly detectDeps: ClaudeDetectDeps
   private readonly userClaudeDir: string
+  private readonly skillRegistry: SkillRegistry
+  private readonly userSkills: UserSkillRepository
   private providerSequence = 0
 
   constructor(options: SettingsServiceOptions = {}) {
@@ -85,6 +107,8 @@ class SettingsService {
     this.repository = options.repository ?? new SettingsRepository(this.storageRoot)
     this.detectDeps = options.detectDeps ?? createDefaultDetectDeps()
     this.userClaudeDir = options.userClaudeDir ?? defaultUserClaudeDir()
+    this.skillRegistry = options.skillRegistry ?? new SkillRegistry()
+    this.userSkills = options.userSkills ?? new UserSkillRepository(this.storageRoot)
   }
 
   // Returns the renderer-safe (masked) snapshot of settings.
@@ -97,6 +121,117 @@ class SettingsService {
       activeModel: settings.activeModel,
       providers: settings.providers.map((provider) => this.toProviderView(provider)),
       onboardingCompletedAt: settings.onboardingCompletedAt
+    }
+  }
+
+  // The full skill catalog across every source: bundled (featured) + imported + personal.
+  private async skillCatalog(): Promise<BundledSkill[]> {
+    const [featured, user] = await Promise.all([this.skillRegistry.list(), this.userSkills.list()])
+
+    return [...featured, ...user]
+  }
+
+  // Lists all skills (featured + imported + personal) with enabled state from the stored disabled set.
+  async listSkills(): Promise<SkillView[]> {
+    const [skills, settings] = await Promise.all([
+      this.skillCatalog(),
+      this.repository.getSettings()
+    ])
+    const disabled = new Set(settings.disabledSkillIds ?? [])
+
+    return skills.map((skill) => this.toSkillView(skill, disabled))
+  }
+
+  // Returns one skill's view plus its SKILL.md body for the detail view (any source).
+  async getSkillDetail(id: string): Promise<SkillDetailView> {
+    const [skills, settings] = await Promise.all([
+      this.skillCatalog(),
+      this.repository.getSettings()
+    ])
+    const skill = skills.find((entry) => entry.id === id)
+
+    if (!skill) {
+      throw new Error(`Unknown skill: ${id}`)
+    }
+
+    const disabled = new Set(settings.disabledSkillIds ?? [])
+    const { body } = await readSkillFile(skill.sourceDir)
+
+    return { ...this.toSkillView(skill, disabled), body }
+  }
+
+  // Toggles a skill and returns the refreshed list. The agent picks up the change on its next reconnect
+  // (driven by the IPC layer's onSkillsChanged), which re-provisions the config dir.
+  async setSkillEnabled(request: SetSkillEnabledRequest): Promise<SkillView[]> {
+    await this.repository.setSkillEnabled(request.id, request.enabled)
+
+    return this.listSkills()
+  }
+
+  // Creates a personal skill from the in-app editor, returning the refreshed list.
+  async createSkill(request: CreateSkillRequest): Promise<SkillView[]> {
+    await this.userSkills.createPersonal(request)
+
+    return this.listSkills()
+  }
+
+  // Updates an existing personal skill in place, returning the refreshed list.
+  async updateSkill(request: UpdateSkillRequest): Promise<SkillView[]> {
+    await this.userSkills.updatePersonal(request.id, {
+      name: request.name,
+      description: request.description,
+      body: request.body,
+      references: request.references
+    })
+
+    return this.listSkills()
+  }
+
+  // Deletes a personal or imported skill, returning the refreshed list.
+  async deleteSkill(request: DeleteSkillRequest): Promise<SkillView[]> {
+    await this.userSkills.delete(request.id)
+    // Drop any stale disabled entry so a re-created skill with the same id starts enabled.
+    await this.repository.setSkillEnabled(request.id, true)
+
+    return this.listSkills()
+  }
+
+  // Imports a skill from a public GitHub URL (deduplicated), returning the outcome + refreshed list.
+  async importSkill(request: ImportSkillRequest): Promise<ImportSkillResult> {
+    const outcome = await this.userSkills.importFromGitHub(request.url)
+
+    return { status: outcome.status, id: outcome.id, skills: await this.listSkills() }
+  }
+
+  // Imports a skill from an uploaded .zip / .skill bundle, returning the outcome + refreshed list.
+  async importSkillZip(request: ImportSkillZipRequest): Promise<ImportSkillResult> {
+    const outcome = await this.userSkills.importFromZip(Buffer.from(request.dataBase64, 'base64'))
+
+    return { status: outcome.status, id: outcome.id, skills: await this.listSkills() }
+  }
+
+  // Parses an uploaded bundle for a confirm-before-import preview, without writing anything.
+  async previewSkillZip(request: PreviewSkillZipRequest): Promise<SkillBundlePreview> {
+    return this.userSkills.previewZip(Buffer.from(request.dataBase64, 'base64'))
+  }
+
+  // Scans a GitHub repo for importable skill directories (marking already-imported ones).
+  async scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult> {
+    return { skills: await this.userSkills.scanRepo(request.repo) }
+  }
+
+  // Projects a catalog skill into its renderer-safe view given the disabled set.
+  private toSkillView(skill: BundledSkill, disabled: Set<string>): SkillView {
+    return {
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      source: skill.source,
+      updatedAt: skill.updatedAt,
+      enabled: !disabled.has(skill.id),
+      author: skill.author,
+      license: skill.license,
+      thirdParty: skill.thirdParty
     }
   }
 
@@ -367,9 +502,14 @@ class SettingsService {
       throw new Error('No active model provider is configured. Configure one in settings.')
     }
 
-    // Ensure the app-owned config dir exists (and app assets are injected) before the agent spawns.
+    // Ensure the app-owned config dir exists (and app assets are injected) before the agent spawns. The
+    // enabled skill set (featured + imported + personal) is materialized here, so a toggle/create/import
+    // takes effect on the next spawn.
     const appConfigDir = getAppClaudeConfigDir(this.storageRoot)
-    await provisionAppClaudeConfigDir(appConfigDir)
+    await provisionAppClaudeConfigDir(appConfigDir, {
+      skills: await this.skillCatalog(),
+      disabledSkillIds: settings.disabledSkillIds
+    })
 
     const envOverrides = buildProviderEnv(
       this.resolveProvider(activeProvider, settings.activeModel),

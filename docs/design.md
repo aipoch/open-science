@@ -521,45 +521,72 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 
 ### Settings
 
-- Use a large `Dialog`; desktop max width is `960px`, height is `calc(100svh - 2rem)` and capped at `688px`.
-- Left navigation: `w-52 bg-muted/30 p-3`.
-- Nav item: `h-8 rounded-lg px-2 text-sm hover:bg-accent`.
+- Use a large `Dialog`; the default panel is bordered `rounded-xl border border-border bg-card shadow-dialog`. A maximize control enlarges it to `h-[80vh] w-[80vw]`; the restored size follows content density.
+- Left navigation: `w-52 shrink-0 border-r border-border bg-muted/40 p-3`, organized into labeled groups (for example Capabilities and Workspace). Each group has a `text-xs font-medium text-muted-foreground` heading over its rows.
+- Nav item: `h-8 w-full rounded-lg px-2 text-sm gap-2 hover:bg-accent`, with a `size-4` leading icon (`text-muted-foreground`) and a truncating label.
 - Active: `bg-accent text-accent-foreground font-medium`.
-- Content header: `h-14 px-5`.
-- Content area: `space-y-6 p-5 overflow-auto`.
+- Content header: `h-12 border-b border-border px-3`, a space-between row. Left cluster: back / forward `size-7` icon buttons (`ArrowLeft` / `ArrowRight`, `disabled:opacity-40`), a `h-4 w-px bg-border` divider, then either a breadcrumb or a plain `h2 text-sm font-semibold` title. Right cluster: a maximize / restore `size-7` toggle (`Maximize2` / `Minimize2`) and a `size-7` close (`X`); both use `hover:bg-muted hover:text-foreground`.
+- Breadcrumb: a clickable root segment (`text-muted-foreground hover:text-foreground`), a muted `/` separator, and the truncated current page label in `text-foreground`, all at `text-sm font-semibold`.
+- Content area: scrolls independently (`min-h-0 flex-1 overflow-y-auto`); panels pad with `p-5`.
 - Form row: use `Field`; explanatory copy uses `FieldDescription` or `text-muted-foreground`.
 - Select fields use `Select`, with a `32px` trigger height.
 
+#### Skills panel
+
+- Panel navigation is breadcrumb-driven: the list, detail, create, edit, import, and upload screens are second-level pages reached through the settings header's back / forward history and maximize control, not separate dialogs.
+- List toolbar: a single row of `Select` source filter (`w-36`), a flex-1 search `Input` with a leading `Search` icon (`pl-8`, `type="search"`), and a right-aligned "Add skill" control.
+- "Add skill" is a neutral (not primary) `DropdownMenu` trigger: `h-8 rounded-lg border border-border bg-card px-2.5 text-sm font-medium hover:bg-muted`, with a leading `Plus` and a trailing `ChevronDown` (`opacity-70`). Its items — Write from scratch, Upload a skill, Import from GitHub — use `gap-2.5`, a leading icon, and a stacked label + `text-xs text-muted-foreground` hint.
+- Skills group by source (Featured / Imported / Personal). Each group header is a full-width collapse toggle: `text-sm font-semibold` label with a `ChevronDown` that rotates `-rotate-90` when collapsed, over a `text-xs text-muted-foreground` subtitle.
+- Skill row: `flex items-center gap-2 py-2.5`, rows separated by `divide-y divide-border`. The name (`text-sm`) over description (`text-xs text-muted-foreground`) is a flex-1 button opening the detail page; trailing controls are a `size-7` edit button (personal only), a `size-7` delete button (`hover:text-destructive`, non-featured only), and the enable toggle.
+- Enable toggle is an inline `role="switch"` (no shared Switch component): `h-5 w-9 rounded-full`, track `bg-primary` when on / `bg-muted` when off, with a `size-4` white knob that slides `translate-x-4`. The detail page reuses the same markup.
+- Skill detail page: header row pairs a `size-6` scroll icon (`ScrollText`, `text-primary`) + `text-heading font-semibold` name + a rounded source badge (`bg-muted text-xs text-muted-foreground`, e.g. Featured) against the same enable toggle, with a `text-xs text-muted-foreground` "Updated N days ago" line and a `[text-wrap:pretty]` description below. A **Files** section (`border-t border-border pt-4`) renders the `SKILL.md` body via `AgentMarkdown`; a **Details** section lists frontmatter Author / License / Third-party as stacked `text-xs` label + `text-sm` value rows, shown only when present.
+- Editor (create / edit) is sectioned Identity + Content + References: Content offers a Write / Upload toggle where pasting a `SKILL.md` auto-fills the frontmatter; References is a dropzone writing into the skill's `references/`.
+- Import from GitHub is Preview-first: no standalone import action initially, only a **Preview** button that scans the repo. Scanned candidates list with per-row checkboxes plus a **Select all** checkbox and an **Invert** text button; already-imported skills (matched by exact source URL or by the same folder name) show a muted `Imported` pill and are not pre-selected. The batch action, "Import selected (N)", is a neutral button (`border border-border bg-card hover:bg-muted`), never primary green.
+- Upload is a full-page dropzone (`Drag and drop or click to upload`) accepting a `.md` file or a `.zip` / `.skill` bundle, with a centered "Write from scratch instead" fallback. A dropped file is **parsed first, not imported**: on success it advances to a "Confirm import" page (parsed name, description, and — for a bundle — the file list), with a neutral **Import** button and a **Choose a different file** escape. Nothing is written until Import is confirmed.
+- Duplicate detection on the confirm page uses two signals: an **exact re-upload** (the bundle's sha256 content signature already matches an import) and a **same-name skill** already in the catalog (any source; also covers `.md` uploads). Either one shows an "Already uploaded" pill on the name and an `Info`-icon reminder below the button row (`text-xs text-muted-foreground`) — "…already imported — re-importing is a no-op." for an exact match, or `A skill named "X" already exists.` for a name match. The reminder never blocks import.
+- When a file fails to parse into a valid skill (not a ZIP, no `SKILL.md`, or a `SKILL.md` with no `name`), the failure shows in a danger banner directly under the dropzone: `flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000` with a leading `size-3.5` `AlertTriangle`. This is the reusable inline-error style for the settings pages.
+- Stray file drops are neutralized app-wide: the renderer entry prevents the default `dragover` / `drop` so a file released outside a dropzone can never navigate the window to `file://…`.
+
 ## Clickable Area Guidelines
 
-| Area              | Clickable part                       | shadcn pattern                                                                       |
-| ----------------- | ------------------------------------ | ------------------------------------------------------------------------------------ |
-| Home              | Account menu                         | `Button ghost icon` + `DropdownMenu`                                                 |
-| Home              | Main create button                   | `Button default` or `Button outline size=sm`                                         |
-| Home              | List row                             | `button` / `Link` + `hover:bg-accent`                                                |
-| Home              | Row actions                          | `Button ghost icon` + opacity reveal                                                 |
-| Dialog            | Close                                | `DialogClose` or `Button ghost icon`                                                 |
-| Dialog            | Cancel / confirm                     | `DialogFooter` + `Button secondary/default`                                          |
-| Settings          | Left navigation                      | `Button ghost` or `TabsTrigger`; active uses `bg-accent`                             |
-| Settings          | Select field                         | `Select`                                                                             |
-| Sidebar           | Back / collapse                      | `Sidebar` + `Button ghost icon`                                                      |
-| Sidebar           | Navigation row                       | `SidebarMenuButton`                                                                  |
-| Workspace sidebar | New conversation                     | `button` + `hover:bg-bg-300 cursor-pointer`                                          |
-| Workspace sidebar | Session row                          | Nested `button`; wrapper owns hover/active only                                      |
-| Workspace sidebar | Session actions                      | Icon `button` + opacity reveal + `DropdownMenu`                                      |
-| Workspace sidebar | Settings                             | Icon `button` + `hover:bg-bg-300 cursor-pointer`                                     |
-| Activity stream   | Tool row                             | `Button ghost`-style row, hover `bg-foreground/[0.04]`                               |
-| Activity stream   | Link / reference                     | `text-primary hover:underline`                                                       |
-| Activity stream   | Output card                          | `Card` or button card                                                                |
-| Composer          | Add / options / send                 | `Button ghost icon`                                                                  |
-| Composer          | Text field                           | `Textarea` or contenteditable shell, preserving shadcn focus ring                    |
-| Session menu      | Rename / delete                      | `DropdownMenu.Item`; destructive delete uses `text-danger-000`                       |
-| Workspace dialogs | Rename / delete confirm              | `RenameSessionDialog` uses `bg-text-000`; `DeleteSessionDialog` uses `bg-danger-000` |
-| Viewer            | Tab                                  | `TabsTrigger`                                                                        |
-| Viewer            | More / fullscreen / download / close | `Button ghost icon` + `Tooltip`                                                      |
-| File library      | Search                               | `Input` / `CommandInput`                                                             |
-| File library      | Grid/list switch                     | `ToggleGroup type="single"`                                                          |
-| File library      | File card / file row                 | `Card` / button row + hover `bg-accent`                                              |
+| Area              | Clickable part                       | shadcn pattern                                                                           |
+| ----------------- | ------------------------------------ | ---------------------------------------------------------------------------------------- |
+| Home              | Account menu                         | `Button ghost icon` + `DropdownMenu`                                                     |
+| Home              | Main create button                   | `Button default` or `Button outline size=sm`                                             |
+| Home              | List row                             | `button` / `Link` + `hover:bg-accent`                                                    |
+| Home              | Row actions                          | `Button ghost icon` + opacity reveal                                                     |
+| Dialog            | Close                                | `DialogClose` or `Button ghost icon`                                                     |
+| Dialog            | Cancel / confirm                     | `DialogFooter` + `Button secondary/default`                                              |
+| Settings          | Left navigation                      | `Button ghost` or `TabsTrigger`; active uses `bg-accent`                                 |
+| Settings          | Back / forward                       | `size-7` icon `button` (`ArrowLeft` / `ArrowRight`), `disabled:opacity-40`               |
+| Settings          | Breadcrumb root                      | Text `button` (`text-muted-foreground hover:text-foreground`)                            |
+| Settings          | Maximize / restore                   | `size-7` icon `button` (`Maximize2` / `Minimize2`)                                       |
+| Settings          | Close                                | `size-7` icon `button` (`X`)                                                             |
+| Settings          | Select field                         | `Select`                                                                                 |
+| Skills            | Add skill                            | Neutral `DropdownMenu` trigger (`border border-border bg-card`) + `Plus` / `ChevronDown` |
+| Skills            | Group header                         | Full-width collapse `button` + rotating `ChevronDown`                                    |
+| Skills            | Skill row                            | Flex-1 `button` → detail; hover reveals no extra chrome                                  |
+| Skills            | Edit / delete                        | `size-7` icon `button`; delete uses `hover:text-destructive`                             |
+| Skills            | Enable toggle                        | Inline `button role="switch"` (`h-5 w-9`)                                                |
+| Skills            | Import selected                      | Neutral `button` (`border border-border bg-card`), not primary                           |
+| Sidebar           | Back / collapse                      | `Sidebar` + `Button ghost icon`                                                          |
+| Sidebar           | Navigation row                       | `SidebarMenuButton`                                                                      |
+| Workspace sidebar | New conversation                     | `button` + `hover:bg-bg-300 cursor-pointer`                                              |
+| Workspace sidebar | Session row                          | Nested `button`; wrapper owns hover/active only                                          |
+| Workspace sidebar | Session actions                      | Icon `button` + opacity reveal + `DropdownMenu`                                          |
+| Workspace sidebar | Settings                             | Icon `button` + `hover:bg-bg-300 cursor-pointer`                                         |
+| Activity stream   | Tool row                             | `Button ghost`-style row, hover `bg-foreground/[0.04]`                                   |
+| Activity stream   | Link / reference                     | `text-primary hover:underline`                                                           |
+| Activity stream   | Output card                          | `Card` or button card                                                                    |
+| Composer          | Add / options / send                 | `Button ghost icon`                                                                      |
+| Composer          | Text field                           | `Textarea` or contenteditable shell, preserving shadcn focus ring                        |
+| Session menu      | Rename / delete                      | `DropdownMenu.Item`; destructive delete uses `text-danger-000`                           |
+| Workspace dialogs | Rename / delete confirm              | `RenameSessionDialog` uses `bg-text-000`; `DeleteSessionDialog` uses `bg-danger-000`     |
+| Viewer            | Tab                                  | `TabsTrigger`                                                                            |
+| Viewer            | More / fullscreen / download / close | `Button ghost icon` + `Tooltip`                                                          |
+| File library      | Search                               | `Input` / `CommandInput`                                                                 |
+| File library      | Grid/list switch                     | `ToggleGroup type="single"`                                                              |
+| File library      | File card / file row                 | `Card` / button row + hover `bg-accent`                                                  |
 
 ## Language Guidelines
 
