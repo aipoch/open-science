@@ -8,12 +8,6 @@
       "updatedAt": "2026-07-12T00:00:00.000Z"
     },
     {
-      "id": "literature-review",
-      "name": "Literature Review",
-      "source": "featured",
-      "updatedAt": "2026-07-12T00:00:00.000Z"
-    },
-    {
       "id": "abstract-summarizer",
       "name": "Abstract Summarizer",
       "source": "featured",
