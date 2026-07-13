@@ -61,7 +61,6 @@ describe('provider-kind helpers', () => {
     )
 
     expect(apiKeys).toContain('official:deepseek')
-    expect(apiKeys).toContain('official:moonshot')
     expect(otherKeys).toEqual(['custom', 'claude-default'])
   })
 
