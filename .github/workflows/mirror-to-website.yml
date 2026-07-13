@@ -1,6 +1,8 @@
 # Mirror a published GitHub Release to the website's S3-compatible storage + CDN. Decoupled downstream
 # consumer of release.yml: GitHub Release stays the single source of truth, this job re-publishes its
 # installers to a fast, in-country endpoint and writes version.json (website + in-app update prompt).
+# Cache correctness is handled purely via Cache-Control headers at upload time (immutable installers,
+# no-cache manifest) — no CDN purge API is needed.
 name: Mirror to website
 
 on:
@@ -73,36 +75,29 @@ jobs:
           aws configure set default.region "$S3_REGION"
 
       # Installers go to an immutable, per-version path: re-running the same tag overwrites identical
-      # bytes (idempotent backfill), and the versioned path never needs CDN invalidation. version.json
-      # is excluded here and published separately as the one mutable object.
+      # bytes (idempotent backfill). The immutable Cache-Control lets the CDN/browsers cache these
+      # large files forever without any purge. version.json is excluded here and published separately
+      # as the one mutable object. Bucket is a secret so it stays masked in the public Actions log, and
+      # --only-show-errors suppresses the per-file `upload: ... to s3://...` lines that would leak it.
       - name: Sync installers to versioned path
         env:
           S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
-          S3_BUCKET: ${{ vars.S3_BUCKET }}
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
           S3_PREFIX: ${{ vars.S3_PREFIX }}
           VERSION: ${{ steps.ref.outputs.version }}
         run: |
           aws --endpoint-url "$S3_ENDPOINT" s3 sync dist-assets/ \
-            "s3://$S3_BUCKET/$S3_PREFIX/releases/$VERSION/" --exclude "version.json"
+            "s3://$S3_BUCKET/$S3_PREFIX/releases/$VERSION/" --exclude "version.json" \
+            --cache-control "public, max-age=31536000, immutable" --only-show-errors
 
-      # The single mutable manifest, overwritten on every release; website + app read this path.
+      # The single mutable manifest, overwritten on every release; website + app read this path. no-cache
+      # keeps the CDN/browsers revalidating so a new version is picked up immediately without a purge.
       - name: Upload version.json
         env:
           S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
-          S3_BUCKET: ${{ vars.S3_BUCKET }}
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
           S3_PREFIX: ${{ vars.S3_PREFIX }}
         run: |
           aws --endpoint-url "$S3_ENDPOINT" s3 cp version.json \
-            "s3://$S3_BUCKET/$S3_PREFIX/version.json"
-
-      # Pluggable CDN invalidation: only version.json can change, so only it is invalidated. Skipped
-      # entirely when no CDN credential is configured (e.g. MinIO-only setups), keeping the CDN vendor
-      # out of the hard dependency path. Swap the command body for your CDN's API when enabling.
-      - name: Invalidate CDN cache for version.json
-        if: ${{ secrets.CDN_API_TOKEN != '' }}
-        env:
-          CDN_API_TOKEN: ${{ secrets.CDN_API_TOKEN }}
-          S3_PREFIX: ${{ vars.S3_PREFIX }}
-        run: |
-          echo "Invalidating $S3_PREFIX/version.json via CDN API"
-          # TODO(sub-project): call the configured CDN's purge API for /$S3_PREFIX/version.json.
+            "s3://$S3_BUCKET/$S3_PREFIX/version.json" \
+            --cache-control "no-cache" --content-type "application/json" --only-show-errors
