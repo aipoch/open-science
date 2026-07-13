@@ -1,4 +1,4 @@
-import { CheckCircle2, XCircle } from 'lucide-react'
+import { CheckCircle2, RefreshCw, XCircle } from 'lucide-react'
 
 import type { ClaudeInfo } from '../../../../shared/settings'
 
@@ -33,8 +33,10 @@ const ClaudeStatusCard = ({
         type="button"
         onClick={onDetect}
         disabled={isDetecting}
-        className="rounded-lg border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+        className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
       >
+        {/* Circular-arrows icon conveys the re-scan action; spins while a detection is in flight. */}
+        <RefreshCw className={`size-3.5 ${isDetecting ? 'animate-spin' : ''}`} aria-hidden="true" />
         {isDetecting ? 'Detecting…' : 'Re-detect'}
       </button>
     </div>

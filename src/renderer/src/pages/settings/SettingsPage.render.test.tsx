@@ -97,7 +97,7 @@ describe('SettingsPage layout', () => {
     expect(document.body.textContent).toContain('Providers')
   })
 
-  it('opens Add provider as a sub-page with a back control, and returns on back', () => {
+  it('opens Add provider as a history-driven sub-page and returns via the back arrow', () => {
     act(() => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
@@ -111,16 +111,30 @@ describe('SettingsPage layout', () => {
 
     clickByText('Add provider')
 
-    // The sub-page shows a back control and the provider-type dropdown, hiding the Claude section.
-    expect(document.body.querySelector('[aria-label="Back to providers"]')).not.toBeNull()
+    // The sub-page shows a "Model › Add provider" breadcrumb and the provider-type dropdown, hiding
+    // the Claude section. There is no standalone in-content back arrow.
+    const crumb = document.body.querySelector<HTMLButtonElement>('[aria-label="Back to model"]')
+    expect(crumb).not.toBeNull()
+    expect(document.body.textContent).toContain('Add provider')
+    expect(document.body.querySelector('[aria-label="Back to providers"]')).toBeNull()
     expect(document.body.querySelector('[aria-label="Provider type"]')).not.toBeNull()
     expect(document.body.querySelector('section[aria-label="Claude"]')).toBeNull()
 
-    // Going back restores the provider list view.
-    const back = document.body.querySelector<HTMLButtonElement>('[aria-label="Back to providers"]')
+    // The shared top back arrow exits the form back to the provider list.
+    const back = document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')
     act(() => back?.click())
     expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
     expect(document.body.querySelector('[aria-label="Provider type"]')).toBeNull()
+
+    // Forward re-enters the form as a history location.
+    const forward = document.body.querySelector<HTMLButtonElement>('[aria-label="Forward"]')
+    act(() => forward?.click())
+    expect(document.body.querySelector('[aria-label="Provider type"]')).not.toBeNull()
+
+    // The breadcrumb root crumb returns to the provider list too.
+    const rootCrumb = document.body.querySelector<HTMLButtonElement>('[aria-label="Back to model"]')
+    act(() => rootCrumb?.click())
+    expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
   })
 
   it('switches to the General panel and shows the diagnostic log file', async () => {

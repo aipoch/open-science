@@ -3,6 +3,7 @@ import {
   ArrowRight,
   Maximize2,
   Minimize2,
+  Plus,
   ScrollText,
   Settings2,
   SlidersHorizontal,
@@ -33,8 +34,8 @@ type SettingsPageProps = {
   onClose: () => void
 }
 
-// Form target: a brand-new provider or an existing one being edited.
-type FormTarget = { mode: 'create' } | { mode: 'edit'; provider: ProviderView }
+// The model panel sub-view, driven by the settings navigation history so add/edit is a breadcrumb page.
+type ModelView = { kind: 'list' } | { kind: 'create' } | { kind: 'edit'; providerId: string }
 
 // Builds a form value from an existing provider (never carrying the plaintext key).
 const toFormValue = (provider: ProviderView): ProviderFormValue =>
@@ -90,11 +91,15 @@ const SETTINGS_PANELS: ReadonlyArray<SettingsPanel> = SETTINGS_GROUPS.flatMap(
   (group) => group.panels
 )
 
-// One entry in the settings back/forward history: the active panel plus, for the skills panel, its
-// current sub-view (list / detail / create / edit / import).
-type NavLocation = { panel: SettingsPanelId; skills: SkillsView }
+// One entry in the settings back/forward history: the active panel plus each panel's current sub-view
+// (skills: list / detail / create / edit / import; model: list / create / edit).
+type NavLocation = { panel: SettingsPanelId; skills: SkillsView; model: ModelView }
 
-const INITIAL_LOCATION: NavLocation = { panel: 'model', skills: { kind: 'list' } }
+const INITIAL_LOCATION: NavLocation = {
+  panel: 'model',
+  skills: { kind: 'list' },
+  model: { kind: 'list' }
+}
 
 // App-level model settings surface. Reuses the onboarding cards/form; manages providers (CRUD +
 // activate + test). Opened from the Home/Workspace gear entry.
@@ -115,9 +120,8 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const validateProvider = useSettingsStore((state) => state.validateProvider)
   const refreshProviderModels = useSettingsStore((state) => state.refreshProviderModels)
 
-  const [formTarget, setFormTarget] = useState<FormTarget | null>(null)
-  // Settings navigation history (browser-like back/forward). Panel switches and skill drill-downs push a
-  // new location; the active panel and open skill detail are derived from the current entry.
+  // Settings navigation history (browser-like back/forward). Panel switches and drill-downs push a
+  // new location; the active panel and open sub-views are derived from the current entry.
   const [history, setHistory] = useState<NavLocation[]>([INITIAL_LOCATION])
   const [historyIndex, setHistoryIndex] = useState(0)
   // Whether the dialog is enlarged to near-fullscreen via the maximize control.
@@ -140,76 +144,120 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const currentLocation = history[historyIndex]
   const activePanel = currentLocation.panel
   const skillsView = currentLocation.skills
+  const modelView = currentLocation.model
   const canGoBack = historyIndex > 0
   const canGoForward = historyIndex < history.length - 1
 
-  // Pushes a new location, dropping any forward entries and closing a transient provider form.
+  // Pushes a new location, dropping any forward entries.
   const navigate = (location: NavLocation): void => {
     if (
       location.panel === activePanel &&
       location.skills.kind === skillsView.kind &&
       ('id' in location.skills ? location.skills.id : undefined) ===
-        ('id' in skillsView ? skillsView.id : undefined)
+        ('id' in skillsView ? skillsView.id : undefined) &&
+      location.model.kind === modelView.kind &&
+      ('providerId' in location.model ? location.model.providerId : undefined) ===
+        ('providerId' in modelView ? modelView.providerId : undefined)
     ) {
       return
     }
-    setFormTarget(null)
     setHistory((entries) => [...entries.slice(0, historyIndex + 1), location])
     setHistoryIndex((index) => index + 1)
   }
 
   // Navigates within the skills panel (list/detail/create/edit/import) as a history entry.
-  const navigateSkills = (skills: SkillsView): void => navigate({ panel: 'skills', skills })
+  const navigateSkills = (skills: SkillsView): void =>
+    navigate({ panel: 'skills', skills, model: modelView })
 
-  // Breadcrumb label for a skills sub-view (null when on the list, so the plain panel title shows).
-  const skillsBreadcrumbLabel = ((): string | null => {
-    if (activePanel !== 'skills' || skillsView.kind === 'list') return null
-    if (skillsView.kind === 'create') return 'New skill'
-    if (skillsView.kind === 'upload') return 'Upload a skill'
-    if (skillsView.kind === 'import') return 'Import from GitHub'
-    const name = skills.find((skill) => skill.id === skillsView.id)?.name ?? ''
-    return skillsView.kind === 'edit' ? `Edit ${name}`.trim() : name
+  // Shared header breadcrumb for a drilled-in sub-view (null when on a panel's list, so the plain
+  // panel title shows). Covers both the skills and model panels.
+  const breadcrumb = ((): {
+    rootLabel: string
+    rootTo: NavLocation
+    leaf: string
+  } | null => {
+    if (activePanel === 'skills' && skillsView.kind !== 'list') {
+      const leaf =
+        skillsView.kind === 'create'
+          ? 'New skill'
+          : skillsView.kind === 'upload'
+            ? 'Upload a skill'
+            : skillsView.kind === 'import'
+              ? 'Import from GitHub'
+              : (() => {
+                  const name = skills.find((skill) => skill.id === skillsView.id)?.name ?? ''
+                  return skillsView.kind === 'edit' ? `Edit ${name}`.trim() : name
+                })()
+      return {
+        rootLabel: 'Skills',
+        rootTo: { panel: 'skills', skills: { kind: 'list' }, model: currentLocation.model },
+        leaf
+      }
+    }
+    if (activePanel === 'model' && modelView.kind !== 'list') {
+      const name =
+        modelView.kind === 'edit'
+          ? (providers.find((provider) => provider.id === modelView.providerId)?.name ?? '')
+          : ''
+      return {
+        rootLabel: 'Model',
+        rootTo: { panel: 'model', skills: currentLocation.skills, model: { kind: 'list' } },
+        leaf: modelView.kind === 'create' ? 'Add provider' : `Edit ${name}`.trim()
+      }
+    }
+    return null
   })()
 
   const goBack = (): void => {
     if (!canGoBack) return
-    setFormTarget(null)
     setHistoryIndex((index) => index - 1)
   }
 
   const goForward = (): void => {
     if (!canGoForward) return
-    setFormTarget(null)
     setHistoryIndex((index) => index + 1)
   }
 
+  // A provider form (add/edit) is open when the model panel is on a non-list sub-view.
+  const isProviderFormOpen = activePanel === 'model' && modelView.kind !== 'list'
   // Resolve the edited provider from the live store so a model refresh (which updates the cache) is
-  // reflected in the form; fall back to the captured target if it's mid-delete.
+  // reflected in the form; undefined until the provider is found (or when creating).
   const editingProvider =
-    formTarget?.mode === 'edit'
-      ? (providers.find((provider) => provider.id === formTarget.provider.id) ??
-        formTarget.provider)
+    modelView.kind === 'edit'
+      ? providers.find((provider) => provider.id === modelView.providerId)
       : undefined
   // Required-field errors for the open draft; a custom provider must be complete before it can save.
   const formErrors = getProviderFormErrors(formValue, { hasStoredKey: editingProvider?.hasKey })
   const canSave = !isSaving && !hasProviderFormErrors(formErrors)
 
-  const openCreate = (): void => {
-    setFormTarget({ mode: 'create' })
-    setFormValue(createEmptyProviderFormValue())
+  // Seed the form value when entering a create/edit sub-view (adjust-state-during-render, keyed on the
+  // sub-view so typing isn't clobbered by background store updates; edit guards until the provider
+  // loads). Also clears any stale status message on entry.
+  const modelViewKey = modelView.kind === 'edit' ? `edit:${modelView.providerId}` : modelView.kind
+  const [seededModelView, setSeededModelView] = useState(modelViewKey)
+  if (modelViewKey !== seededModelView) {
+    setSeededModelView(modelViewKey)
+    if (modelView.kind === 'create') {
+      setFormValue(createEmptyProviderFormValue())
+    } else if (modelView.kind === 'edit') {
+      const provider = providers.find((entry) => entry.id === modelView.providerId)
+      if (provider) setFormValue(toFormValue(provider))
+    }
     setStatusMessage(undefined)
   }
 
-  const openEdit = (provider: ProviderView): void => {
-    setFormTarget({ mode: 'edit', provider })
-    setFormValue(toFormValue(provider))
-    setStatusMessage(undefined)
-  }
+  const openCreate = (): void =>
+    navigate({ panel: 'model', skills: currentLocation.skills, model: { kind: 'create' } })
 
-  const closeForm = (): void => {
-    setFormTarget(null)
-    setStatusMessage(undefined)
-  }
+  const openEdit = (provider: ProviderView): void =>
+    navigate({
+      panel: 'model',
+      skills: currentLocation.skills,
+      model: { kind: 'edit', providerId: provider.id }
+    })
+
+  const closeForm = (): void =>
+    navigate({ panel: 'model', skills: currentLocation.skills, model: { kind: 'list' } })
 
   const handleSave = async (): Promise<void> => {
     setIsSaving(true)
@@ -221,7 +269,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
       // warning) lands on the provider's card.
       const providerId = await persistProvider(toUpsertRequest(formValue, editingProvider?.id))
 
-      setFormTarget(null)
+      navigate({ panel: 'model', skills: currentLocation.skills, model: { kind: 'list' } })
 
       if (providerId) {
         setBusyProviderId(providerId)
@@ -309,7 +357,13 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                         <button
                           type="button"
                           aria-current={isActive ? 'page' : undefined}
-                          onClick={() => navigate({ panel: id, skills: { kind: 'list' } })}
+                          onClick={() =>
+                            navigate({
+                              panel: id,
+                              skills: { kind: 'list' },
+                              model: { kind: 'list' }
+                            })
+                          }
                           className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors ${
                             isActive
                               ? 'bg-muted font-medium text-foreground'
@@ -354,20 +408,20 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                   <ArrowRight className="size-4" aria-hidden="true" />
                 </button>
                 <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
-                {skillsBreadcrumbLabel !== null ? (
+                {breadcrumb !== null ? (
                   <div className="flex min-w-0 items-center gap-1.5 text-sm font-semibold">
                     <button
                       type="button"
-                      onClick={() => navigateSkills({ kind: 'list' })}
-                      aria-label="Back to skills"
+                      onClick={() => navigate(breadcrumb.rootTo)}
+                      aria-label={`Back to ${breadcrumb.rootLabel.toLowerCase()}`}
                       className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
                     >
-                      Skills
+                      {breadcrumb.rootLabel}
                     </button>
                     <span className="shrink-0 text-muted-foreground" aria-hidden="true">
                       ›
                     </span>
-                    <span className="truncate text-foreground">{skillsBreadcrumbLabel}</span>
+                    <span className="truncate text-foreground">{breadcrumb.leaf}</span>
                   </div>
                 ) : (
                   <h2 className="truncate text-sm font-semibold text-foreground">
@@ -402,24 +456,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                 <SkillsPanel view={skillsView} onNavigate={navigateSkills} />
               ) : activePanel === 'general' ? (
                 <GeneralPanel />
-              ) : formTarget ? (
-                // Add/edit provider is a secondary page: a back arrow returns to the provider list.
+              ) : isProviderFormOpen ? (
+                // Add/edit provider is a secondary page reached via the shared back/forward arrows.
                 <div className="p-5">
-                  <div className="mb-4 flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={closeForm}
-                      disabled={isSaving}
-                      aria-label="Back to providers"
-                      className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
-                    >
-                      <ArrowLeft className="size-4" aria-hidden="true" />
-                    </button>
-                    <h3 className="text-sm font-semibold text-foreground">
-                      {editingProvider ? 'Edit provider' : 'Add provider'}
-                    </h3>
-                  </div>
-
                   <ProviderForm
                     value={formValue}
                     onChange={(patch) => setFormValue((current) => ({ ...current, ...patch }))}
@@ -494,8 +533,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                       <button
                         type="button"
                         onClick={openCreate}
-                        className="rounded-lg border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-muted"
+                        className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
                       >
+                        <Plus className="size-4" aria-hidden="true" />
                         Add provider
                       </button>
                     </div>
