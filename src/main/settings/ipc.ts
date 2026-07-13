@@ -1,10 +1,18 @@
 import { BrowserWindow, ipcMain } from 'electron'
 
 import type {
+  CreateSkillRequest,
   DeleteProviderRequest,
+  DeleteSkillRequest,
+  ImportSkillRequest,
+  ImportSkillZipRequest,
+  PreviewSkillZipRequest,
+  ScanRepoRequest,
   InstallClaudeRequest,
   RefreshProviderModelsRequest,
   SetActiveProviderRequest,
+  SetSkillEnabledRequest,
+  UpdateSkillRequest,
   UpsertProviderRequest,
   ValidateProviderRequest
 } from '../../shared/settings'
@@ -17,6 +25,8 @@ export type SettingsIpcOptions = {
   service?: SettingsService
   // Called after the active provider changes so the ACP runtime can drop its stale connection.
   onActiveProviderChanged?: () => void
+  // Called after a skill is toggled so the ACP runtime reloads skills on its next reconnect.
+  onSkillsChanged?: () => void
 }
 
 // Streams one install log line to every open renderer window.
@@ -32,7 +42,8 @@ const broadcastInstallLog = (payload: unknown): void => {
 // handlers only marshal typed requests and forward install log streaming.
 const registerSettingsIpcHandlers = ({
   service = createDefaultSettingsService(),
-  onActiveProviderChanged
+  onActiveProviderChanged,
+  onSkillsChanged
 }: SettingsIpcOptions = {}): void => {
   ipcMain.handle('settings:get-preflight', () => service.getPreflight())
   ipcMain.handle('settings:get-settings', () => service.getSettingsView())
@@ -78,6 +89,49 @@ const registerSettingsIpcHandlers = ({
     (_event, request: RefreshProviderModelsRequest) => service.refreshProviderModels(request)
   )
   ipcMain.handle('settings:mark-onboarding-complete', () => service.markOnboardingComplete())
+
+  ipcMain.handle('settings:list-skills', () => service.listSkills())
+  ipcMain.handle('settings:get-skill-detail', (_event, id: string) => service.getSkillDetail(id))
+  ipcMain.handle('settings:set-skill-enabled', async (_event, request: SetSkillEnabledRequest) => {
+    const skills = await service.setSkillEnabled(request)
+
+    // A toggle takes effect on the next reconnect: the runtime re-provisions (re-materializes) the
+    // config dir and resumes the open session with full context on its next message.
+    onSkillsChanged?.()
+
+    return skills
+  })
+  ipcMain.handle('settings:create-skill', async (_event, request: CreateSkillRequest) => {
+    const skills = await service.createSkill(request)
+    onSkillsChanged?.()
+    return skills
+  })
+  ipcMain.handle('settings:update-skill', async (_event, request: UpdateSkillRequest) => {
+    const skills = await service.updateSkill(request)
+    onSkillsChanged?.()
+    return skills
+  })
+  ipcMain.handle('settings:delete-skill', async (_event, request: DeleteSkillRequest) => {
+    const skills = await service.deleteSkill(request)
+    onSkillsChanged?.()
+    return skills
+  })
+  ipcMain.handle('settings:import-skill', async (_event, request: ImportSkillRequest) => {
+    const result = await service.importSkill(request)
+    onSkillsChanged?.()
+    return result
+  })
+  ipcMain.handle('settings:import-skill-zip', async (_event, request: ImportSkillZipRequest) => {
+    const result = await service.importSkillZip(request)
+    onSkillsChanged?.()
+    return result
+  })
+  ipcMain.handle('settings:preview-skill-zip', (_event, request: PreviewSkillZipRequest) =>
+    service.previewSkillZip(request)
+  )
+  ipcMain.handle('settings:scan-repo-skills', (_event, request: ScanRepoRequest) =>
+    service.scanRepoSkills(request)
+  )
 }
 
 export { SETTINGS_INSTALL_LOG_CHANNEL, registerSettingsIpcHandlers }

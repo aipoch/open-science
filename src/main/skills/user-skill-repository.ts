@@ -1,0 +1,420 @@
+import { createHash } from 'node:crypto'
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+
+import type { SkillBundlePreview, SkillReference, SkillSource } from '../../shared/settings'
+import { createLogger } from '../logger'
+import {
+  fetchSkillFiles,
+  parseGitHubSkillUrl,
+  parseGitHubRepo,
+  scanRepoForSkills,
+  type FetchLike,
+  type FetchedSkillFile,
+  type ScannedSkill
+} from './github-import'
+import { parseFrontmatter } from './frontmatter'
+import type { BundledSkill } from './registry'
+import { readSkillFile } from './skill-files'
+import { extractZip } from './zip-extract'
+
+const log = createLogger('skills')
+
+// User skills live in writable app storage, one subdir per skill, grouped by source. Bundled (featured)
+// skills stay read-only in resources and are handled by SkillRegistry instead.
+const USER_SOURCES: ReadonlyArray<Extract<SkillSource, 'imported' | 'personal'>> = [
+  'imported',
+  'personal'
+]
+
+// Only lowercase slugs so a skill id maps 1:1 to a safe directory name.
+const SAFE_SLUG = /^[a-z0-9-]+$/
+
+// Builds a filesystem-safe slug from a display name (e.g. "My Skill!" -> "my-skill").
+const toSlug = (name: string): string =>
+  name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64)
+
+// A skill id is `<source>-<slug>`; parse it back to its source + slug (null for bundled/unknown ids).
+const parseUserSkillId = (
+  id: string
+): { source: (typeof USER_SOURCES)[number]; slug: string } | null => {
+  for (const source of USER_SOURCES) {
+    const prefix = `${source}-`
+    if (id.startsWith(prefix)) {
+      const slug = id.slice(prefix.length)
+      if (SAFE_SLUG.test(slug)) return { source, slug }
+    }
+  }
+  return null
+}
+
+type WriteSkillInput = {
+  name: string
+  description: string
+  body: string
+  references?: SkillReference[]
+}
+
+// Result of an import: whether it was newly imported, refreshed from an upstream change, or a no-op
+// because the same source was already imported unchanged.
+export type ImportOutcome = { status: 'imported' | 'unchanged' | 'updated'; id: string }
+
+// Records the origin + content signature of an imported skill so re-imports can be deduplicated.
+const SOURCE_MANIFEST = '.source.json'
+
+// Content signature over every file (sorted by path) used to detect upstream changes on re-import.
+const signatureOf = (files: FetchedSkillFile[]): string => {
+  const hash = createHash('sha256')
+  for (const file of [...files].sort((a, b) => a.relativePath.localeCompare(b.relativePath))) {
+    hash.update(file.relativePath)
+    hash.update('\0')
+    hash.update(file.content)
+    hash.update('\0')
+  }
+  return hash.digest('hex')
+}
+
+// Normalizes an extracted zip into skill files with SKILL.md at the root: if the bundle is wrapped in a
+// single top-level directory, that prefix is stripped so `wrapper/SKILL.md` becomes `SKILL.md`.
+const normalizeBundle = (entries: { path: string; content: Buffer }[]): FetchedSkillFile[] => {
+  const hasRootSkill = entries.some((entry) => entry.path.toLowerCase() === 'skill.md')
+  if (hasRootSkill) {
+    return entries.map((entry) => ({ relativePath: entry.path, content: entry.content }))
+  }
+
+  const topLevels = new Set(entries.map((entry) => entry.path.split('/')[0]))
+  if (topLevels.size === 1) {
+    const prefix = `${[...topLevels][0]}/`
+    return entries
+      .filter((entry) => entry.path.startsWith(prefix))
+      .map((entry) => ({ relativePath: entry.path.slice(prefix.length), content: entry.content }))
+  }
+
+  return entries.map((entry) => ({ relativePath: entry.path, content: entry.content }))
+}
+
+// Reads the `name:` value from a SKILL.md frontmatter block, if present.
+const frontmatterName = (text: string): string | undefined => {
+  const match = /^---\n([\s\S]*?)\n---/.exec(text)
+  if (!match) return undefined
+  return /^name:\s*(.*)$/m.exec(match[1])?.[1].trim() || undefined
+}
+
+// Reads and writes user-authored (personal) and imported skills under `<storageRoot>/skills/`.
+class UserSkillRepository {
+  constructor(private readonly storageRoot: string) {}
+
+  private sourceDir(source: (typeof USER_SOURCES)[number]): string {
+    return join(this.storageRoot, 'skills', source)
+  }
+
+  private skillDir(source: (typeof USER_SOURCES)[number], slug: string): string {
+    return join(this.sourceDir(source), slug)
+  }
+
+  // Lists every personal + imported skill, skipping any dir whose SKILL.md is missing/unreadable.
+  async list(): Promise<BundledSkill[]> {
+    const skills: BundledSkill[] = []
+
+    for (const source of USER_SOURCES) {
+      const dir = this.sourceDir(source)
+      let slugs: string[] = []
+      try {
+        slugs = await readdir(dir)
+      } catch {
+        continue
+      }
+
+      for (const slug of slugs) {
+        if (!SAFE_SLUG.test(slug)) continue
+        const skillDir = this.skillDir(source, slug)
+
+        try {
+          const { fields } = await readSkillFile(skillDir)
+          const updatedAt = (await stat(join(skillDir, 'SKILL.md'))).mtime.toISOString()
+
+          skills.push({
+            id: `${source}-${slug}`,
+            name: fields.name || slug,
+            description: fields.description ?? '',
+            source,
+            updatedAt,
+            sourceDir: skillDir,
+            author: fields.author,
+            license: fields.license,
+            thirdParty: fields['third-party'] ?? fields['third_party'] ?? fields.thirdparty
+          })
+        } catch (error) {
+          log.warn('skipping user skill with unreadable SKILL.md', { source, slug, error })
+        }
+      }
+    }
+
+    return skills
+  }
+
+  // Returns one user skill's SKILL.md body (frontmatter stripped).
+  async body(id: string): Promise<string> {
+    const parsed = parseUserSkillId(id)
+    if (!parsed) throw new Error(`Not a user skill id: ${id}`)
+
+    return (await readSkillFile(this.skillDir(parsed.source, parsed.slug))).body
+  }
+
+  // Creates a personal skill, returning its new id. Slug collisions get a numeric suffix.
+  async createPersonal(input: WriteSkillInput): Promise<string> {
+    const base = toSlug(input.name) || 'skill'
+    const slug = await this.uniqueSlug('personal', base)
+    await this.writeSkill('personal', slug, input)
+
+    return `personal-${slug}`
+  }
+
+  // Rewrites an existing personal skill's SKILL.md in place.
+  async updatePersonal(id: string, input: WriteSkillInput): Promise<void> {
+    const parsed = parseUserSkillId(id)
+    if (!parsed || parsed.source !== 'personal') throw new Error(`Not a personal skill id: ${id}`)
+
+    await this.writeSkill('personal', parsed.slug, input)
+  }
+
+  // Deletes a personal or imported skill directory.
+  async delete(id: string): Promise<void> {
+    const parsed = parseUserSkillId(id)
+    if (!parsed) throw new Error(`Not a user skill id: ${id}`)
+
+    await rm(this.skillDir(parsed.source, parsed.slug), { recursive: true, force: true })
+  }
+
+  // Imports a single skill directory from a public GitHub URL, deduplicating against prior imports of
+  // the same source: an unchanged re-import is a no-op, a changed one refreshes the files in place, and
+  // a new source (or a same-name skill from a different source) is imported as a fresh slug.
+  async importFromGitHub(url: string, fetchImpl?: FetchLike): Promise<ImportOutcome> {
+    const location = parseGitHubSkillUrl(url)
+    if (!location) throw new Error('Not a recognizable GitHub URL.')
+
+    const fetcher = fetchImpl ?? (globalThis.fetch as unknown as FetchLike | undefined)
+    if (!fetcher) throw new Error('No fetch implementation available.')
+
+    const files = await fetchSkillFiles(location, fetcher)
+    const signature = signatureOf(files)
+    const base = toSlug(location.path.split('/').filter(Boolean).pop() ?? location.repo) || 'skill'
+
+    // If a prior import from the exact same URL exists, either skip (unchanged) or refresh (changed).
+    const existingSlug = await this.findImportedSlugByUrl(url)
+    if (existingSlug) {
+      const existing = await this.readSource(existingSlug)
+      if (existing?.signature === signature) {
+        return { status: 'unchanged', id: `imported-${existingSlug}` }
+      }
+      await this.writeImported(existingSlug, files, url, signature)
+      return { status: 'updated', id: `imported-${existingSlug}` }
+    }
+
+    // A brand-new source; take a free slug (a same-name skill from a different repo gets a suffix).
+    const slug = await this.uniqueSlug('imported', base)
+    await this.writeImported(slug, files, url, signature)
+    return { status: 'imported', id: `imported-${slug}` }
+  }
+
+  // Finds an already-imported skill whose recorded source URL matches, for dedup.
+  private async findImportedSlugByUrl(url: string): Promise<string | undefined> {
+    let slugs: string[] = []
+    try {
+      slugs = await readdir(this.sourceDir('imported'))
+    } catch {
+      return undefined
+    }
+
+    for (const slug of slugs) {
+      const source = await this.readSource(slug)
+      if (source?.url === url) return slug
+    }
+    return undefined
+  }
+
+  // Parses a bundle for a confirm-before-import preview: extracts it, reads the SKILL.md frontmatter,
+  // lists the files, and flags whether the identical bundle was already imported. Writes nothing.
+  async previewZip(zip: Buffer): Promise<SkillBundlePreview> {
+    const files = normalizeBundle(extractZip(zip))
+    const skillMd = files.find((file) => file.relativePath.toLowerCase() === 'skill.md')
+    if (!skillMd) throw new Error('The bundle must contain a SKILL.md.')
+
+    const { fields } = parseFrontmatter(skillMd.content.toString('utf8'))
+    const name = fields.name?.trim()
+    if (!name) throw new Error("The bundle's SKILL.md needs a name in its frontmatter.")
+
+    const existingSlug = await this.findImportedSlugBySignature(signatureOf(files))
+
+    return {
+      name,
+      description: fields.description ?? '',
+      files: files.map((file) => file.relativePath).sort(),
+      alreadyImported: Boolean(existingSlug)
+    }
+  }
+
+  // Imports a .zip / .skill bundle that contains a SKILL.md. Dedups by content signature: re-importing
+  // the same bundle is a no-op; a bundle with a name already taken gets a suffixed slug.
+  async importFromZip(zip: Buffer): Promise<ImportOutcome> {
+    const files = normalizeBundle(extractZip(zip))
+    const skillMd = files.find((file) => file.relativePath.toLowerCase() === 'skill.md')
+    if (!skillMd) throw new Error('The bundle must contain a SKILL.md.')
+
+    const signature = signatureOf(files)
+
+    const existingSlug = await this.findImportedSlugBySignature(signature)
+    if (existingSlug) {
+      return { status: 'unchanged', id: `imported-${existingSlug}` }
+    }
+
+    const name = frontmatterName(skillMd.content.toString('utf8'))
+    const base = toSlug(name ?? 'skill') || 'skill'
+    const slug = await this.uniqueSlug('imported', base)
+    await this.writeImported(slug, files, '', signature)
+    return { status: 'imported', id: `imported-${slug}` }
+  }
+
+  // Finds an imported skill whose recorded content signature matches, for zip dedup.
+  private async findImportedSlugBySignature(signature: string): Promise<string | undefined> {
+    let slugs: string[] = []
+    try {
+      slugs = await readdir(this.sourceDir('imported'))
+    } catch {
+      return undefined
+    }
+
+    for (const slug of slugs) {
+      const source = await this.readSource(slug)
+      if (source?.signature === signature) return slug
+    }
+    return undefined
+  }
+
+  // Scans a GitHub repo for skill directories, marking which are already imported (by source URL).
+  async scanRepo(
+    repoInput: string,
+    fetchImpl?: FetchLike
+  ): Promise<(ScannedSkill & { alreadyImported: boolean })[]> {
+    const repo = parseGitHubRepo(repoInput)
+    if (!repo) throw new Error('Not a recognizable GitHub repo (owner/repo or a github.com URL).')
+
+    const fetcher = fetchImpl ?? (globalThis.fetch as unknown as FetchLike | undefined)
+    if (!fetcher) throw new Error('No fetch implementation available.')
+
+    const [found, index] = await Promise.all([
+      scanRepoForSkills(repo, fetcher),
+      this.importedIndex()
+    ])
+
+    // Mark a candidate as already imported when its exact source URL matches, or when its name matches
+    // an existing import (an imported slug's base is toSlug(folder name), which equals the scanned name
+    // slugified) — so the same skill from a different URL/ref/fork is still flagged.
+    return found.map((skill) => ({
+      ...skill,
+      alreadyImported: index.urls.has(skill.url) || index.slugs.has(toSlug(skill.name))
+    }))
+  }
+
+  // The source URLs and slugs of already-imported skills, for scan dedup marking (by URL or by name).
+  private async importedIndex(): Promise<{ urls: Set<string>; slugs: Set<string> }> {
+    const urls = new Set<string>()
+    const slugs = new Set<string>()
+    let dirs: string[] = []
+    try {
+      dirs = await readdir(this.sourceDir('imported'))
+    } catch {
+      return { urls, slugs }
+    }
+
+    for (const slug of dirs) {
+      slugs.add(slug)
+      const source = await this.readSource(slug)
+      if (source?.url) urls.add(source.url)
+    }
+    return { urls, slugs }
+  }
+
+  private async readSource(slug: string): Promise<{ url?: string; signature?: string } | null> {
+    try {
+      const raw = await readFile(join(this.skillDir('imported', slug), SOURCE_MANIFEST), 'utf8')
+      const parsed = JSON.parse(raw) as unknown
+      return typeof parsed === 'object' && parsed !== null
+        ? (parsed as Record<string, string>)
+        : null
+    } catch {
+      return null
+    }
+  }
+
+  // Writes an imported skill's files (replacing any prior copy) plus its source manifest.
+  private async writeImported(
+    slug: string,
+    files: FetchedSkillFile[],
+    url: string,
+    signature: string
+  ): Promise<void> {
+    const dir = this.skillDir('imported', slug)
+    await rm(dir, { recursive: true, force: true })
+
+    for (const file of files) {
+      const target = join(dir, file.relativePath)
+      await mkdir(dirname(target), { recursive: true })
+      await writeFile(target, file.content)
+    }
+
+    await writeFile(join(dir, SOURCE_MANIFEST), JSON.stringify({ url, signature }, null, 2), 'utf8')
+  }
+
+  // Finds a slug not yet taken under the source, appending -2, -3, ... on collision.
+  private async uniqueSlug(source: (typeof USER_SOURCES)[number], base: string): Promise<string> {
+    let slugs: string[] = []
+    try {
+      slugs = await readdir(this.sourceDir(source))
+    } catch {
+      slugs = []
+    }
+    const taken = new Set(slugs)
+
+    if (!taken.has(base)) return base
+    for (let index = 2; ; index += 1) {
+      const candidate = `${base}-${index}`
+      if (!taken.has(candidate)) return candidate
+    }
+  }
+
+  // Writes a SKILL.md with a minimal frontmatter block (name/description) followed by the body.
+  private async writeSkill(
+    source: (typeof USER_SOURCES)[number],
+    slug: string,
+    input: WriteSkillInput
+  ): Promise<void> {
+    const dir = this.skillDir(source, slug)
+    await mkdir(dir, { recursive: true })
+
+    const frontmatter = [
+      '---',
+      `name: ${input.name}`,
+      `description: ${input.description}`,
+      '---'
+    ].join('\n')
+    const contents = `${frontmatter}\n\n${input.body.trimStart()}`
+
+    await writeFile(join(dir, 'SKILL.md'), contents, 'utf8')
+
+    // Write any supporting files under references/, using each file's basename as a safe path.
+    for (const reference of input.references ?? []) {
+      const name = reference.path.split(/[\\/]/).pop() ?? ''
+      if (!name || !/^[A-Za-z0-9._-]+$/.test(name)) continue
+      const target = join(dir, 'references', name)
+      await mkdir(dirname(target), { recursive: true })
+      await writeFile(target, Buffer.from(reference.dataBase64, 'base64'))
+    }
+  }
+}
+
+export { UserSkillRepository, parseUserSkillId, toSlug }

@@ -12,6 +12,12 @@ import type {
   ProviderView,
   RefreshProviderModelsResult,
   SettingsSnapshot,
+  SkillView,
+  CreateSkillRequest,
+  UpdateSkillRequest,
+  ImportSkillResult,
+  SkillBundlePreview,
+  ScanRepoResult,
   UpsertProviderRequest,
   ValidateProviderRequest,
   ValidateProviderResult
@@ -31,6 +37,8 @@ type SettingsStoreData = {
   activeModel: string | undefined
   providers: ProviderView[]
   onboardingCompletedAt: number | undefined
+  // Bundled skills with their enabled state, loaded lazily when the Skills panel opens.
+  skills: SkillView[]
   preflight: Preflight
   // Latched true the first time both startup gates pass. Onboarding is a first-run gate, so once the
   // user has entered the app, later provider changes (which may momentarily flip a gate) must not send
@@ -68,6 +76,24 @@ type SettingsStore = SettingsStoreData & {
   deleteProvider: (providerId: string) => Promise<void>
   openSettings: () => void
   closeSettings: () => void
+  // Loads the bundled-skill list (enabled state included) from the main process.
+  loadSkills: () => Promise<void>
+  // Toggles one skill; optimistic, then reconciled with the authoritative list from main.
+  setSkillEnabled: (id: string, enabled: boolean) => Promise<void>
+  // Creates a personal skill, returning its refreshed list.
+  createSkill: (request: CreateSkillRequest) => Promise<void>
+  // Updates a personal skill in place.
+  updateSkill: (request: UpdateSkillRequest) => Promise<void>
+  // Deletes a personal or imported skill.
+  deleteSkill: (id: string) => Promise<void>
+  // Imports a skill from a public GitHub URL, returning the import outcome.
+  importSkill: (url: string) => Promise<ImportSkillResult>
+  // Imports a skill from an uploaded .zip / .skill bundle (base64), returning the outcome.
+  importSkillZip: (dataBase64: string) => Promise<ImportSkillResult>
+  // Parses an uploaded bundle without importing it, for a confirm-before-import preview.
+  previewSkillZip: (dataBase64: string) => Promise<SkillBundlePreview>
+  // Scans a GitHub repo for importable skill directories (does not mutate state).
+  scanRepoSkills: (repo: string) => Promise<ScanRepoResult>
   // Persists the first-run completion marker and caches it so the startup gate falls through to Home.
   completeOnboarding: () => Promise<void>
 }
@@ -88,6 +114,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   activeModel: undefined,
   providers: [],
   onboardingCompletedAt: undefined,
+  skills: [],
   preflight: createInitialPreflight(),
   hasEnteredApp: false,
   encryptionAvailable: true,
@@ -336,6 +363,51 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   openSettings: () => set({ isSettingsOpen: true }),
 
   closeSettings: () => set({ isSettingsOpen: false }),
+
+  loadSkills: async () => {
+    const skills = await window.api.settings.listSkills()
+    set({ skills })
+  },
+
+  // Optimistically flips the toggle, then reconciles with the authoritative list from main.
+  setSkillEnabled: async (id, enabled) => {
+    set((state) => ({
+      skills: state.skills.map((skill) => (skill.id === id ? { ...skill, enabled } : skill))
+    }))
+    const skills = await window.api.settings.setSkillEnabled({ id, enabled })
+    set({ skills })
+  },
+
+  createSkill: async (request) => {
+    const skills = await window.api.settings.createSkill(request)
+    set({ skills })
+  },
+
+  updateSkill: async (request) => {
+    const skills = await window.api.settings.updateSkill(request)
+    set({ skills })
+  },
+
+  deleteSkill: async (id) => {
+    const skills = await window.api.settings.deleteSkill({ id })
+    set({ skills })
+  },
+
+  importSkill: async (url) => {
+    const result = await window.api.settings.importSkill({ url })
+    set({ skills: result.skills })
+    return result
+  },
+
+  importSkillZip: async (dataBase64) => {
+    const result = await window.api.settings.importSkillZip({ dataBase64 })
+    set({ skills: result.skills })
+    return result
+  },
+
+  previewSkillZip: async (dataBase64) => window.api.settings.previewSkillZip({ dataBase64 }),
+
+  scanRepoSkills: async (repo) => window.api.settings.scanRepoSkills({ repo }),
 
   completeOnboarding: async () => {
     const snapshot = await window.api.settings.markOnboardingComplete()

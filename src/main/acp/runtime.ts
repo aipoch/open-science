@@ -163,6 +163,7 @@ class AcpRuntime {
   private readonly promptInFlightSessionIds = new Set<string>()
   // A provider change requested while a prompt was running, applied when the session next goes idle.
   private pendingProviderReconnect = false
+  private pendingSkillsReload = false
   private expectedProcessExits = new WeakSet<ChildProcessWithoutNullStreams>()
   private readonly permissionBroker: AcpPermissionBroker
   private readonly callbacks: AcpRuntimeCallbacks
@@ -515,10 +516,32 @@ class AcpRuntime {
 
   // If a provider reconnect was deferred while a prompt ran, apply it once nothing is in flight.
   private maybeApplyPendingProviderReconnect(): void {
-    if (this.pendingProviderReconnect && this.promptInFlightSessionIds.size === 0) {
+    if (this.promptInFlightSessionIds.size > 0) return
+
+    if (this.pendingProviderReconnect) {
       this.pendingProviderReconnect = false
       void this.disconnect()
+      return
     }
+
+    if (this.pendingSkillsReload) {
+      this.pendingSkillsReload = false
+      void this.disconnect()
+    }
+  }
+
+  // Re-materializes the agent's skills on the next reconnect: a disconnect makes the next prompt spawn a
+  // fresh agent, whose provisioning copies the current enabled set into the config dir before the session
+  // resumes with full context. Defers past an in-flight prompt exactly like a provider switch. Called
+  // when a skill is toggled in settings.
+  async requestSkillsReload(): Promise<void> {
+    if (this.promptInFlightSessionIds.size > 0) {
+      this.pendingSkillsReload = true
+      return
+    }
+
+    this.pendingSkillsReload = false
+    await this.disconnect()
   }
 
   private async disconnectCurrent(emitClosedStatus = true): Promise<AcpStateSnapshot> {

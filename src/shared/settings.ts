@@ -239,3 +239,107 @@ export type ClaudeInstallResult = {
 export type NpmAvailability = {
   available: boolean
 }
+
+// A bundled skill's source category: app-bundled, imported from GitHub, or user-authored.
+export type SkillSource = 'featured' | 'imported' | 'personal'
+
+// Renderer-safe view of one bundled skill (no file contents).
+export type SkillView = {
+  id: string
+  name: string
+  description: string
+  source: SkillSource
+  updatedAt: string
+  enabled: boolean
+  // From the SKILL.md frontmatter; shown in the detail view's "Details" section when present.
+  author?: string
+  license?: string
+  thirdParty?: string
+}
+
+// A skill view plus its SKILL.md body (frontmatter stripped), for the detail view.
+export type SkillDetailView = SkillView & {
+  body: string
+}
+
+export type SetSkillEnabledRequest = {
+  id: string
+  enabled: boolean
+}
+
+// A supporting file bundled under the skill's `references/` directory (base64-encoded for transport).
+export type SkillReference = {
+  path: string
+  dataBase64: string
+}
+
+// Create a personal (user-authored) skill from the in-app editor.
+export type CreateSkillRequest = {
+  name: string
+  description: string
+  body: string
+  references?: SkillReference[]
+}
+
+// Update an existing personal skill in place.
+export type UpdateSkillRequest = {
+  id: string
+  name: string
+  description: string
+  body: string
+  references?: SkillReference[]
+}
+
+export type DeleteSkillRequest = {
+  id: string
+}
+
+// Import a single skill from a public GitHub URL.
+export type ImportSkillRequest = {
+  url: string
+}
+
+// Import a skill from an uploaded .zip / .skill bundle (base64-encoded archive bytes).
+export type ImportSkillZipRequest = {
+  dataBase64: string
+  filename?: string
+}
+
+// Parse an uploaded .zip / .skill bundle without importing it, for a confirm-before-import preview.
+export type PreviewSkillZipRequest = {
+  dataBase64: string
+}
+
+// The parsed contents of a bundle: the skill's name/description, the files it contains, and whether an
+// identical bundle was already imported (same content signature).
+export type SkillBundlePreview = {
+  name: string
+  description: string
+  files: string[]
+  alreadyImported: boolean
+}
+
+// Scan a GitHub repo (owner/repo, owner/repo@ref, or a URL) for skill directories.
+export type ScanRepoRequest = {
+  repo: string
+}
+
+// One skill directory found by a repo scan, with an importable URL and whether it's already imported.
+export type ScannedSkillView = {
+  name: string
+  path: string
+  url: string
+  alreadyImported: boolean
+}
+
+export type ScanRepoResult = {
+  skills: ScannedSkillView[]
+}
+
+// Outcome of an import: newly imported, refreshed from upstream, or an already-imported no-op. The
+// refreshed skill list is included so the renderer can update in one round-trip.
+export type ImportSkillResult = {
+  status: 'imported' | 'unchanged' | 'updated'
+  id: string
+  skills: SkillView[]
+}

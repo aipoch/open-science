@@ -1,4 +1,13 @@
-import { ArrowLeft, Settings2, SlidersHorizontal, X } from 'lucide-react'
+import {
+  ArrowLeft,
+  ArrowRight,
+  Maximize2,
+  Minimize2,
+  ScrollText,
+  Settings2,
+  SlidersHorizontal,
+  X
+} from 'lucide-react'
 import { Dialog } from 'radix-ui'
 import { useEffect, useState } from 'react'
 
@@ -7,6 +16,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { ClaudeInstallCard } from './ClaudeInstallCard'
 import { ClaudeStatusCard } from './ClaudeStatusCard'
 import { GeneralPanel } from './GeneralPanel'
+import { SkillsPanel, type SkillsView } from './SkillsPanel'
 import { resolveVendorModelsUrl } from '../../../../shared/provider-registry'
 import { ActiveModelSelect } from './ActiveModelSelect'
 import { ProviderForm } from './ProviderForm'
@@ -51,17 +61,40 @@ const toUpsertRequest = (
   key: value.key || undefined
 })
 
-// Left-nav panels. "Model" manages Claude + providers; "General" holds app settings incl. the log file.
-type SettingsPanelId = 'model' | 'general'
+// Left-nav panels, grouped in the sidebar. "Capabilities" holds agent extensions (Skills); "Workspace"
+// holds environment/config (Model manages Claude + providers, General holds app settings incl. logs).
+type SettingsPanelId = 'model' | 'skills' | 'general'
 
-const SETTINGS_PANELS: ReadonlyArray<{
+type SettingsPanel = {
   id: SettingsPanelId
   label: string
   Icon: typeof SlidersHorizontal
-}> = [
-  { id: 'model', label: 'Model', Icon: SlidersHorizontal },
-  { id: 'general', label: 'General', Icon: Settings2 }
+}
+
+const SETTINGS_GROUPS: ReadonlyArray<{ label: string; panels: ReadonlyArray<SettingsPanel> }> = [
+  {
+    label: 'Capabilities',
+    panels: [{ id: 'skills', label: 'Skills', Icon: ScrollText }]
+  },
+  {
+    label: 'Workspace',
+    panels: [
+      { id: 'model', label: 'Model', Icon: SlidersHorizontal },
+      { id: 'general', label: 'General', Icon: Settings2 }
+    ]
+  }
 ]
+
+// Flattened panel list for lookups (header title, etc.).
+const SETTINGS_PANELS: ReadonlyArray<SettingsPanel> = SETTINGS_GROUPS.flatMap(
+  (group) => group.panels
+)
+
+// One entry in the settings back/forward history: the active panel plus, for the skills panel, its
+// current sub-view (list / detail / create / edit / import).
+type NavLocation = { panel: SettingsPanelId; skills: SkillsView }
+
+const INITIAL_LOCATION: NavLocation = { panel: 'model', skills: { kind: 'list' } }
 
 // App-level model settings surface. Reuses the onboarding cards/form; manages providers (CRUD +
 // activate + test). Opened from the Home/Workspace gear entry.
@@ -83,7 +116,13 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const refreshProviderModels = useSettingsStore((state) => state.refreshProviderModels)
 
   const [formTarget, setFormTarget] = useState<FormTarget | null>(null)
-  const [activePanel, setActivePanel] = useState<SettingsPanelId>('model')
+  // Settings navigation history (browser-like back/forward). Panel switches and skill drill-downs push a
+  // new location; the active panel and open skill detail are derived from the current entry.
+  const [history, setHistory] = useState<NavLocation[]>([INITIAL_LOCATION])
+  const [historyIndex, setHistoryIndex] = useState(0)
+  // Whether the dialog is enlarged to near-fullscreen via the maximize control.
+  const [isExpanded, setIsExpanded] = useState(false)
+  const skills = useSettingsStore((state) => state.skills)
   const [formValue, setFormValue] = useState<ProviderFormValue>(() =>
     createEmptyProviderFormValue()
   )
@@ -97,6 +136,52 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   useEffect(() => {
     if (open) void load()
   }, [open, load])
+
+  const currentLocation = history[historyIndex]
+  const activePanel = currentLocation.panel
+  const skillsView = currentLocation.skills
+  const canGoBack = historyIndex > 0
+  const canGoForward = historyIndex < history.length - 1
+
+  // Pushes a new location, dropping any forward entries and closing a transient provider form.
+  const navigate = (location: NavLocation): void => {
+    if (
+      location.panel === activePanel &&
+      location.skills.kind === skillsView.kind &&
+      ('id' in location.skills ? location.skills.id : undefined) ===
+        ('id' in skillsView ? skillsView.id : undefined)
+    ) {
+      return
+    }
+    setFormTarget(null)
+    setHistory((entries) => [...entries.slice(0, historyIndex + 1), location])
+    setHistoryIndex((index) => index + 1)
+  }
+
+  // Navigates within the skills panel (list/detail/create/edit/import) as a history entry.
+  const navigateSkills = (skills: SkillsView): void => navigate({ panel: 'skills', skills })
+
+  // Breadcrumb label for a skills sub-view (null when on the list, so the plain panel title shows).
+  const skillsBreadcrumbLabel = ((): string | null => {
+    if (activePanel !== 'skills' || skillsView.kind === 'list') return null
+    if (skillsView.kind === 'create') return 'New skill'
+    if (skillsView.kind === 'upload') return 'Upload a skill'
+    if (skillsView.kind === 'import') return 'Import from GitHub'
+    const name = skills.find((skill) => skill.id === skillsView.id)?.name ?? ''
+    return skillsView.kind === 'edit' ? `Edit ${name}`.trim() : name
+  })()
+
+  const goBack = (): void => {
+    if (!canGoBack) return
+    setFormTarget(null)
+    setHistoryIndex((index) => index - 1)
+  }
+
+  const goForward = (): void => {
+    if (!canGoForward) return
+    setFormTarget(null)
+    setHistoryIndex((index) => index + 1)
+  }
 
   // Resolve the edited provider from the live store so a model refresh (which updates the cache) is
   // reflected in the form; fall back to the captured target if it's mid-delete.
@@ -193,7 +278,11 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
           // the whole panel. The dropdown's own dismiss still closes just the dropdown; the panel is
           // closed intentionally via the ✕ button or Escape.
           onInteractOutside={(event) => event.preventDefault()}
-          className="fixed left-1/2 top-1/2 z-50 flex h-[min(640px,calc(100vh-2rem))] w-[min(920px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border border-border bg-card text-foreground shadow-dialog data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
+          className={`fixed left-1/2 top-1/2 z-50 flex -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border border-border bg-card text-foreground shadow-dialog data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 ${
+            isExpanded
+              ? 'h-[80vh] w-[80vw]'
+              : 'h-[min(640px,calc(100vh-2rem))] w-[min(920px,calc(100vw-2rem))]'
+          }`}
         >
           {/* Radix requires a Title/Description for a11y; the visible panel title lives in the header. */}
           <Dialog.Title className="sr-only">Settings</Dialog.Title>
@@ -201,53 +290,117 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
             Manage your Claude installation and model providers.
           </Dialog.Description>
 
-          {/* Left navigation: switch between the Model and General panels. */}
+          {/* Left navigation: grouped settings panels (Capabilities, Workspace). */}
           <nav
             aria-label="Settings"
-            className="flex w-52 shrink-0 flex-col gap-1 border-r border-border bg-muted/40 p-3"
+            className="flex w-52 shrink-0 flex-col gap-3 border-r border-border bg-muted/40 p-3"
           >
-            <div className="px-2 pb-1 pt-1 text-xs font-medium text-muted-foreground">Settings</div>
-            <ul className="flex flex-col gap-0.5">
-              {SETTINGS_PANELS.map(({ id, label, Icon }) => {
-                const isActive = activePanel === id
+            {SETTINGS_GROUPS.map((group) => (
+              <div key={group.label} className="flex flex-col gap-0.5">
+                <div className="px-2 pb-1 pt-1 text-xs font-medium text-muted-foreground">
+                  {group.label}
+                </div>
+                <ul className="flex flex-col gap-0.5">
+                  {group.panels.map(({ id, label, Icon }) => {
+                    const isActive = activePanel === id
 
-                return (
-                  <li key={id}>
-                    <button
-                      type="button"
-                      aria-current={isActive ? 'page' : undefined}
-                      onClick={() => setActivePanel(id)}
-                      className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors ${
-                        isActive
-                          ? 'bg-muted font-medium text-foreground'
-                          : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
-                      }`}
-                    >
-                      <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                      <span className="min-w-0 flex-1 truncate">{label}</span>
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
+                    return (
+                      <li key={id}>
+                        <button
+                          type="button"
+                          aria-current={isActive ? 'page' : undefined}
+                          onClick={() => navigate({ panel: id, skills: { kind: 'list' } })}
+                          className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors ${
+                            isActive
+                              ? 'bg-muted font-medium text-foreground'
+                              : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+                          }`}
+                        >
+                          <Icon
+                            className="size-4 shrink-0 text-muted-foreground"
+                            aria-hidden="true"
+                          />
+                          <span className="min-w-0 flex-1 truncate">{label}</span>
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+            ))}
           </nav>
 
           {/* Right column: header bar + scrollable panel content. */}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-card">
-            <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border px-5">
-              <h2 className="truncate text-sm font-semibold text-foreground">
-                {SETTINGS_PANELS.find((panel) => panel.id === activePanel)?.label}
-              </h2>
-              <Dialog.Close
-                aria-label="Close settings"
-                className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                <X className="size-4" aria-hidden="true" />
-              </Dialog.Close>
+            <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border px-3">
+              <div className="flex min-w-0 items-center gap-1">
+                {/* Browser-like history controls for the settings navigation. */}
+                <button
+                  type="button"
+                  onClick={goBack}
+                  disabled={!canGoBack}
+                  aria-label="Back"
+                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                >
+                  <ArrowLeft className="size-4" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  onClick={goForward}
+                  disabled={!canGoForward}
+                  aria-label="Forward"
+                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                >
+                  <ArrowRight className="size-4" aria-hidden="true" />
+                </button>
+                <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
+                {skillsBreadcrumbLabel !== null ? (
+                  <div className="flex min-w-0 items-center gap-1.5 text-sm font-semibold">
+                    <button
+                      type="button"
+                      onClick={() => navigateSkills({ kind: 'list' })}
+                      aria-label="Back to skills"
+                      className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
+                    >
+                      Skills
+                    </button>
+                    <span className="shrink-0 text-muted-foreground" aria-hidden="true">
+                      ›
+                    </span>
+                    <span className="truncate text-foreground">{skillsBreadcrumbLabel}</span>
+                  </div>
+                ) : (
+                  <h2 className="truncate text-sm font-semibold text-foreground">
+                    {SETTINGS_PANELS.find((panel) => panel.id === activePanel)?.label}
+                  </h2>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setIsExpanded((value) => !value)}
+                  aria-label={isExpanded ? 'Restore' : 'Maximize'}
+                  className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  {isExpanded ? (
+                    <Minimize2 className="size-4" aria-hidden="true" />
+                  ) : (
+                    <Maximize2 className="size-4" aria-hidden="true" />
+                  )}
+                </button>
+                <Dialog.Close
+                  aria-label="Close settings"
+                  className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </Dialog.Close>
+              </div>
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto">
-              {activePanel === 'general' ? (
+              {activePanel === 'skills' ? (
+                <SkillsPanel view={skillsView} onNavigate={navigateSkills} />
+              ) : activePanel === 'general' ? (
                 <GeneralPanel />
               ) : formTarget ? (
                 // Add/edit provider is a secondary page: a back arrow returns to the provider list.

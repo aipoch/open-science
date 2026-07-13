@@ -20,6 +20,8 @@ type SettingsApi = {
   setActiveProvider: ReturnType<typeof vi.fn>
   deleteProvider: ReturnType<typeof vi.fn>
   markOnboardingComplete: ReturnType<typeof vi.fn>
+  listSkills: ReturnType<typeof vi.fn>
+  setSkillEnabled: ReturnType<typeof vi.fn>
 }
 
 // Minimal window.api.acp surface the provider-switch flow reads/uses.
@@ -67,7 +69,9 @@ beforeEach(() => {
     deleteProvider: vi.fn(),
     markOnboardingComplete: vi
       .fn()
-      .mockResolvedValue({ ...snapshot([]), onboardingCompletedAt: 4242 })
+      .mockResolvedValue({ ...snapshot([]), onboardingCompletedAt: 4242 }),
+    listSkills: vi.fn().mockResolvedValue([]),
+    setSkillEnabled: vi.fn().mockResolvedValue([])
   }
   acp = {
     getState: vi.fn().mockResolvedValue({ promptInFlightSessionIds: [] }),
@@ -405,5 +409,35 @@ describe('settings store: refreshProviderModels', () => {
 
     expect(result.ok).toBe(false)
     expect(api.getSettings).not.toHaveBeenCalled()
+  })
+
+  it('loads skills and toggles optimistically', async () => {
+    api.listSkills.mockResolvedValue([
+      {
+        id: 'demo',
+        name: 'Demo',
+        description: '',
+        source: 'featured',
+        updatedAt: '',
+        enabled: true
+      }
+    ])
+    api.setSkillEnabled.mockResolvedValue([
+      {
+        id: 'demo',
+        name: 'Demo',
+        description: '',
+        source: 'featured',
+        updatedAt: '',
+        enabled: false
+      }
+    ])
+
+    await useSettingsStore.getState().loadSkills()
+    expect(useSettingsStore.getState().skills[0].enabled).toBe(true)
+
+    await useSettingsStore.getState().setSkillEnabled('demo', false)
+    expect(api.setSkillEnabled).toHaveBeenCalledWith({ id: 'demo', enabled: false })
+    expect(useSettingsStore.getState().skills[0].enabled).toBe(false)
   })
 })

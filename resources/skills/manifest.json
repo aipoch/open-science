@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "skills": [
+    {
+      "id": "citation-formatter",
+      "name": "Citation Formatter",
+      "source": "featured",
+      "updatedAt": "2026-07-12T00:00:00.000Z"
+    },
+    {
+      "id": "literature-review",
+      "name": "Literature Review",
+      "source": "featured",
+      "updatedAt": "2026-07-12T00:00:00.000Z"
+    },
+    {
+      "id": "abstract-summarizer",
+      "name": "Abstract Summarizer",
+      "source": "featured",
+      "updatedAt": "2026-07-12T00:00:00.000Z"
+    },
+    {
+      "id": "pubmed-search-specialist",
+      "name": "PubMed Search Specialist",
+      "source": "featured",
+      "updatedAt": "2026-07-12T00:00:00.000Z"
+    },
+    {
+      "id": "literature-close-read",
+      "name": "Literature Close Read",
+      "source": "featured",
+      "updatedAt": "2026-07-12T00:00:00.000Z"
+    },
+    {
+      "id": "experiment-design",
+      "name": "Experiment Design",
+      "source": "featured",
+      "updatedAt": "2026-07-12T00:00:00.000Z"
+    },
+    {
+      "id": "research-proposal-generator",
+      "name": "Research Proposal Generator",
+      "source": "featured",
+      "updatedAt": "2026-07-12T00:00:00.000Z"
+    },
+    {
+      "id": "exploratory-data-analysis",
+      "name": "Exploratory Data Analysis",
+      "source": "featured",
+      "updatedAt": "2026-07-12T00:00:00.000Z"
+    },
+    {
+      "id": "statistical-analysis-advisor",
+      "name": "Statistical Analysis Advisor",
+      "source": "featured",
+      "updatedAt": "2026-07-12T00:00:00.000Z"
+    },
+    {
+      "id": "mindmap",
+      "name": "Mind Map",
+      "source": "featured",
+      "updatedAt": "2026-07-12T00:00:00.000Z"
+    },
+    {
+      "id": "pdf-extract",
+      "name": "PDF Extract",
+      "source": "featured",
+      "updatedAt": "2026-07-12T00:00:00.000Z"
+    },
+    {
+      "id": "sci-paper-reviewer",
+      "name": "Scientific Paper Reviewer",
+      "source": "featured",
+      "updatedAt": "2026-07-12T00:00:00.000Z"
+    }
+  ]
+}
