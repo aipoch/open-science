@@ -244,6 +244,36 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
   })
 
+  it('warns about reduced-protection storage in the provider form when encryption is unavailable', async () => {
+    // The store loads encryptionAvailable from this call when the dialog opens.
+    ;(
+      window as unknown as {
+        api: { settings: { isEncryptionAvailable: ReturnType<typeof vi.fn> } }
+      }
+    ).api.settings.isEncryptionAvailable.mockResolvedValue(false)
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    // No warning on the provider list itself…
+    expect(document.body.textContent).not.toContain('reduced protection')
+
+    const addProvider = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Add provider')
+    await act(async () => {
+      addProvider?.click()
+    })
+
+    // …but the Add provider sub-page warns before the user saves a key.
+    expect(document.body.textContent).toContain('Secure key storage is unavailable')
+    expect(document.body.textContent).toContain('reduced protection')
+  })
+
   it('does not render when closed', () => {
     act(() => {
       root.render(<SettingsPage open={false} onClose={vi.fn()} />)

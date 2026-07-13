@@ -126,6 +126,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const isInstalling = useSettingsStore((state) => state.isInstalling)
   const installLogs = useSettingsStore((state) => state.installLogs)
   const npmAvailable = useSettingsStore((state) => state.npmAvailable)
+  const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const load = useSettingsStore((state) => state.load)
   const detectClaude = useSettingsStore((state) => state.detectClaude)
   const installClaude = useSettingsStore((state) => state.installClaude)
@@ -520,6 +521,14 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
               ) : isProviderFormOpen ? (
                 // Add/edit provider is a secondary page reached via the shared back/forward arrows.
                 <div className="p-5">
+                  {/* Keys are stored with OS encryption; warn (as onboarding does) when the keychain
+                      is unavailable so the reduced-protection fallback is never a silent surprise. */}
+                  {!encryptionAvailable ? (
+                    <p className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                      Secure key storage is unavailable on this machine. Your key will be stored
+                      with reduced protection.
+                    </p>
+                  ) : null}
                   <ProviderForm
                     value={formValue}
                     onChange={(patch) => setFormValue((current) => ({ ...current, ...patch }))}
