@@ -34,6 +34,8 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
       required: ['geneId']
     },
     required: ['geneId'],
+    returns:
+      '`[ { "gene_symbol": str, "gencode_id": str, "gencode_version": str, "genome_build": str } ]` — array of matching gene references (usually one); `[]` when the gene isn\'t found. Fields are undefined if absent upstream.',
     url: (a) => `${GTEX}/reference/gene?geneId=${encodeURIComponent(String(a.geneId))}`,
     parse: (raw) =>
       ((raw as GtexGeneRefResponse).data ?? []).map((g) => ({
@@ -57,6 +59,8 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
       required: ['gencodeId']
     },
     required: ['gencodeId'],
+    returns:
+      '`[ { "tissue": str, "median_tpm": float, "unit": str } ]` — one row per GTEx tissue site; `median_tpm` in TPM. `[]` when the gencodeId is unknown for the dataset.',
     url: (a) => {
       const dataset = String(a.datasetId ?? DEFAULT_DATASET)
       return `${GTEX}/expression/medianGeneExpression?gencodeId=${encodeURIComponent(String(a.gencodeId))}&datasetId=${encodeURIComponent(dataset)}`

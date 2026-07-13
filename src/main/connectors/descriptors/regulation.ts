@@ -41,6 +41,8 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
       required: ['query']
     },
     required: ['query'],
+    returns:
+      '`[ { "accession": str, "assay_title": str, "biosample": str, "target": str, "status": str } ]` — one entry per matching experiment, up to `limit` (default 25); `[]` when nothing matches. `target`/`biosample` are null when the experiment has none.',
     url: (a) => {
       const limit = typeof a.limit === 'number' && a.limit > 0 ? a.limit : DEFAULT_SEARCH_LIMIT
       return `${ENCODE}/search/?searchTerm=${encodeURIComponent(String(a.query))}&type=Experiment&format=json&limit=${limit}`
@@ -65,6 +67,8 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
       required: ['accession']
     },
     required: ['accession'],
+    returns:
+      '`{ "accession": str, "status": str, "assay_title": str, "assay_term_name": str, "biosample": str, "target": str, "description": str, "lab": str, "date_released": str }` — one experiment; `target`/`lab`/`biosample`/`date_released` are null when absent upstream.',
     url: (a) => `${ENCODE}/experiments/${encodeURIComponent(String(a.accession))}/?format=json`,
     parse: (raw) => {
       const e = raw as EncodeExperiment

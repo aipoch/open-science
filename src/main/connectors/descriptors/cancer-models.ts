@@ -55,6 +55,8 @@ export const CANCER_MODELS_TOOLS: ToolDescriptor[] = [
       required: ['query']
     },
     required: ['query'],
+    returns:
+      '`[ { "studyId": str, "name": str, "cancerType": str, "allSampleCount": int } ]` — up to `page_size` studies (default 10); `[]` when nothing matches.',
     url: (a) =>
       `${CBIOPORTAL}/studies?keyword=${encodeURIComponent(String(a.query))}&projection=DETAILED&pageSize=${Number(a.page_size ?? DEFAULT_PAGE_SIZE)}&pageNumber=0`,
     parse: (raw) => ((raw as CBioStudy[] | null) ?? []).map(compactStudyRow)
@@ -70,6 +72,8 @@ export const CANCER_MODELS_TOOLS: ToolDescriptor[] = [
       required: ['study_id']
     },
     required: ['study_id'],
+    returns:
+      '`{ "studyId": str, "name": str, "description": str, "cancerType": str, "cancerTypeId": str, "pmid": str, "citation": str, "referenceGenome": str, "allSampleCount": int, "sequencedSampleCount": int, "cnaSampleCount": int, "structuralVariantCount": int }` — a single study; fields are undefined when absent from the cBioPortal record.',
     url: (a) =>
       `${CBIOPORTAL}/studies/${encodeURIComponent(String(a.study_id))}?projection=DETAILED`,
     parse: (raw) => compactStudyDetail(raw as CBioStudy)

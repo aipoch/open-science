@@ -52,6 +52,8 @@ export const GENOMES_TOOLS: ToolDescriptor[] = [
       required: ['symbol']
     },
     required: ['symbol'],
+    returns:
+      '`{ "id": str, "display_name": str, "biotype": str, "seq_region_name": str, "start": int, "end": int, "strand": int }` — single feature; `seq_region_name` is the chromosome, `strand` is 1 or -1. Fields undefined when absent upstream.',
     url: (a) => {
       const species = String(a.species ?? DEFAULT_SPECIES)
       const symbol = String(a.symbol)
@@ -70,6 +72,8 @@ export const GENOMES_TOOLS: ToolDescriptor[] = [
       required: ['id']
     },
     required: ['id'],
+    returns:
+      '`{ "id": str, "display_name": str, "biotype": str, "seq_region_name": str, "start": int, "end": int, "strand": int }` — single feature; `seq_region_name` is the chromosome, `strand` is 1 or -1. Fields undefined when absent upstream.',
     url: (a) =>
       `${ENSEMBL}/lookup/id/${encodeURIComponent(String(a.id))}?content-type=application/json`,
     parse: parseFeature

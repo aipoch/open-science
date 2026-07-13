@@ -27,6 +27,8 @@ export const RNA_TOOLS: ToolDescriptor[] = [
       required: ['family']
     },
     required: ['family'],
+    returns:
+      '`{ "rfam_acc": str, "id": str, "description": str, "type": str }` — `rfam_acc` is the accession (RF#####), `id` the family name (e.g. tRNA), `type` the curated RNA type. Fields are missing/undefined when absent upstream.',
     url: (a) =>
       `${RFAM}/family/${encodeURIComponent(String(a.family))}?content-type=application/json`,
     parse: (raw) => {
@@ -50,6 +52,8 @@ export const RNA_TOOLS: ToolDescriptor[] = [
     },
     required: ['accession'],
     format: 'text',
+    returns:
+      '`{ "accession": str, "id": str }` — echoes the input `accession` and its resolved family `id` (upstream plain-text response, trimmed).',
     url: (a) =>
       `${RFAM}/family/${encodeURIComponent(String(a.accession))}/id?content-type=text/plain`,
     parse: (raw, a) => ({ accession: String(a.accession), id: String(raw).trim() })

@@ -73,6 +73,8 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
       required: ['cids']
     },
     required: ['cids'],
+    returns:
+      '`[ { "CID": int, "MolecularFormula": str, "MolecularWeight": str, "CanonicalSMILES": str, "IUPACName": str } ]` — passthrough of PubChem `PropertyTable.Properties`, one entry per resolvable CID; unknown CIDs are simply omitted.',
     url: (a) =>
       `${PUBCHEM}/compound/cid/${([] as unknown[]).concat(a.cids as never).join(',')}/property/${PROPS}/JSON`,
     parse: (raw) => (raw as Props).PropertyTable.Properties
@@ -87,6 +89,8 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
       required: ['query']
     },
     required: ['query'],
+    returns:
+      '`{ "query": str, "compounds": [ { "CID": int, "MolecularFormula": str, "MolecularWeight": str, "CanonicalSMILES": str, "IUPACName": str } ] }` — up to `max_cids` compounds (default 5); `compounds` is `[]` when the name matches nothing.',
     run: async (ctx, a) => {
       const cidRes = (await ctx.fetchJson(
         `${PUBCHEM}/compound/name/${encodeURIComponent(String(a.query))}/cids/JSON`
@@ -111,6 +115,8 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
       required: ['chebi_id']
     },
     required: ['chebi_id'],
+    returns:
+      '`{ "chebi_accession": str, "name": str, "definition": str, "formula": str, "charge": str, "mass": str, "smiles": str, "inchi": str, "inchikey": str }` — any field may be null when absent from the ChEBI record (e.g. no structure or definition).',
     url: (a) => `${CHEBI_API}/compound/${normalizeChebiId(a.chebi_id)}/`,
     parse: (raw) => {
       const c = raw as ChebiCompound
@@ -137,6 +143,8 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
       required: ['rhea_id']
     },
     required: ['rhea_id'],
+    returns:
+      '`{ "rhea_id": str, "equation": str, "status": str, "left_side": [ { "compound_accession": str, "name": str } ], "right_side": [ ... ] }` — throws if the id has no match; a participant `name` may be null when the compound has no label.',
     run: async (ctx, a) => {
       const acc = normalizeRheaId(a.rhea_id)
       const query = `${RHEA_PREFIXES}SELECT ?equation ?status ?side ?cacc ?cname WHERE {
@@ -181,6 +189,8 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
       required: ['uniprot']
     },
     required: ['uniprot'],
+    returns:
+      '`{ "uniprot": str, "cutoff_nm": int, "n_rows": int, "affinities": [ { "target_name": str, "monomer_id": str, "smiles": str, "affinity_type": str, "affinity": str, "pmid": str, "doi": str } ] }` — `affinity` is a numeric value in nM as a string; `affinities` is `[]` and `n_rows` 0 when no ligand passes the cutoff; `n_rows` equals the returned count.',
     run: async (ctx, a) => {
       const uniprot = String(a.uniprot).trim().toUpperCase()
       if (!UNIPROT_RE.test(uniprot)) throw new Error(`not a UniProt accession: ${uniprot}`)

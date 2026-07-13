@@ -75,6 +75,8 @@ export const GNOMAD_TOOLS: ToolDescriptor[] = [
       required: ['gene_symbol']
     },
     required: ['gene_symbol'],
+    returns:
+      '`{ "gene_id": str, "symbol": str, "chrom": str, "start": int, "stop": int, "dataset": str, "n_variants_total": int, "returned": int, "variants": [ { "variant_id": str, "pos": int, "ref": str, "alt": str, "rsids": [str], "exome": { "ac": int, "an": int, "af": float }|null, "genome": {...}|null } ] }` — variants capped at `limit` (default 25); `n_variants_total` is the full count. `exome`/`genome` are null when absent. Unknown gene returns `{ "symbol": str, "dataset": str, "gene_id": null, "n_variants": 0, "variants": [] }`.',
     run: async (ctx, a) => {
       const symbol = String(a.gene_symbol)
       const dataset = String(a.dataset ?? DEFAULT_DATASET)

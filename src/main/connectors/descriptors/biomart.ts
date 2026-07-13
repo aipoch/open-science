@@ -92,6 +92,8 @@ export const BIOMART_TOOLS: ToolDescriptor[] = [
     description:
       'List available Ensembl BioMart marts (name and display name) from the martservice registry.',
     input: { type: 'object', properties: {} },
+    returns:
+      '`[ { "name": str, "displayName": str } ]` — array of registered BioMart marts; `[]` when the registry lists none.',
     format: 'text',
     url: () => `${MARTSERVICE}?type=registry`,
     parse: (raw) => {
@@ -124,6 +126,8 @@ export const BIOMART_TOOLS: ToolDescriptor[] = [
       required: ['dataset', 'attributes']
     },
     required: ['dataset', 'attributes'],
+    returns:
+      '`{ "dataset": str, "columns": [str], "rows": [[str]] }` — `columns` echoes the requested attributes and each row is a string array in that column order. `rows` is sorted lexicographically and `[]` when nothing matches.',
     run: async (ctx, a) => {
       const dataset = String(a.dataset)
       const attributes = (a.attributes as unknown[]).map(String)

@@ -106,6 +106,8 @@ export const CELLGUIDE_TOOLS: ToolDescriptor[] = [
       required: ['cellType']
     },
     required: ['cellType'],
+    returns:
+      '`{ "id": str, "name": str, "synonyms": [ str ], "ontologyDescription": str, "description": str, "descriptionSource": str, "references": [ ... ], "canonicalMarkerGenes": [ { "symbol": str, "name": str, "tissue": str, "publication": str, "publicationTitle": str } ] }` — returns `{ "error": str }` when the CL id is not found; markers capped at 30; `descriptionSource` is `validated`, `gpt`, or `none` (with `description` empty).',
     run: async (ctx, a) => {
       const cellType = String(a.cellType)
       const jsonId = toJsonFormat(cellType)

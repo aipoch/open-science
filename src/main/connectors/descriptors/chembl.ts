@@ -31,6 +31,8 @@ export const CHEMBL_TOOLS: ToolDescriptor[] = [
       required: ['query']
     },
     required: ['query'],
+    returns:
+      '`[ { "chembl_id": str, "pref_name": str|null, "max_phase": str|int|null, "molecule_type": str|null } ]` — array of compact molecule summaries (all matches ChEMBL returns, unbounded); `[]` when nothing matches.',
     url: (a) => `${CHEMBL}/molecule/search?q=${encodeURIComponent(String(a.query))}&format=json`,
     parse: (raw) => ((raw as ChemblSearchResponse).molecules ?? []).map(summarize)
   },
@@ -44,6 +46,8 @@ export const CHEMBL_TOOLS: ToolDescriptor[] = [
       required: ['chembl_id']
     },
     required: ['chembl_id'],
+    returns:
+      '`{ "chembl_id": str, "pref_name": str|null, "max_phase": str|int|null, "molecule_type": str|null }` — a single molecule summary; fields are null/undefined when absent on the record.',
     url: (a) => `${CHEMBL}/molecule/${encodeURIComponent(String(a.chembl_id))}?format=json`,
     parse: (raw) => summarize(raw as ChemblMolecule)
   }
