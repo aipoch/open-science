@@ -489,4 +489,60 @@ describe('notebook runtime service', () => {
     expect(document.runs).toHaveLength(2)
     expect(document.runs.every((run) => run.status === 'completed')).toBe(true)
   })
+
+  it('runs different sessions in parallel instead of serializing across sessions', async () => {
+    const root = await createStorageRoot()
+    let active = 0
+    let maxConcurrent = 0
+    const releases = new Map<string, () => void>()
+    const service = new NotebookRuntimeService({
+      storageRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      // Each session gets its own executor; the shared counter proves both can be in flight at once.
+      executorFactory: (sessionId) => ({
+        execute: async (request): Promise<NotebookExecutionResult> => {
+          active += 1
+          maxConcurrent = Math.max(maxConcurrent, active)
+
+          // Hold each session's execution open until released so both can overlap.
+          await new Promise<void>((resolve) => releases.set(sessionId, resolve))
+          active -= 1
+
+          return {
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: [],
+            workingFiles: []
+          }
+        },
+        shutdown: async () => undefined
+      })
+    })
+
+    const submit = (sessionId: string): Promise<unknown> =>
+      service.execute({
+        projectName: 'default-project',
+        sessionId,
+        workspaceCwd: '/workspace',
+        code: 'print(1)',
+        source: 'user',
+        inputKind: 'terminal'
+      })
+
+    const runA = submit('session-a')
+    const runB = submit('session-b')
+
+    // Both sessions should be inside their own executors at the same time — the per-session queue
+    // must not serialize one session behind another.
+    await vi.waitFor(() => expect(releases.size).toBe(2))
+    expect(maxConcurrent).toBe(2)
+
+    releases.get('session-a')?.()
+    releases.get('session-b')?.()
+    await Promise.all([runA, runB])
+  })
 })
