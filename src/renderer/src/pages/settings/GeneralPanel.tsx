@@ -1,4 +1,4 @@
-import { ExternalLink, Globe } from 'lucide-react'
+import { ExternalLink, FolderOpen, Globe } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
@@ -25,7 +25,12 @@ const XMark = ({ className }: { className?: string }): React.JSX.Element => (
   </svg>
 )
 
-// General app settings. Hosts the diagnostics "Logs" option and the community/connect links. The log
+// Standard settings action button (matches the icon buttons in SettingsPage / Connectors / Skills),
+// so the diagnostics actions stay consistent with the rest of Settings.
+const actionButtonClassName =
+  'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50'
+
+// General app settings. Hosts the Diagnostics (log file) tools and the community/connect links. The log
 // file stays on this device and is never transmitted by the app.
 const GeneralPanel = (): React.JSX.Element => {
   const [logPath, setLogPath] = useState<string | null>(null)
@@ -53,34 +58,61 @@ const GeneralPanel = (): React.JSX.Element => {
     }
   }
 
+  const handleReveal = async (): Promise<void> => {
+    setMessage(undefined)
+
+    try {
+      const result = await window.api.logs.revealInFolder()
+
+      if (!result.revealed) {
+        setMessage(result.error ?? 'Could not reveal the log file.')
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not reveal the log file.')
+    }
+  }
+
   return (
     <div className="space-y-6 p-5">
       <AppVersionSection />
-      <section aria-label="Logs">
-        <h3 className="mb-1 text-sm font-semibold text-foreground">Logs</h3>
+      <section aria-label="Diagnostics">
+        <h3 className="mb-1 text-sm font-semibold text-foreground">Diagnostics</h3>
         <p className="mb-3 text-xs text-muted-foreground">
-          View the app&apos;s runtime log file. When something goes wrong, open it and attach it to
-          your feedback so the issue can be diagnosed.
+          View this device&apos;s runtime log — it records what the app is doing so problems can be
+          diagnosed.
         </p>
 
         <div className="rounded-xl border border-border p-4">
-          <span className="text-xs font-medium text-muted-foreground">Log file</span>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-medium text-muted-foreground">Log file</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void handleReveal()}
+                disabled={!logPath}
+                className={actionButtonClassName}
+              >
+                <FolderOpen className="size-4" aria-hidden="true" />
+                Reveal
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleOpenLog()}
+                disabled={isOpening || !logPath}
+                className={actionButtonClassName}
+              >
+                <ExternalLink className="size-4" aria-hidden="true" />
+                {isOpening ? 'Opening…' : 'Open'}
+              </button>
+            </div>
+          </div>
+
           <pre
-            className="mt-1 overflow-x-auto rounded-lg bg-muted px-3 py-2 font-mono text-xs text-foreground"
+            className="mt-2 overflow-x-auto rounded-lg bg-muted px-3 py-2 font-mono text-xs text-foreground"
             aria-label="Log file path"
           >
             {logPath ?? 'Not available yet.'}
           </pre>
-
-          <button
-            type="button"
-            onClick={() => void handleOpenLog()}
-            disabled={isOpening || !logPath}
-            className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-primary bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-          >
-            <ExternalLink className="size-4" aria-hidden="true" />
-            {isOpening ? 'Opening…' : 'Open log file'}
-          </button>
 
           {message ? (
             <p className="mt-2 text-xs text-destructive" role="alert">
@@ -90,14 +122,10 @@ const GeneralPanel = (): React.JSX.Element => {
         </div>
 
         <p className="mt-3 text-xs text-muted-foreground">
-          Something not working as expected?{' '}
+          Something not working?{' '}
           <ExternalTextLink href={APP.links.githubIssues}>Open an issue on GitHub</ExternalTextLink>{' '}
-          and attach the log above.
-        </p>
-
-        <p className="mt-3 text-xs text-muted-foreground">
-          Logs are stored only on this device and are never sent anywhere by the app. The file may
-          contain local file paths; review it before sharing.
+          and attach the log above. It stays on this device and is never sent automatically; it may
+          contain local file paths, so review it before sharing.
         </p>
       </section>
 

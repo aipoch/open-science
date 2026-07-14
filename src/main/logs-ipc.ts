@@ -1,11 +1,11 @@
 import { ipcMain, shell } from 'electron'
 
 import { getLogFilePath } from './logger'
-import type { OpenLogFileResult } from '../shared/logs'
+import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 
 // Renderer-callable diagnostics surface. Logs live only on this device and are never transmitted; the
-// renderer can read the file path (to show it) and ask the OS to open the file (to share when reporting
-// a bug). "Open" targets the log file itself, not its folder.
+// renderer can read the file path (to show it), open the file, or reveal it in its folder (to grab and
+// attach when reporting a bug). "Open" targets the log file itself; "reveal" selects it in the folder.
 const registerLogsIpcHandlers = (): void => {
   ipcMain.handle('logs:get-path', () => getLogFilePath() ?? null)
 
@@ -18,6 +18,17 @@ const registerLogsIpcHandlers = (): void => {
     const error = await shell.openPath(path)
 
     return error ? { opened: false, error } : { opened: true }
+  })
+
+  ipcMain.handle('logs:reveal-in-folder', (): RevealLogFileResult => {
+    const path = getLogFilePath()
+
+    if (!path) return { revealed: false, error: 'No log file is available yet.' }
+
+    // Opens the containing folder with the log file selected; returns void, so success is assumed.
+    shell.showItemInFolder(path)
+
+    return { revealed: true }
   })
 }
 

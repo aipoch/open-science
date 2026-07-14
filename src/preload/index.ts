@@ -25,7 +25,7 @@ import type {
   ReadArtifactPreviewRequest
 } from '../shared/artifacts'
 import type { SaveBlobFileRequest, SaveBlobFileResult } from '../shared/file-save'
-import type { OpenLogFileResult } from '../shared/logs'
+import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
   AppendNotebookCodeCellRequest,
   BeginNotebookCodeCellRequest,
@@ -198,6 +198,7 @@ type OpenScienceAPI = {
   logs: {
     getPath: () => Promise<string | null>
     openFile: () => Promise<OpenLogFileResult>
+    revealInFolder: () => Promise<RevealLogFileResult>
   }
   github: {
     getStars: () => Promise<number | null>
@@ -406,7 +407,9 @@ const api: OpenScienceAPI = {
   },
   logs: {
     getPath: () => ipcRenderer.invoke('logs:get-path') as Promise<string | null>,
-    openFile: () => ipcRenderer.invoke('logs:open-file') as Promise<OpenLogFileResult>
+    openFile: () => ipcRenderer.invoke('logs:open-file') as Promise<OpenLogFileResult>,
+    revealInFolder: () =>
+      ipcRenderer.invoke('logs:reveal-in-folder') as Promise<RevealLogFileResult>
   },
   github: {
     getStars: () => ipcRenderer.invoke('github:get-stars') as Promise<number | null>

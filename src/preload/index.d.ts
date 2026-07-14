@@ -23,7 +23,7 @@ import type {
   ReadArtifactPreviewRequest
 } from '../shared/artifacts'
 import type { SaveBlobFileRequest, SaveBlobFileResult } from '../shared/file-save'
-import type { OpenLogFileResult } from '../shared/logs'
+import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
   AppendNotebookCodeCellRequest,
   BeginNotebookCodeCellRequest,
@@ -183,6 +183,7 @@ interface OpenScienceAPI {
   logs: {
     getPath(): Promise<string | null>
     openFile(): Promise<OpenLogFileResult>
+    revealInFolder(): Promise<RevealLogFileResult>
   }
   github: {
     getStars(): Promise<number | null>
