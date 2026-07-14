@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react'
 
 import { useSessionPersistence } from '@/lib/session-persistence/session-persistence'
+import { UpdateDialog } from '@/components/UpdateDialog'
 import { HomePage } from '@/pages/home/HomePage'
 import { OnboardingWizard } from '@/pages/onboarding/OnboardingWizard'
 import { resolveStartupView, shouldMarkOnboardingComplete } from '@/pages/onboarding/startup-gate'
@@ -10,6 +11,7 @@ import { WorkspacePage } from '@/pages/workspace/WorkspacePage'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useUpdateStore } from '@/stores/update-store'
 
 const App = (): React.JSX.Element | null => {
   // Persistence is started once at the top so sessions stay loaded for both Home and Workspace.
@@ -26,6 +28,12 @@ const App = (): React.JSX.Element | null => {
   const isSettingsOpen = useSettingsStore((state) => state.isSettingsOpen)
   const closeSettings = useSettingsStore((state) => state.closeSettings)
   const enqueueApproval = useSettingsStore((state) => state.enqueueApproval)
+  const initUpdates = useUpdateStore((state) => state.init)
+
+  // Load app info and subscribe to update-status broadcasts once at startup.
+  useEffect(() => {
+    initUpdates()
+  }, [initUpdates])
 
   // Subscribe once to connector approval requests from the main-process gate; they surface as a
   // modal the user must answer before the held connector call proceeds.
@@ -80,6 +88,7 @@ const App = (): React.JSX.Element | null => {
       )}
       <SettingsPage open={isSettingsOpen} onClose={closeSettings} />
       <ConnectorApprovalDialog />
+      <UpdateDialog />
     </>
   )
 }

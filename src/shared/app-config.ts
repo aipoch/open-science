@@ -13,9 +13,15 @@ export const APP = {
   links: {
     website: 'https://www.aipoch.com/open-science',
     githubRepo: GITHUB_REPO_URL,
+    githubReleases: `${GITHUB_REPO_URL}/releases`,
     githubApi: `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}`,
     githubIssues: `${GITHUB_REPO_URL}/issues`,
     discord: 'https://discord.gg/85dKfuGM9',
     x: 'https://x.com/aipoch_ai'
+  },
+  copyright: '© 2026 AIPOCH. All rights reserved.',
+  update: {
+    manifestUrl: 'https://statics.aipoch.com/open-science/app/stable/version.json',
+    downloadPage: 'https://www.aipoch.com/open-science'
   }
 } as const

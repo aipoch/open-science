@@ -96,6 +96,7 @@ import type {
   ValidateProviderRequest,
   ValidateProviderResult
 } from '../shared/settings'
+import type { AppInfo, UpdateStatus } from '../shared/update'
 import type {
   DeleteUploadRequest,
   FinalizeUploadSessionRequest,
@@ -196,6 +197,15 @@ type OpenScienceAPI = {
   }
   github: {
     getStars: () => Promise<number | null>
+  }
+  update: {
+    getAppInfo: () => Promise<AppInfo>
+    getStatus: () => Promise<UpdateStatus>
+    check: () => Promise<UpdateStatus>
+    download: () => Promise<UpdateStatus>
+    openInstaller: () => Promise<UpdateStatus>
+    onStatus: (listener: (status: UpdateStatus) => void) => RemoveListener
+    onProgress: (listener: (percent: number) => void) => RemoveListener
   }
   projects: {
     list: () => Promise<Project[]>
@@ -392,6 +402,15 @@ const api: OpenScienceAPI = {
   },
   github: {
     getStars: () => ipcRenderer.invoke('github:get-stars') as Promise<number | null>
+  },
+  update: {
+    getAppInfo: () => ipcRenderer.invoke('update:get-app-info') as Promise<AppInfo>,
+    getStatus: () => ipcRenderer.invoke('update:get-status') as Promise<UpdateStatus>,
+    check: () => ipcRenderer.invoke('update:check') as Promise<UpdateStatus>,
+    download: () => ipcRenderer.invoke('update:download') as Promise<UpdateStatus>,
+    openInstaller: () => ipcRenderer.invoke('update:open-installer') as Promise<UpdateStatus>,
+    onStatus: (listener) => onIpcMessage('update:status', listener),
+    onProgress: (listener) => onIpcMessage('update:progress', listener)
   },
   projects: {
     // Project CRUD backed by the SQLite/Prisma layer (scope: projects only).

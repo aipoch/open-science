@@ -3,6 +3,7 @@ import { DropdownMenu } from 'radix-ui'
 
 import { cn } from '@/lib/utils'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
+import { UpdateCapsule } from '@/components/UpdateCapsule'
 import type { ChatSession, SessionStatus } from '@/stores/session-store'
 
 type WorkspaceSidebarProps = {
@@ -237,6 +238,7 @@ const WorkspaceSidebar = ({
           >
             <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
           </button>
+          <UpdateCapsule />
           <GitHubStarBadge />
         </div>
       </nav>

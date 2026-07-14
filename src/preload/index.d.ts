@@ -94,6 +94,7 @@ import type {
   ValidateProviderRequest,
   ValidateProviderResult
 } from '../shared/settings'
+import type { AppInfo, UpdateStatus } from '../shared/update'
 import type {
   DeleteUploadRequest,
   FinalizeUploadSessionRequest,
@@ -181,6 +182,15 @@ interface OpenScienceAPI {
   }
   github: {
     getStars(): Promise<number | null>
+  }
+  update: {
+    getAppInfo(): Promise<AppInfo>
+    getStatus(): Promise<UpdateStatus>
+    check(): Promise<UpdateStatus>
+    download(): Promise<UpdateStatus>
+    openInstaller(): Promise<UpdateStatus>
+    onStatus(listener: (status: UpdateStatus) => void): RemoveListener
+    onProgress(listener: (percent: number) => void): RemoveListener
   }
   projects: {
     list(): Promise<Project[]>

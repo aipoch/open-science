@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { APP } from '../../../../shared/app-config'
+import { AppVersionSection } from './AppVersionSection'
 
 // Community entry links (Discord, X) share the GitHub badge's compact look so the row reads as one
 // set of "connect with the project" actions.
@@ -54,6 +55,7 @@ const GeneralPanel = (): React.JSX.Element => {
 
   return (
     <div className="space-y-6 p-5">
+      <AppVersionSection />
       <section aria-label="Logs">
         <h3 className="mb-1 text-sm font-semibold text-foreground">Logs</h3>
         <p className="mb-3 text-xs text-muted-foreground">

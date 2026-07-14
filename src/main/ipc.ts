@@ -25,6 +25,8 @@ import { getAppClaudeConfigDir } from './settings/provider-env'
 import { createDefaultSettingsService, type SettingsService } from './settings/service'
 import type { StoredConnectors } from './settings/types'
 import { resolveStorageRoot } from './storage-root'
+import { registerUpdateIpcHandlers } from './update/ipc'
+import { startUpdateScheduler } from './update/scheduler'
 import { createDefaultUploadRepository, registerUploadIpcHandlers } from './uploads/ipc'
 
 type IpcRegistrationOptions = {
@@ -135,6 +137,8 @@ const registerIpcHandlers = ({ mainEntryPath }: IpcRegistrationOptions): void =>
   registerFileSaveHandlers()
   registerLogsIpcHandlers()
   registerGithubIpcHandlers()
+  const updateService = registerUpdateIpcHandlers()
+  startUpdateScheduler(updateService)
   const runtime = registerAcpIpcHandlers({
     mcpEntryPath: mainEntryPath,
     repository: artifactRepository,

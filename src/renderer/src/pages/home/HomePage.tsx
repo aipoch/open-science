@@ -20,6 +20,7 @@ import { useSessionStore } from '@/stores/session-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
+import { UpdateCapsule } from '@/components/UpdateCapsule'
 import { APP } from '../../../../shared/app-config'
 import type { Project } from '../../../../shared/projects'
 
@@ -219,6 +220,7 @@ const HomePage = (): React.JSX.Element => {
             <div className="mt-1 text-[11px] text-text-100">Beta</div>
           </div>
           <div className="flex items-center gap-2">
+            <UpdateCapsule />
             <GitHubStarBadge />
             <button
               type="button"
