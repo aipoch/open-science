@@ -21,9 +21,8 @@ const ClaudeInstallCard = ({
   npmAvailable,
   onInstall
 }: ClaudeInstallCardProps): React.JSX.Element => {
-  const [source, setSource] = useState<ClaudeInstallSource>(
-    npmAvailable ? 'npm' : 'official-script'
-  )
+  // Default to the app-managed download — it needs no Node.js/npm and works behind region blocks.
+  const [source, setSource] = useState<ClaudeInstallSource>('managed')
   // Sources carry platform-specific copy (e.g. install.ps1 vs install.sh), so resolve them for the
   // host the app is running on.
   const installSources = useMemo(() => getClaudeInstallSources(window.api?.platform), [])
@@ -59,7 +58,11 @@ const ClaudeInstallCard = ({
         </Select>
       </div>
 
-      {selectedSource ? (
+      {selectedSource?.description ? (
+        <p className="mt-3 text-xs text-muted-foreground">{selectedSource.description}</p>
+      ) : null}
+
+      {selectedSource && selectedSource.displayCommand ? (
         <div className="mt-3">
           <span className="text-xs font-medium text-muted-foreground">Command</span>
           <pre

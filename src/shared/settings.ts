@@ -153,27 +153,39 @@ export type RefreshProviderModelsResult = {
   message?: string
 }
 
-// Selectable install sources for the one-click claude installer.
-export type ClaudeInstallSource = 'npm' | 'official-script'
+// Selectable install sources for the one-click claude installer. `managed` is the app-driven download
+// (no user Node/npm needed) and is the default; the other two are manual/advanced fallbacks.
+export type ClaudeInstallSource = 'managed' | 'npm' | 'official-script'
 
 // Static, non-secret description of an install source shown in the UI (command is copyable).
 export type ClaudeInstallSourceInfo = {
   id: ClaudeInstallSource
   label: string
-  // Human-readable command shown in the UI and safe to copy/paste.
+  // Human-readable command shown in the UI and safe to copy/paste. Empty for the app-managed source,
+  // which has no shell command (the app performs the install itself).
   displayCommand: string
   // Whether this source needs npm on PATH (drives default selection + disabled state).
   requiresNpm: boolean
+  // Optional one-line explanation shown under the picker (used by the app-managed source).
+  description?: string
 }
 
-// The ordered install sources for a given host platform; a plain global npm install is the default
-// when npm is available. The npm command is identical everywhere, but the official installer differs:
-// Windows uses the PowerShell script (install.ps1), other platforms use the shell script (install.sh).
-// Pass the host platform (e.g. `window.api.platform`) so the copyable command matches what runs.
+// The ordered install sources for a given host platform. The app-managed download is the default and
+// recommended path (self-contained binary, no user Node/npm). npm and the official installer follow as
+// manual fallbacks: the npm command is identical everywhere, while the official installer differs —
+// Windows uses install.ps1, other platforms install.sh. Pass the host platform (e.g.
+// `window.api.platform`) so the copyable command matches what runs.
 export const getClaudeInstallSources = (platform: string = 'linux'): ClaudeInstallSourceInfo[] => {
   const isWindows = platform === 'win32'
 
   return [
+    {
+      id: 'managed',
+      label: 'App-managed download (recommended)',
+      displayCommand: '',
+      requiresNpm: false,
+      description: 'Downloads a self-contained Claude — no Node.js or npm required.'
+    },
     {
       id: 'npm',
       label: 'npm (global install)',

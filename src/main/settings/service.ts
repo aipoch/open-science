@@ -58,6 +58,12 @@ import { resolveStorageRoot } from '../storage-root'
 import { createDefaultDetectDeps, detectClaude, type ClaudeDetectDeps } from './claude-detect'
 import { provisionAppClaudeConfigDir } from './claude-config-provision'
 import { detectNpmAvailable, runInstall } from './claude-install'
+import {
+  installManagedClaude,
+  managedClaudeDir,
+  type InstallManagedClaudeOptions,
+  type ManagedInstallOutcome
+} from './managed-claude'
 import { encryptKey, isEncryptionAvailable, maskKey, tryDecryptKey } from './crypto'
 import { applyLocalClaudeAuth, defaultUserClaudeDir } from './local-claude-auth'
 import { computePreflight } from './preflight'
@@ -127,6 +133,10 @@ export type SettingsServiceOptions = {
   userSkills?: UserSkillRepository
   // One-shot Claude command runner, injectable so validation tests can inspect the exact auth env.
   executeClaudeProbe?: ExecuteClaudeProbe
+  // One-shot managed Claude installer, injectable so tests avoid real network/fs.
+  installManagedClaudeImpl?: (
+    options: InstallManagedClaudeOptions
+  ) => Promise<ManagedInstallOutcome>
 }
 
 // Orchestrates the settings units (repository + crypto + detect/install + validate) behind one
@@ -140,6 +150,9 @@ class SettingsService {
   private readonly skillRegistry: SkillRegistry
   private readonly userSkills: UserSkillRepository
   private readonly executeClaudeProbe: ExecuteClaudeProbe
+  private readonly installManagedClaudeImpl: (
+    options: InstallManagedClaudeOptions
+  ) => Promise<ManagedInstallOutcome>
   private providerSequence = 0
   // Skills force-loaded for the current turn: subtracted from the stored disabled set at spawn time so
   // a picked-but-disabled skill materializes for this prompt only, without mutating stored settings.
@@ -148,11 +161,18 @@ class SettingsService {
   constructor(options: SettingsServiceOptions = {}) {
     this.storageRoot = options.storageRoot ?? resolveStorageRoot()
     this.repository = options.repository ?? new SettingsRepository(this.storageRoot)
-    this.detectDeps = options.detectDeps ?? createDefaultDetectDeps()
+    // Probe the app-managed install dir too, so a managed Claude is re-detected even if the cached
+    // path is ever cleared (e.g. a manual re-detect).
+    const baseDetectDeps = options.detectDeps ?? createDefaultDetectDeps()
+    this.detectDeps = {
+      ...baseDetectDeps,
+      extraDirs: [...(baseDetectDeps.extraDirs ?? []), managedClaudeDir(this.storageRoot)]
+    }
     this.userClaudeDir = options.userClaudeDir ?? defaultUserClaudeDir()
     this.skillRegistry = options.skillRegistry ?? new SkillRegistry()
     this.userSkills = options.userSkills ?? new UserSkillRepository(this.storageRoot)
     this.executeClaudeProbe = options.executeClaudeProbe ?? executeClaudeProbe
+    this.installManagedClaudeImpl = options.installManagedClaudeImpl ?? installManagedClaude
   }
 
   // Returns the renderer-safe (masked) snapshot of settings.
@@ -349,12 +369,32 @@ class SettingsService {
   }
 
   // Runs the one-click installer, then re-detects claude so a success immediately unblocks the gate.
+  // The app-managed source downloads the native binary itself and persists its exact path; the npm and
+  // official-script sources shell out and rely on PATH re-detection.
   async installClaude(
     request: InstallClaudeRequest,
     onLog: (event: ClaudeInstallLogEvent) => void
   ): Promise<ClaudeInstallResult> {
     this.providerSequence += 1
     const installId = `install-${Date.now()}-${this.providerSequence}`
+
+    if (request.source === 'managed') {
+      const outcome = await this.installManagedClaudeImpl({
+        installId,
+        onLog,
+        dataRoot: this.storageRoot
+      })
+
+      if (outcome.result.ok && outcome.resolvedPath) {
+        await this.repository.setClaudeInfo({
+          resolvedPath: outcome.resolvedPath,
+          version: outcome.version
+        })
+      }
+
+      return outcome.result
+    }
+
     const result = await runInstall({ source: request.source, installId, onLog })
 
     if (result.ok) {

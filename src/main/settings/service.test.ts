@@ -28,11 +28,22 @@ const { SkillRegistry } = await import('../skills/registry')
 let storageRoot: string
 let repository: InstanceType<typeof SettingsRepository>
 
+type ManagedInstallImpl = (options: {
+  installId: string
+  onLog: (event: { installId: string; stream: string; chunk: string }) => void
+  dataRoot: string
+}) => Promise<{
+  result: { installId: string; ok: boolean; error?: string }
+  resolvedPath?: string
+  version?: string
+}>
+
 const createService = (
   detectResult = { found: true, path: '/bin/claude', version: '2.1.0' },
   options: {
     userClaudeDir?: string
     executeClaudeProbe?: (executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>
+    installManagedClaudeImpl?: ManagedInstallImpl
   } = {}
 ): InstanceType<typeof SettingsService> =>
   new SettingsService({
@@ -41,6 +52,8 @@ const createService = (
     // Point at a non-existent user Claude dir so tests never read the real ~/.claude for local auth.
     userClaudeDir: options.userClaudeDir ?? join(storageRoot, 'no-user-claude'),
     executeClaudeProbe: options.executeClaudeProbe,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    installManagedClaudeImpl: options.installManagedClaudeImpl as any,
     detectDeps: {
       env: {},
       homePath: '/home',
@@ -716,5 +729,40 @@ describe('SettingsService: skills', () => {
       'My Skill',
       'Demo'
     ])
+  })
+})
+
+describe('installClaude (app-managed source)', () => {
+  it('routes managed installs through the managed installer and persists the resolved path', async () => {
+    const service = createService(undefined, {
+      installManagedClaudeImpl: async ({ installId }) => ({
+        result: { installId, ok: true },
+        resolvedPath: '/data/claude-code/bin/claude',
+        version: '2.1.209'
+      })
+    })
+
+    const result = await service.installClaude({ source: 'managed' }, () => undefined)
+
+    expect(result.ok).toBe(true)
+    const snapshot = await service.getSettingsView()
+    expect(snapshot.claude).toEqual({
+      resolvedPath: '/data/claude-code/bin/claude',
+      version: '2.1.209'
+    })
+  })
+
+  it('does not persist claude info when the managed install fails', async () => {
+    const service = createService(undefined, {
+      installManagedClaudeImpl: async ({ installId }) => ({
+        result: { installId, ok: false, error: 'all registries failed' }
+      })
+    })
+
+    const result = await service.installClaude({ source: 'managed' }, () => undefined)
+
+    expect(result.ok).toBe(false)
+    const snapshot = await service.getSettingsView()
+    expect(snapshot.claude).toEqual({})
   })
 })

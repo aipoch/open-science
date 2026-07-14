@@ -27,6 +27,8 @@ export type ClaudeDetectDeps = {
   getVersion: (path: string) => Promise<string | undefined>
   // Extra bin directories to probe (e.g. `npm prefix -g`); resolved lazily and tolerant of failure.
   resolveNpmBinDirs: () => Promise<string[]>
+  // Extra fixed directories to probe (e.g. the app-managed install dir), searched after PATH/home.
+  extraDirs?: string[]
 }
 
 // Path semantics follow the injected platform, not the host running the code. Production wires
@@ -67,7 +69,13 @@ const collectCandidateDirs = async (deps: ClaudeDetectDeps): Promise<string[]> =
 
   // De-duplicate while preserving first-seen order so the first real hit wins.
   return Array.from(
-    new Set([...pathDirs, localBin, ...wellKnownDirs(deps.platform, deps.env), ...npmBinDirs])
+    new Set([
+      ...pathDirs,
+      localBin,
+      ...(deps.extraDirs ?? []),
+      ...wellKnownDirs(deps.platform, deps.env),
+      ...npmBinDirs
+    ])
   )
 }
 
