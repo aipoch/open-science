@@ -21,6 +21,7 @@ import {
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
 type MessageUploadAttachment = NonNullable<ChatMessage['uploads']>[number]
+type ArtifactMentionPart = Extract<MessagePart, { type: 'artifact' }>
 type ArtifactPreviewState = Record<string, ArtifactPreviewResult | undefined>
 type ArtifactPreviewCache = {
   key: string
@@ -31,6 +32,8 @@ type WorkspaceMessageItemProps = {
   message: ChatMessage
   onPreviewArtifact: (artifact: MessageArtifact) => void
   onPreviewUploadAttachment: (attachment: MessageUploadAttachment) => void
+  onOpenSkillMention: (skillId: string, name: string) => void
+  onPreviewMentionArtifact: (part: ArtifactMentionPart) => void
   artifacts?: MessageArtifact[]
 }
 
@@ -48,6 +51,9 @@ const uploadedAttachmentButtonClassName =
 // Shared pill shape for inline skill/artifact mentions in the sent bubble.
 const mentionPillClassName =
   'inline-flex items-center rounded px-1.5 py-0.5 mx-0.5 text-sm font-medium'
+// Interactive additions layered onto the pill shape when a mention resolves to a clickable target.
+const mentionButtonClassName =
+  'cursor-pointer hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-200/60'
 
 const assistantMessageSurfaceClassName =
   'relative w-full max-w-[56rem] text-sm leading-relaxed text-text-000 md:text-[15px]'
@@ -251,24 +257,49 @@ const MessageUploadAttachmentList = ({
 }
 
 // Renders a user message's structured mention segments as inline styled pills.
-const MessagePartsContent = ({ parts }: { parts: MessagePart[] }): React.JSX.Element => (
+const MessagePartsContent = ({
+  parts,
+  onOpenSkillMention,
+  onPreviewMentionArtifact
+}: {
+  parts: MessagePart[]
+  onOpenSkillMention: (skillId: string, name: string) => void
+  onPreviewMentionArtifact: (part: ArtifactMentionPart) => void
+}): React.JSX.Element => (
   <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
     {parts.map((part, index) => {
       if (part.type === 'skill') {
         return (
-          <span key={index} className={cn(mentionPillClassName, 'bg-primary/15 text-primary')}>
+          <button
+            key={index}
+            type="button"
+            className={cn(
+              mentionPillClassName,
+              mentionButtonClassName,
+              'bg-primary/15 text-primary'
+            )}
+            onClick={() => onOpenSkillMention(part.id, part.name)}
+            aria-label={`Open skill ${part.name}`}
+          >
             /{part.name}
-          </span>
+          </button>
         )
       }
       if (part.type === 'artifact') {
         return (
-          <span
+          <button
             key={index}
-            className={cn(mentionPillClassName, 'bg-mention-chip text-mention-chip-foreground')}
+            type="button"
+            className={cn(
+              mentionPillClassName,
+              mentionButtonClassName,
+              'bg-mention-chip text-mention-chip-foreground'
+            )}
+            onClick={() => onPreviewMentionArtifact(part)}
+            aria-label={`Preview ${part.name}`}
           >
             @{part.name}
-          </span>
+          </button>
         )
       }
 
@@ -286,6 +317,8 @@ const WorkspaceMessageItem = ({
   message,
   onPreviewArtifact,
   onPreviewUploadAttachment,
+  onOpenSkillMention,
+  onPreviewMentionArtifact,
   artifacts = []
 }: WorkspaceMessageItemProps): React.JSX.Element => {
   const isUserMessage = message.role === 'user'
@@ -309,7 +342,11 @@ const WorkspaceMessageItem = ({
               />
               {/* Structured parts drive styled pills; plain content is the backward-compatible fallback. */}
               {message.parts && message.parts.length > 0 ? (
-                <MessagePartsContent parts={message.parts} />
+                <MessagePartsContent
+                  parts={message.parts}
+                  onOpenSkillMention={onOpenSkillMention}
+                  onPreviewMentionArtifact={onPreviewMentionArtifact}
+                />
               ) : message.content ? (
                 <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
                   {message.content}
@@ -329,3 +366,4 @@ const WorkspaceMessageItem = ({
 }
 
 export { WorkspaceMessageItem }
+export type { ArtifactMentionPart }

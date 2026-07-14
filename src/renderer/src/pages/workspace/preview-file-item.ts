@@ -1,5 +1,6 @@
 import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-store'
 import type { ChatSession } from '@/stores/session-store'
+import type { MessagePart } from '../../../../shared/session-persistence'
 import { getUploadedAttachmentName } from '../../../../shared/uploads'
 
 import { getArtifactExtension, getArtifactName } from './artifact-preview-utils'
@@ -9,6 +10,7 @@ export type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
 export type MessageUploadAttachment = NonNullable<
   ChatSession['messages'][number]['uploads']
 >[number]
+type ArtifactMentionPart = Extract<MessagePart, { type: 'artifact' }>
 
 // Builds the common preview workbench file item for generated artifacts and user uploads.
 export const createPreviewFileItem = ({
@@ -80,3 +82,17 @@ export const createPreviewFileItemFromUpload = (
     mimeType: attachment.mimeType
   })
 }
+
+// Converts a sent-message artifact mention into the same preview shape used by its source panel.
+export const createPreviewFileItemFromMention = (
+  part: ArtifactMentionPart,
+  sessionId: string
+): PreviewFileItem =>
+  createPreviewFileItem({
+    id: part.id,
+    sessionId,
+    path: part.path,
+    name: part.name,
+    extension: getFileExtension(part.name),
+    source: part.source === 'upload' ? 'upload' : undefined
+  })

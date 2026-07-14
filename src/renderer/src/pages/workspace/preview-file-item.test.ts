@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ChatSession } from '@/stores/session-store'
+import type { MessagePart } from '../../../../shared/session-persistence'
 
 import {
   createPreviewFileItemFromArtifact,
+  createPreviewFileItemFromMention,
   createPreviewFileItemFromUpload
 } from './preview-file-item'
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
 type MessageUploadAttachment = NonNullable<ChatSession['messages'][number]['uploads']>[number]
+type ArtifactMentionPart = Extract<MessagePart, { type: 'artifact' }>
 
 const createManagedArtifact = (overrides: Partial<MessageArtifact> = {}): MessageArtifact => ({
   id: 'artifact-1',
@@ -32,6 +35,15 @@ const createUploadAttachment = (
   path: '/Users/example/.open-science/uploads/default-project/session-1/safe-name.png',
   mimeType: 'image/png',
   size: 2048,
+  ...overrides
+})
+
+const createMentionPart = (overrides: Partial<ArtifactMentionPart> = {}): ArtifactMentionPart => ({
+  type: 'artifact',
+  id: 'artifact-9',
+  name: 'summary.md',
+  path: '/workspace/results/summary.md',
+  source: 'artifact',
   ...overrides
 })
 
@@ -103,6 +115,37 @@ describe('preview file item helpers', () => {
       title: 'rendered-report',
       name: 'rendered-report',
       format: 'html'
+    })
+  })
+
+  it('creates artifact mention preview items without an explicit source', () => {
+    expect(createPreviewFileItemFromMention(createMentionPart(), 'session-1')).toEqual({
+      id: 'artifact-9',
+      sessionId: 'session-1',
+      title: 'summary.md',
+      type: 'file',
+      path: '/workspace/results/summary.md',
+      name: 'summary.md',
+      format: 'markdown'
+    })
+  })
+
+  it('preserves the mention id and marks upload-sourced mentions as uploads', () => {
+    const item = createPreviewFileItemFromMention(
+      createMentionPart({
+        id: 'upload-mention-3',
+        name: 'scan.png',
+        path: '/uploads/scan.png',
+        source: 'upload'
+      }),
+      'session-1'
+    )
+
+    expect(item).toMatchObject({
+      id: 'upload-mention-3',
+      source: 'upload',
+      name: 'scan.png',
+      format: 'image'
     })
   })
 })

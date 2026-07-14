@@ -6,17 +6,20 @@ import {
   MessageScrollerViewport
 } from '@/components/ui/message-scroller'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import type { ChatSession } from '@/stores/session-store'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { shouldShowAgentLoadingMessage } from './agent-loading-message'
 import {
   createPreviewFileItemFromArtifact,
+  createPreviewFileItemFromMention,
   createPreviewFileItemFromUpload
 } from './preview-file-item'
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
 import { WorkspaceAgentLoadingRow } from './WorkspaceAgentLoadingRow'
 import { WorkspaceMessageItem } from './WorkspaceMessageItem'
+import type { ArtifactMentionPart } from './WorkspaceMessageItem'
 import { createConversationItems } from './workspace-conversation-items'
 import { groupConversationItems } from './workspace-tool-activity-groups'
 import type { ActivityExpansionOverrides } from './workspace-tool-activity-groups'
@@ -38,6 +41,8 @@ type SessionScopedActivityExpansionState = {
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
 type MessageUploadAttachment = NonNullable<ChatSession['messages'][number]['uploads']>[number]
 const conversationContentClassName = 'relative mx-auto w-full max-w-4xl pb-[56px]'
+// How long a "no longer available" mention notice stays visible before auto-dismissing.
+const MENTION_NOTICE_TIMEOUT_MS = 3000
 
 // Resolves a message's artifact ids against the session-level artifact metadata store.
 const getMessageArtifacts = (
@@ -97,6 +102,33 @@ const WorkspaceMessageScroller = ({
   const conversationItems = groupConversationItems(createConversationItems(activeSession))
   const showAgentLoadingMessage = shouldShowAgentLoadingMessage(activeSession)
 
+  // Transient "no longer available" pill shown when a mention target can't be opened.
+  const [mentionNotice, setMentionNotice] = useState<string | null>(null)
+  const mentionNoticeTimerRef = useRef<number | undefined>(undefined)
+
+  // Clears any pending auto-dismiss timer so unmounting never fires setState on a dead component.
+  useEffect(
+    () => () => {
+      if (mentionNoticeTimerRef.current !== undefined) {
+        window.clearTimeout(mentionNoticeTimerRef.current)
+      }
+    },
+    []
+  )
+
+  // Shows a transient notice and schedules its auto-dismiss, replacing any in-flight timer.
+  const showMentionNotice = (message: string): void => {
+    if (mentionNoticeTimerRef.current !== undefined) {
+      window.clearTimeout(mentionNoticeTimerRef.current)
+    }
+
+    setMentionNotice(message)
+    mentionNoticeTimerRef.current = window.setTimeout(() => {
+      setMentionNotice(null)
+      mentionNoticeTimerRef.current = undefined
+    }, MENTION_NOTICE_TIMEOUT_MS)
+  }
+
   // Routes a generated-file click to the preview workbench, scoped to the active session.
   const onPreviewArtifact = (artifact: MessageArtifact): void => {
     if (currentSessionId) previewArtifact(artifact, currentSessionId)
@@ -105,6 +137,37 @@ const WorkspaceMessageScroller = ({
   // Routes a sent-message upload click to the preview workbench for the active session.
   const onPreviewUploadAttachment = (attachment: MessageUploadAttachment): void => {
     if (currentSessionId) previewUploadAttachment(attachment, currentSessionId)
+  }
+
+  // Opens an artifact mention in the preview panel, probing existence first so a stale link warns.
+  const onPreviewMentionArtifact = async (part: ArtifactMentionPart): Promise<void> => {
+    if (!currentSessionId) return
+
+    const read =
+      part.source === 'upload' ? window.api.uploads.readPreview : window.api.artifacts.readPreview
+
+    try {
+      await read({ path: part.path, maxBytes: 1, encoding: 'utf8' })
+    } catch {
+      showMentionNotice(`"${part.name}" is no longer available.`)
+      return
+    }
+
+    usePreviewWorkbenchStore
+      .getState()
+      .upsertAndActivateItem(createPreviewFileItemFromMention(part, currentSessionId))
+  }
+
+  // Opens Settings on a skill mention's detail, warning instead when the skill no longer exists.
+  const onOpenSkillMention = async (skillId: string, name: string): Promise<void> => {
+    const detail = await window.api.settings.getSkillDetail(skillId).catch(() => null)
+
+    if (!detail) {
+      showMentionNotice(`Skill "${name}" is no longer available.`)
+      return
+    }
+
+    useSettingsStore.getState().openSettingsToSkill(skillId)
   }
 
   // Toggles a whole adjacent tool-activity group without affecting other sessions.
@@ -172,6 +235,8 @@ const WorkspaceMessageScroller = ({
                       message={item.message}
                       onPreviewArtifact={onPreviewArtifact}
                       onPreviewUploadAttachment={onPreviewUploadAttachment}
+                      onOpenSkillMention={onOpenSkillMention}
+                      onPreviewMentionArtifact={onPreviewMentionArtifact}
                       artifacts={artifacts}
                     />
                   )
@@ -197,6 +262,18 @@ const WorkspaceMessageScroller = ({
         </MessageScrollerViewport>
 
         <MessageScrollerButton className="z-10 border-border-200 bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3" />
+
+        {/* Transient warning shown when a mention target no longer resolves to a file or skill. */}
+        {mentionNotice ? (
+          <div
+            role="status"
+            className="pointer-events-none absolute inset-x-0 bottom-14 z-10 flex justify-center px-4"
+          >
+            <span className="rounded-full border border-border-200 bg-bg-000 px-3 py-1 text-[13px] text-text-100 shadow-card">
+              {mentionNotice}
+            </span>
+          </div>
+        ) : null}
       </MessageScroller>
     </MessageScrollerProvider>
   )
