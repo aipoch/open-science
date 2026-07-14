@@ -59,6 +59,7 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
         onStageAttachmentFiles={onStageAttachmentFiles}
         onRemoveAttachment={vi.fn()}
         onCancelRun={vi.fn()}
+        onResumeSession={vi.fn().mockResolvedValue(undefined)}
         onOpenNotebook={vi.fn()}
         onTogglePreviewPanel={vi.fn()}
         onRespondToPermission={vi.fn()}

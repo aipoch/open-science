@@ -12,6 +12,7 @@ import {
   type PermissionProfileId
 } from '../../../shared/permission-profiles'
 import {
+  INTERRUPTED_SESSION_ERROR,
   sanitizeToolActivity,
   type MessagePart,
   type PersistedActiveRun,
@@ -60,6 +61,9 @@ export type ChatSession = Omit<
   messages: ChatMessage[]
   activities?: ToolActivity[]
   isPending?: boolean
+  // Transient: set at hydration when a session was interrupted by an app restart, so the UI can
+  // offer an explicit Resume affordance. Never persisted (stripped in stripTransientSessionState).
+  interrupted?: boolean
 }
 
 type SessionStoreData = {
@@ -157,6 +161,7 @@ type SessionStore = SessionStoreData & {
   hydrateSessions: (sessions: PersistedChatSession[], manifest?: PersistedSessionManifest) => void
   finishRun: (sessionId: string) => void
   failRun: (sessionId: string, error: string) => void
+  markResumed: (sessionId: string) => void
   upsertToolActivity: (input: UpsertToolActivityInput) => void
   setPermissionPending: (sessionId: string) => void
   clearPermissionPending: (sessionId: string) => void
@@ -187,9 +192,10 @@ const stripTransientMessageState = (message: ChatMessage): PersistedChatMessage 
 }
 
 const stripTransientSessionState = (session: ChatSession): PersistedChatSession => {
-  const { activities, isPending, messages, ...persistedSession } = session
+  const { activities, isPending, interrupted, messages, ...persistedSession } = session
 
   void isPending
+  void interrupted
 
   // Persist a bounded projection of tool activities so the transcript survives restarts.
   const persistedActivities = activities
@@ -217,7 +223,10 @@ const hydrateToolActivity = (activity: PersistedToolActivity): ToolActivity => (
 const hydrateSession = (session: PersistedChatSession): ChatSession => ({
   ...session,
   permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-  activities: session.activities?.map(hydrateToolActivity)
+  activities: session.activities?.map(hydrateToolActivity),
+  // Sessions restored as interrupted (see normalizeSessionAfterRestore) carry this exact error;
+  // flag them so the composer can surface a Resume button instead of a dead-end error.
+  interrupted: session.error === INTERRUPTED_SESSION_ERROR ? true : undefined
 })
 
 // Serializes one in-memory session into the durable per-file projection saved by the main process.
@@ -986,6 +995,23 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               error: message,
               messages: failStreamingMessages(session.messages),
               activities: failOpenActivities(session.activities),
+              updatedAt: Date.now()
+            }
+          : session
+      )
+    }))
+  },
+
+  // Clears the interrupted/error state after a successful resume so the composer is usable again.
+  markResumed: (sessionId) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              status: 'idle',
+              error: undefined,
+              interrupted: undefined,
               updatedAt: Date.now()
             }
           : session

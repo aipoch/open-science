@@ -142,6 +142,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     permissionGrants,
     sendMessage,
     cancelRun,
+    resumeInterruptedSession,
     deleteRuntimeSession,
     respondToPermission,
     setPermissionProfile,
@@ -547,6 +548,11 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     if (activeSession) void cancelRun(activeSession.id)
   }
 
+  // Re-attaches the visible interrupted session so the user can keep chatting; awaited by the banner.
+  const resumeActiveSession = async (): Promise<void> => {
+    if (activeSession) await resumeInterruptedSession(activeSession.id)
+  }
+
   // Forwards visible permission decisions to the runtime bridge.
   const respondToVisiblePermission = (requestId: string, optionId?: string): void => {
     void respondToPermission(requestId, optionId)
@@ -642,6 +648,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
             onStageAttachmentFiles={stageAttachmentFiles}
             onRemoveAttachment={removeComposerAttachment}
             onCancelRun={cancelActiveRun}
+            onResumeSession={resumeActiveSession}
             onOpenNotebook={openNotebookPreview}
             onTogglePreviewPanel={togglePreviewPanel}
             onRespondToPermission={respondToVisiblePermission}

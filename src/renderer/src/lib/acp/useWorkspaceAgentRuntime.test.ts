@@ -6,6 +6,7 @@ import { createInitialSessionState, useSessionStore } from '../../stores/session
 import {
   createWorkspaceRuntimeEventProcessor,
   processVisibleWorkspaceRuntimeEvents,
+  resumeInterruptedWorkspaceSession,
   sendWorkspaceMessage
 } from './useWorkspaceAgentRuntime'
 
@@ -504,5 +505,104 @@ describe('workspace agent message sending', () => {
       error: 'Agent session resume failed'
     })
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
+  })
+})
+
+describe('resuming an interrupted session on demand', () => {
+  beforeEach(() => {
+    useSessionStore.setState(createInitialSessionState())
+  })
+
+  // Seeds a restored interrupted session (detached from the runtime) via the hydration path, which
+  // is what sets the `interrupted` flag in production. An empty cwd models a missing workspace.
+  const seedDetachedSession = (cwd: string = '/workspace/project'): void => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'default-project',
+        title: 'Interrupted',
+        cwd,
+        status: 'error',
+        error: 'Session was interrupted before the app closed.',
+        permissionProfile: 'ask',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ])
+  }
+
+  it('re-attaches the session and unlocks the composer on success', async () => {
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn(),
+      resumeSession: vi
+        .fn()
+        .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
+      sendPrompt: vi.fn()
+    }
+    seedDetachedSession()
+
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+
+    expect(runtime.resumeSession).toHaveBeenCalledWith(
+      'session-1',
+      '/workspace/project',
+      'default-project',
+      expect.any(String)
+    )
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
+    expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].interrupted).toBeUndefined()
+  })
+
+  it('keeps the error visible so a retry stays possible when resume fails', async () => {
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn(),
+      resumeSession: vi.fn().mockRejectedValue(new Error('Internal error')),
+      sendPrompt: vi.fn()
+    }
+    seedDetachedSession()
+
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      error: 'Agent session resume failed'
+    })
+  })
+
+  it('just clears the banner without re-resuming an already-attached session', async () => {
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+    seedDetachedSession()
+
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+
+    expect(runtime.resumeSession).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
+  })
+
+  it('surfaces an actionable message when the session has no workspace to resume into', async () => {
+    const runtime = {
+      state: { ...createSnapshot(), cwd: '' },
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+    seedDetachedSession('')
+
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+
+    expect(runtime.resumeSession).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      error: 'Session workspace is missing; start a new conversation.'
+    })
   })
 })

@@ -117,7 +117,8 @@ export type PersistedChatSession = {
   updatedAt: number
 }
 
-const INTERRUPTED_SESSION_ERROR = 'Session was interrupted before the app closed.'
+// Restored interrupted sessions carry this error verbatim; the renderer keys its resume banner off it.
+export const INTERRUPTED_SESSION_ERROR = 'Session was interrupted before the app closed.'
 
 const MESSAGE_ROLES = new Set<PersistedMessageRole>(['user', 'agent'])
 const MESSAGE_STATUSES = new Set<PersistedMessageStatus>(['complete', 'streaming', 'error'])

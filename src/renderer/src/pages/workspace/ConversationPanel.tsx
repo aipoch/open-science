@@ -15,7 +15,7 @@ import {
   Square,
   X
 } from 'lucide-react'
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { ResizablePanel } from '@/components/ui/resizable'
@@ -28,6 +28,7 @@ import { docToSkillIds, type ComposerDoc } from './composer/composer-doc'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { ComposerPermissionProfilePicker } from './ComposerPermissionProfilePicker'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
+import { SessionInterruptedBanner } from './SessionInterruptedBanner'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
 
 const composerInteractiveTransitionClassName = 'transition-colors duration-200 ease-out'
@@ -85,6 +86,7 @@ type ConversationPanelProps = {
   onStageAttachmentFiles: (files: File[]) => void
   onRemoveAttachment: (attachment: UploadedAttachment) => void
   onCancelRun: () => void
+  onResumeSession: () => Promise<void>
   onOpenNotebook: (notebook: NotebookSessionReference) => void
   onTogglePreviewPanel: () => void
   onRespondToPermission: (requestId: string, optionId?: string) => void
@@ -114,6 +116,7 @@ const ConversationPanel = ({
   onStageAttachmentFiles,
   onRemoveAttachment,
   onCancelRun,
+  onResumeSession,
   onOpenNotebook,
   onTogglePreviewPanel,
   onRespondToPermission,
@@ -122,6 +125,20 @@ const ConversationPanel = ({
   onClearPermissionGrants
 }: ConversationPanelProps): React.JSX.Element => {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  // Local so the interrupted banner can show a spinner and block a double-resume until the request settles.
+  const [isResuming, setIsResuming] = useState(false)
+
+  // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
+  const handleResume = async (): Promise<void> => {
+    if (isResuming) return
+
+    setIsResuming(true)
+    try {
+      await onResumeSession()
+    } finally {
+      setIsResuming(false)
+    }
+  }
 
   // Drag-and-drop shares the same staging callback as the picker and paste paths.
   const { isDragging, dropZoneProps } = useFileDropZone({
@@ -197,7 +214,15 @@ const ConversationPanel = ({
             {/* Runtime and session errors stay near the composer so recovery is visible. */}
             <div className={composerContentClassName}>
               <div className="px-1 md:px-3">
-                {actionError || activeSession?.error ? (
+                {/* Interrupted sessions get a neutral banner with a Resume action instead of the
+                    red error box, so the user can re-attach the runtime and keep chatting. */}
+                {activeSession?.interrupted ? (
+                  <SessionInterruptedBanner
+                    message={activeSession.error ?? 'This session was interrupted.'}
+                    isResuming={isResuming}
+                    onResume={() => void handleResume()}
+                  />
+                ) : actionError || activeSession?.error ? (
                   <div className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700">
                     {actionError ?? activeSession?.error}
                   </div>

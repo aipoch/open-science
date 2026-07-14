@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ArtifactFile } from '../../../shared/artifacts'
-import { SESSION_MANIFEST_VERSION } from '../../../shared/session-persistence'
+import {
+  INTERRUPTED_SESSION_ERROR,
+  SESSION_MANIFEST_VERSION,
+  type PersistedChatSession
+} from '../../../shared/session-persistence'
 import type { UploadedAttachment } from '../../../shared/uploads'
 import { createInitialSessionState, toPersistedSession, useSessionStore } from './session-store'
 
@@ -1166,5 +1170,58 @@ describe('session store', () => {
       ]
     })
     expect(persisted).not.toHaveProperty('isPending')
+  })
+
+  describe('interrupted session resume', () => {
+    const hydrateInterrupted = (overrides: Partial<PersistedChatSession> = {}): void => {
+      useSessionStore.getState().hydrateSessions(
+        [
+          {
+            id: 'resumable-session',
+            projectId: 'default',
+            title: 'Interrupted',
+            cwd: '/workspace',
+            status: 'error',
+            error: INTERRUPTED_SESSION_ERROR,
+            messages: [],
+            createdAt: 1,
+            updatedAt: 2,
+            ...overrides
+          }
+        ],
+        { version: SESSION_MANIFEST_VERSION, lastSessionId: 'resumable-session' }
+      )
+    }
+
+    it('flags a restored interrupted session so the UI can offer resume', () => {
+      hydrateInterrupted()
+
+      expect(useSessionStore.getState().sessions[0].interrupted).toBe(true)
+    })
+
+    it('leaves the flag unset when the error is not the interrupted marker', () => {
+      hydrateInterrupted({ error: 'Something else failed' })
+
+      expect(useSessionStore.getState().sessions[0].interrupted).toBeUndefined()
+    })
+
+    it('never persists the transient interrupted flag', () => {
+      hydrateInterrupted()
+
+      const persisted = toPersistedSession(useSessionStore.getState().sessions[0])
+
+      expect(persisted).not.toHaveProperty('interrupted')
+    })
+
+    it('markResumed clears the interrupted state so the composer is usable', () => {
+      hydrateInterrupted()
+
+      useSessionStore.getState().markResumed('resumable-session')
+      const session = useSessionStore.getState().sessions[0]
+
+      expect(session.interrupted).toBeUndefined()
+      expect(session.error).toBeUndefined()
+      expect(session.status).toBe('idle')
+    })
   })
 })
