@@ -13,12 +13,24 @@ describe('ACP agent process packaging paths', () => {
     )
   })
 
+  it('unpacks asar paths that use Windows separators', () => {
+    // The regex accepts back-slashes too, so a packaged Windows install redirects into
+    // app.asar.unpacked the same way the POSIX case above does.
+    expect(
+      toUnpackedAsarPath(
+        'C:\\Program Files\\Open Science\\resources\\app.asar\\node_modules\\@anthropic-ai\\claude-agent-sdk-win32-x64\\claude.exe'
+      )
+    ).toBe(
+      'C:\\Program Files\\Open Science\\resources\\app.asar.unpacked\\node_modules\\@anthropic-ai\\claude-agent-sdk-win32-x64\\claude.exe'
+    )
+  })
+
   it('leaves development node_modules paths unchanged', () => {
     expect(
       toUnpackedAsarPath(
-        '/Users/lj/Desktop/cs/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude'
+        '/home/dev/project/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude'
       )
-    ).toBe('/Users/lj/Desktop/cs/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude')
+    ).toBe('/home/dev/project/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude')
   })
 })
 
