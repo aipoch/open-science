@@ -32,6 +32,21 @@ export type PersistedArtifact = {
 // Stores uploaded file references on the user message that submitted them.
 export type PersistedUploadedAttachment = UploadedAttachment
 
+// Ordered structural segments of a user message, letting the bubble re-render skill/artifact
+// mentions as styled pills instead of plain text. Structurally mirrors the renderer ComposerNode
+// (shared cannot import renderer code). Absent on older messages, which fall back to plain content.
+export type MessagePart =
+  | { type: 'text'; text: string }
+  | { type: 'skill'; id: string; name: string }
+  | {
+      type: 'artifact'
+      id: string
+      name: string
+      path: string
+      source: 'upload' | 'artifact'
+      versionId?: string
+    }
+
 export type PersistedChatMessage = {
   id: string
   role: PersistedMessageRole
@@ -43,6 +58,8 @@ export type PersistedChatMessage = {
   // Links a message to session-level artifact metadata without duplicating file records per message.
   artifactIds?: string[]
   uploads?: PersistedUploadedAttachment[]
+  // Structured mention segments for the styled user bubble; optional for backward compatibility.
+  parts?: MessagePart[]
   createdAt: number
   updatedAt: number
 }
