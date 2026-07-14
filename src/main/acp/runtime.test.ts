@@ -57,6 +57,9 @@ const startFakeAgent = (
     // When true, the resume handler rejects with the ACP "Resource not found" (-32002) — the signal a
     // replaced agent (e.g. after a provider switch) gives for a session id it does not hold.
     resumeNotFound?: boolean
+    // When true, the resume handler rejects with a generic "Internal error" (-32603) — what some
+    // agents return instead of a clean not-found after their process was replaced by an app restart.
+    resumeInternalError?: boolean
     onPrompt?: (context: {
       sessionId: string
       text: string
@@ -112,6 +115,10 @@ const startFakeAgent = (
     .onRequest(acp.methods.agent.session.resume, (ctx) => {
       if (options.resumeNotFound) {
         throw acp.RequestError.resourceNotFound(ctx.params.sessionId)
+      }
+
+      if (options.resumeInternalError) {
+        throw acp.RequestError.internalError()
       }
 
       resumedSessions.push({
@@ -1001,6 +1008,37 @@ describe('ACP runtime session management', () => {
     expect(events).toEqual(
       expect.arrayContaining([
         { sessionId: 'switched-session', text: 'reply for adopted-session-1' }
+      ])
+    )
+  })
+
+  it('adopts a fresh session when the agent returns a generic Internal error on resume', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['adopted-session-1'], { resumeInternalError: true })
+    const events: Array<{ sessionId?: string; text?: string }> = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: {
+        onEvent: (event) => events.push({ sessionId: event.sessionId, text: event.text })
+      }
+    })
+
+    // Resume fails with -32603 "Internal error" (what a restarted agent returns instead of a clean
+    // not-found). It must still be adopted onto a fresh agent session so the thread is not dead-ended.
+    const resumed = await runtime.resumeSession({
+      sessionId: 'restarted-session',
+      cwd: '/workspace'
+    })
+    expect(resumed.sessionId).toBe('restarted-session')
+
+    await runtime.sendPrompt({ sessionId: 'restarted-session', text: 'keep going' })
+
+    expect(fakeAgent.prompts).toEqual([{ sessionId: 'adopted-session-1', text: 'keep going' }])
+    expect(events).toEqual(
+      expect.arrayContaining([
+        { sessionId: 'restarted-session', text: 'reply for adopted-session-1' }
       ])
     )
   })

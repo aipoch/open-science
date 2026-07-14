@@ -173,14 +173,23 @@ const errorMessage = (error: unknown): string => {
 
 const log = createLogger('acp')
 
-// Detects the ACP JSON-RPC "Resource not found" (-32002) the agent returns when a resumed session id
-// is unknown to the current process — the signal that the agent was replaced (e.g. provider switch).
-const isSessionNotFoundError = (error: unknown): boolean => {
+// Detects an agent-side resume failure that means the session cannot be reattached, so the thread
+// should adopt a fresh agent session instead of dead-ending. A spec-compliant agent returns
+// "Resource not found" (-32002) for a session id it no longer holds (e.g. after a provider switch);
+// some agents instead return a generic "Internal error" (-32603) after an app restart replaced their
+// process. Both mean resume is impossible here. Other failures (invalid params, transport errors)
+// still propagate so genuinely fatal problems stay visible.
+const isUnresumableSessionError = (error: unknown): boolean => {
   if (typeof error !== 'object' || error === null) return false
 
   const candidate = error as { code?: number; message?: string }
+  const message = candidate.message ?? ''
 
-  return candidate.code === -32002 || /resource not found/i.test(candidate.message ?? '')
+  return (
+    candidate.code === -32002 ||
+    candidate.code === -32603 ||
+    /resource not found|internal error/i.test(message)
+  )
 }
 
 // Owns the agent process, protocol connection, and all active protocol sessions.
@@ -541,14 +550,17 @@ class AcpRuntime {
         ...this.createSessionMeta()
       })
     } catch (error) {
-      if (!isSessionNotFoundError(error)) throw error
+      if (!isUnresumableSessionError(error)) throw error
 
-      // A provider switch replaces the agent process, so the fresh agent no longer holds this session
-      // (and it may live under a different provider's config dir). Rather than dead-end the thread,
-      // adopt a brand-new agent session under the SAME app id so the user can keep chatting on the new
-      // provider — earlier turns stay visible; only agent-side context resets, which is expected when
-      // moving to a different model.
-      log.info('resumed session adopted onto replaced agent', { sessionId: request.sessionId })
+      // The agent could not resume this session (it was replaced by a provider switch, or an app
+      // restart spawned a fresh agent process that no longer holds it — surfacing as -32002 not-found
+      // or a generic -32603 Internal error). Rather than dead-end the thread, adopt a brand-new agent
+      // session under the SAME app id so the user can keep chatting — earlier turns stay visible; only
+      // agent-side context resets, which is expected after a restart or model switch.
+      log.info('resumed session adopted after unrecoverable resume error', {
+        sessionId: request.sessionId,
+        reason: error instanceof Error ? error.message : String(error)
+      })
 
       const adopted = await connection.agent
         .buildSession({
