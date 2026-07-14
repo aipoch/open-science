@@ -13,6 +13,18 @@ export type ArtifactFile = {
   mtimeMs: number
 }
 
+// A user-picked reference to an existing file (upload or generated output) inserted via the
+// composer `@` mention. Carries the durable path so the runtime can resolve and attach the file.
+export type ArtifactReference = {
+  id: string
+  name: string
+  path: string
+  source: 'upload' | 'artifact'
+  mimeType?: string
+  // Reserved for a future version switcher; no version UI ships yet.
+  versionId?: string
+}
+
 export type ArtifactWriteEncoding = 'utf8' | 'base64'
 
 export type ArtifactWriteSource =

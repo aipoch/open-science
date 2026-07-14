@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest'
 
 import {
   applyDocToDom,
+  docArtifactCount,
   docFromText,
   docIsEmpty,
+  docToArtifactRefs,
   docToSkillIds,
   docToText,
   domToDoc,
@@ -22,6 +24,24 @@ describe('docToText', () => {
       ]
     }
     expect(docToText(doc)).toBe('run /TDD now')
+  })
+
+  it('renders artifact nodes as @<name>', () => {
+    const doc: ComposerDoc = {
+      nodes: [
+        { type: 'text', text: 'compare ' },
+        { type: 'artifact', id: 'a1', name: 'fig1.png', path: '/p/fig1.png', source: 'artifact' },
+        { type: 'text', text: ' and ' },
+        {
+          type: 'artifact',
+          id: 'u1',
+          name: 'clinical trial03.pdf',
+          path: '/u/clinical trial03.pdf',
+          source: 'upload'
+        }
+      ]
+    }
+    expect(docToText(doc)).toBe('compare @fig1.png and @clinical trial03.pdf')
   })
 
   it('returns an empty string for the empty doc', () => {
@@ -44,6 +64,41 @@ describe('docToSkillIds', () => {
 
   it('returns an empty array when there are no skill nodes', () => {
     expect(docToSkillIds(docFromText('plain text'))).toEqual([])
+  })
+})
+
+describe('docToArtifactRefs', () => {
+  it('collects artifact refs in order and de-duplicates by path', () => {
+    const doc: ComposerDoc = {
+      nodes: [
+        { type: 'artifact', id: 'a1', name: 'fig1.png', path: '/p/fig1.png', source: 'artifact' },
+        { type: 'text', text: ' and ' },
+        { type: 'artifact', id: 'u1', name: 'notes.md', path: '/u/notes.md', source: 'upload' },
+        // Same path as the first, mentioned again with a different chip id — collapsed.
+        { type: 'artifact', id: 'a1b', name: 'fig1.png', path: '/p/fig1.png', source: 'artifact' }
+      ]
+    }
+    expect(docToArtifactRefs(doc)).toEqual([
+      { id: 'a1', name: 'fig1.png', path: '/p/fig1.png', source: 'artifact', versionId: undefined },
+      { id: 'u1', name: 'notes.md', path: '/u/notes.md', source: 'upload', versionId: undefined }
+    ])
+  })
+
+  it('returns an empty array when there are no artifact nodes', () => {
+    expect(docToArtifactRefs(docFromText('plain text'))).toEqual([])
+  })
+})
+
+describe('docArtifactCount', () => {
+  it('counts artifact chips including path duplicates', () => {
+    const doc: ComposerDoc = {
+      nodes: [
+        { type: 'artifact', id: 'a1', name: 'fig1.png', path: '/p/fig1.png', source: 'artifact' },
+        { type: 'skill', id: 's', name: 'S' },
+        { type: 'artifact', id: 'a1b', name: 'fig1.png', path: '/p/fig1.png', source: 'artifact' }
+      ]
+    }
+    expect(docArtifactCount(doc)).toBe(2)
   })
 })
 
@@ -149,5 +204,45 @@ describe('applyDocToDom + domToDoc round-trip', () => {
     expect(chip?.getAttribute('data-skill-id')).toBe('tdd')
     expect(chip?.getAttribute('contenteditable')).toBe('false')
     expect(chip?.textContent).toBe('/TDD')
+  })
+
+  it('round-trips artifact chips, preserving path/source and filenames with spaces', () => {
+    const doc: ComposerDoc = {
+      nodes: [
+        { type: 'text', text: 'use ' },
+        {
+          type: 'artifact',
+          id: 'u1',
+          name: 'clinical trial03.pdf',
+          path: '/u/clinical trial03.pdf',
+          source: 'upload'
+        },
+        { type: 'text', text: ' plus ' },
+        {
+          type: 'artifact',
+          id: 'a1',
+          name: 'fig2_cooccurrence.png',
+          path: '/p/fig2_cooccurrence.png',
+          source: 'artifact',
+          versionId: 'v9'
+        }
+      ]
+    }
+    const root = document.createElement('div')
+    applyDocToDom(root, doc)
+    expect(domToDoc(root)).toEqual(doc)
+  })
+
+  it('renders an artifact chip with the green mention attributes and @ label', () => {
+    const root = document.createElement('div')
+    applyDocToDom(root, {
+      nodes: [{ type: 'artifact', id: 'a1', name: 'fig.png', path: '/p/fig.png', source: 'artifact' }]
+    })
+    const chip = root.querySelector('span[data-mention-type="artifact"]')
+    expect(chip?.getAttribute('data-mention-path')).toBe('/p/fig.png')
+    expect(chip?.getAttribute('data-mention-source')).toBe('artifact')
+    expect(chip?.getAttribute('data-mention-filename')).toBe('fig.png')
+    expect(chip?.getAttribute('contenteditable')).toBe('false')
+    expect(chip?.textContent).toBe('@fig.png')
   })
 })
