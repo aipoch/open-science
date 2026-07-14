@@ -314,8 +314,8 @@ describe('WorkspaceMessageScroller loading render', () => {
       })
     )
 
-    const firstIndex = html.indexOf('@pasted-image-2026-07-08T06-17-13.png')
-    const secondIndex = html.indexOf('@pasted-image-2026-07-08T06-17-25.png')
+    const firstIndex = html.indexOf('pasted-image-2026-07-08T06-17-13.png')
+    const secondIndex = html.indexOf('pasted-image-2026-07-08T06-17-25.png', firstIndex + 1)
     const textIndex = html.indexOf('What is in the first image')
 
     expect(firstIndex).toBeGreaterThan(-1)
@@ -324,6 +324,82 @@ describe('WorkspaceMessageScroller loading render', () => {
     expect(html).toContain(
       'aria-label="Preview uploaded attachment pasted-image-2026-07-08T06-17-13.png"'
     )
+    // Uploads are gray file pills without the legacy leading @ prefix.
+    expect(html).toContain('bg-bg-200')
+    expect(html).not.toContain('@pasted-image-2026-07-08T06-17-13.png')
+  })
+
+  it('renders user message parts as styled skill and artifact pills', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        messages: [
+          createMessage({
+            id: 'prompt-1',
+            content: 'Run /forecast on @clinical trial03.pdf',
+            parts: [
+              { type: 'text', text: 'Run ' },
+              { type: 'skill', id: 'skill-forecast', name: 'forecast' },
+              { type: 'text', text: ' on ' },
+              {
+                type: 'artifact',
+                id: 'artifact-1',
+                name: 'clinical trial03.pdf',
+                path: '/p/clinical trial03.pdf',
+                source: 'artifact'
+              }
+            ]
+          })
+        ]
+      })
+    )
+
+    // Skill pill is blue; artifact pill is green; labels keep their / and @ markers.
+    expect(html).toContain('text-primary')
+    expect(html).toContain('/forecast')
+    expect(html).toContain('bg-mention-chip')
+    expect(html).toContain('text-mention-chip-foreground')
+    expect(html).toContain('@clinical trial03.pdf')
+  })
+
+  it('renders plain content for user messages without structured parts', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        messages: [createMessage({ id: 'prompt-1', content: 'Just plain text' })]
+      })
+    )
+
+    expect(html).toContain('Just plain text')
+    expect(html).not.toContain('text-mention-chip-foreground')
+  })
+
+  it('renders uploads as gray pills labeled by filename', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        messages: [
+          createMessage({
+            id: 'prompt-1',
+            content: 'Look at this',
+            uploads: [
+              createUpload({
+                id: 'upload-1',
+                name: 'report.pdf',
+                originalName: 'report.pdf',
+                mimeType: 'application/pdf',
+                path: '/p/report.pdf'
+              })
+            ]
+          })
+        ]
+      })
+    )
+
+    expect(html).toContain('bg-bg-200')
+    expect(html).toContain('report.pdf')
+    expect(html).not.toContain('@report.pdf')
+    expect(html).toContain('aria-label="Preview uploaded attachment report.pdf"')
   })
 
   it('renders search activities as compact chips with details collapsed by default', async () => {

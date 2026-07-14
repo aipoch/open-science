@@ -13,6 +13,7 @@ import {
 } from '../../../shared/permission-profiles'
 import {
   sanitizeToolActivity,
+  type MessagePart,
   type PersistedActiveRun,
   type PersistedArtifact,
   type PersistedChatMessage,
@@ -70,6 +71,7 @@ type AppendUserMessageInput = {
   sessionId: string
   content: string
   attachments?: PersistedUploadedAttachment[]
+  parts?: MessagePart[]
   cwd?: string
   projectId?: string
   permissionProfile?: PermissionProfileId
@@ -79,6 +81,7 @@ type AppendUserMessageInput = {
 type AppendPendingUserMessageInput = {
   content: string
   attachments?: PersistedUploadedAttachment[]
+  parts?: MessagePart[]
   cwd?: string
   projectId?: string
   permissionProfile?: PermissionProfileId
@@ -271,7 +274,8 @@ const createMessage = (
   status: ChatMessageStatus,
   streamId?: string,
   eventIds: string[] = [],
-  uploads: PersistedUploadedAttachment[] = []
+  uploads: PersistedUploadedAttachment[] = [],
+  parts?: MessagePart[]
 ): ChatMessage => {
   const now = Date.now()
   // Normalize upload references before attaching them to durable message state.
@@ -285,6 +289,8 @@ const createMessage = (
     streamId,
     eventIds,
     uploads: persistedUploads.length > 0 ? persistedUploads : undefined,
+    // Structured mention segments drive the styled bubble; omit them when absent.
+    parts: parts && parts.length > 0 ? parts : undefined,
     sortIndex: createSortIndex(),
     createdAt: now,
     updatedAt: now
@@ -447,6 +453,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     sessionId,
     content,
     attachments = [],
+    parts,
     cwd,
     projectId,
     permissionProfile,
@@ -460,7 +467,15 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     const state = get()
     const existingSession = state.sessions.find((session) => session.id === sessionId)
     const now = Date.now()
-    const userMessage = createMessage('user', trimmedContent, 'complete', undefined, [], uploads)
+    const userMessage = createMessage(
+      'user',
+      trimmedContent,
+      'complete',
+      undefined,
+      [],
+      uploads,
+      parts
+    )
     const activeRun: ActiveRun = {
       promptMessageId: userMessage.id,
       startedAt: now
@@ -509,11 +524,19 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   // Creates a visible local conversation before ACP returns the durable session id.
-  appendPendingUserMessage: ({ content, attachments = [], cwd, projectId, permissionProfile }) => {
+  appendPendingUserMessage: ({
+    content,
+    attachments = [],
+    parts,
+    cwd,
+    projectId,
+    permissionProfile
+  }) => {
     return get().appendUserMessage({
       sessionId: createPendingSessionId(),
       content,
       attachments,
+      parts,
       cwd,
       projectId,
       permissionProfile,

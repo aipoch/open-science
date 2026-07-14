@@ -469,6 +469,40 @@ const normalizeActivityAfterRestore = (activity: PersistedToolActivity): Persist
     ? { ...activity, status: 'failed' }
     : activity
 
+// Rebuilds one structured mention segment, dropping malformed entries so the bubble stays renderable.
+const sanitizeMessagePart = (part: unknown): MessagePart | undefined => {
+  if (!isRecord(part)) return undefined
+
+  switch (asString(part.type)) {
+    case 'text': {
+      const text = asString(part.text)
+
+      return text !== undefined ? { type: 'text', text } : undefined
+    }
+    case 'skill': {
+      const id = asString(part.id)
+      const name = asString(part.name)
+
+      return id && name ? { type: 'skill', id, name } : undefined
+    }
+    case 'artifact': {
+      const id = asString(part.id)
+      const name = asString(part.name)
+      const path = asString(part.path)
+      const source = asString(part.source)
+
+      if (!id || !name || !path || (source !== 'upload' && source !== 'artifact')) return undefined
+
+      const sanitized: MessagePart = { type: 'artifact', id, name, path, source }
+      const versionId = asString(part.versionId)
+
+      return versionId ? { ...sanitized, versionId } : sanitized
+    }
+    default:
+      return undefined
+  }
+}
+
 // Rebuilds a message from durable UI fields and strips unknown renderer payload.
 const sanitizeMessage = (message: unknown): PersistedChatMessage | undefined => {
   if (!isRecord(message)) return undefined
@@ -496,11 +530,15 @@ const sanitizeMessage = (message: unknown): PersistedChatMessage | undefined => 
         .map(sanitizeUploadedAttachment)
         .filter((item): item is PersistedUploadedAttachment => !!item)
     : []
+  const parts = Array.isArray(message.parts)
+    ? message.parts.map(sanitizeMessagePart).filter((item): item is MessagePart => !!item)
+    : []
 
   if (streamId) sanitized.streamId = streamId
   if (responseToMessageId) sanitized.responseToMessageId = responseToMessageId
   if (artifactIds.length > 0) sanitized.artifactIds = artifactIds
   if (uploads.length > 0) sanitized.uploads = uploads
+  if (parts.length > 0) sanitized.parts = parts
 
   return sanitized
 }
