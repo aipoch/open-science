@@ -61,7 +61,8 @@ const installApi = (): void => {
     },
     logs: {
       getPath: vi.fn().mockResolvedValue('/Users/x/Library/Logs/Open Science/main.log'),
-      openFile: vi.fn().mockResolvedValue({ opened: true })
+      openFile: vi.fn().mockResolvedValue({ opened: true }),
+      revealInFolder: vi.fn().mockResolvedValue({ revealed: true })
     }
   }
 }
@@ -167,12 +168,15 @@ describe('SettingsPage layout', () => {
       generalTab?.click()
     })
 
-    // The General panel surfaces the log file path and an open control.
+    // The Diagnostics panel surfaces the log file path plus Open and Reveal controls.
     expect(document.body.textContent).toContain('main.log')
-    const openButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
-      /open log file/i.test(button.textContent ?? '')
+    const buttons = Array.from(document.body.querySelectorAll('button'))
+    const openButton = buttons.find((button) => /^open$/i.test((button.textContent ?? '').trim()))
+    const revealButton = buttons.find((button) =>
+      /^reveal$/i.test((button.textContent ?? '').trim())
     )
     expect(openButton).not.toBeUndefined()
+    expect(revealButton).not.toBeUndefined()
 
     await act(async () => {
       openButton?.click()
@@ -181,6 +185,15 @@ describe('SettingsPage layout', () => {
     expect(
       (window as unknown as { api: { logs: { openFile: ReturnType<typeof vi.fn> } } }).api.logs
         .openFile
+    ).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      revealButton?.click()
+    })
+
+    expect(
+      (window as unknown as { api: { logs: { revealInFolder: ReturnType<typeof vi.fn> } } }).api
+        .logs.revealInFolder
     ).toHaveBeenCalledTimes(1)
   })
 
