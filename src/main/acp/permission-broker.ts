@@ -1,7 +1,11 @@
 import type { RequestPermissionRequest, RequestPermissionResponse } from '@agentclientprotocol/sdk'
 import { randomUUID } from 'node:crypto'
 
-import type { AcpPermissionGrant, AcpPermissionRequest, AcpPermissionResponse } from '../../shared/acp'
+import type {
+  AcpPermissionGrant,
+  AcpPermissionRequest,
+  AcpPermissionResponse
+} from '../../shared/acp'
 import { extractProviderToolName } from './runtime-events'
 import { resolveAutomaticPermission, type PermissionPolicyContext } from './permission-policy'
 
