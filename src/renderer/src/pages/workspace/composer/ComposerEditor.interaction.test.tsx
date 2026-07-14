@@ -184,6 +184,26 @@ const dispatchKey = (target: EventTarget, key: string, init: KeyboardEventInit =
 }
 
 describe('ComposerEditor', () => {
+  it('shows the placeholder when the doc is empty and hides it once there is content', () => {
+    renderEditor({ doc: emptyDoc })
+    // The only aria-hidden node in the editor is the placeholder overlay.
+    expect(document.body.querySelector('[aria-hidden="true"]')?.textContent).toBe('Ask anything')
+
+    act(() => {
+      root.render(
+        <ComposerEditor
+          doc={{ nodes: [{ type: 'text', text: 'hi' }] }}
+          onDocChange={noop}
+          onSubmit={noop}
+          onPaste={noop}
+          placeholder="Ask anything"
+          ariaLabel="Ask anything"
+        />
+      )
+    })
+    expect(document.body.querySelector('[aria-hidden="true"]')).toBeNull()
+  })
+
   it('emits the typed text as a doc on input', () => {
     const onDocChange = vi.fn()
     renderEditor({ onDocChange })

@@ -7,6 +7,7 @@ import { ArtifactMentionPopup, type PickedArtifact } from './ArtifactMentionPopu
 import {
   applyDocToDom,
   docArtifactCount,
+  docIsEmpty,
   domToDoc,
   MAX_COMPOSER_ARTIFACT_MENTIONS,
   type ComposerDoc,
@@ -15,10 +16,15 @@ import {
 import { SkillMentionPopup } from './SkillMentionPopup'
 import { useMentionTrigger } from './useMentionTrigger'
 
-// Base editor styling: mirrors the sizing/leading of the legacy composer textarea and adds the
-// mockup's empty:before placeholder technique so the hint shows only while the doc is empty.
+// Base editor styling: mirrors the sizing/leading of the legacy composer textarea. The placeholder is
+// rendered as a model-driven overlay (see below) rather than a CSS :empty hint, so it shows whenever
+// the doc is empty — including when the editor is blurred or retains a stray browser-inserted node.
 const composerEditorClassName =
-  'min-h-[36px] max-h-[200px] w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent py-1.5 text-[15px] leading-relaxed text-text-000 outline-none empty:before:content-[attr(data-placeholder)] empty:before:text-text-300 empty:before:pointer-events-none empty:before:whitespace-nowrap empty:before:overflow-hidden empty:before:text-ellipsis empty:before:max-w-full'
+  'min-h-[36px] max-h-[200px] w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent py-1.5 text-[15px] leading-relaxed text-text-000 outline-none'
+
+// Placeholder overlay aligned to the editor's text start; pointer-events-none lets clicks reach the box.
+const composerPlaceholderClassName =
+  'pointer-events-none absolute inset-x-0 top-0 truncate py-1.5 text-[15px] leading-relaxed text-text-300'
 
 type ComposerEditorProps = {
   doc: ComposerDoc
@@ -223,6 +229,12 @@ export const ComposerEditor = ({
           composingRef.current = false
         }}
       />
+      {/* Show the placeholder whenever the doc is empty, regardless of focus. */}
+      {docIsEmpty(doc) ? (
+        <div aria-hidden="true" className={composerPlaceholderClassName}>
+          {placeholder}
+        </div>
+      ) : null}
       {mention.active ? (
         <SkillMentionPopup
           query={mention.query}
