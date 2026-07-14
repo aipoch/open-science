@@ -48,9 +48,10 @@ const userMessageBubbleClassName =
 // Staged uploads render as gray file pills inside the sent bubble.
 const uploadedAttachmentButtonClassName =
   'inline-flex max-w-full items-center gap-1.5 rounded-md border border-border-200 bg-bg-200 px-2 py-0.5 text-left text-[13px] leading-5 text-text-000 transition-colors hover:bg-bg-000 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-200/60'
-// Shared pill shape for inline skill/artifact mentions in the sent bubble.
+// Shared pill shape for inline skill/artifact mentions in the sent bubble. Capped width + truncation
+// keeps a long file/skill name from overflowing the bubble.
 const mentionPillClassName =
-  'inline-flex items-center rounded px-1.5 py-0.5 mx-0.5 text-sm font-medium'
+  'inline-block max-w-[220px] truncate align-middle rounded px-1.5 py-0.5 mx-0.5 text-sm font-medium'
 // Interactive additions layered onto the pill shape when a mention resolves to a clickable target.
 const mentionButtonClassName =
   'cursor-pointer hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-200/60'

@@ -128,9 +128,11 @@ export const domToDoc = (root: HTMLElement): ComposerDoc => {
   return nodes.length === 0 ? emptyDoc : { nodes }
 }
 
-// Shared chip base styling; select-all keeps a chip atomic to text selection.
+// Shared chip base styling; a capped width with truncation keeps a long name from stretching the
+// composer, and select-all keeps a chip atomic to text selection. Truncation is visual only, so
+// domToDoc still reads the full name back from textContent / the stored filename attribute.
 const CHIP_BASE_CLASS =
-  'inline-flex items-center rounded px-1.5 py-0.5 mx-0.5 text-sm font-medium select-all'
+  'inline-block max-w-[220px] truncate align-middle rounded px-1.5 py-0.5 mx-0.5 text-sm font-medium select-all'
 
 // Render a skill chip span: an atomic, non-editable blue mention token. Exported so the mention hook
 // inserts the exact same markup it re-renders here, and the styling can never drift between the two.
