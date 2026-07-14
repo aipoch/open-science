@@ -131,7 +131,9 @@ describe('notebook runtime service', () => {
     })
     expect(executions[0]).toMatchObject({
       code: "print('hello')",
-      cwd: '/workspace',
+      // The interpreter runs in the session's writable data dir (Jupyter-style), not the workspace,
+      // so relative writes land inside the artifact import roots.
+      cwd: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
       notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
       dataRoot: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
       runtimeRoot: join(root, 'runtime')

@@ -1143,7 +1143,7 @@ describe('ACP runtime session management', () => {
     })
     expect(fakeAgent.newSessions[0]._meta).toMatchObject({
       systemPrompt: {
-        append: expect.stringContaining('~/.open-science/notebooks/default-project/<sessionId>/')
+        append: expect.stringContaining('writable session workspace')
       }
     })
   })

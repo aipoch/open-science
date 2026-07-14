@@ -135,7 +135,17 @@ const resolveAllowedImportFilePath = async (
     throw importRootsError(filePath, allowedImportRoots)
   }
 
-  const resolvedFilePath = await realpath(resolve(filePath))
+  let resolvedFilePath: string
+  try {
+    resolvedFilePath = await realpath(resolve(filePath))
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      throw new Error(
+        `Artifact local source path does not exist: "${filePath}". Save the file to disk (inside the notebook session workspace) before calling write_artifact_file, or pass inline content instead.`
+      )
+    }
+    throw error
+  }
   const resolvedRoots = (
     await Promise.all(
       allowedImportRoots.map(async (root) => {

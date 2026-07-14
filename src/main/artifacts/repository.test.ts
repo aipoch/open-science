@@ -145,6 +145,29 @@ describe('artifact repository', () => {
     await expect(attempt).rejects.toThrow(allowedRoot)
   })
 
+  it('rejects a non-existent local source file with a save-first message', async () => {
+    // The agent's common mistake is calling write_artifact_file before the file is saved (e.g. after
+    // plt.show() with no savefig). The rejection tells it to save the file first, not a raw ENOENT.
+    const root = await createStorageRoot()
+    const allowedRoot = join(root, 'notebook-session')
+    const missingPath = join(allowedRoot, 'never-saved.png')
+
+    const repository = new ArtifactRepository(root)
+
+    const attempt = repository.writePendingFile(
+      {
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        filename: 'never-saved.png',
+        source: { kind: 'localPath', path: missingPath }
+      },
+      { allowedImportRoots: [allowedRoot] }
+    )
+    await expect(attempt).rejects.toThrow(/does not exist/)
+    await expect(attempt).rejects.toThrow(/before calling write_artifact_file/)
+  })
+
   it('rejects path-like project, session, run, and filename segments', async () => {
     const repository = new ArtifactRepository(await createStorageRoot())
 

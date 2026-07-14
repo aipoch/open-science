@@ -36,18 +36,30 @@ type ArtifactToolWriteInput = {
 }
 
 const writeArtifactFileToolSchema = {
-  filename: z.string().min(1),
+  filename: z
+    .string()
+    .min(1)
+    .describe('Display filename for the artifact, e.g. "sine_wave.png" or "report.pdf".'),
   mimeType: z.string().min(1).optional(),
   source: z
     .union([
       z.object({
         kind: z.literal('inline'),
-        content: z.string(),
+        content: z
+          .string()
+          .describe(
+            'Small in-memory text to write directly. Use localPath for files already on disk.'
+          ),
         encoding: z.enum(['utf8', 'base64']).default('utf8')
       }),
       z.object({
         kind: z.literal('localPath'),
-        path: z.string().min(1)
+        path: z
+          .string()
+          .min(1)
+          .describe(
+            'Absolute path to an ALREADY-SAVED file inside the notebook session workspace (e.g. under OPEN_SCIENCE_NOTEBOOK_DATA_DIR). The file must exist before you call this — the app copies it.'
+          )
       })
     ])
     .optional(),
@@ -126,7 +138,7 @@ const createArtifactMcpServer = (
     {
       title: 'Write artifact file',
       description:
-        'Write a generated local artifact file for the current assistant turn. Pass only the filename, MIME type, and either inline content or a local source path; the app assigns the session and message ownership.',
+        'Attach a file this turn generated as a downloadable artifact (chart, image, report, CSV, archive, …). The file must ALREADY EXIST on disk before you call this. Provide `filename` plus a `source`: either {kind:"localPath", path} pointing at an already-saved file inside the notebook session workspace — save it first (e.g. plt.savefig(...) under OPEN_SCIENCE_NOTEBOOK_DATA_DIR) then pass that absolute path — or {kind:"inline", content} for small in-memory text. The app copies the file and assigns session/message ownership; do not call this before the file is written.',
       inputSchema: writeArtifactFileToolSchema
     },
     async (input) => {
