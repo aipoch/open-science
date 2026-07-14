@@ -38,7 +38,7 @@ const composerIconButtonClassName = cn(
 )
 
 const composerSendButtonClassName = cn(
-  'flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-action-primary text-white hover:bg-action-primary-hover disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-action-primary',
+  'flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary',
   composerInteractiveTransitionClassName
 )
 
