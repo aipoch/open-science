@@ -26,6 +26,8 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
     required: ['nct_id'],
     returns:
       '`{ "nct_id": str, "title": str, "status": str, "phase": [str], "conditions": [str] }` — one study; `phase` and `conditions` are arrays (may be undefined when the study omits those modules).',
+    example:
+      'result = host.mcp("clinical_trials", "clinicaltrials_get_study", {"nct_id": "NCT00000419"})',
     url: (a) => `${STUDIES}/${encodeURIComponent(String(a.nct_id))}`,
     parse: (raw) => {
       const proto = (raw as Study).protocolSection ?? {}
@@ -51,6 +53,8 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
     required: ['query'],
     returns:
       '`{ "studies": [ { "nct_id": str, "title": str, "status": str } ], "nextPageToken"?: str }` — up to `page_size` studies (default 10); `nextPageToken` is present only when more pages exist. `studies` is `[]` when nothing matches.',
+    example:
+      'result = host.mcp("clinical_trials", "clinicaltrials_search", {"query": "aspirin", "page_size": 10})',
     run: async (ctx, a) => {
       const url = `${STUDIES}?query.term=${encodeURIComponent(String(a.query))}&pageSize=${Number(a.page_size ?? 10)}`
       const res = (await ctx.fetchJson(url)) as SearchResponse

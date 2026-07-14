@@ -41,9 +41,9 @@ describe('ParserEngine declarative path', () => {
     await expect(engine.call(desc, {}, {})).rejects.toThrow(/required arg: q/)
   })
 
-  it('throws on non-2xx', async () => {
+  it('retries transient 5xx and gives up after the configured retries', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 503 } as Response)
-    const engine = new ParserEngine({ fetchImpl })
+    const engine = new ParserEngine({ fetchImpl, retries: 2, retryBackoffMs: 0 })
     const desc: ToolDescriptor = {
       id: 't',
       connector: 'c',
@@ -53,6 +53,58 @@ describe('ParserEngine declarative path', () => {
       parse: (r) => r
     }
     await expect(engine.call(desc, {}, {})).rejects.toThrow(/HTTP 503/)
+    expect(fetchImpl).toHaveBeenCalledTimes(3) // 1 initial + 2 retries
+  })
+
+  it('retries a transient 5xx then succeeds', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 503 } as Response)
+      .mockResolvedValueOnce(jsonResponse({ value: 7 }))
+    const engine = new ParserEngine({ fetchImpl, retryBackoffMs: 0 })
+    const desc: ToolDescriptor = {
+      id: 't',
+      connector: 'c',
+      description: '',
+      input: {},
+      url: () => 'https://x.test',
+      parse: (raw) => (raw as { value: number }).value
+    }
+    expect(await engine.call(desc, {}, {})).toBe(7)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries a network/timeout error then succeeds', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('ECONNRESET'))
+      .mockResolvedValueOnce(jsonResponse({ value: 5 }))
+    const engine = new ParserEngine({ fetchImpl, retryBackoffMs: 0 })
+    const desc: ToolDescriptor = {
+      id: 't',
+      connector: 'c',
+      description: '',
+      input: {},
+      url: () => 'https://x.test',
+      parse: (raw) => (raw as { value: number }).value
+    }
+    expect(await engine.call(desc, {}, {})).toBe(5)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not retry a client error (4xx other than 429)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 400 } as Response)
+    const engine = new ParserEngine({ fetchImpl, retryBackoffMs: 0 })
+    const desc: ToolDescriptor = {
+      id: 't',
+      connector: 'c',
+      description: '',
+      input: {},
+      url: () => 'https://x.test',
+      parse: (r) => r
+    }
+    await expect(engine.call(desc, {}, {})).rejects.toThrow(/HTTP 400/)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
   it('postJson sends a POST with a JSON body and parses the response', async () => {

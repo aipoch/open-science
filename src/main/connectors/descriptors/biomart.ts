@@ -94,6 +94,7 @@ export const BIOMART_TOOLS: ToolDescriptor[] = [
     input: { type: 'object', properties: {} },
     returns:
       '`[ { "name": str, "displayName": str } ]` — array of registered BioMart marts; `[]` when the registry lists none.',
+    example: 'result = host.mcp("biomart", "biomart_list_marts", {})',
     format: 'text',
     url: () => `${MARTSERVICE}?type=registry`,
     parse: (raw) => {
@@ -128,6 +129,8 @@ export const BIOMART_TOOLS: ToolDescriptor[] = [
     required: ['dataset', 'attributes'],
     returns:
       '`{ "dataset": str, "columns": [str], "rows": [[str]] }` — `columns` echoes the requested attributes and each row is a string array in that column order. `rows` is sorted lexicographically and `[]` when nothing matches.',
+    example:
+      'result = host.mcp("biomart", "biomart_query", {"dataset": "hsapiens_gene_ensembl", "attributes": ["ensembl_gene_id", "external_gene_name"]})',
     run: async (ctx, a) => {
       const dataset = String(a.dataset)
       const attributes = (a.attributes as unknown[]).map(String)

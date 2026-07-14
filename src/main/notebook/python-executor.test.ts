@@ -123,6 +123,111 @@ describe('notebook Python executor', () => {
   )
 
   itWithPython(
+    'echoes a trailing expression like Jupyter so a bare variable shows output',
+    async () => {
+      // Root-cause fix for the double host.mcp call: with a plain exec(), `result` on the last line
+      // produced no output, so the agent re-ran the call in a second cell just to print it. Echoing
+      // the trailing expression (repr) makes `result` visible in one cell, no explicit print needed.
+      const root = await createStorageRoot()
+      const executor = new NotebookPythonExecutor('python3')
+
+      const base = {
+        cwd: root,
+        notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
+        dataRoot: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
+        runtimeRoot: join(root, 'runtime')
+      }
+
+      try {
+        // Assignment then a bare expression: only the trailing expression echoes, as its repr.
+        const echoed = await executor.execute({
+          ...base,
+          code: 'result = {"count": 0, "term": "肿瘤进展"}\nresult'
+        })
+        expect(echoed).toMatchObject({ status: 'completed' })
+        expect(echoed.stdout).toBe("{'count': 0, 'term': '肿瘤进展'}\n")
+
+        // A cell ending in a statement (assignment) echoes nothing.
+        const silent = await executor.execute({ ...base, code: 'y = 5' })
+        expect(silent).toMatchObject({ status: 'completed', stdout: '' })
+
+        // A trailing expression that evaluates to None echoes nothing (matches Jupyter).
+        const none = await executor.execute({ ...base, code: 'print("hi")\nNone' })
+        expect(none).toMatchObject({ status: 'completed', stdout: 'hi\n' })
+      } finally {
+        await executor.shutdown()
+      }
+    },
+    PYTHON_TEST_TIMEOUT_MS
+  )
+
+  itWithPython(
+    'suppresses matplotlib artist reprs in the trailing-expression echo',
+    async () => {
+      // Headless Agg can't render a figure inline, so a matplotlib artist (or a list/tuple of them,
+      // e.g. plt.plot(...) -> [Line2D]) at the end of a cell would echo a noisy object repr. Faking
+      // the module keeps the test independent of matplotlib being installed.
+      const root = await createStorageRoot()
+      const executor = new NotebookPythonExecutor('python3')
+      const base = {
+        cwd: root,
+        notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
+        dataRoot: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
+        runtimeRoot: join(root, 'runtime')
+      }
+      const fakeArtist = ['class _A:\n    pass', "_A.__module__ = 'matplotlib.lines'"].join('\n')
+
+      try {
+        const artist = await executor.execute({ ...base, code: `${fakeArtist}\n_A()` })
+        expect(artist).toMatchObject({ status: 'completed', stdout: '' })
+
+        const artistList = await executor.execute({ ...base, code: `${fakeArtist}\n[_A(), _A()]` })
+        expect(artistList).toMatchObject({ status: 'completed', stdout: '' })
+
+        // Ordinary data is still echoed.
+        const data = await executor.execute({ ...base, code: "{'a': 1}" })
+        expect(data.stdout).toBe("{'a': 1}\n")
+      } finally {
+        await executor.shutdown()
+      }
+    },
+    PYTHON_TEST_TIMEOUT_MS
+  )
+
+  itWithPython(
+    'silences the headless matplotlib non-interactive show() warning',
+    async () => {
+      // Agg warns "FigureCanvasAgg is non-interactive, and thus cannot be shown" on every plt.show()
+      // in this headless notebook; the bridge filters that message. Emitting the same warning text
+      // keeps the test independent of matplotlib being installed.
+      const root = await createStorageRoot()
+      const executor = new NotebookPythonExecutor('python3')
+      const base = {
+        cwd: root,
+        notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
+        dataRoot: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
+        runtimeRoot: join(root, 'runtime')
+      }
+
+      try {
+        const result = await executor.execute({
+          ...base,
+          code: [
+            'import warnings',
+            'warnings.warn("FigureCanvasAgg is non-interactive, and thus cannot be shown")',
+            'print("plotted")'
+          ].join('\n')
+        })
+        expect(result).toMatchObject({ status: 'completed', stdout: 'plotted\n' })
+        expect(result.stderr).not.toContain('non-interactive')
+      } finally {
+        await executor.shutdown()
+      }
+    },
+    PYTHON_TEST_TIMEOUT_MS
+  )
+
+  itWithPython(
     'runs with a non-interactive matplotlib backend so no GUI window opens',
     async () => {
       const root = await createStorageRoot()

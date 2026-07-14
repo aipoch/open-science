@@ -141,6 +141,8 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     required: ['gene'],
     returns:
       '`{ "gene_id": str, "symbol": str, "approved_name": str, "n_diseases_total": int, "returned": int, "diseases": [ { "disease_id": str, "disease_name": str, "score": float } ] }` — diseases ranked by association score, up to `limit` (default 10); `n_diseases_total` is the full count, usually larger than `returned`. Unresolved symbol or absent target yields `gene_id`/`symbol` null and `diseases: []`.',
+    example:
+      'result = host.mcp("clinical_genomics", "opentargets_target_diseases", {"gene": "EGFR", "limit": 10})',
     run: async (ctx, a) => {
       const gene = String(a.gene)
       const limit = Number(a.limit ?? DEFAULT_LIMIT)
@@ -200,6 +202,8 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     required: ['chembl_id'],
     returns:
       '`{ "chembl_id": str, "name": str, "drug_type": str, "max_clinical_stage": str, "mechanisms_of_action": [ { "mechanism_of_action": str, "action_type": str, "targets": [ { "id": str, "approved_symbol": str } ] } ], "n_indications_total": int, "returned_indications": int, "indications": [ { "disease_id": str, "disease_name": str, "max_clinical_stage": str } ] }` — indications capped at `limit` (default 10); `n_indications_total` is the full count. Unknown ChEMBL id returns `{ "chembl_id": str, "found": false }`.',
+    example:
+      'result = host.mcp("clinical_genomics", "opentargets_drug", {"chembl_id": "CHEMBL1201583"})',
     run: async (ctx, a) => {
       const chemblId = String(a.chembl_id)
       const limit = Number(a.limit ?? DEFAULT_LIMIT)

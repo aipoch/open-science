@@ -45,6 +45,8 @@ export const PUBMED_TOOLS: ToolDescriptor[] = [
     required: ['term'],
     returns:
       '`{ "term": str, "count": int, "articles": [ { "pmid": str, "title": str, "date": str } ] }` — up to `retmax` articles (default 5); `count` is the total number of PubMed matches and is usually far larger than the returned list. `articles` is `[]` when nothing matches.',
+    example:
+      'result = host.mcp("pubmed", "pubmed_search", {"term": "tumor progression", "retmax": 10})',
     run: async (ctx, a) => {
       const q = ncbiEtiquette(ctx.credentials)
       const es = (await ctx.fetchJson(
@@ -87,6 +89,7 @@ export const PUBMED_TOOLS: ToolDescriptor[] = [
     required: ['pmids'],
     returns:
       '`{ "pmids": [str], "articles": [ { "pmid": str, "title": str, "authors": [str], "journal": str, "date": str, "doi": str|null, "abstract": str|null } ] }` — one entry per requested PMID (order preserved); `doi`/`abstract` are null when PubMed has none, `authors` is `[]` when unlisted.',
+    example: 'result = host.mcp("pubmed", "pubmed_fetch", {"pmids": ["40302006", "31452104"]})',
     run: async (ctx, a) => {
       const ids = (Array.isArray(a.pmids) ? a.pmids : [a.pmids]).map((x) => String(x))
       const q = ncbiEtiquette(ctx.credentials)

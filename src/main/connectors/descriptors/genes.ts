@@ -53,6 +53,7 @@ export const GENES_TOOLS: ToolDescriptor[] = [
     required: ['accession'],
     returns:
       '`{ "accession": str, "name": str, "gene": str, "function": str }` — any field may be null when the entry lacks it (e.g. no recommended name, gene, or FUNCTION comment).',
+    example: 'result = host.mcp("genes", "uniprot_get_entry", {"accession": "P04637"})',
     url: (a) => `${UNIPROT}/${encodeURIComponent(String(a.accession))}.json`,
     parse: (raw) => {
       const entry = raw as UniProtEntry
@@ -77,6 +78,7 @@ export const GENES_TOOLS: ToolDescriptor[] = [
     required: ['symbol'],
     returns:
       '`[ { "symbol": str, "name": str, "entrezgene": str, "ensembl": { "gene": str } | [ { "gene": str } ] } ]` — human hits only; `[]` when the symbol resolves to nothing; `ensembl` is an object or array depending on gene count.',
+    example: 'result = host.mcp("genes", "mygene_query", {"symbol": "TP53"})',
     url: (a) =>
       `${MYGENE}?q=${encodeURIComponent(String(a.symbol))}&species=human&fields=${MYGENE_FIELDS}`,
     parse: (raw) =>
@@ -99,6 +101,7 @@ export const GENES_TOOLS: ToolDescriptor[] = [
     required: ['id'],
     returns:
       '`{ "id": str, "label": str, "definition": str, "ontology": str }` — only the first matching OLS4 term is used; all fields are null when the GO id has no term match.',
+    example: 'result = host.mcp("genes", "go_get_term", {"id": "GO:0006281"})',
     // OLS4 `obo_id` lookup avoids double-encoding a full term IRI (see upstream ols_terms client).
     url: (a) => `${OLS}/ontologies/go/terms?obo_id=${encodeURIComponent(String(a.id))}`,
     parse: (raw) => {
@@ -130,6 +133,7 @@ export const GENES_TOOLS: ToolDescriptor[] = [
     required: ['identifier'],
     returns:
       '`[ { "pathway_id": str, "name": str } ]` — `[]` when the identifier maps to no Reactome pathways for the given species.',
+    example: 'result = host.mcp("genes", "reactome_pathways_for_gene", {"identifier": "P04637"})',
     url: (a) => {
       const resource = a.resource ? String(a.resource) : 'UniProt'
       const species = a.species ? String(a.species) : '9606'

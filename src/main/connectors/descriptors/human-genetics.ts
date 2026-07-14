@@ -56,6 +56,7 @@ export const HUMAN_GENETICS_TOOLS: ToolDescriptor[] = [
     required: ['gene'],
     returns:
       '`[ { "rsId": str, "pValue": float, "riskAllele": str, "mappedGenes": [ str ], "trait": str } ]` — up to 50 associations sorted by ascending p-value; `[]` when none match. `mappedGenes` may be empty; `trait` falls back to reported trait.',
+    example: 'result = host.mcp("human_genetics", "gwas_search_associations", {"gene": "APOE"})',
     url: (a) =>
       `${GWAS_ASSOCIATIONS}?mapped_gene=${encodeURIComponent(String(a.gene))}&size=${PAGE_SIZE}&sort=p_value&direction=asc`,
     parse: (raw) => flattenAssociations(raw)
@@ -75,6 +76,7 @@ export const HUMAN_GENETICS_TOOLS: ToolDescriptor[] = [
     required: ['rsId'],
     returns:
       '`[ { "rsId": str, "pValue": float, "riskAllele": str, "mappedGenes": [ str ], "trait": str } ]` — up to 50 associations sorted by ascending p-value; `[]` when none match. `mappedGenes` may be empty; `trait` falls back to reported trait.',
+    example: 'result = host.mcp("human_genetics", "gwas_variant_associations", {"rsId": "rs7412"})',
     url: (a) =>
       `${GWAS_ASSOCIATIONS}?rs_id=${encodeURIComponent(String(a.rsId))}&size=${PAGE_SIZE}&sort=p_value&direction=asc`,
     parse: (raw) => flattenAssociations(raw)

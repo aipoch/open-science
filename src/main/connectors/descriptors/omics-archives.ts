@@ -45,6 +45,8 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     required: ['query'],
     returns:
       '`[ { "accession": str, "title": str, "type": str, "release_date": str } ]` — up to `pageSize` hits (default 20), newest release_date first; `[]` when nothing matches.',
+    example:
+      'result = host.mcp("omics_archives", "arrayexpress_search", {"query": "cancer", "pageSize": 20})',
     url: (a) => {
       const pageSize = Number(a.pageSize ?? DEFAULT_PAGE_SIZE)
       return (
@@ -73,6 +75,8 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     required: ['accession'],
     returns:
       '`{ "accession": str, "title": str, "release_date": str, "organism": str, "study_type": str, "description": str }` — single study; any field is undefined when its attribute is absent upstream.',
+    example:
+      'result = host.mcp("omics_archives", "arrayexpress_get_study", {"accession": "E-MTAB-17244"})',
     url: (a) => `${BIOSTUDIES}/studies/${encodeURIComponent(String(a.accession))}`,
     parse: (raw) => {
       const study = raw as BioStudiesStudy

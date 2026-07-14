@@ -3,6 +3,8 @@ import { getConnectorTools } from './registry'
 
 const CONVENTIONS = [
   'Reach this service ONLY via `host.mcp` from the notebook kernel. It runs synchronously and returns the result directly — assign it: `result = host.mcp(server, method, {...})`. Arguments go as a dict, or as keywords (`host.mcp(server, method, term=...)`).',
+  "The result is a ready-to-use native Python value — a dict or list for most tools, sometimes a string or number. It is already parsed (not a JSON string). Each tool's **Returns** block gives its exact shape and field meanings; how you inspect or process it is up to you.",
+  'The notebook kernel is a persistent shared session: the variable you assign a result to stays available in later cells, so reuse it instead of running the call again. Each call hits the rate-limited upstream — never re-issue the same call to look at or reprocess a result you already have.',
   'Do NOT reimplement these calls with raw HTTP (urllib / requests / httpx / fetch) or hit the upstream endpoints directly — that bypasses the approval gate, per-tool policy, credentials, and rate limits, and can leak project data.',
   'Prefer bulk/list tools over per-item loops — the upstream API is rate-limited and shared across subagents.',
   'Pass large results between cells via `./handoff/*.json`, not the model context.'
@@ -55,10 +57,17 @@ function exampleArgs(schema: unknown): string | undefined {
   return entries.length ? `{${entries.join(', ')}}` : undefined
 }
 
-// Renders one tool's call example as a copyable python cell: `result = host.mcp(server, tool, {args})`,
-// with args drawn from the tool schema (or `...` when the schema names no concrete fields).
-function renderExample(server: string, tool: string, schema: unknown): string {
-  return `Example:\n\n\`\`\`python\nresult = host.mcp("${server}", "${tool}", ${exampleArgs(schema) ?? '...'})\n\`\`\`\n`
+// Renders one tool's usage example as a copyable python cell. Prefers the descriptor's hand-authored
+// `example` (a single call with realistic args); otherwise builds a bare call from the schema. A tool
+// with no concrete args renders as `host.mcp(server, method)` (no third argument) — passing a literal
+// `...` there would reach the bridge as Ellipsis and raise, so it must be omitted.
+function renderExample(server: string, tool: string, schema: unknown, example?: string): string {
+  if (example) return `Example:\n\n\`\`\`python\n${example}\n\`\`\`\n`
+  const args = exampleArgs(schema)
+  const call = args
+    ? `host.mcp("${server}", "${tool}", ${args})`
+    : `host.mcp("${server}", "${tool}")`
+  return `Example:\n\n\`\`\`python\nresult = ${call}\n\`\`\`\n`
 }
 
 // Renders one connector's tools as a searchable skill document (frontmatter + conventions + methods).
@@ -74,7 +83,7 @@ export function renderSkillDoc(connectorId: string): string {
       (t) =>
         `### ${t.id}\n\n${t.description}\n\n\`\`\`json\n${JSON.stringify(t.input, null, 2)}\n\`\`\`\n\n` +
         (t.returns ? `**Returns:** ${t.returns}\n\n` : '') +
-        renderExample(connectorId, t.id, t.input)
+        renderExample(connectorId, t.id, t.input, t.example)
     )
     .join('\n')
   return (

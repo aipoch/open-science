@@ -37,6 +37,21 @@ describe('chemistry / pubchem', () => {
     expect(fetchImpl.mock.calls[1][0]).toContain('/compound/cid/2519/property/')
     expect(out).toEqual({ query: 'caffeine', compounds: [{ CID: 2519 }] })
   })
+
+  it('pubchem_get_image builds the imgsrv URL without a network call', async () => {
+    const fetchImpl = vi.fn()
+    const out = await new ParserEngine({ fetchImpl }).call(
+      tool('pubchem_get_image'),
+      { cid: 2244 },
+      {}
+    )
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(out).toEqual({
+      cid: 2244,
+      format: 'png',
+      url: 'https://pubchem.ncbi.nlm.nih.gov/image/imgsrv.fcgi?cid=2244&t=l'
+    })
+  })
 })
 
 describe('chemistry / chebi', () => {

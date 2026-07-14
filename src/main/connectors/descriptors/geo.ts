@@ -29,6 +29,7 @@ export const GEO_TOOLS: ToolDescriptor[] = [
     required: ['term'],
     returns:
       '`{ "term": str, "count": int, "records": [ { "accession": str, "title": str, "summary": str, "taxon": str, "n_samples": int, "gdstype": str } ] }` — up to `retmax` records (default 5); `count` is the total number of GEO matches, usually far larger than the returned list. `records` is `[]` when nothing matches.',
+    example: 'result = host.mcp("geo", "geo_search", {"term": "asthma", "retmax": 5})',
     run: async (ctx, a) => {
       const q = ncbiEtiquette(ctx.credentials)
       const es = (await ctx.fetchJson(

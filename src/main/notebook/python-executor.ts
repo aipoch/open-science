@@ -22,6 +22,7 @@ const delay = (ms: number): Promise<void> =>
 
 // Small stdin/stdout bridge that keeps Python globals alive across executions in one process.
 const PYTHON_BRIDGE = String.raw`
+import ast
 import json
 import os
 import sys
@@ -29,6 +30,12 @@ import tempfile
 import traceback
 import urllib.error
 import urllib.request
+import warnings
+
+# The Agg backend warns "FigureCanvasAgg is non-interactive, and thus cannot be shown" on every
+# plt.show() in this headless notebook. Figures are saved as artifacts instead, so that message is
+# pure noise on stderr — silence just that one warning.
+warnings.filterwarnings("ignore", message=".*is non-interactive, and thus cannot be shown")
 
 class _Host:
     # Control-plane bridge to the main process connector service. Tool arguments accept either a
@@ -101,6 +108,38 @@ globals_ns["host"] = _Host()
 protocol_stdout = os.fdopen(os.dup(1), "w", buffering=1)
 
 
+# A real Jupyter inline backend renders a figure and suppresses the artist's text repr; we run headless
+# (Agg) and can't render inline, so echoing a matplotlib artist (or a list/tuple of them, e.g.
+# plt.plot(...) -> [Line2D] or plt.subplots() -> (Figure, Axes)) is pure noise. Skip those, matching the
+# inline backend's suppression.
+def _is_matplotlib_repr(value):
+    def _is_artist(v):
+        return type(v).__module__.split(".", 1)[0] == "matplotlib"
+    if _is_artist(value):
+        return True
+    if isinstance(value, (list, tuple)) and value:
+        return all(_is_artist(v) for v in value)
+    return False
+
+
+# Runs one cell like a Jupyter cell: execute every statement, then — if the cell ends in a bare
+# expression — echo that value's repr the way execute_result does. This is what lets "result" on the
+# last line show output without an explicit print, so the agent doesn't re-run the (rate-limited) call
+# in a second cell just to see the data. Assignments and other statements echo nothing (value is None
+# or not an expression), matching Jupyter.
+def _run_cell(code, ns):
+    block = ast.parse(code, mode="exec")
+    trailing = None
+    if block.body and isinstance(block.body[-1], ast.Expr):
+        trailing = ast.Expression(block.body.pop().value)
+        ast.fix_missing_locations(trailing)
+    exec(compile(block, "<cell>", "exec"), ns, ns)
+    if trailing is not None:
+        value = eval(compile(trailing, "<cell>", "eval"), ns, ns)
+        if value is not None and not _is_matplotlib_repr(value):
+            print(repr(value))
+
+
 # Captures Python prints plus direct subprocess fd writes while code executes.
 def execute_captured(code):
     stdout_file = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
@@ -117,7 +156,7 @@ def execute_captured(code):
         os.dup2(stderr_file.fileno(), 2)
 
         try:
-            exec(code, globals_ns, globals_ns)
+            _run_cell(code, globals_ns)
         except Exception:
             status = "failed"
             traceback_text = traceback.format_exc()

@@ -2,8 +2,18 @@ import type { ConnectorCredentials, ToolContext, ToolDescriptor } from './types'
 
 const DEFAULT_TIMEOUT_MS = 30_000
 
+// Transient-failure retry policy shared by every connector call. Public bio APIs (PubChem PUG-REST,
+// GTEx, NCBI) routinely return 429/5xx or a brief timeout under load; a couple of backed-off retries
+// turn those blips into successes instead of surfacing them to the notebook.
+const DEFAULT_RETRIES = 2
+const DEFAULT_BACKOFF_MS = 400
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504])
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
 // Some public APIs (e.g. AlphaFold EBI) reject requests without a User-Agent; send a stable one.
-const USER_AGENT = 'OpenScience/1.0 (+https://github.com/aipoch/open-science)'
+const USER_AGENT =
+  'Mozilla/5.0 (compatible; OpenScience/1.0; +https://github.com/aipoch/open-science)'
 
 // Builds the NCBI E-utilities etiquette query suffix; empty when unset (calls still work).
 export function ncbiEtiquette(credentials: ConnectorCredentials): string {
@@ -30,10 +40,19 @@ function redactUrl(url: string): string {
 export class ParserEngine {
   private readonly fetchImpl: typeof fetch
   private readonly timeoutMs: number
+  private readonly retries: number
+  private readonly backoffMs: number
 
-  constructor(opts?: { fetchImpl?: typeof fetch; timeoutMs?: number }) {
+  constructor(opts?: {
+    fetchImpl?: typeof fetch
+    timeoutMs?: number
+    retries?: number
+    retryBackoffMs?: number
+  }) {
     this.fetchImpl = opts?.fetchImpl ?? fetch
     this.timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    this.retries = opts?.retries ?? DEFAULT_RETRIES
+    this.backoffMs = opts?.retryBackoffMs ?? DEFAULT_BACKOFF_MS
   }
 
   async call(
@@ -55,19 +74,42 @@ export class ParserEngine {
   }
 
   private makeContext(credentials: ConnectorCredentials): ToolContext {
+    // Delay before the next attempt: honour a numeric Retry-After (seconds, capped), else exponential
+    // backoff with jitter off the configured base.
+    const nextDelay = (attempt: number, retryAfter: string | null): number => {
+      const ra = retryAfter ? Number(retryAfter) : NaN
+      if (Number.isFinite(ra) && ra >= 0) return Math.min(ra * 1000, 5_000)
+      return Math.min(this.backoffMs * 2 ** attempt, 4_000) + Math.random() * this.backoffMs
+    }
+
     const doFetch = async (url: string, accept: string, init?: RequestInit): Promise<Response> => {
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), this.timeoutMs)
-      try {
-        const res = await this.fetchImpl(url, {
-          ...init,
-          headers: { accept, 'user-agent': USER_AGENT, ...init?.headers },
-          signal: controller.signal
-        })
-        if (!res.ok) throw new Error(`HTTP ${res.status} for ${redactUrl(url)}`)
-        return res
-      } finally {
-        clearTimeout(timer)
+      for (let attempt = 0; ; attempt++) {
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), this.timeoutMs)
+        let res: Response
+        try {
+          res = await this.fetchImpl(url, {
+            ...init,
+            headers: { accept, 'user-agent': USER_AGENT, ...init?.headers },
+            signal: controller.signal
+          })
+        } catch (err) {
+          // Network failure or timeout abort — retry a bounded number of times, then give up.
+          if (attempt < this.retries) {
+            await sleep(nextDelay(attempt, null))
+            continue
+          }
+          throw err
+        } finally {
+          clearTimeout(timer)
+        }
+        if (res.ok) return res
+        // Retry only transient upstream statuses; client errors (4xx except 429) fail fast.
+        if (attempt < this.retries && RETRYABLE_STATUS.has(res.status)) {
+          await sleep(nextDelay(attempt, res.headers?.get?.('retry-after') ?? null))
+          continue
+        }
+        throw new Error(`HTTP ${res.status} for ${redactUrl(url)}`)
       }
     }
     return {

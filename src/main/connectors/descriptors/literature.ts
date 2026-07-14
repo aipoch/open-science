@@ -17,6 +17,8 @@ export const LITERATURE_TOOLS: ToolDescriptor[] = [
     required: ['query'],
     returns:
       '`[ { "id": str, "title": str, "summary": str } ]` — up to `max_results` hits (default 5), parsed from arXiv Atom XML; `[]` when nothing matches.',
+    example:
+      'result = host.mcp("literature", "arxiv_search", {"query": "diffusion", "max_results": 5})',
     format: 'text',
     url: (a) =>
       `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(String(a.query))}&max_results=${Number(a.max_results ?? 5)}`,
