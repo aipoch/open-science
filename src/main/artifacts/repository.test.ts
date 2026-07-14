@@ -1,4 +1,13 @@
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  writeFile
+} from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -263,6 +272,62 @@ describe('artifact repository', () => {
     await expect(
       readdir(join(root, 'artifacts', 'default-project', 'session-1', '.pending'))
     ).resolves.not.toContain('run-1')
+  })
+
+  it('recovers a finalized file when a preview still references its old pending path', async () => {
+    // Root cause of the transient "Failed to read artifact preview ENOENT": the renderer keeps the
+    // `.pending/<run>/` path while finalizeRunArtifacts moves the file into the message directory.
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+
+    await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      filename: 'plot.png',
+      source: createInlineSource('img-bytes')
+    })
+    const pendingPath = join(
+      root,
+      'artifacts',
+      'default-project',
+      'session-1',
+      '.pending',
+      'run-1',
+      'plot.png'
+    )
+
+    await repository.finalizeRunArtifacts({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      messageId: 'message-7'
+    })
+
+    // The pending path is gone, but resolving/previewing it recovers the finalized copy.
+    const resolved = await repository.resolveManagedFilePath({ path: pendingPath })
+    const expected = await realpath(
+      join(root, 'artifacts', 'default-project', 'session-1', 'message-7', 'plot.png')
+    )
+    expect(resolved).toBe(expected)
+
+    const preview = await repository.readManagedFilePreview({ path: pendingPath })
+    expect(preview.content).toContain('img-bytes')
+  })
+
+  it('still throws for a missing artifact path that was never finalized', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+    const missing = join(
+      root,
+      'artifacts',
+      'default-project',
+      'session-1',
+      '.pending',
+      'run-1',
+      'nope.png'
+    )
+    await expect(repository.resolveManagedFilePath({ path: missing })).rejects.toThrow()
   })
 
   it('finalizes pending files from an internal artifact session scope', async () => {

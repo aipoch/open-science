@@ -10,7 +10,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type {
@@ -338,7 +338,18 @@ class ArtifactRepository {
     assertPathInsideArtifactRoot(artifactRoot, requestedPath)
 
     const resolvedArtifactRoot = await realpath(artifactRoot)
-    const resolvedFilePath = await realpath(requestedPath)
+    let resolvedFilePath: string
+    try {
+      resolvedFilePath = await realpath(requestedPath)
+    } catch (error) {
+      // A preview/open can hold a `.pending/<run>/<file>` path that finalizeRunArtifacts has already
+      // moved to `<session>/<messageId>/<file>`. Recover the finalized copy so the pending->message
+      // transition does not surface as a spurious ENOENT.
+      if (!isMissingFileError(error)) throw error
+      const recovered = await this.recoverFinalizedPendingPath(requestedPath)
+      if (!recovered) throw error
+      resolvedFilePath = await realpath(recovered)
+    }
 
     assertPathInsideArtifactRoot(resolvedArtifactRoot, resolvedFilePath)
 
@@ -349,6 +360,31 @@ class ArtifactRepository {
     }
 
     return resolvedFilePath
+  }
+
+  // Given a now-missing `.pending/<run>/<file>` artifact path, finds the same file after finalize moved
+  // it into a sibling message directory (`<session>/<messageId>/<file>`). Returns the newest match, or
+  // undefined when the path is not a pending path or no finalized copy exists. Path safety is still
+  // enforced by resolveManagedFilePath's root check on the returned path.
+  private async recoverFinalizedPendingPath(requestedPath: string): Promise<string | undefined> {
+    const pendingDir = dirname(dirname(requestedPath)) // <session>/.pending
+    if (basename(pendingDir) !== PENDING_DIR) return undefined
+    const sessionDir = dirname(pendingDir)
+    const filename = basename(requestedPath)
+
+    const entries = await readdir(sessionDir, { withFileTypes: true }).catch(() => null)
+    if (!entries) return undefined
+
+    const matches: Array<{ path: string; mtimeMs: number }> = []
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name === PENDING_DIR || entry.name === METADATA_DIR)
+        continue
+      const candidate = join(sessionDir, entry.name, filename)
+      const candidateStat = await stat(candidate).catch(() => undefined)
+      if (candidateStat?.isFile()) matches.push({ path: candidate, mtimeMs: candidateStat.mtimeMs })
+    }
+    matches.sort((left, right) => right.mtimeMs - left.mtimeMs)
+    return matches[0]?.path
   }
 
   // Reads a small text preview from a managed artifact without exposing arbitrary filesystem reads.
