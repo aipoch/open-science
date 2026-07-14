@@ -493,7 +493,11 @@ class NotebookRuntimeService {
       id: `notebook-session-${request.sessionId}`,
       sessionId: request.sessionId,
       projectName,
-      cwd: request.workspaceCwd,
+      // Start the interpreter in the session's writable data dir (like a Jupyter notebook's cwd), not
+      // the outer workspace. Relative writes — e.g. plt.savefig("plot.png") — then land in a directory
+      // that is inside the artifact import roots, so the agent never has to guess an absolute path.
+      // dataRoot lives under notebookSessionRoot (an allowed import root) and is created before this.
+      cwd: document.dataRoot,
       notebookSessionRoot: document.notebookSessionRoot,
       dataRoot: document.dataRoot,
       runtimeRoot: document.kernel.runtimeRoot,
