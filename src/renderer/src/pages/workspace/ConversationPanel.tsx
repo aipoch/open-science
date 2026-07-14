@@ -1,4 +1,4 @@
-import type { AcpPermissionRequest } from '../../../../shared/acp'
+import type { AcpPermissionGrant, AcpPermissionRequest } from '../../../../shared/acp'
 import type { NotebookSessionReference } from '../../../../shared/notebook'
 import type {
   PermissionProfileId,
@@ -78,6 +78,7 @@ type ConversationPanelProps = {
   pendingPermissions: AcpPermissionRequest[]
   permissionProfile: PermissionProfileId
   permissionProfileState: SessionPermissionProfileState | undefined
+  permissionGrants: AcpPermissionGrant[]
   canChangePermissionProfile: boolean
   onDraftDocChange: (doc: ComposerDoc) => void
   onSendMessage: (forcedSkillIds: string[]) => void
@@ -88,6 +89,8 @@ type ConversationPanelProps = {
   onTogglePreviewPanel: () => void
   onRespondToPermission: (requestId: string, optionId?: string) => void
   onPermissionProfileChange: (profile: PermissionProfileId) => void
+  onRevokePermissionGrant: (categoryKey: string) => void
+  onClearPermissionGrants: () => void
 }
 
 // Middle chat surface owns the visible conversation and local message composer UI.
@@ -104,6 +107,7 @@ const ConversationPanel = ({
   pendingPermissions,
   permissionProfile,
   permissionProfileState,
+  permissionGrants,
   canChangePermissionProfile,
   onDraftDocChange,
   onSendMessage,
@@ -113,7 +117,9 @@ const ConversationPanel = ({
   onOpenNotebook,
   onTogglePreviewPanel,
   onRespondToPermission,
-  onPermissionProfileChange
+  onPermissionProfileChange,
+  onRevokePermissionGrant,
+  onClearPermissionGrants
 }: ConversationPanelProps): React.JSX.Element => {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -288,7 +294,7 @@ const ConversationPanel = ({
                         />
                       </div>
 
-                      <div className="flex items-center gap-1">
+                      <div className="@container/composer flex items-center gap-1">
                         <button
                           type="button"
                           disabled={!canEditDraft || isUploadingAttachments}
@@ -311,8 +317,11 @@ const ConversationPanel = ({
                         <ComposerPermissionProfilePicker
                           value={permissionProfile}
                           state={permissionProfileState}
+                          grants={permissionGrants}
                           disabled={!canChangePermissionProfile}
                           onChange={onPermissionProfileChange}
+                          onRevokeGrant={onRevokePermissionGrant}
+                          onClearGrants={onClearPermissionGrants}
                         />
 
                         <div className="flex-1" />

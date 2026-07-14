@@ -71,7 +71,11 @@ describe('ComposerPermissionProfilePicker', () => {
         <ComposerPermissionProfilePicker value="ask" onChange={onChange} disabled={false} />
       )
     })
-    act(() => findButton('Approve for meAutomatically approve only low-risk operations.').click())
+    act(() =>
+      findButton(
+        'Auto-approve editsAuto-approve edits to files in the workspace. Still ask before commands, network, and MCP.'
+      ).click()
+    )
 
     expect(onChange).toHaveBeenCalledWith('auto')
     expect(container.textContent).not.toContain('Enable Full access?')
@@ -83,12 +87,16 @@ describe('ComposerPermissionProfilePicker', () => {
     act(() => {
       root.render(<ComposerPermissionProfilePicker value="ask" onChange={onChange} />)
     })
-    act(() => findButton('Full accessRun without approval prompts in this conversation.').click())
+    act(() =>
+      findButton(
+        'Full accessRun everything without prompts, including commands and network.'
+      ).click()
+    )
 
     expect(onChange).not.toHaveBeenCalled()
     expect(container.textContent).toContain('Enable Full access?')
 
-    act(() => findButton('Enable Full access').click())
+    act(() => findButton('Enable').click())
     expect(onChange).toHaveBeenCalledWith('full')
   })
 
@@ -112,5 +120,64 @@ describe('ComposerPermissionProfilePicker', () => {
     expect(
       findButton('Full accessThe current agent does not support native bypass mode.').disabled
     ).toBe(true)
+  })
+
+  it('lists session grants and revokes the clicked one', () => {
+    const onRevokeGrant = vi.fn()
+
+    act(() => {
+      root.render(
+        <ComposerPermissionProfilePicker
+          value="ask"
+          grants={[
+            { categoryKey: 'shell:git', label: 'git status', kind: 'shell' },
+            { categoryKey: 'mcp:search', label: 'search papers', kind: 'mcp' }
+          ]}
+          onChange={vi.fn()}
+          onRevokeGrant={onRevokeGrant}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('Always allowed this session')
+    expect(container.textContent).toContain('git status')
+
+    const revokeButton = Array.from(container.querySelectorAll('button')).find(
+      (candidate) => candidate.getAttribute('aria-label') === 'Revoke always-allow for git status'
+    )
+
+    if (!revokeButton) throw new Error('revoke button not found')
+
+    act(() => revokeButton.click())
+
+    expect(onRevokeGrant).toHaveBeenCalledWith('shell:git')
+  })
+
+  it('clears all grants when Clear all is clicked', () => {
+    const onClearGrants = vi.fn()
+
+    act(() => {
+      root.render(
+        <ComposerPermissionProfilePicker
+          value="ask"
+          grants={[
+            { categoryKey: 'shell:git', label: 'git status', kind: 'shell' },
+            { categoryKey: 'tool:Write', label: 'Write', kind: 'tool' }
+          ]}
+          onChange={vi.fn()}
+          onClearGrants={onClearGrants}
+        />
+      )
+    })
+
+    const clearButton = Array.from(container.querySelectorAll('button')).find(
+      (candidate) => candidate.getAttribute('aria-label') === 'Clear all always-allow grants'
+    )
+
+    if (!clearButton) throw new Error('clear button not found')
+
+    act(() => clearButton.click())
+
+    expect(onClearGrants).toHaveBeenCalledTimes(1)
   })
 })

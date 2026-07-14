@@ -1,7 +1,7 @@
 import type { RequestPermissionRequest, RequestPermissionResponse } from '@agentclientprotocol/sdk'
 import { randomUUID } from 'node:crypto'
 
-import type { AcpPermissionRequest, AcpPermissionResponse } from '../../shared/acp'
+import type { AcpPermissionGrant, AcpPermissionRequest, AcpPermissionResponse } from '../../shared/acp'
 import { extractProviderToolName } from './runtime-events'
 import { resolveAutomaticPermission, type PermissionPolicyContext } from './permission-policy'
 
@@ -24,16 +24,11 @@ const ALLOW_ONCE_OPTION_KIND = 'allow_once'
 // containing whitespace/quotes are not covered (already split away) and fall back to the raw token.
 const ENV_ASSIGNMENT_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=[^\s]*$/
 
-// Strips a single matching pair of surrounding quotes from a shell token.
-const stripSurroundingQuotes = (token: string): string => {
-  const match = token.match(/^(["'])(.*)\1$/)
-
-  return match ? match[2] : token
-}
-
-// Derives the command signature (leading executable) used to group shell/execute permissions. Leading
-// trivial env assignments are skipped so `FOO=bar python a.py` still groups under `python`.
-const leadingExecutable = (command: string): string => {
+// Derives the command signature used to group shell/execute permissions. Leading trivial env
+// assignments are dropped, then the remaining command (executable plus its arguments) is normalized
+// to single-spaced form. Keying on the full command — not just the executable — keeps "Always" on
+// `python a.py` from also allowing `python b.py`.
+const commandSignature = (command: string): string => {
   const tokens = command.trim().split(/\s+/)
   let index = 0
 
@@ -41,12 +36,14 @@ const leadingExecutable = (command: string): string => {
     index += 1
   }
 
-  return stripSurroundingQuotes(tokens[index] ?? command.trim())
+  const rest = tokens.slice(index)
+
+  return rest.length > 0 ? rest.join(' ') : command.trim()
 }
 
 // Derives a session-scoped "Always" category key from a permission request (first match wins):
 // 1. MCP/notebook tool (title starts with mcp__): keyed by title (the tool name, no args).
-// 2. Shell/execute tool (provider tool name Bash, or execute kind): keyed by leading executable.
+// 2. Shell/execute tool (provider tool name Bash, or execute kind): keyed by full command signature.
 // 3. Other built-ins (Write/Edit/WebFetch/…): keyed by provider tool name (falls back to title).
 // The mcp__ check runs before the execute branch so a notebook execute-cell is not misrouted to Bash.
 const resolveCategoryKey = (params: RequestPermissionRequest): string => {
@@ -59,10 +56,25 @@ const resolveCategoryKey = (params: RequestPermissionRequest): string => {
   }
 
   if (providerToolName === 'Bash' || toolCall.kind === 'execute') {
-    return `bash:${leadingExecutable(title)}`
+    return `bash:${commandSignature(title)}`
   }
 
   return `tool:${providerToolName ?? title}`
+}
+
+// Projects an opaque category key into the display grant shown in the composer.
+const describeGrant = (categoryKey: string): AcpPermissionGrant => {
+  if (categoryKey.startsWith('bash:')) {
+    return { categoryKey, kind: 'shell', label: categoryKey.slice('bash:'.length) }
+  }
+
+  if (categoryKey.startsWith('tool:')) {
+    const label = categoryKey.slice('tool:'.length)
+
+    return { categoryKey, kind: label.startsWith(MCP_TOOL_TITLE_PREFIX) ? 'mcp' : 'tool', label }
+  }
+
+  return { categoryKey, kind: 'tool', label: categoryKey }
 }
 
 // Tracks permission requests until the renderer chooses an outcome.
@@ -83,6 +95,18 @@ class AcpPermissionBroker {
     return Array.from(this.pendingRequests.values()).some(
       ({ request }) => request.sessionId === sessionId
     )
+  }
+
+  // Lists the session's always-allow grants so the composer can show and revoke them.
+  listGrants(sessionId: string): AcpPermissionGrant[] {
+    const categories = this.alwaysAllowedCategories.get(sessionId)
+
+    return categories ? Array.from(categories, describeGrant) : []
+  }
+
+  // Removes one always-allow grant so its tool prompts again on the next call.
+  revokeGrant(sessionId: string, categoryKey: string): void {
+    this.alwaysAllowedCategories.get(sessionId)?.delete(categoryKey)
   }
 
   // Stores a permission request and resolves it later from a renderer response.

@@ -221,7 +221,7 @@ describe('ACP permission broker', () => {
     expect(emittedRequests).toHaveLength(2)
   })
 
-  it('remembers Always for shell by leading executable, not the full command', async () => {
+  it('remembers Always for shell by full command signature, not just the executable', async () => {
     const emittedRequests: string[] = []
     const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))
 
@@ -231,23 +231,23 @@ describe('ACP permission broker', () => {
     broker.respond({ requestId: emittedRequests[0], optionId: 'allow-always' })
     await firstBash
 
-    // Same executable, different arguments auto-approves.
-    const secondBash = broker.requestPermission(
-      createToolPermissionRequest({ title: 'python b.py', providerToolName: 'Bash' })
+    // The exact same command auto-approves.
+    const sameBash = broker.requestPermission(
+      createToolPermissionRequest({ title: 'python a.py', providerToolName: 'Bash' })
     )
-    await expect(secondBash).resolves.toEqual({
+    await expect(sameBash).resolves.toEqual({
       outcome: { outcome: 'selected', optionId: 'allow-once' }
     })
     expect(emittedRequests).toHaveLength(1)
 
-    // A different executable still prompts.
+    // Different arguments to the same executable are a distinct signature and still prompt.
     broker.requestPermission(
-      createToolPermissionRequest({ title: 'rm -rf x', providerToolName: 'Bash' })
+      createToolPermissionRequest({ title: 'python b.py', providerToolName: 'Bash' })
     )
     expect(emittedRequests).toHaveLength(2)
   })
 
-  it('routes execute-kind shell calls by signature even without a provider tool name', async () => {
+  it('normalizes leading env assignments in the shell command signature', async () => {
     const emittedRequests: string[] = []
     const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))
 
@@ -257,14 +257,20 @@ describe('ACP permission broker', () => {
     broker.respond({ requestId: emittedRequests[0], optionId: 'allow-always' })
     await firstBash
 
-    // Leading env assignments are skipped, so `node ...` groups under the same signature.
+    // The same command without the leading env assignment shares the signature and auto-approves.
     const secondBash = broker.requestPermission(
-      createToolPermissionRequest({ title: 'node serve.js', kind: 'execute' })
+      createToolPermissionRequest({ title: 'node build.js', kind: 'execute' })
     )
     await expect(secondBash).resolves.toEqual({
       outcome: { outcome: 'selected', optionId: 'allow-once' }
     })
     expect(emittedRequests).toHaveLength(1)
+
+    // A different command still prompts.
+    broker.requestPermission(
+      createToolPermissionRequest({ title: 'node serve.js', kind: 'execute' })
+    )
+    expect(emittedRequests).toHaveLength(2)
   })
 
   it('keeps prompting for a different notebook sub-tool after Always on another', async () => {
@@ -284,6 +290,50 @@ describe('ACP permission broker', () => {
     expect(emittedRequests).toHaveLength(2)
   })
 
+  it('keeps a per-tool Always grant even when the composer profile changes between calls', async () => {
+    const emittedRequests: string[] = []
+    const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))
+
+    // Under Ask, the user grants Always for a shell executable.
+    const firstBash = broker.requestPermission(
+      createToolPermissionRequest({ title: 'python train.py', providerToolName: 'Bash' }),
+      { profile: 'ask' }
+    )
+    broker.respond({ requestId: emittedRequests[0], optionId: 'allow-always' })
+    await firstBash
+
+    // Switching to conservative Auto must not drop the grant. Conservative Auto never approves a
+    // shell command on its own, so an auto-approval here proves the per-tool grant survived the switch.
+    const secondBash = broker.requestPermission(
+      createToolPermissionRequest({ title: 'python train.py', providerToolName: 'Bash' }),
+      { profile: 'auto', autoReviewStrategy: 'conservative', cwd: '/workspace' }
+    )
+    await expect(secondBash).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(emittedRequests).toHaveLength(1)
+  })
+
+  it('never auto-approves an MCP tool under conservative Auto, even for a workspace read', () => {
+    const emittedRequests: string[] = []
+    const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))
+
+    const request = createToolPermissionRequest({
+      title: 'mcp__pencil__batch_get',
+      kind: 'read'
+    })
+    request.toolCall.locations = [{ path: 'data/results.csv' }]
+
+    void broker.requestPermission(request, {
+      profile: 'auto',
+      autoReviewStrategy: 'conservative',
+      cwd: '/workspace'
+    })
+
+    // MCP is excluded from the conservative fallback, so a prompt is still surfaced to the user.
+    expect(emittedRequests).toHaveLength(1)
+  })
+
   it('does not remember Always across sessions for built-in tools', async () => {
     const emittedRequests: string[] = []
     const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))
@@ -299,5 +349,52 @@ describe('ACP permission broker', () => {
       createToolPermissionRequest({ sessionId: 'session-2', providerToolName: 'Write' })
     )
     expect(emittedRequests).toHaveLength(2)
+  })
+
+  it('lists per-session grants with display labels and revokes them individually', async () => {
+    const emittedRequests: string[] = []
+    const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))
+
+    const write = broker.requestPermission(
+      createToolPermissionRequest({ title: 'Write report.md', providerToolName: 'Write' })
+    )
+    broker.respond({ requestId: emittedRequests[0], optionId: 'allow-always' })
+    await write
+
+    const bash = broker.requestPermission(
+      createToolPermissionRequest({ title: 'python a.py', providerToolName: 'Bash' })
+    )
+    broker.respond({ requestId: emittedRequests[1], optionId: 'allow-always' })
+    await bash
+
+    const notebook = broker.requestPermission(
+      createNotebookPermissionRequest('session-1', 'mcp__open-science-notebook__notebook_execute')
+    )
+    broker.respond({ requestId: emittedRequests[2], optionId: 'allow-always' })
+    await notebook
+
+    expect(broker.listGrants('session-1')).toEqual(
+      expect.arrayContaining([
+        { categoryKey: 'tool:Write', kind: 'tool', label: 'Write' },
+        { categoryKey: 'bash:python a.py', kind: 'shell', label: 'python a.py' },
+        {
+          categoryKey: 'tool:mcp__open-science-notebook__notebook_execute',
+          kind: 'mcp',
+          label: 'mcp__open-science-notebook__notebook_execute'
+        }
+      ])
+    )
+
+    // Revoking one grant removes only it and makes that tool prompt again.
+    broker.revokeGrant('session-1', 'tool:Write')
+    expect(broker.listGrants('session-1').map((grant) => grant.categoryKey).sort()).toEqual(
+      ['bash:python a.py', 'tool:mcp__open-science-notebook__notebook_execute'].sort()
+    )
+
+    const countBeforeWrite = emittedRequests.length
+    broker.requestPermission(
+      createToolPermissionRequest({ title: 'Write notes.md', providerToolName: 'Write' })
+    )
+    expect(emittedRequests).toHaveLength(countBeforeWrite + 1)
   })
 })

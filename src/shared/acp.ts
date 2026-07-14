@@ -69,6 +69,14 @@ export type AcpPermissionRequest = {
   raw: unknown
 }
 
+// A tool category the user chose to always-allow for the rest of a session. `categoryKey` is the
+// broker's opaque grouping key; `label`/`kind` are the display projection shown in the composer.
+export type AcpPermissionGrant = {
+  categoryKey: string
+  label: string
+  kind: 'shell' | 'mcp' | 'tool'
+}
+
 export type AcpStateSnapshot = {
   status: AcpConnectionStatus
   cwd: string
@@ -78,6 +86,8 @@ export type AcpStateSnapshot = {
   events: AcpRuntimeEvent[]
   pendingPermissions: AcpPermissionRequest[]
   permissionProfiles: Record<string, SessionPermissionProfileState>
+  // Per-session always-allow grants (from per-request "Always"), so the UI can show and revoke them.
+  permissionGrants: Record<string, AcpPermissionGrant[]>
   promptInFlight: boolean
   promptInFlightSessionIds: string[]
 }
@@ -130,4 +140,9 @@ export type AcpPermissionResponse = {
   requestId: string
   optionId?: string
   cancelled?: boolean
+}
+
+export type AcpRevokePermissionGrantRequest = {
+  sessionId: string
+  categoryKey: string
 }
