@@ -26,10 +26,12 @@ const configDenyRules = (configDir: string): string[] => {
   return GUARDED_FILE_TOOLS.map((tool) => `${tool}(//${abs}/**)`)
 }
 
-// Writes/merges `<configDir>/settings.json` so its permissions.deny includes the guard rules, keeping
-// any settings and deny entries already present. Loaded because the agent runs with settingSources:
-// ['user'], i.e. this app-owned config dir is the user scope.
-const writeGuardSettings = async (configDir: string): Promise<void> => {
+// Writes/merges `<configDir>/settings.json` for the app-owned user scope (the agent runs with
+// settingSources: ['user']). Two things are enforced here, merge-preserving any settings already
+// present: the permissions.deny guard rules, and disableBundledSkills so Claude Code's own bundled
+// skills/workflows (dataviz, deep-research, …) never leak in — the app injects its OWN curated skill
+// set into `<configDir>/skills`, which disableBundledSkills leaves untouched.
+const writeAppSettings = async (configDir: string): Promise<void> => {
   const settingsPath = join(configDir, 'settings.json')
 
   let settings: Record<string, unknown> = {}
@@ -48,6 +50,7 @@ const writeGuardSettings = async (configDir: string): Promise<void> => {
   const deny = [...new Set([...existingDeny, ...configDenyRules(configDir)])]
 
   settings.permissions = { ...permissions, deny }
+  settings.disableBundledSkills = true
   await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
 }
 
@@ -70,7 +73,7 @@ const provisionAppClaudeConfigDir = async (
     APP_ASSET_SUBDIRS.map((sub) => mkdir(join(configDir, sub), { recursive: true }))
   )
 
-  await writeGuardSettings(configDir)
+  await writeAppSettings(configDir)
 
   const materializer = options.materializer ?? new ClaudeCodeSkillMaterializer()
   const skills = options.skills ?? (await new SkillRegistry().list())

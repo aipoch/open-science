@@ -87,6 +87,16 @@ describe('provisionAppClaudeConfigDir', () => {
     }
   })
 
+  it('disables Claude Code bundled skills in the app user scope', async () => {
+    root = await mkdtemp(join(tmpdir(), 'os-claude-config-'))
+    const configDir = join(root, 'claude')
+
+    await provisionAppClaudeConfigDir(configDir)
+
+    const settings = JSON.parse(await readFile(join(configDir, 'settings.json'), 'utf8'))
+    expect(settings.disableBundledSkills).toBe(true)
+  })
+
   it('merges guard deny rules into a pre-existing settings.json without dropping entries', async () => {
     root = await mkdtemp(join(tmpdir(), 'os-claude-config-'))
     const configDir = join(root, 'claude')
@@ -101,6 +111,7 @@ describe('provisionAppClaudeConfigDir', () => {
 
     const settings = JSON.parse(await readFile(join(configDir, 'settings.json'), 'utf8'))
     expect(settings.model).toBe('keep-me')
+    expect(settings.disableBundledSkills).toBe(true)
     expect(settings.permissions.deny).toContain('Bash(rm:*)')
     for (const rule of configDenyRules(configDir)) {
       expect(settings.permissions.deny).toContain(rule)
