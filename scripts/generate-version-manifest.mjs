@@ -81,6 +81,55 @@ export function buildManifest({ dir, version, notes, releaseDate, cdnBase, prefi
   return { version, releaseDate, notes, downloads }
 }
 
+// --- Release-notes condensation -----------------------------------------------------------------
+
+// H2 sections kept in the in-app "what's new" notes, matched case-insensitively by heading text with
+// emoji/punctuation stripped. Everything else in a release body (install steps, maturity notes,
+// acknowledgements, the auto-generated "What's Changed"/contributors) is dropped.
+const NOTE_SECTIONS = new Set(['highlights', 'new features', 'improvements', 'bug fixes'])
+
+// Normalize a `## …` heading to its comparable label: drop the leading #'s and any emoji/punctuation,
+// collapse whitespace, lowercase. `## 🐛 Bug Fixes` -> `bug fixes`.
+function headingLabel(line) {
+  return line
+    .replace(/^#+\s*/, '')
+    .replace(/[^\p{L}\p{N} ]+/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+}
+
+// Condense a full GitHub release body into concise "what's new" notes: keep only the allowlisted H2
+// sections, in document order. Falls back to the preamble (text before the first H2, minus the H1
+// title) when no allowlisted section is present, and to '' for an empty body.
+export function extractHighlights(body) {
+  if (!body || !body.trim()) return ''
+
+  const sections = []
+  let current = { label: null, lines: [] } // label null = preamble before the first H2
+  for (const line of body.split('\n')) {
+    if (/^##\s+/.test(line)) {
+      sections.push(current)
+      current = { label: headingLabel(line), lines: [line] }
+    } else {
+      current.lines.push(line)
+    }
+  }
+  sections.push(current)
+
+  const kept = sections
+    .filter((section) => section.label && NOTE_SECTIONS.has(section.label))
+    .map((section) => section.lines.join('\n').trim())
+    .filter(Boolean)
+  if (kept.length > 0) return kept.join('\n\n')
+
+  // Fallback: the preamble before the first H2, without the H1 title line.
+  return (sections[0]?.lines ?? [])
+    .filter((line) => !/^#\s+/.test(line))
+    .join('\n')
+    .trim()
+}
+
 // CLI entry: only runs when the file is executed directly, not when imported by the test.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const dir = process.argv[2] || process.env.DIST_DIR || 'dist-assets'
@@ -97,7 +146,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const manifest = buildManifest({
     dir,
     version,
-    notes: process.env.NOTES ?? '',
+    notes: extractHighlights(process.env.NOTES ?? ''),
     releaseDate: process.env.RELEASE_DATE ?? '',
     cdnBase,
     prefix
