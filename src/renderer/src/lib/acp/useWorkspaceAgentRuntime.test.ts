@@ -255,6 +255,7 @@ describe('workspace agent message sending', () => {
       'transport-session-1',
       'Help me inspect this notebook',
       [],
+      undefined,
       undefined
     )
   })
@@ -318,6 +319,7 @@ describe('workspace agent message sending', () => {
       'transport-session-1',
       '',
       [finalizedAttachment],
+      undefined,
       undefined
     )
   })
@@ -364,6 +366,7 @@ describe('workspace agent message sending', () => {
       'transport-session-1',
       'Try again',
       [],
+      undefined,
       undefined
     )
     expect(useSessionStore.getState().selectedSessionId).toBe('transport-session-1')

@@ -24,7 +24,13 @@ import { useSessionStore } from '@/stores/session-store'
 import type { StageUploadFile, UploadedAttachment } from '../../../../shared/uploads'
 
 import { planComposerAttachmentIntake } from './composer-attachment-intake'
-import { docIsEmpty, docToText, emptyDoc, type ComposerDoc } from './composer/composer-doc'
+import {
+  docIsEmpty,
+  docToArtifactRefs,
+  docToText,
+  emptyDoc,
+  type ComposerDoc
+} from './composer/composer-doc'
 import { ConversationPanel } from './ConversationPanel'
 import { DeleteSessionDialog } from './DeleteSessionDialog'
 import { PreviewPanel } from './PreviewPanel'
@@ -472,6 +478,10 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
       sessionId: activeSession?.id,
       text: docToText(doc),
       attachments: attachmentsForSend,
+      // Existing files the user referenced via `@`; the runtime attaches each as a content block.
+      referencedArtifacts: docToArtifactRefs(doc),
+      // Persist the draft's structural segments so the sent bubble renders styled mention pills.
+      parts: doc.nodes,
       cwd: activeSession?.cwd,
       projectId: activeSession?.projectId ?? scopedProjectId,
       projectName: activeSession?.projectId ?? scopedProjectId,

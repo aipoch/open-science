@@ -289,7 +289,7 @@ const ConversationPanel = ({
                           onSubmit={handleSubmit}
                           onPaste={handleMessageDraftPaste}
                           disabled={!canEditDraft}
-                          placeholder="Ask anything — / for skills"
+                          placeholder="Ask anything — / for skills, @ for artifacts"
                           ariaLabel="Ask anything"
                         />
                       </div>

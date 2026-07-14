@@ -11,6 +11,8 @@ import {
   type SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
 import type { UploadedAttachment } from '../../../../shared/uploads'
+import type { ArtifactReference } from '../../../../shared/artifacts'
+import type { MessagePart } from '../../../../shared/session-persistence'
 import { useSessionStore } from '../../stores/session-store'
 import { useAcpRuntime } from './useAcpRuntime'
 import { applyWorkspaceRuntimeEvent, syncWorkspacePermissionState } from './workspace-events'
@@ -27,6 +29,10 @@ type SendWorkspaceMessageInput = {
   permissionProfile?: PermissionProfileId
   // Skills the user picked in the composer; force-loaded and nudged for this turn only.
   forcedSkillIds?: string[]
+  // Existing files referenced via `@` mentions; attached to the prompt as content blocks.
+  referencedArtifacts?: ArtifactReference[]
+  // Structured mention segments of the draft, persisted so the sent bubble renders styled pills.
+  parts?: MessagePart[]
 }
 
 type SendWorkspaceMessageResult = {
@@ -175,7 +181,8 @@ const startPendingSessionPrompt = (
   cwd: string | undefined,
   projectName: string | undefined,
   permissionProfile: PermissionProfileId,
-  forcedSkillIds: string[] | undefined
+  forcedSkillIds: string[] | undefined,
+  referencedArtifacts: ArtifactReference[] | undefined
 ): void => {
   void (async () => {
     let createdSession
@@ -219,7 +226,7 @@ const startPendingSessionPrompt = (
     }
 
     void runtime
-      .sendPrompt(runtimeSessionId, content, promptAttachments, forcedSkillIds)
+      .sendPrompt(runtimeSessionId, content, promptAttachments, forcedSkillIds, referencedArtifacts)
       .then((snapshot) => {
         if (!snapshot) {
           useSessionStore.getState().failRun(runtimeSessionId, 'Agent run failed')
@@ -244,7 +251,9 @@ const sendWorkspaceMessage = async (
     projectId,
     projectName,
     permissionProfile,
-    forcedSkillIds
+    forcedSkillIds,
+    referencedArtifacts,
+    parts
   }: SendWorkspaceMessageInput
 ): Promise<SendWorkspaceMessageResult | undefined> => {
   const content = text.trim()
@@ -273,6 +282,7 @@ const sendWorkspaceMessage = async (
         sessionId: currentSession.id,
         content,
         attachments,
+        parts,
         cwd: retryCwd,
         projectId: projectId ?? currentSession.projectId
       })
@@ -287,7 +297,8 @@ const sendWorkspaceMessage = async (
         retryCwd,
         sessionProjectName,
         currentSession.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-        forcedSkillIds
+        forcedSkillIds,
+        referencedArtifacts
       )
       return appended
     }
@@ -310,6 +321,7 @@ const sendWorkspaceMessage = async (
       sessionId: targetSessionId,
       content,
       attachments,
+      parts,
       cwd: targetCwd,
       projectId: projectId ?? currentSession?.projectId
     })
@@ -350,7 +362,7 @@ const sendWorkspaceMessage = async (
 
     // The hook returns after local state is updated; event listeners handle the streamed result.
     void runtime
-      .sendPrompt(targetSessionId, content, promptAttachments, forcedSkillIds)
+      .sendPrompt(targetSessionId, content, promptAttachments, forcedSkillIds, referencedArtifacts)
       .then((snapshot) => {
         if (!snapshot) {
           useSessionStore.getState().failRun(targetSessionId, 'Agent run failed')
@@ -368,6 +380,7 @@ const sendWorkspaceMessage = async (
   const pending = useSessionStore.getState().appendPendingUserMessage({
     content,
     attachments,
+    parts,
     cwd: targetCwd ?? runtime.state.cwd,
     projectId,
     permissionProfile
@@ -384,7 +397,8 @@ const sendWorkspaceMessage = async (
     targetCwd ?? runtime.state.cwd,
     projectName,
     permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-    forcedSkillIds
+    forcedSkillIds,
+    referencedArtifacts
   )
 
   return pending
