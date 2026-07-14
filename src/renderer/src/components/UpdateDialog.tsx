@@ -2,6 +2,7 @@ import { Download, ExternalLink, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
+import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { useUpdateStore } from '@/stores/update-store'
 import { APP } from '../../../shared/app-config'
 
@@ -30,7 +31,7 @@ const UpdateDialog = (): React.JSX.Element | null => {
     >
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/50" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-[60] w-[min(440px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5 text-foreground shadow-dialog">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-[60] w-[min(560px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5 text-foreground shadow-dialog">
           <div className="flex items-start justify-between gap-3">
             <div>
               <Dialog.Title className="text-base font-semibold">Update available</Dialog.Title>
@@ -49,9 +50,9 @@ const UpdateDialog = (): React.JSX.Element | null => {
           {status.notes ? (
             <div className="mt-3">
               <p className="mb-1 text-xs font-medium text-muted-foreground">What&apos;s new</p>
-              <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2 text-xs text-foreground">
-                {status.notes}
-              </pre>
+              <div className="max-h-96 overflow-auto rounded-lg bg-muted px-3 py-2">
+                <AgentMarkdown content={status.notes} />
+              </div>
               <ExternalTextLink href={releaseUrl} className="mt-2 text-xs">
                 View full release notes on GitHub
               </ExternalTextLink>

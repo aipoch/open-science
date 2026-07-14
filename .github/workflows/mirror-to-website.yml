@@ -50,7 +50,10 @@ jobs:
           node-version: 20
 
       # Build version.json from the downloaded files. Missing platforms warn (not fail) inside the
-      # script, so a partial release still yields a usable manifest.
+      # script, so a partial release still yields a usable manifest. Notes/date are pulled from the
+      # release itself (via gh), not the event payload, so a manual workflow_dispatch backfill gets the
+      # real body/date too — not just the release-published event. The script condenses the body to the
+      # curated highlights sections.
       - name: Generate version.json
         env:
           DIST_DIR: dist-assets
@@ -58,9 +61,13 @@ jobs:
           VERSION: ${{ steps.ref.outputs.version }}
           CDN_BASE_URL: ${{ vars.CDN_BASE_URL }}
           S3_PREFIX: ${{ vars.S3_PREFIX }}
-          NOTES: ${{ github.event.release.body }}
-          RELEASE_DATE: ${{ github.event.release.published_at }}
-        run: node scripts/generate-version-manifest.mjs
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ref.outputs.tag }}
+        run: |
+          NOTES="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
+          RELEASE_DATE="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json publishedAt --jq .publishedAt)"
+          export NOTES RELEASE_DATE
+          node scripts/generate-version-manifest.mjs
 
       # Credentials + region for aws-cli. The region alone lets aws-cli resolve the correct AWS S3
       # endpoint on its own — do NOT pass --endpoint-url: a bucket/website-style endpoint there makes

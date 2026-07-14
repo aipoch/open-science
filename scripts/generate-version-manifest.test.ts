@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { buildManifest, parseSha256Sums } from './generate-version-manifest.mjs'
+import { buildManifest, extractHighlights, parseSha256Sums } from './generate-version-manifest.mjs'
 
 const VERSION = '0.1.2'
 const CDN = 'https://cdn.example.com'
@@ -54,6 +54,72 @@ describe('parseSha256Sums', () => {
     const map = parseSha256Sums(`${'c'.repeat(64)} *app.AppImage\nnot a checksum line\n`)
     expect(map['app.AppImage']).toBe('c'.repeat(64))
     expect(Object.keys(map)).toHaveLength(1)
+  })
+})
+
+describe('extractHighlights', () => {
+  const body = [
+    '# Open Science v0.2.0',
+    '',
+    '> one-line tagline',
+    '',
+    'Intro paragraph.',
+    '',
+    '## ✨ Highlights',
+    '',
+    '- Point one (#1)',
+    '- Point two',
+    '',
+    '## 🚀 New Features',
+    '',
+    '- Feature A',
+    '',
+    '## 🔧 Improvements',
+    '',
+    '- Improvement A',
+    '',
+    '## 🐛 Bug Fixes',
+    '',
+    '- Fix A',
+    '',
+    '## 📦 Install',
+    '',
+    'Download the build for your platform.',
+    '',
+    "## What's Changed",
+    '',
+    '- chore: bump deps'
+  ].join('\n')
+
+  it('keeps only the allowlisted sections, in document order', () => {
+    const notes = extractHighlights(body)
+
+    expect(notes).toContain('## ✨ Highlights')
+    expect(notes).toContain('## 🚀 New Features')
+    expect(notes).toContain('## 🔧 Improvements')
+    expect(notes).toContain('## 🐛 Bug Fixes')
+    // Dropped sections and their content.
+    expect(notes).not.toContain('## 📦 Install')
+    expect(notes).not.toContain('Download the build')
+    expect(notes).not.toContain("What's Changed")
+    expect(notes).not.toContain('bump deps')
+    // Order preserved.
+    expect(notes.indexOf('Highlights')).toBeLessThan(notes.indexOf('Bug Fixes'))
+  })
+
+  it('returns an empty string for an empty or blank body', () => {
+    expect(extractHighlights('')).toBe('')
+    expect(extractHighlights('   \n  \n')).toBe('')
+    expect(extractHighlights(undefined)).toBe('')
+  })
+
+  it('falls back to the preamble (minus the H1 title) when no allowlisted section exists', () => {
+    const plain = '# Title\n\n> tagline\n\nSome intro without standard sections.'
+    const notes = extractHighlights(plain)
+
+    expect(notes).not.toContain('# Title')
+    expect(notes).toContain('tagline')
+    expect(notes).toContain('Some intro without standard sections.')
   })
 })
 

@@ -6,6 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useUpdateStore } from '@/stores/update-store'
 import { UpdateDialog } from './UpdateDialog'
 
+// Markdown rendering is covered by AgentMarkdown's own tests; stub it to a plain passthrough so this
+// render test stays deterministic and independent of the streamdown pipeline.
+vi.mock('@/components/streamdown/AgentMarkdown', () => ({
+  AgentMarkdown: ({ content }: { content: string }) => <div data-slot="markdown">{content}</div>
+}))
+
 let container: HTMLDivElement
 let root: Root
 
