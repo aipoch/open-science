@@ -71,6 +71,7 @@ export const STRUCTURES_TOOLS: ToolDescriptor[] = [
     required: ['pdb_id'],
     returns:
       '`{ "pdb_id": str, "title": str, "method": str, "resolution": float }` — a single PDB entry; `method` is the first experiment method and `resolution` is the first value of resolution_combined in Angstroms. Fields are undefined when absent from the RCSB record.',
+    example: 'result = host.mcp("structures", "pdb_get_entry", {"pdb_id": "1TUP"})',
     url: (a) => `${PDB_DATA}/entry/${encodeURIComponent(String(a.pdb_id).trim().toUpperCase())}`,
     parse: (raw) => {
       const entry = raw as PdbEntry
@@ -95,6 +96,7 @@ export const STRUCTURES_TOOLS: ToolDescriptor[] = [
     required: ['uniprot_accession'],
     returns:
       '`{ "uniprot": str, "model_url": str, "cif_url": str, "mean_plddt": float }` — the first AlphaFold model for the accession; `mean_plddt` is the global confidence score (0-100). All fields undefined when no prediction exists.',
+    example: 'result = host.mcp("structures", "alphafold_get", {"uniprot_accession": "P04637"})',
     url: (a) => `${ALPHAFOLD}/${encodeURIComponent(String(a.uniprot_accession).trim())}`,
     parse: (raw) => {
       const model = ((raw as AlphaFoldModel[]) ?? [])[0] ?? {}
@@ -123,6 +125,8 @@ export const STRUCTURES_TOOLS: ToolDescriptor[] = [
     required: ['query'],
     returns:
       '`{ "query": str, "total_elements": int, "returned": int, "interactions": [ { "interactor_a": str, "interactor_b": str, "molecule_a": str, "molecule_b": str, "interaction_type": str, "interaction_type_mi": str, "detection_method": str, "detection_method_mi": str, "mi_score": float, "pubmed_id": str } ] }` — up to `limit` interactions (default 25); `total_elements` is IntAct\'s full match count, usually larger than `returned`. `interactions` is `[]` when nothing matches.',
+    example:
+      'result = host.mcp("structures", "intact_interactions", {"query": "TP53", "limit": 25})',
     run: async (ctx, a) => {
       const query = String(a.query)
       const minMiScore = Number(a.min_mi_score ?? 0)

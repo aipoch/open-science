@@ -53,6 +53,7 @@ export const RESEARCH_RESOURCES_TOOLS: ToolDescriptor[] = [
     required: ['query'],
     returns:
       '`{ "total_elements": int, "items": [ { "ab_id": str, "name": str, "vendor": str, "target": str, "clonality": str } ] }` — `ab_id` is an `AB_<id>` RRID. `total_elements` is the full match count; `items` holds one page (default 10) and is `[]` when nothing matches. Anonymous paging past page*size > 500 fails upstream (HTTP 401).',
+    example: 'result = host.mcp("research_resources", "antibody_search", {"query": "TP53"})',
     url: (a) => {
       const page = Number.isFinite(Number(a.page)) ? Math.max(1, Number(a.page)) : 1
       const size = Number.isFinite(Number(a.size)) ? Math.max(1, Number(a.size)) : 10
@@ -79,6 +80,7 @@ export const RESEARCH_RESOURCES_TOOLS: ToolDescriptor[] = [
     required: ['ab_id'],
     returns:
       '`[ { "ab_id": str, "name": str, "vendor": str, "target": str, "clonality": str } ]` — an array because one accession can map to several curated records; `ab_id` is an `AB_<id>` RRID. Empty array when the id has no records.',
+    example: 'result = host.mcp("research_resources", "antibody_get", {"ab_id": "AB_3717446"})',
     url: (a) => `${BASE}/antibodies/${parseAbId(a.ab_id)}`,
     parse: (raw) => (raw as AntibodyRecord[]).map(compactAntibody)
   }

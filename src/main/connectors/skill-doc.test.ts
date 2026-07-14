@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { renderSkillDoc } from './skill-doc'
+import { renderSkillDoc, renderCustomSkillDoc } from './skill-doc'
 
 describe('renderSkillDoc', () => {
   it('renders frontmatter, conventions, and each tool', () => {
@@ -20,13 +20,53 @@ describe('renderSkillDoc', () => {
   it('throws for an unknown connector', () => {
     expect(() => renderSkillDoc('nope')).toThrow()
   })
-  it('renders a concrete, copyable dict example built from the tool schema', () => {
-    // The example mirrors the JSON Schema shown above it: required fields plus any defaulted field,
-    // passed as a dict, assigned to a variable to demonstrate the synchronous return.
+  it('renders a tool-authored example as a single realistic call, with no per-tool prose', () => {
+    // The example carries only realistic args (better than schema placeholders). General guidance
+    // (reuse across cells, return shape) lives once in the shared conventions template — it must NOT
+    // be duplicated into each tool's example.
     const md = renderSkillDoc('pubmed')
-    expect(md).toContain(
-      'result = host.mcp("pubmed", "pubmed_search", {"term": "...", "retmax": 5})'
+    const block = md.slice(md.indexOf('### pubmed_search'), md.indexOf('### pubmed_fetch'))
+    const py = block
+      .slice(block.indexOf('```python') + '```python'.length, block.lastIndexOf('```'))
+      .trim()
+    expect(py).toBe(
+      'result = host.mcp("pubmed", "pubmed_search", {"term": "tumor progression", "retmax": 10})'
     )
+    expect(py).not.toContain('#') // no per-tool comment/prose
+  })
+  it('does not hardcode a processing/display method in the doc', () => {
+    // Requirement: the skill doc states facts (shape lives in Returns, result is a Python value) but
+    // never prescribes how to handle it — so no `print(...)` or `json.dumps(...)` recipes.
+    const md = renderSkillDoc('pubmed')
+    expect(md).not.toContain('print(')
+    expect(md).not.toContain('json.dumps')
+    expect(md).not.toContain('json.loads')
+  })
+  it('falls back to a schema-built call example for tools without an authored example', () => {
+    // Custom MCP servers ship no `example`, so the doc must still render a concrete, copyable call.
+    const md = renderCustomSkillDoc(
+      { name: 'acme', description: 'Use when you need acme tools.' },
+      [
+        {
+          name: 'do_thing',
+          inputSchema: {
+            type: 'object',
+            properties: { q: { type: 'string' } },
+            required: ['q']
+          }
+        }
+      ]
+    )
+    expect(md).toContain('result = host.mcp("acme", "do_thing", {"q": "..."})')
+  })
+  it('renders a no-arg tool without a third argument (never a literal ...)', () => {
+    // A literal `...` as the args positional reaches the bridge as Ellipsis and raises; a no-arg tool
+    // must render as host.mcp(server, method) so the example is copy-runnable.
+    const md = renderCustomSkillDoc({ name: 'acme' }, [
+      { name: 'ping', inputSchema: { type: 'object', properties: {} } }
+    ])
+    expect(md).toContain('result = host.mcp("acme", "ping")')
+    expect(md).not.toContain('"ping", ...)') // never a literal Ellipsis as the args positional
   })
   it('frames the calling convention positively (assign the sync dict result)', () => {
     const md = renderSkillDoc('pubmed')
@@ -37,5 +77,24 @@ describe('renderSkillDoc', () => {
     expect(md).toContain('**Returns:**')
     // A return-shape field absent from the input schema — proves the Returns block is rendered.
     expect(md).toContain('"pmid"')
+  })
+  it('tells the agent the kernel persists so it reuses the result instead of re-calling', () => {
+    // Root cause of the observed double host.mcp call: the doc never said the kernel is a
+    // persistent shared session, so the agent re-issued the (rate-limited) call in a second cell
+    // instead of reusing the variable it had already assigned.
+    const md = renderSkillDoc('pubmed')
+    expect(md).toContain('persistent')
+    expect(md).toContain('native Python')
+    expect(md).toMatch(/reuse it instead of running the call again/)
+    expect(md).toMatch(/never re-(issue|call)/i)
+  })
+  it('gives custom MCP servers the same reuse guidance', () => {
+    // renderCustomSkillDoc shares the CONVENTIONS block, so the fix must reach custom servers too.
+    const md = renderCustomSkillDoc(
+      { name: 'acme', description: 'Use when you need acme tools.' },
+      [{ name: 'do_thing', inputSchema: { type: 'object', properties: { q: { type: 'string' } } } }]
+    )
+    expect(md).toContain('persistent')
+    expect(md).toMatch(/reuse it instead of running the call again/)
   })
 })

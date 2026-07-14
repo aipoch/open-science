@@ -17,6 +17,11 @@ export type ToolDescriptor = {
   // Human-readable shape of the returned value, shown as a "Returns:" block in the skill doc so an
   // agent knows the result structure without running a probe cell. Free-form (prose or a shape sketch).
   returns?: string
+  // A concrete, copy-runnable `host.mcp(...)` call for the skill doc, using realistic argument values
+  // (e.g. real PMIDs) instead of the schema-derived placeholders. Just the call — general guidance
+  // (result is reusable across cells, shape lives in Returns) belongs in the shared conventions
+  // template, not repeated here. When omitted, the doc renders a bare call built from `input`.
+  example?: string
   required?: string[]
   format?: 'json' | 'text'
   url?: (args: Record<string, unknown>) => string

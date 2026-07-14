@@ -62,6 +62,8 @@ export const OPENALEX_TOOLS: ToolDescriptor[] = [
     required: ['query'],
     returns:
       '`[ { "id": str, "title": str, "publication_year": int, "doi": str, "cited_by_count": int, "authors": [ str ] } ]` — one entry per hit, up to `per_page` (default 5); `[]` when nothing matches. `authors` is capped at the first 5 names; `id` is the short OpenAlex W-id and any field may be null when absent upstream.',
+    example:
+      'result = host.mcp("openalex", "openalex_search_works", {"query": "open access", "per_page": 5})',
     url: (a) =>
       `${WORKS}?search=${encodeURIComponent(String(a.query))}&per_page=${Number(a.per_page ?? 5)}`,
     parse: (raw) => ((raw as OpenAlexWorksResponse).results ?? []).map(compactWork)
@@ -79,6 +81,7 @@ export const OPENALEX_TOOLS: ToolDescriptor[] = [
     required: ['id'],
     returns:
       '`{ "id": str, "title": str, "publication_year": int, "doi": str, "cited_by_count": int, "authors": [ str ] }` — one work; `authors` is capped at the first 5 names and `id` is the short OpenAlex W-id. Any field may be null when absent upstream.',
+    example: 'result = host.mcp("openalex", "openalex_get_work", {"id": "W2741809807"})',
     url: (a) => `${WORKS}/${encodeURIComponent(normalizeWorkId(String(a.id)))}`,
     parse: (raw) => compactWork(raw as OpenAlexWork)
   }

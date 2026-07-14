@@ -271,6 +271,7 @@ export const ZINC_TOOLS: ToolDescriptor[] = [
     required: ['zinc_ids'],
     returns:
       '`{ "query": { "zinc_ids": [str] }, "total_available": int, "returned_count": int, "truncated": bool, "records": [ { "zinc_id": str, "smiles": str, "tranche_name": str, "catalogs": any, "source": str } ] }` — records capped at `max_results` (default 50, cap 500); `truncated` is true when more were available. `source` is "zinc22"/"zinc20"; `records` is `[]` when no ids resolve.',
+    example: 'result = host.mcp("zinc", "zinc_search_by_id", {"zinc_ids": ["ZINC000000000012"]})',
     run: async (_ctx, a) => {
       const ids = normalizeZincIds(a.zinc_ids)
       const cap = clampMaxResults(a.max_results)

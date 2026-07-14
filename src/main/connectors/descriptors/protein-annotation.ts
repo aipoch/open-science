@@ -26,6 +26,8 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
     required: ['gene'],
     returns:
       '`[ { "partner": str, "score": float } ]` — up to `limit` partners (default 10) for the query gene, ranked by STRING combined score (0–1); `[]` when the gene is unknown or has no partners.',
+    example:
+      'result = host.mcp("protein_annotation", "string_interaction_partners", {"gene": "TP53", "limit": 10})',
     url: (a) => {
       const limit = typeof a.limit === 'number' ? a.limit : 10
       return `${STRING_BASE}/interaction_partners?identifiers=${encodeURIComponent(String(a.gene))}&species=${HUMAN_TAXON_ID}&limit=${limit}`
@@ -50,6 +52,8 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
     required: ['genes'],
     returns:
       '`[ { "a": str, "b": str, "score": float } ]` — one entry per interaction edge among the input genes, `score` is the STRING combined score (0–1); `[]` when no edges are found. Only pairs with an interaction are returned, not every gene pair.',
+    example:
+      'result = host.mcp("protein_annotation", "string_network", {"genes": ["TP53", "MDM2"]})',
     url: (a) => {
       const genes = a.genes as string[]
       return `${STRING_BASE}/network?identifiers=${encodeURIComponent(genes.join(','))}&species=${HUMAN_TAXON_ID}`

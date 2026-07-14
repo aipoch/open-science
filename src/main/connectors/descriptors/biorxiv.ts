@@ -51,6 +51,7 @@ export const BIORXIV_TOOLS: ToolDescriptor[] = [
     required: ['doi'],
     returns:
       '`[ { "doi": str, "title": str, "authors": str, "date": str, "category": str, "published": str } ]` — array of matching preprint versions; `published` is "NA" until linked to a published journal article. `[]` when the DOI is unknown.',
+    example: 'result = host.mcp("biorxiv", "biorxiv_get_details", {"doi": "10.1101/339747"})',
     url: (a) => `${BASE}/details/${normalizeServer(a.server)}/${normalizeDoi(String(a.doi))}`,
     parse: (raw) => summarize((raw as BiorxivResponse).collection ?? [])
   },
@@ -73,6 +74,8 @@ export const BIORXIV_TOOLS: ToolDescriptor[] = [
     required: ['from', 'to'],
     returns:
       '`{ "total": str, "results": [ { "doi": str, "title": str, "authors": str, "date": str, "category": str, "published": str } ] }` — one page of up to 30 preprints; `total` (passthrough string count) is the full interval total. `published` is "NA" until linked to a journal article.',
+    example:
+      'result = host.mcp("biorxiv", "biorxiv_list_interval", {"from": "2024-01-01", "to": "2024-01-02"})',
     url: (a) => {
       const cursor = Number.isFinite(Number(a.cursor)) ? Math.max(0, Number(a.cursor)) : 0
       const path = `${BASE}/details/${normalizeServer(a.server)}/${encodeURIComponent(String(a.from))}/${encodeURIComponent(String(a.to))}/${cursor}`

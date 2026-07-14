@@ -36,6 +36,7 @@ export const VARIANTS_TOOLS: ToolDescriptor[] = [
     required: ['term'],
     returns:
       '`{ "term": str, "count": int, "records": [ { "uid": str, "title": str, "clinical_significance": str, "gene": str } ] }` — up to `retmax` records (default 5); `count` is the total ClinVar match count, usually larger than the returned list. `records` is `[]` when nothing matches; `clinical_significance` comes from the germline classification and per-record fields may be undefined.',
+    example: 'result = host.mcp("variants", "clinvar_search", {"term": "BRCA1", "retmax": 5})',
     run: async (ctx, a) => {
       const q = ncbiEtiquette(ctx.credentials)
       const es = (await ctx.fetchJson(
@@ -71,6 +72,7 @@ export const VARIANTS_TOOLS: ToolDescriptor[] = [
     required: ['rsid'],
     returns:
       '`{ "rsid": str, "chr": str, "pos": int, "alleles": str, "gene": str, "clinical_significance": str }` — `rsid` is normalized to `rs<id>`; `alleles` is `ref>alt` derived from the SPDI trail. Any field is undefined when missing upstream (e.g. `alleles`/`pos` absent, no clinical significance).',
+    example: 'result = host.mcp("variants", "dbsnp_get_variant", {"rsid": "rs7412"})',
     run: async (ctx, a) => {
       const q = ncbiEtiquette(ctx.credentials)
       const id = String(a.rsid).trim().replace(/^rs/i, '')

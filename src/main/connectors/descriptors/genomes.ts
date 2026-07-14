@@ -54,6 +54,7 @@ export const GENOMES_TOOLS: ToolDescriptor[] = [
     required: ['symbol'],
     returns:
       '`{ "id": str, "display_name": str, "biotype": str, "seq_region_name": str, "start": int, "end": int, "strand": int }` — single feature; `seq_region_name` is the chromosome, `strand` is 1 or -1. Fields undefined when absent upstream.',
+    example: 'result = host.mcp("genomes", "ensembl_lookup_symbol", {"symbol": "BRCA2"})',
     url: (a) => {
       const species = String(a.species ?? DEFAULT_SPECIES)
       const symbol = String(a.symbol)
@@ -74,6 +75,7 @@ export const GENOMES_TOOLS: ToolDescriptor[] = [
     required: ['id'],
     returns:
       '`{ "id": str, "display_name": str, "biotype": str, "seq_region_name": str, "start": int, "end": int, "strand": int }` — single feature; `seq_region_name` is the chromosome, `strand` is 1 or -1. Fields undefined when absent upstream.',
+    example: 'result = host.mcp("genomes", "ensembl_lookup_id", {"id": "ENSG00000139618"})',
     url: (a) =>
       `${ENSEMBL}/lookup/id/${encodeURIComponent(String(a.id))}?content-type=application/json`,
     parse: parseFeature

@@ -32,8 +32,9 @@ describe('renderCustomSkillDoc', () => {
     expect(md).toContain('search')
     expect(md).toContain('fetch')
     expect(md).toContain('"type": "object"')
-    expect(md).toContain('host.mcp("myserver", "search", ...)')
-    expect(md).toContain('host.mcp("myserver", "fetch", ...)')
+    // No-arg tools render without a third argument (a literal ... would reach the bridge as Ellipsis).
+    expect(md).toContain('host.mcp("myserver", "search")')
+    expect(md).toContain('host.mcp("myserver", "fetch")')
   })
 
   it('uses the server-provided description verbatim when present', () => {

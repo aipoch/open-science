@@ -108,6 +108,7 @@ export const CELLGUIDE_TOOLS: ToolDescriptor[] = [
     required: ['cellType'],
     returns:
       '`{ "id": str, "name": str, "synonyms": [ str ], "ontologyDescription": str, "description": str, "descriptionSource": str, "references": [ ... ], "canonicalMarkerGenes": [ { "symbol": str, "name": str, "tissue": str, "publication": str, "publicationTitle": str } ] }` — returns `{ "error": str }` when the CL id is not found; markers capped at 30; `descriptionSource` is `validated`, `gpt`, or `none` (with `description` empty).',
+    example: 'result = host.mcp("cellguide", "cellguide_cell_type", {"cellType": "CL:0000622"})',
     run: async (ctx, a) => {
       const cellType = String(a.cellType)
       const jsonId = toJsonFormat(cellType)

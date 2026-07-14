@@ -75,6 +75,7 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
     required: ['cids'],
     returns:
       '`[ { "CID": int, "MolecularFormula": str, "MolecularWeight": str, "CanonicalSMILES": str, "IUPACName": str } ]` — passthrough of PubChem `PropertyTable.Properties`, one entry per resolvable CID; unknown CIDs are simply omitted.',
+    example: 'result = host.mcp("chemistry", "pubchem_get_properties", {"cids": [2244]})',
     url: (a) =>
       `${PUBCHEM}/compound/cid/${([] as unknown[]).concat(a.cids as never).join(',')}/property/${PROPS}/JSON`,
     parse: (raw) => (raw as Props).PropertyTable.Properties
@@ -91,6 +92,8 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
     required: ['query'],
     returns:
       '`{ "query": str, "compounds": [ { "CID": int, "MolecularFormula": str, "MolecularWeight": str, "CanonicalSMILES": str, "IUPACName": str } ] }` — up to `max_cids` compounds (default 5); `compounds` is `[]` when the name matches nothing.',
+    example:
+      'result = host.mcp("chemistry", "pubchem_search_compounds", {"query": "caffeine", "max_cids": 5})',
     run: async (ctx, a) => {
       const cidRes = (await ctx.fetchJson(
         `${PUBCHEM}/compound/name/${encodeURIComponent(String(a.query))}/cids/JSON`
@@ -106,6 +109,29 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
     }
   },
   {
+    id: 'pubchem_get_image',
+    connector: 'chemistry',
+    description:
+      "Get the URL of a compound's 2D structure image (PNG) by PubChem CID; returns a URL the caller can download or save as an artifact.",
+    input: {
+      type: 'object',
+      properties: { cid: { type: 'integer' } },
+      required: ['cid']
+    },
+    required: ['cid'],
+    returns:
+      '`{ "cid": int, "format": "png", "url": str }` — a direct URL to the compound\'s 2D structure PNG (e.g. `https://pubchem.ncbi.nlm.nih.gov/image/imgsrv.fcgi?cid=2244&t=l`).',
+    example: 'result = host.mcp("chemistry", "pubchem_get_image", {"cid": 2244})',
+    run: async (_ctx, a) => {
+      const cid = Number(a.cid)
+      return {
+        cid,
+        format: 'png',
+        url: `https://pubchem.ncbi.nlm.nih.gov/image/imgsrv.fcgi?cid=${cid}&t=l`
+      }
+    }
+  },
+  {
     id: 'chebi_get_entity',
     connector: 'chemistry',
     description: 'Look up a ChEBI ontology entity by ID: name, formula, structure, definition.',
@@ -117,6 +143,7 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
     required: ['chebi_id'],
     returns:
       '`{ "chebi_accession": str, "name": str, "definition": str, "formula": str, "charge": str, "mass": str, "smiles": str, "inchi": str, "inchikey": str }` — any field may be null when absent from the ChEBI record (e.g. no structure or definition).',
+    example: 'result = host.mcp("chemistry", "chebi_get_entity", {"chebi_id": "CHEBI:27732"})',
     url: (a) => `${CHEBI_API}/compound/${normalizeChebiId(a.chebi_id)}/`,
     parse: (raw) => {
       const c = raw as ChebiCompound
@@ -145,6 +172,7 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
     required: ['rhea_id'],
     returns:
       '`{ "rhea_id": str, "equation": str, "status": str, "left_side": [ { "compound_accession": str, "name": str } ], "right_side": [ ... ] }` — throws if the id has no match; a participant `name` may be null when the compound has no label.',
+    example: 'result = host.mcp("chemistry", "rhea_get_reaction", {"rhea_id": "10280"})',
     run: async (ctx, a) => {
       const acc = normalizeRheaId(a.rhea_id)
       const query = `${RHEA_PREFIXES}SELECT ?equation ?status ?side ?cacc ?cname WHERE {
@@ -191,6 +219,8 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
     required: ['uniprot'],
     returns:
       '`{ "uniprot": str, "cutoff_nm": int, "n_rows": int, "affinities": [ { "target_name": str, "monomer_id": str, "smiles": str, "affinity_type": str, "affinity": str, "pmid": str, "doi": str } ] }` — `affinity` is a numeric value in nM as a string; `affinities` is `[]` and `n_rows` 0 when no ligand passes the cutoff; `n_rows` equals the returned count.',
+    example:
+      'result = host.mcp("chemistry", "bindingdb_affinities", {"uniprot": "P00533", "cutoff_nm": 100})',
     run: async (ctx, a) => {
       const uniprot = String(a.uniprot).trim().toUpperCase()
       if (!UNIPROT_RE.test(uniprot)) throw new Error(`not a UniProt accession: ${uniprot}`)
