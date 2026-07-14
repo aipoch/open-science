@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef } from 'react'
 
-import type { AcpPermissionRequest, AcpRuntimeEvent } from '../../../../shared/acp'
+import type {
+  AcpPermissionGrant,
+  AcpPermissionRequest,
+  AcpRuntimeEvent
+} from '../../../../shared/acp'
 import {
   DEFAULT_PERMISSION_PROFILE,
   type PermissionProfileId,
@@ -392,11 +396,13 @@ const useWorkspaceAgentRuntime = (): {
   isConnecting: boolean
   pendingPermissions: AcpPermissionRequest[]
   permissionProfiles: Record<string, SessionPermissionProfileState>
+  permissionGrants: Record<string, AcpPermissionGrant[]>
   sendMessage: (input: SendWorkspaceMessageInput) => Promise<SendWorkspaceMessageResult | undefined>
   cancelRun: (sessionId: string) => Promise<void>
   deleteRuntimeSession: (sessionId: string) => Promise<void>
   respondToPermission: (requestId: string, optionId?: string) => Promise<void>
   setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => Promise<boolean>
+  revokePermissionGrant: (sessionId: string, categoryKey: string) => Promise<void>
 } => {
   const runtime = useAcpRuntime()
   const eventProcessor = useRef(createWorkspaceRuntimeEventProcessor())
@@ -477,16 +483,30 @@ const useWorkspaceAgentRuntime = (): {
     [runtime]
   )
 
+  // Revokes one always-allow grant; the returned snapshot refreshes the visible grant list.
+  const revokePermissionGrant = useCallback(
+    async (sessionId: string, categoryKey: string): Promise<void> => {
+      const snapshot = await runtime.revokePermissionGrant(sessionId, categoryKey)
+
+      if (!snapshot) {
+        useSessionStore.getState().failRun(sessionId, 'Permission revoke failed')
+      }
+    },
+    [runtime]
+  )
+
   return {
     actionError: runtime.actionError,
     isConnecting: runtime.isConnecting,
     pendingPermissions: runtime.state.pendingPermissions,
     permissionProfiles: runtime.state.permissionProfiles,
+    permissionGrants: runtime.state.permissionGrants,
     sendMessage,
     cancelRun,
     deleteRuntimeSession,
     respondToPermission,
-    setPermissionProfile
+    setPermissionProfile,
+    revokePermissionGrant
   }
 }
 

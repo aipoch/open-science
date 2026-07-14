@@ -3,6 +3,7 @@ import type {
   AcpPermissionResponse,
   AcpPromptRequest,
   AcpResumeSessionRequest,
+  AcpRevokePermissionGrantRequest,
   AcpSetPermissionProfileRequest,
   AcpStateSnapshot
 } from '../../../../shared/acp'
@@ -17,6 +18,7 @@ const emptyAcpState: AcpStateSnapshot = {
   events: [],
   pendingPermissions: [],
   permissionProfiles: {},
+  permissionGrants: {},
   promptInFlight: false,
   promptInFlightSessionIds: []
 }
@@ -65,6 +67,10 @@ const useAcpRuntime = (): {
   setPermissionProfile: (
     sessionId: string,
     profile: PermissionProfileId
+  ) => Promise<AcpStateSnapshot | undefined>
+  revokePermissionGrant: (
+    sessionId: string,
+    categoryKey: string
   ) => Promise<AcpStateSnapshot | undefined>
 } => {
   const [state, setState] = useState<AcpStateSnapshot>(emptyAcpState)
@@ -243,6 +249,16 @@ const useAcpRuntime = (): {
     [runSnapshotAction]
   )
 
+  // Drops one always-allow grant for a session and applies the returned snapshot.
+  const revokePermissionGrant = useCallback(
+    (sessionId: string, categoryKey: string) => {
+      const request: AcpRevokePermissionGrantRequest = { sessionId, categoryKey }
+
+      return runSnapshotAction(undefined, () => window.api.acp.revokePermissionGrant(request))
+    },
+    [runSnapshotAction]
+  )
+
   return {
     state,
     actionError,
@@ -256,7 +272,8 @@ const useAcpRuntime = (): {
     cancel,
     sendPrompt,
     respondToPermission,
-    setPermissionProfile
+    setPermissionProfile,
+    revokePermissionGrant
   }
 }
 

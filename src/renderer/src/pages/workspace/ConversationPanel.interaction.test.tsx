@@ -52,6 +52,7 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
         pendingPermissions={[]}
         permissionProfile="ask"
         permissionProfileState={undefined}
+        permissionGrants={[]}
         canChangePermissionProfile
         onDraftDocChange={vi.fn()}
         onSendMessage={vi.fn()}
@@ -62,6 +63,8 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
         onTogglePreviewPanel={vi.fn()}
         onRespondToPermission={vi.fn()}
         onPermissionProfileChange={vi.fn()}
+        onRevokePermissionGrant={vi.fn()}
+        onClearPermissionGrants={vi.fn()}
         {...props}
       />
     )

@@ -12,6 +12,7 @@ import type {
   AcpPermissionResponse,
   AcpPromptRequest,
   AcpResumeSessionRequest,
+  AcpRevokePermissionGrantRequest,
   AcpSetPermissionProfileRequest,
   AcpStateSnapshot
 } from '../../shared/acp'
@@ -133,6 +134,10 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntime => {
   )
   ipcMain.handle('acp:set-permission-profile', (_event, request: AcpSetPermissionProfileRequest) =>
     runtime.setPermissionProfile(request)
+  )
+  ipcMain.handle(
+    'acp:revoke-permission-grant',
+    (_event, request: AcpRevokePermissionGrantRequest) => runtime.revokePermissionGrant(request)
   )
 
   return runtime

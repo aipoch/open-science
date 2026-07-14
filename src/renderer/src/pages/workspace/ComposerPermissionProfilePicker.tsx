@@ -2,7 +2,8 @@ import type {
   PermissionProfileId,
   SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
-import { AlertTriangle, Check, ChevronUp, Shield, ShieldCheck, Zap } from 'lucide-react'
+import type { AcpPermissionGrant } from '../../../../shared/acp'
+import { AlertTriangle, Check, ChevronUp, Shield, ShieldAlert, ShieldCheck, X } from 'lucide-react'
 import { useState } from 'react'
 import { AlertDialog } from 'radix-ui'
 
@@ -16,8 +17,11 @@ import {
 type ComposerPermissionProfilePickerProps = {
   value: PermissionProfileId
   state?: SessionPermissionProfileState
+  grants?: AcpPermissionGrant[]
   disabled?: boolean
   onChange: (profile: PermissionProfileId) => void
+  onRevokeGrant?: (categoryKey: string) => void
+  onClearGrants?: () => void
 }
 
 const permissionProfiles: Array<{
@@ -29,33 +33,39 @@ const permissionProfiles: Array<{
   {
     id: 'ask',
     label: 'Ask for approval',
-    description: 'Ask before risky commands, file changes, or network access.',
+    description: 'Ask before file edits, commands, network, and MCP tools.',
     icon: Shield
   },
   {
     id: 'auto',
-    label: 'Approve for me',
-    description: 'Automatically approve only low-risk operations.',
+    label: 'Auto-approve edits',
+    description:
+      'Auto-approve edits to files in the workspace. Still ask before commands, network, and MCP.',
     icon: ShieldCheck
   },
   {
     id: 'full',
     label: 'Full access',
-    description: 'Run without approval prompts in this conversation.',
-    icon: Zap
+    description: 'Run everything without prompts, including commands and network.',
+    icon: ShieldAlert
   }
 ]
 
 const ComposerPermissionProfilePicker = ({
   value,
   state,
+  grants,
   disabled = false,
-  onChange
+  onChange,
+  onRevokeGrant,
+  onClearGrants
 }: ComposerPermissionProfilePickerProps): React.JSX.Element => {
   const [confirmFullAccess, setConfirmFullAccess] = useState(false)
   const selectedProfile = permissionProfiles.find((profile) => profile.id === value)!
   const SelectedIcon = selectedProfile.icon
   const fullAccessUnavailable = state?.fullAccessAvailable === false
+  // Grants only apply while asking for approval; the count pill hints at active always-allows.
+  const hasGrants = value === 'ask' && (grants?.length ?? 0) > 0
 
   const selectProfile = (profile: PermissionProfileId): void => {
     if (profile === value) return
@@ -78,8 +88,23 @@ const ComposerPermissionProfilePicker = ({
             aria-label={`Permission mode: ${selectedProfile.label}`}
           >
             <SelectedIcon className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
-            <span className="max-w-32 truncate">{selectedProfile.label}</span>
-            <ChevronUp className="size-3 shrink-0" strokeWidth={2} aria-hidden="true" />
+            {/* Count pill stays visible even when the label collapses so grants aren't hidden. */}
+            {hasGrants ? (
+              <span
+                className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-bg-300 px-1 text-[10px] font-medium leading-none text-text-100"
+                aria-label={`${grants!.length} always-allowed this session`}
+              >
+                {grants!.length}
+              </span>
+            ) : null}
+            <span className="max-w-32 truncate @max-[28rem]/composer:hidden">
+              {selectedProfile.label}
+            </span>
+            <ChevronUp
+              className="size-3 shrink-0 @max-[28rem]/composer:hidden"
+              strokeWidth={2}
+              aria-hidden="true"
+            />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-80 p-1.5">
@@ -92,11 +117,11 @@ const ComposerPermissionProfilePicker = ({
               <DropdownMenuItem
                 key={profile.id}
                 disabled={isDisabled}
-                className="items-start gap-2.5 px-2.5 py-2"
+                className="items-center gap-2.5 px-2.5 py-2"
                 onSelect={() => selectProfile(profile.id)}
               >
                 <ProfileIcon
-                  className="mt-0.5 size-4 shrink-0 text-text-200"
+                  className="size-4 shrink-0 text-text-200"
                   strokeWidth={2}
                   aria-hidden="true"
                 />
@@ -109,15 +134,66 @@ const ComposerPermissionProfilePicker = ({
                   </span>
                 </span>
                 {isSelected ? (
-                  <Check className="mt-0.5 size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
+                  <Check className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
                 ) : null}
               </DropdownMenuItem>
             )
           })}
           {value === 'auto' && state?.autoReviewStrategy === 'conservative' ? (
             <div className="mx-1 mt-1 rounded-md bg-bg-200 px-2 py-1.5 text-[11px] leading-4 text-text-200">
-              This agent has no native auto mode. Only structured reads, searches, and workspace
-              edits are approved automatically.
+              This agent has no native auto mode. Open Science auto-approves only edits to files
+              inside the workspace — commands, network, and MCP tools still ask.
+            </div>
+          ) : null}
+          {hasGrants ? (
+            <div className="mt-1 border-t border-border-200 pt-1.5">
+              <div className="flex items-center justify-between px-2.5 pb-1">
+                <span className="text-[11px] font-medium uppercase tracking-wide text-text-300">
+                  Always allowed this session
+                </span>
+                {/* One-click clear for a long session; swallow the event so the menu stays open. */}
+                <button
+                  type="button"
+                  className="shrink-0 text-[11px] text-text-300 hover:text-text-000"
+                  aria-label="Clear all always-allow grants"
+                  onClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    onClearGrants?.()
+                  }}
+                >
+                  Clear all
+                </button>
+              </div>
+              {/* Cap the list so a long session of grants scrolls instead of stretching the menu. */}
+              <div className="max-h-40 overflow-y-auto">
+                {grants!.map((grant) => (
+                  <div
+                    key={grant.categoryKey}
+                    className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[11px] text-text-200"
+                  >
+                    <span
+                      className="min-w-0 flex-1 truncate font-mono leading-4"
+                      title={grant.label}
+                    >
+                      {grant.label}
+                    </span>
+                    {/* Revoke must not close the menu or re-select a profile, so swallow the event. */}
+                    <button
+                      type="button"
+                      className="flex size-5 shrink-0 items-center justify-center rounded text-text-300 hover:bg-bg-200 hover:text-text-000"
+                      aria-label={`Revoke always-allow for ${grant.label}`}
+                      onClick={(event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        onRevokeGrant?.(grant.categoryKey)
+                      }}
+                    >
+                      <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
           ) : null}
         </DropdownMenuContent>
@@ -157,7 +233,7 @@ const ComposerPermissionProfilePicker = ({
                   className="rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700"
                   onClick={() => onChange('full')}
                 >
-                  Enable Full access
+                  Enable
                 </button>
               </AlertDialog.Action>
             </div>

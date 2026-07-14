@@ -27,6 +27,7 @@ import type {
   AcpPermissionResponse,
   AcpPromptRequest,
   AcpResumeSessionRequest,
+  AcpRevokePermissionGrantRequest,
   AcpSetPermissionProfileRequest,
   AcpStateSnapshot
 } from '../../shared/acp'
@@ -270,6 +271,9 @@ class AcpRuntime {
       events: [...this.events],
       pendingPermissions: this.permissionBroker.getPendingRequests(),
       permissionProfiles: Object.fromEntries(this.permissionProfiles),
+      permissionGrants: Object.fromEntries(
+        sessionIds.map((sessionId) => [sessionId, this.permissionBroker.listGrants(sessionId)])
+      ),
       promptInFlight: promptInFlightSessionIds.length > 0,
       promptInFlightSessionIds
     }
@@ -624,6 +628,14 @@ class AcpRuntime {
     }
 
     await this.configurePermissionProfile(request.sessionId, session, request.profile)
+    this.emitState()
+
+    return this.getSnapshot()
+  }
+
+  // Revokes a remembered "Always" grant for a session so the next matching tool call prompts again.
+  revokePermissionGrant(request: AcpRevokePermissionGrantRequest): AcpStateSnapshot {
+    this.permissionBroker.revokeGrant(request.sessionId, request.categoryKey)
     this.emitState()
 
     return this.getSnapshot()

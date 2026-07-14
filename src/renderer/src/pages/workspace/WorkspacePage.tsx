@@ -133,11 +133,13 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     actionError,
     pendingPermissions,
     permissionProfiles,
+    permissionGrants,
     sendMessage,
     cancelRun,
     deleteRuntimeSession,
     respondToPermission,
-    setPermissionProfile
+    setPermissionProfile,
+    revokePermissionGrant
   } = useWorkspaceAgentRuntime()
   const [draftDoc, setDraftDoc] = useState<ComposerDoc>(emptyDoc)
   const [newConversationPermissionProfile, setNewConversationPermissionProfile] =
@@ -172,6 +174,8 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const activePermissionProfileState = activeSession
     ? permissionProfiles?.[activeSession.id]
     : undefined
+  // Always-allow grants only exist for a bound session; new conversations have none yet.
+  const activePermissionGrants = activeSession ? (permissionGrants?.[activeSession.id] ?? []) : []
   // Composer controls follow only the selected session and persistence readiness.
   const canEditDraft = isSessionPersistenceReady
   // Sending is disabled while the current session is running or awaiting a decision.
@@ -551,6 +555,28 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     void setPermissionProfile(activeSession.id, profile)
   }
 
+  // Revokes one always-allow grant for the visible session; new conversations have no grants.
+  const revokeActivePermissionGrant = (categoryKey: string): void => {
+    if (!activeSession) return
+
+    void revokePermissionGrant(activeSession.id, categoryKey)
+  }
+
+  // Clears every always-allow grant for the visible session. Revokes are awaited in sequence so the
+  // final snapshot reflects the emptied set rather than a partial one racing back from the broker.
+  const clearActivePermissionGrants = (): void => {
+    if (!activeSession) return
+
+    const sessionId = activeSession.id
+    const categoryKeys = activePermissionGrants.map((grant) => grant.categoryKey)
+
+    void (async () => {
+      for (const categoryKey of categoryKeys) {
+        await revokePermissionGrant(sessionId, categoryKey)
+      }
+    })()
+  }
+
   // Opens the right preview on demand instead of stealing focus when the agent first uses notebook.
   const openNotebookPreview = (notebook: NotebookSessionReference): void => {
     upsertAndActivatePreviewItem(createNotebookPreviewItem(notebook))
@@ -599,6 +625,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
             pendingPermissions={visiblePermissionRequests}
             permissionProfile={activePermissionProfile}
             permissionProfileState={activePermissionProfileState}
+            permissionGrants={activePermissionGrants}
             canChangePermissionProfile={canChangePermissionProfile}
             onDraftDocChange={setDraftDoc}
             onSendMessage={sendCurrentMessage}
@@ -609,6 +636,8 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
             onTogglePreviewPanel={togglePreviewPanel}
             onRespondToPermission={respondToVisiblePermission}
             onPermissionProfileChange={changePermissionProfile}
+            onRevokePermissionGrant={revokeActivePermissionGrant}
+            onClearPermissionGrants={clearActivePermissionGrants}
           />
 
           <ResizableHandle

@@ -9,6 +9,7 @@ import type {
   AcpPermissionResponse,
   AcpPromptRequest,
   AcpResumeSessionRequest,
+  AcpRevokePermissionGrantRequest,
   AcpSetPermissionProfileRequest,
   AcpStateSnapshot
 } from '../shared/acp'
@@ -128,6 +129,7 @@ interface OpenScienceAPI {
     deleteSession(request: AcpDeleteSessionRequest): Promise<AcpStateSnapshot>
     respondToPermission(response: AcpPermissionResponse): Promise<AcpStateSnapshot>
     setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<AcpStateSnapshot>
+    revokePermissionGrant(request: AcpRevokePermissionGrantRequest): Promise<AcpStateSnapshot>
     onState(listener: AcpListener<AcpStateSnapshot>): RemoveListener
     onEvent(listener: AcpListener<AcpRuntimeEvent>): RemoveListener
     onPermissionRequest(listener: AcpListener<AcpPermissionRequest>): RemoveListener
