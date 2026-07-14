@@ -245,6 +245,9 @@ export type ClaudeInstallResult = {
   exitCode?: number
   timedOut?: boolean
   error?: string
+  // The official installer returned a region-block HTML page instead of the script (common in
+  // regions where claude.ai is unavailable); the installer auto-falls-back to npm when it can.
+  regionBlocked?: boolean
 }
 
 // Availability of npm on the host, used to gate the npm source.

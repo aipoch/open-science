@@ -57,7 +57,7 @@ import {
 import { resolveStorageRoot } from '../storage-root'
 import { createDefaultDetectDeps, detectClaude, type ClaudeDetectDeps } from './claude-detect'
 import { provisionAppClaudeConfigDir } from './claude-config-provision'
-import { detectNpmAvailable, runInstall } from './claude-install'
+import { detectNpmAvailable, runInstallWithFallback } from './claude-install'
 import {
   installManagedClaude,
   managedClaudeDir,
@@ -370,7 +370,8 @@ class SettingsService {
 
   // Runs the one-click installer, then re-detects claude so a success immediately unblocks the gate.
   // The app-managed source downloads the native binary itself and persists its exact path; the npm and
-  // official-script sources shell out and rely on PATH re-detection.
+  // official-script sources shell out (with an automatic npm fallback when the official script is
+  // region-blocked) and rely on PATH re-detection.
   async installClaude(
     request: InstallClaudeRequest,
     onLog: (event: ClaudeInstallLogEvent) => void
@@ -395,7 +396,7 @@ class SettingsService {
       return outcome.result
     }
 
-    const result = await runInstall({ source: request.source, installId, onLog })
+    const result = await runInstallWithFallback({ source: request.source, installId, onLog })
 
     if (result.ok) {
       await this.detectClaude()

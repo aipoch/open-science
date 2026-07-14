@@ -1,5 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { execFile } from 'node:child_process'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { promisify } from 'node:util'
 
 import type {
@@ -27,18 +29,24 @@ type InstallSpawnSpec = {
 
 // Builds the exact spawn command/args for a source on a given platform. Windows: npm runs through the
 // shell (npm.cmd), and the official installer is the PowerShell script (install.ps1); other platforms
-// keep npm bare and pipe the shell script through bash. All args are hard-coded constants, so shell
-// use here carries no injection risk.
+// keep npm bare and pipe the shell script through bash. On Unix, npm's global install is redirected to
+// a user-writable `~/.local` prefix so it never needs sudo (the system prefix is often root-owned); the
+// resulting `~/.local/bin/claude` is already probed by detection and on the augmented PATH. Windows'
+// global npm bin (%APPDATA%\npm) is already user-writable, so no prefix override is needed there. All
+// args are hard-coded constants, so shell use here carries no injection risk.
 const getInstallSpawnSpec = (
   source: ClaudeInstallSource,
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = process.platform,
+  homePath: string = homedir()
 ): InstallSpawnSpec => {
   const isWindows = platform === 'win32'
 
   if (source === 'npm') {
     return {
       command: 'npm',
-      args: ['i', '-g', '@anthropic-ai/claude-code'],
+      args: isWindows
+        ? ['i', '-g', '@anthropic-ai/claude-code']
+        : ['i', '-g', '@anthropic-ai/claude-code', '--prefix', join(homePath, '.local')],
       shell: isWindows
     }
   }
@@ -63,6 +71,27 @@ const getInstallSpawnSpec = (
 // Default guard so a hung network install cannot block the wizard forever.
 const DEFAULT_INSTALL_TIMEOUT_MS = 5 * 60 * 1000
 
+// Cap on retained installer output used only for region-block detection (keeps memory bounded on a
+// chatty install while still holding enough tail to spot the HTML signature).
+const REGION_BLOCK_SCAN_LIMIT = 16 * 1024
+
+// Signatures of the official installer being served a region-block HTML page instead of the shell
+// script: `curl … | bash` then pipes HTML into bash, which fails with a syntax error near `<`. Any of
+// these in the output means the download was blocked, not that the machine is misconfigured.
+const REGION_BLOCK_MARKERS = [
+  '<!doctype html',
+  '<html',
+  'app unavailable in region',
+  'syntax error near unexpected token'
+]
+
+// Whether installer output looks like the region-block HTML page (used to trigger the npm fallback).
+const isRegionBlockedOutput = (text: string): boolean => {
+  const haystack = text.toLowerCase()
+
+  return REGION_BLOCK_MARKERS.some((marker) => haystack.includes(marker))
+}
+
 export type RunInstallOptions = {
   source: ClaudeInstallSource
   installId: string
@@ -75,6 +104,12 @@ export type RunInstallOptions = {
     args: string[],
     options?: { shell?: boolean }
   ) => ChildProcessWithoutNullStreams
+}
+
+// Options for the region-block-aware install. Extends the run options with an injectable npm probe so
+// the fallback's availability check can be driven in tests without shelling out to a real npm.
+export type RunInstallWithFallbackOptions = RunInstallOptions & {
+  npmProbe?: () => Promise<unknown>
 }
 
 // Real installer spawn with piped stdio. PATH is augmented so a GUI-launched app can still find npm,
@@ -121,6 +156,12 @@ const runInstall = ({
 
     let settled = false
     let timedOut = false
+    // Bounded tail of stdout+stderr, scanned on failure to spot a region-block HTML page.
+    let captured = ''
+
+    const capture = (chunk: string): void => {
+      captured = (captured + chunk).slice(-REGION_BLOCK_SCAN_LIMIT)
+    }
 
     // Ensures we resolve exactly once across exit/error/timeout races.
     const settle = (result: ClaudeInstallResult): void => {
@@ -138,11 +179,15 @@ const runInstall = ({
     }, timeoutMs)
 
     child.stdout.on('data', (data: Buffer) => {
-      onLog({ installId, stream: 'stdout', chunk: data.toString('utf8') })
+      const chunk = data.toString('utf8')
+      capture(chunk)
+      onLog({ installId, stream: 'stdout', chunk })
     })
 
     child.stderr.on('data', (data: Buffer) => {
-      onLog({ installId, stream: 'stderr', chunk: data.toString('utf8') })
+      const chunk = data.toString('utf8')
+      capture(chunk)
+      onLog({ installId, stream: 'stderr', chunk })
     })
 
     child.on('error', (error) => {
@@ -150,11 +195,17 @@ const runInstall = ({
     })
 
     child.on('exit', (code) => {
+      const ok = !timedOut && code === 0
+
       settle({
         installId,
-        ok: !timedOut && code === 0,
+        ok,
         exitCode: code ?? undefined,
-        timedOut: timedOut || undefined
+        timedOut: timedOut || undefined,
+        // Only the official script can be served the region-block page; flag it so callers can retry
+        // with npm instead of surfacing a cryptic `syntax error near '<'`.
+        regionBlocked:
+          !ok && source === 'official-script' && isRegionBlockedOutput(captured) ? true : undefined
       })
     })
   })
@@ -181,4 +232,40 @@ const detectNpmAvailable = async (
   }
 }
 
-export { DEFAULT_INSTALL_TIMEOUT_MS, detectNpmAvailable, getInstallSpawnSpec, runInstall }
+// Runs the chosen install source and, when the official script comes back region-blocked, transparently
+// retries with npm (which after the ~/.local prefix change needs no sudo). The fallback only fires when
+// npm is actually available, so a machine without npm still gets the original, honest failure plus its
+// copyable manual commands. Deps mirror runInstall/detectNpmAvailable so the whole flow stays testable.
+const runInstallWithFallback = async ({
+  source,
+  installId,
+  onLog,
+  timeoutMs,
+  spawnImpl,
+  npmProbe
+}: RunInstallWithFallbackOptions): Promise<ClaudeInstallResult> => {
+  const result = await runInstall({ source, installId, onLog, timeoutMs, spawnImpl })
+
+  if (result.ok || source !== 'official-script' || !result.regionBlocked) return result
+
+  const { available } = await detectNpmAvailable(npmProbe)
+
+  if (!available) return result
+
+  onLog({
+    installId,
+    stream: 'system',
+    chunk: 'Official installer looks unavailable in your region; falling back to npm…'
+  })
+
+  return runInstall({ source: 'npm', installId, onLog, timeoutMs, spawnImpl })
+}
+
+export {
+  DEFAULT_INSTALL_TIMEOUT_MS,
+  detectNpmAvailable,
+  getInstallSpawnSpec,
+  isRegionBlockedOutput,
+  runInstall,
+  runInstallWithFallback
+}
