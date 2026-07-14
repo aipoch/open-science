@@ -134,6 +134,8 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const deleteProvider = useSettingsStore((state) => state.deleteProvider)
   const validateProvider = useSettingsStore((state) => state.validateProvider)
   const refreshProviderModels = useSettingsStore((state) => state.refreshProviderModels)
+  const pendingSkillId = useSettingsStore((state) => state.pendingSkillId)
+  const consumePendingSkill = useSettingsStore((state) => state.consumePendingSkill)
 
   // Settings navigation history (browser-like back/forward). Panel switches and drill-downs push a
   // new location; the active panel and open sub-views are derived from the current entry.
@@ -157,6 +159,32 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   useEffect(() => {
     if (open) void load()
   }, [open, load])
+
+  // When opened from a skill mention, seed the history straight to that skill's detail page. This is
+  // the derive-state-during-render pattern (guarded so it runs once per request); the guard resets on
+  // close so reopening the same skill re-seeds. The Skills panel loads its list on mount, so the
+  // breadcrumb name resolves once that arrives.
+  const [seededSkillId, setSeededSkillId] = useState<string | undefined>(undefined)
+  if (open && pendingSkillId !== undefined && pendingSkillId !== seededSkillId) {
+    setSeededSkillId(pendingSkillId)
+    setHistory([
+      {
+        panel: 'skills',
+        skills: { kind: 'detail', id: pendingSkillId },
+        model: { kind: 'list' },
+        connectors: { kind: 'list' }
+      }
+    ])
+    setHistoryIndex(0)
+  }
+  if (!open && seededSkillId !== undefined) {
+    setSeededSkillId(undefined)
+  }
+
+  // Clear the store's pending flag after it has been applied, so a later normal open starts fresh.
+  useEffect(() => {
+    if (pendingSkillId !== undefined) consumePendingSkill()
+  }, [pendingSkillId, consumePendingSkill])
 
   const currentLocation = history[historyIndex]
   const activePanel = currentLocation.panel

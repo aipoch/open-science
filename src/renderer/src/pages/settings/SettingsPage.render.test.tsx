@@ -244,6 +244,29 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
   })
 
+  it('opens directly on a skill detail when the store has a pending skill', async () => {
+    // A skill mention sets the pending id before the dialog opens.
+    useSettingsStore.setState({ pendingSkillId: 'alpha' })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    // Flush the seeding effect, the skills-list load, and the skill-detail fetch.
+    await act(async () => {
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    // Landed on the skill's detail page (breadcrumb + detail), not the default Model panel.
+    expect(document.body.querySelector('[aria-label="Back to skills"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('Alpha')
+    expect(document.body.querySelector('section[aria-label="Providers"]')).toBeNull()
+    // The pending id is consumed so a later normal open won't jump back to it.
+    expect(useSettingsStore.getState().pendingSkillId).toBeUndefined()
+  })
+
   it('warns about reduced-protection storage in the provider form when encryption is unavailable', async () => {
     // The store loads encryptionAvailable from this call when the dialog opens.
     ;(

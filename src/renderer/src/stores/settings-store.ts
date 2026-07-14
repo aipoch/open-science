@@ -70,6 +70,8 @@ type SettingsStoreData = {
   installLogs: string[]
   // Whether the settings dialog is open (rendered at the app root, over Home/Workspace).
   isSettingsOpen: boolean
+  // Skill to land on when the dialog opens from a skill mention; consumed once its detail is seeded.
+  pendingSkillId?: string
 }
 
 type SettingsStore = SettingsStoreData & {
@@ -94,6 +96,10 @@ type SettingsStore = SettingsStoreData & {
   deleteProvider: (providerId: string) => Promise<void>
   openSettings: () => void
   closeSettings: () => void
+  // Opens the dialog straight onto a skill's detail page (used by clickable skill mentions).
+  openSettingsToSkill: (skillId: string) => void
+  // Clears the pending skill once its detail view has been seeded, so a later open starts fresh.
+  consumePendingSkill: () => void
   // Loads the bundled-skill list (enabled state included) from the main process.
   loadSkills: () => Promise<void>
   // Toggles one skill; optimistic, then reconciled with the authoritative list from main.
@@ -169,7 +175,8 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   isDetectingClaude: false,
   isInstalling: false,
   installLogs: [],
-  isSettingsOpen: false
+  isSettingsOpen: false,
+  pendingSkillId: undefined
 })
 
 // Applies a fresh main-process snapshot to the renderer cache.
@@ -409,7 +416,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   openSettings: () => set({ isSettingsOpen: true }),
 
-  closeSettings: () => set({ isSettingsOpen: false }),
+  // Clearing the pending skill on close stops a later normal open from jumping back to a stale skill.
+  closeSettings: () => set({ isSettingsOpen: false, pendingSkillId: undefined }),
+
+  openSettingsToSkill: (skillId) => set({ isSettingsOpen: true, pendingSkillId: skillId }),
+
+  consumePendingSkill: () => set({ pendingSkillId: undefined }),
 
   loadSkills: async () => {
     const skills = await window.api.settings.listSkills()

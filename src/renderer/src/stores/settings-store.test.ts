@@ -484,6 +484,23 @@ describe('settings store: refreshProviderModels', () => {
   })
 })
 
+describe('settings store: openSettingsToSkill', () => {
+  it('opens the dialog on a skill; consume and close both clear the pending id', () => {
+    useSettingsStore.getState().openSettingsToSkill('x')
+    expect(useSettingsStore.getState().isSettingsOpen).toBe(true)
+    expect(useSettingsStore.getState().pendingSkillId).toBe('x')
+
+    useSettingsStore.getState().consumePendingSkill()
+    expect(useSettingsStore.getState().pendingSkillId).toBeUndefined()
+
+    // Closing after a fresh open-to-skill clears the pending id so a later open starts fresh.
+    useSettingsStore.getState().openSettingsToSkill('y')
+    useSettingsStore.getState().closeSettings()
+    expect(useSettingsStore.getState().isSettingsOpen).toBe(false)
+    expect(useSettingsStore.getState().pendingSkillId).toBeUndefined()
+  })
+})
+
 describe('settings store: connectors slice', () => {
   const connectorView = (id: string, enabled: boolean): ConnectorView => ({
     id,
