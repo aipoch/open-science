@@ -55,28 +55,26 @@ describe('ClaudeInstallCard install-source picker', () => {
     expect(trigger?.getAttribute('role')).toBe('combobox')
   })
 
-  it('defaults to npm and shows its copyable command when npm is available', () => {
+  it('defaults to the app-managed download and shows its description, not a command', () => {
     render({ npmAvailable: true })
 
     const trigger = container.querySelector('[aria-label="Install source"]')
 
-    expect(trigger?.textContent).toContain('npm (global install)')
-    expect(container.querySelector('[aria-label="Install command"]')?.textContent).toContain(
-      'npm i -g @anthropic-ai/claude-code'
-    )
+    expect(trigger?.textContent).toContain('App-managed download (recommended)')
+    // The managed source is app-driven, so no copyable shell command is shown — just its description.
+    expect(container.querySelector('[aria-label="Install command"]')).toBeNull()
+    expect(container.textContent).toContain('no Node.js or npm required')
   })
 
-  it('defaults to the official installer when npm is unavailable', () => {
+  it('stays on the app-managed download even when npm is unavailable', () => {
     render({ npmAvailable: false })
 
     const trigger = container.querySelector('[aria-label="Install source"]')
 
-    // Falls back to the script installer (no npm needed) and shows its command; the npm-missing note
-    // only appears when npm itself is the selected source, so it stays hidden here.
-    expect(trigger?.textContent).toContain('Official install.sh')
-    expect(container.querySelector('[aria-label="Install command"]')?.textContent).toContain(
-      'curl -fsSL https://claude.ai/install.sh'
-    )
+    // The managed source needs neither npm nor Node, so it is the default regardless of npm presence,
+    // and the npm-missing note (which only applies to the npm source) stays hidden.
+    expect(trigger?.textContent).toContain('App-managed download (recommended)')
+    expect(container.querySelector('[role="alert"]')).toBeNull()
   })
 
   it('installs the currently selected source when the button is clicked', () => {
@@ -90,6 +88,6 @@ describe('ClaudeInstallCard install-source picker', () => {
       button?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    expect(onInstall).toHaveBeenCalledWith('npm')
+    expect(onInstall).toHaveBeenCalledWith('managed')
   })
 })
