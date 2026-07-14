@@ -276,7 +276,7 @@ const MessagePartsContent = ({
             className={cn(
               mentionPillClassName,
               mentionButtonClassName,
-              'bg-primary/15 text-primary'
+              'bg-skill-chip text-skill-chip-foreground'
             )}
             onClick={() => onOpenSkillMention(part.id, part.name)}
             aria-label={`Open skill ${part.name}`}

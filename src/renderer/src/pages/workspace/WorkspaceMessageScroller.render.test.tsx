@@ -355,7 +355,7 @@ describe('WorkspaceMessageScroller loading render', () => {
     )
 
     // Skill pill is blue; artifact pill is green; labels keep their / and @ markers.
-    expect(html).toContain('text-primary')
+    expect(html).toContain('text-skill-chip-foreground')
     expect(html).toContain('/forecast')
     expect(html).toContain('bg-mention-chip')
     expect(html).toContain('text-mention-chip-foreground')

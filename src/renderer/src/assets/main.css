@@ -45,6 +45,8 @@
   --color-message-user-text: var(--message-user-text);
   --color-mention-chip: var(--mention-chip);
   --color-mention-chip-foreground: var(--mention-chip-foreground);
+  --color-skill-chip: var(--skill-chip);
+  --color-skill-chip-foreground: var(--skill-chip-foreground);
   --color-rail-card-bg: hsl(var(--rail-card-bg));
   --shadow-card: 0 0 0 1px rgb(10 10 10 / 0.06), 0 4px 24px rgb(10 10 10 / 0.04);
   --shadow-card-opaque: 0 0 0 1px rgb(10 10 10 / 0.08), 0 8px 28px rgb(10 10 10 / 0.1);
@@ -79,6 +81,9 @@
   /* Green pill for composer artifact/upload `@` mention chips, distinct from the blue skill chip. */
   --mention-chip: hsl(110 42% 90%);
   --mention-chip-foreground: hsl(140 55% 30%);
+  /* Blue pill for composer skill `/` mention chips. */
+  --skill-chip: hsl(214 95% 90%);
+  --skill-chip-foreground: hsl(222 63% 47%);
   --always-black: 0 0% 0%;
   --background: oklch(0.985 0.01 96);
   --foreground: oklch(0.19 0.025 236);
