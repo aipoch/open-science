@@ -387,9 +387,12 @@ describe('ACP permission broker', () => {
 
     // Revoking one grant removes only it and makes that tool prompt again.
     broker.revokeGrant('session-1', 'tool:Write')
-    expect(broker.listGrants('session-1').map((grant) => grant.categoryKey).sort()).toEqual(
-      ['bash:python a.py', 'tool:mcp__open-science-notebook__notebook_execute'].sort()
-    )
+    expect(
+      broker
+        .listGrants('session-1')
+        .map((grant) => grant.categoryKey)
+        .sort()
+    ).toEqual(['bash:python a.py', 'tool:mcp__open-science-notebook__notebook_execute'].sort())
 
     const countBeforeWrite = emittedRequests.length
     broker.requestPermission(
