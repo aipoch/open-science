@@ -236,7 +236,9 @@ describe('applyDocToDom + domToDoc round-trip', () => {
   it('renders an artifact chip with the green mention attributes and @ label', () => {
     const root = document.createElement('div')
     applyDocToDom(root, {
-      nodes: [{ type: 'artifact', id: 'a1', name: 'fig.png', path: '/p/fig.png', source: 'artifact' }]
+      nodes: [
+        { type: 'artifact', id: 'a1', name: 'fig.png', path: '/p/fig.png', source: 'artifact' }
+      ]
     })
     const chip = root.querySelector('span[data-mention-type="artifact"]')
     expect(chip?.getAttribute('data-mention-path')).toBe('/p/fig.png')

@@ -3,7 +3,15 @@ import { useCallback, useLayoutEffect, useRef } from 'react'
 import type { SkillView } from '../../../../../shared/settings'
 import { cn } from '@/lib/utils'
 
-import { applyDocToDom, domToDoc, type ComposerDoc, type ComposerNode } from './composer-doc'
+import { ArtifactMentionPopup, type PickedArtifact } from './ArtifactMentionPopup'
+import {
+  applyDocToDom,
+  docArtifactCount,
+  domToDoc,
+  MAX_COMPOSER_ARTIFACT_MENTIONS,
+  type ComposerDoc,
+  type ComposerNode
+} from './composer-doc'
 import { SkillMentionPopup } from './SkillMentionPopup'
 import { useMentionTrigger } from './useMentionTrigger'
 
@@ -34,6 +42,15 @@ const nodesEqual = (a: ComposerNode[], b: ComposerNode[]): boolean => {
     if (node.type === 'skill' && other.type === 'skill') {
       return node.id === other.id && node.name === other.name
     }
+    if (node.type === 'artifact' && other.type === 'artifact') {
+      return (
+        node.id === other.id &&
+        node.name === other.name &&
+        node.path === other.path &&
+        node.source === other.source &&
+        node.versionId === other.versionId
+      )
+    }
     return false
   })
 }
@@ -53,15 +70,14 @@ const insertPlainTextAtCaret = (text: string): void => {
   selection.addRange(range)
 }
 
-// A rendered skill chip element (atomic, non-editable token).
-const asSkillChip = (node: Node | null): HTMLElement | null =>
-  node?.nodeType === Node.ELEMENT_NODE &&
-  (node as HTMLElement).getAttribute('data-mention-type') === 'skill'
+// A rendered mention chip element (skill or artifact) — any atomic, non-editable token span.
+const asMentionChip = (node: Node | null): HTMLElement | null =>
+  node?.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).hasAttribute('data-mention-type')
     ? (node as HTMLElement)
     : null
 
-// Find the skill chip immediately on one side of a collapsed caret, so Backspace/Delete can remove the
-// whole chip instead of letting the browser edit into it character by character.
+// Find the mention chip immediately on one side of a collapsed caret, so Backspace/Delete can remove
+// the whole chip instead of letting the browser edit into it character by character.
 const chipBesideCaret = (root: HTMLElement, side: 'before' | 'after'): HTMLElement | null => {
   const selection = window.getSelection()
   if (!selection || selection.rangeCount === 0) return null
@@ -71,12 +87,12 @@ const chipBesideCaret = (root: HTMLElement, side: 'before' | 'after'): HTMLEleme
   const offset = range.startOffset
 
   if (node.nodeType === Node.TEXT_NODE) {
-    if (side === 'before') return offset === 0 ? asSkillChip(node.previousSibling) : null
-    return offset === (node.textContent ?? '').length ? asSkillChip(node.nextSibling) : null
+    if (side === 'before') return offset === 0 ? asMentionChip(node.previousSibling) : null
+    return offset === (node.textContent ?? '').length ? asMentionChip(node.nextSibling) : null
   }
   if (node.nodeType === Node.ELEMENT_NODE) {
     const index = side === 'before' ? offset - 1 : offset
-    return asSkillChip(node.childNodes[index] ?? null)
+    return asMentionChip(node.childNodes[index] ?? null)
   }
   return null
 }
@@ -107,6 +123,13 @@ export const ComposerEditor = ({
     disabled: disabled || hasSkill
   })
 
+  // A parallel `@` trigger for artifact mentions, self-suppressing once the per-message cap is reached.
+  const artifactMention = useMentionTrigger({
+    editorRef: editorRef as React.RefObject<HTMLElement>,
+    trigger: '@',
+    disabled: disabled || docArtifactCount(doc) >= MAX_COMPOSER_ARTIFACT_MENTIONS
+  })
+
   // Read the live DOM back into a doc and notify the parent.
   const emitDocFromDom = useCallback((): void => {
     const root = editorRef.current
@@ -125,8 +148,8 @@ export const ComposerEditor = ({
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     if (disabled) return
-    // While the mention popup is open it owns Enter/arrow keys; leave them to its document listener.
-    if (mention.active) return
+    // While either mention popup is open it owns Enter/arrow keys; leave them to its document listener.
+    if (mention.active || artifactMention.active) return
     // Backspace/Delete next to a chip removes the whole chip atomically (never edits its label).
     if (event.key === 'Backspace' || event.key === 'Delete') {
       const root = editorRef.current
@@ -164,6 +187,19 @@ export const ComposerEditor = ({
     mention.cancel()
   }
 
+  // Replace the active `@query` token with an artifact chip, then close the popup.
+  const handleSelectArtifact = (ref: PickedArtifact): void => {
+    artifactMention.replaceTokenWith({
+      type: 'artifact',
+      id: ref.id,
+      name: ref.name,
+      path: ref.path,
+      source: ref.source,
+      versionId: ref.versionId
+    })
+    artifactMention.cancel()
+  }
+
   return (
     <div className="relative min-w-0">
       <div
@@ -192,6 +228,13 @@ export const ComposerEditor = ({
           query={mention.query}
           onSelect={handleSelectSkill}
           onClose={mention.cancel}
+        />
+      ) : null}
+      {artifactMention.active ? (
+        <ArtifactMentionPopup
+          query={artifactMention.query}
+          onSelect={handleSelectArtifact}
+          onClose={artifactMention.cancel}
         />
       ) : null}
     </div>
