@@ -1,10 +1,13 @@
 import { EventEmitter } from 'node:events'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ClaudeInstallLogEvent } from '../../shared/settings'
 import {
   detectNpmAvailable,
   getInstallSpawnSpec,
+  isNpmGlobalPrefixWritable,
   isRegionBlockedOutput,
   runInstall,
   runInstallWithFallback
@@ -42,12 +45,21 @@ const scriptedSpawn = (
 }
 
 describe('claude-install: command construction', () => {
-  it('runs a global npm install into a user-writable prefix (no sudo) on Unix', () => {
-    const spec = getInstallSpawnSpec('npm', 'linux', '/home/tester')
+  it('runs a plain global npm install (no --prefix) on Unix by default', () => {
+    const spec = getInstallSpawnSpec('npm', 'linux')
 
     expect(spec.command).toBe('npm')
-    // --prefix ~/.local keeps the global install out of the system prefix, so no sudo is needed;
-    // ~/.local/bin is already probed by detection and on the augmented PATH.
+    // With a writable default global prefix (Homebrew/nvm/volta), no override is needed.
+    expect(spec.args).toEqual(['i', '-g', '@anthropic-ai/claude-code'])
+    expect(spec.args.includes('--prefix')).toBe(false)
+    expect(spec.args.some((arg) => arg.includes('--registry'))).toBe(false)
+    expect(spec.shell).toBeFalsy()
+  })
+
+  it('appends --prefix when a user-writable override is provided on Unix', () => {
+    const spec = getInstallSpawnSpec('npm', 'linux', '/home/tester/.local')
+
+    // The override is used only when the caller determined the default prefix needs sudo.
     expect(spec.args).toEqual([
       'i',
       '-g',
@@ -55,12 +67,10 @@ describe('claude-install: command construction', () => {
       '--prefix',
       '/home/tester/.local'
     ])
-    expect(spec.args.some((arg) => arg.includes('--registry'))).toBe(false)
-    expect(spec.shell).toBeFalsy()
   })
 
-  it('uses the same user prefix on macOS', () => {
-    const spec = getInstallSpawnSpec('npm', 'darwin', '/Users/tester')
+  it('honours the override on macOS too', () => {
+    const spec = getInstallSpawnSpec('npm', 'darwin', '/Users/tester/.local')
 
     expect(spec.args).toEqual([
       'i',
@@ -78,11 +88,11 @@ describe('claude-install: command construction', () => {
     expect(spec.args.at(-1)).toContain('curl -fsSL https://claude.ai/install.sh | bash')
   })
 
-  it('runs npm through a shell on Windows (npm.cmd shim) without a prefix override', () => {
-    const spec = getInstallSpawnSpec('npm', 'win32', 'C:\\Users\\tester')
+  it('runs npm through a shell on Windows (npm.cmd shim) and never adds a --prefix', () => {
+    // Even if an override is passed, Windows must ignore it (%APPDATA%\npm is already user-writable).
+    const spec = getInstallSpawnSpec('npm', 'win32', 'C:\\Users\\tester\\.local')
 
     expect(spec.command).toBe('npm')
-    // Windows global npm bin (%APPDATA%\npm) is already user-writable, so no --prefix is needed.
     expect(spec.args).toEqual(['i', '-g', '@anthropic-ai/claude-code'])
     expect(spec.shell).toBe(true)
   })
@@ -119,12 +129,15 @@ describe('claude-install: run', () => {
       source: 'npm',
       installId: 'install-1',
       onLog: (event) => logs.push(event),
-      spawnImpl: () => child as never
+      spawnImpl: () => child as never,
+      npmPrefixWritable: () => Promise.resolve(true)
     })
 
-    child.stdout.emit('data', Buffer.from('adding package\n'))
-    child.stderr.emit('data', Buffer.from('warn\n'))
-    child.emit('exit', 0)
+    setImmediate(() => {
+      child.stdout.emit('data', Buffer.from('adding package\n'))
+      child.stderr.emit('data', Buffer.from('warn\n'))
+      child.emit('exit', 0)
+    })
 
     const result = await promise
 
@@ -141,10 +154,11 @@ describe('claude-install: run', () => {
       source: 'npm',
       installId: 'install-2',
       onLog: () => undefined,
-      spawnImpl: () => child as never
+      spawnImpl: () => child as never,
+      npmPrefixWritable: () => Promise.resolve(true)
     })
 
-    child.emit('exit', 1)
+    setImmediate(() => child.emit('exit', 1))
 
     await expect(promise).resolves.toMatchObject({ ok: false, exitCode: 1 })
   })
@@ -154,6 +168,7 @@ describe('claude-install: run', () => {
       source: 'npm',
       installId: 'install-3',
       onLog: () => undefined,
+      npmPrefixWritable: () => Promise.resolve(true),
       spawnImpl: () => {
         throw new Error('spawn npm ENOENT')
       }
@@ -184,11 +199,14 @@ describe('claude-install: run', () => {
       source: 'npm',
       installId: 'install-5',
       onLog: () => undefined,
-      spawnImpl: () => child as never
+      spawnImpl: () => child as never,
+      npmPrefixWritable: () => Promise.resolve(true)
     })
 
-    child.stderr.emit('data', Buffer.from('npm error code EACCES'))
-    child.emit('exit', 1)
+    setImmediate(() => {
+      child.stderr.emit('data', Buffer.from('npm error code EACCES'))
+      child.emit('exit', 1)
+    })
 
     const result = await promise
 
@@ -210,7 +228,8 @@ describe('claude-install: run with region-block fallback', () => {
       installId: 'install-6',
       onLog: (event) => logs.push(event),
       spawnImpl: spawn as never,
-      npmProbe: () => Promise.resolve()
+      npmProbe: () => Promise.resolve(),
+      npmPrefixWritable: () => Promise.resolve(true)
     })
 
     expect(commands).toEqual(['bash', 'npm'])
@@ -263,5 +282,99 @@ describe('claude-install: npm availability', () => {
     await expect(detectNpmAvailable(() => Promise.reject(new Error('not found')))).resolves.toEqual(
       { available: false }
     )
+  })
+})
+
+describe('claude-install: npm global prefix writability', () => {
+  it('reports writable when the prefix resolves and fs.access succeeds', async () => {
+    await expect(
+      isNpmGlobalPrefixWritable({
+        runNpmPrefix: () => Promise.resolve({ stdout: '/opt/homebrew\n' }),
+        access: () => Promise.resolve()
+      })
+    ).resolves.toBe(true)
+  })
+
+  it('reports not writable when fs.access rejects (root-owned prefix)', async () => {
+    await expect(
+      isNpmGlobalPrefixWritable({
+        runNpmPrefix: () => Promise.resolve({ stdout: '/usr/local\n' }),
+        access: () => Promise.reject(new Error('EACCES'))
+      })
+    ).resolves.toBe(false)
+  })
+
+  it('reports not writable when `npm prefix -g` fails (safe fallback)', async () => {
+    await expect(
+      isNpmGlobalPrefixWritable({
+        runNpmPrefix: () => Promise.reject(new Error('npm not found')),
+        access: () => Promise.resolve()
+      })
+    ).resolves.toBe(false)
+  })
+
+  it('reports not writable when the resolved prefix is empty', async () => {
+    await expect(
+      isNpmGlobalPrefixWritable({
+        runNpmPrefix: () => Promise.resolve({ stdout: '   \n' }),
+        access: () => Promise.resolve()
+      })
+    ).resolves.toBe(false)
+  })
+})
+
+describe('claude-install: run redirects npm prefix only when needed', () => {
+  // Captures the args passed to the spawned command, then exits 0 on the next tick so runInstall's
+  // listeners (attached after the async prefix probe) are already in place.
+  const capturingSpawn = (): {
+    spawn: (command: string, args: string[]) => FakeChild
+    args: () => string[]
+  } => {
+    let captured: string[] = []
+    const spawn = (_command: string, args: string[]): FakeChild => {
+      captured = args
+      const child = new FakeChild()
+
+      setImmediate(() => child.emit('exit', 0))
+
+      return child
+    }
+
+    return { spawn, args: () => captured }
+  }
+
+  it('adds --prefix ~/.local when the global prefix is not writable', async () => {
+    const { spawn, args } = capturingSpawn()
+
+    await runInstall({
+      source: 'npm',
+      installId: 'install-prefix-1',
+      onLog: () => undefined,
+      spawnImpl: spawn as never,
+      npmPrefixWritable: () => Promise.resolve(false)
+    })
+
+    expect(args()).toEqual([
+      'i',
+      '-g',
+      '@anthropic-ai/claude-code',
+      '--prefix',
+      join(homedir(), '.local')
+    ])
+  })
+
+  it('omits --prefix when the global prefix is writable', async () => {
+    const { spawn, args } = capturingSpawn()
+
+    await runInstall({
+      source: 'npm',
+      installId: 'install-prefix-2',
+      onLog: () => undefined,
+      spawnImpl: spawn as never,
+      npmPrefixWritable: () => Promise.resolve(true)
+    })
+
+    expect(args()).toEqual(['i', '-g', '@anthropic-ai/claude-code'])
+    expect(args().includes('--prefix')).toBe(false)
   })
 })
