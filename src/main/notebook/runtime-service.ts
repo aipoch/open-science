@@ -87,6 +87,9 @@ type RuntimeSession = {
   activeRunId?: string
   executionCount: number
   executor: NotebookExecutor
+  // Tail of the serialized execution chain: the shared interpreter runs one cell at a time, so each
+  // run is queued behind the previous one instead of failing when the kernel is already busy.
+  executionQueue: Promise<unknown>
 }
 
 // Builds the compact plain text output list shown in the preview panel.
@@ -239,6 +242,23 @@ class NotebookRuntimeService {
       throw new Error(`Notebook cell is still receiving code: ${cell.id}`)
     }
 
+    // Serialize execution on the shared interpreter: chain this run after any in-flight run so the
+    // single kernel processes one cell at a time instead of failing the overlapping request.
+    const run = session.executionQueue.then(() => this.runCellExclusive(session, cell, request))
+    // Keep the queue tail settled so a failing run never wedges the runs waiting behind it.
+    session.executionQueue = run.catch(() => undefined)
+
+    return run
+  }
+
+  // Runs one cell to completion while holding the session's single execution slot. Only ever invoked
+  // through the serialized executionQueue so activeRunId, execution counts, and the shared interpreter
+  // stay consistent across overlapping run requests.
+  private async runCellExclusive(
+    session: RuntimeSession,
+    cell: NotebookCell,
+    request: RunNotebookCellRequest
+  ): Promise<NotebookRunSummary> {
     this.notifyNotebookAvailable(session, request.source ?? 'agent')
     this.runSequence += 1
     session.executionCount += 1
@@ -480,7 +500,8 @@ class NotebookRuntimeService {
       runJsonPath: getNotebookRunJsonPath(this.options.storageRoot, projectName, request.sessionId),
       cells: [],
       executionCount: document.runs.length,
-      executor: this.createExecutor(request.sessionId)
+      executor: this.createExecutor(request.sessionId),
+      executionQueue: Promise.resolve()
     }
 
     this.sessions.set(request.sessionId, session)
