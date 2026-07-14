@@ -128,18 +128,21 @@ describe('artifact repository', () => {
 
     const repository = new ArtifactRepository(root)
 
-    await expect(
-      repository.writePendingFile(
-        {
-          projectName: 'default-project',
-          sessionId: 'session-1',
-          runId: 'run-1',
-          filename: 'outside.txt',
-          source: { kind: 'localPath', path: sourcePath }
-        },
-        { allowedImportRoots: [allowedRoot] }
-      )
-    ).rejects.toThrow(/outside allowed artifact import roots/)
+    const attempt = repository.writePendingFile(
+      {
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        filename: 'outside.txt',
+        source: { kind: 'localPath', path: sourcePath }
+      },
+      { allowedImportRoots: [allowedRoot] }
+    )
+    await expect(attempt).rejects.toThrow(/outside allowed artifact import roots/)
+    // The rejection is actionable: it names the offending path and the allowed root so the agent can
+    // re-save inside the sandbox instead of retrying blindly.
+    await expect(attempt).rejects.toThrow(sourcePath)
+    await expect(attempt).rejects.toThrow(allowedRoot)
   })
 
   it('rejects path-like project, session, run, and filename segments', async () => {

@@ -114,12 +114,25 @@ const isPathInsideRoot = (root: string, filePath: string): boolean => {
     : false
 }
 
+// Builds an actionable rejection: name the allowed roots so the agent can re-save the file inside one
+// of them (e.g. the notebook session workspace) or fall back to inline content, instead of retrying
+// blindly against a path outside the sandbox (e.g. /tmp).
+const importRootsError = (filePath: string, allowedImportRoots: string[]): Error => {
+  const guidance =
+    allowedImportRoots.length > 0
+      ? ` Write the file under one of these directories and pass that path, or use inline content instead: ${allowedImportRoots.join(', ')}`
+      : ' No import roots are configured; use inline content instead.'
+  return new Error(
+    `Artifact local source path is outside allowed artifact import roots (got "${filePath}").${guidance}`
+  )
+}
+
 const resolveAllowedImportFilePath = async (
   filePath: string,
   allowedImportRoots: string[]
 ): Promise<string> => {
   if (allowedImportRoots.length === 0) {
-    throw new Error('Artifact local source path is outside allowed artifact import roots.')
+    throw importRootsError(filePath, allowedImportRoots)
   }
 
   const resolvedFilePath = await realpath(resolve(filePath))
@@ -138,7 +151,7 @@ const resolveAllowedImportFilePath = async (
   const isAllowed = resolvedRoots.some((root) => isPathInsideRoot(root, resolvedFilePath))
 
   if (!isAllowed) {
-    throw new Error('Artifact local source path is outside allowed artifact import roots.')
+    throw importRootsError(filePath, allowedImportRoots)
   }
 
   const fileStat = await stat(resolvedFilePath)
