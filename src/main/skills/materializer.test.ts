@@ -141,4 +141,71 @@ describe('ClaudeCodeSkillMaterializer', () => {
 
     expect(await listSkillDirs(configDir)).toEqual([])
   })
+
+  // Builds a source skill with a real frontmatter block so the notice injection has a header to sit
+  // after; category/requirements are set on the returned object (the predicate reads those fields).
+  const makeSkillWithFrontmatter = async (
+    name: string,
+    extra: Partial<BundledSkill>
+  ): Promise<BundledSkill> => {
+    const root = await mkdtemp(join(tmpdir(), `src-${name}-`))
+    await writeFile(
+      join(root, 'SKILL.md'),
+      ['---', `name: ${name}`, 'description: does a thing', '---', '', '# Heading', 'Run it.'].join(
+        '\n'
+      ),
+      'utf8'
+    )
+    return {
+      id: name,
+      name,
+      description: '',
+      source: 'featured',
+      updatedAt: '',
+      sourceDir: root,
+      ...extra
+    }
+  }
+
+  it('injects the compute-unavailable notice for a biomodels-category skill, keeping frontmatter first', async () => {
+    const configDir = await skillsDir()
+    const skill = await makeSkillWithFrontmatter('alphafold2', { category: 'biomodels' })
+    await new ClaudeCodeSkillMaterializer().sync(configDir, [skill])
+
+    const md = await readFile(join(configDir, 'skills', 'os-alphafold2', 'SKILL.md'), 'utf8')
+    expect(md.startsWith('---\n')).toBe(true) // YAML header still first
+    expect(md).toContain('Compute environment unavailable in this app')
+    // notice sits between the frontmatter and the body heading
+    expect(md.indexOf('Compute environment unavailable')).toBeLessThan(md.indexOf('# Heading'))
+  })
+
+  it('injects for a gpu requirement even without a category, and not for a pure skill', async () => {
+    const configDir = await skillsDir()
+    const gpu = await makeSkillWithFrontmatter('scvi-tools', { requirements: '[gpu]' })
+    const pure = await makeSkillWithFrontmatter('literature-review', {})
+    await new ClaudeCodeSkillMaterializer().sync(configDir, [gpu, pure])
+
+    const gpuMd = await readFile(join(configDir, 'skills', 'os-scvi-tools', 'SKILL.md'), 'utf8')
+    const pureMd = await readFile(
+      join(configDir, 'skills', 'os-literature-review', 'SKILL.md'),
+      'utf8'
+    )
+    expect(gpuMd).toContain('Compute environment unavailable in this app')
+    expect(pureMd).not.toContain('Compute environment unavailable in this app')
+  })
+
+  it('does not double-inject the notice on a version-bump re-copy', async () => {
+    const configDir = await skillsDir()
+    const skill = {
+      ...(await makeSkillWithFrontmatter('boltz', { category: 'biomodels' })),
+      updatedAt: 'v1'
+    }
+    const materializer = new ClaudeCodeSkillMaterializer()
+    await materializer.sync(configDir, [skill])
+    await materializer.sync(configDir, [{ ...skill, updatedAt: 'v2' }])
+
+    const md = await readFile(join(configDir, 'skills', 'os-boltz', 'SKILL.md'), 'utf8')
+    const occurrences = md.split('Compute environment unavailable in this app').length - 1
+    expect(occurrences).toBe(1)
+  })
 })

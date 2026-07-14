@@ -29,6 +29,57 @@ describe('parseFrontmatter', () => {
     expect(fields).toEqual({})
     expect(body).toBe('# Just a body')
   })
+
+  it('joins a folded block scalar (>) into a single spaced line', () => {
+    const raw = [
+      '---',
+      'name: alphafold2',
+      'description: >',
+      '  Predict protein structure for monomers and multimers',
+      '  with AlphaFold2 via the ColabFold runner.',
+      'license: Apache-2.0',
+      '---',
+      '',
+      '# AlphaFold2'
+    ].join('\n')
+    const { fields, body } = parseFrontmatter(raw)
+    expect(fields.description).toBe(
+      'Predict protein structure for monomers and multimers with AlphaFold2 via the ColabFold runner.'
+    )
+    expect(fields.license).toBe('Apache-2.0')
+    expect(body.startsWith('# AlphaFold2')).toBe(true)
+  })
+
+  it('preserves newlines for a literal block scalar (|) and stops at the next top-level key', () => {
+    const raw = [
+      '---',
+      'description: |',
+      '  line one',
+      '  line two',
+      'name: demo',
+      '---',
+      'body'
+    ].join('\n')
+    const { fields } = parseFrontmatter(raw)
+    expect(fields.description).toBe('line one\nline two')
+    expect(fields.name).toBe('demo')
+  })
+
+  it('ignores nested (indented) keys after a block scalar, as a flat reader', () => {
+    const raw = [
+      '---',
+      'name: demo',
+      'description: >',
+      '  folded text',
+      'metadata:',
+      '  display-name: Demo',
+      '---',
+      'body'
+    ].join('\n')
+    const { fields } = parseFrontmatter(raw)
+    expect(fields.description).toBe('folded text')
+    expect(fields['display-name']).toBeUndefined()
+  })
 })
 
 describe('splitFrontmatter', () => {

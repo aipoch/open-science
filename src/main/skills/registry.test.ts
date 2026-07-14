@@ -18,6 +18,8 @@ const seedRoot = async (): Promise<string> => {
       'author: Test Author',
       'license: Test License',
       'third-party: Weights — Example (CC-BY-4.0)',
+      'category: biomodels',
+      'requirements: [gpu]',
       '---',
       '',
       '# Demo body'
@@ -49,7 +51,9 @@ describe('SkillRegistry', () => {
       source: 'featured',
       author: 'Test Author',
       license: 'Test License',
-      thirdParty: 'Weights — Example (CC-BY-4.0)'
+      thirdParty: 'Weights — Example (CC-BY-4.0)',
+      category: 'biomodels',
+      requirements: '[gpu]'
     })
   })
 
