@@ -9,7 +9,9 @@ import { resolveBundledSkillsRoot } from './resource-path'
 const log = createLogger('skills')
 
 // One bundled skill resolved from manifest + its SKILL.md. `sourceDir` is the absolute directory the
-// materializer copies from; author/license/thirdParty come from the SKILL.md frontmatter (may be absent).
+// materializer copies from; author/license/thirdParty/category/requirements come from the SKILL.md
+// frontmatter (may be absent). `category`/`requirements` let the materializer flag skills whose model
+// tooling needs a compute backend this app does not provide.
 export type BundledSkill = {
   id: string
   name: string
@@ -20,6 +22,8 @@ export type BundledSkill = {
   author?: string
   license?: string
   thirdParty?: string
+  category?: string
+  requirements?: string
 }
 
 type ManifestEntry = { id: string; name: string; source: SkillSource; updatedAt: string }
@@ -90,7 +94,9 @@ class SkillRegistry {
           author: fields.author,
           license: fields.license,
           // The "Third-party software, content, terms, and information" row; several key spellings.
-          thirdParty: fields['third-party'] ?? fields['third_party'] ?? fields.thirdparty
+          thirdParty: fields['third-party'] ?? fields['third_party'] ?? fields.thirdparty,
+          category: fields.category,
+          requirements: fields.requirements
         })
       } catch (error) {
         log.warn('skipping bundled skill with unreadable SKILL.md', { id: entry.id, error })

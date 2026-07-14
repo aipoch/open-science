@@ -2,58 +2,100 @@
   "version": 1,
   "skills": [
     {
-      "id": "citation-formatter",
-      "name": "Citation Formatter",
+      "id": "alphafold2",
+      "name": "AlphaFold2",
       "source": "featured",
-      "updatedAt": "2026-07-12T00:00:00.000Z"
+      "updatedAt": "2026-07-14T00:00:00.000Z"
     },
     {
-      "id": "abstract-summarizer",
-      "name": "Abstract Summarizer",
+      "id": "boltz",
+      "name": "Boltz",
       "source": "featured",
-      "updatedAt": "2026-07-12T00:00:00.000Z"
+      "updatedAt": "2026-07-14T00:00:00.000Z"
     },
     {
-      "id": "literature-close-read",
-      "name": "Literature Close Read",
+      "id": "borzoi",
+      "name": "Borzoi",
       "source": "featured",
-      "updatedAt": "2026-07-12T00:00:00.000Z"
+      "updatedAt": "2026-07-14T00:00:00.000Z"
     },
     {
-      "id": "experiment-design",
-      "name": "Experiment Design",
+      "id": "chai1",
+      "name": "Chai-1",
       "source": "featured",
-      "updatedAt": "2026-07-12T00:00:00.000Z"
+      "updatedAt": "2026-07-14T00:00:00.000Z"
     },
     {
-      "id": "research-proposal-generator",
-      "name": "Research Proposal Generator",
+      "id": "diffdock",
+      "name": "DiffDock",
       "source": "featured",
-      "updatedAt": "2026-07-12T00:00:00.000Z"
+      "updatedAt": "2026-07-14T00:00:00.000Z"
     },
     {
-      "id": "exploratory-data-analysis",
-      "name": "Exploratory Data Analysis",
+      "id": "esmfold2",
+      "name": "ESMFold2",
       "source": "featured",
-      "updatedAt": "2026-07-12T00:00:00.000Z"
+      "updatedAt": "2026-07-14T00:00:00.000Z"
     },
     {
-      "id": "statistical-analysis-advisor",
-      "name": "Statistical Analysis Advisor",
+      "id": "evo2",
+      "name": "Evo 2",
       "source": "featured",
-      "updatedAt": "2026-07-12T00:00:00.000Z"
+      "updatedAt": "2026-07-14T00:00:00.000Z"
     },
     {
-      "id": "pdf-extract",
-      "name": "PDF Extract",
+      "id": "fair-esm2",
+      "name": "ESM-2",
       "source": "featured",
-      "updatedAt": "2026-07-12T00:00:00.000Z"
+      "updatedAt": "2026-07-14T00:00:00.000Z"
     },
     {
-      "id": "sci-paper-reviewer",
-      "name": "Scientific Paper Reviewer",
+      "id": "ligandmpnn",
+      "name": "LigandMPNN",
       "source": "featured",
-      "updatedAt": "2026-07-12T00:00:00.000Z"
+      "updatedAt": "2026-07-14T00:00:00.000Z"
+    },
+    {
+      "id": "openfold3",
+      "name": "OpenFold3",
+      "source": "featured",
+      "updatedAt": "2026-07-14T00:00:00.000Z"
+    },
+    {
+      "id": "proteinmpnn",
+      "name": "ProteinMPNN",
+      "source": "featured",
+      "updatedAt": "2026-07-14T00:00:00.000Z"
+    },
+    {
+      "id": "scgpt",
+      "name": "scGPT",
+      "source": "featured",
+      "updatedAt": "2026-07-14T00:00:00.000Z"
+    },
+    {
+      "id": "scvi-tools",
+      "name": "scvi-tools",
+      "source": "featured",
+      "updatedAt": "2026-07-14T00:00:00.000Z"
+    },
+    {
+      "id": "solublempnn",
+      "name": "SolubleMPNN",
+      "source": "featured",
+      "updatedAt": "2026-07-14T00:00:00.000Z"
+    },
+    {
+      "id": "indication-dossier",
+      "name": "Indication Dossier",
+      "source": "featured",
+      "updatedAt": "2026-07-14T00:00:00.000Z"
+    },
+    {
+      "id": "literature-review",
+      "name": "Literature Review",
+      "source": "featured",
+      "updatedAt": "2026-07-14T00:00:00.000Z"
     }
   ]
 }
