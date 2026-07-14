@@ -58,7 +58,8 @@ const useAcpRuntime = (): {
     sessionId: string,
     text: string,
     attachments?: AcpPromptRequest['attachments'],
-    forcedSkillIds?: string[]
+    forcedSkillIds?: string[],
+    referencedArtifacts?: AcpPromptRequest['referencedArtifacts']
   ) => Promise<AcpStateSnapshot | undefined>
   respondToPermission: (
     requestId: string,
@@ -212,7 +213,8 @@ const useAcpRuntime = (): {
       sessionId: AcpPromptRequest['sessionId'],
       text: AcpPromptRequest['text'],
       attachments?: AcpPromptRequest['attachments'],
-      forcedSkillIds?: string[]
+      forcedSkillIds?: string[],
+      referencedArtifacts?: AcpPromptRequest['referencedArtifacts']
     ) =>
       runSnapshotAction(undefined, () =>
         window.api.acp.sendPrompt({
@@ -220,7 +222,9 @@ const useAcpRuntime = (): {
           text,
           attachments,
           // Omit the field entirely when no skills were picked so the request stays minimal.
-          ...(forcedSkillIds && forcedSkillIds.length > 0 ? { forcedSkillIds } : {})
+          ...(forcedSkillIds && forcedSkillIds.length > 0 ? { forcedSkillIds } : {}),
+          // Same minimal-request rule for `@`-mentioned artifacts.
+          ...(referencedArtifacts && referencedArtifacts.length > 0 ? { referencedArtifacts } : {})
         })
       ),
     [runSnapshotAction]

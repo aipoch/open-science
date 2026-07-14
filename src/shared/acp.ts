@@ -1,5 +1,5 @@
 import type { ToolCallContent, ToolCallLocation, ToolKind } from '@agentclientprotocol/sdk'
-import type { ArtifactFile } from './artifacts'
+import type { ArtifactFile, ArtifactReference } from './artifacts'
 import type { UploadedAttachment } from './uploads'
 import type { PermissionProfileId, SessionPermissionProfileState } from './permission-profiles'
 
@@ -126,6 +126,8 @@ export type AcpPromptRequest = {
   attachments?: UploadedAttachment[]
   // Skills the user explicitly picked in the composer; the runtime force-loads and nudges them.
   forcedSkillIds?: string[]
+  // Existing files referenced via composer `@` mentions; appended as prompt content blocks.
+  referencedArtifacts?: ArtifactReference[]
 }
 
 export type AcpCancelPromptRequest = {

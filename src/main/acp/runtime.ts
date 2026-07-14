@@ -11,7 +11,7 @@ import type {
   SessionNotification
 } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 import { pathToFileURL } from 'node:url'
@@ -62,6 +62,7 @@ import { getNotebookSessionRoot } from '../notebook/repository'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import type { UploadRepository } from '../uploads/repository'
 import type { UploadedAttachment } from '../../shared/uploads'
+import type { ArtifactReference } from '../../shared/artifacts'
 import { buildImageContentData, extractPdfText } from '../uploads/attachment-media'
 
 type AcpRuntimeCallbacks = {
@@ -1007,22 +1008,32 @@ class AcpRuntime {
     request: AcpPromptRequest
   ): Promise<string | ContentBlock[]> {
     const attachments = request.attachments ?? []
+    const referencedArtifacts = request.referencedArtifacts ?? []
 
-    if (attachments.length === 0) return request.text
-    if (!this.uploadRepository) throw new Error('Upload storage is not configured.')
+    if (attachments.length === 0 && referencedArtifacts.length === 0) return request.text
 
-    // The runtime owns the durable session id, so it is the final authority for upload ownership.
-    const finalizedAttachments = await this.uploadRepository.finalizePendingSessionUploads(
-      sessionId,
-      attachments
-    )
     const contentBlocks: ContentBlock[] = request.text.trim()
       ? [{ type: 'text', text: request.text }]
       : []
 
-    // Keep the user's text first, then append files in the same order they were added.
-    for (const attachment of finalizedAttachments) {
-      contentBlocks.push(await this.createAttachmentContentBlock(attachment))
+    // Staged uploads own the durable session id here, so finalize before turning them into blocks.
+    if (attachments.length > 0) {
+      if (!this.uploadRepository) throw new Error('Upload storage is not configured.')
+
+      const finalizedAttachments = await this.uploadRepository.finalizePendingSessionUploads(
+        sessionId,
+        attachments
+      )
+
+      // Keep the user's text first, then append files in the same order they were added.
+      for (const attachment of finalizedAttachments) {
+        contentBlocks.push(await this.createAttachmentContentBlock(attachment))
+      }
+    }
+
+    // `@`-mentioned artifacts reuse the same per-type block builder as uploads, in mention order.
+    for (const reference of referencedArtifacts) {
+      contentBlocks.push(await this.createReferencedArtifactContentBlock(reference))
     }
 
     return contentBlocks
@@ -1035,37 +1046,83 @@ class AcpRuntime {
     if (!this.uploadRepository) throw new Error('Upload storage is not configured.')
 
     const filePath = await this.uploadRepository.resolveManagedUploadPath({ path: attachment.path })
-    const uri = pathToFileURL(filePath).href
+
+    return this.buildFileContentBlock({
+      absolutePath: filePath,
+      uri: pathToFileURL(filePath).href,
+      name: attachment.originalName || attachment.name,
+      mimeType: attachment.mimeType,
+      size: attachment.size
+    })
+  }
+
+  // Converts one `@`-mentioned artifact into the same content block an equivalent upload produces.
+  private async createReferencedArtifactContentBlock(
+    reference: ArtifactReference
+  ): Promise<ContentBlock> {
+    const filePath = await this.resolveReferencedArtifactPath(reference)
+    const { size } = await stat(filePath)
+
+    return this.buildFileContentBlock({
+      absolutePath: filePath,
+      uri: pathToFileURL(filePath).href,
+      name: reference.name,
+      mimeType: reference.mimeType,
+      size
+    })
+  }
+
+  // Resolves a referenced file through the managed-path validator for its owning repository.
+  private async resolveReferencedArtifactPath(reference: ArtifactReference): Promise<string> {
+    if (reference.source === 'upload') {
+      if (!this.uploadRepository) throw new Error('Upload storage is not configured.')
+      return this.uploadRepository.resolveManagedUploadPath({ path: reference.path })
+    }
+
+    if (!this.artifactRepository) throw new Error('Artifact storage is not configured.')
+    return this.artifactRepository.resolveManagedFilePath({ path: reference.path })
+  }
+
+  // Builds the richest ACP content block that is safe for a resolved file, shared by uploads and
+  // `@`-mentioned artifacts so both reach the agent through identical per-type logic.
+  private async buildFileContentBlock(descriptor: {
+    absolutePath: string
+    uri: string
+    name: string
+    mimeType?: string
+    size: number
+  }): Promise<ContentBlock> {
+    const { absolutePath, uri, name, mimeType, size } = descriptor
 
     // Images are embedded as base64 so vision-capable agents receive the actual pixels.
-    // Large images are downscaled/re-encoded first so one upload cannot overflow the request.
-    if (attachment.mimeType?.startsWith('image/')) {
-      const { data, mimeType } = await buildImageContentData(
-        filePath,
-        attachment.mimeType,
-        attachment.size
+    // Large images are downscaled/re-encoded first so one file cannot overflow the request.
+    if (mimeType?.startsWith('image/')) {
+      const { data, mimeType: outMimeType } = await buildImageContentData(
+        absolutePath,
+        mimeType,
+        size
       )
 
-      return { type: 'image', data, mimeType, uri }
+      return { type: 'image', data, mimeType: outMimeType, uri }
     }
 
     // PDFs are never inlined as base64 (a 20MB file overflows the 32MB request limit); instead we
     // extract selectable text so the model reads readable content. Page images are a future option.
-    if (this.isPdfAttachment(attachment)) {
-      return this.createPdfContentBlock(attachment, filePath, uri)
+    if (this.isPdfFile(name, mimeType)) {
+      return this.createPdfContentBlock(name, absolutePath, uri)
     }
 
     // Small text-like files are embedded for direct reading; oversized text falls through to a link.
     if (
-      (attachment.mimeType?.startsWith('text/') || attachment.mimeType === 'application/json') &&
-      attachment.size <= MAX_EMBEDDED_TEXT_UPLOAD_BYTES
+      (mimeType?.startsWith('text/') || mimeType === 'application/json') &&
+      size <= MAX_EMBEDDED_TEXT_UPLOAD_BYTES
     ) {
       return {
         type: 'resource',
         resource: {
           uri,
-          mimeType: attachment.mimeType,
-          text: await readFile(filePath, 'utf8')
+          mimeType,
+          text: await readFile(absolutePath, 'utf8')
         }
       }
     }
@@ -1074,30 +1131,27 @@ class AcpRuntime {
     return {
       type: 'resource_link',
       uri,
-      name: attachment.originalName || attachment.name,
-      title: attachment.originalName || attachment.name,
-      mimeType: attachment.mimeType,
-      size: attachment.size
+      name,
+      title: name,
+      mimeType,
+      size
     }
   }
 
   // Recognizes PDFs by MIME type or extension since the renderer does not always send a MIME type.
-  private isPdfAttachment(attachment: UploadedAttachment): boolean {
-    if (attachment.mimeType === 'application/pdf') return true
+  private isPdfFile(name: string, mimeType?: string): boolean {
+    if (mimeType === 'application/pdf') return true
 
-    const name = attachment.originalName || attachment.name
     return name.toLowerCase().endsWith('.pdf')
   }
 
   // Turns a PDF into a text resource block, degrading to an explanatory note when extraction fails
   // or yields nothing (e.g. scanned/image-only PDFs) rather than ever inlining the raw file.
   private async createPdfContentBlock(
-    attachment: UploadedAttachment,
+    name: string,
     filePath: string,
     uri: string
   ): Promise<ContentBlock> {
-    const name = attachment.originalName || attachment.name
-
     const toResource = (text: string): ContentBlock => ({
       type: 'resource',
       resource: { uri, mimeType: 'text/plain', text }

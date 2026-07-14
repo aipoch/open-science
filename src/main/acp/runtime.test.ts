@@ -425,6 +425,127 @@ describe('ACP runtime session management', () => {
     // is markedly slower on a cold Windows CI runner and can exceed the 5s default there.
   }, 30000)
 
+  it('appends referenced artifacts as content blocks by file type', async () => {
+    const root = await createTemporaryRoot()
+    const uploadRepository = new UploadRepository(root)
+    const artifactRepository = new ArtifactRepository(root)
+
+    // A referenced upload (an already-staged file) resolves through the upload path validator.
+    const [uploadRef] = await uploadRepository.stageFiles({
+      files: [
+        {
+          name: 'summary.txt',
+          mimeType: 'text/plain',
+          content: Buffer.from('referenced upload text').toString('base64')
+        }
+      ]
+    })
+
+    // A referenced image output resolves through the artifact path validator and inlines its pixels.
+    const imageArtifact = await artifactRepository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'remote-session-1',
+      runId: 'run-1',
+      filename: 'chart.png',
+      mimeType: 'image/png',
+      source: {
+        kind: 'inline',
+        content: Buffer.from('png-bytes').toString('base64'),
+        encoding: 'base64'
+      }
+    })
+
+    // A referenced binary output has no rich representation, so it falls through to a resource link.
+    const binaryArtifact = await artifactRepository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'remote-session-1',
+      runId: 'run-1',
+      filename: 'data.bin',
+      mimeType: 'application/octet-stream',
+      source: {
+        kind: 'inline',
+        content: Buffer.from([0, 1, 2, 3]).toString('base64'),
+        encoding: 'base64'
+      }
+    })
+
+    const process = new FakeAgentProcess()
+    const receivedPrompts: ContentBlock[][] = []
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: ({ prompt }) => {
+        receivedPrompts.push(prompt)
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      uploads: { repository: uploadRepository },
+      artifacts: {
+        storageRoot: root,
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        repository: artifactRepository
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'use these files',
+      referencedArtifacts: [
+        {
+          id: 'u1',
+          name: uploadRef.originalName,
+          path: uploadRef.path,
+          source: 'upload',
+          mimeType: uploadRef.mimeType
+        },
+        {
+          id: 'a1',
+          name: imageArtifact.name,
+          path: imageArtifact.path,
+          source: 'artifact',
+          mimeType: imageArtifact.mimeType
+        },
+        {
+          id: 'a2',
+          name: binaryArtifact.name,
+          path: binaryArtifact.path,
+          source: 'artifact',
+          mimeType: binaryArtifact.mimeType
+        }
+      ]
+    })
+
+    expect(receivedPrompts).toHaveLength(1)
+    expect(receivedPrompts[0][0]).toEqual({ type: 'text', text: 'use these files' })
+    // Referenced upload text file -> inline resource with its contents.
+    expect(receivedPrompts[0][1]).toMatchObject({
+      type: 'resource',
+      resource: {
+        mimeType: 'text/plain',
+        text: 'referenced upload text',
+        uri: expect.stringContaining('summary.txt')
+      }
+    })
+    // Referenced image artifact -> base64 image block.
+    expect(receivedPrompts[0][2]).toMatchObject({
+      type: 'image',
+      mimeType: 'image/png',
+      data: Buffer.from('png-bytes').toString('base64'),
+      uri: expect.stringContaining('chart.png')
+    })
+    // Referenced binary artifact -> resource link.
+    expect(receivedPrompts[0][3]).toMatchObject({
+      type: 'resource_link',
+      name: 'data.bin',
+      title: 'data.bin',
+      mimeType: 'application/octet-stream',
+      uri: expect.stringContaining('data.bin')
+    })
+  })
+
   it('allows prompts from different sessions to run concurrently', async () => {
     const process = new FakeAgentProcess()
     const promptCanStopBySession = new Map<string, ReturnType<typeof createDeferred>>()
