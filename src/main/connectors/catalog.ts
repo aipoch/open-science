@@ -225,9 +225,10 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'cellguide',
     displayName: 'CellGuide',
-    description: 'Cell-type identity and canonical marker genes via CELLxGENE CellGuide.',
+    description:
+      'Cell-type identity, marker genes, source datasets, and tissues via CELLxGENE CellGuide.',
     useWhen:
-      'Use when you need cell-type identity, description, or canonical marker genes for a Cell Ontology (CL) id. Sourced from CELLxGENE CellGuide.',
+      'Use for cell-type biology from CELLxGENE CellGuide — searching cell types by name/synonym, or (by Cell Ontology id or name) getting identity/description, computational or canonical marker genes, contributing source datasets/publications, and the anatomical tissues a cell type is found in.',
     sources: ['CELLxGENE'],
     termsUrl: 'https://cellxgene.cziscience.com/',
     requiresNcbi: false
