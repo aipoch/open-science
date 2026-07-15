@@ -260,9 +260,10 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'zinc',
     displayName: 'ZINC',
-    description: 'Purchasable compound lookups via ZINC22.',
+    description:
+      'ZINC22 purchasable chemical space (CartBlanche22) — compound lookup by ZINC id, SMILES exact/similarity search, supplier-code resolution, random sampling, 3D structure locations for docking.',
     useWhen:
-      'Use when you need to look up a purchasable compound by ZINC identifier — structure (SMILES), tranche properties, and which suppliers sell it. Sourced from ZINC22.',
+      'Use when you need purchasable small molecules from ZINC22 — look up compounds by ZINC id, search by SMILES (exact or analog/similarity), resolve vendor catalog codes, draw a random compound sample, or locate docking-ready 3D structures. Sourced from ZINC22 / CartBlanche22.',
     sources: ['ZINC'],
     termsUrl: 'https://zinc.docking.org/',
     requiresNcbi: false
