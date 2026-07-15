@@ -189,10 +189,11 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'protein_annotation',
     displayName: 'Protein Annotation',
-    description: 'Protein-protein interaction data via STRING-DB.',
+    description:
+      'Protein domain architecture, family/clan membership, expression atlas and interaction networks via InterPro/Pfam, the Human Protein Atlas and STRING.',
     useWhen:
-      'Use when you need protein-protein interaction data — interaction partners for a gene/protein ranked by confidence score, or the interaction network among a set of genes/proteins. Sourced from STRING-DB.',
-    sources: ['STRING'],
+      "Use when you need protein annotation — a protein's complete InterPro/Pfam domain architecture, entry/family/clan search and detail, member proteins or proteomes of a Pfam family, Human Protein Atlas per-gene expression (tissue/subcellular/pathology/blood/brain) and bulk search, or STRING id mapping, interaction networks and homology similarity. Sourced from InterPro, Pfam, the Human Protein Atlas and STRING.",
+    sources: ['InterPro', 'Pfam', 'Human Protein Atlas', 'STRING'],
     termsUrl: 'https://string-db.org/cgi/access?footer_active_subpage=licensing',
     requiresNcbi: false
   },
