@@ -264,9 +264,9 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'biomart',
     displayName: 'BioMart',
-    description: 'Ensembl BioMart identifier translation and attribute queries.',
+    description: 'Ensembl BioMart attribute queries and identifier translation.',
     useWhen:
-      'Use when you need Ensembl BioMart data — listing available marts, or querying gene attributes / cross-references (identifier translation) for a dataset with filters.',
+      'Use when you need Ensembl BioMart data — browsing the marts → datasets → attributes/filters hierarchy, running attribute queries (get_data) for a dataset with filters, or translating gene/transcript identifiers between attribute types (e.g. HGNC symbol → Ensembl gene ID).',
     sources: ['Ensembl BioMart'],
     termsUrl: 'https://www.ensembl.org/info/about/legal/disclaimer.html',
     requiresNcbi: false
