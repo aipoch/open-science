@@ -28,6 +28,7 @@ const PREVIEW_SUPPORTED_EXTENSIONS: Record<string, PreviewFileFormat> = {
   sdf: 'molecule',
   smi: 'molecule',
   smiles: 'molecule',
+  rxn: 'molecule',
   pdf: 'pdf',
   bash: 'text',
   conf: 'text',
@@ -78,6 +79,7 @@ const getPreviewFormatForMimeType = (mimeType: string): PreviewFileFormat => {
   if (
     normalizedMimeType === 'chemical/x-mdl-molfile' ||
     normalizedMimeType === 'chemical/x-mdl-sdfile' ||
+    normalizedMimeType === 'chemical/x-mdl-rxnfile' ||
     normalizedMimeType === 'chemical/x-daylight-smiles'
   ) {
     return 'molecule'
