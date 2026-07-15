@@ -27,6 +27,12 @@ const describeValidation = (result: ValidateProviderResult): string => {
     return result.message
   }
 
+  // A gateway that rejected the probe with its own error text (e.g. "Insufficient Balance" on a
+  // billing 402) has already told us the reason — surface it instead of the generic "unknown" copy.
+  if (result.category === 'unknown' && result.message) {
+    return result.status ? `${result.message} (HTTP ${result.status})` : result.message
+  }
+
   if (result.message && MESSAGE_CATEGORIES.has(result.category)) {
     return `${base} (${result.message})`
   }

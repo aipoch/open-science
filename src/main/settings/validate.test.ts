@@ -4,6 +4,7 @@ import {
   buildValidationRequest,
   classifyFetchError,
   classifyStatus,
+  extractProviderErrorMessage,
   validateProvider
 } from './validate'
 
@@ -64,6 +65,46 @@ describe('validate: classification', () => {
   })
 })
 
+describe('validate: error-body extraction', () => {
+  it('reads a nested error.message (Anthropic/OpenAI/DeepSeek shape)', () => {
+    expect(extractProviderErrorMessage('{"error":{"message":"Insufficient Balance"}}')).toBe(
+      'Insufficient Balance'
+    )
+  })
+
+  it('reads a bare string error or top-level message', () => {
+    expect(extractProviderErrorMessage('{"error":"rate limited"}')).toBe('rate limited')
+    expect(extractProviderErrorMessage('{"message":"model not deployed"}')).toBe(
+      'model not deployed'
+    )
+  })
+
+  it('falls back to the raw body for non-JSON, collapsing whitespace', () => {
+    expect(extractProviderErrorMessage('  Bad\n Gateway  ')).toBe('Bad Gateway')
+  })
+
+  it('suppresses an HTML/markup error page (5xx gateway page)', () => {
+    const html = '<html><head><title>502 Bad Gateway</title></head><body>nginx</body></html>'
+
+    expect(extractProviderErrorMessage(html)).toBeUndefined()
+  })
+
+  it('returns undefined for an empty or messageless body', () => {
+    expect(extractProviderErrorMessage('')).toBeUndefined()
+    expect(extractProviderErrorMessage('   ')).toBeUndefined()
+    expect(extractProviderErrorMessage('{"foo":"bar"}')).toBeUndefined()
+  })
+
+  it('truncates an overlong message', () => {
+    const message = extractProviderErrorMessage(
+      JSON.stringify({ error: { message: 'x'.repeat(500) } })
+    )
+
+    expect(message).toHaveLength(301)
+    expect(message?.endsWith('…')).toBe(true)
+  })
+})
+
 describe('validate: provider dispatch', () => {
   it('returns ok for a 200 custom response', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({ status: 200 } as Response)
@@ -76,8 +117,13 @@ describe('validate: provider dispatch', () => {
     expect(result).toMatchObject({ ok: true, category: 'ok', status: 200 })
   })
 
-  it('classifies a 401 custom response as auth', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue({ status: 401 } as Response)
+  it('keeps the friendly auth guidance and does not surface a raw 401 body', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      status: 401,
+      // Even when the gateway returns a body, an auth failure keeps its targeted advice, so the raw
+      // text is deliberately ignored here.
+      text: () => Promise.resolve('{"error":{"message":"invalid api key"}}')
+    } as unknown as Response)
 
     const result = await validateProvider(
       { type: 'custom', baseUrl: 'https://g/v1', key: 'k' },
@@ -85,6 +131,61 @@ describe('validate: provider dispatch', () => {
     )
 
     expect(result).toMatchObject({ ok: false, category: 'auth', status: 401 })
+    expect(result.message).toBeUndefined()
+  })
+
+  it('surfaces the gateway error body on a billing 402 (DeepSeek insufficient balance)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      status: 402,
+      text: () =>
+        Promise.resolve('{"error":{"message":"Insufficient Balance","type":"unknown_error"}}')
+    } as unknown as Response)
+
+    const result = await validateProvider(
+      { type: 'custom', baseUrl: 'https://api.deepseek.com', key: 'k', model: 'deepseek-chat' },
+      { fetchImpl: fetchImpl as unknown as typeof fetch }
+    )
+
+    expect(result).toMatchObject({
+      ok: false,
+      category: 'unknown',
+      status: 402,
+      message: 'Insufficient Balance'
+    })
+  })
+
+  it('surfaces a JSON 5xx error message (e.g. an overloaded upstream)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      status: 503,
+      text: () => Promise.resolve('{"error":{"message":"Service temporarily unavailable"}}')
+    } as unknown as Response)
+
+    const result = await validateProvider(
+      { type: 'custom', baseUrl: 'https://g/v1', key: 'k' },
+      { fetchImpl: fetchImpl as unknown as typeof fetch }
+    )
+
+    expect(result).toMatchObject({
+      ok: false,
+      category: 'unknown',
+      status: 503,
+      message: 'Service temporarily unavailable'
+    })
+  })
+
+  it('tolerates an unreadable error body without throwing', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      status: 500,
+      text: () => Promise.reject(new Error('stream closed'))
+    } as unknown as Response)
+
+    const result = await validateProvider(
+      { type: 'custom', baseUrl: 'https://g/v1', key: 'k' },
+      { fetchImpl: fetchImpl as unknown as typeof fetch }
+    )
+
+    expect(result).toMatchObject({ ok: false, category: 'unknown', status: 500 })
+    expect(result.message).toBeUndefined()
   })
 
   it('classifies a thrown fetch as network', async () => {

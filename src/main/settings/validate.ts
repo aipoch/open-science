@@ -85,6 +85,60 @@ const toResult = (
   ...extra
 })
 
+// Cap on a surfaced provider error so a runaway HTML/error page can't flood the UI.
+const MAX_ERROR_MESSAGE_LENGTH = 300
+
+// Digs the human-readable error string out of a parsed error body. Anthropic- and
+// OpenAI/DeepSeek-compatible gateways nest it under `error.message`; some return a bare `message` or
+// a string `error` (e.g. DeepSeek's "Insufficient Balance" on a 402).
+const pickErrorMessage = (parsed: unknown): string | undefined => {
+  if (!parsed || typeof parsed !== 'object') return undefined
+
+  const { error, message } = parsed as { error?: unknown; message?: unknown }
+
+  if (typeof error === 'string') return error
+  if (error && typeof error === 'object') {
+    const nested = (error as { message?: unknown }).message
+    if (typeof nested === 'string') return nested
+  }
+  if (typeof message === 'string') return message
+
+  return undefined
+}
+
+// Turns a provider's raw error body into a short, single-line message, or undefined when it carries
+// nothing usable. Non-JSON bodies (an HTML/plain-text gateway error page) fall back to the raw text.
+const extractProviderErrorMessage = (bodyText: string): string | undefined => {
+  const trimmed = bodyText.trim()
+  if (!trimmed) return undefined
+
+  let message: string | undefined
+  try {
+    message = pickErrorMessage(JSON.parse(trimmed))
+  } catch {
+    // Not JSON — surface a short plain-text error, but skip an HTML/markup body (a 5xx gateway error
+    // page from nginx/Cloudflare) whose tags would be noise rather than a reason.
+    message = trimmed.startsWith('<') ? undefined : trimmed
+  }
+  if (!message) return undefined
+
+  const collapsed = message.replace(/\s+/g, ' ').trim()
+  if (!collapsed) return undefined
+
+  return collapsed.length > MAX_ERROR_MESSAGE_LENGTH
+    ? `${collapsed.slice(0, MAX_ERROR_MESSAGE_LENGTH)}…`
+    : collapsed
+}
+
+// Reads and extracts a failed response's error message, tolerating a body that can't be read.
+const readProviderErrorMessage = async (response: Response): Promise<string | undefined> => {
+  try {
+    return extractProviderErrorMessage(await response.text())
+  } catch {
+    return undefined
+  }
+}
+
 // Outcome of the one-shot claude-default probe. `timedOut` lets the UI show a timeout message instead
 // of a misleading auth failure when the local claude never responds.
 export type ClaudeProbeResult = {
@@ -126,6 +180,17 @@ const validateCustomProvider = async (
       signal: controller.signal
     })
     const category = classifyStatus(response.status)
+
+    // Only the catch-all 'unknown' status (402 billing, 429 rate limit, 5xx, …) lacks guidance of its
+    // own, so surface the gateway's error text there — whatever it actually says — rather than an
+    // assumed meaning. auth/model-not-found already map to targeted advice, so their raw bodies would
+    // only muddy it.
+    if (category === 'unknown') {
+      return toResult(category, {
+        status: response.status,
+        message: await readProviderErrorMessage(response)
+      })
+    }
 
     return toResult(category, { status: response.status })
   } catch (error) {
@@ -179,5 +244,6 @@ export {
   buildValidationRequest,
   classifyFetchError,
   classifyStatus,
+  extractProviderErrorMessage,
   validateProvider
 }
