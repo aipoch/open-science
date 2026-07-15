@@ -93,10 +93,11 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'clinical_genomics',
     displayName: 'Clinical Genomics',
-    description: 'Target-disease associations and drug mechanisms via Open Targets.',
+    description:
+      'Clinical genomics knowledge bases: ClinGen curations, CIViC clinical evidence, and the Open Targets Platform.',
     useWhen:
-      "Use when you need target-disease association scores for a gene (which diseases are most linked to a target), or a drug's mechanism of action and clinical indications by ChEMBL id. Sourced from the Open Targets Platform.",
-    sources: ['Open Targets'],
+      "Use when you need clinical interpretation of genes and variants — ClinGen gene-disease validity, dosage sensitivity, clinical actionability, and expert-panel (VCEP) variant pathogenicity classifications; CIViC clinical evidence, assertions, molecular profiles, diseases, and therapies for a gene or variant in cancer; or Open Targets target-disease association scores, a disease's known drugs/associated targets, a drug's mechanism of action, and arbitrary Open Targets GraphQL. Sourced from ClinGen, CIViC, and the Open Targets Platform.",
+    sources: ['ClinGen', 'CIViC', 'Open Targets'],
     termsUrl: 'https://platform-docs.opentargets.org/licence',
     requiresNcbi: false
   },
