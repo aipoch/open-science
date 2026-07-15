@@ -358,6 +358,7 @@ describe('claude-install: run redirects npm prefix only when needed', () => {
       installId: 'install-prefix-1',
       onEvent: () => undefined,
       spawnImpl: spawn as never,
+      platform: 'linux',
       npmPrefixWritable: () => Promise.resolve(false)
     })
 
@@ -378,6 +379,7 @@ describe('claude-install: run redirects npm prefix only when needed', () => {
       installId: 'install-prefix-2',
       onEvent: () => undefined,
       spawnImpl: spawn as never,
+      platform: 'linux',
       npmPrefixWritable: () => Promise.resolve(true)
     })
 
