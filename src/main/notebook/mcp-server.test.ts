@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  NOTEBOOK_MCP_OUTPUT_FIELD_LIMIT,
   NOTEBOOK_RPC_TOOLS,
   NOTEBOOK_SYSTEM_PROMPT_APPEND,
-  createNotebookMcpServerConfig
+  createNotebookMcpServerConfig,
+  truncateNotebookRunResult
 } from './mcp-server'
 
 describe('notebook MCP server config', () => {
@@ -72,5 +74,71 @@ describe('notebook MCP server config', () => {
     expect(toolNames).not.toContain('notebook_append_code_cell')
     expect(toolNames).not.toContain('notebook_finish_code_cell')
     expect(toolNames).not.toContain('notebook_run_cell')
+  })
+})
+
+describe('truncateNotebookRunResult', () => {
+  const runSummary = (text: {
+    stdout?: string
+    stderr?: string
+    traceback?: string
+  }): Record<string, unknown> => ({
+    runId: 'notebook-run-1',
+    status: 'completed',
+    text: { stdout: '', stderr: '', traceback: '', plain: [], ...text },
+    outputs: [],
+    artifacts: [],
+    workingFiles: []
+  })
+
+  it('returns a run summary untouched when every stream is under the limit', () => {
+    const result = runSummary({ stdout: 'small output' })
+
+    const truncated = truncateNotebookRunResult(result)
+
+    expect(truncated).toBe(result)
+    expect(truncated).not.toHaveProperty('truncated')
+  })
+
+  it('clips an oversized stream, marks it truncated, and keeps the JSON parseable', () => {
+    const oversized = 'x'.repeat(NOTEBOOK_MCP_OUTPUT_FIELD_LIMIT + 5_000)
+    const result = runSummary({ stdout: oversized })
+
+    const truncated = truncateNotebookRunResult(result) as {
+      truncated?: boolean
+      text: { stdout: string; stderr: string }
+    }
+
+    expect(truncated.truncated).toBe(true)
+    expect(truncated.text.stdout.length).toBeLessThan(oversized.length)
+    expect(truncated.text.stdout).toContain('truncated 5000 chars')
+    // Streams under the limit are left alone.
+    expect(truncated.text.stderr).toBe('')
+    // The serialized payload the agent receives is still valid JSON.
+    expect(() => JSON.parse(JSON.stringify(truncated))).not.toThrow()
+    // The original object is not mutated.
+    expect((result.text as { stdout: string }).stdout).toBe(oversized)
+  })
+
+  it('clips each oversized stream independently', () => {
+    const oversized = 'y'.repeat(NOTEBOOK_MCP_OUTPUT_FIELD_LIMIT + 1)
+    const result = runSummary({ stdout: oversized, traceback: oversized })
+
+    const truncated = truncateNotebookRunResult(result) as {
+      truncated?: boolean
+      text: { stdout: string; traceback: string }
+    }
+
+    expect(truncated.truncated).toBe(true)
+    expect(truncated.text.stdout).toContain('truncated')
+    expect(truncated.text.traceback).toContain('truncated')
+  })
+
+  it('passes through payloads that are not run summaries', () => {
+    const state = { cells: [], recentRuns: [], kernelStatus: 'idle' }
+
+    expect(truncateNotebookRunResult(state)).toBe(state)
+    expect(truncateNotebookRunResult(null)).toBeNull()
+    expect(truncateNotebookRunResult('plain')).toBe('plain')
   })
 })

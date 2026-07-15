@@ -150,8 +150,53 @@ const callNotebookRpc = async (
   return payload.result
 }
 
-// Serializes notebook RPC results exactly as execution facts for the agent to analyze.
-const toToolText = (value: unknown): string => JSON.stringify(value, null, 2)
+// Per-stream cap for the run summary returned to the agent. The full output is always kept in
+// run.json and the notebook preview; only this agent-facing copy is bounded so a single large
+// result (e.g. a connector call dumping many records to stdout) cannot overflow the tool result.
+const NOTEBOOK_MCP_OUTPUT_FIELD_LIMIT = 8_000
+
+// Clips one output stream to the field limit, appending a marker that points at the full copy.
+const clipStream = (text: string): { text: string; clipped: boolean } => {
+  if (text.length <= NOTEBOOK_MCP_OUTPUT_FIELD_LIMIT) return { text, clipped: false }
+
+  const removed = text.length - NOTEBOOK_MCP_OUTPUT_FIELD_LIMIT
+  return {
+    text: `${text.slice(0, NOTEBOOK_MCP_OUTPUT_FIELD_LIMIT)}\n…[truncated ${removed} chars; full output in notebook preview]`,
+    clipped: true
+  }
+}
+
+// Bounds the agent-facing run summary by clipping oversized stdout/stderr/traceback in place. Only
+// touches values shaped like a run summary (a `text` object with string streams); every other RPC
+// payload (state/restart/shutdown) is returned untouched. Never clips the serialized JSON string,
+// which would produce invalid JSON.
+const truncateNotebookRunResult = (value: unknown): unknown => {
+  if (typeof value !== 'object' || value === null) return value
+  const record = value as Record<string, unknown>
+  const text = record.text
+  if (typeof text !== 'object' || text === null) return value
+
+  const streams = text as Record<string, unknown>
+  let clippedAny = false
+  const nextText: Record<string, unknown> = { ...streams }
+
+  for (const field of ['stdout', 'stderr', 'traceback'] as const) {
+    const stream = streams[field]
+    if (typeof stream !== 'string') continue
+    const { text: clippedText, clipped } = clipStream(stream)
+    nextText[field] = clippedText
+    clippedAny = clippedAny || clipped
+  }
+
+  if (!clippedAny) return value
+
+  return { ...record, text: nextText, truncated: true }
+}
+
+// Serializes notebook RPC results exactly as execution facts for the agent to analyze, bounding the
+// per-stream output size so one large run cannot overflow the tool result.
+const toToolText = (value: unknown): string =>
+  JSON.stringify(truncateNotebookRunResult(value), null, 2)
 
 // Registers one MCP tool that forwards its validated input to a matching notebook RPC method.
 const registerNotebookRpcTool = (
@@ -238,6 +283,7 @@ const runNotebookMcpServer = async (
 }
 
 export {
+  NOTEBOOK_MCP_OUTPUT_FIELD_LIMIT,
   NOTEBOOK_MCP_SERVER_ARG,
   NOTEBOOK_MCP_SERVER_NAME,
   NOTEBOOK_RPC_TOOLS,
@@ -246,6 +292,7 @@ export {
   createNotebookMcpEnvironmentFromProcess,
   createNotebookMcpServer,
   createNotebookMcpServerConfig,
-  runNotebookMcpServer
+  runNotebookMcpServer,
+  truncateNotebookRunResult
 }
 export type { NotebookMcpEnvironment, NotebookMcpServerConfigRequest, NotebookRpcConnection }
