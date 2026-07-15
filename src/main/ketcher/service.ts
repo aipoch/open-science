@@ -24,6 +24,13 @@ type KetcherServiceDeps = {
 
 const STRUCTURE_FORMATS: KetcherStructureFormat[] = ['ket', 'molfile', 'smiles']
 
+// Treats a missing file as the finalize-move case so save can recover the artifact's new path.
+const isMissingFileError = (error: unknown): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  'code' in error &&
+  (error as { code?: unknown }).code === 'ENOENT'
+
 // Narrows an optional string argument, rejecting a present-but-wrong-typed value.
 const optionalString = (value: unknown, field: string): string | undefined => {
   if (value === undefined || value === null) return undefined
@@ -85,10 +92,21 @@ export class KetcherService {
   }
 
   // Persists a mounted tile's current structure back to its .ket artifact (best-effort, throttled).
+  // After a turn ends the pending file is finalized into the message directory, so a stale tracked path
+  // is re-resolved (and remembered) through the repository's pending->message recovery before writing.
   async save(artifactId: string, ket: string): Promise<void> {
     const entry = this.files.get(artifactId)
     if (!entry) return
-    await this.writeFileImpl(entry.path, ket)
+
+    try {
+      await this.writeFileImpl(entry.path, ket)
+    } catch (error) {
+      if (!isMissingFileError(error)) throw error
+
+      const recovered = await this.deps.repository.resolveManagedFilePath({ path: entry.path })
+      this.files.set(artifactId, { path: recovered })
+      await this.writeFileImpl(recovered, ket)
+    }
   }
 
   private async openSketcher(args: Record<string, unknown>): Promise<unknown> {

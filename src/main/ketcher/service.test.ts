@@ -30,13 +30,22 @@ const runContext: KetcherRunContext = {
 // A repository double that echoes a deterministic ArtifactFile for writePendingFile.
 const createRepository = (
   writePendingFile = vi.fn()
-): { repository: ArtifactRepository; writePendingFile: ReturnType<typeof vi.fn> } => {
+): {
+  repository: ArtifactRepository
+  writePendingFile: ReturnType<typeof vi.fn>
+  resolveManagedFilePath: ReturnType<typeof vi.fn>
+} => {
   writePendingFile.mockImplementation(async (request: { filename: string }) => ({
     id: `session-art:run-1:${request.filename}`,
     path: `/artifacts/${request.filename}`,
     name: request.filename
   }))
-  return { repository: { writePendingFile } as unknown as ArtifactRepository, writePendingFile }
+  const resolveManagedFilePath = vi.fn()
+  return {
+    repository: { writePendingFile, resolveManagedFilePath } as unknown as ArtifactRepository,
+    writePendingFile,
+    resolveManagedFilePath
+  }
 }
 
 describe('KetcherService', () => {
@@ -196,5 +205,30 @@ describe('KetcherService', () => {
     // An unknown artifact id is a no-op (nothing tracked, no throw).
     await service.save('unknown', 'x')
     expect(writeFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('save recovers the finalized path when the pending file has moved', async () => {
+    const { broker } = createBroker()
+    const { repository, resolveManagedFilePath } = createRepository()
+    resolveManagedFilePath.mockResolvedValue('/artifacts/message/m.ket')
+    const enoent = Object.assign(new Error('missing'), { code: 'ENOENT' })
+    const writeFile = vi.fn().mockRejectedValueOnce(enoent).mockResolvedValue(undefined)
+    const service = new KetcherService({
+      broker,
+      repository,
+      resolveRunContext: () => runContext,
+      writeFile
+    })
+
+    const opened = (await service.call('open_sketcher', { filename: 'm.ket' })) as {
+      artifact_id: string
+    }
+    await service.save(opened.artifact_id, '{"root":{}}')
+
+    expect(resolveManagedFilePath).toHaveBeenCalledWith({ path: '/artifacts/m.ket' })
+    expect(writeFile).toHaveBeenLastCalledWith('/artifacts/message/m.ket', '{"root":{}}')
+    // The recovered path is remembered so the next save goes straight there.
+    await service.save(opened.artifact_id, '{"root":{"x":1}}')
+    expect(resolveManagedFilePath).toHaveBeenCalledTimes(1)
   })
 })
