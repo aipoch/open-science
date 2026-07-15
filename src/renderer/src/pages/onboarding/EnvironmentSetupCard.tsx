@@ -11,6 +11,7 @@ import {
   XCircle
 } from 'lucide-react'
 
+import { Button } from '@/components/ui/button'
 import type {
   ClaudeInstallProgressEvent,
   EnvironmentCheckId,
@@ -85,7 +86,7 @@ const PendingCheckRow = ({ id, label }: (typeof CHECK_LABELS)[number]): React.JS
   const Icon = CHECK_ICONS[id]
 
   return (
-    <li className="flex items-start gap-3 px-4 py-3.5">
+    <li className="flex items-start gap-3 py-3.5">
       <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
         <Icon className="size-4" aria-hidden="true" />
       </span>
@@ -102,7 +103,7 @@ const EnvironmentCheckRow = ({ check }: { check: EnvironmentCheckItem }): React.
   const Icon = CHECK_ICONS[check.id]
 
   return (
-    <li className="flex items-start gap-3 px-4 py-3.5">
+    <li className="flex items-start gap-3 py-3.5">
       <span
         className={cn(
           'mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg',
@@ -139,6 +140,10 @@ const EnvironmentCheckRow = ({ check }: { check: EnvironmentCheckItem }): React.
   )
 }
 
+// Unframed environment summary rendered inside the onboarding work Card: a re-check control, the
+// per-requirement checklist, and (when Claude is the only gap) a one-click app-managed install with
+// progress and a copyable technical log. It intentionally carries no card chrome of its own so the
+// wizard keeps a single visible work surface.
 const EnvironmentSetupCard = ({
   environment,
   isChecking,
@@ -158,30 +163,26 @@ const EnvironmentSetupCard = ({
     environment?.recommendedRegistry === 'npmmirror' ? 'China-friendly mirror' : 'official registry'
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card shadow-card">
-      <div className="flex items-start justify-between gap-4 border-b border-border px-4 py-4">
-        <div>
-          <h2 className="text-sm font-semibold text-card-foreground">
-            Automatic environment check
-          </h2>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            Open Science checks its core requirements, selects a trusted download source, and
-            reports optional Notebook availability.
-          </p>
-        </div>
-        <button
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-4">
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Open Science checks its core requirements, selects a trusted download source, and reports
+          optional Notebook availability.
+        </p>
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           onClick={onCheck}
           disabled={isChecking || isInstalling}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
         >
-          <RefreshCw className={cn('size-3.5', isChecking && 'animate-spin')} aria-hidden="true" />
+          <RefreshCw className={cn(isChecking && 'animate-spin')} aria-hidden="true" />
           {isChecking ? 'Checking…' : 'Check again'}
-        </button>
+        </Button>
       </div>
 
       <ul
-        className="divide-y divide-border"
+        className="divide-y divide-border-200"
         aria-label="Environment requirements"
         aria-live="polite"
       >
@@ -191,7 +192,7 @@ const EnvironmentSetupCard = ({
       </ul>
 
       {environment && !environment.ready ? (
-        <div className="border-t border-border bg-muted/35 px-4 py-4">
+        <div className="rounded-lg bg-bg-10 px-4 py-4 ring-1 ring-border-200">
           {environment.canAutoInstall ? (
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -203,19 +204,19 @@ const EnvironmentSetupCard = ({
                   source as fallback; no Node.js, npm, or admin password is required.
                 </p>
               </div>
-              <button
+              <Button
                 type="button"
                 onClick={onInstall}
                 disabled={isInstalling || isChecking}
-                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border border-primary bg-primary px-3.5 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                className="shrink-0"
               >
                 {isInstalling ? (
-                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                  <Loader2 className="animate-spin" aria-hidden="true" />
                 ) : (
-                  <TerminalSquare className="size-4" aria-hidden="true" />
+                  <TerminalSquare aria-hidden="true" />
                 )}
                 {isInstalling ? 'Installing…' : 'Install missing runtime'}
-              </button>
+              </Button>
             </div>
           ) : (
             <p className="text-xs leading-relaxed text-muted-foreground">
@@ -227,7 +228,11 @@ const EnvironmentSetupCard = ({
       ) : null}
 
       {isInstalling ? (
-        <div className="border-t border-border px-4 py-3" role="status" aria-live="polite">
+        <div
+          className="rounded-lg bg-bg-10 px-4 py-3 ring-1 ring-border-200"
+          role="status"
+          aria-live="polite"
+        >
           <div className="flex items-center justify-between text-xs">
             <span className="font-medium text-foreground">
               {structuredProgress?.label ?? 'Installing Claude runtime'}
@@ -249,7 +254,10 @@ const EnvironmentSetupCard = ({
       ) : null}
 
       {error ? (
-        <div className="border-t border-destructive/30 bg-destructive/5 px-4 py-3" role="alert">
+        <div
+          className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3"
+          role="alert"
+        >
           <p className="text-xs font-semibold text-destructive">Setup could not be completed</p>
           <p className="mt-1 break-words text-xs text-destructive/90">{error}</p>
           <p className="mt-1 text-[11px] text-muted-foreground">
@@ -260,7 +268,7 @@ const EnvironmentSetupCard = ({
 
       {installLogs.length > 0 ? (
         <pre
-          className="max-h-44 overflow-auto border-t border-border bg-foreground/5 px-4 py-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-foreground/75 select-text"
+          className="max-h-44 overflow-auto rounded-lg bg-foreground/5 px-4 py-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-foreground/75 select-text"
           aria-label="Automatic setup log"
         >
           {installLogs.join('\n')}
