@@ -33,9 +33,9 @@ const scriptedSpawn = (
     const script = scripts[command]
 
     setImmediate(() => {
-      if (script.stdout) child.stdout.emit('data', Buffer.from(script.stdout))
-      if (script.stderr) child.stderr.emit('data', Buffer.from(script.stderr))
-      child.emit('exit', script.exit)
+      if (script?.stdout) child.stdout.emit('data', Buffer.from(script.stdout))
+      if (script?.stderr) child.stderr.emit('data', Buffer.from(script.stderr))
+      child.emit('exit', script?.exit ?? 0)
     })
 
     return child
@@ -230,6 +230,7 @@ describe('claude-install: run with region-block fallback', () => {
       installId: 'install-6',
       onEvent: (event) => logs.push(event),
       spawnImpl: spawn as never,
+      platform: 'linux',
       npmProbe: () => Promise.resolve(),
       npmPrefixWritable: () => Promise.resolve(true)
     })
@@ -251,6 +252,7 @@ describe('claude-install: run with region-block fallback', () => {
       installId: 'install-7',
       onEvent: () => undefined,
       spawnImpl: spawn as never,
+      platform: 'linux',
       npmProbe: () => Promise.reject(new Error('not found'))
     })
 
@@ -269,6 +271,7 @@ describe('claude-install: run with region-block fallback', () => {
       installId: 'install-8',
       onEvent: () => undefined,
       spawnImpl: spawn as never,
+      platform: 'linux',
       npmProbe: () => Promise.resolve()
     })
 

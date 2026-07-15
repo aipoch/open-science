@@ -156,6 +156,9 @@ export type RunInstallOptions = {
   installId: string
   onEvent: (event: ClaudeInstallEvent) => void
   timeoutMs?: number
+  // Host platform, injectable so tests exercise a fixed OS's spawn spec (e.g. bash vs powershell for
+  // the official script) regardless of the machine running them. Defaults to the real process.platform.
+  platform?: NodeJS.Platform
   // Injectable spawn so tests can drive stdout/stderr/exit without a real process. `options` carries
   // the spec's `shell` flag through to the real spawn.
   spawnImpl?: (
@@ -196,17 +199,18 @@ const runInstall = async ({
   onEvent,
   timeoutMs = DEFAULT_INSTALL_TIMEOUT_MS,
   spawnImpl = defaultInstallSpawn,
+  platform = process.platform,
   npmPrefixWritable = () => isNpmGlobalPrefixWritable()
 }: RunInstallOptions): Promise<ClaudeInstallResult> => {
   // Redirect npm's global install to a user-owned prefix only off Windows and only when the default
   // global prefix isn't writable (would otherwise need sudo). Homebrew/nvm/volta users keep a plain
   // `npm i -g` at their expected, PATH-visible location.
   const npmPrefixOverride =
-    source === 'npm' && process.platform !== 'win32' && !(await npmPrefixWritable())
+    source === 'npm' && platform !== 'win32' && !(await npmPrefixWritable())
       ? join(homedir(), '.local')
       : undefined
 
-  const spec = getInstallSpawnSpec(source, process.platform, npmPrefixOverride)
+  const spec = getInstallSpawnSpec(source, platform, npmPrefixOverride)
 
   onEvent({
     kind: 'log',
@@ -328,6 +332,7 @@ const runInstallWithFallback = async ({
   onEvent,
   timeoutMs,
   spawnImpl,
+  platform,
   npmProbe,
   npmPrefixWritable
 }: RunInstallWithFallbackOptions): Promise<ClaudeInstallResult> => {
@@ -337,6 +342,7 @@ const runInstallWithFallback = async ({
     onEvent,
     timeoutMs,
     spawnImpl,
+    platform,
     npmPrefixWritable
   })
 
@@ -353,7 +359,15 @@ const runInstallWithFallback = async ({
     chunk: 'Official installer looks unavailable in your region; falling back to npm…\n'
   })
 
-  return runInstall({ source: 'npm', installId, onEvent, timeoutMs, spawnImpl, npmPrefixWritable })
+  return runInstall({
+    source: 'npm',
+    installId,
+    onEvent,
+    timeoutMs,
+    spawnImpl,
+    platform,
+    npmPrefixWritable
+  })
 }
 
 export {
