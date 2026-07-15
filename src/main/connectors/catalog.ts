@@ -84,9 +84,10 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'clinical_trials',
     displayName: 'Clinical Trials',
-    description: 'Clinical trial records via ClinicalTrials.gov.',
+    description:
+      'Clinical trials from ClinicalTrials.gov — search, details, sponsors, investigators, endpoints, and eligibility.',
     useWhen:
-      'Use when searching or fetching clinical trials from ClinicalTrials.gov — by NCT id, or by a condition, intervention, or free-text query.',
+      'Use for ClinicalTrials.gov: search trials by condition/intervention/sponsor/location/status/phase, fetch full details by NCT id, find trials by sponsor, discover investigators and sites, analyze trial endpoints, or match patients by eligibility.',
     sources: ['ClinicalTrials.gov'],
     termsUrl: 'https://clinicaltrials.gov/about-site/terms-conditions',
     requiresNcbi: false,
