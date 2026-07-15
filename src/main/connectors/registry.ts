@@ -15,7 +15,6 @@ import { GNOMAD_TOOLS } from './descriptors/gnomad'
 import { HUMAN_GENETICS_TOOLS } from './descriptors/human-genetics'
 import { LITERATURE_TOOLS } from './descriptors/literature'
 import { OMICS_ARCHIVES_TOOLS } from './descriptors/omics-archives'
-import { OPENALEX_TOOLS } from './descriptors/openalex'
 import { PROTEIN_ANNOTATION_TOOLS } from './descriptors/protein-annotation'
 import { PUBMED_TOOLS } from './descriptors/pubmed'
 import { REGULATION_TOOLS } from './descriptors/regulation'
@@ -44,7 +43,6 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...HUMAN_GENETICS_TOOLS,
   ...LITERATURE_TOOLS,
   ...OMICS_ARCHIVES_TOOLS,
-  ...OPENALEX_TOOLS,
   ...PROTEIN_ANNOTATION_TOOLS,
   ...PUBMED_TOOLS,
   ...REGULATION_TOOLS,
