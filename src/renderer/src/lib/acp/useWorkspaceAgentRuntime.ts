@@ -407,44 +407,6 @@ const sendWorkspaceMessage = async (
   return pending
 }
 
-// Explicitly re-attaches an interrupted session's ACP runtime so the user can keep chatting. On
-// success the composer is unlocked; on failure the interrupted banner stays so a retry stays possible.
-const resumeInterruptedWorkspaceSession = async (
-  runtime: WorkspaceMessageRuntime,
-  sessionId: string
-): Promise<void> => {
-  const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
-
-  if (!session) return
-
-  // Already attached (e.g. a redundant click after a prior resume): just clear the banner.
-  if (runtime.state.sessionIds.includes(sessionId)) {
-    useSessionStore.getState().markResumed(sessionId)
-    return
-  }
-
-  const resumeCwd = session.cwd || runtime.state.cwd
-
-  if (!resumeCwd) {
-    useSessionStore
-      .getState()
-      .failRun(sessionId, 'Session workspace is missing; start a new conversation.')
-    return
-  }
-
-  try {
-    await runtime.resumeSession(
-      sessionId,
-      resumeCwd,
-      session.projectId,
-      session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE
-    )
-    useSessionStore.getState().markResumed(sessionId)
-  } catch (error) {
-    useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
-  }
-}
-
 const useWorkspaceAgentRuntime = (): {
   actionError: string | null
   isConnecting: boolean
@@ -453,7 +415,6 @@ const useWorkspaceAgentRuntime = (): {
   permissionGrants: Record<string, AcpPermissionGrant[]>
   sendMessage: (input: SendWorkspaceMessageInput) => Promise<SendWorkspaceMessageResult | undefined>
   cancelRun: (sessionId: string) => Promise<void>
-  resumeInterruptedSession: (sessionId: string) => Promise<void>
   deleteRuntimeSession: (sessionId: string) => Promise<void>
   respondToPermission: (requestId: string, optionId?: string) => Promise<void>
   setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => Promise<boolean>
@@ -476,13 +437,6 @@ const useWorkspaceAgentRuntime = (): {
   const sendMessage = useCallback(
     (input: SendWorkspaceMessageInput): Promise<SendWorkspaceMessageResult | undefined> =>
       sendWorkspaceMessage(runtime, input),
-    [runtime]
-  )
-
-  // Explicitly re-attaches an interrupted session's ACP runtime so the user can keep chatting. On
-  // success the composer is unlocked; on failure the interrupted banner stays so a retry stays possible.
-  const resumeInterruptedSession = useCallback(
-    (sessionId: string): Promise<void> => resumeInterruptedWorkspaceSession(runtime, sessionId),
     [runtime]
   )
 
@@ -565,7 +519,6 @@ const useWorkspaceAgentRuntime = (): {
     permissionGrants: runtime.state.permissionGrants,
     sendMessage,
     cancelRun,
-    resumeInterruptedSession,
     deleteRuntimeSession,
     respondToPermission,
     setPermissionProfile,
@@ -576,7 +529,6 @@ const useWorkspaceAgentRuntime = (): {
 export {
   createWorkspaceRuntimeEventProcessor,
   processVisibleWorkspaceRuntimeEvents,
-  resumeInterruptedWorkspaceSession,
   sendWorkspaceMessage,
   useWorkspaceAgentRuntime
 }

@@ -161,7 +161,6 @@ type SessionStore = SessionStoreData & {
   hydrateSessions: (sessions: PersistedChatSession[], manifest?: PersistedSessionManifest) => void
   finishRun: (sessionId: string) => void
   failRun: (sessionId: string, error: string) => void
-  markResumed: (sessionId: string) => void
   upsertToolActivity: (input: UpsertToolActivityInput) => void
   setPermissionPending: (sessionId: string) => void
   clearPermissionPending: (sessionId: string) => void
@@ -501,6 +500,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
                 status: 'running',
                 activeRun,
                 error: undefined,
+                // A new message re-attaches on send, so the interrupted flag no longer applies.
+                interrupted: undefined,
                 messages: [...session.messages, userMessage],
                 updatedAt: now
               }
@@ -995,23 +996,6 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               error: message,
               messages: failStreamingMessages(session.messages),
               activities: failOpenActivities(session.activities),
-              updatedAt: Date.now()
-            }
-          : session
-      )
-    }))
-  },
-
-  // Clears the interrupted/error state after a successful resume so the composer is usable again.
-  markResumed: (sessionId) => {
-    set((state) => ({
-      sessions: state.sessions.map((session) =>
-        session.id === sessionId
-          ? {
-              ...session,
-              status: 'idle',
-              error: undefined,
-              interrupted: undefined,
               updatedAt: Date.now()
             }
           : session

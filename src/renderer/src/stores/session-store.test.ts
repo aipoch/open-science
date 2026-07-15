@@ -1213,15 +1213,20 @@ describe('session store', () => {
       expect(persisted).not.toHaveProperty('interrupted')
     })
 
-    it('markResumed clears the interrupted state so the composer is usable', () => {
+    it('appendUserMessage clears the interrupted flag so the session looks ready again', () => {
       hydrateInterrupted()
 
-      useSessionStore.getState().markResumed('resumable-session')
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'resumable-session',
+        content: 'hello again',
+        cwd: '/workspace',
+        projectId: 'default'
+      })
       const session = useSessionStore.getState().sessions[0]
 
       expect(session.interrupted).toBeUndefined()
       expect(session.error).toBeUndefined()
-      expect(session.status).toBe('idle')
+      expect(session.status).toBe('running')
     })
   })
 })
