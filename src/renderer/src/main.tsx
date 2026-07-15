@@ -1,3 +1,5 @@
+// Node-global shim (process/global) must run before any lazy Ketcher chunk loads.
+import './lib/node-globals-shim'
 import './assets/main.css'
 
 import { StrictMode } from 'react'
