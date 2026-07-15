@@ -31,6 +31,11 @@ describe('preview support format detection', () => {
     ['faa', undefined, 'fasta'],
     ['json', undefined, 'json'],
     ['pdb', undefined, 'pdb'],
+    ['mol', undefined, 'molecule'],
+    ['sdf', undefined, 'molecule'],
+    ['smi', undefined, 'molecule'],
+    ['smiles', undefined, 'molecule'],
+    ['rxn', undefined, 'molecule'],
     ['html', undefined, 'html'],
     ['htm', undefined, 'html']
   ])('maps .%s files to %s previews', (extension, mimeType, expectedFormat) => {
@@ -44,6 +49,7 @@ describe('preview support format detection', () => {
     ['image/png', 'image'],
     ['text/markdown', 'markdown'],
     ['chemical/x-pdb', 'pdb'],
+    ['chemical/x-mdl-rxnfile', 'molecule'],
     ['application/xml', 'text'],
     ['application/atom+xml', 'text'],
     ['text/plain', 'text']
