@@ -17,12 +17,12 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
-    "build": "npm run typecheck && electron-vite build",
+    "build": "npm run typecheck && node --max-old-space-size=4096 node_modules/electron-vite/bin/electron-vite.js build",
     "postinstall": "prisma generate && electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",
-    "build:mac": "electron-vite build && electron-builder --mac",
-    "build:linux": "electron-vite build && electron-builder --linux",
-    "build:win": "electron-vite build && electron-builder --win",
+    "build:mac": "node --max-old-space-size=4096 node_modules/electron-vite/bin/electron-vite.js build && electron-builder --mac",
+    "build:linux": "node --max-old-space-size=4096 node_modules/electron-vite/bin/electron-vite.js build && electron-builder --linux",
+    "build:win": "node --max-old-space-size=4096 node_modules/electron-vite/bin/electron-vite.js build && electron-builder --win",
     "predev": "node scripts/dev-app-branding.cjs"
   },
   "dependencies": {
