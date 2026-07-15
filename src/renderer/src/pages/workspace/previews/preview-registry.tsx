@@ -5,6 +5,7 @@ import { HtmlPreviewRenderer } from './renderers/HtmlPreview'
 import { ImagePreviewRenderer } from './renderers/ImagePreview'
 import { JsonPreviewRenderer } from './renderers/JsonPreview'
 import { MarkdownPreviewRenderer } from './renderers/MarkdownPreview'
+import { MoleculePreviewRenderer } from './renderers/MoleculePreview'
 import { PdbPreviewRenderer } from './renderers/PdbPreview'
 import { PdfPreviewRenderer } from './renderers/PdfPreview'
 import { TextPreviewRenderer } from './renderers/TextPreview'
@@ -28,6 +29,8 @@ export const renderPreviewFile = ({
       return <MarkdownPreviewRenderer item={item} />
     case 'pdb':
       return <PdbPreviewRenderer item={item} />
+    case 'molecule':
+      return <MoleculePreviewRenderer item={item} />
     case 'text':
       return <TextPreviewRenderer item={item} />
     case 'pdf':

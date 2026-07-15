@@ -1,5 +1,8 @@
 import type { AcpRuntimeEvent, AcpPermissionRequest } from '../../../../shared/acp'
 import type { ArtifactFile, FinalizeRunArtifactsRequest } from '../../../../shared/artifacts'
+import { createPreviewFileItem } from '../../pages/workspace/preview-file-item'
+import { getPreviewFormatForFile } from '../../pages/workspace/preview-support'
+import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
 import { useSessionStore } from '../../stores/session-store'
 import { createRuntimeStreamId, isAssistantRuntimeChatMessageEvent } from './chat-events'
 
@@ -21,6 +24,28 @@ type WorkspaceRuntimeEventDependencies = {
 // Defaults to the preload artifact API while allowing tests to inject a fake finalizer.
 const finalizeRunArtifacts = (request: FinalizeRunArtifactsRequest): Promise<ArtifactFile[]> =>
   window.api.artifacts.finalizeRunArtifacts(request)
+
+// Opens freshly generated molecular-structure artifacts in the preview panel so the OpenChemLib
+// viewer renders them without a manual click. Only molecule-format files auto-open; other artifacts
+// (charts, tables, …) still wait for an explicit click. Fires only on live-run artifact events.
+const openMoleculePreviews = (sessionId: string, artifacts: ArtifactFile[]): void => {
+  const workbench = usePreviewWorkbenchStore.getState()
+
+  for (const artifact of artifacts) {
+    const format = getPreviewFormatForFile({ name: artifact.name, mimeType: artifact.mimeType })
+    if (format !== 'molecule') continue
+
+    workbench.upsertAndActivateItem(
+      createPreviewFileItem({
+        id: artifact.id,
+        sessionId,
+        path: artifact.path,
+        name: artifact.name,
+        mimeType: artifact.mimeType
+      })
+    )
+  }
+}
 
 // Applies one runtime event to the workspace store when it affects chat state.
 const applyWorkspaceRuntimeEvent = async (
@@ -98,6 +123,9 @@ const applyWorkspaceRuntimeEvent = async (
           artifacts: finalizedArtifacts
         })
         store.clearArtifactError(event.sessionId)
+
+        // Auto-open any molecular-structure files this run produced, using the finalized paths.
+        openMoleculePreviews(event.sessionId, finalizedArtifacts)
       } catch (error) {
         store.recordArtifactError(event.sessionId, getErrorText(error))
         throw error

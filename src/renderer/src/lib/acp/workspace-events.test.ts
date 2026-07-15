@@ -275,6 +275,76 @@ describe('workspace runtime events', () => {
     ])
   })
 
+  it('auto-opens a generated molecule artifact in the preview panel', async () => {
+    const finalizedArtifact = createArtifactFile({
+      id: 'transport-session-1:message-1:aspirin.mol',
+      sessionId: 'transport-session-1',
+      messageId: 'message-1',
+      runId: undefined,
+      name: 'aspirin.mol',
+      path: '/Users/example/.open-science/artifacts/default-project/transport-session-1/message-1/aspirin.mol',
+      fileUrl:
+        'file:///Users/example/.open-science/artifacts/default-project/transport-session-1/message-1/aspirin.mol'
+    })
+    const finalizeRunArtifacts = vi.fn().mockResolvedValue([finalizedArtifact])
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'artifact-event-1',
+        kind: 'artifact',
+        runId: 'run-1',
+        artifactSessionId: 'artifact-session-1',
+        artifactClaimId: 'claim-1',
+        artifacts: [createArtifactFile({ name: 'aspirin.mol' })]
+      }),
+      { finalizeRunArtifacts }
+    )
+
+    const preview = usePreviewWorkbenchStore.getState()
+
+    expect(preview.panelState).toBe('open')
+    expect(preview.activeItemId).toBe('transport-session-1:message-1:aspirin.mol')
+    expect(preview.items).toEqual([
+      expect.objectContaining({
+        id: 'transport-session-1:message-1:aspirin.mol',
+        type: 'file',
+        format: 'molecule',
+        name: 'aspirin.mol'
+      })
+    ])
+  })
+
+  it('does not auto-open non-molecule artifacts', async () => {
+    const finalizedArtifact = createArtifactFile({
+      id: 'transport-session-1:message-1:result.txt',
+      sessionId: 'transport-session-1',
+      messageId: 'message-1',
+      runId: undefined,
+      path: '/Users/example/.open-science/artifacts/default-project/transport-session-1/message-1/result.txt',
+      fileUrl:
+        'file:///Users/example/.open-science/artifacts/default-project/transport-session-1/message-1/result.txt'
+    })
+    const finalizeRunArtifacts = vi.fn().mockResolvedValue([finalizedArtifact])
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'artifact-event-1',
+        kind: 'artifact',
+        runId: 'run-1',
+        artifactSessionId: 'artifact-session-1',
+        artifactClaimId: 'claim-1',
+        artifacts: [createArtifactFile()]
+      }),
+      { finalizeRunArtifacts }
+    )
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: undefined,
+      panelState: 'collapsed',
+      items: []
+    })
+  })
+
   it('records finalize failures and retries when an artifact event is replayed', async () => {
     const finalizedArtifact = createArtifactFile({
       id: 'transport-session-1:message-1:result.txt',

@@ -12,6 +12,7 @@ import { GENES_TOOLS } from './descriptors/genes'
 import { GENOMES_TOOLS } from './descriptors/genomes'
 import { HUMAN_GENETICS_TOOLS } from './descriptors/human-genetics'
 import { LITERATURE_TOOLS } from './descriptors/literature'
+import { MOLECULE_TOOLS } from './descriptors/molecule'
 import { OMICS_ARCHIVES_TOOLS } from './descriptors/omics-archives'
 import { PROTEIN_ANNOTATION_TOOLS } from './descriptors/protein-annotation'
 import { PUBMED_TOOLS } from './descriptors/pubmed'
@@ -38,6 +39,7 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...GENOMES_TOOLS,
   ...HUMAN_GENETICS_TOOLS,
   ...LITERATURE_TOOLS,
+  ...MOLECULE_TOOLS,
   ...OMICS_ARCHIVES_TOOLS,
   ...PROTEIN_ANNOTATION_TOOLS,
   ...PUBMED_TOOLS,

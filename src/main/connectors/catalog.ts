@@ -39,6 +39,16 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     requiresNcbi: false
   },
   {
+    id: 'molecule',
+    displayName: 'Molecule Viewer',
+    description:
+      'Validate and preview 2D molecular structures (OpenChemLib). Backs the .mol/.sdf/.smi/.smiles artifact viewer.',
+    useWhen:
+      'Use when the user provides or wants to inspect a chemical structure — validating or normalizing a SMILES or MDL molfile, computing a molecular formula / weight / heavy-atom count, or turning a structure into a previewable 2D depiction. Self-contained: pass a SMILES or molfile directly, no other connector required. Sourced from OpenChemLib (offline, in-app).',
+    sources: ['OpenChemLib'],
+    requiresNcbi: false
+  },
+  {
     id: 'pubmed',
     displayName: 'PubMed',
     description:

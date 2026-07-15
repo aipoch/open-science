@@ -5,7 +5,17 @@ import type { UploadedAttachment } from '../../../shared/uploads'
 
 export type PreviewPanelState = 'open' | 'collapsed'
 export type PreviewFileFormat =
-  'markdown' | 'text' | 'json' | 'csv' | 'fasta' | 'html' | 'image' | 'pdb' | 'pdf' | 'unknown'
+  | 'markdown'
+  | 'text'
+  | 'json'
+  | 'csv'
+  | 'fasta'
+  | 'html'
+  | 'image'
+  | 'pdb'
+  | 'molecule'
+  | 'pdf'
+  | 'unknown'
 // Distinguishes generated artifacts from user uploads when preview readers and actions differ.
 export type PreviewFileSource = 'artifact' | 'upload'
 export const PROJECT_FILES_PREVIEW_ID = 'tool:project:files'

@@ -24,6 +24,10 @@ const PREVIEW_SUPPORTED_EXTENSIONS: Record<string, PreviewFileFormat> = {
   markdown: 'markdown',
   md: 'markdown',
   pdb: 'pdb',
+  mol: 'molecule',
+  sdf: 'molecule',
+  smi: 'molecule',
+  smiles: 'molecule',
   pdf: 'pdf',
   bash: 'text',
   conf: 'text',
@@ -70,6 +74,13 @@ const getPreviewFormatForMimeType = (mimeType: string): PreviewFileFormat => {
     normalizedMimeType === 'application/x-pdb'
   ) {
     return 'pdb'
+  }
+  if (
+    normalizedMimeType === 'chemical/x-mdl-molfile' ||
+    normalizedMimeType === 'chemical/x-mdl-sdfile' ||
+    normalizedMimeType === 'chemical/x-daylight-smiles'
+  ) {
+    return 'molecule'
   }
   if (normalizedMimeType === 'application/pdf') return 'pdf'
   if (normalizedMimeType.startsWith('text/')) return 'text'
