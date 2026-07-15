@@ -14,6 +14,7 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import {
+  createKetcherPreviewItem,
   createNotebookPreviewItem,
   createProjectFilesPreviewItem,
   PROJECT_FILES_PREVIEW_ID,
@@ -33,6 +34,7 @@ import {
 } from './composer/composer-doc'
 import { ConversationPanel } from './ConversationPanel'
 import { DeleteSessionDialog } from './DeleteSessionDialog'
+import { installKetcherCommandBridge } from './ketcher-tile-bridge'
 import { PreviewPanel } from './PreviewPanel'
 import { RenameSessionDialog } from './RenameSessionDialog'
 import { getVisiblePermissionRequests } from './session-permissions'
@@ -324,6 +326,30 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
       removeNotebookAvailableListener()
     }
   }, [upsertPreviewItem])
+
+  // The Ketcher tool host opens editable sketcher tiles and drives them over IPC; install the command
+  // bridge once and open (or refocus) a tile whenever the host writes a new .ket artifact.
+  useEffect(() => {
+    const removeCommandBridge = installKetcherCommandBridge()
+    const removeOpenListener = window.api.ketcher.onOpen((open) => {
+      upsertAndActivatePreviewItem(
+        createKetcherPreviewItem(
+          {
+            artifactId: open.artifactId,
+            path: open.path,
+            name: open.name,
+            content: open.content
+          },
+          open.sessionId
+        )
+      )
+    })
+
+    return () => {
+      removeCommandBridge()
+      removeOpenListener()
+    }
+  }, [upsertAndActivatePreviewItem])
 
   // The availability event only fires while the agent is live, so a session opened after relaunch
   // would lose its notebook entry until the next call. Probe persisted run.json on selection to

@@ -25,6 +25,13 @@ import type {
   ReadArtifactPreviewRequest
 } from '../shared/artifacts'
 import type { SaveBlobFileRequest, SaveBlobFileResult } from '../shared/file-save'
+import type {
+  KetcherCommand,
+  KetcherMountNotice,
+  KetcherOpenTile,
+  KetcherReply,
+  KetcherSaveRequest
+} from '../shared/ketcher'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
   AppendNotebookCodeCellRequest,
@@ -277,6 +284,14 @@ type OpenScienceAPI = {
     onAvailable: (listener: AcpListener<NotebookAvailableEvent>) => RemoveListener
     onChanged: (listener: AcpListener<NotebookChangedEvent>) => RemoveListener
   }
+  ketcher: {
+    onCommand: (listener: AcpListener<KetcherCommand>) => RemoveListener
+    onOpen: (listener: AcpListener<KetcherOpenTile>) => RemoveListener
+    reply: (reply: KetcherReply) => Promise<void>
+    notifyMounted: (notice: KetcherMountNotice) => Promise<void>
+    notifyUnmounted: (notice: KetcherMountNotice) => Promise<void>
+    save: (request: KetcherSaveRequest) => Promise<void>
+  }
 }
 
 // Exposes the small, typed bridge surface available to renderer code.
@@ -501,6 +516,19 @@ const api: OpenScienceAPI = {
       }>,
     onAvailable: (listener) => onIpcMessage('notebook:available', listener),
     onChanged: (listener) => onIpcMessage('notebook:changed', listener)
+  },
+  ketcher: {
+    // Main pushes imperative canvas commands and tile-open requests; the tile pushes back replies and
+    // mount/save notices. Kept behind the preload bridge so renderer code never touches raw IPC.
+    onCommand: (listener: AcpListener<KetcherCommand>) => onIpcMessage('ketcher:command', listener),
+    onOpen: (listener: AcpListener<KetcherOpenTile>) => onIpcMessage('ketcher:open', listener),
+    reply: (reply: KetcherReply) => ipcRenderer.invoke('ketcher:reply', reply) as Promise<void>,
+    notifyMounted: (notice: KetcherMountNotice) =>
+      ipcRenderer.invoke('ketcher:mounted', notice) as Promise<void>,
+    notifyUnmounted: (notice: KetcherMountNotice) =>
+      ipcRenderer.invoke('ketcher:unmounted', notice) as Promise<void>,
+    save: (request: KetcherSaveRequest) =>
+      ipcRenderer.invoke('ketcher:save', request) as Promise<void>
   }
 }
 

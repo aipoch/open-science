@@ -33,11 +33,20 @@ export type PreviewFileItem = PreviewItemBase & {
   name: string
 }
 
+// The live editable sketcher tile mounted for one .ket artifact (driven by the Ketcher tool host).
+export type KetcherTileReference = {
+  artifactId: string
+  path: string
+  name: string
+  content: string
+}
+
 // Tool previews share the workbench chrome with files, but keep their own render path.
 export type PreviewToolItem = PreviewItemBase & {
   type: 'tool'
-  toolKind?: 'notebook' | 'files'
+  toolKind?: 'notebook' | 'files' | 'ketcher'
   notebook?: NotebookSessionReference
+  ketcher?: KetcherTileReference
 }
 
 export type PreviewItem = PreviewFileItem | PreviewToolItem
@@ -145,6 +154,19 @@ const createProjectFilesPreviewItem = (): PreviewToolItem => ({
   type: 'tool',
   toolKind: 'files',
   title: 'Files'
+})
+
+// Builds the editable sketcher tab keyed by artifact id so repeated opens refresh the same tile.
+const createKetcherPreviewItem = (
+  reference: KetcherTileReference,
+  sessionId: string
+): PreviewToolItem => ({
+  id: `tool:ketcher:${reference.artifactId}`,
+  sessionId,
+  type: 'tool',
+  toolKind: 'ketcher',
+  title: reference.name,
+  ketcher: reference
 })
 
 // Chooses a stable fallback tab when the active preview item is removed.
@@ -294,4 +316,4 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
   }
 }))
 
-export { createNotebookPreviewItem, createProjectFilesPreviewItem }
+export { createNotebookPreviewItem, createProjectFilesPreviewItem, createKetcherPreviewItem }

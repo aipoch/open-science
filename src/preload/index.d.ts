@@ -23,6 +23,13 @@ import type {
   ReadArtifactPreviewRequest
 } from '../shared/artifacts'
 import type { SaveBlobFileRequest, SaveBlobFileResult } from '../shared/file-save'
+import type {
+  KetcherCommand,
+  KetcherMountNotice,
+  KetcherOpenTile,
+  KetcherReply,
+  KetcherSaveRequest
+} from '../shared/ketcher'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
   AppendNotebookCodeCellRequest,
@@ -254,6 +261,14 @@ interface OpenScienceAPI {
     shutdown(request: NotebookSessionRequest): Promise<{ sessionId: string; status: 'shutdown' }>
     onAvailable(listener: AcpListener<NotebookAvailableEvent>): RemoveListener
     onChanged(listener: AcpListener<NotebookChangedEvent>): RemoveListener
+  }
+  ketcher: {
+    onCommand(listener: AcpListener<KetcherCommand>): RemoveListener
+    onOpen(listener: AcpListener<KetcherOpenTile>): RemoveListener
+    reply(reply: KetcherReply): Promise<void>
+    notifyMounted(notice: KetcherMountNotice): Promise<void>
+    notifyUnmounted(notice: KetcherMountNotice): Promise<void>
+    save(request: KetcherSaveRequest): Promise<void>
   }
 }
 
