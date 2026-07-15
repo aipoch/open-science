@@ -175,9 +175,9 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'expression',
     displayName: 'Expression',
-    description: 'Gene expression across human tissues via the GTEx Portal.',
+    description: 'Human tissue expression and eQTLs via the GTEx Portal.',
     useWhen:
-      'Use when you need gene expression levels across human tissues — resolving a gene symbol to its GTEx gencodeId, or median expression (TPM) by tissue for a gene. Sourced from GTEx.',
+      'Use for GTEx tissue expression and eQTL evidence — listing tissue sites or dataset releases, resolving gene symbols to versioned GENCODE ids, median or per-sample expression (TPM) by tissue, top-expressed genes per tissue, sample/donor metadata, and cis-eQTLs (eGenes, single-tissue, multi-tissue METASOFT, or on-the-fly calculation) for a gene or variant. Sourced from GTEx.',
     sources: ['GTEx'],
     termsUrl: 'https://gtexportal.org/home/license',
     requiresNcbi: false
