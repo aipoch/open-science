@@ -167,7 +167,7 @@ const OnboardingWizard = (): React.JSX.Element => {
 
   return (
     <main className="h-svh overflow-y-auto bg-bg-10 text-text-000">
-      <div className="mx-auto min-h-full w-full max-w-[960px] px-8 py-7">
+      <div className="mx-auto min-h-full w-full max-w-[1040px] px-8 py-7">
         <a
           href={APP.links.website}
           target="_blank"
@@ -179,7 +179,7 @@ const OnboardingWizard = (): React.JSX.Element => {
 
         <div
           data-onboarding-layout="split"
-          className="mt-12 grid grid-cols-[260px_minmax(0,1fr)] gap-12"
+          className="mt-12 grid grid-cols-[240px_minmax(0,1fr)] gap-10"
         >
           <section aria-labelledby="onboarding-introduction-title" className="pt-2">
             <p className="text-[11px] font-medium text-text-100">FIRST-TIME SETUP</p>

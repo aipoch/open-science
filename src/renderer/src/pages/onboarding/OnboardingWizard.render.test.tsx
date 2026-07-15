@@ -68,7 +68,12 @@ describe('OnboardingWizard', () => {
       (link) => link.textContent === 'Open Science'
     )
 
-    expect(container.querySelector('[data-onboarding-layout="split"]')).not.toBeNull()
+    const layout = container.querySelector('[data-onboarding-layout="split"]')
+
+    expect(layout).not.toBeNull()
+    expect(layout?.parentElement?.className).toContain('max-w-[1040px]')
+    expect(layout?.className).toContain('grid-cols-[240px_minmax(0,1fr)]')
+    expect(layout?.className).toContain('gap-10')
     expect(brandLink?.className).toContain('font-serif')
     expect(brandLink?.className).toContain('text-text-000')
     expect(container.textContent).toContain('Set up your research workspace.')
