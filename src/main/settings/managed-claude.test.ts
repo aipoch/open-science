@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import type { ClaudeInstallLogEvent } from '../../shared/settings'
+import type { ClaudeInstallEvent } from '../../shared/settings'
 import {
   downloadAndVerify,
   extractFileFromTgz,
@@ -165,10 +165,36 @@ describe('managed-claude: download + verify', () => {
       integrity: sha512(payload),
       destPath: dest,
       installId: 'i1',
-      onLog: () => undefined,
+      onEvent: () => undefined,
       fetchTarball: async () => ({ stream: Readable.from([payload]), totalBytes: payload.length })
     })
     expect((await readFile(dest)).equals(payload)).toBe(true)
+  })
+
+  it('emits determinate download progress ticks that finish at the total', async () => {
+    const chunks = [
+      Buffer.alloc(100, 1),
+      Buffer.alloc(100, 2),
+      Buffer.alloc(100, 3),
+      Buffer.alloc(100, 4)
+    ]
+    const payload = Buffer.concat(chunks)
+    const events: ClaudeInstallEvent[] = []
+    await downloadAndVerify({
+      url: 'https://reg/x.tgz',
+      integrity: sha512(payload),
+      destPath: join(dir, 'out.tgz'),
+      installId: 'i1',
+      onEvent: (e) => events.push(e),
+      fetchTarball: async () => ({ stream: Readable.from(chunks), totalBytes: payload.length })
+    })
+
+    const progress = events.filter((e) => e.kind === 'progress' && e.phase === 'downloading')
+    expect(progress.length).toBeGreaterThan(1)
+    // No raw byte lines leak into the log stream anymore.
+    expect(events.some((e) => e.kind === 'log')).toBe(false)
+    const last = progress.at(-1)
+    expect(last).toMatchObject({ receivedBytes: payload.length, totalBytes: payload.length })
   })
 
   it('rejects and removes the file on a sha512 mismatch', async () => {
@@ -179,7 +205,7 @@ describe('managed-claude: download + verify', () => {
         integrity: 'sha512-wrong',
         destPath: dest,
         installId: 'i1',
-        onLog: () => undefined,
+        onEvent: () => undefined,
         fetchTarball: async () => ({ stream: Readable.from([Buffer.from('bytes')]) })
       })
     ).rejects.toThrow(/integrity check/)
@@ -248,11 +274,11 @@ describe('managed-claude: install orchestration', () => {
 
   it('installs the binary and reports the resolved path + version', async () => {
     const { tgz, binary } = fixture()
-    const logs: ClaudeInstallLogEvent[] = []
+    const events: ClaudeInstallEvent[] = []
 
     const outcome = await installManagedClaude({
       installId: 'i1',
-      onLog: (e) => logs.push(e),
+      onEvent: (e) => events.push(e),
       dataRoot: root,
       registries: ['https://reg'],
       platform,
@@ -267,13 +293,22 @@ describe('managed-claude: install orchestration', () => {
     expect(outcome.version).toBe('2.1.209')
     expect(outcome.resolvedPath).toBe(join(root, 'claude-code', 'bin', 'claude'))
     expect((await readFile(outcome.resolvedPath as string)).equals(binary)).toBe(true)
+
+    const phases = events.filter((e) => e.kind === 'progress').map((e) => e.phase)
+    expect(phases).toEqual(expect.arrayContaining(['resolving', 'downloading', 'extracting']))
+    expect(
+      events.some(
+        (e) =>
+          e.kind === 'log' && e.stream === 'system' && /Installed Claude 2\.1\.209/.test(e.chunk)
+      )
+    ).toBe(true)
   })
 
   it('falls back to the next registry when the first fails', async () => {
     const { tgz } = fixture()
     const outcome = await installManagedClaude({
       installId: 'i2',
-      onLog: () => undefined,
+      onEvent: () => undefined,
       dataRoot: root,
       registries: ['https://bad', 'https://good'],
       platform,
@@ -293,7 +328,7 @@ describe('managed-claude: install orchestration', () => {
   it('reports failure when every registry fails', async () => {
     const outcome = await installManagedClaude({
       installId: 'i3',
-      onLog: () => undefined,
+      onEvent: () => undefined,
       dataRoot: root,
       registries: ['https://bad'],
       platform,

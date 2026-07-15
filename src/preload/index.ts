@@ -60,7 +60,7 @@ import type {
 } from '../shared/session-persistence'
 import type {
   ClaudeDetectResult,
-  ClaudeInstallLogEvent,
+  ClaudeInstallEvent,
   ClaudeInstallResult,
   DeleteProviderRequest,
   InstallClaudeRequest,
@@ -193,7 +193,7 @@ type OpenScienceAPI = {
     updateCustomServer: (request: UpdateCustomServerRequest) => Promise<ConnectorsSnapshot>
     onConnectorApprovalRequest: (listener: AcpListener<ConnectorApprovalRequest>) => RemoveListener
     respondConnectorApproval: (request: RespondApprovalRequest) => Promise<void>
-    onInstallLog: (listener: AcpListener<ClaudeInstallLogEvent>) => RemoveListener
+    onInstallLog: (listener: AcpListener<ClaudeInstallEvent>) => RemoveListener
   }
   logs: {
     getPath: () => Promise<string | null>

@@ -10,12 +10,9 @@ import { DRUG_REGULATORY_TOOLS } from './descriptors/drug-regulatory'
 import { EXPRESSION_TOOLS } from './descriptors/expression'
 import { GENES_TOOLS } from './descriptors/genes'
 import { GENOMES_TOOLS } from './descriptors/genomes'
-import { GEO_TOOLS } from './descriptors/geo'
-import { GNOMAD_TOOLS } from './descriptors/gnomad'
 import { HUMAN_GENETICS_TOOLS } from './descriptors/human-genetics'
 import { LITERATURE_TOOLS } from './descriptors/literature'
 import { OMICS_ARCHIVES_TOOLS } from './descriptors/omics-archives'
-import { OPENALEX_TOOLS } from './descriptors/openalex'
 import { PROTEIN_ANNOTATION_TOOLS } from './descriptors/protein-annotation'
 import { PUBMED_TOOLS } from './descriptors/pubmed'
 import { REGULATION_TOOLS } from './descriptors/regulation'
@@ -39,12 +36,9 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...EXPRESSION_TOOLS,
   ...GENES_TOOLS,
   ...GENOMES_TOOLS,
-  ...GEO_TOOLS,
-  ...GNOMAD_TOOLS,
   ...HUMAN_GENETICS_TOOLS,
   ...LITERATURE_TOOLS,
   ...OMICS_ARCHIVES_TOOLS,
-  ...OPENALEX_TOOLS,
   ...PROTEIN_ANNOTATION_TOOLS,
   ...PUBMED_TOOLS,
   ...REGULATION_TOOLS,

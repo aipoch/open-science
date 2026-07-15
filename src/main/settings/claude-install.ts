@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 
 import type {
-  ClaudeInstallLogEvent,
+  ClaudeInstallEvent,
   ClaudeInstallResult,
   ClaudeInstallSource,
   NpmAvailability
@@ -154,8 +154,11 @@ const isNpmGlobalPrefixWritable = async ({
 export type RunInstallOptions = {
   source: ClaudeInstallSource
   installId: string
-  onLog: (event: ClaudeInstallLogEvent) => void
+  onEvent: (event: ClaudeInstallEvent) => void
   timeoutMs?: number
+  // Host platform, injectable so tests exercise a fixed OS's spawn spec (e.g. bash vs powershell for
+  // the official script) regardless of the machine running them. Defaults to the real process.platform.
+  platform?: NodeJS.Platform
   // Injectable spawn so tests can drive stdout/stderr/exit without a real process. `options` carries
   // the spec's `shell` flag through to the real spawn.
   spawnImpl?: (
@@ -193,22 +196,28 @@ const defaultInstallSpawn = (
 const runInstall = async ({
   source,
   installId,
-  onLog,
+  onEvent,
   timeoutMs = DEFAULT_INSTALL_TIMEOUT_MS,
   spawnImpl = defaultInstallSpawn,
+  platform = process.platform,
   npmPrefixWritable = () => isNpmGlobalPrefixWritable()
 }: RunInstallOptions): Promise<ClaudeInstallResult> => {
   // Redirect npm's global install to a user-owned prefix only off Windows and only when the default
   // global prefix isn't writable (would otherwise need sudo). Homebrew/nvm/volta users keep a plain
   // `npm i -g` at their expected, PATH-visible location.
   const npmPrefixOverride =
-    source === 'npm' && process.platform !== 'win32' && !(await npmPrefixWritable())
+    source === 'npm' && platform !== 'win32' && !(await npmPrefixWritable())
       ? join(homedir(), '.local')
       : undefined
 
-  const spec = getInstallSpawnSpec(source, process.platform, npmPrefixOverride)
+  const spec = getInstallSpawnSpec(source, platform, npmPrefixOverride)
 
-  onLog({ installId, stream: 'system', chunk: `$ ${spec.command} ${spec.args.join(' ')}` })
+  onEvent({
+    kind: 'log',
+    installId,
+    stream: 'system',
+    chunk: `$ ${spec.command} ${spec.args.join(' ')}\n`
+  })
 
   return new Promise<ClaudeInstallResult>((resolve) => {
     let child: ChildProcessWithoutNullStreams
@@ -224,6 +233,9 @@ const runInstall = async ({
 
       return
     }
+
+    // No byte total for a shelled installer, so the bar runs indeterminate while it streams output.
+    onEvent({ kind: 'progress', installId, phase: 'installing' })
 
     let settled = false
     let timedOut = false
@@ -245,20 +257,25 @@ const runInstall = async ({
 
     const timer = setTimeout(() => {
       timedOut = true
-      onLog({ installId, stream: 'system', chunk: 'Install timed out; terminating.' })
+      onEvent({
+        kind: 'log',
+        installId,
+        stream: 'system',
+        chunk: 'Install timed out; terminating.\n'
+      })
       child.kill()
     }, timeoutMs)
 
     child.stdout.on('data', (data: Buffer) => {
       const chunk = data.toString('utf8')
       capture(chunk)
-      onLog({ installId, stream: 'stdout', chunk })
+      onEvent({ kind: 'log', installId, stream: 'stdout', chunk })
     })
 
     child.stderr.on('data', (data: Buffer) => {
       const chunk = data.toString('utf8')
       capture(chunk)
-      onLog({ installId, stream: 'stderr', chunk })
+      onEvent({ kind: 'log', installId, stream: 'stderr', chunk })
     })
 
     child.on('error', (error) => {
@@ -312,18 +329,20 @@ const detectNpmAvailable = async (
 const runInstallWithFallback = async ({
   source,
   installId,
-  onLog,
+  onEvent,
   timeoutMs,
   spawnImpl,
+  platform,
   npmProbe,
   npmPrefixWritable
 }: RunInstallWithFallbackOptions): Promise<ClaudeInstallResult> => {
   const result = await runInstall({
     source,
     installId,
-    onLog,
+    onEvent,
     timeoutMs,
     spawnImpl,
+    platform,
     npmPrefixWritable
   })
 
@@ -333,13 +352,22 @@ const runInstallWithFallback = async ({
 
   if (!available) return result
 
-  onLog({
+  onEvent({
+    kind: 'log',
     installId,
     stream: 'system',
-    chunk: 'Official installer looks unavailable in your region; falling back to npm…'
+    chunk: 'Official installer looks unavailable in your region; falling back to npm…\n'
   })
 
-  return runInstall({ source: 'npm', installId, onLog, timeoutMs, spawnImpl, npmPrefixWritable })
+  return runInstall({
+    source: 'npm',
+    installId,
+    onEvent,
+    timeoutMs,
+    spawnImpl,
+    platform,
+    npmPrefixWritable
+  })
 }
 
 export {

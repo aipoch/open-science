@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ClaudeInstallCard } from './ClaudeInstallCard'
+import { describeInstallProgress } from './claude-install-progress'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -101,5 +102,83 @@ describe('ClaudeInstallCard install-source picker', () => {
     expect(card?.className).toContain('ring-0')
     expect(card?.className).toContain('bg-transparent')
     expect(container.querySelector('[data-slot="button"]')).not.toBeNull()
+  })
+})
+
+const MB = 1024 * 1024
+
+describe('describeInstallProgress', () => {
+  it('reports a determinate fraction + byte label for a sized download', () => {
+    const r = describeInstallProgress({
+      kind: 'progress',
+      installId: 'i',
+      phase: 'downloading',
+      receivedBytes: 5 * MB,
+      totalBytes: 10 * MB
+    })
+    expect(r.fraction).toBeCloseTo(0.5)
+    expect(r.label).toContain('5.0')
+    expect(r.label).toContain('10.0')
+  })
+
+  it('is indeterminate (no fraction) for a phase without a total', () => {
+    expect(
+      describeInstallProgress({ kind: 'progress', installId: 'i', phase: 'installing' })
+    ).toEqual({
+      label: 'Installing…'
+    })
+    expect(
+      describeInstallProgress({ kind: 'progress', installId: 'i', phase: 'resolving' }).fraction
+    ).toBeUndefined()
+  })
+})
+
+describe('ClaudeInstallCard progress + log', () => {
+  it('renders a determinate progress bar from installProgress', () => {
+    render({
+      isInstalling: true,
+      installProgress: {
+        kind: 'progress',
+        installId: 'i',
+        phase: 'downloading',
+        receivedBytes: 5 * MB,
+        totalBytes: 10 * MB
+      }
+    })
+
+    const bar = container.querySelector('[role="progressbar"]')
+    expect(bar).not.toBeNull()
+    expect(bar?.getAttribute('aria-valuenow')).toBe('50')
+    expect(container.textContent).toContain('Downloading')
+  })
+
+  it('renders an indeterminate progress bar for a phase without a total', () => {
+    render({
+      isInstalling: true,
+      installProgress: { kind: 'progress', installId: 'i', phase: 'installing' }
+    })
+
+    const bar = container.querySelector('[role="progressbar"]')
+    expect(bar).not.toBeNull()
+    expect(bar?.getAttribute('aria-valuenow')).toBeNull()
+    expect(bar?.getAttribute('data-indeterminate')).toBe('true')
+    expect(container.textContent).toContain('Installing')
+  })
+
+  it('hides the install log on success behind a toggle', () => {
+    render({ installLogs: ['Installed Claude 2.1.209.\n'] })
+
+    expect(container.querySelector('[aria-label="Install log"]')).toBeNull()
+    const toggle = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Show log')
+    )
+    expect(toggle).toBeTruthy()
+  })
+
+  it('auto-shows the install log and error when the last install failed', () => {
+    render({ installLogs: ['registry failed: boom\n'], installError: 'registry failed: boom' })
+
+    expect(container.querySelector('[aria-label="Install log"]')).not.toBeNull()
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('boom')
   })
 })

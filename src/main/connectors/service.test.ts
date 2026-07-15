@@ -15,7 +15,7 @@ describe('ConnectorService', () => {
       }),
       resolveApiKey: () => undefined
     })
-    await expect(svc.call('chemistry', 'pubchem_get_properties', { cids: [1] })).rejects.toThrow(
+    await expect(svc.call('chemistry', 'pubchem_get_compounds', { cids: [1] })).rejects.toThrow(
       /not enabled/
     )
   })
@@ -48,19 +48,19 @@ describe('ConnectorService', () => {
       }),
       resolveApiKey: (ref) => (ref === 'ref' ? 'SECRET' : undefined)
     })
-    const out = await svc.call('chemistry', 'pubchem_get_properties', { cids: [1] })
-    expect(out).toEqual([{ CID: 1 }])
+    const out = await svc.call('chemistry', 'pubchem_get_compounds', { cids: [1] })
+    expect(out).toEqual({ n_requested: 1, duplicates: [], records: [{ CID: 1 }], not_found: [] })
   })
   it('rejects a blocked tool', async () => {
     const svc = new ConnectorService({
       getConnectors: () => ({
         enabledIds: ['chemistry'],
         autoAllowIds: [],
-        blockedToolIds: ['chemistry/pubchem_get_properties']
+        blockedToolIds: ['chemistry/pubchem_get_compounds']
       }),
       resolveApiKey: () => undefined
     })
-    await expect(svc.call('chemistry', 'pubchem_get_properties', { cids: [1] })).rejects.toThrow(
+    await expect(svc.call('chemistry', 'pubchem_get_compounds', { cids: [1] })).rejects.toThrow(
       /blocked by policy/
     )
   })
@@ -75,16 +75,16 @@ describe('ConnectorService', () => {
       getConnectors: () => ({
         enabledIds: [],
         autoAllowIds: [],
-        askToolIds: ['chemistry/pubchem_get_properties']
+        askToolIds: ['chemistry/pubchem_get_compounds']
       }),
       resolveApiKey: () => undefined,
       requestApproval
     })
-    const out = await svc.call('chemistry', 'pubchem_get_properties', { cids: [1] })
-    expect(out).toEqual([{ CID: 1 }])
+    const out = await svc.call('chemistry', 'pubchem_get_compounds', { cids: [1] })
+    expect(out).toEqual({ n_requested: 1, duplicates: [], records: [{ CID: 1 }], not_found: [] })
     expect(requestApproval).toHaveBeenCalledWith({
       connector: 'chemistry',
-      method: 'pubchem_get_properties',
+      method: 'pubchem_get_compounds',
       args: { cids: [1] }
     })
   })
@@ -97,12 +97,12 @@ describe('ConnectorService', () => {
       getConnectors: () => ({
         enabledIds: [],
         autoAllowIds: [],
-        askToolIds: ['chemistry/pubchem_get_properties']
+        askToolIds: ['chemistry/pubchem_get_compounds']
       }),
       resolveApiKey: () => undefined,
       requestApproval
     })
-    await expect(svc.call('chemistry', 'pubchem_get_properties', { cids: [1] })).rejects.toThrow(
+    await expect(svc.call('chemistry', 'pubchem_get_compounds', { cids: [1] })).rejects.toThrow(
       /denied by user/
     )
     expect(fetchImpl).not.toHaveBeenCalled()
@@ -119,7 +119,7 @@ describe('ConnectorService', () => {
       resolveApiKey: () => undefined,
       requestApproval
     })
-    await svc.call('chemistry', 'pubchem_get_properties', { cids: [1] })
+    await svc.call('chemistry', 'pubchem_get_compounds', { cids: [1] })
     expect(requestApproval).not.toHaveBeenCalled()
   })
 
@@ -133,12 +133,12 @@ describe('ConnectorService', () => {
       getConnectors: () => ({
         enabledIds: [],
         autoAllowIds: ['chemistry'],
-        askToolIds: ['chemistry/pubchem_get_properties']
+        askToolIds: ['chemistry/pubchem_get_compounds']
       }),
       resolveApiKey: () => undefined,
       requestApproval
     })
-    await svc.call('chemistry', 'pubchem_get_properties', { cids: [1] })
+    await svc.call('chemistry', 'pubchem_get_compounds', { cids: [1] })
     expect(requestApproval).not.toHaveBeenCalled()
   })
 

@@ -5,6 +5,7 @@ import { providerValidationFailed } from '../../../shared/settings'
 import type {
   ClaudeDetectResult,
   ClaudeInfo,
+  ClaudeInstallProgressEvent,
   ClaudeInstallResult,
   ClaudeInstallSource,
   Preflight,
@@ -68,6 +69,11 @@ type SettingsStoreData = {
   isDetectingClaude: boolean
   isInstalling: boolean
   installLogs: string[]
+  // Latest progress tick driving the install progress bar; null when no install is active.
+  installProgress: ClaudeInstallProgressEvent | null
+  // Error message from the last install attempt; drives auto-expansion of the log pane. Undefined on
+  // success or before the first attempt.
+  installError: string | undefined
   // Whether the settings dialog is open (rendered at the app root, over Home/Workspace).
   isSettingsOpen: boolean
   // Skill to land on when the dialog opens from a skill mention; consumed once its detail is seeded.
@@ -175,6 +181,8 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   isDetectingClaude: false,
   isInstalling: false,
   installLogs: [],
+  installProgress: null,
+  installError: undefined,
   isSettingsOpen: false,
   pendingSkillId: undefined
 })
@@ -297,12 +305,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     }
   },
 
-  // Runs a one-click install, streaming output into installLogs, then refreshes settings/preflight.
+  // Runs a one-click install, streaming events into installProgress/installLogs, then refreshes
+  // settings/preflight. Log and progress share one channel, routed here by `kind`.
   installClaude: async (source) => {
-    set({ isInstalling: true, installLogs: [] })
+    set({ isInstalling: true, installLogs: [], installProgress: null, installError: undefined })
 
     const unsubscribe = window.api.settings.onInstallLog((event) => {
-      set((state) => ({ installLogs: [...state.installLogs, event.chunk] }))
+      if (event.kind === 'progress') {
+        set({ installProgress: event })
+      } else {
+        set((state) => ({ installLogs: [...state.installLogs, event.chunk] }))
+      }
     })
 
     try {
@@ -314,14 +327,19 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       set(applySnapshot(snapshot))
       await get().refreshPreflight()
 
+      set({ installError: result.ok ? undefined : (result.error ?? 'Install failed.') })
+
       return result
+    } catch (error) {
+      set({ installError: error instanceof Error ? error.message : 'Install failed.' })
+      throw error
     } finally {
       unsubscribe()
-      set({ isInstalling: false })
+      set({ isInstalling: false, installProgress: null })
     }
   },
 
-  clearInstallLogs: () => set({ installLogs: [] }),
+  clearInstallLogs: () => set({ installLogs: [], installProgress: null, installError: undefined }),
 
   // Persists a provider draft (create/update) and refreshes derived state, without testing it.
   persistProvider: async (request) => {

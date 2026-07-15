@@ -30,7 +30,7 @@ let repository: InstanceType<typeof SettingsRepository>
 
 type ManagedInstallImpl = (options: {
   installId: string
-  onLog: (event: { installId: string; stream: string; chunk: string }) => void
+  onEvent: (event: { kind: string; installId: string }) => void
   dataRoot: string
 }) => Promise<{
   result: { installId: string; ok: boolean; error?: string }

@@ -233,10 +233,29 @@ export type InstallClaudeRequest = {
 
 // One streamed line of installer output. `installId` groups a single install run.
 export type ClaudeInstallLogEvent = {
+  kind: 'log'
   installId: string
   stream: 'stdout' | 'stderr' | 'system'
   chunk: string
 }
+
+// Coarse stage of an install run, used to label the progress bar.
+export type ClaudeInstallPhase = 'resolving' | 'downloading' | 'extracting' | 'installing'
+
+// One progress tick driving the install progress bar. `receivedBytes`/`totalBytes` are present only
+// for a determinate download (the app-managed source, when the server reports a content length); their
+// absence marks an indeterminate phase (npm/official-script, or an unknown download size).
+export type ClaudeInstallProgressEvent = {
+  kind: 'progress'
+  installId: string
+  phase: ClaudeInstallPhase
+  receivedBytes?: number
+  totalBytes?: number
+}
+
+// The single install-event stream: discrete log lines and progress ticks share one ordered channel,
+// discriminated by `kind`. The renderer routes by kind (progress → the bar, log → the log pane).
+export type ClaudeInstallEvent = ClaudeInstallLogEvent | ClaudeInstallProgressEvent
 
 // Final result of an install run; on success the caller re-detects claude.
 export type ClaudeInstallResult = {

@@ -7,7 +7,7 @@ describe('renderSkillDoc', () => {
     expect(md).toContain('name: mcp-chemistry')
     expect(md).toContain('source: connector')
     expect(md).toContain('host.mcp(')
-    expect(md).toContain('pubchem_get_properties')
+    expect(md).toContain('pubchem_get_compounds')
     expect(md).toContain('rate-limited') // rate warning present
   })
   it('uses the trigger-style useWhen as the frontmatter description for auto-discovery', () => {
@@ -25,12 +25,15 @@ describe('renderSkillDoc', () => {
     // (reuse across cells, return shape) lives once in the shared conventions template — it must NOT
     // be duplicated into each tool's example.
     const md = renderSkillDoc('pubmed')
-    const block = md.slice(md.indexOf('### pubmed_search'), md.indexOf('### pubmed_fetch'))
+    const block = md.slice(
+      md.indexOf('### search_articles'),
+      md.indexOf('### get_article_metadata')
+    )
     const py = block
       .slice(block.indexOf('```python') + '```python'.length, block.lastIndexOf('```'))
       .trim()
     expect(py).toBe(
-      'result = host.mcp("pubmed", "pubmed_search", {"term": "tumor progression", "retmax": 10})'
+      'result = host.mcp("pubmed", "search_articles", {"query": "CRISPR gene editing", "max_results": 10})'
     )
     expect(py).not.toContain('#') // no per-tool comment/prose
   })

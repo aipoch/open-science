@@ -7,7 +7,7 @@ import { promisify } from 'node:util'
 
 import type {
   ClaudeDetectResult,
-  ClaudeInstallLogEvent,
+  ClaudeInstallEvent,
   ClaudeInstallResult,
   ConnectorDetailView,
   ConnectorsSnapshot,
@@ -374,7 +374,7 @@ class SettingsService {
   // region-blocked) and rely on PATH re-detection.
   async installClaude(
     request: InstallClaudeRequest,
-    onLog: (event: ClaudeInstallLogEvent) => void
+    onEvent: (event: ClaudeInstallEvent) => void
   ): Promise<ClaudeInstallResult> {
     this.providerSequence += 1
     const installId = `install-${Date.now()}-${this.providerSequence}`
@@ -382,7 +382,7 @@ class SettingsService {
     if (request.source === 'managed') {
       const outcome = await this.installManagedClaudeImpl({
         installId,
-        onLog,
+        onEvent,
         dataRoot: this.storageRoot
       })
 
@@ -396,7 +396,7 @@ class SettingsService {
       return outcome.result
     }
 
-    const result = await runInstallWithFallback({ source: request.source, installId, onLog })
+    const result = await runInstallWithFallback({ source: request.source, installId, onEvent })
 
     if (result.ok) {
       await this.detectClaude()
