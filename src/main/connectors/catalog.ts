@@ -232,10 +232,11 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'regulation',
     displayName: 'Regulation',
-    description: 'Gene-regulation functional-genomics experiments via the ENCODE portal.',
+    description:
+      'Gene-regulation functional genomics — ENCODE experiments/biosamples/files, JASPAR TF binding profiles, and UniBind ChIP-seq TFBS.',
     useWhen:
-      'Use when you need gene-regulation / functional-genomics experiment data — searching ENCODE experiments (ChIP-seq, ATAC-seq, ...) by free text, or looking up a known ENCODE experiment by accession (assay, target, biosample, status).',
-    sources: ['ENCODE'],
+      'Use when you need gene-regulation / functional-genomics data — ENCODE experiments (ChIP-seq, ATAC-seq, ...), biosamples and data files (complete, count-verified searches by assay/target/organism/format, or a record by accession); JASPAR transcription-factor binding profiles (PFM by versioned matrix id, version history, filtered profile catalog by species/collection, and the species/taxa/collections/releases listings); or UniBind high-confidence TF binding sites (search ChIP-seq datasets, per-model TFBS detail with BED/FASTA URLs, and TFBS overlapping a genomic region). Sourced from ENCODE, JASPAR and UniBind.',
+    sources: ['ENCODE', 'JASPAR', 'UniBind'],
     termsUrl: 'https://www.encodeproject.org/about/data-use-policy/',
     requiresNcbi: false
   },
