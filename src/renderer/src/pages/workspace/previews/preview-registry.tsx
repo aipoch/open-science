@@ -4,6 +4,7 @@ import { FastaPreviewRenderer } from './renderers/FastaPreview'
 import { HtmlPreviewRenderer } from './renderers/HtmlPreview'
 import { ImagePreviewRenderer } from './renderers/ImagePreview'
 import { JsonPreviewRenderer } from './renderers/JsonPreview'
+import { KetcherPreviewRenderer } from './renderers/KetcherPreview'
 import { MarkdownPreviewRenderer } from './renderers/MarkdownPreview'
 import { PdbPreviewRenderer } from './renderers/PdbPreview'
 import { PdfPreviewRenderer } from './renderers/PdfPreview'
@@ -28,6 +29,8 @@ export const renderPreviewFile = ({
       return <MarkdownPreviewRenderer item={item} />
     case 'pdb':
       return <PdbPreviewRenderer item={item} />
+    case 'molecule':
+      return <KetcherPreviewRenderer item={item} />
     case 'text':
       return <TextPreviewRenderer item={item} />
     case 'pdf':

@@ -4,7 +4,17 @@ import type { NotebookSessionReference } from '../../../shared/notebook'
 
 export type PreviewPanelState = 'open' | 'collapsed'
 export type PreviewFileFormat =
-  'markdown' | 'text' | 'json' | 'csv' | 'fasta' | 'html' | 'image' | 'pdb' | 'pdf' | 'unknown'
+  | 'markdown'
+  | 'text'
+  | 'json'
+  | 'csv'
+  | 'fasta'
+  | 'html'
+  | 'image'
+  | 'pdb'
+  | 'pdf'
+  | 'molecule'
+  | 'unknown'
 // Distinguishes generated artifacts from user uploads when preview readers and actions differ.
 export type PreviewFileSource = 'artifact' | 'upload'
 export const PROJECT_FILES_PREVIEW_ID = 'tool:project:files'
