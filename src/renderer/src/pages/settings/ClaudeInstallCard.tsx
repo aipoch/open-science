@@ -117,14 +117,17 @@ const ClaudeInstallCard = ({
         </div>
       ) : null}
 
-      <button
-        type="button"
-        onClick={() => onInstall(source)}
-        disabled={isInstalling || npmMissing}
-        className="mt-3 rounded-lg border border-primary bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-      >
-        {isInstalling ? 'Installing…' : 'Install with one click'}
-      </button>
+      {/* Right-aligned primary action, matching the Re-detect / Save buttons elsewhere in Settings. */}
+      <div className="mt-3 flex justify-end">
+        <button
+          type="button"
+          onClick={() => onInstall(source)}
+          disabled={isInstalling || npmMissing}
+          className="rounded-lg border border-primary bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+        >
+          {isInstalling ? 'Installing…' : 'Install with one click'}
+        </button>
+      </div>
 
       {progress ? (
         <div className="mt-3 space-y-1.5">
