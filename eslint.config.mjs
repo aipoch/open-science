@@ -11,6 +11,8 @@ export default defineConfig(
       '**/node_modules',
       '**/dist',
       '**/out',
+      // Git worktrees live under .claude/worktrees and hold full source copies; don't lint duplicates.
+      '**/.claude/**',
       // Keep official shadcn registry output unmodified; local adaptations live in wrappers.
       'src/renderer/src/components/ui/message-scroller.tsx'
     ]

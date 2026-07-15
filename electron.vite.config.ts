@@ -13,6 +13,11 @@ export default defineConfig({
         '@renderer': resolve('src/renderer/src')
       }
     },
+    server: {
+      // Don't watch git worktrees under .claude/worktrees — full source copies would trigger
+      // needless rescans/HMR churn during dev.
+      watch: { ignored: ['**/.claude/**'] }
+    },
     plugins: [react(), tailwindcss()]
   }
 })
