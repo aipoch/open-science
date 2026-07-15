@@ -407,7 +407,7 @@ export const CANCER_MODELS_TOOLS: ToolDescriptor[] = [
     input: {
       type: 'object',
       properties: {
-        gene_symbol: { type: 'string' },
+        gene_symbol: { type: 'string', description: 'HUGO gene symbol, e.g. KRAS, IDH1' },
         study_ids: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 12 }
       },
       required: ['gene_symbol', 'study_ids']
@@ -499,7 +499,7 @@ export const CANCER_MODELS_TOOLS: ToolDescriptor[] = [
     input: {
       type: 'object',
       properties: {
-        gene_symbol: { type: 'string' },
+        gene_symbol: { type: 'string', description: 'HUGO gene symbol, e.g. KRAS, IDH1' },
         study_id: { type: 'string' },
         event_type: {
           type: 'string',

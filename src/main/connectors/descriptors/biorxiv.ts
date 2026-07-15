@@ -358,7 +358,6 @@ const contentStatsResponse = (rows: BiorxivRecord[]): Record<string, unknown> =>
     out.new_papers = toInt(r.new_papers)
     out.new_papers_cumulative = toInt(r.new_papers_cumulative)
     out.revised_papers = toInt(r.revised_papers)
-    out.preprint_date = null
     out.revised_papers_cumulative = toInt(r.revised_papers_cumulative)
     return out
   }),
@@ -614,7 +613,7 @@ export const BIORXIV_TOOLS: ToolDescriptor[] = [
       }
     },
     returns:
-      '`{ "success": bool, "results": [ { "month"|"year", "new_papers", "new_papers_cumulative", "revised_papers", "preprint_date": null, "revised_papers_cumulative" } ], "error": null }`. Monthly rows carry "month" (YYYY-MM); yearly rows carry "year".',
+      '`{ "success": bool, "results": [ { "month"|"year", "new_papers", "new_papers_cumulative", "revised_papers", "revised_papers_cumulative" } ], "error": null }`. Monthly rows carry "month" (YYYY-MM); yearly rows carry "year".',
     example: 'result = host.mcp("biorxiv", "get_content_statistics", {"interval": "yearly"})',
     run: async (ctx, a) => {
       try {

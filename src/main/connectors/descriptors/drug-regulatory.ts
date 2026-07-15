@@ -325,11 +325,31 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
         dosage_form: { type: 'string' },
         route: { type: 'string' },
         pharm_class: { type: 'string' },
-        pharm_class_type: { type: 'string', enum: ['epc', 'moa', 'cs', 'pe'] },
-        search_type: { type: 'string', enum: ['and', 'or'], default: 'and' },
-        submission_date_from: { type: 'string' },
-        submission_date_to: { type: 'string' },
-        raw_search: { type: 'string' },
+        pharm_class_type: {
+          type: 'string',
+          enum: ['epc', 'moa', 'cs', 'pe'],
+          description:
+            'Which openFDA pharmacologic-class facet `pharm_class` matches: epc (established pharmacologic class), moa (mechanism of action), cs (chemical/structural class), pe (physiologic effect).'
+        },
+        search_type: {
+          type: 'string',
+          enum: ['and', 'or'],
+          default: 'and',
+          description: 'How to combine the mapped filters: "and" (default) or "or".'
+        },
+        submission_date_from: {
+          type: 'string',
+          description: 'Earliest submission date (inclusive), YYYY-MM-DD; ANDed onto the query.'
+        },
+        submission_date_to: {
+          type: 'string',
+          description: 'Latest submission date (inclusive), YYYY-MM-DD; ANDed onto the query.'
+        },
+        raw_search: {
+          type: 'string',
+          description:
+            'Verbatim openFDA Lucene query; when set, overrides every mapped filter above.'
+        },
         max_records: { type: 'integer', default: 50 }
       }
     },
@@ -393,7 +413,11 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
     input: {
       type: 'object',
       properties: {
-        count_field: { type: 'string' },
+        count_field: {
+          type: 'string',
+          description:
+            'Field to bucket on — a friendly name (sponsor_name, application_number, dosage_form, route, marketing_status, te_code, pharm_class_epc/moa/cs/pe) or a raw openFDA field path.'
+        },
         brand: { type: 'string' },
         generic: { type: 'string' },
         active_ingredient: { type: 'string' },
@@ -402,11 +426,31 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
         dosage_form: { type: 'string' },
         route: { type: 'string' },
         pharm_class: { type: 'string' },
-        pharm_class_type: { type: 'string', enum: ['epc', 'moa', 'cs', 'pe'] },
-        search_type: { type: 'string', enum: ['and', 'or'], default: 'and' },
-        submission_date_from: { type: 'string' },
-        submission_date_to: { type: 'string' },
-        raw_search: { type: 'string' },
+        pharm_class_type: {
+          type: 'string',
+          enum: ['epc', 'moa', 'cs', 'pe'],
+          description:
+            'Which openFDA pharmacologic-class facet `pharm_class` matches: epc (established pharmacologic class), moa (mechanism of action), cs (chemical/structural class), pe (physiologic effect).'
+        },
+        search_type: {
+          type: 'string',
+          enum: ['and', 'or'],
+          default: 'and',
+          description: 'How to combine the mapped filters: "and" (default) or "or".'
+        },
+        submission_date_from: {
+          type: 'string',
+          description: 'Earliest submission date (inclusive), YYYY-MM-DD; ANDed onto the query.'
+        },
+        submission_date_to: {
+          type: 'string',
+          description: 'Latest submission date (inclusive), YYYY-MM-DD; ANDed onto the query.'
+        },
+        raw_search: {
+          type: 'string',
+          description:
+            'Verbatim openFDA Lucene query; when set, overrides every mapped filter above.'
+        },
         max_buckets: { type: 'integer', default: 100 }
       },
       required: ['count_field']
@@ -466,7 +510,13 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
     input: {
       type: 'object',
       properties: {
-        class_type: { type: 'string', enum: ['epc', 'moa', 'cs', 'pe'], default: 'epc' },
+        class_type: {
+          type: 'string',
+          enum: ['epc', 'moa', 'cs', 'pe'],
+          default: 'epc',
+          description:
+            'Pharmacologic-class facet to enumerate: epc (established pharmacologic class), moa (mechanism of action), cs (chemical/structural class), pe (physiologic effect).'
+        },
         max_buckets: { type: 'integer', default: 100 }
       }
     },
@@ -575,9 +625,23 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
           type: 'string',
           enum: ['HUMAN PRESCRIPTION DRUG', 'HUMAN OTC DRUG']
         },
-        exact: { type: 'boolean', default: false },
-        raw_search: { type: 'string' },
-        sections: { type: 'array', items: { type: 'string' } },
+        exact: {
+          type: 'boolean',
+          default: false,
+          description:
+            'Query the non-analyzed `.exact` field variants (exact match instead of tokenized).'
+        },
+        raw_search: {
+          type: 'string',
+          description:
+            'Verbatim openFDA Lucene query; when set, overrides every mapped filter above.'
+        },
+        sections: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'openFDA label section names to extract (e.g. ["boxed_warning", "warnings"]); returns raw section text instead of the default structured record.'
+        },
         max_records: { type: 'integer', default: 25 }
       }
     },

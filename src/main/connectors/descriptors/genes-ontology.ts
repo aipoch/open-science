@@ -400,16 +400,21 @@ export const GENES_ONTOLOGY_TOOLS: ToolDescriptor[] = [
     id: 'get_go_annotations',
     connector: 'genes',
     description:
-      'Retrieve GO annotations for a UniProt gene product from QuickGO (complete, count-verified). Args: uniprot_accession (e.g. "P04637", prefix optional); aspect (None/all or biological_process/molecular_function/cellular_component); evidence (None/all, a preset "experimental_manual"=manually-assigned experimental evidence, "automatic_iea"=electronic/IEA, or an explicit ECO code like "ECO:0000314"; three-letter GO evidence codes like IDA/IEA are NOT accepted — QuickGO silently ignores goEvidence, filter must use ECO codes); taxon_id (optional NCBI taxon, e.g. 9606); include_term_names (hydrate each record with GO term name/aspect/obsolete via one batched ontology lookup); max_records (cap on records; full set still retrieved and summarized; `truncated` flags the cap). Returns {gene_product, total_annotations, n_records, complete, truncated, distinct_go_ids (across ALL annotations), records:[{go_id, go_aspect, qualifier, go_evidence, eco_id, reference, assigned_by, date, ...}]}.',
+      'Retrieve GO annotations for a UniProt gene product from QuickGO (complete, count-verified). Args: uniprot_accession (e.g. "P04637", prefix optional); aspect (omit for all aspects, or one of biological_process/molecular_function/cellular_component); evidence (None/all, a preset "experimental_manual"=manually-assigned experimental evidence, "automatic_iea"=electronic/IEA, or an explicit ECO code like "ECO:0000314"; three-letter GO evidence codes like IDA/IEA are NOT accepted — QuickGO silently ignores goEvidence, filter must use ECO codes); taxon_id (optional NCBI taxon, e.g. 9606); include_term_names (hydrate each record with GO term name/aspect/obsolete via one batched ontology lookup); max_records (cap on records; full set still retrieved and summarized; `truncated` flags the cap). Returns {gene_product, total_annotations, n_records, complete, truncated, distinct_go_ids (across ALL annotations), records:[{go_id, go_aspect, qualifier, go_evidence, eco_id, reference, assigned_by, date, ...}]}.',
     input: {
       type: 'object',
       properties: {
         uniprot_accession: { type: 'string' },
         aspect: {
           type: 'string',
-          enum: ['biological_process', 'molecular_function', 'cellular_component']
+          enum: ['biological_process', 'molecular_function', 'cellular_component'],
+          description: 'Restrict to one GO aspect; omit for all aspects.'
         },
-        evidence: { type: 'string' },
+        evidence: {
+          type: 'string',
+          description:
+            'Evidence filter: a preset ("experimental_manual" = manually-assigned experimental, "automatic_iea" = electronic/IEA) or an explicit ECO code (e.g. "ECO:0000314"); omit for all. Three-letter GO codes (IDA/IEA) are not accepted — filter by ECO code.'
+        },
         taxon_id: { type: 'integer' },
         include_term_names: { type: 'boolean', default: false },
         max_records: { type: 'integer', default: 200 }

@@ -395,7 +395,6 @@ describe('biorxiv / get_content_statistics', () => {
       new_papers: 109,
       new_papers_cumulative: 109,
       revised_papers: 34,
-      preprint_date: null,
       revised_papers_cumulative: 34
     })
   })

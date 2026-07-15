@@ -761,7 +761,7 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
     id: 'get_structural_variant',
     connector: 'variants',
     description:
-      'Look up one gnomAD structural variant by its release-specific SV ID (e.g. `DEL_chr17_599b1512` in gnomad_sv_r4). IDs do NOT carry across releases — `dataset` (`gnomad_sv_r4` default, or `gnomad_sv_r2_1`) must match the release the ID came from.',
+      'Look up one gnomAD structural variant by its release-specific SV ID (e.g. `DEL_CHR17_599B1512` in gnomad_sv_r4). IDs do NOT carry across releases — `dataset` (`gnomad_sv_r4` default, or `gnomad_sv_r2_1`) must match the release the ID came from.',
     input: {
       type: 'object',
       properties: {
