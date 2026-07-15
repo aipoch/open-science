@@ -1,41 +1,120 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+import { ParserEngine } from '../engine'
 import { HUMAN_GENETICS_TOOLS } from './human-genetics'
+import type { ToolDescriptor } from '../types'
 
-// Integration: the aggregate "Human Genetics" tool set. Per-tool behavior is covered in
-// humangenetics-gwas.test.ts, humangenetics-eqtl.test.ts and humangenetics-phewas.test.ts.
-const EXPECTED_IDS = [
-  'gwas_associations_for_variant',
-  'gwas_associations_for_gene',
-  'gwas_associations_for_trait',
-  'gwas_search_traits',
-  'gwas_search_studies',
-  'gwas_get_study',
-  'gwas_get_variant',
-  'eqtl_list_datasets',
-  'eqtl_associations',
-  'phewas_instances',
-  'phewas_variant',
-  'phewas_finngen_gene',
-  'phewas_list_phenotypes',
-  'phewas_search_phenotypes'
-]
+const tool = (id: string): ToolDescriptor => HUMAN_GENETICS_TOOLS.find((t) => t.id === id)!
+const jsonRes = (body: unknown): Response =>
+  ({ ok: true, status: 200, json: async () => body }) as Response
 
-describe('human-genetics / aggregate', () => {
-  it('exposes exactly the Human Genetics tools in order', () => {
-    expect(HUMAN_GENETICS_TOOLS.map((t) => t.id)).toEqual(EXPECTED_IDS)
+// GWAS Catalog REST API v2 shape: flat snake_case association records wrapped in a HAL-style
+// `_embedded` collection (confirmed against the upstream fleet client's gwas_catalog/tool.py).
+const HAL_ASSOCIATIONS = {
+  page: { size: 50, totalElements: 2, totalPages: 1, number: 0 },
+  _embedded: {
+    associations: [
+      {
+        association_id: '12345',
+        p_value: 1.2e-15,
+        snp_effect_allele: ['rs7412-T'],
+        snp_allele: [{ rs_id: 'rs7412' }],
+        mapped_genes: ['APOE'],
+        efo_traits: [{ efo_id: 'EFO_0004611', efo_trait: 'LDL cholesterol measurement' }],
+        reported_trait: ['LDL cholesterol']
+      },
+      {
+        association_id: '67890',
+        p_value: 3.4e-8,
+        snp_effect_allele: ['rs429358-C'],
+        snp_allele: [{ rs_id: 'rs429358' }],
+        mapped_genes: ['APOE', 'TOMM40'],
+        efo_traits: [],
+        reported_trait: ['Alzheimer disease']
+      }
+    ]
+  }
+}
+
+describe('human_genetics / gwas_search_associations', () => {
+  it('builds the mapped_gene URL and parses the HAL _embedded collection', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes(HAL_ASSOCIATIONS))
+    const out = await new ParserEngine({ fetchImpl }).call(
+      tool('gwas_search_associations'),
+      { gene: 'APOE' },
+      {}
+    )
+    const url = fetchImpl.mock.calls[0][0] as string
+    expect(url).toBe(
+      'https://www.ebi.ac.uk/gwas/rest/api/v2/associations?mapped_gene=APOE&size=50&sort=p_value&direction=asc'
+    )
+    expect(out).toEqual([
+      {
+        rsId: 'rs7412',
+        pValue: 1.2e-15,
+        riskAllele: 'rs7412-T',
+        mappedGenes: ['APOE'],
+        trait: 'LDL cholesterol measurement'
+      },
+      {
+        rsId: 'rs429358',
+        pValue: 3.4e-8,
+        riskAllele: 'rs429358-C',
+        mappedGenes: ['APOE', 'TOMM40'],
+        trait: 'Alzheimer disease'
+      }
+    ])
   })
 
-  it('registers every tool under the human_genetics connector with unique ids', () => {
-    expect(HUMAN_GENETICS_TOOLS.every((t) => t.connector === 'human_genetics')).toBe(true)
-    expect(new Set(HUMAN_GENETICS_TOOLS.map((t) => t.id)).size).toBe(HUMAN_GENETICS_TOOLS.length)
+  it('returns an empty array when there are no embedded associations', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(jsonRes({ page: { totalElements: 0 }, _embedded: { associations: [] } }))
+    const out = await new ParserEngine({ fetchImpl }).call(
+      tool('gwas_search_associations'),
+      { gene: 'NOPE' },
+      {}
+    )
+    expect(out).toEqual([])
+  })
+})
+
+describe('human_genetics / gwas_variant_associations', () => {
+  it('builds the rs_id URL and parses associations', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes(HAL_ASSOCIATIONS))
+    const out = await new ParserEngine({ fetchImpl }).call(
+      tool('gwas_variant_associations'),
+      { rsId: 'rs7412' },
+      {}
+    )
+    const url = fetchImpl.mock.calls[0][0] as string
+    expect(url).toBe(
+      'https://www.ebi.ac.uk/gwas/rest/api/v2/associations?rs_id=rs7412&size=50&sort=p_value&direction=asc'
+    )
+    expect((out as unknown[])[0]).toEqual({
+      rsId: 'rs7412',
+      pValue: 1.2e-15,
+      riskAllele: 'rs7412-T',
+      mappedGenes: ['APOE'],
+      trait: 'LDL cholesterol measurement'
+    })
   })
 
-  it('gives every tool an input schema, docs, and a run() implementation', () => {
-    for (const t of HUMAN_GENETICS_TOOLS) {
-      expect(typeof t.run).toBe('function')
-      expect(t.description.length).toBeGreaterThan(0)
-      expect(t.returns && t.returns.length).toBeTruthy()
-      expect(t.input).toMatchObject({ type: 'object' })
-    }
+  it('tolerates missing embedded/trait fields', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonRes({
+        page: { totalElements: 1 },
+        _embedded: {
+          associations: [{ p_value: 0.001, snp_allele: [{ rs_id: 'rs1' }], mapped_genes: [] }]
+        }
+      })
+    )
+    const out = await new ParserEngine({ fetchImpl }).call(
+      tool('gwas_variant_associations'),
+      { rsId: 'rs1' },
+      {}
+    )
+    expect(out).toEqual([
+      { rsId: 'rs1', pValue: 0.001, riskAllele: undefined, mappedGenes: [], trait: undefined }
+    ])
   })
 })

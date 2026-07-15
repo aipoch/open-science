@@ -1,38 +1,79 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+import { ParserEngine } from '../engine'
 import { GENOMES_TOOLS } from './genomes'
+import type { ToolDescriptor } from '../types'
 
-// Integration: the aggregate "Genomes" tool set. Per-tool behavior is covered in
-// genomes-ensembl.test.ts and genomes-ucsc.test.ts.
-const EXPECTED_IDS = [
-  'ensembl_lookup',
-  'ensembl_xrefs',
-  'ensembl_vep_variant',
-  'ensembl_homology',
-  'ensembl_sequence',
-  'ensembl_overlap_region',
-  'ucsc_list_tracks',
-  'ucsc_track_data',
-  'ucsc_conservation',
-  'ucsc_tfbs_clusters',
-  'ucsc_chrom_sizes'
-]
+const tool = (id: string): ToolDescriptor => GENOMES_TOOLS.find((t) => t.id === id)!
+const jsonRes = (body: unknown): Response =>
+  ({ ok: true, status: 200, json: async () => body }) as Response
 
-describe('genomes / aggregate', () => {
-  it('exposes exactly the Genomes tools in order', () => {
-    expect(GENOMES_TOOLS.map((t) => t.id)).toEqual(EXPECTED_IDS)
+const BRCA2_FEATURE = {
+  id: 'ENSG00000139618',
+  display_name: 'BRCA2',
+  biotype: 'protein_coding',
+  seq_region_name: '13',
+  start: 32315086,
+  end: 32400268,
+  strand: 1,
+  version: 19,
+  assembly_name: 'GRCh38',
+  description: 'BRCA2 DNA repair associated'
+}
+
+describe('genomes / ensembl_lookup_symbol', () => {
+  it('builds the lookup URL with a default species and parses the feature', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes(BRCA2_FEATURE))
+    const out = await new ParserEngine({ fetchImpl }).call(
+      tool('ensembl_lookup_symbol'),
+      { symbol: 'BRCA2' },
+      {}
+    )
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      'https://rest.ensembl.org/lookup/symbol/homo_sapiens/BRCA2?content-type=application/json'
+    )
+    expect(out).toEqual({
+      id: 'ENSG00000139618',
+      display_name: 'BRCA2',
+      biotype: 'protein_coding',
+      seq_region_name: '13',
+      start: 32315086,
+      end: 32400268,
+      strand: 1
+    })
   })
 
-  it('registers every tool under the genomes connector with unique ids', () => {
-    expect(GENOMES_TOOLS.every((t) => t.connector === 'genomes')).toBe(true)
-    expect(new Set(GENOMES_TOOLS.map((t) => t.id)).size).toBe(GENOMES_TOOLS.length)
+  it('honors an explicit species', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes(BRCA2_FEATURE))
+    await new ParserEngine({ fetchImpl }).call(
+      tool('ensembl_lookup_symbol'),
+      { symbol: 'Brca2', species: 'mus_musculus' },
+      {}
+    )
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      'https://rest.ensembl.org/lookup/symbol/mus_musculus/Brca2?content-type=application/json'
+    )
   })
+})
 
-  it('gives every tool an input schema, docs, and a run() implementation', () => {
-    for (const t of GENOMES_TOOLS) {
-      expect(typeof t.run).toBe('function')
-      expect(t.description.length).toBeGreaterThan(0)
-      expect(t.returns && t.returns.length).toBeTruthy()
-      expect(t.input).toMatchObject({ type: 'object' })
-    }
+describe('genomes / ensembl_lookup_id', () => {
+  it('builds the lookup URL and parses the feature', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes(BRCA2_FEATURE))
+    const out = await new ParserEngine({ fetchImpl }).call(
+      tool('ensembl_lookup_id'),
+      { id: 'ENSG00000139618' },
+      {}
+    )
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      'https://rest.ensembl.org/lookup/id/ENSG00000139618?content-type=application/json'
+    )
+    expect(out).toEqual({
+      id: 'ENSG00000139618',
+      display_name: 'BRCA2',
+      biotype: 'protein_coding',
+      seq_region_name: '13',
+      start: 32315086,
+      end: 32400268,
+      strand: 1
+    })
   })
 })
