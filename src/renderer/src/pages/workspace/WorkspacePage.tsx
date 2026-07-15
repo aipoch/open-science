@@ -35,6 +35,7 @@ import { ConversationPanel } from './ConversationPanel'
 import { DeleteSessionDialog } from './DeleteSessionDialog'
 import { PreviewPanel } from './PreviewPanel'
 import { RenameSessionDialog } from './RenameSessionDialog'
+import { SessionNotebookDialog } from './SessionNotebookDialog'
 import { getVisiblePermissionRequests } from './session-permissions'
 import { WorkspaceSidebar } from './WorkspaceSidebar'
 
@@ -166,6 +167,9 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const [sessionToRename, setSessionToRename] = useState<ChatSession | undefined>(undefined)
   const [renameDraft, setRenameDraft] = useState('')
   const [sessionToDelete, setSessionToDelete] = useState<ChatSession | undefined>(undefined)
+  const [sessionToViewNotebook, setSessionToViewNotebook] = useState<ChatSession | undefined>(
+    undefined
+  )
   // The selected session is the only conversation rendered in the center panel.
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === selectedSessionId),
@@ -619,6 +623,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
           onOpenFiles={openFilesPreview}
           onOpenSession={openSession}
           onRenameSession={openRenameDialog}
+          onViewNotebook={setSessionToViewNotebook}
           onDeleteSession={setSessionToDelete}
           onOpenSettings={openSettings}
         />
@@ -691,6 +696,11 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
         session={sessionToDelete}
         onCancel={closeDeleteDialog}
         onConfirmDelete={confirmDeleteSession}
+      />
+
+      <SessionNotebookDialog
+        session={sessionToViewNotebook}
+        onClose={() => setSessionToViewNotebook(undefined)}
       />
     </main>
   )

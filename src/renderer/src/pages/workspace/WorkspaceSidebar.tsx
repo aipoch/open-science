@@ -1,4 +1,13 @@
-import { ChevronLeft, Files, MoreVertical, Pencil, Plus, Settings, Trash2 } from 'lucide-react'
+import {
+  BookOpen,
+  ChevronLeft,
+  Files,
+  MoreVertical,
+  Pencil,
+  Plus,
+  Settings,
+  Trash2
+} from 'lucide-react'
 import { DropdownMenu } from 'radix-ui'
 
 import { cn } from '@/lib/utils'
@@ -17,6 +26,7 @@ type WorkspaceSidebarProps = {
   onOpenFiles: () => void
   onOpenSession: (sessionId: string) => void
   onRenameSession: (session: ChatSession) => void
+  onViewNotebook: (session: ChatSession) => void
   onDeleteSession: (session: ChatSession) => void
   onOpenSettings: () => void
 }
@@ -69,6 +79,7 @@ const WorkspaceSidebar = ({
   onOpenFiles,
   onOpenSession,
   onRenameSession,
+  onViewNotebook,
   onDeleteSession,
   onOpenSettings
 }: WorkspaceSidebarProps): React.JSX.Element => (
@@ -201,6 +212,16 @@ const WorkspaceSidebar = ({
                               <Pencil className="size-4" strokeWidth={2} aria-hidden="true" />
                             </span>
                             Rename…
+                          </DropdownMenu.Item>
+                          <DropdownMenu.Separator className="mx-1 my-1 h-px bg-border-300" />
+                          <DropdownMenu.Item
+                            className={sessionMenuItemClassName}
+                            onSelect={() => onViewNotebook(session)}
+                          >
+                            <span className={sessionMenuIconClassName}>
+                              <BookOpen className="size-4" strokeWidth={2} aria-hidden="true" />
+                            </span>
+                            View notebook
                           </DropdownMenu.Item>
                           <DropdownMenu.Separator className="mx-1 my-1 h-px bg-border-300" />
                           <DropdownMenu.Item

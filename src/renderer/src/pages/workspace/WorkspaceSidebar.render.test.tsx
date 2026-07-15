@@ -34,6 +34,7 @@ const renderSidebar = async (sessions: ChatSession[]): Promise<string> => {
       onOpenFiles={vi.fn()}
       onOpenSession={vi.fn()}
       onRenameSession={vi.fn()}
+      onViewNotebook={vi.fn()}
       onDeleteSession={vi.fn()}
       onOpenSettings={vi.fn()}
     />
@@ -113,6 +114,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenFiles: vi.fn(),
       onOpenSession,
       onRenameSession,
+      onViewNotebook: vi.fn(),
       onDeleteSession,
       onOpenSettings: vi.fn()
     })
@@ -153,6 +155,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenFiles,
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
+      onViewNotebook: vi.fn(),
       onDeleteSession: vi.fn(),
       onOpenSettings: vi.fn()
     })
@@ -168,5 +171,36 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(filesButton?.props.onClick).toBeTypeOf('function')
     ;(filesButton?.props.onClick as () => void)()
     expect(onOpenFiles).toHaveBeenCalledTimes(1)
+  })
+
+  it('wires the View notebook menu item to the matching session', async () => {
+    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+    const sessions = [
+      createSession({ id: 'session-a', title: 'Notebook review' }),
+      createSession({ id: 'session-b', title: 'Dataset cleanup' })
+    ]
+    const onViewNotebook = vi.fn()
+    const tree = WorkspaceSidebar({
+      projectName: 'Example project',
+      sessions,
+      activeSessionId: sessions[0].id,
+      canCreateConversation: true,
+      onGoHome: vi.fn(),
+      onNewConversation: vi.fn(),
+      isFilesOpen: false,
+      onOpenFiles: vi.fn(),
+      onOpenSession: vi.fn(),
+      onRenameSession: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onViewNotebook,
+      onOpenSettings: vi.fn()
+    })
+    const viewNotebookItems = collectElements(tree).filter(
+      (element) => getTextContent(element).trim() === 'View notebook'
+    )
+
+    expect(viewNotebookItems[1]?.props.onSelect).toBeTypeOf('function')
+    ;(viewNotebookItems[1]?.props.onSelect as () => void)()
+    expect(onViewNotebook).toHaveBeenCalledWith(sessions[1])
   })
 })
