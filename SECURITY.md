@@ -87,7 +87,7 @@ the agent is deliberately isolated from your ambient shell environment:
 - API tokens for a custom gateway that you enter in the app are **encrypted at rest**
   with the OS keychain (Electron `safeStorage`); the UI only ever shows a masked hint.
 - Project data, sessions, notebooks, and artifacts live under `~/.open-science`
-  (production) or `~/.open-science-project` (development builds).
+  (production) or `~/.open-science-dev` (development builds).
 
 **Never paste an API key, access token, or other credential — or the contents of
 those directories — into an issue, PR, log excerpt, or screenshot.** Redact secrets

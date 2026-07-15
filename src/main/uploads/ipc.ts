@@ -1,4 +1,4 @@
-import { app, ipcMain } from 'electron'
+import { ipcMain } from 'electron'
 
 import type { ReadArtifactPreviewRequest } from '../../shared/artifacts'
 import type {
@@ -7,12 +7,12 @@ import type {
   ReadUploadBytesRequest,
   StageUploadFilesRequest
 } from '../../shared/uploads'
-import { getSessionPersistenceDir } from '../session-persistence/repository'
+import { resolveStorageRoot } from '../storage-root'
 import { UploadRepository } from './repository'
 
-// Creates the upload repository under the same app-owned persistence root as sessions.
+// Uses the shared dev-aware root so uploads remain readable by every preview entry point.
 const createDefaultUploadRepository = (): UploadRepository =>
-  new UploadRepository(getSessionPersistenceDir(app.getPath('home')))
+  new UploadRepository(resolveStorageRoot())
 
 // Registers the small upload IPC surface used by the renderer composer and preview panel.
 const registerUploadIpcHandlers = (repository = createDefaultUploadRepository()): void => {

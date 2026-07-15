@@ -92,7 +92,7 @@ npm install
 npm run dev
 ```
 
-`npm run dev` builds the Electron main/preload bundles, starts the renderer dev server on `localhost:5173`, and opens the **Open Science** desktop window automatically. Development data is isolated under `~/.open-science-project`, so it never touches a production install's data.
+`npm run dev` builds the Electron main/preload bundles, starts the renderer dev server on `localhost:5173`, and opens the **Open Science** desktop window automatically. Development data is isolated under `~/.open-science-dev`, so it never touches a production install's data.
 
 > **Tip:** on a cold first launch the window occasionally fails to appear even though the process is running — just `Ctrl+C` and run `npm run dev` again.
 

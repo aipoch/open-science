@@ -17,7 +17,7 @@ const MANIFEST_FILE = 'manifest.json'
 
 // Production storage lives under ~/.open-science; dev builds use an isolated sibling directory.
 export const PROD_SESSION_DIR_NAME = '.open-science'
-export const DEV_SESSION_DIR_NAME = '.open-science-project'
+export const DEV_SESSION_DIR_NAME = '.open-science-dev'
 
 // Builds the app-owned session directory in the user's home folder. Kept pure (no electron) so it
 // stays unit-testable; the dev/prod choice is applied by the main-only resolveStorageRoot helper.
