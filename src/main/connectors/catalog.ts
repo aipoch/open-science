@@ -137,10 +137,11 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'biorxiv',
     displayName: 'bioRxiv',
-    description: 'Preprint metadata via the bioRxiv/medRxiv REST API.',
+    description:
+      'bioRxiv/medRxiv preprints — search by date/category, metadata by DOI, journal-publication links, funder listings, and platform statistics.',
     useWhen:
-      'Use when looking up a bioRxiv or medRxiv preprint by DOI, or listing preprints posted in a date range (optionally filtered by category) — title, authors, date, category, and journal-publication link.',
-    sources: ['bioRxiv'],
+      'Use when working with bioRxiv or medRxiv preprints — searching by date range and category (no keyword search), fetching full metadata for a DOI, finding which preprints were published in journals (optionally by publisher DOI prefix), listing preprints by funder (ROR id), or reporting submission/usage statistics over time. Sourced from bioRxiv and medRxiv (funder ids via ROR).',
+    sources: ['bioRxiv', 'medRxiv', 'ROR'],
     termsUrl: 'https://www.biorxiv.org/about/FAQ',
     requiresNcbi: false,
     group: 'directory'
