@@ -17,6 +17,10 @@ const APP_ASSET_SUBDIRS = ['skills', 'plugins', 'commands'] as const
 // (bash/subprocess) is guarded separately; see the notebook audit hook and read-guard spec.
 const GUARDED_FILE_TOOLS = ['Read', 'Edit', 'Glob', 'Grep'] as const
 
+// Built-in agent tools disabled outright in this app. Web search is off by policy: the agent gets its
+// external data through the curated MCP research connectors, not the model's open-web search.
+const DENIED_BUILTIN_TOOLS = ['WebSearch'] as const
+
 // Builds the claude-code permission deny rules that fence the agent's file tools out of `configDir`.
 // Claude Code permission paths are gitignore-style with forward slashes, where a `//<abs>` prefix
 // denotes an absolute filesystem path. Normalize Windows backslashes and collapse the leading slash
@@ -27,10 +31,11 @@ const configDenyRules = (configDir: string): string[] => {
 }
 
 // Writes/merges `<configDir>/settings.json` for the app-owned user scope (the agent runs with
-// settingSources: ['user']). Two things are enforced here, merge-preserving any settings already
-// present: the permissions.deny guard rules, and disableBundledSkills so Claude Code's own bundled
-// skills/workflows (dataviz, deep-research, …) never leak in — the app injects its OWN curated skill
-// set into `<configDir>/skills`, which disableBundledSkills leaves untouched.
+// settingSources: ['user']). Three things are enforced here, merge-preserving any settings already
+// present: the permissions.deny guard rules (file-tool fence + disabled built-in tools like WebSearch),
+// and disableBundledSkills so Claude Code's own bundled skills/workflows (dataviz, deep-research, …)
+// never leak in — the app injects its OWN curated skill set into `<configDir>/skills`, which
+// disableBundledSkills leaves untouched.
 const writeAppSettings = async (configDir: string): Promise<void> => {
   const settingsPath = join(configDir, 'settings.json')
 
@@ -47,7 +52,9 @@ const writeAppSettings = async (configDir: string): Promise<void> => {
       ? (settings.permissions as Record<string, unknown>)
       : {}
   const existingDeny = Array.isArray(permissions.deny) ? (permissions.deny as string[]) : []
-  const deny = [...new Set([...existingDeny, ...configDenyRules(configDir)])]
+  const deny = [
+    ...new Set([...existingDeny, ...configDenyRules(configDir), ...DENIED_BUILTIN_TOOLS])
+  ]
 
   settings.permissions = { ...permissions, deny }
   settings.disableBundledSkills = true
@@ -83,4 +90,4 @@ const provisionAppClaudeConfigDir = async (
   await materializer.sync(configDir, enabled)
 }
 
-export { APP_ASSET_SUBDIRS, configDenyRules, provisionAppClaudeConfigDir }
+export { APP_ASSET_SUBDIRS, DENIED_BUILTIN_TOOLS, configDenyRules, provisionAppClaudeConfigDir }

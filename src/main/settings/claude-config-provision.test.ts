@@ -8,6 +8,7 @@ import { SkillRegistry } from '../skills/registry'
 import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import {
   APP_ASSET_SUBDIRS,
+  DENIED_BUILTIN_TOOLS,
   configDenyRules,
   provisionAppClaudeConfigDir
 } from './claude-config-provision'
@@ -80,11 +81,21 @@ describe('provisionAppClaudeConfigDir', () => {
 
     const settings = JSON.parse(await readFile(join(configDir, 'settings.json'), 'utf8'))
     const deny: string[] = settings.permissions.deny
-    expect(deny).toEqual(configDenyRules(configDir))
+    expect(deny).toEqual([...configDenyRules(configDir), ...DENIED_BUILTIN_TOOLS])
     // Each rule is an absolute-path (`//`) recursive deny for one of the guarded file tools.
     for (const tool of ['Read', 'Edit', 'Glob', 'Grep']) {
       expect(deny.some((rule) => rule.startsWith(`${tool}(//`) && rule.endsWith('/**)'))).toBe(true)
     }
+  })
+
+  it('disables the built-in WebSearch tool in the app user scope', async () => {
+    root = await mkdtemp(join(tmpdir(), 'os-claude-config-'))
+    const configDir = join(root, 'claude')
+
+    await provisionAppClaudeConfigDir(configDir)
+
+    const settings = JSON.parse(await readFile(join(configDir, 'settings.json'), 'utf8'))
+    expect(settings.permissions.deny).toContain('WebSearch')
   })
 
   it('disables Claude Code bundled skills in the app user scope', async () => {
