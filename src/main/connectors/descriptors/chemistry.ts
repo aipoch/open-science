@@ -244,7 +244,7 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "n_requested": int, "duplicates": [int], "records": [ {...} ], "not_found": [int] }` — one record per distinct CID (repeats disclosed in `duplicates`, first-occurrence order). Each record carries CID, MolecularFormula, MolecularWeight, SMILES (isomeric), ConnectivitySMILES, InChI, InChIKey, IUPACName, XLogP, ExactMass, TPSA, Charge, HBondDonorCount, HBondAcceptorCount, RotatableBondCount, HeavyAtomCount — plus `synonyms`/`n_synonyms_total`/`synonyms_truncated` when `include_synonyms`. CIDs the API does not know appear in `not_found`.',
     example:
-      'result = host.mcp("chemistry", "pubchem_get_compounds", {"cids": [2244, 2519], "include_synonyms": false})',
+      'result = host.mcp("chemistry", "pubchem_get_compounds", {"cids": [2244, 2519], "include_synonyms": False})',
     run: async (ctx, a) => {
       const raw = ([] as unknown[]).concat(a.cids as never).map((c) => Number(c))
       if (!raw.length) throw new Error('cids must be non-empty')
@@ -342,7 +342,7 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "cid": int, "active_only": bool, "n_rows_total": int, "truncated": bool, "rows": [ {...} ] }` — each row maps the upstream columns: AID, SID, CID, "Activity Outcome" (Active/Inactive/Unspecified/Inconclusive), "Target Accession", "Target GeneID", "Activity Value [uM]", "Activity Name", "Assay Name", "Assay Type", "PubMed ID". Filtering by `active_only` happens BEFORE the cap, so `n_rows_total` is the true (filtered) count. `rows` is `[]` for compounds with no assay data (not an error).',
     example:
-      'result = host.mcp("chemistry", "pubchem_get_bioassay_summary", {"cid": 2244, "active_only": true})',
+      'result = host.mcp("chemistry", "pubchem_get_bioassay_summary", {"cid": 2244, "active_only": True})',
     run: async (ctx, a) => {
       const cid = Number(a.cid)
       const maxRows = Number(a.max_rows ?? 100)

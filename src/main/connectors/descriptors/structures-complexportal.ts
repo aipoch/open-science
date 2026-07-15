@@ -285,7 +285,7 @@ export const STRUCTURES_COMPLEXPORTAL_TOOLS: ToolDescriptor[] = [
     returns:
       '{query_accession, solr_query, total_reported, total_retrieved, complexes:[{complex_ac, name, species_name, taxid, predicted_complex, interactors:[{identifier, name, interactor_type, stoichiometry_raw}]}]}. complexes are sorted by CPX accession (numeric); total_reported == total_retrieved is enforced or the call throws.',
     example:
-      'result = host.mcp("structures", "complexportal_search_by_participant", {"accession": "P69905", "participants_only": true})',
+      'result = host.mcp("structures", "complexportal_search_by_participant", {"accession": "P69905", "participants_only": True})',
     run: async (ctx: ToolContext, a: Record<string, unknown>): Promise<unknown> => {
       const accession = String(a.accession).trim()
       const participantsOnly = a.participants_only !== false

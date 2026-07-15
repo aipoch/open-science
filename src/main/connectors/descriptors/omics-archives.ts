@@ -1281,7 +1281,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     },
     required: ['accessions'],
     returns:
-      '`{ "n_requested": int, "records": [ { "accession", "title", "organism": [str], "series_type": [str], "status", "submission_date", "last_update_date", "summary", "overall_design", "pubmed_ids": [str], "platforms": [str], "n_samples": int, "samples": [ {accession,title,organism,characteristics:[{tag,value}],library_strategy,instrument_model,...} ], "supplementary_files": {series:[str],samples:{acc:[str]},ftp_root}, "esummary": {...} } ] }` — records ordered by accession.',
+      '`{ "n_requested": int (accessions requested, before de-duplication), "records": [ { "accession", "title", "organism": [str], "series_type": [str], "status", "submission_date", "last_update_date", "summary", "overall_design", "pubmed_ids": [str], "platforms": [str], "n_samples": int, "samples": [ {accession,title,organism,characteristics:[{tag,value}],library_strategy,instrument_model,...} ], "supplementary_files": {series:[str],samples:{acc:[str]},ftp_root}, "esummary": {...} } ] }` — records ordered by accession.',
     example: 'result = host.mcp("omics_archives", "geo_get_series", {"accessions": ["GSE131907"]})',
     run: async (ctx, a) => {
       const etiquette = ncbiEtiquette(ctx.credentials)
@@ -1302,7 +1302,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     input: { type: 'object', properties: {} },
     returns:
       '`{ "accessions": [str], "count": int, "reported_count": int }` — full accession list (MTBLS1, MTBLS2, ...); `count` and `reported_count` should agree.',
-    example: 'result = host.mcp("omics_archives", "metabolights_list_studies")',
+    example: 'result = host.mcp("omics_archives", "metabolights_list_studies", {})',
     url: () => `${METABOLIGHTS}/studies`,
     parse: (raw) => {
       const payload = asObj(raw)
@@ -1332,7 +1332,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "n_requested": int, "records": [ { "accession", "title", "description", "study_status", "release_year", "submission_year", "organisms": [{organism,organism_part}], "organism_names": [str], "assays": [{assay_number,measurement,technology,platform,filename}], "assay_count", "technologies": [str], "factors": [str], "descriptors": [str], "sample_count", "protocols": [{name,description}], "sample_table"? } ], "not_found": [str] }` — records sorted by numeric accession.',
     example:
-      'result = host.mcp("omics_archives", "metabolights_get_studies", {"accessions": ["MTBLS1"], "include_samples": false})',
+      'result = host.mcp("omics_archives", "metabolights_get_studies", {"accessions": ["MTBLS1"], "include_samples": False})',
     run: async (ctx, a) => {
       const unique = sortMtbls(asArr(a.accessions).map(String))
       const includeSamples = Boolean(a.include_samples)
@@ -1505,7 +1505,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "studies": [ { "accession", "secondary_accession", "bioproject", "study_name", "biome_lineages": [str], "samples_count", "centre_name", "data_origination", "is_private", "last_update", "analyses_total"?, "analyses_by_pipeline_version"?, "analyses_by_experiment_type"? } ], "missing": [str], "analyses"?: {acc: [record]} }` — studies sorted by accession.',
     example:
-      'result = host.mcp("omics_archives", "mgnify_get_studies", {"accessions": ["MGYS00000410"], "include_analyses": false})',
+      'result = host.mcp("omics_archives", "mgnify_get_studies", {"accessions": ["MGYS00000410"], "include_analyses": False})',
     run: async (ctx, a) => {
       const includeAnalyses = Boolean(a.include_analyses)
       const unique = [...new Set(asArr(a.accessions).map(String))].sort()
