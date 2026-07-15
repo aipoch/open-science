@@ -33,7 +33,7 @@ This document records reusable UI/UX rules only. It must not include sample proj
 ```
 
 - Use `cssVariables: true`; expose all colors, radii, rings, and sidebar colors through CSS variables.
-- Use `neutral` as the `baseColor`; the Open Science brand blue should only appear in semantic tokens such as `--primary`, `--ring`, and `--chart-*`.
+- Use `neutral` as the `baseColor`; the Open Science deep green should only appear through semantic tokens such as `--primary` and `--ring`.
 - Use the `.dark` class to override shadcn tokens in dark mode. Components must use tokens from this specification only; do not invent new color variable names outside the shadcn and workspace token sets defined here.
 - Prefer shadcn components for new UI: `Button`, `Dialog`, `DropdownMenu`, `Select`, `Tabs`, `Sidebar`, `Input`, `Textarea`, `Card`, `Separator`, `ScrollArea`, and `Tooltip`.
 
@@ -105,7 +105,7 @@ This document records reusable UI/UX rules only. It must not include sample proj
 
 ### Light Theme
 
-The light theme uses a warm off-white page background, white cards, and a blue interaction focus. Values below match `src/renderer/src/assets/main.css`:
+The light theme uses a warm off-white page background, white cards, and a deep-green interaction focus. Values below match `src/renderer/src/assets/main.css`:
 
 ```css
 :root {
@@ -124,8 +124,6 @@ The light theme uses a warm off-white page background, white cards, and a blue i
   --rail-card-bg: 0 0% 100%;
   --danger-000: hsl(0 45% 38%);
   --danger-900: hsl(0 55% 95%);
-  --action-primary: hsl(13 55% 51%);
-  --action-primary-hover: hsl(13 53% 47%);
   --action-panel-toggle: hsl(0 0% 42%);
   --surface-control-hover: hsl(38 20% 90%);
   --message-user-text: hsl(0 0% 12%);
@@ -167,7 +165,7 @@ Target values for dark mode. Apply under `.dark` when dark theme is enabled:
   --popover: hsl(60 2% 17%);
   --popover-foreground: hsl(60 14% 97%);
 
-  --primary: rgb(109 167 236);
+  --primary: oklch(0.68 0.1 184);
   --primary-foreground: hsl(60 2% 12%);
 
   --secondary: hsl(60 2% 9%);
@@ -183,7 +181,7 @@ Target values for dark mode. Apply under `.dark` when dark theme is enabled:
 
   --border: hsl(53 12% 87% / 0.1);
   --input: hsl(53 12% 87% / 0.15);
-  --ring: rgb(42 120 214);
+  --ring: oklch(0.7 0.1 184);
 
   --chart-1: rgb(109 167 236);
   --chart-2: rgb(88 176 133);
@@ -212,18 +210,18 @@ Target values for dark mode. Apply under `.dark` when dark theme is enabled:
 
 ### shadcn Semantic Tokens
 
-| Token                     | Tailwind class                  | Usage                                     |
-| ------------------------- | ------------------------------- | ----------------------------------------- |
-| `--background`            | `bg-background`                 | Home page root and generic shells         |
-| `--foreground`            | `text-foreground`               | Primary text on shadcn surfaces           |
-| `--card`                  | `bg-card`                       | Cards, viewer panels, elevated surfaces   |
-| `--popover`               | `bg-popover`                    | Menus, selects, popovers                  |
-| `--secondary` / `--muted` | `bg-secondary`, `bg-muted`      | Weak containers and secondary buttons     |
-| `--accent`                | `bg-accent`                     | Hover states, active tabs, Home list rows |
-| `--muted-foreground`      | `text-muted-foreground`         | Helper text and weak icons                |
-| `--border` / `--input`    | `border-border`, `border-input` | Borders and input outlines                |
-| `--ring`                  | `ring-ring`                     | Focus ring and active indicators          |
-| `--primary`               | `text-primary`, `bg-primary`    | Brand actions and links                   |
+| Token                     | Tailwind class                  | Usage                                         |
+| ------------------------- | ------------------------------- | --------------------------------------------- |
+| `--background`            | `bg-background`                 | Home page root and generic shells             |
+| `--foreground`            | `text-foreground`               | Primary text on shadcn surfaces               |
+| `--card`                  | `bg-card`                       | Cards, viewer panels, elevated surfaces       |
+| `--popover`               | `bg-popover`                    | Menus, selects, popovers                      |
+| `--secondary` / `--muted` | `bg-secondary`, `bg-muted`      | Weak containers and secondary buttons         |
+| `--accent`                | `bg-accent`                     | Hover states, active tabs, Home list rows     |
+| `--muted-foreground`      | `text-muted-foreground`         | Helper text and weak icons                    |
+| `--border` / `--input`    | `border-border`, `border-input` | Borders and input outlines                    |
+| `--ring`                  | `ring-ring`                     | Focus ring and active indicators              |
+| `--primary`               | `text-primary`, `bg-primary`    | All primary actions, active states, and links |
 
 ### Workspace ↔ shadcn Equivalence
 
@@ -243,19 +241,18 @@ Workspace tokens share the same visual intent as several shadcn tokens. Workspac
 
 Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shared surface colors, see **Workspace ↔ shadcn Equivalence** above.
 
-| Token                                         | Tailwind class                                       | Light value                                                                   | Usage                                             |
-| --------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------- |
-| `--bg-400`                                    | `bg-bg-400`                                          | `hsl(45 10% 88%)`                                                             | Sidebar row action hover                          |
-| `--text-300`                                  | `text-text-300`                                      | `hsl(43 3% 57%)`                                                              | Footer/action icon default color and loading dots |
-| `--rail-card-bg`                              | `bg-rail-card-bg`                                    | `hsl(0 0% 100%)`                                                              | Sidebar rail card                                 |
-| `--danger-000` / `--danger-900`               | `text-danger-000`, `bg-danger-900`                   | `hsl(0 45% 38%)`, `hsl(0 55% 95%)`                                            | Destructive session menu and dialog actions       |
-| `--action-primary` / `--action-primary-hover` | `bg-action-primary`, `hover:bg-action-primary-hover` | `hsl(13 55% 51%)`, `hsl(13 53% 47%)`                                          | Composer send button and active preview toggle    |
-| `--action-panel-toggle`                       | `text-action-panel-toggle`                           | `hsl(0 0% 42%)`                                                               | Collapsed preview toggle                          |
-| `--surface-control-hover`                     | `hover:bg-surface-control-hover`                     | `hsl(38 20% 90%)`                                                             | Header icon control hover                         |
-| `--message-user-text`                         | `text-message-user-text`                             | `hsl(0 0% 12%)`                                                               | User message bubble text                          |
-| `--shadow-card`                               | `shadow-card`                                        | `0 0 0 1px rgb(10 10 10 / 0.06), 0 4px 24px rgb(10 10 10 / 0.04)`             | Sidebar rail card and composer dock               |
-| `--shadow-card-opaque`                        | `shadow-card-opaque`                                 | `0 0 0 1px rgb(10 10 10 / 0.08), 0 8px 28px rgb(10 10 10 / 0.1)`              | Composer form                                     |
-| `--shadow-menu` / `--shadow-dialog`           | `shadow-menu`, `shadow-dialog`                       | `0 4px 16px hsl(var(--always-black) / 10%)`, `0 8px 32px rgb(10 10 10 / 12%)` | Session menus and modal dialogs                   |
+| Token                               | Tailwind class                     | Light value                                                                   | Usage                                             |
+| ----------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------- |
+| `--bg-400`                          | `bg-bg-400`                        | `hsl(45 10% 88%)`                                                             | Sidebar row action hover                          |
+| `--text-300`                        | `text-text-300`                    | `hsl(43 3% 57%)`                                                              | Footer/action icon default color and loading dots |
+| `--rail-card-bg`                    | `bg-rail-card-bg`                  | `hsl(0 0% 100%)`                                                              | Sidebar rail card                                 |
+| `--danger-000` / `--danger-900`     | `text-danger-000`, `bg-danger-900` | `hsl(0 45% 38%)`, `hsl(0 55% 95%)`                                            | Destructive session menu and dialog actions       |
+| `--action-panel-toggle`             | `text-action-panel-toggle`         | `hsl(0 0% 42%)`                                                               | Collapsed preview toggle                          |
+| `--surface-control-hover`           | `hover:bg-surface-control-hover`   | `hsl(38 20% 90%)`                                                             | Header icon control hover                         |
+| `--message-user-text`               | `text-message-user-text`           | `hsl(0 0% 12%)`                                                               | User message bubble text                          |
+| `--shadow-card`                     | `shadow-card`                      | `0 0 0 1px rgb(10 10 10 / 0.06), 0 4px 24px rgb(10 10 10 / 0.04)`             | Sidebar rail card and composer dock               |
+| `--shadow-card-opaque`              | `shadow-card-opaque`               | `0 0 0 1px rgb(10 10 10 / 0.08), 0 8px 28px rgb(10 10 10 / 0.1)`              | Composer form                                     |
+| `--shadow-menu` / `--shadow-dialog` | `shadow-menu`, `shadow-dialog`     | `0 4px 16px hsl(var(--always-black) / 10%)`, `0 8px 32px rgb(10 10 10 / 12%)` | Session menus and modal dialogs                   |
 
 ### Border Opacity
 
@@ -269,16 +266,16 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 
 ### Key Colors
 
-| Semantic role          | Light value        | Dark value         |
-| ---------------------- | ------------------ | ------------------ |
-| Page background        | `rgb(253 253 252)` | `rgb(31 31 30)`    |
-| Primary text           | `rgb(18 18 18)`    | `rgb(248 248 246)` |
-| Secondary text         | `rgb(55 55 52)`    | `rgb(195 194 183)` |
-| Weak text / icons      | `rgb(123 121 116)` | `rgb(148 146 139)` |
-| Active background      | `rgb(239 238 235)` | `rgb(18 18 18)`    |
-| Card / menu background | `rgb(255 255 255)` | `rgb(44 44 42)`    |
-| Brand text / links     | `rgb(24 79 149)`   | `rgb(109 167 236)` |
-| Focus ring             | `rgb(42 120 214)`  | `rgb(42 120 214)`  |
+| Semantic role           | Light value             | Dark value            |
+| ----------------------- | ----------------------- | --------------------- |
+| Page background         | `rgb(253 253 252)`      | `rgb(31 31 30)`       |
+| Primary text            | `rgb(18 18 18)`         | `rgb(248 248 246)`    |
+| Secondary text          | `rgb(55 55 52)`         | `rgb(195 194 183)`    |
+| Weak text / icons       | `rgb(123 121 116)`      | `rgb(148 146 139)`    |
+| Active background       | `rgb(239 238 235)`      | `rgb(18 18 18)`       |
+| Card / menu background  | `rgb(255 255 255)`      | `rgb(44 44 42)`       |
+| Primary actions / links | `oklch(0.47 0.105 184)` | `oklch(0.68 0.1 184)` |
+| Focus ring              | `oklch(0.58 0.11 184)`  | `oklch(0.7 0.1 184)`  |
 
 ## Style Guidelines
 
@@ -314,7 +311,7 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Workspace shell surfaces use `bg-bg-10`; white workspace surfaces use `bg-bg-000`.
 - Sidebar row hover/active states use `hover:bg-bg-300` and active `bg-bg-300`.
 - Session action menu items use `data-[highlighted]:bg-bg-200 data-[highlighted]:text-text-000`; destructive highlights use `data-[highlighted]:bg-danger-900`.
-- Do not use large brand-color surfaces. Brand blue is reserved for links, focus, status dots, and primary actions.
+- Do not use large brand-color surfaces. Deep green is reserved for links, focus, status dots, active states, and primary actions.
 
 ### Shadows
 
@@ -480,7 +477,7 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Workspace composer shell: `px-4 pb-2`; center content in `mx-auto w-full max-w-4xl`, then use `px-1 md:px-3` so the composer text track aligns with the message content after the form's own `px-3`.
 - Workspace composer form: `relative z-10 flex flex-col gap-2 rounded-2xl bg-bg-000 px-3 py-2 shadow-card-opaque`.
 - Textarea: `min-h-[36px] max-h-[200px] py-1.5 text-[15px] leading-relaxed text-text-000 placeholder:text-text-100`.
-- Toolbar action buttons are `h-8 w-8`; send uses `bg-action-primary hover:bg-action-primary-hover`, cancel uses `bg-bg-200 text-text-000 hover:bg-bg-300`.
+- Toolbar action buttons are `h-8 w-8`; send uses `bg-primary text-primary-foreground hover:bg-primary/80`, cancel uses `bg-bg-200 text-text-000 hover:bg-bg-300`.
 - Read-only state: apply `opacity-50` to the input content and action area as a whole, but do not shrink the layout.
 - Drag-and-drop state: use `ring-ring/50`, `border-ring/50`, or a semantic success token. Do not hardcode a new green.
 
@@ -510,6 +507,20 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - List title: `text-[17px] leading-6 font-medium`.
 - List row: `h-10 rounded-lg px-3 hover:bg-accent hover:text-accent-foreground`.
 - Inline more actions: default `opacity-0`, then `opacity-100` on hover or focus-visible.
+
+### Onboarding
+
+- Root: `h-svh overflow-y-auto bg-bg-10 text-text-000`.
+- Container: `mx-auto min-h-full w-full max-w-[960px] px-8 py-7`.
+- Brand: reuse the exact Home treatment, `font-serif text-[26px] font-medium leading-none tracking-[-0.02em] text-text-000`; do not recolor it with `primary`.
+- Main layout: `mt-12 grid grid-cols-[260px_minmax(0,1fr)] gap-12`; the left column is unframed introduction/progress, and the right column is the only visible work card.
+- Work surface: one shadcn `Card`, `min-h-[420px] gap-0 rounded-lg bg-bg-000 py-0 shadow-card ring-1 ring-border-200`; do not nest visual cards inside it.
+- Current step uses `bg-primary text-primary-foreground`; completed and inactive labels remain neutral.
+- Commands use shadcn `Button`; primary commands inherit the shared deep-green `primary` variant.
+- ProviderForm field guidance uses the shared `FieldHelp` component next to the field label. It accepts only `content: ReactNode`; field types and copy mappings remain owned by the form.
+- `FieldHelp` uses a neutral shadcn `Button variant="ghost" size="icon-xs"`, overridden to `size-[18px] rounded-full bg-transparent text-muted-foreground/50`. Hover, keyboard focus, and open states use `bg-muted text-foreground`; it uses Lucide `CircleHelp` and never uses `primary`.
+- Provider type, Base URL, API key, and Supported models descriptions live only in the shared shadcn `Tooltip` (`max-w-[280px] px-3 py-2 text-xs leading-5 whitespace-normal`); do not render helper copy below those controls. Validation errors remain inline below their inputs.
+- If OS secure storage is unavailable, retain the reduced-protection warning above the form and make the Tooltip copy describe that state accurately.
 
 ### Workspace
 

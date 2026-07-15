@@ -106,9 +106,9 @@ const highlightPythonCode = (code: string): React.ReactNode[] => {
       : token.startsWith('"') || token.startsWith("'")
         ? 'text-primary'
         : /^\d/.test(token)
-          ? 'text-action-primary'
+          ? 'text-primary'
           : pythonKeywords.has(token)
-            ? 'font-semibold text-action-primary'
+            ? 'font-semibold text-primary'
             : pythonBuiltins.has(token)
               ? 'text-text-100'
               : 'text-text-000'
@@ -140,7 +140,7 @@ const runStatusClassName = (status: NotebookRunRecord['status']): string =>
     ? 'text-primary'
     : isProblemRunStatus(status)
       ? 'text-danger-000'
-      : 'text-action-primary'
+      : 'text-primary'
 
 // Renders the captured output for one run, preserving whitespace for tracebacks.
 const NotebookRunOutput = ({ run }: { run: NotebookRunRecord }): React.JSX.Element | null => {

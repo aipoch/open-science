@@ -1,4 +1,5 @@
 import { ExternalTextLink } from '@/components/ExternalTextLink'
+import { FieldHelp } from '@/components/FieldHelp'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -9,6 +10,7 @@ import {
   SelectTrigger
 } from '@/components/ui/select'
 import { getOfficialVendor, resolveVendorApiKeyUrl } from '../../../../shared/provider-registry'
+import { getApiKeySecurityCopy } from './provider-key-security'
 import { ProviderKindIcon } from './provider-icons'
 import {
   PROVIDER_KINDS,
@@ -37,10 +39,28 @@ type ProviderFormProps = {
   onRefreshModels?: () => void
   isRefreshingModels?: boolean
   disabled?: boolean
+  // Whether Electron can protect new keys with the operating system's secure storage.
+  encryptionAvailable?: boolean
 }
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
 const fieldErrorClassName = 'text-xs text-destructive'
+
+// Static field guidance stays close to the form while FieldHelp remains content-agnostic.
+const BASE_URL_HELP_CONTENT = (
+  <>
+    Only Anthropic <code>/v1/messages</code>–compatible gateways are supported (an Anthropic-format
+    endpoint, not an OpenAI-compatible one). Give the root — a trailing <code>/v1</code> is added
+    automatically.
+  </>
+)
+
+const SUPPORTED_MODELS_HELP_CONTENT = (
+  <>
+    Bundled with the app. Refresh from the vendor to pull the latest. Choose one from the Active
+    model selector after adding.
+  </>
+)
 
 // Group headers shown in the provider-type dropdown, in display order. ('coding' is reserved for
 // subscription coding-plan endpoints once those are wired up.)
@@ -69,7 +89,8 @@ const ProviderForm = ({
   supportedModels,
   onRefreshModels,
   isRefreshingModels = false,
-  disabled = false
+  disabled = false,
+  encryptionAvailable = true
 }: ProviderFormProps): React.JSX.Element => {
   const isCustom = value.type === 'custom'
   const isOfficial = value.type === 'official'
@@ -80,14 +101,25 @@ const ProviderForm = ({
   // Where to get a key for an official vendor (region-specific console); custom providers have none.
   const apiKeyUrl =
     isOfficial && value.vendorId ? resolveVendorApiKeyUrl(value.vendorId, value.region) : undefined
+  const securityCopy = getApiKeySecurityCopy(encryptionAvailable)
 
   const keyField = (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between gap-2">
-        <label className={fieldLabelClassName} htmlFor="provider-key">
-          API key
-          <RequiredMark />
-        </label>
+        <div className="flex items-center gap-1">
+          <label className={fieldLabelClassName} htmlFor="provider-key">
+            API key
+            <RequiredMark />
+          </label>
+          <FieldHelp
+            content={
+              <>
+                <span className="block font-medium">{securityCopy.title}</span>
+                <span className="block text-bg-000/80">{securityCopy.description}</span>
+              </>
+            }
+          />
+        </div>
         {apiKeyUrl ? (
           <ExternalTextLink href={apiKeyUrl} className="text-xs">
             Get an API key
@@ -118,7 +150,10 @@ const ProviderForm = ({
   return (
     <div className="space-y-4">
       <div className="space-y-1.5">
-        <span className={fieldLabelClassName}>Provider type</span>
+        <div className="flex items-center gap-1">
+          <span className={fieldLabelClassName}>Provider type</span>
+          {selectedKind ? <FieldHelp content={selectedKind.description} /> : null}
+        </div>
         <Select value={selectedKey} onValueChange={(key) => onChange(providerKindPatch(key))}>
           <SelectTrigger aria-label="Provider type">
             <span className="flex items-center gap-2">
@@ -149,9 +184,6 @@ const ProviderForm = ({
             })}
           </SelectContent>
         </Select>
-        {selectedKind ? (
-          <p className="text-xs text-muted-foreground">{selectedKind.description}</p>
-        ) : null}
       </div>
 
       <div className="space-y-1.5">
@@ -171,10 +203,13 @@ const ProviderForm = ({
       {isCustom ? (
         <>
           <div className="space-y-1.5">
-            <label className={fieldLabelClassName} htmlFor="provider-base-url">
-              Base URL
-              <RequiredMark />
-            </label>
+            <div className="flex items-center gap-1">
+              <label className={fieldLabelClassName} htmlFor="provider-base-url">
+                Base URL
+                <RequiredMark />
+              </label>
+              <FieldHelp content={BASE_URL_HELP_CONTENT} />
+            </div>
             <Input
               id="provider-base-url"
               aria-label="Base URL"
@@ -183,11 +218,6 @@ const ProviderForm = ({
               placeholder="https://gateway.example"
               onChange={(event) => onChange({ baseUrl: event.target.value })}
             />
-            <p className="text-xs text-muted-foreground">
-              Only Anthropic <code>/v1/messages</code>–compatible gateways are supported (an
-              Anthropic-format endpoint, not an OpenAI-compatible one). Give the root — a trailing{' '}
-              <code>/v1</code> is added automatically.
-            </p>
             {errors.baseUrl ? (
               <p className={fieldErrorClassName} role="alert">
                 {errors.baseUrl}
@@ -253,7 +283,10 @@ const ProviderForm = ({
             return (
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
-                  <span className={fieldLabelClassName}>Supported models</span>
+                  <div className="flex items-center gap-1">
+                    <span className={fieldLabelClassName}>Supported models</span>
+                    <FieldHelp content={SUPPORTED_MODELS_HELP_CONTENT} />
+                  </div>
                   {onRefreshModels ? (
                     <button
                       type="button"
@@ -275,10 +308,6 @@ const ProviderForm = ({
                     </span>
                   ))}
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Bundled with the app. Refresh from the vendor to pull the latest. Choose one from
-                  the Active model selector after adding.
-                </p>
               </div>
             )
           })()}

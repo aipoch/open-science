@@ -99,7 +99,7 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
                   <span className="min-w-0 flex-1 truncate">{optionLabel(option)}</span>
                   {isActive ? (
                     <Check
-                      className="size-4 shrink-0 text-action-primary"
+                      className="size-4 shrink-0 text-primary"
                       strokeWidth={2}
                       aria-hidden="true"
                     />

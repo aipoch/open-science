@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { OnboardingWizard } from './OnboardingWizard'
 
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
 let container: HTMLDivElement
 let root: Root
 
@@ -50,6 +52,47 @@ describe('OnboardingWizard', () => {
     // The Claude install/status section is present; the model form is not yet shown.
     expect(container.querySelector('section[aria-label="Confirm Claude"]')).not.toBeNull()
     expect(container.querySelector('section[aria-label="Configure model"]')).toBeNull()
+  })
+
+  it('renders the approved split shell and advances its accessible progress state', async () => {
+    useSettingsStore.setState({
+      preflight: { claudeReady: true, activeProviderReady: false },
+      claude: { resolvedPath: '/bin/claude', version: '2.1.0' }
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+
+    const brandLink = Array.from(container.querySelectorAll('a')).find(
+      (link) => link.textContent === 'Open Science'
+    )
+
+    expect(container.querySelector('[data-onboarding-layout="split"]')).not.toBeNull()
+    expect(brandLink?.className).toContain('font-serif')
+    expect(brandLink?.className).toContain('text-text-000')
+    expect(container.textContent).toContain('Set up your research workspace.')
+    expect(container.textContent).toContain(
+      'Two quick checks connect the local runtime and the model you want to use.'
+    )
+    expect(container.querySelector('[aria-current="step"]')?.textContent).toContain(
+      'Claude runtime'
+    )
+
+    const continueButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      /continue/i.test(button.textContent ?? '')
+    )
+
+    await act(async () => {
+      continueButton?.click()
+    })
+
+    expect(container.querySelector('[aria-current="step"]')?.textContent).toContain(
+      'Model provider'
+    )
+    expect(container.textContent).toContain('Connect a model')
+    expect(container.textContent).toContain('Test connection & finish')
+    expect(container.querySelectorAll('[data-slot="field-help"]')).toHaveLength(3)
   })
 
   it('Continue is disabled until Claude is ready, then advances to the model step', async () => {

@@ -281,7 +281,7 @@ const PdbPreviewViewer = ({
                 className={cn(
                   'h-6 rounded-md px-2.5 text-[12px] text-text-300 transition-colors hover:bg-bg-300 hover:text-text-000',
                   isActive &&
-                    'bg-action-primary text-white hover:bg-action-primary-hover hover:text-white',
+                    'bg-primary text-primary-foreground hover:bg-primary/80 hover:text-primary-foreground',
                   isDisabled &&
                     'cursor-not-allowed opacity-45 hover:bg-transparent hover:text-text-300'
                 )}

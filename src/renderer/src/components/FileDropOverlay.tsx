@@ -14,12 +14,12 @@ const FileDropOverlay = ({ label, className }: FileDropOverlayProps): React.JSX.
   <div
     aria-hidden="true"
     className={cn(
-      'pointer-events-none absolute inset-0 z-20 flex items-center justify-center border-2 border-action-primary bg-bg-000/70',
+      'pointer-events-none absolute inset-0 z-20 flex items-center justify-center border-2 border-primary bg-bg-000/70',
       className
     )}
   >
     <div className="flex flex-col items-center gap-2 text-text-000">
-      <Upload className="size-8 text-action-primary" strokeWidth={2} aria-hidden="true" />
+      <Upload className="size-8 text-primary" strokeWidth={2} aria-hidden="true" />
       <span className="text-sm font-medium">{label}</span>
     </div>
   </div>

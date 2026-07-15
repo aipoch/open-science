@@ -4,11 +4,14 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ProviderForm } from './ProviderForm'
+import { getApiKeySecurityCopy } from './provider-key-security'
 import {
   createEmptyProviderFormValue,
   type ProviderFormErrors,
   type ProviderFormValue
 } from './provider-form-value'
+
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 let container: HTMLDivElement
 let root: Root
@@ -113,6 +116,75 @@ describe('ProviderForm field switching', () => {
 
     expect(keyInput?.getAttribute('type')).toBe('password')
     expect(keyInput?.value).toBe('')
+  })
+
+  it('moves custom-provider descriptions into three generic field-help tooltips', async () => {
+    render(createEmptyProviderFormValue({ type: 'custom' }))
+    const helpButtons = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-slot="field-help"]')
+    )
+
+    expect(helpButtons).toHaveLength(3)
+    expect(
+      helpButtons.every((button) => button.getAttribute('aria-label') === 'More information')
+    ).toBe(true)
+    expect(container.textContent).not.toContain(
+      'Anthropic /v1/messages-compatible base URL, key, and model'
+    )
+    expect(container.textContent).not.toContain('Only Anthropic')
+
+    await act(async () => helpButtons[0]?.focus())
+    expect(document.body.textContent).toContain(
+      'Anthropic /v1/messages-compatible base URL, key, and model'
+    )
+
+    await act(async () => helpButtons[1]?.focus())
+    expect(document.body.textContent).toContain('Only Anthropic /v1/messages–compatible gateways')
+
+    await act(async () => helpButtons[2]?.focus())
+    expect(document.body.textContent).toContain('Your key stays private.')
+  })
+
+  it('uses field help for provider, key, and supported-model descriptions for official vendors', async () => {
+    render(createEmptyProviderFormValue({ type: 'official', vendorId: 'deepseek' }))
+    const helpButtons = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-slot="field-help"]')
+    )
+
+    expect(helpButtons).toHaveLength(3)
+    expect(container.textContent).not.toContain('API key — models provided')
+    expect(container.textContent).not.toContain('Bundled with the app.')
+
+    await act(async () => helpButtons[2]?.focus())
+    expect(document.body.textContent).toContain(
+      'Bundled with the app. Refresh from the vendor to pull the latest.'
+    )
+  })
+
+  it('shows only provider-type help for local Claude', async () => {
+    render(createEmptyProviderFormValue({ type: 'claude-default' }))
+    const helpButtons = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-slot="field-help"]')
+    )
+
+    expect(helpButtons).toHaveLength(1)
+    expect(container.textContent).not.toContain("Reuse this machine's Claude login")
+
+    await act(async () => helpButtons[0]?.focus())
+    expect(document.body.textContent).toContain("Reuse this machine's Claude login")
+  })
+
+  it('describes encrypted and reduced-protection storage accurately', () => {
+    expect(getApiKeySecurityCopy(true)).toEqual({
+      title: 'Your key stays private.',
+      description:
+        'It is stored only on this device and never uploaded to Open Science. Your OS secure storage protects it, and it is sent only to the selected provider when you make a request.'
+    })
+    expect(getApiKeySecurityCopy(false)).toEqual({
+      title: 'Secure storage is unavailable.',
+      description:
+        'It is stored only on this device and never uploaded to Open Science. OS secure storage is unavailable, so it has reduced local protection and is sent only to the selected provider when you make a request.'
+    })
   })
 
   it('renders inline required-field errors for a custom provider', () => {

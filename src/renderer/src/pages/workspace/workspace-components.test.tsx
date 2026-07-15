@@ -164,6 +164,26 @@ describe('workspace page component boundaries', () => {
     expect(workspaceSources).not.toContain('bg-bg-100')
     expect(workspaceSources).not.toContain('text-text-400')
   })
+
+  it('uses the shared primary token for every workspace emphasis state', () => {
+    const emphasisSources = [
+      conversationPanelPath,
+      workspaceActivityGroupPath,
+      resolve(__dirname, 'ComposerModelPicker.tsx'),
+      resolve(__dirname, 'NotebookPreview.tsx'),
+      resolve(__dirname, 'ProjectFilesView.tsx'),
+      resolve(__dirname, '../../components/FileDropOverlay.tsx'),
+      resolve(__dirname, 'previews/renderers/PdbPreview.tsx')
+    ]
+      .map((path) => readFileSync(path, 'utf8'))
+      .join('\n')
+    const mainCssSource = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
+    const deprecatedActionToken = ['action', 'primary'].join('-')
+
+    expect(`${mainCssSource}\n${emphasisSources}`).not.toContain(deprecatedActionToken)
+    expect(emphasisSources).toContain('bg-primary')
+    expect(emphasisSources).toContain('text-primary')
+  })
 })
 
 describe('conversation message scroller integration', () => {
@@ -563,7 +583,7 @@ describe('preview workbench integration', () => {
       "aria-label={isPreviewPanelCollapsed ? 'Expand preview panel' : 'Collapse preview panel'}"
     )
     expect(conversationPanelSource).toContain('<PanelRight')
-    expect(conversationPanelSource).toContain("'text-action-panel-toggle' : 'text-action-primary'")
+    expect(conversationPanelSource).toContain("'text-action-panel-toggle' : 'text-primary'")
     expect(conversationPanelSource).toContain('fill="none"')
   })
 

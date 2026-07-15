@@ -207,7 +207,7 @@ const FilterMenuItem = ({
       <Icon className="size-4 shrink-0 text-text-300" strokeWidth={1.8} aria-hidden="true" />
       <span className="min-w-0 flex-1 truncate">{option.label}</span>
       {isSelected ? (
-        <Check className="size-4 shrink-0 text-action-primary" strokeWidth={2} aria-hidden="true" />
+        <Check className="size-4 shrink-0 text-primary" strokeWidth={2} aria-hidden="true" />
       ) : null}
       <span className="shrink-0 text-[11px] text-text-300">{option.count}</span>
     </DropdownMenuItem>

@@ -39,7 +39,7 @@ const composerIconButtonClassName = cn(
 )
 
 const composerSendButtonClassName = cn(
-  'flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary',
+  'flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground hover:bg-primary/80 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary',
   composerInteractiveTransitionClassName
 )
 
@@ -191,7 +191,7 @@ const ConversationPanel = ({
           <button
             type="button"
             className={`flex size-7 shrink-0 items-center justify-center rounded-lg hover:bg-surface-control-hover ${
-              isPreviewPanelCollapsed ? 'text-action-panel-toggle' : 'text-action-primary'
+              isPreviewPanelCollapsed ? 'text-action-panel-toggle' : 'text-primary'
             }`}
             aria-label={isPreviewPanelCollapsed ? 'Expand preview panel' : 'Collapse preview panel'}
             aria-expanded={!isPreviewPanelCollapsed}

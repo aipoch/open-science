@@ -38,8 +38,6 @@
   --color-text-300: var(--text-300);
   --color-danger-000: var(--danger-000);
   --color-danger-900: var(--danger-900);
-  --color-action-primary: var(--action-primary);
-  --color-action-primary-hover: var(--action-primary-hover);
   --color-action-panel-toggle: var(--action-panel-toggle);
   --color-surface-control-hover: var(--surface-control-hover);
   --color-message-user-text: var(--message-user-text);
@@ -73,8 +71,6 @@
   --rail-card-bg: 0 0% 100%;
   --danger-000: hsl(0 45% 38%);
   --danger-900: hsl(0 55% 95%);
-  --action-primary: hsl(13 55% 51%);
-  --action-primary-hover: hsl(13 53% 47%);
   --action-panel-toggle: hsl(0 0% 42%);
   --surface-control-hover: hsl(38 20% 90%);
   --message-user-text: hsl(0 0% 12%);

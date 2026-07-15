@@ -52,7 +52,7 @@ const WorkspaceActivityGroup = ({
             type="button"
             aria-expanded={isExpanded}
             data-testid="tool-group-header"
-            className="flex w-full items-center gap-2 rounded-lg py-[5px] pl-1.5 pr-2.5 text-[13px] transition-colors hover:bg-bg-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-action-primary"
+            className="flex w-full items-center gap-2 rounded-lg py-[5px] pl-1.5 pr-2.5 text-[13px] transition-colors hover:bg-bg-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
             onClick={() => onToggleGroup(group.id)}
           >
             <span

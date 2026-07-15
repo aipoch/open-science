@@ -1,5 +1,18 @@
+import { Check } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
+import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle
+} from '@/components/ui/card'
+import { Separator } from '@/components/ui/separator'
+import { cn } from '@/lib/utils'
+import { APP } from '../../../../shared/app-config'
 import type { UpsertProviderRequest } from '../../../../shared/settings'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ClaudeInstallCard } from '../settings/ClaudeInstallCard'
@@ -14,6 +27,56 @@ import {
 import { describeValidation } from '../settings/validation-message'
 
 type WizardStep = 'claude' | 'provider'
+
+// Keeps the two-step sequence visible without turning the lightweight setup flow into navigation.
+const OnboardingProgress = ({ step }: { step: WizardStep }): React.JSX.Element => {
+  const providerActive = step === 'provider'
+
+  return (
+    <ol aria-label="Setup progress" className="mt-7 space-y-3">
+      <li
+        aria-current={!providerActive ? 'step' : undefined}
+        className={cn(
+          'flex items-center gap-2 text-sm',
+          providerActive ? 'text-text-100' : 'font-medium text-text-000'
+        )}
+      >
+        <span
+          className={cn(
+            'flex size-5 shrink-0 items-center justify-center rounded-full text-[11px]',
+            providerActive
+              ? 'border border-primary/40 text-primary'
+              : 'bg-primary font-medium text-primary-foreground'
+          )}
+          aria-hidden="true"
+        >
+          {providerActive ? <Check className="size-3" strokeWidth={2.4} /> : '1'}
+        </span>
+        <span>Claude runtime</span>
+      </li>
+      <li
+        aria-current={providerActive ? 'step' : undefined}
+        className={cn(
+          'flex items-center gap-2 text-sm',
+          providerActive ? 'font-medium text-text-000' : 'text-text-300'
+        )}
+      >
+        <span
+          className={cn(
+            'flex size-5 shrink-0 items-center justify-center rounded-full text-[11px]',
+            providerActive
+              ? 'bg-primary font-medium text-primary-foreground'
+              : 'border border-border-300 bg-bg-000'
+          )}
+          aria-hidden="true"
+        >
+          2
+        </span>
+        <span>Model provider</span>
+      </li>
+    </ol>
+  )
+}
 
 // Converts a form value into the upsert request the main process expects.
 const toUpsertRequest = (value: ProviderFormValue): UpsertProviderRequest => ({
@@ -103,88 +166,130 @@ const OnboardingWizard = (): React.JSX.Element => {
   }
 
   return (
-    <main className="min-h-svh bg-background text-foreground">
-      <div className="mx-auto max-w-xl px-6 py-12">
-        <h1 className="font-serif text-2xl font-medium">Welcome to Open Science</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Two quick steps and you are ready: confirm Claude, then connect a model.
-        </p>
+    <main className="h-svh overflow-y-auto bg-bg-10 text-text-000">
+      <div className="mx-auto min-h-full w-full max-w-[960px] px-8 py-7">
+        <a
+          href={APP.links.website}
+          target="_blank"
+          rel="noreferrer"
+          className="font-serif text-[26px] font-medium leading-none tracking-[-0.02em] text-text-000 transition-colors duration-150 ease-out hover:text-text-100"
+        >
+          Open Science
+        </a>
 
-        <ol className="mt-6 flex items-center gap-3 text-xs text-muted-foreground">
-          <li className={step === 'claude' ? 'font-medium text-foreground' : ''}>1. Claude</li>
-          <li aria-hidden="true">→</li>
-          <li className={step === 'provider' ? 'font-medium text-foreground' : ''}>2. Model</li>
-        </ol>
+        <div
+          data-onboarding-layout="split"
+          className="mt-12 grid grid-cols-[260px_minmax(0,1fr)] gap-12"
+        >
+          <section aria-labelledby="onboarding-introduction-title" className="pt-2">
+            <p className="text-[11px] font-medium text-text-100">FIRST-TIME SETUP</p>
+            <h1
+              id="onboarding-introduction-title"
+              className="mt-2 font-serif text-[28px] leading-[1.15] font-medium text-text-000"
+            >
+              Set up your research workspace.
+            </h1>
+            <p className="mt-3 max-w-60 text-sm leading-5 text-text-100">
+              Two quick checks connect the local runtime and the model you want to use.
+            </p>
+            <OnboardingProgress step={step} />
+          </section>
 
-        {step === 'claude' ? (
-          <section aria-label="Confirm Claude" className="mt-6 space-y-4">
-            <ClaudeStatusCard
-              claude={claude}
-              claudeReady={preflight.claudeReady}
-              isDetecting={isDetectingClaude}
-              onDetect={() => void detectClaude()}
-            />
-            {/* Once a runnable claude is detected there's nothing to install — just confirm & continue. */}
-            {!preflight.claudeReady ? (
-              <ClaudeInstallCard
-                isInstalling={isInstalling}
-                installLogs={installLogs}
-                npmAvailable={npmAvailable}
-                onInstall={(source) => void installClaude(source)}
-              />
-            ) : null}
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={() => setStep('provider')}
-                disabled={!preflight.claudeReady}
-                className="rounded-lg border border-primary bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-              >
-                Continue
-              </button>
-            </div>
-          </section>
-        ) : (
-          <section aria-label="Configure model" className="mt-6 space-y-4">
-            {!encryptionAvailable ? (
-              <p className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-                Secure key storage is unavailable on this machine. Your key will be stored with
-                reduced protection.
-              </p>
-            ) : null}
-            <ProviderForm
-              value={formValue}
-              onChange={(patch) => setFormValue((current) => ({ ...current, ...patch }))}
-              errors={showProviderErrors ? formErrors : undefined}
-              disabled={isSaving}
-            />
-            {validationMessage ? (
-              <p
-                className={`text-sm ${validationOk ? 'text-primary' : 'text-destructive'}`}
-                role="alert"
-              >
-                {validationMessage}
-              </p>
-            ) : null}
-            <div className="flex items-center justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setStep('claude')}
-                className="rounded-lg border border-input px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
-              >
-                Back
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleSaveProvider()}
-                disabled={isSaving}
-                className="rounded-lg border border-primary bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-              >
-                {isSaving ? 'Testing connection…' : 'Test connection & continue'}
-              </button>
-            </div>
-          </section>
-        )}
+          {/* One stable work surface keeps the two setup steps aligned as their content changes. */}
+          <Card className="min-h-[420px] gap-0 rounded-lg bg-bg-000 py-0 shadow-card ring-1 ring-border-200">
+            <CardHeader className="gap-1 rounded-t-lg px-6 py-5">
+              <CardTitle className="text-[15px] font-semibold">
+                {step === 'claude' ? 'Connect Claude' : 'Connect a model'}
+              </CardTitle>
+              <CardDescription className="text-xs leading-5">
+                {step === 'claude'
+                  ? 'Open Science uses Claude Code as its local agent runtime.'
+                  : 'Choose the provider Open Science should use for new research sessions.'}
+              </CardDescription>
+            </CardHeader>
+            <Separator className="bg-border-200" />
+
+            {step === 'claude' ? (
+              <>
+                <CardContent className="flex-1 px-6 py-5">
+                  <section aria-label="Confirm Claude" className="space-y-5">
+                    <ClaudeStatusCard
+                      claude={claude}
+                      claudeReady={preflight.claudeReady}
+                      isDetecting={isDetectingClaude}
+                      onDetect={() => void detectClaude()}
+                      embedded
+                    />
+                    {/* Once Claude is ready, installation controls no longer add useful choices. */}
+                    {!preflight.claudeReady ? (
+                      <>
+                        <Separator className="bg-border-200" />
+                        <ClaudeInstallCard
+                          isInstalling={isInstalling}
+                          installLogs={installLogs}
+                          npmAvailable={npmAvailable}
+                          onInstall={(source) => void installClaude(source)}
+                          embedded
+                        />
+                      </>
+                    ) : null}
+                  </section>
+                </CardContent>
+                <CardFooter className="mt-auto justify-end rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
+                  <Button
+                    type="button"
+                    onClick={() => setStep('provider')}
+                    disabled={!preflight.claudeReady}
+                    className="px-4"
+                  >
+                    Continue
+                  </Button>
+                </CardFooter>
+              </>
+            ) : (
+              <>
+                <CardContent className="flex-1 px-6 py-5">
+                  <section aria-label="Configure model">
+                    {!encryptionAvailable ? (
+                      <p className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                        Secure key storage is unavailable on this machine. Your key will be stored
+                        with reduced protection.
+                      </p>
+                    ) : null}
+                    <ProviderForm
+                      value={formValue}
+                      onChange={(patch) => setFormValue((current) => ({ ...current, ...patch }))}
+                      errors={showProviderErrors ? formErrors : undefined}
+                      disabled={isSaving}
+                      encryptionAvailable={encryptionAvailable}
+                    />
+                    {validationMessage ? (
+                      <p
+                        className={`mt-4 text-sm ${validationOk ? 'text-primary' : 'text-destructive'}`}
+                        role="alert"
+                      >
+                        {validationMessage}
+                      </p>
+                    ) : null}
+                  </section>
+                </CardContent>
+                <CardFooter className="mt-auto justify-end gap-2 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
+                  <Button type="button" variant="outline" onClick={() => setStep('claude')}>
+                    Back
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => void handleSaveProvider()}
+                    disabled={isSaving}
+                    className="px-4"
+                  >
+                    {isSaving ? 'Testing connection…' : 'Test connection & finish'}
+                  </Button>
+                </CardFooter>
+              </>
+            )}
+          </Card>
+        </div>
       </div>
     </main>
   )

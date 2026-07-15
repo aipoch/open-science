@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ClaudeInstallCard } from './ClaudeInstallCard'
 
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
 let container: HTMLDivElement
 let root: Root
 
@@ -89,5 +91,15 @@ describe('ClaudeInstallCard install-source picker', () => {
     })
 
     expect(onInstall).toHaveBeenCalledWith('managed')
+  })
+
+  it('uses shadcn card and button slots and removes surface chrome when embedded', () => {
+    render({ embedded: true })
+    const card = container.querySelector('[data-slot="card"]')
+
+    expect(card).not.toBeNull()
+    expect(card?.className).toContain('ring-0')
+    expect(card?.className).toContain('bg-transparent')
+    expect(container.querySelector('[data-slot="button"]')).not.toBeNull()
   })
 })

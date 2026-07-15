@@ -1,6 +1,9 @@
 import { useMemo, useState } from 'react'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { cn } from '@/lib/utils'
 import type { ClaudeInstallSource } from '../../../../shared/settings'
 import { getClaudeInstallSources, getNodeInstallHint } from '../../../../shared/settings'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
@@ -11,6 +14,7 @@ type ClaudeInstallCardProps = {
   // Whether npm is available on the host; disables/deprioritizes the npm source when false.
   npmAvailable: boolean
   onInstall: (source: ClaudeInstallSource) => void
+  embedded?: boolean
 }
 
 // Source picker + one-click installer with a live log pane and an always-visible, copyable command so
@@ -19,7 +23,8 @@ const ClaudeInstallCard = ({
   isInstalling,
   installLogs,
   npmAvailable,
-  onInstall
+  onInstall,
+  embedded = false
 }: ClaudeInstallCardProps): React.JSX.Element => {
   // Default to the app-managed download — it needs no Node.js/npm and works behind region blocks.
   const [source, setSource] = useState<ClaudeInstallSource>('managed')
@@ -35,85 +40,88 @@ const ClaudeInstallCard = ({
     `${item.label}${item.requiresNpm && !npmAvailable ? ' (npm not found)' : ''}`
 
   return (
-    <div className="rounded-xl border border-border p-4">
-      <div className="space-y-1.5">
-        <label className="text-xs font-medium text-muted-foreground" htmlFor="install-source">
-          Install source
-        </label>
-        <Select
-          value={source}
-          disabled={isInstalling}
-          onValueChange={(next) => setSource(next as ClaudeInstallSource)}
-        >
-          <SelectTrigger id="install-source" aria-label="Install source">
-            <span className="truncate">{selectedSource ? sourceLabel(selectedSource) : ''}</span>
-          </SelectTrigger>
-          <SelectContent>
-            {installSources.map((item) => (
-              <SelectItem key={item.id} value={item.id}>
-                {sourceLabel(item)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      {selectedSource?.description ? (
-        <p className="mt-3 text-xs text-muted-foreground">{selectedSource.description}</p>
-      ) : null}
-
-      {selectedSource && selectedSource.displayCommand ? (
-        <div className="mt-3">
-          <span className="text-xs font-medium text-muted-foreground">Command</span>
-          <pre
-            className="mt-1 overflow-x-auto rounded-lg bg-muted px-3 py-2 font-mono text-xs text-foreground"
-            aria-label="Install command"
+    <Card className={cn('gap-0 py-0', embedded && 'rounded-none bg-transparent ring-0')}>
+      <CardContent className={cn('p-4', embedded && 'px-0 py-0')}>
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-muted-foreground" htmlFor="install-source">
+            Install source
+          </label>
+          <Select
+            value={source}
+            disabled={isInstalling}
+            onValueChange={(next) => setSource(next as ClaudeInstallSource)}
           >
-            {selectedSource.displayCommand}
-          </pre>
+            <SelectTrigger id="install-source" aria-label="Install source">
+              <span className="truncate">{selectedSource ? sourceLabel(selectedSource) : ''}</span>
+            </SelectTrigger>
+            <SelectContent>
+              {installSources.map((item) => (
+                <SelectItem key={item.id} value={item.id}>
+                  {sourceLabel(item)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-      ) : null}
 
-      {npmMissing ? (
-        <div className="mt-2 space-y-1.5 text-xs text-destructive" role="alert">
-          <p>
-            npm was not found. Switch to the official installer above (it needs no Node.js), or
-            install Node.js first — it includes npm.
-          </p>
-          {nodeHint.command ? (
+        {selectedSource?.description ? (
+          <p className="mt-3 text-xs text-muted-foreground">{selectedSource.description}</p>
+        ) : null}
+
+        {selectedSource?.displayCommand ? (
+          <div className="mt-3">
+            <span className="text-xs font-medium text-muted-foreground">Command</span>
             <pre
-              className="overflow-x-auto rounded-lg bg-muted px-3 py-2 font-mono text-foreground"
-              aria-label="Node.js install command"
+              className="mt-1 overflow-x-auto rounded-lg bg-muted px-3 py-2 font-mono text-xs text-foreground"
+              aria-label="Install command"
             >
-              {nodeHint.command}
+              {selectedSource.displayCommand}
             </pre>
-          ) : null}
-          <p className="text-muted-foreground">
-            Or download it from{' '}
-            <ExternalTextLink href={nodeHint.url}>{nodeHint.url}</ExternalTextLink>, then re-detect
-            above so npm is picked up.
-          </p>
-        </div>
-      ) : null}
+          </div>
+        ) : null}
 
-      <button
-        type="button"
-        onClick={() => onInstall(source)}
-        disabled={isInstalling || npmMissing}
-        className="mt-3 rounded-lg border border-primary bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-      >
-        {isInstalling ? 'Installing…' : 'Install with one click'}
-      </button>
+        {npmMissing ? (
+          <div className="mt-2 space-y-1.5 text-xs text-destructive" role="alert">
+            <p>
+              npm was not found. Switch to the official installer above (it needs no Node.js), or
+              install Node.js first — it includes npm.
+            </p>
+            {nodeHint.command ? (
+              <pre
+                className="overflow-x-auto rounded-lg bg-muted px-3 py-2 font-mono text-foreground"
+                aria-label="Node.js install command"
+              >
+                {nodeHint.command}
+              </pre>
+            ) : null}
+            <p className="text-muted-foreground">
+              Or download it from{' '}
+              <ExternalTextLink href={nodeHint.url}>{nodeHint.url}</ExternalTextLink>, then
+              re-detect above so npm is picked up.
+            </p>
+          </div>
+        ) : null}
 
-      {installLogs.length > 0 ? (
-        <pre
-          className="mt-3 max-h-48 overflow-auto rounded-lg bg-foreground/5 px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-foreground/80"
-          aria-label="Install log"
+        <Button
+          type="button"
+          size="sm"
+          onClick={() => onInstall(source)}
+          disabled={isInstalling || npmMissing}
+          className="mt-3"
         >
-          {installLogs.join('')}
-        </pre>
-      ) : null}
-    </div>
+          {isInstalling ? 'Installing…' : 'Install with one click'}
+        </Button>
+
+        {installLogs.length > 0 ? (
+          <pre
+            className="mt-3 max-h-48 overflow-auto rounded-lg bg-foreground/5 px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-foreground/80"
+            aria-label="Install log"
+          >
+            {installLogs.join('')}
+          </pre>
+        ) : null}
+      </CardContent>
+    </Card>
   )
 }
 
