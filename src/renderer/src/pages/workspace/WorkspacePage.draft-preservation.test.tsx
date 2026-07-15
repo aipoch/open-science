@@ -159,6 +159,10 @@ describe('WorkspacePage draft preservation', () => {
     globalThis.FileReader = MockFileReader as never
 
     window.api = {
+      ketcher: {
+        onCommand: vi.fn(() => vi.fn()),
+        onOpen: vi.fn(() => vi.fn())
+      },
       notebook: {
         onAvailable: vi.fn(() => vi.fn()),
         getReference: vi.fn(() => Promise.resolve(null))

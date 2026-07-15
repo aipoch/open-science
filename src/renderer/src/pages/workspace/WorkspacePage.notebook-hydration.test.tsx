@@ -90,6 +90,10 @@ describe('WorkspacePage notebook entry hydration', () => {
     vi.clearAllMocks()
     getReference = vi.fn(() => Promise.resolve(null))
     window.api = {
+      ketcher: {
+        onCommand: vi.fn(() => vi.fn()),
+        onOpen: vi.fn(() => vi.fn())
+      },
       notebook: {
         onAvailable: vi.fn(() => vi.fn()),
         getReference
