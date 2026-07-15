@@ -45,7 +45,10 @@ const KetcherPreviewViewer = ({
         Using Ketcher (Indigo) viewer
       </span>
     </div>
-    <div className="relative min-h-0 flex-1 overflow-hidden bg-bg-000" aria-label={`Structure preview of ${name}`}>
+    <div
+      className="relative min-h-0 flex-1 overflow-hidden bg-bg-000"
+      aria-label={`Structure preview of ${name}`}
+    >
       <Suspense fallback={<PreviewLoadingContent />}>
         <KetcherCanvas content={content} />
       </Suspense>
