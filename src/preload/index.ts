@@ -63,6 +63,7 @@ import type {
   ClaudeInstallEvent,
   ClaudeInstallResult,
   DeleteProviderRequest,
+  EnvironmentCheckResult,
   InstallClaudeRequest,
   Preflight,
   RefreshProviderModelsRequest,
@@ -161,6 +162,7 @@ type OpenScienceAPI = {
     getSettings: () => Promise<SettingsSnapshot>
     isEncryptionAvailable: () => Promise<boolean>
     isNpmAvailable: () => Promise<boolean>
+    checkEnvironment: () => Promise<EnvironmentCheckResult>
     detectClaude: () => Promise<ClaudeDetectResult>
     installClaude: (request: InstallClaudeRequest) => Promise<ClaudeInstallResult>
     upsertProvider: (request: UpsertProviderRequest) => Promise<SettingsSnapshot>
@@ -335,6 +337,8 @@ const api: OpenScienceAPI = {
     isEncryptionAvailable: () =>
       ipcRenderer.invoke('settings:encryption-available') as Promise<boolean>,
     isNpmAvailable: () => ipcRenderer.invoke('settings:npm-available') as Promise<boolean>,
+    checkEnvironment: () =>
+      ipcRenderer.invoke('settings:check-environment') as Promise<EnvironmentCheckResult>,
     detectClaude: () => ipcRenderer.invoke('settings:detect-claude') as Promise<ClaudeDetectResult>,
     installClaude: (request) =>
       ipcRenderer.invoke('settings:install-claude', request) as Promise<ClaudeInstallResult>,

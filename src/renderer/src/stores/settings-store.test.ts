@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type {
+  EnvironmentCheckResult,
   SettingsSnapshot,
   ValidateProviderResult,
   ConnectorView
@@ -17,6 +18,7 @@ type SettingsApi = {
   getPreflight: ReturnType<typeof vi.fn>
   isEncryptionAvailable: ReturnType<typeof vi.fn>
   isNpmAvailable: ReturnType<typeof vi.fn>
+  checkEnvironment: ReturnType<typeof vi.fn>
   detectClaude: ReturnType<typeof vi.fn>
   upsertProvider: ReturnType<typeof vi.fn>
   validateProvider: ReturnType<typeof vi.fn>
@@ -73,6 +75,15 @@ beforeEach(() => {
     getPreflight: vi.fn().mockResolvedValue({ claudeReady: true, activeProviderReady: true }),
     isEncryptionAvailable: vi.fn().mockResolvedValue(true),
     isNpmAvailable: vi.fn().mockResolvedValue(true),
+    checkEnvironment: vi.fn().mockResolvedValue({
+      checkedAt: 1,
+      platform: 'darwin',
+      architecture: 'arm64',
+      checks: [],
+      ready: true,
+      canAutoInstall: false,
+      claude: { found: true, path: '/bin/claude' }
+    }),
     detectClaude: vi.fn().mockResolvedValue({ found: false }),
     upsertProvider: vi.fn(),
     validateProvider: vi.fn(),
@@ -245,50 +256,6 @@ describe('settings store: saveProvider keeps a provider whose test fails', () =>
   })
 })
 
-describe('settings store: hasEnteredApp latch (onboarding is first-run only)', () => {
-  it('latches on when load finds both gates ready', async () => {
-    api.getPreflight.mockResolvedValue({ claudeReady: true, activeProviderReady: true })
-
-    await useSettingsStore.getState().load()
-
-    expect(useSettingsStore.getState().hasEnteredApp).toBe(true)
-  })
-
-  it('stays off when load finds a gate unmet on a genuine first run', async () => {
-    api.getPreflight.mockResolvedValue({ claudeReady: true, activeProviderReady: false })
-
-    await useSettingsStore.getState().load()
-
-    expect(useSettingsStore.getState().hasEnteredApp).toBe(false)
-  })
-
-  it('does not turn back off when a later preflight flips a gate (provider select)', async () => {
-    // Entered the app: both gates ready.
-    api.getPreflight.mockResolvedValue({ claudeReady: true, activeProviderReady: true })
-    await useSettingsStore.getState().load()
-    expect(useSettingsStore.getState().hasEnteredApp).toBe(true)
-
-    // Selecting a not-yet-validated provider makes the active provider not-ready again...
-    api.getPreflight.mockResolvedValue({ claudeReady: true, activeProviderReady: false })
-    await useSettingsStore.getState().refreshPreflight()
-
-    // ...but the app must stay entered so it doesn't jump back to onboarding.
-    expect(useSettingsStore.getState().preflight.activeProviderReady).toBe(false)
-    expect(useSettingsStore.getState().hasEnteredApp).toBe(true)
-  })
-
-  it('does not turn back off when settings is reopened (load) on an unready provider', async () => {
-    api.getPreflight.mockResolvedValue({ claudeReady: true, activeProviderReady: true })
-    await useSettingsStore.getState().load()
-
-    // Reopening settings triggers another load while the active provider is temporarily not-ready.
-    api.getPreflight.mockResolvedValue({ claudeReady: true, activeProviderReady: false })
-    await useSettingsStore.getState().load()
-
-    expect(useSettingsStore.getState().hasEnteredApp).toBe(true)
-  })
-})
-
 describe('settings store: detectClaude refreshes npm', () => {
   it('re-checks npm availability so a mid-onboarding Node.js install is picked up', async () => {
     // Start from the "npm missing" state a genuine first run without Node.js would have.
@@ -299,6 +266,62 @@ describe('settings store: detectClaude refreshes npm', () => {
 
     expect(api.isNpmAvailable).toHaveBeenCalledTimes(1)
     expect(useSettingsStore.getState().npmAvailable).toBe(true)
+  })
+})
+
+describe('settings store: environment check', () => {
+  it('caches the launch inspection and refreshes preflight after detection', async () => {
+    api.getSettings.mockResolvedValue({
+      ...snapshot([]),
+      claude: { resolvedPath: '/bin/claude', version: '2.1.0' }
+    })
+
+    const result = await useSettingsStore.getState().checkEnvironment()
+
+    expect(result?.ready).toBe(true)
+    expect(useSettingsStore.getState().environmentCheck?.platform).toBe('darwin')
+    expect(useSettingsStore.getState().claude.resolvedPath).toBe('/bin/claude')
+    expect(api.getPreflight).toHaveBeenCalled()
+  })
+
+  it('deduplicates concurrent launch checks', async () => {
+    let resolveCheck: ((value: EnvironmentCheckResult) => void) | undefined
+    api.checkEnvironment.mockImplementation(
+      () =>
+        new Promise<EnvironmentCheckResult>((resolve) => {
+          resolveCheck = resolve
+        })
+    )
+
+    const first = useSettingsStore.getState().checkEnvironment()
+    const second = useSettingsStore.getState().checkEnvironment()
+
+    expect(api.checkEnvironment).toHaveBeenCalledTimes(1)
+    expect(await second).toBeUndefined()
+
+    resolveCheck?.({
+      checkedAt: 1,
+      platform: 'darwin',
+      architecture: 'arm64',
+      checks: [],
+      ready: true,
+      canAutoInstall: false,
+      claude: { found: true, path: '/bin/claude' }
+    })
+    await first
+  })
+
+  it('surfaces a failed main-process inspection and always clears loading state', async () => {
+    api.checkEnvironment.mockRejectedValue(new Error('environment IPC unavailable'))
+
+    const result = await useSettingsStore.getState().checkEnvironment()
+
+    expect(result).toBeUndefined()
+    expect(useSettingsStore.getState()).toMatchObject({
+      isCheckingEnvironment: false,
+      isDetectingClaude: false,
+      environmentCheckError: 'environment IPC unavailable'
+    })
   })
 })
 

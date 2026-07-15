@@ -8,6 +8,8 @@ import type {
   ClaudeInstallProgressEvent,
   ClaudeInstallResult,
   ClaudeInstallSource,
+  EnvironmentCheckResult,
+  ManagedClaudeRegistry,
   Preflight,
   ProviderType,
   ProviderView,
@@ -59,13 +61,12 @@ type SettingsStoreData = {
   // Shared NCBI credential state (never the plaintext key), reconciled alongside the connectors list.
   ncbi: NcbiCredentialsView
   preflight: Preflight
-  // Latched true the first time both startup gates pass. Onboarding is a first-run gate, so once the
-  // user has entered the app, later provider changes (which may momentarily flip a gate) must not send
-  // them back to the wizard — the app reads this instead of preflight alone to decide onboarding.
-  hasEnteredApp: boolean
   encryptionAvailable: boolean
   npmAvailable: boolean
+  environmentCheck: EnvironmentCheckResult | undefined
+  environmentCheckError: string | undefined
   // Transient UI state for the wizard/settings page.
+  isCheckingEnvironment: boolean
   isDetectingClaude: boolean
   isInstalling: boolean
   installLogs: string[]
@@ -74,6 +75,9 @@ type SettingsStoreData = {
   // Error message from the last install attempt; drives auto-expansion of the log pane. Undefined on
   // success or before the first attempt.
   installError: string | undefined
+  // Explicit repair navigation. Completed users stay on Home during background checks and enter the
+  // environment page only after choosing the required-item alert.
+  isEnvironmentRepairOpen: boolean
   // Whether the settings dialog is open (rendered at the app root, over Home/Workspace).
   isSettingsOpen: boolean
   // Skill to land on when the dialog opens from a skill mention; consumed once its detail is seeded.
@@ -83,9 +87,15 @@ type SettingsStoreData = {
 type SettingsStore = SettingsStoreData & {
   load: () => Promise<void>
   refreshPreflight: () => Promise<Preflight>
+  checkEnvironment: () => Promise<EnvironmentCheckResult | undefined>
   detectClaude: () => Promise<ClaudeDetectResult>
-  installClaude: (source: ClaudeInstallSource) => Promise<ClaudeInstallResult>
+  installClaude: (
+    source: ClaudeInstallSource,
+    managedRegistry?: ManagedClaudeRegistry
+  ) => Promise<ClaudeInstallResult>
   clearInstallLogs: () => void
+  openEnvironmentRepair: () => void
+  closeEnvironmentRepair: () => void
   // Persists the draft (create/update) without testing it, returning the affected provider id. The
   // Settings page uses this to return to the list immediately, then tests in the background.
   persistProvider: (request: UpsertProviderRequest) => Promise<string>
@@ -158,10 +168,6 @@ const createInitialPreflight = (): Preflight => ({
   activeProviderReady: false
 })
 
-// Both hard startup gates satisfied — the condition that latches hasEnteredApp and clears onboarding.
-const isPreflightReady = (preflight: Preflight): boolean =>
-  preflight.claudeReady && preflight.activeProviderReady
-
 export const createInitialSettingsState = (): SettingsStoreData => ({
   isLoaded: false,
   claude: {},
@@ -175,14 +181,17 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   pendingApprovals: [],
   ncbi: { hasApiKey: false },
   preflight: createInitialPreflight(),
-  hasEnteredApp: false,
   encryptionAvailable: true,
   npmAvailable: true,
+  environmentCheck: undefined,
+  environmentCheckError: undefined,
+  isCheckingEnvironment: false,
   isDetectingClaude: false,
   isInstalling: false,
   installLogs: [],
   installProgress: null,
   installError: undefined,
+  isEnvironmentRepairOpen: false,
   isSettingsOpen: false,
   pendingSkillId: undefined
 })
@@ -252,30 +261,59 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       window.api.settings.isNpmAvailable()
     ])
 
-    set((state) => ({
+    set({
       ...applySnapshot(snapshot),
       preflight,
-      // Latch on only; a later load (e.g. reopening settings on a not-yet-validated provider) must
-      // never turn this back off and resurrect onboarding.
-      hasEnteredApp: state.hasEnteredApp || isPreflightReady(preflight),
       encryptionAvailable,
       npmAvailable,
       isLoaded: true
-    }))
+    })
   },
 
   // Re-checks the two startup gates without reloading the whole snapshot.
   refreshPreflight: async () => {
     const preflight = await window.api.settings.getPreflight()
 
-    // Latch hasEnteredApp on (never off): once the app is entered, a later gate flip in settings must
-    // not resurrect the onboarding wizard.
-    set((state) => ({
-      preflight,
-      hasEnteredApp: state.hasEnteredApp || isPreflightReady(preflight)
-    }))
+    set({ preflight })
 
     return preflight
+  },
+
+  // Full startup inspection: main owns filesystem/network/runtime probes; the renderer caches only
+  // their structured, non-secret result. Refresh settings/preflight afterwards because detection may
+  // have discovered and persisted a Claude installation that appeared since the previous launch.
+  checkEnvironment: async () => {
+    // React Strict Mode intentionally re-runs mount effects in development. The first invocation sets
+    // this flag synchronously, so later callers reuse the in-flight pass instead of probing twice.
+    if (get().isCheckingEnvironment) return get().environmentCheck
+
+    set({ isCheckingEnvironment: true, isDetectingClaude: true, environmentCheckError: undefined })
+
+    try {
+      const environmentCheck = await window.api.settings.checkEnvironment()
+      const [snapshot, preflight, npmAvailable] = await Promise.all([
+        window.api.settings.getSettings(),
+        window.api.settings.getPreflight(),
+        window.api.settings.isNpmAvailable()
+      ])
+
+      set({
+        ...applySnapshot(snapshot),
+        environmentCheck,
+        preflight,
+        npmAvailable
+      })
+
+      return environmentCheck
+    } catch (error) {
+      set({
+        environmentCheckError:
+          error instanceof Error ? error.message : 'Environment detection could not be completed.'
+      })
+      return undefined
+    } finally {
+      set({ isCheckingEnvironment: false, isDetectingClaude: false })
+    }
   },
 
   // Detects claude and folds the resolved path/version back into the cache.
@@ -307,7 +345,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   // Runs a one-click install, streaming events into installProgress/installLogs, then refreshes
   // settings/preflight. Log and progress share one channel, routed here by `kind`.
-  installClaude: async (source) => {
+  installClaude: async (source, managedRegistry) => {
     set({ isInstalling: true, installLogs: [], installProgress: null, installError: undefined })
 
     const unsubscribe = window.api.settings.onInstallLog((event) => {
@@ -319,7 +357,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     })
 
     try {
-      const result = await window.api.settings.installClaude({ source })
+      const result = await window.api.settings.installClaude({ source, managedRegistry })
 
       // A successful install re-detects claude in main; reload so the cache reflects it.
       const snapshot = await window.api.settings.getSettings()
@@ -340,6 +378,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   },
 
   clearInstallLogs: () => set({ installLogs: [], installProgress: null, installError: undefined }),
+
+  openEnvironmentRepair: () => set({ isEnvironmentRepairOpen: true }),
+
+  closeEnvironmentRepair: () => set({ isEnvironmentRepairOpen: false }),
 
   // Persists a provider draft (create/update) and refreshes derived state, without testing it.
   persistProvider: async (request) => {

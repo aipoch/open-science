@@ -19,6 +19,7 @@ import type {
   UpdateCustomServerRequest,
   CreateSkillRequest,
   DeleteSkillRequest,
+  EnvironmentCheckResult,
   InstallClaudeRequest,
   NcbiCredentialsView,
   Preflight,
@@ -58,7 +59,9 @@ import { resolveStorageRoot } from '../storage-root'
 import { createDefaultDetectDeps, detectClaude, type ClaudeDetectDeps } from './claude-detect'
 import { provisionAppClaudeConfigDir } from './claude-config-provision'
 import { detectNpmAvailable, runInstallWithFallback } from './claude-install'
+import { runEnvironmentCheck } from './environment-check'
 import {
+  DEFAULT_REGISTRIES,
   installManagedClaude,
   managedClaudeDir,
   type InstallManagedClaudeOptions,
@@ -357,6 +360,33 @@ class SettingsService {
     })
   }
 
+  // Re-runs the complete host inspection on every app launch. Claude detection is part of the same
+  // pass so a runtime installed outside Open Science between launches is picked up immediately.
+  async checkEnvironment(): Promise<EnvironmentCheckResult> {
+    let claude = await this.detectClaude()
+
+    // A GUI launch can have a narrower PATH than the shell that originally installed Claude. Keep a
+    // previously resolved absolute path when it is still executable so automatic and manual status
+    // surfaces cannot disagree about the same healthy runtime.
+    if (!claude.found) {
+      const cached = (await this.repository.getSettings()).claude
+
+      if (cached?.resolvedPath && (await this.pathExists(cached.resolvedPath))) {
+        claude = {
+          found: true,
+          path: cached.resolvedPath,
+          version: cached.version
+        }
+      }
+    }
+
+    return runEnvironmentCheck({
+      storageRoot: this.storageRoot,
+      claude,
+      encryptionAvailable: this.isEncryptionAvailable()
+    })
+  }
+
   // Detects claude and persists the resolved path/version for later spawns.
   async detectClaude(): Promise<ClaudeDetectResult> {
     const result = await detectClaude(this.detectDeps)
@@ -380,13 +410,27 @@ class SettingsService {
     const installId = `install-${Date.now()}-${this.providerSequence}`
 
     if (request.source === 'managed') {
+      const registries =
+        request.managedRegistry === 'npmmirror'
+          ? [DEFAULT_REGISTRIES[1], DEFAULT_REGISTRIES[0]]
+          : DEFAULT_REGISTRIES
       const outcome = await this.installManagedClaudeImpl({
         installId,
         onEvent,
-        dataRoot: this.storageRoot
+        dataRoot: this.storageRoot,
+        registries
       })
 
       if (outcome.result.ok && outcome.resolvedPath) {
+        const installedVersion = await this.detectDeps.getVersion(outcome.resolvedPath)
+
+        if (!installedVersion) {
+          const error =
+            'The installed Claude runtime could not report its version. It may be incompatible or incomplete. Delete it and install again.'
+          onEvent({ kind: 'log', installId, stream: 'system', chunk: `${error}\n` })
+          return { installId, ok: false, error }
+        }
+
         await this.repository.setClaudeInfo({
           resolvedPath: outcome.resolvedPath,
           version: outcome.version

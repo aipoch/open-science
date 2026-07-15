@@ -1,10 +1,10 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect } from 'react'
 
 import { useSessionPersistence } from '@/lib/session-persistence/session-persistence'
 import { UpdateDialog } from '@/components/UpdateDialog'
 import { HomePage } from '@/pages/home/HomePage'
 import { OnboardingWizard } from '@/pages/onboarding/OnboardingWizard'
-import { resolveStartupView, shouldMarkOnboardingComplete } from '@/pages/onboarding/startup-gate'
+import { resolveStartupView } from '@/pages/onboarding/startup-gate'
 import { ConnectorApprovalDialog } from '@/pages/settings/ConnectorApprovalDialog'
 import { SettingsPage } from '@/pages/settings/SettingsPage'
 import { WorkspacePage } from '@/pages/workspace/WorkspacePage'
@@ -19,12 +19,10 @@ const App = (): React.JSX.Element | null => {
   const view = useNavigationStore((state) => state.view)
   const loadProjects = useProjectStore((state) => state.loadProjects)
   const isSettingsLoaded = useSettingsStore((state) => state.isLoaded)
-  const preflight = useSettingsStore((state) => state.preflight)
-  // #4 session latch: once true, a later gate flip in settings must not resurrect the wizard.
-  const hasEnteredApp = useSettingsStore((state) => state.hasEnteredApp)
   const onboardingCompletedAt = useSettingsStore((state) => state.onboardingCompletedAt)
+  const isEnvironmentRepairOpen = useSettingsStore((state) => state.isEnvironmentRepairOpen)
   const loadSettings = useSettingsStore((state) => state.load)
-  const completeOnboarding = useSettingsStore((state) => state.completeOnboarding)
+  const checkEnvironment = useSettingsStore((state) => state.checkEnvironment)
   const isSettingsOpen = useSettingsStore((state) => state.isSettingsOpen)
   const closeSettings = useSettingsStore((state) => state.closeSettings)
   const enqueueApproval = useSettingsStore((state) => state.enqueueApproval)
@@ -52,30 +50,24 @@ const App = (): React.JSX.Element | null => {
     void loadSettings()
   }, [loadSettings])
 
-  // Stable so the auto-complete effect only re-runs when an actual gate value changes.
-  const gateInput = useMemo(
-    () => ({
-      hasEnteredApp,
-      onboardingDone: onboardingCompletedAt !== undefined,
-      claudeReady: preflight.claudeReady,
-      activeProviderReady: preflight.activeProviderReady
-    }),
-    [hasEnteredApp, onboardingCompletedAt, preflight.claudeReady, preflight.activeProviderReady]
-  )
-
-  // Already-configured installs that predate the marker: stamp it silently, without a wizard flash.
+  // Required host capabilities are re-checked on every launch. Completed users remain on Home while
+  // this runs; a required failure becomes an inline alert instead of flashing the setup page.
   useEffect(() => {
-    if (isSettingsLoaded && shouldMarkOnboardingComplete(gateInput)) {
-      void completeOnboarding()
-    }
-  }, [isSettingsLoaded, gateInput, completeOnboarding])
+    void checkEnvironment()
+  }, [checkEnvironment])
 
-  // Hold rendering until the gate is known so the wizard does not flash for ready users.
+  // Settings carry the persisted first-run marker. No environment result is awaited here: existing
+  // users proceed directly to Home while the launch check runs in the background.
   if (!isSettingsLoaded) {
     return null
   }
 
-  if (resolveStartupView(gateInput) === 'onboarding') {
+  if (
+    resolveStartupView({
+      onboardingDone: onboardingCompletedAt !== undefined,
+      repairRequested: isEnvironmentRepairOpen
+    }) === 'onboarding'
+  ) {
     return <OnboardingWizard />
   }
 

@@ -306,9 +306,10 @@ describe('managed-claude: install orchestration', () => {
 
   it('falls back to the next registry when the first fails', async () => {
     const { tgz } = fixture()
+    const events: ClaudeInstallEvent[] = []
     const outcome = await installManagedClaude({
       installId: 'i2',
-      onEvent: () => undefined,
+      onEvent: (event) => events.push(event),
       dataRoot: root,
       registries: ['https://bad', 'https://good'],
       platform,
@@ -323,12 +324,16 @@ describe('managed-claude: install orchestration', () => {
 
     expect(outcome.result.ok).toBe(true)
     expect(outcome.version).toBe('2.1.209')
+    expect(
+      events.some((event) => event.kind === 'log' && event.chunk.includes('network down'))
+    ).toBe(true)
   })
 
   it('reports failure when every registry fails', async () => {
+    const events: ClaudeInstallEvent[] = []
     const outcome = await installManagedClaude({
       installId: 'i3',
-      onEvent: () => undefined,
+      onEvent: (event) => events.push(event),
       dataRoot: root,
       registries: ['https://bad'],
       platform,
@@ -340,5 +345,31 @@ describe('managed-claude: install orchestration', () => {
 
     expect(outcome.result.ok).toBe(false)
     expect(outcome.result.error).toContain('boom')
+    expect(
+      events.some(
+        (event) => event.kind === 'log' && event.chunk.includes('remove the incomplete runtime')
+      )
+    ).toBe(true)
+  })
+
+  it('turns an out-of-space failure into an actionable install log', async () => {
+    const events: ClaudeInstallEvent[] = []
+    const outcome = await installManagedClaude({
+      installId: 'i4',
+      onEvent: (event) => events.push(event),
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform,
+      fetchJson: async () => {
+        throw Object.assign(new Error('no space left on device, write'), { code: 'ENOSPC' })
+      },
+      fetchTarball: async () => ({ stream: Readable.from([]) })
+    })
+
+    expect(outcome.result.ok).toBe(false)
+    expect(outcome.result.error).toContain('Insufficient disk space')
+    expect(
+      events.some((event) => event.kind === 'log' && event.chunk.includes('Free some space'))
+    ).toBe(true)
   })
 })

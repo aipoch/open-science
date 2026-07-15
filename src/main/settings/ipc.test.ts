@@ -22,6 +22,7 @@ type FakeSettingsService = Record<
   | 'getSettingsView'
   | 'isEncryptionAvailable'
   | 'isNpmAvailable'
+  | 'checkEnvironment'
   | 'detectClaude'
   | 'installClaude'
   | 'upsertProvider'
@@ -43,6 +44,7 @@ const createFakeService = (): FakeSettingsService => ({
   getSettingsView: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   isEncryptionAvailable: vi.fn().mockReturnValue(true),
   isNpmAvailable: vi.fn().mockResolvedValue(true),
+  checkEnvironment: vi.fn().mockResolvedValue({ ready: true, checks: [] }),
   detectClaude: vi.fn().mockResolvedValue({ found: false }),
   installClaude: vi.fn().mockResolvedValue({ installId: 'i', ok: true }),
   upsertProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
@@ -82,6 +84,7 @@ describe('settings IPC handlers', () => {
       'settings:get-settings',
       'settings:encryption-available',
       'settings:npm-available',
+      'settings:check-environment',
       'settings:detect-claude',
       'settings:install-claude',
       'settings:upsert-provider',

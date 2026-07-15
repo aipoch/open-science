@@ -62,6 +62,7 @@ const registerSettingsIpcHandlers = ({
   ipcMain.handle('settings:get-settings', () => service.getSettingsView())
   ipcMain.handle('settings:encryption-available', () => service.isEncryptionAvailable())
   ipcMain.handle('settings:npm-available', () => service.isNpmAvailable())
+  ipcMain.handle('settings:check-environment', () => service.checkEnvironment())
   ipcMain.handle('settings:detect-claude', () => service.detectClaude())
 
   ipcMain.handle('settings:install-claude', (_event, request: InstallClaudeRequest) =>

@@ -157,6 +157,10 @@ export type RefreshProviderModelsResult = {
 // (no user Node/npm needed) and is the default; the other two are manual/advanced fallbacks.
 export type ClaudeInstallSource = 'managed' | 'npm' | 'official-script'
 
+// Trusted registries supported by the app-managed installer. The renderer can select one only from
+// this fixed allow-list; arbitrary download origins never cross the IPC boundary.
+export type ManagedClaudeRegistry = 'npmjs' | 'npmmirror'
+
 // Static, non-secret description of an install source shown in the UI (command is copyable).
 export type ClaudeInstallSourceInfo = {
   id: ClaudeInstallSource
@@ -229,6 +233,9 @@ export const getNodeInstallHint = (platform: string = 'linux'): NodeInstallHint 
 
 export type InstallClaudeRequest = {
   source: ClaudeInstallSource
+  // Optional trusted-source preference for an explicit install request. Automatic setup omits this
+  // field and lets the installer try the official registry and China-friendly mirror in order.
+  managedRegistry?: ManagedClaudeRegistry
 }
 
 // One streamed line of installer output. `installId` groups a single install run.
@@ -272,6 +279,35 @@ export type ClaudeInstallResult = {
 // Availability of npm on the host, used to gate the npm source.
 export type NpmAvailability = {
   available: boolean
+}
+
+// Automatic first-run environment inspection. Warnings are intentionally non-blocking (for example,
+// OS keychain encryption may be unavailable while the app can still operate with reduced protection).
+export type EnvironmentCheckId =
+  'system' | 'storage' | 'secure-storage' | 'install-network' | 'python' | 'claude'
+
+export type EnvironmentCheckStatus = 'passed' | 'warning' | 'failed'
+
+export type EnvironmentCheckItem = {
+  id: EnvironmentCheckId
+  label: string
+  status: EnvironmentCheckStatus
+  summary: string
+  detail?: string
+}
+
+export type EnvironmentCheckResult = {
+  checkedAt: number
+  platform: string
+  architecture: string
+  checks: EnvironmentCheckItem[]
+  // True when no required check failed. A warning does not block the next onboarding step.
+  ready: boolean
+  // True when the managed runtime can be attempted using a reachable trusted source and app-owned
+  // data directory. More detailed operational errors are reported by the install log.
+  canAutoInstall: boolean
+  recommendedRegistry?: ManagedClaudeRegistry
+  claude: ClaudeDetectResult
 }
 
 // A bundled skill's source category: app-bundled, imported from GitHub, or user-authored.

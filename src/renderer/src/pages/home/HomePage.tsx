@@ -1,6 +1,7 @@
 import {
   Archive,
   Building2,
+  CircleAlert,
   Clock,
   MoreVertical,
   Pencil,
@@ -23,6 +24,7 @@ import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { UpdateCapsule } from '@/components/UpdateCapsule'
 import { APP } from '../../../../shared/app-config'
 import type { Project } from '../../../../shared/projects'
+import type { EnvironmentCheckItem, EnvironmentCheckResult } from '../../../../shared/settings'
 
 import { DeleteProjectDialog } from './DeleteProjectDialog'
 import { ProjectFormDialog } from './ProjectFormDialog'
@@ -36,6 +38,12 @@ type ProjectSummary = {
 }
 
 type ProjectFormState = { mode: 'create' } | { mode: 'edit'; projectId: string }
+
+// Optional warnings (currently Python and reduced key protection) never create a Home alert. Only a
+// failed check that blocks the core flow asks an existing user to revisit environment setup.
+const getRequiredEnvironmentFailures = (
+  environment: EnvironmentCheckResult | undefined
+): EnvironmentCheckItem[] => environment?.checks.filter((check) => check.status === 'failed') ?? []
 
 // Returns the first user prompt as a one-line preview for a session row.
 const getSessionPreview = (session: ChatSession): string =>
@@ -75,6 +83,9 @@ const HomePage = (): React.JSX.Element => {
   const openProject = useNavigationStore((state) => state.openProject)
   const openSession = useNavigationStore((state) => state.openSession)
   const openSettings = useSettingsStore((state) => state.openSettings)
+  const environmentCheck = useSettingsStore((state) => state.environmentCheck)
+  const openEnvironmentRepair = useSettingsStore((state) => state.openEnvironmentRepair)
+  const requiredEnvironmentFailures = getRequiredEnvironmentFailures(environmentCheck)
 
   const [formState, setFormState] = useState<ProjectFormState | null>(null)
   const [nameDraft, setNameDraft] = useState('')
@@ -221,6 +232,21 @@ const HomePage = (): React.JSX.Element => {
           </div>
           <div className="flex items-center gap-2">
             <UpdateCapsule />
+            {requiredEnvironmentFailures.length > 0 ? (
+              <button
+                type="button"
+                onClick={openEnvironmentRepair}
+                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-danger-000/35 bg-danger-900 px-2.5 text-xs font-medium text-danger-000 transition-colors duration-150 ease-out hover:border-danger-000/55 hover:bg-danger-900/80"
+                aria-label="Open environment repair"
+              >
+                <CircleAlert className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                <span>
+                  {requiredEnvironmentFailures.length === 1
+                    ? `${requiredEnvironmentFailures[0].label} needs attention`
+                    : `${requiredEnvironmentFailures.length} environment items need attention`}
+                </span>
+              </button>
+            ) : null}
             <GitHubStarBadge />
             <button
               type="button"

@@ -38,6 +38,13 @@ describe('app display branding', () => {
     expect(builderSource).toContain(`appId: ${appId}`)
   })
 
+  it('opens tall enough to show the complete first-run environment summary', () => {
+    const windowsSource = readFileSync(resolve(projectRoot, 'src/main/windows.ts'), 'utf8')
+
+    expect(windowsSource).toContain('height: 960')
+    expect(windowsSource).toContain('minHeight: 720')
+  })
+
   it('awaits Electron readiness inside the startup promise chain', () => {
     const mainSource = readFileSync(resolve(projectRoot, 'src/main/index.ts'), 'utf8')
 

@@ -396,8 +396,28 @@ export type InstallManagedClaudeOptions = {
   tmpDir?: string
 }
 
+// Keeps operational failures actionable in the existing install log instead of adding more startup
+// checks. The original message is retained so support reports still include the platform error.
+const describeManagedInstallError = (error: unknown): string => {
+  const message = error instanceof Error ? error.message : String(error)
+  const code =
+    typeof error === 'object' && error !== null && 'code' in error
+      ? String((error as { code?: unknown }).code ?? '')
+      : ''
+
+  if (code === 'ENOSPC' || /no space left on device/i.test(message)) {
+    return `Insufficient disk space (ENOSPC). Free some space, then install again. ${message}`
+  }
+
+  if (['EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'ENETUNREACH', 'ENOTFOUND'].includes(code)) {
+    return `Network error (${code}). Check the network, proxy, VPN, or firewall, then install again. ${message}`
+  }
+
+  return message
+}
+
 // Downloads + installs the managed Claude binary, trying each registry in order. Streams progress via
-// `onLog` and resolves (never rejects) with a structured outcome the service can persist.
+// `onEvent` and resolves (never rejects) with a structured outcome the service can persist.
 const installManagedClaude = async ({
   installId,
   onEvent,
@@ -458,7 +478,7 @@ const installManagedClaude = async ({
         version: resolution.version
       }
     } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error)
+      lastError = describeManagedInstallError(error)
       onEvent({
         kind: 'log',
         installId,
@@ -469,6 +489,13 @@ const installManagedClaude = async ({
       await rm(tgzPath, { force: true }).catch(() => undefined)
     }
   }
+
+  onEvent({
+    kind: 'log',
+    installId,
+    stream: 'system',
+    chunk: `Automatic setup stopped. Correct the error above and install again. If an installation was interrupted, remove the incomplete runtime at ${destPath} before retrying.\n`
+  })
 
   return { result: { installId, ok: false, error: lastError } }
 }

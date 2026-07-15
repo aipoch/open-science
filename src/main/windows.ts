@@ -45,7 +45,10 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
 const createMainWindow = (): BrowserWindow => {
   const window = createAppWindow({
     width: 1280,
-    height: 820,
+    // The first-run environment summary needs enough vertical space to keep its Continue action
+    // visible at the default size. Electron still clamps this to the display work area on smaller
+    // screens, where the onboarding surface provides its own vertical scroll fallback.
+    height: 960,
     minWidth: 1100,
     minHeight: 720,
     title: 'Open Science'

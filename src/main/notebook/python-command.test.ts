@@ -1,8 +1,22 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { resolvePythonCommand } from './python-command'
+import { findPythonCommand, isPython3Version, resolvePythonCommand } from './python-command'
 
 describe('resolvePythonCommand', () => {
+  it('accepts Python 3 versions and rejects Python 2', () => {
+    expect(isPython3Version('Python 3.12.2')).toBe(true)
+    expect(isPython3Version('Python 2.7.18')).toBe(false)
+  })
+
+  it('returns undefined from the non-blocking environment probe when Python is missing', async () => {
+    const result = await findPythonCommand({
+      platform: 'linux',
+      probe: vi.fn().mockResolvedValue(false)
+    })
+
+    expect(result).toBeUndefined()
+  })
+
   it('prefers python3, then python, on unix', async () => {
     const tried: string[] = []
     const result = await resolvePythonCommand({

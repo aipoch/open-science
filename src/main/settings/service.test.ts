@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { execPath } from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { ClaudeDetectResult } from '../../shared/settings'
+
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
 vi.mock('electron', () => ({
   safeStorage: {
@@ -32,6 +34,7 @@ type ManagedInstallImpl = (options: {
   installId: string
   onEvent: (event: { kind: string; installId: string }) => void
   dataRoot: string
+  registries?: string[]
 }) => Promise<{
   result: { installId: string; ok: boolean; error?: string }
   resolvedPath?: string
@@ -39,7 +42,7 @@ type ManagedInstallImpl = (options: {
 }>
 
 const createService = (
-  detectResult = { found: true, path: '/bin/claude', version: '2.1.0' },
+  detectResult: ClaudeDetectResult = { found: true, path: '/bin/claude', version: '2.1.0' },
   options: {
     userClaudeDir?: string
     executeClaudeProbe?: (executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>
@@ -764,5 +767,68 @@ describe('installClaude (app-managed source)', () => {
     expect(result.ok).toBe(false)
     const snapshot = await service.getSettingsView()
     expect(snapshot.claude).toEqual({})
+  })
+
+  it('logs a version error and rejects an incompatible managed runtime', async () => {
+    const logs: string[] = []
+    const service = createService(
+      { found: false, path: undefined, version: undefined },
+      {
+        installManagedClaudeImpl: async ({ installId }) => ({
+          result: { installId, ok: true },
+          resolvedPath: '/data/claude-code/bin/claude',
+          version: '9.9.9'
+        })
+      }
+    )
+
+    const result = await service.installClaude({ source: 'managed' }, (event) => {
+      if (event.kind === 'log') logs.push(event.chunk)
+    })
+
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('version') })
+    expect(logs.at(-1)).toContain('incompatible or incomplete')
+    expect((await service.getSettingsView()).claude).toEqual({})
+  })
+
+  it('puts an explicitly requested China-friendly mirror first', async () => {
+    const installManagedClaudeImpl = vi.fn<ManagedInstallImpl>(async ({ installId }) => ({
+      result: { installId, ok: false }
+    }))
+    const service = createService(undefined, { installManagedClaudeImpl })
+
+    await service.installClaude(
+      { source: 'managed', managedRegistry: 'npmmirror' },
+      () => undefined
+    )
+
+    expect(installManagedClaudeImpl.mock.calls[0]?.[0].registries).toEqual([
+      'https://registry.npmmirror.com',
+      'https://registry.npmjs.org'
+    ])
+  })
+})
+
+describe('checkEnvironment', () => {
+  it('keeps a cached executable when a GUI PATH cannot rediscover it', async () => {
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    const service = new SettingsService({
+      repository,
+      storageRoot,
+      userClaudeDir: join(storageRoot, 'no-user-claude'),
+      detectDeps: {
+        env: {},
+        homePath: '/home',
+        platform: 'linux',
+        isExecutable: () => Promise.resolve(false),
+        getVersion: () => Promise.resolve(undefined),
+        resolveNpmBinDirs: () => Promise.resolve([])
+      }
+    })
+
+    const result = await service.checkEnvironment()
+
+    expect(result.claude).toEqual({ found: true, path: execPath, version: '2.1.0' })
+    expect(result.checks.find((check) => check.id === 'claude')?.status).toBe('passed')
   })
 })

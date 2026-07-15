@@ -3,6 +3,8 @@ import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
 
+const isPython3Version = (output: string): boolean => /\bPython\s+3(?:\.|\s|$)/i.test(output)
+
 // A resolved Python interpreter invocation: the executable plus any leading args needed to select an
 // interpreter (e.g. the Windows `py` launcher needs `-3`).
 export type PythonCommand = {
@@ -37,24 +39,23 @@ const defaultProbe =
   (platform: NodeJS.Platform) =>
   async ({ command, baseArgs }: PythonCommand): Promise<boolean> => {
     try {
-      await execFileAsync(command, [...baseArgs, '--version'], {
+      const { stdout, stderr } = await execFileAsync(command, [...baseArgs, '--version'], {
         timeout: 10_000,
         shell: platform === 'win32',
         windowsHide: true
       })
 
-      return true
+      return isPython3Version(`${stdout}\n${stderr}`)
     } catch {
       return false
     }
   }
 
-// Resolves the first Python interpreter that answers `--version`. Falls back to the platform's
-// preferred command when none respond, so the caller's spawn still produces a clear ENOENT error
-// rather than silently doing nothing.
-export const resolvePythonCommand = async (
+// Finds the first Python interpreter that answers `--version`. Environment setup uses this optional
+// result to report Notebook availability without making Python a core startup requirement.
+export const findPythonCommand = async (
   deps: Partial<ResolvePythonDeps> = {}
-): Promise<PythonCommand> => {
+): Promise<PythonCommand | undefined> => {
   const platform = deps.platform ?? process.platform
   const probe = deps.probe ?? defaultProbe(platform)
   const candidates = pythonCandidates(platform)
@@ -62,6 +63,23 @@ export const resolvePythonCommand = async (
   for (const candidate of candidates) {
     if (await probe(candidate)) return candidate
   }
+
+  return undefined
+}
+
+export { isPython3Version }
+
+// Resolves the first usable interpreter. Falls back to the platform's preferred command when none
+// respond, so Notebook execution still produces a clear ENOENT error rather than silently doing
+// nothing if the environment changed after the startup check.
+export const resolvePythonCommand = async (
+  deps: Partial<ResolvePythonDeps> = {}
+): Promise<PythonCommand> => {
+  const found = await findPythonCommand(deps)
+  if (found) return found
+
+  const platform = deps.platform ?? process.platform
+  const candidates = pythonCandidates(platform)
 
   return candidates[0]
 }
