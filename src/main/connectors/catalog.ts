@@ -155,9 +155,9 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'drug_regulatory',
     displayName: 'Drug Regulatory',
-    description: 'FDA drug labels and adverse event reports via openFDA.',
+    description: 'Drugs@FDA applications, labels, and corpus statistics via openFDA.',
     useWhen:
-      'Use when you need FDA regulatory data for a drug — product label sections (indications, brand/generic name, manufacturer) or adverse event reports (FAERS) by drug name or openFDA query.',
+      'Use when you need FDA drug regulatory data — searching or fetching Drugs@FDA applications (NDA/ANDA/BLA) by brand, generic, ingredient, sponsor, marketing status, or pharmacologic class; aggregate/corpus statistics; generic equivalents of a brand; or product label (SPL) sections such as indications and boxed warnings. Sourced from openFDA (Drugs@FDA + drug labels).',
     sources: ['openFDA'],
     termsUrl: 'https://open.fda.gov/terms/',
     requiresNcbi: false
