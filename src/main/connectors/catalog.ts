@@ -200,9 +200,9 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'rna',
     displayName: 'RNA',
-    description: 'Non-coding RNA family metadata via Rfam.',
+    description: 'Non-coding RNA family data (metadata, alignments, models, structures) via Rfam.',
     useWhen:
-      'Use when you need RNA family metadata — Rfam accession, family id, description, or RNA type (e.g. tRNA, rRNA, riboswitch) for an Rfam accession or family id.',
+      'Use for non-coding RNA families from Rfam (accession or family id, e.g. RF00005 / tRNA): family metadata (RNA type, seed/full counts, gathering/trusted/noise cutoffs, clan); the seed alignment (Stockholm or FASTA); the Infernal covariance model; the seed phylogenetic tree; full-region hits across sequence databases; PDB structure mappings; accession<->id conversion; and single-sequence cmscan search against all Rfam models.',
     sources: ['Rfam'],
     termsUrl: 'https://docs.rfam.org/en/latest/',
     requiresNcbi: false
