@@ -27,6 +27,10 @@ type ConnectorServiceDeps = {
     method: string
     args: Record<string, unknown>
   }) => Promise<ApprovalDecision>
+  // Handlers for bundled tools that run privileged local code (e.g. write an artifact, open a preview)
+  // instead of the read-only HTTP ParserEngine. Keyed by `${connector}/${method}`; invoked after the
+  // same enable/policy/approval gate as any other bundled call.
+  localToolHandlers?: Record<string, (args: Record<string, unknown>) => Promise<unknown>>
 }
 
 // Agent-agnostic gate: enforces enabled state + per-tool policy, prompts for approval on un-trusted
@@ -68,6 +72,11 @@ export class ConnectorService {
       throw new Error(`tool blocked by policy: ${connector}/${method}`)
     }
     await this.ensureApproved(connector, method, args)
+
+    // Bundled tools that need privileged local behavior run here, after the same gate, instead of the
+    // read-only HTTP engine.
+    const localHandler = this.deps.localToolHandlers?.[`${connector}/${method}`]
+    if (localHandler) return localHandler(args)
 
     return this.engine.call(descriptor, args, this.credentials())
   }

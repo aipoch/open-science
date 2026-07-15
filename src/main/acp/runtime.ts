@@ -62,7 +62,7 @@ import { getNotebookSessionRoot } from '../notebook/repository'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import type { UploadRepository } from '../uploads/repository'
 import type { UploadedAttachment } from '../../shared/uploads'
-import type { ArtifactReference } from '../../shared/artifacts'
+import type { ArtifactFile, ArtifactReference } from '../../shared/artifacts'
 import { buildImageContentData, extractPdfText } from '../uploads/attachment-media'
 
 type AcpRuntimeCallbacks = {
@@ -232,6 +232,9 @@ class AcpRuntime {
   private artifactSessionSequence = 0
   private artifactRunSequence = 0
   private notebookSessionSequence = 0
+  // The in-flight turn's artifact run, tracked so app-side tools (e.g. molecule preview) can attach a
+  // generated file to the current run. Set while a prompt is active, cleared in the prompt's finally.
+  private activeArtifactRun: { sessionId: string; run: ActiveArtifactRun } | undefined
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
   constructor(private readonly options: AcpRuntimeOptions) {
@@ -832,6 +835,9 @@ class AcpRuntime {
     try {
       // Create a fresh run context before prompting so MCP writes can be attributed to this turn.
       artifactRun = await this.activateArtifactRun(request.sessionId)
+      this.activeArtifactRun = artifactRun
+        ? { sessionId: request.sessionId, run: artifactRun }
+        : undefined
       // Prepend a short steering nudge naming the picked skills. It goes only into the content sent to
       // the agent; the user-facing message event keeps the original text (which already shows /Name).
       const promptText = await this.applySkillNudge(request.text, forced)
@@ -914,6 +920,7 @@ class AcpRuntime {
           text: errorMessage(error)
         })
       }
+      this.activeArtifactRun = undefined
       this.promptInFlightSessionIds.delete(request.sessionId)
       this.emitState()
       // A disabled skill forced for this turn is restored now: clear the force set, then schedule a
@@ -1453,6 +1460,29 @@ class AcpRuntime {
     if (!artifactRun) return
 
     await writeFile(artifactRun.currentRunFile, `${JSON.stringify({})}\n`, 'utf8')
+  }
+
+  // Writes an inline file into the in-flight turn's pending artifact run so it attaches to the resulting
+  // message and surfaces to the renderer like any generated artifact. Used by app-side connector tools
+  // (e.g. molecule preview). Throws when no assistant turn is active (e.g. a user-run notebook cell).
+  async writeArtifactForCurrentRun(input: {
+    filename: string
+    content: string
+    mimeType?: string
+  }): Promise<ArtifactFile> {
+    const active = this.activeArtifactRun
+    if (!active || !this.artifactRepository) {
+      throw new Error('No active assistant turn to attach a generated file to.')
+    }
+
+    return this.artifactRepository.writePendingFile({
+      projectName: this.resolveSessionProjectName(active.sessionId),
+      sessionId: active.run.artifactSessionId,
+      runId: active.run.runId,
+      filename: input.filename,
+      mimeType: input.mimeType,
+      source: { kind: 'inline', content: input.content, encoding: 'utf8' }
+    })
   }
 
   // Publishes pending files as a claim event; the renderer later supplies the final message id.

@@ -9,6 +9,7 @@ import { ArtifactRunRegistry } from './artifacts/run-registry'
 import { ApprovalBroker } from './connectors/approval-broker'
 import { toCustomMcpConfig, selectEnabledCustomServers } from './connectors/custom-mcp-bootstrap'
 import { McpClientManager } from './connectors/mcp-client-manager'
+import { createMoleculePreviewHandler } from './connectors/molecule-preview'
 import { ALL_CONNECTOR_IDS } from './connectors/registry'
 import { ConnectorService } from './connectors/service'
 import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './connectors/provision'
@@ -104,12 +105,24 @@ const registerIpcHandlers = ({ mainEntryPath }: IpcRegistrationOptions): void =>
       }
     }
   })
+  // Late-bound app runtime for connector tools that attach a generated file to the current turn. The
+  // runtime is created below (it depends on the connector service), so the handler resolves it lazily.
+  const runtimeRef: { current: ReturnType<typeof registerAcpIpcHandlers> | undefined } = {
+    current: undefined
+  }
+  const moleculePreviewHandler = createMoleculePreviewHandler({
+    writeArtifactForCurrentRun: (input) => {
+      if (!runtimeRef.current) throw new Error('Artifact runtime is not initialized.')
+      return runtimeRef.current.writeArtifactForCurrentRun(input)
+    }
+  })
   const connectorService = new ConnectorService({
     getConnectors: () => connectorsSnapshot,
     resolveApiKey: (ref) => tryDecryptKey(ref),
     mcpClientManager,
     requestApproval: ({ connector, method, args }) =>
-      approvalBroker.request({ connector, method, argsPreview: previewArgs(args) })
+      approvalBroker.request({ connector, method, argsPreview: previewArgs(args) }),
+    localToolHandlers: { 'molecule/preview_molecule': moleculePreviewHandler }
   })
   const notebookRpcServer = new NotebookLocalRpcServer(notebookService, { connectorService })
   // The RPC server needs the runtime service to dispatch to, and the runtime service needs the RPC
@@ -147,6 +160,7 @@ const registerIpcHandlers = ({ mainEntryPath }: IpcRegistrationOptions): void =>
     notebookRpcServer,
     settingsService
   })
+  runtimeRef.current = runtime
   // Switching the active provider takes effect on the next reconnect. Defer that reconnect until any
   // in-flight prompt finishes so switching never interrupts a running turn; the shared config dir keeps
   // the conversation's context across the switch.

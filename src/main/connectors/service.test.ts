@@ -51,6 +51,29 @@ describe('ConnectorService', () => {
     const out = await svc.call('chemistry', 'pubchem_get_compounds', { cids: [1] })
     expect(out).toEqual({ n_requested: 1, duplicates: [], records: [{ CID: 1 }], not_found: [] })
   })
+  it('routes a bundled tool with a registered local handler through it, not the engine', async () => {
+    const localHandler = vi.fn().mockResolvedValue({ ok: true })
+    const engine = { call: vi.fn() } as unknown as ParserEngine
+    const svc = new ConnectorService({
+      engine,
+      getConnectors: () => ({ enabledIds: ['molecule'], autoAllowIds: [] }),
+      resolveApiKey: () => undefined,
+      localToolHandlers: { 'molecule/preview_molecule': localHandler }
+    })
+    const out = await svc.call('molecule', 'preview_molecule', { smiles: 'C' })
+    expect(localHandler).toHaveBeenCalledWith({ smiles: 'C' })
+    expect(out).toEqual({ ok: true })
+    expect(engine.call).not.toHaveBeenCalled()
+  })
+  it('falls through to the engine when no local handler is registered', async () => {
+    const svc = new ConnectorService({
+      getConnectors: () => ({ enabledIds: ['molecule'], autoAllowIds: [] }),
+      resolveApiKey: () => undefined
+    })
+    await expect(svc.call('molecule', 'preview_molecule', { smiles: 'C' })).rejects.toThrow(
+      /handled by the app runtime/
+    )
+  })
   it('rejects a blocked tool', async () => {
     const svc = new ConnectorService({
       getConnectors: () => ({
