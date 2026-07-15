@@ -7,7 +7,7 @@ describe('renderSkillDoc', () => {
     expect(md).toContain('name: mcp-chemistry')
     expect(md).toContain('source: connector')
     expect(md).toContain('host.mcp(')
-    expect(md).toContain('pubchem_get_properties')
+    expect(md).toContain('pubchem_get_compounds')
     expect(md).toContain('rate-limited') // rate warning present
   })
   it('uses the trigger-style useWhen as the frontmatter description for auto-discovery', () => {

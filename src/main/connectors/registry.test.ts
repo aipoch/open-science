@@ -4,7 +4,7 @@ import { CONNECTOR_CATALOG } from './catalog'
 
 describe('registry + catalog', () => {
   it('resolves a tool by connector+method', () => {
-    expect(getDescriptor('chemistry', 'pubchem_get_properties')?.id).toBe('pubchem_get_properties')
+    expect(getDescriptor('chemistry', 'pubchem_get_compounds')?.id).toBe('pubchem_get_compounds')
     expect(getDescriptor('chemistry', 'nope')).toBeUndefined()
   })
   it('lists tools for a connector', () => {

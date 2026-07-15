@@ -20,10 +20,10 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'chemistry',
     displayName: 'Chemistry',
-    description: 'Small-molecule chemistry via PubChem.',
+    description: 'Small-molecule chemistry via PubChem, ChEBI, Rhea and BindingDB.',
     useWhen:
-      'Use when a question needs authoritative data about a chemical compound or drug — molecular formula, molecular weight, SMILES/InChI, IUPAC name, or PubChem identifiers (e.g. aspirin, caffeine, ibuprofen). Sourced from PubChem.',
-    sources: ['PubChem'],
+      'Use when a question needs authoritative small-molecule chemistry data — PubChem compound properties (formula, weight, SMILES/InChI, IUPAC name), CID resolution and 2D similarity search, bioassay and GHS safety summaries; ChEBI ontology entities, roles and relations; Rhea enzyme reactions (by ChEBI participant, EC number, or equation text); or BindingDB binding affinities (Ki/Kd/IC50/EC50) by protein target or compound. Sourced from PubChem, ChEBI, Rhea and BindingDB.',
+    sources: ['PubChem', 'ChEBI', 'Rhea', 'BindingDB'],
     termsUrl: 'https://www.ncbi.nlm.nih.gov/home/about/policies/',
     requiresNcbi: false
   },
