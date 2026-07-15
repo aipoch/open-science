@@ -12,6 +12,9 @@ const ctx: ToolContext = {
   fetchText: async () => {
     throw new Error('zinc_search_by_id must not use ctx.fetchText')
   },
+  fetchJsonWithHeaders: async () => {
+    throw new Error('zinc_search_by_id must not use ctx.fetchJsonWithHeaders')
+  },
   postJson: async () => {
     throw new Error('zinc_search_by_id must not use ctx.postJson (JSON body, not form-encoded)')
   }

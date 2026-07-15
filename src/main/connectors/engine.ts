@@ -115,6 +115,10 @@ export class ParserEngine {
     return {
       credentials,
       fetchJson: async (url) => (await doFetch(url, 'application/json')).json(),
+      fetchJsonWithHeaders: async (url) => {
+        const res = await doFetch(url, 'application/json')
+        return { body: await res.json(), headers: res.headers }
+      },
       fetchText: async (url) => (await doFetch(url, 'text/plain, application/xml, */*')).text(),
       postJson: async (url, body) =>
         (

@@ -3,6 +3,9 @@ export type ConnectorCredentials = { ncbiEmail?: string; ncbiApiKey?: string }
 export type ToolContext = {
   fetchJson(url: string): Promise<unknown>
   fetchText(url: string): Promise<string>
+  // GET JSON plus the response headers — for APIs that report totals/pagination in headers rather than
+  // the body (e.g. PRIDE Archive's `total_records`), which fetchJson alone would drop.
+  fetchJsonWithHeaders(url: string): Promise<{ body: unknown; headers: Headers }>
   // POST a JSON body and parse the JSON response — for GraphQL / POST-only APIs (e.g. gnomAD).
   postJson(url: string, body: unknown): Promise<unknown>
   credentials: ConnectorCredentials
