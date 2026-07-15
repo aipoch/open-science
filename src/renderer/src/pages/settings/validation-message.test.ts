@@ -18,4 +18,21 @@ describe('describeValidation', () => {
       'Authentication failed. Check the API key. (HTTP 401)'
     )
   })
+
+  it('surfaces the gateway message for an unknown failure instead of the generic copy', () => {
+    expect(
+      describeValidation({
+        ok: false,
+        category: 'unknown',
+        status: 402,
+        message: 'Insufficient Balance'
+      })
+    ).toBe('Insufficient Balance (HTTP 402)')
+  })
+
+  it('falls back to the generic unknown copy when no message is present', () => {
+    expect(describeValidation({ ok: false, category: 'unknown', status: 402 })).toBe(
+      'Validation failed for an unknown reason. (HTTP 402)'
+    )
+  })
 })
