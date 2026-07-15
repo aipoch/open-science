@@ -9,6 +9,7 @@ import type {
   PreviewSkillZipRequest,
   ScanRepoRequest,
   InstallClaudeRequest,
+  ClaudeInstallEvent,
   RefreshProviderModelsRequest,
   SetActiveProviderRequest,
   AddCustomServerRequest,
@@ -27,6 +28,7 @@ import type {
 import { createDefaultSettingsService, SettingsService } from './service'
 
 // IPC channel names for the settings/onboarding surface. Kept together so preload and main agree.
+// Carries both log lines and progress ticks (a `ClaudeInstallEvent` discriminated union).
 const SETTINGS_INSTALL_LOG_CHANNEL = 'settings:install-log'
 
 export type SettingsIpcOptions = {
@@ -39,11 +41,11 @@ export type SettingsIpcOptions = {
   onConnectorsChanged?: () => void
 }
 
-// Streams one install log line to every open renderer window.
-const broadcastInstallLog = (payload: unknown): void => {
+// Streams one install event (log line or progress tick) to every open renderer window.
+const broadcastInstallEvent = (event: ClaudeInstallEvent): void => {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
-      window.webContents.send(SETTINGS_INSTALL_LOG_CHANNEL, payload)
+      window.webContents.send(SETTINGS_INSTALL_LOG_CHANNEL, event)
     }
   }
 }
@@ -63,7 +65,7 @@ const registerSettingsIpcHandlers = ({
   ipcMain.handle('settings:detect-claude', () => service.detectClaude())
 
   ipcMain.handle('settings:install-claude', (_event, request: InstallClaudeRequest) =>
-    service.installClaude(request, broadcastInstallLog)
+    service.installClaude(request, broadcastInstallEvent)
   )
 
   ipcMain.handle('settings:upsert-provider', async (_event, request: UpsertProviderRequest) => {

@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 
 import type {
-  ClaudeInstallLogEvent,
+  ClaudeInstallEvent,
   ClaudeInstallResult,
   ClaudeInstallSource,
   NpmAvailability
@@ -154,7 +154,7 @@ const isNpmGlobalPrefixWritable = async ({
 export type RunInstallOptions = {
   source: ClaudeInstallSource
   installId: string
-  onLog: (event: ClaudeInstallLogEvent) => void
+  onEvent: (event: ClaudeInstallEvent) => void
   timeoutMs?: number
   // Injectable spawn so tests can drive stdout/stderr/exit without a real process. `options` carries
   // the spec's `shell` flag through to the real spawn.
@@ -193,7 +193,7 @@ const defaultInstallSpawn = (
 const runInstall = async ({
   source,
   installId,
-  onLog,
+  onEvent,
   timeoutMs = DEFAULT_INSTALL_TIMEOUT_MS,
   spawnImpl = defaultInstallSpawn,
   npmPrefixWritable = () => isNpmGlobalPrefixWritable()
@@ -208,7 +208,7 @@ const runInstall = async ({
 
   const spec = getInstallSpawnSpec(source, process.platform, npmPrefixOverride)
 
-  onLog({ installId, stream: 'system', chunk: `$ ${spec.command} ${spec.args.join(' ')}` })
+  onEvent({ kind: 'log', installId, stream: 'system', chunk: `$ ${spec.command} ${spec.args.join(' ')}` })
 
   return new Promise<ClaudeInstallResult>((resolve) => {
     let child: ChildProcessWithoutNullStreams
@@ -224,6 +224,9 @@ const runInstall = async ({
 
       return
     }
+
+    // No byte total for a shelled installer, so the bar runs indeterminate while it streams output.
+    onEvent({ kind: 'progress', installId, phase: 'installing' })
 
     let settled = false
     let timedOut = false
@@ -245,20 +248,20 @@ const runInstall = async ({
 
     const timer = setTimeout(() => {
       timedOut = true
-      onLog({ installId, stream: 'system', chunk: 'Install timed out; terminating.' })
+      onEvent({ kind: 'log', installId, stream: 'system', chunk: 'Install timed out; terminating.' })
       child.kill()
     }, timeoutMs)
 
     child.stdout.on('data', (data: Buffer) => {
       const chunk = data.toString('utf8')
       capture(chunk)
-      onLog({ installId, stream: 'stdout', chunk })
+      onEvent({ kind: 'log', installId, stream: 'stdout', chunk })
     })
 
     child.stderr.on('data', (data: Buffer) => {
       const chunk = data.toString('utf8')
       capture(chunk)
-      onLog({ installId, stream: 'stderr', chunk })
+      onEvent({ kind: 'log', installId, stream: 'stderr', chunk })
     })
 
     child.on('error', (error) => {
@@ -312,7 +315,7 @@ const detectNpmAvailable = async (
 const runInstallWithFallback = async ({
   source,
   installId,
-  onLog,
+  onEvent,
   timeoutMs,
   spawnImpl,
   npmProbe,
@@ -321,7 +324,7 @@ const runInstallWithFallback = async ({
   const result = await runInstall({
     source,
     installId,
-    onLog,
+    onEvent,
     timeoutMs,
     spawnImpl,
     npmPrefixWritable
@@ -333,13 +336,14 @@ const runInstallWithFallback = async ({
 
   if (!available) return result
 
-  onLog({
+  onEvent({
+    kind: 'log',
     installId,
     stream: 'system',
     chunk: 'Official installer looks unavailable in your region; falling back to npm…'
   })
 
-  return runInstall({ source: 'npm', installId, onLog, timeoutMs, spawnImpl, npmPrefixWritable })
+  return runInstall({ source: 'npm', installId, onEvent, timeoutMs, spawnImpl, npmPrefixWritable })
 }
 
 export {

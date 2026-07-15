@@ -10,7 +10,7 @@ import { Transform, Writable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { createGunzip } from 'node:zlib'
 
-import type { ClaudeInstallLogEvent, ClaudeInstallResult } from '../../shared/settings'
+import type { ClaudeInstallEvent, ClaudeInstallResult } from '../../shared/settings'
 
 // App-managed Claude installer. The `@anthropic-ai/claude-code` npm package is a thin wrapper whose
 // real payload is a per-platform native binary shipped as an optionalDependency
@@ -165,41 +165,45 @@ const resolveNativePackage = async ({
 // ---- Download + verify -----------------------------------------------------------------------------
 
 // Streams a tarball to `destPath`, computing its sha512 as it goes and rejecting on an
-// integrity mismatch (the file is removed). Progress is logged, throttled to whole-percent / MB steps.
+// integrity mismatch (the file is removed). Emits `downloading` progress ticks, throttled to
+// whole-percent steps when the total size is known (indeterminate otherwise).
 const downloadAndVerify = async ({
   url,
   integrity,
   destPath,
   installId,
-  onLog,
+  onEvent,
   fetchTarball
 }: {
   url: string
   integrity: string
   destPath: string
   installId: string
-  onLog: (event: ClaudeInstallLogEvent) => void
+  onEvent: (event: ClaudeInstallEvent) => void
   fetchTarball: FetchTarball
 }): Promise<void> => {
   const { stream, totalBytes } = await fetchTarball(url)
   const hash = createHash('sha512')
   let received = 0
-  let lastLoggedMb = 0
+  let lastPercent = 0
+
+  // Kick off the download phase immediately so the bar switches from "resolving" without waiting for
+  // the first chunk (matters when the total is unknown and no percent ticks will follow).
+  onEvent({ kind: 'progress', installId, phase: 'downloading', receivedBytes: 0, totalBytes })
 
   const meter = new Transform({
     transform(chunk: Buffer, _enc, cb) {
       hash.update(chunk)
       received += chunk.length
 
-      const mb = Math.floor(received / (1024 * 1024))
-      if (mb > lastLoggedMb) {
-        lastLoggedMb = mb
-        const total = totalBytes ? ` / ${(totalBytes / (1024 * 1024)).toFixed(1)} MB` : ''
-        onLog({
-          installId,
-          stream: 'system',
-          chunk: `Downloading Claude — ${mb.toFixed(0)} MB${total}`
-        })
+      // Determinate: emit only when the whole-percent advances (≤100 ticks). Unknown total stays
+      // indeterminate and rides the initial event above (the bar animates on its own).
+      if (totalBytes) {
+        const percent = Math.floor((received / totalBytes) * 100)
+        if (percent > lastPercent) {
+          lastPercent = percent
+          onEvent({ kind: 'progress', installId, phase: 'downloading', receivedBytes: received, totalBytes })
+        }
       }
 
       cb(null, chunk)
@@ -374,7 +378,7 @@ export type ManagedInstallOutcome = {
 
 export type InstallManagedClaudeOptions = {
   installId: string
-  onLog: (event: ClaudeInstallLogEvent) => void
+  onEvent: (event: ClaudeInstallEvent) => void
   // Root under which the binary is placed (<dataRoot>/claude-code/bin/<binName>). Pass the app's
   // configurable storage root, not a hardcoded userData path.
   dataRoot: string
@@ -390,7 +394,7 @@ export type InstallManagedClaudeOptions = {
 // `onLog` and resolves (never rejects) with a structured outcome the service can persist.
 const installManagedClaude = async ({
   installId,
-  onLog,
+  onEvent,
   dataRoot,
   registries = DEFAULT_REGISTRIES,
   version,
@@ -407,7 +411,8 @@ const installManagedClaude = async ({
     const tgzPath = join(scratch, `claude-download-${Date.now()}.tgz`)
 
     try {
-      onLog({ installId, stream: 'system', chunk: `Resolving Claude from ${registry} …` })
+      onEvent({ kind: 'progress', installId, phase: 'resolving' })
+      onEvent({ kind: 'log', installId, stream: 'system', chunk: `Resolving Claude from ${registry} …` })
       const resolution = await resolveNativePackage({ registry, platform, version, fetchJson })
 
       await downloadAndVerify({
@@ -415,10 +420,11 @@ const installManagedClaude = async ({
         integrity: resolution.integrity,
         destPath: tgzPath,
         installId,
-        onLog,
+        onEvent,
         fetchTarball
       })
 
+      onEvent({ kind: 'progress', installId, phase: 'extracting' })
       const found = await extractFileFromTgz({
         tgzPath,
         entryName: `package/${platform.binName}`,
@@ -428,7 +434,7 @@ const installManagedClaude = async ({
       if (!found) throw new Error(`Native package did not contain ${platform.binName}`)
       if (process.platform !== 'win32') await chmod(destPath, 0o755)
 
-      onLog({ installId, stream: 'system', chunk: `Installed Claude ${resolution.version}.` })
+      onEvent({ kind: 'log', installId, stream: 'system', chunk: `Installed Claude ${resolution.version}.` })
 
       return {
         result: { installId, ok: true },
@@ -437,7 +443,7 @@ const installManagedClaude = async ({
       }
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error)
-      onLog({ installId, stream: 'system', chunk: `${registry} failed: ${lastError}` })
+      onEvent({ kind: 'log', installId, stream: 'system', chunk: `${registry} failed: ${lastError}` })
     } finally {
       await rm(tgzPath, { force: true }).catch(() => undefined)
     }

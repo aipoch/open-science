@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { ClaudeInstallLogEvent } from '../../shared/settings'
+import type { ClaudeInstallEvent } from '../../shared/settings'
 import {
   detectNpmAvailable,
   getInstallSpawnSpec,
@@ -124,11 +124,11 @@ describe('claude-install: region-block detection', () => {
 describe('claude-install: run', () => {
   it('streams stdout/stderr and resolves ok on exit code 0', async () => {
     const child = new FakeChild()
-    const logs: ClaudeInstallLogEvent[] = []
+    const logs: ClaudeInstallEvent[] = []
     const promise = runInstall({
       source: 'npm',
       installId: 'install-1',
-      onLog: (event) => logs.push(event),
+      onEvent: (event) => logs.push(event),
       spawnImpl: () => child as never,
       npmPrefixWritable: () => Promise.resolve(true)
     })
@@ -143,9 +143,9 @@ describe('claude-install: run', () => {
 
     expect(result).toMatchObject({ installId: 'install-1', ok: true, exitCode: 0 })
     expect(
-      logs.some((log) => log.stream === 'stdout' && log.chunk.includes('adding package'))
+      logs.some((e) => e.kind === 'log' && e.stream === 'stdout' && e.chunk.includes('adding package'))
     ).toBe(true)
-    expect(logs.some((log) => log.stream === 'stderr')).toBe(true)
+    expect(logs.some((e) => e.kind === 'log' && e.stream === 'stderr')).toBe(true)
   })
 
   it('resolves not ok on a non-zero exit', async () => {
@@ -153,7 +153,7 @@ describe('claude-install: run', () => {
     const promise = runInstall({
       source: 'npm',
       installId: 'install-2',
-      onLog: () => undefined,
+      onEvent: () => undefined,
       spawnImpl: () => child as never,
       npmPrefixWritable: () => Promise.resolve(true)
     })
@@ -167,7 +167,7 @@ describe('claude-install: run', () => {
     const result = await runInstall({
       source: 'npm',
       installId: 'install-3',
-      onLog: () => undefined,
+      onEvent: () => undefined,
       npmPrefixWritable: () => Promise.resolve(true),
       spawnImpl: () => {
         throw new Error('spawn npm ENOENT')
@@ -183,7 +183,7 @@ describe('claude-install: run', () => {
     const promise = runInstall({
       source: 'official-script',
       installId: 'install-4',
-      onLog: () => undefined,
+      onEvent: () => undefined,
       spawnImpl: () => child as never
     })
 
@@ -198,7 +198,7 @@ describe('claude-install: run', () => {
     const promise = runInstall({
       source: 'npm',
       installId: 'install-5',
-      onLog: () => undefined,
+      onEvent: () => undefined,
       spawnImpl: () => child as never,
       npmPrefixWritable: () => Promise.resolve(true)
     })
@@ -221,12 +221,12 @@ describe('claude-install: run with region-block fallback', () => {
       bash: { stderr: "syntax error near unexpected token `<'", exit: 2 },
       npm: { stdout: 'added 1 package', exit: 0 }
     })
-    const logs: ClaudeInstallLogEvent[] = []
+    const logs: ClaudeInstallEvent[] = []
 
     const result = await runInstallWithFallback({
       source: 'official-script',
       installId: 'install-6',
-      onLog: (event) => logs.push(event),
+      onEvent: (event) => logs.push(event),
       spawnImpl: spawn as never,
       npmProbe: () => Promise.resolve(),
       npmPrefixWritable: () => Promise.resolve(true)
@@ -234,7 +234,7 @@ describe('claude-install: run with region-block fallback', () => {
 
     expect(commands).toEqual(['bash', 'npm'])
     expect(result.ok).toBe(true)
-    expect(logs.some((log) => log.stream === 'system' && /region/i.test(log.chunk))).toBe(true)
+    expect(logs.some((e) => e.kind === 'log' && e.stream === 'system' && /region/i.test(e.chunk))).toBe(true)
   })
 
   it('does not fall back when npm is unavailable', async () => {
@@ -245,7 +245,7 @@ describe('claude-install: run with region-block fallback', () => {
     const result = await runInstallWithFallback({
       source: 'official-script',
       installId: 'install-7',
-      onLog: () => undefined,
+      onEvent: () => undefined,
       spawnImpl: spawn as never,
       npmProbe: () => Promise.reject(new Error('not found'))
     })
@@ -263,7 +263,7 @@ describe('claude-install: run with region-block fallback', () => {
     const result = await runInstallWithFallback({
       source: 'official-script',
       installId: 'install-8',
-      onLog: () => undefined,
+      onEvent: () => undefined,
       spawnImpl: spawn as never,
       npmProbe: () => Promise.resolve()
     })
@@ -349,7 +349,7 @@ describe('claude-install: run redirects npm prefix only when needed', () => {
     await runInstall({
       source: 'npm',
       installId: 'install-prefix-1',
-      onLog: () => undefined,
+      onEvent: () => undefined,
       spawnImpl: spawn as never,
       npmPrefixWritable: () => Promise.resolve(false)
     })
@@ -369,7 +369,7 @@ describe('claude-install: run redirects npm prefix only when needed', () => {
     await runInstall({
       source: 'npm',
       installId: 'install-prefix-2',
-      onLog: () => undefined,
+      onEvent: () => undefined,
       spawnImpl: spawn as never,
       npmPrefixWritable: () => Promise.resolve(true)
     })
