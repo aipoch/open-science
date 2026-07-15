@@ -126,9 +126,10 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'chembl',
     displayName: 'ChEMBL',
-    description: 'Bioactive drug-like small molecules via the ChEMBL REST API.',
+    description:
+      'Bioactive compounds, drugs, targets, bioactivity, and mechanisms via the ChEMBL REST API.',
     useWhen:
-      'Use when searching for a bioactive small molecule or drug by name, or looking up a known ChEMBL compound record (preferred name, clinical phase, molecule type) by ChEMBL ID.',
+      'Use for ChEMBL medicinal-chemistry data — search compounds by name, ChEMBL id, or molecular structure (similarity/substructure); find drugs by therapeutic indication with approval and withdrawal flags; get calculated ADMET / drug-likeness properties for a molecule; retrieve bioactivity measurements (IC50, Ki, EC50, pChEMBL) for compound-target pairs; look up mechanism of action; or search biological targets by gene symbol, name, organism, or type. Sourced from ChEMBL (EBI).',
     sources: ['ChEMBL'],
     termsUrl: 'https://chembl.gitbook.io/chembl-interface-documentation/about',
     requiresNcbi: false,
