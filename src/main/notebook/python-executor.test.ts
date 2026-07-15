@@ -251,6 +251,46 @@ describe('notebook Python executor', () => {
   )
 
   itWithPython(
+    'decodes non-ASCII cell code as UTF-8 even when the parent locale codepage is not',
+    async () => {
+      // Windows repro: Node writes the cell as a UTF-8 JSON line, but Python decodes stdin with the
+      // OS locale codepage (cp936 on a Chinese console), corrupting non-ASCII code into lone
+      // surrogates and making ast.parse raise UnicodeEncodeError. Forcing the parent PYTHONIOENCODING
+      // to a non-UTF-8 codec reproduces that mis-decode portably; the executor must override it to
+      // utf-8 so the child still reads the code correctly.
+      const root = await createStorageRoot()
+      const previous = process.env.PYTHONIOENCODING
+      process.env.PYTHONIOENCODING = 'latin-1'
+      const executor = new NotebookPythonExecutor('python3')
+      const base = {
+        cwd: root,
+        notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
+        dataRoot: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
+        runtimeRoot: join(root, 'runtime')
+      }
+
+      // Build the non-ASCII payload from escapes so this source file stays ASCII-only. Covers 2- and
+      // 3-byte UTF-8 sequences (e-acute, em dash, snowman), enough that a codepage mis-decode
+      // corrupts the round-trip.
+      const nonAscii = String.fromCodePoint(0xe9, 0x2014, 0x2603)
+
+      try {
+        const result = await executor.execute({
+          ...base,
+          code: `result = {"term": ${JSON.stringify(nonAscii)}}\nresult`
+        })
+        expect(result).toMatchObject({ status: 'completed' })
+        expect(result.stdout).toBe(`{'term': '${nonAscii}'}\n`)
+      } finally {
+        await executor.shutdown()
+        if (previous === undefined) delete process.env.PYTHONIOENCODING
+        else process.env.PYTHONIOENCODING = previous
+      }
+    },
+    PYTHON_TEST_TIMEOUT_MS
+  )
+
+  itWithPython(
     'returns a timeout execution result when code exceeds timeoutMs',
     async () => {
       const root = await createStorageRoot()

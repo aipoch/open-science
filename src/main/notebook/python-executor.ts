@@ -378,6 +378,11 @@ class NotebookPythonExecutor implements NotebookExecutor {
         // Force a non-interactive matplotlib backend so plt.show() never opens a GUI window in
         // this headless notebook runtime; respect an explicitly configured backend if present.
         MPLBACKEND: process.env.MPLBACKEND || 'Agg',
+        // Node writes the cell code to stdin as UTF-8, but Python otherwise decodes stdin with the
+        // OS locale codepage (e.g. cp936 on a Chinese Windows console). That mis-decode turns any
+        // non-ASCII in the cell (curly quotes, em-dashes, Chinese comments) into lone surrogates and
+        // makes ast.parse raise UnicodeEncodeError. Pin UTF-8 so both ends agree on the encoding.
+        PYTHONIOENCODING: 'utf-8',
         OPEN_SCIENCE_NOTEBOOK_DIR: request.notebookSessionRoot,
         OPEN_SCIENCE_NOTEBOOK_DATA_DIR: request.dataRoot,
         OPEN_SCIENCE_RUNTIME_DIR: request.runtimeRoot,
