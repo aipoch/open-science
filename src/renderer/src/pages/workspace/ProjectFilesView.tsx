@@ -19,8 +19,7 @@ import { ArtifactPreview } from './artifact-preview'
 import {
   ARTIFACT_IMAGE_PREVIEW_BYTES,
   ARTIFACT_PREVIEW_BYTES,
-  isImageArtifact,
-  shouldReadArtifactPreview
+  getArtifactPreviewFormat
 } from './artifact-preview-utils'
 import {
   buildProjectFileLibrary,
@@ -32,6 +31,7 @@ import {
   createPreviewFileItemFromUpload
 } from './preview-file-item'
 import type { MessageArtifact } from './preview-file-item'
+import { getPreviewThumbnailReadEncoding } from './preview-support'
 
 type ProjectFilesFilterOption = {
   id: string
@@ -45,9 +45,23 @@ type ProjectFilePreviewTarget = {
   path: string
   source: 'artifact' | 'upload'
   artifact: MessageArtifact
+  cacheKey: string
+  encoding?: 'utf8' | 'base64'
 }
 
-type ProjectFilePreviewState = Record<string, ArtifactPreviewResult | undefined>
+type ReadableProjectFilePreviewTarget = ProjectFilePreviewTarget & {
+  encoding: 'utf8' | 'base64'
+}
+
+type ProjectFilePreviewEntry = {
+  cacheKey: string
+  preview: ArtifactPreviewResult | undefined
+}
+
+// Each stable file id retains only its current path/version preview entry.
+type ProjectFilePreviewState = Record<string, ProjectFilePreviewEntry | undefined>
+
+type ProjectFilePreviewReadResult = ProjectFilePreviewEntry & { id: string }
 
 const MINUTE_MS = 60 * 1000
 const HOUR_MS = 60 * MINUTE_MS
@@ -64,6 +78,74 @@ const createUploadPreviewArtifact = (file: ProjectUploadFileNode): MessageArtifa
   size: file.attachment.size,
   mtimeMs: file.timestamp
 })
+
+// A moved or rewritten file is a new cache entry even when its stable UI id stays the same.
+const getProjectFilePreviewCacheKey = ({
+  id,
+  path,
+  source,
+  artifact
+}: Pick<ProjectFilePreviewTarget, 'id' | 'path' | 'source' | 'artifact'>): string =>
+  JSON.stringify([source, id, path, artifact.size ?? null, artifact.mtimeMs ?? null])
+
+// Builds the source-neutral capability and source-specific read metadata used by File tiles.
+const createProjectFilePreviewTarget = (
+  target: Pick<ProjectFilePreviewTarget, 'id' | 'path' | 'source' | 'artifact'>
+): ProjectFilePreviewTarget => ({
+  ...target,
+  cacheKey: getProjectFilePreviewCacheKey(target),
+  encoding: getPreviewThumbnailReadEncoding(getArtifactPreviewFormat(target.artifact))
+})
+
+// Skips unsupported, cached, and oversized image targets before any IPC reads start.
+const getMissingProjectFilePreviewTargets = (
+  targets: ProjectFilePreviewTarget[],
+  previews: ProjectFilePreviewState
+): ReadableProjectFilePreviewTarget[] =>
+  targets
+    .filter((target): target is ReadableProjectFilePreviewTarget => target.encoding !== undefined)
+    .filter((target) => previews[target.id]?.cacheKey !== target.cacheKey)
+    .filter(
+      (target) =>
+        target.encoding !== 'base64' ||
+        (typeof target.artifact.size === 'number' &&
+          target.artifact.size <= ARTIFACT_IMAGE_PREVIEW_BYTES)
+    )
+
+// Reads one tile through its source-specific IPC while retaining the source-neutral cache identity.
+const readProjectFilePreview = async (
+  target: ReadableProjectFilePreviewTarget
+): Promise<ProjectFilePreviewReadResult> => {
+  const readPreview =
+    target.source === 'upload' ? window.api.uploads.readPreview : window.api.artifacts.readPreview
+
+  try {
+    const preview = await readPreview({
+      path: target.path,
+      maxBytes:
+        target.encoding === 'base64' ? ARTIFACT_IMAGE_PREVIEW_BYTES : ARTIFACT_PREVIEW_BYTES,
+      encoding: target.encoding
+    })
+
+    return { id: target.id, cacheKey: target.cacheKey, preview }
+  } catch (error) {
+    console.error('Failed to read project file preview', error)
+    return { id: target.id, cacheKey: target.cacheKey, preview: undefined }
+  }
+}
+
+// Merges one completed read batch without dropping cached entries for other visible files.
+const mergeProjectFilePreviews = (
+  currentPreviews: ProjectFilePreviewState,
+  previews: ProjectFilePreviewReadResult[]
+): ProjectFilePreviewState =>
+  previews.reduce<ProjectFilePreviewState>(
+    (nextPreviews, item) => {
+      nextPreviews[item.id] = { cacheKey: item.cacheKey, preview: item.preview }
+      return nextPreviews
+    },
+    { ...currentPreviews }
+  )
 
 const formatMiddleEllipsisName = (name: string): string => {
   if (name.length < 26) return name
@@ -322,73 +404,54 @@ const ProjectFilesView = (): React.JSX.Element => {
     visibleArtifactGroups.reduce((total, group) => total + group.files.length, 0)
   const previewTargets = useMemo<ProjectFilePreviewTarget[]>(
     () => [
-      ...visibleUploadFiles.map((file) => ({
-        id: file.id,
-        path: file.attachment.path,
-        source: 'upload' as const,
-        artifact: createUploadPreviewArtifact(file)
-      })),
-      ...visibleArtifactGroups.flatMap((group) =>
-        group.files.map((file) => ({
+      ...visibleUploadFiles.map((file) =>
+        createProjectFilePreviewTarget({
           id: file.id,
-          path: file.artifact.path,
-          source: 'artifact' as const,
-          artifact: file.artifact
-        }))
+          path: file.attachment.path,
+          source: 'upload',
+          artifact: createUploadPreviewArtifact(file)
+        })
+      ),
+      ...visibleArtifactGroups.flatMap((group) =>
+        group.files.map((file) =>
+          createProjectFilePreviewTarget({
+            id: file.id,
+            path: file.artifact.path,
+            source: 'artifact',
+            artifact: file.artifact
+          })
+        )
       )
     ],
     [visibleArtifactGroups, visibleUploadFiles]
   )
+  // A previous version may remain cached while the current path loads; never render it as current.
+  const currentFilePreviewById = useMemo(
+    () =>
+      new Map(
+        previewTargets.map((target) => {
+          const entry = filePreviews[target.id]
+          return [
+            target.id,
+            entry?.cacheKey === target.cacheKey ? entry.preview : undefined
+          ] as const
+        })
+      ),
+    [filePreviews, previewTargets]
+  )
 
   useEffect(() => {
-    const missingTargets = previewTargets
-      .filter((target) => shouldReadArtifactPreview(target.artifact))
-      .filter((target) => !Object.prototype.hasOwnProperty.call(filePreviews, target.id))
-      .filter(
-        (target) =>
-          !isImageArtifact(target.artifact) ||
-          (typeof target.artifact.size === 'number' &&
-            target.artifact.size <= ARTIFACT_IMAGE_PREVIEW_BYTES)
-      )
+    // Version changes start a fresh batch; cleanup prevents superseded results from reaching state.
+    const missingTargets = getMissingProjectFilePreviewTargets(previewTargets, filePreviews)
 
     if (missingTargets.length === 0) return
 
     let canceled = false
 
-    void Promise.all(
-      missingTargets.map(async (target) => {
-        const readPreview =
-          target.source === 'upload'
-            ? window.api.uploads.readPreview
-            : window.api.artifacts.readPreview
-
-        try {
-          const preview = await readPreview({
-            path: target.path,
-            maxBytes: isImageArtifact(target.artifact)
-              ? ARTIFACT_IMAGE_PREVIEW_BYTES
-              : ARTIFACT_PREVIEW_BYTES,
-            encoding: isImageArtifact(target.artifact) ? 'base64' : 'utf8'
-          })
-
-          return { id: target.id, preview }
-        } catch (error) {
-          console.error('Failed to read project file preview', error)
-          return { id: target.id, preview: undefined }
-        }
-      })
-    ).then((previews) => {
+    void Promise.all(missingTargets.map(readProjectFilePreview)).then((previews) => {
       if (canceled) return
 
-      setFilePreviews((currentPreviews) =>
-        previews.reduce<ProjectFilePreviewState>(
-          (nextPreviews, item) => {
-            nextPreviews[item.id] = item.preview
-            return nextPreviews
-          },
-          { ...currentPreviews }
-        )
-      )
+      setFilePreviews((currentPreviews) => mergeProjectFilePreviews(currentPreviews, previews))
     })
 
     return () => {
@@ -461,7 +524,7 @@ const ProjectFilesView = (): React.JSX.Element => {
                     key={file.id}
                     name={file.name}
                     previewArtifact={createUploadPreviewArtifact(file)}
-                    preview={filePreviews[file.id]}
+                    preview={currentFilePreviewById.get(file.id)}
                     source="upload"
                     size={file.size}
                     timestamp={file.timestamp}
@@ -501,7 +564,7 @@ const ProjectFilesView = (): React.JSX.Element => {
                           key={file.id}
                           name={file.name}
                           previewArtifact={file.artifact}
-                          preview={filePreviews[file.id]}
+                          preview={currentFilePreviewById.get(file.id)}
                           source="artifact"
                           size={file.size}
                           timestamp={file.artifact.mtimeMs}

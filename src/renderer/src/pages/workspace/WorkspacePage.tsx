@@ -264,7 +264,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
 
   // Switches the preview panel to the active project's own tabs (never another project's stale
   // previews) and persists/restores each project's panel state across switches and restarts.
-  usePreviewPersistence(activeProjectId)
+  usePreviewPersistence(activeProjectId, isSessionPersistenceReady)
 
   // Preview workbench open requests come through the store; the shell owns the panel ref.
   useLayoutEffect(() => {

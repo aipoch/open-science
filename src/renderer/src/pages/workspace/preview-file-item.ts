@@ -3,8 +3,8 @@ import type { ChatSession } from '@/stores/session-store'
 import type { MessagePart } from '../../../../shared/session-persistence'
 import { getUploadedAttachmentName } from '../../../../shared/uploads'
 
-import { getArtifactExtension, getArtifactName } from './artifact-preview-utils'
-import { getFileExtension, getPreviewFormat } from './preview-support'
+import { getArtifactName } from './artifact-preview-utils'
+import { getPreviewFormatForFile } from './preview-support'
 
 export type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
 export type MessageUploadAttachment = NonNullable<
@@ -18,7 +18,6 @@ export const createPreviewFileItem = ({
   sessionId,
   path,
   name,
-  extension,
   mimeType,
   source
 }: {
@@ -26,7 +25,6 @@ export const createPreviewFileItem = ({
   sessionId: string
   path: string
   name: string
-  extension: string
   mimeType?: string
   source?: PreviewFileSource
 }): PreviewFileItem => {
@@ -37,7 +35,7 @@ export const createPreviewFileItem = ({
     type: 'file',
     path,
     name,
-    format: getPreviewFormat(extension, mimeType)
+    format: getPreviewFormatForFile({ name, mimeType })
   }
 
   // Only uploads need an explicit source because artifacts are the historical default.
@@ -60,7 +58,6 @@ export const createPreviewFileItemFromArtifact = (
     sessionId,
     path: artifact.path,
     name: artifactName,
-    extension: getArtifactExtension(artifact),
     mimeType: artifact.mimeType
   })
 }
@@ -78,7 +75,6 @@ export const createPreviewFileItemFromUpload = (
     source: 'upload',
     path: attachment.path,
     name: attachmentName,
-    extension: getFileExtension(attachmentName),
     mimeType: attachment.mimeType
   })
 }
@@ -93,6 +89,5 @@ export const createPreviewFileItemFromMention = (
     sessionId,
     path: part.path,
     name: part.name,
-    extension: getFileExtension(part.name),
     source: part.source === 'upload' ? 'upload' : undefined
   })

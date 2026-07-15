@@ -7,6 +7,8 @@ import {
   type PreviewFileSource,
   type RestoredPreviewSlice
 } from '../../stores/preview-workbench-store'
+import { useSessionStore, type ChatSession } from '../../stores/session-store'
+import { getPreviewFormatForFile } from '../../pages/workspace/preview-support'
 
 type PreviewStoreState = ReturnType<typeof usePreviewWorkbenchStore.getState>
 
@@ -33,28 +35,56 @@ const toPersistedPreviewState = (state: PreviewStoreState): PersistedPreviewStat
     }))
 })
 
-// Rebuilds the store's restore payload from persisted file items (format/source cast back to unions).
-const toRestoredSlice = (persisted: PersistedPreviewState): RestoredPreviewSlice => ({
-  panelState: persisted.panelState,
-  activeItemId: persisted.activeItemId,
-  items: persisted.items.map((item) => ({
-    id: item.id,
-    sessionId: item.sessionId,
-    title: item.title,
-    type: 'file' as const,
-    source: item.source as PreviewFileSource | undefined,
-    path: item.path,
-    format: item.format as PreviewFileFormat,
-    name: item.name
-  }))
-})
+// Rebuilds the store's restore payload and repairs upload paths that changed after staging.
+const toRestoredSlice = (
+  persisted: PersistedPreviewState,
+  sessions: ChatSession[] = []
+): RestoredPreviewSlice => {
+  // Hydrated sessions hold finalized upload paths while persisted tabs may still reference staging.
+  const uploadByPreviewId = new Map<string, { sessionId: string; path: string }>()
+
+  for (const session of sessions) {
+    for (const message of session.messages) {
+      for (const upload of message.uploads ?? []) {
+        uploadByPreviewId.set(`upload:${upload.id}`, upload)
+      }
+    }
+  }
+
+  return {
+    panelState: persisted.panelState,
+    activeItemId: persisted.activeItemId,
+    items: persisted.items.map((item) => {
+      const upload = item.source === 'upload' ? uploadByPreviewId.get(item.id) : undefined
+      const currentFormat = getPreviewFormatForFile({ name: item.name })
+
+      return {
+        id: item.id,
+        sessionId: upload?.sessionId ?? item.sessionId,
+        title: item.title,
+        type: 'file' as const,
+        source: item.source as PreviewFileSource | undefined,
+        path: upload?.path ?? item.path,
+        // MIME is not persisted, so keep its stored result only when the name cannot infer a format.
+        format: currentFormat === 'unknown' ? (item.format as PreviewFileFormat) : currentFormat,
+        name: item.name
+      }
+    })
+  }
+}
 
 // Persists and restores the preview panel per project: saves the outgoing project before switching,
 // loads the incoming project's saved slice, and flushes the current project on unmount (e.g. Home).
-export const usePreviewPersistence = (activeProjectId: string | undefined): void => {
+export const usePreviewPersistence = (
+  activeProjectId: string | undefined,
+  isSessionPersistenceReady: boolean
+): void => {
   const previousProjectIdRef = useRef<string | undefined>(undefined)
 
   useEffect(() => {
+    // Upload preview paths can only be reconciled after persisted sessions have hydrated.
+    if (!isSessionPersistenceReady) return
+
     const previousProjectId = previousProjectIdRef.current
     const store = usePreviewWorkbenchStore.getState()
 
@@ -85,16 +115,23 @@ export const usePreviewPersistence = (activeProjectId: string | undefined): void
       .then((restored) => {
         if (cancelled) return
 
+        const projectSessions = useSessionStore
+          .getState()
+          .sessions.filter((session) => session.projectId === activeProjectId)
+
         usePreviewWorkbenchStore
           .getState()
-          .activateProject(activeProjectId, restored ? toRestoredSlice(restored) : undefined)
+          .activateProject(
+            activeProjectId,
+            restored ? toRestoredSlice(restored, projectSessions) : undefined
+          )
       })
       .catch(reportPersistenceError)
 
     return () => {
       cancelled = true
     }
-  }, [activeProjectId])
+  }, [activeProjectId, isSessionPersistenceReady])
 
   // Flush the active project when the workspace unmounts (navigating Home does not change the id).
   useEffect(

@@ -1,6 +1,11 @@
 import type { ChatSession } from '@/stores/session-store'
+import type { PreviewFileFormat } from '@/stores/preview-workbench-store'
 
-import { getFileExtension } from './preview-support'
+import {
+  getFileExtension,
+  getPreviewFormatForFile,
+  getPreviewThumbnailReadEncoding
+} from './preview-support'
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
 type ArtifactPreviewCache = Record<string, unknown | undefined>
@@ -13,62 +18,17 @@ export const getArtifactName = (artifact: MessageArtifact): string => artifact.n
 export const getArtifactExtension = (artifact: MessageArtifact): string =>
   getFileExtension(getArtifactName(artifact)) || 'file'
 
-export const isImageArtifact = (artifact: MessageArtifact): boolean => {
-  if (artifact.mimeType?.startsWith('image/')) return true
+// Adapts artifact metadata to the same source-neutral capability resolver used for uploads.
+export const getArtifactPreviewFormat = (artifact: MessageArtifact): PreviewFileFormat =>
+  getPreviewFormatForFile({ name: getArtifactName(artifact), mimeType: artifact.mimeType })
 
-  return /\.(avif|gif|jpe?g|png|svg|webp)$/i.test(getArtifactName(artifact))
-}
+// Keeps image-specific size limits aligned with the central format decision.
+export const isImageArtifact = (artifact: MessageArtifact): boolean =>
+  getArtifactPreviewFormat(artifact) === 'image'
 
-export const isPdfArtifact = (artifact: MessageArtifact): boolean => {
-  if (artifact.mimeType === 'application/pdf') return true
-
-  return /\.pdf$/i.test(getArtifactName(artifact))
-}
-
-export const shouldReadArtifactPreview = (artifact: MessageArtifact): boolean => {
-  const extension = getArtifactExtension(artifact)
-  const mimeType = artifact.mimeType ?? ''
-
-  return (
-    isImageArtifact(artifact) ||
-    mimeType.startsWith('text/') ||
-    mimeType.includes('json') ||
-    mimeType.includes('xml') ||
-    [
-      'bash',
-      'conf',
-      'config',
-      'css',
-      'csv',
-      'fa',
-      'faa',
-      'fasta',
-      'fna',
-      'html',
-      'ini',
-      'iqtree',
-      'js',
-      'json',
-      'log',
-      'md',
-      'nwk',
-      'pdb',
-      'py',
-      'sh',
-      'state',
-      'toml',
-      'tree',
-      'treefile',
-      'ts',
-      'tsx',
-      'tsv',
-      'txt',
-      'xml',
-      'yaml',
-      'yml'
-    ].includes(extension)
-  )
-}
+// Derives thumbnail eligibility from the shared encoding policy instead of a second allowlist.
+export const shouldReadArtifactPreview = (artifact: MessageArtifact): boolean =>
+  getPreviewThumbnailReadEncoding(getArtifactPreviewFormat(artifact)) !== undefined
 
 export const getArtifactPreviewCacheKey = (artifacts: MessageArtifact[]): string =>
   artifacts

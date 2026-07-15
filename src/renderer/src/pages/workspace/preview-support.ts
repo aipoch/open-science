@@ -1,6 +1,6 @@
 import type { PreviewFileFormat } from '@/stores/preview-workbench-store'
 
-// Single source of truth for which generated-file extensions the preview panel can render inline.
+// Single source of truth for which managed-file extensions the preview panel can render inline.
 // Add an entry here and a matching file renderer to light up a new previewable format.
 const PREVIEW_SUPPORTED_EXTENSIONS: Record<string, PreviewFileFormat> = {
   avif: 'image',
@@ -30,11 +30,16 @@ const PREVIEW_SUPPORTED_EXTENSIONS: Record<string, PreviewFileFormat> = {
   config: 'text',
   css: 'text',
   ini: 'text',
+  iqtree: 'text',
   js: 'text',
   log: 'text',
+  nwk: 'text',
   py: 'text',
   sh: 'text',
+  state: 'text',
   toml: 'text',
+  tree: 'text',
+  treefile: 'text',
   ts: 'text',
   tsx: 'text',
   txt: 'text',
@@ -53,6 +58,7 @@ const getPreviewFormatForMimeType = (mimeType: string): PreviewFileFormat => {
   if (normalizedMimeType === 'application/json' || normalizedMimeType.endsWith('+json')) {
     return 'json'
   }
+  if (normalizedMimeType === 'application/xml' || normalizedMimeType.endsWith('+xml')) return 'text'
   if (normalizedMimeType === 'text/html') return 'html'
   if (normalizedMimeType === 'text/csv' || normalizedMimeType === 'text/tab-separated-values') {
     return 'csv'
@@ -85,6 +91,25 @@ export const getFileExtension = (name: string): string => {
   const extension = name.includes('.') ? name.split('.').pop() : ''
 
   return extension ? extension.toLowerCase() : ''
+}
+
+// Resolves preview capability from file metadata without considering where the file came from.
+export const getPreviewFormatForFile = ({
+  name,
+  mimeType
+}: {
+  name: string
+  mimeType?: string
+}): PreviewFileFormat => getPreviewFormat(getFileExtension(name), mimeType)
+
+// Selects the reader encoding used for lightweight thumbnails in file lists.
+export const getPreviewThumbnailReadEncoding = (
+  format: PreviewFileFormat
+): 'utf8' | 'base64' | undefined => {
+  if (format === 'image') return 'base64'
+  if (format === 'pdf' || format === 'unknown') return undefined
+
+  return 'utf8'
 }
 
 // Shared with artifact-preview.tsx thumbnails so both surfaces infer the same mime type from a name.

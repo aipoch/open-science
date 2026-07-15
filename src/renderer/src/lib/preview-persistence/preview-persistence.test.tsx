@@ -9,6 +9,12 @@ import {
   usePreviewWorkbenchStore
 } from '../../stores/preview-workbench-store'
 import {
+  createInitialSessionState,
+  useSessionStore,
+  type ChatSession
+} from '../../stores/session-store'
+import type { UploadedAttachment } from '../../../../shared/uploads'
+import {
   toPersistedPreviewState,
   toRestoredSlice,
   usePreviewPersistence
@@ -60,9 +66,47 @@ const createStoredToolItem = (): StoreState['items'][number] =>
     updatedAt: 2
   }) as StoreState['items'][number]
 
+const createUpload = (overrides: Partial<UploadedAttachment> = {}): UploadedAttachment => ({
+  id: 'upload-1',
+  sessionId: 'session-final',
+  name: 'data.csv',
+  originalName: 'data.csv',
+  path: '/workspace/uploads/session-final/data.csv',
+  mimeType: 'text/csv',
+  size: 128,
+  ...overrides
+})
+
+const createSession = (
+  upload: UploadedAttachment,
+  overrides: Partial<ChatSession> = {}
+): ChatSession => ({
+  id: upload.sessionId,
+  projectId: 'project-a',
+  title: 'Analysis',
+  cwd: '/workspace/project',
+  status: 'idle',
+  messages: [
+    {
+      id: 'message-1',
+      role: 'user',
+      content: 'Analyze this file',
+      status: 'complete',
+      eventIds: [],
+      uploads: [upload],
+      createdAt: 1,
+      updatedAt: 2
+    }
+  ],
+  createdAt: 1,
+  updatedAt: 2,
+  ...overrides
+})
+
 describe('preview persistence projections', () => {
   beforeEach(() => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    useSessionStore.setState(createInitialSessionState())
   })
 
   it('keeps only file items and stamps the current preview state version', () => {
@@ -121,11 +165,47 @@ describe('preview persistence projections', () => {
       ]
     })
   })
+
+  it('re-evaluates persisted formats against current preview support', () => {
+    const restored = toRestoredSlice({
+      version: PREVIEW_STATE_VERSION,
+      panelState: 'open',
+      activeItemId: 'upload:treefile',
+      items: [
+        {
+          id: 'upload:treefile',
+          sessionId: 'session-1',
+          title: 'analysis.treefile',
+          source: 'upload',
+          path: '/workspace/uploads/session-1/analysis.treefile',
+          format: 'unknown',
+          name: 'analysis.treefile'
+        },
+        {
+          id: 'upload:extensionless-json',
+          sessionId: 'session-1',
+          title: 'model-output',
+          source: 'upload',
+          path: '/workspace/uploads/session-1/model-output',
+          format: 'json',
+          name: 'model-output'
+        }
+      ]
+    })
+
+    expect(restored.items).toMatchObject([{ format: 'text' }, { format: 'json' }])
+  })
 })
 
 // Minimal wrapper so the effect-only hook can be mounted/rerendered/unmounted.
-const PersistenceHarness = ({ projectId }: { projectId: string | undefined }): null => {
-  usePreviewPersistence(projectId)
+const PersistenceHarness = ({
+  projectId,
+  isReady = true
+}: {
+  projectId: string | undefined
+  isReady?: boolean
+}): null => {
+  usePreviewPersistence(projectId, isReady)
   return null
 }
 
@@ -137,6 +217,7 @@ describe('usePreviewPersistence per-project save/restore', () => {
 
   beforeEach(() => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    useSessionStore.setState(createInitialSessionState())
     load = vi.fn(() => Promise.resolve(undefined))
     save = vi.fn(() => Promise.resolve())
     window.api = { preview: { load, save } } as never
@@ -182,6 +263,89 @@ describe('usePreviewPersistence per-project save/restore', () => {
       panelState: 'open',
       activeItemId: 'file:session-1:/workspace/project/report.md',
       items: [{ id: 'file:session-1:/workspace/project/report.md', type: 'file' }]
+    })
+  })
+
+  it('restores uploaded previews with the finalized path from hydrated sessions', async () => {
+    const finalizedUpload = createUpload()
+    const unopenedUpload = createUpload({
+      id: 'upload-2',
+      sessionId: 'session-other',
+      name: 'other.csv'
+    })
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createSession(finalizedUpload), createSession(unopenedUpload)]
+    })
+    load.mockResolvedValueOnce({
+      version: PREVIEW_STATE_VERSION,
+      panelState: 'open',
+      activeItemId: 'upload:upload-1',
+      items: [
+        {
+          id: 'upload:upload-1',
+          sessionId: '.pending',
+          title: 'data.csv',
+          source: 'upload',
+          path: '/workspace/uploads/.pending/data.csv',
+          format: 'csv',
+          name: 'data.csv'
+        }
+      ]
+    })
+
+    await act(async () => {
+      root.render(<PersistenceHarness projectId="project-a" />)
+    })
+
+    const restoredItems = usePreviewWorkbenchStore.getState().items
+
+    expect(restoredItems).toHaveLength(1)
+    expect(restoredItems[0]).toMatchObject({
+      id: 'upload:upload-1',
+      sessionId: 'session-final',
+      path: '/workspace/uploads/session-final/data.csv'
+    })
+  })
+
+  it('waits for session hydration before restoring uploaded preview paths', async () => {
+    const finalizedUpload = createUpload()
+    load.mockResolvedValueOnce({
+      version: PREVIEW_STATE_VERSION,
+      panelState: 'open',
+      activeItemId: 'upload:upload-1',
+      items: [
+        {
+          id: 'upload:upload-1',
+          sessionId: '.pending',
+          title: 'data.csv',
+          source: 'upload',
+          path: '/workspace/uploads/.pending/data.csv',
+          format: 'csv',
+          name: 'data.csv'
+        }
+      ]
+    })
+
+    await act(async () => {
+      root.render(<PersistenceHarness projectId="project-a" isReady={false} />)
+    })
+
+    expect(load).not.toHaveBeenCalled()
+
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createSession(finalizedUpload)]
+    })
+    await act(async () => {
+      root.render(<PersistenceHarness projectId="project-a" isReady />)
+    })
+
+    expect(load).toHaveBeenCalledWith({ projectId: 'project-a' })
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+      id: 'upload:upload-1',
+      sessionId: 'session-final',
+      path: '/workspace/uploads/session-final/data.csv'
     })
   })
 

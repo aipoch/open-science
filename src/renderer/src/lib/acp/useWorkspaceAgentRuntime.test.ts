@@ -4,6 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
 import {
+  createInitialPreviewWorkbenchState,
+  usePreviewWorkbenchStore
+} from '../../stores/preview-workbench-store'
+import {
   createWorkspaceRuntimeEventProcessor,
   processVisibleWorkspaceRuntimeEvents,
   resumeInterruptedWorkspaceSession,
@@ -196,6 +200,7 @@ describe('workspace agent runtime event processing', () => {
 describe('workspace agent message sending', () => {
   beforeEach(() => {
     useSessionStore.setState(createInitialSessionState())
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   })
 
   afterEach(() => {
@@ -323,6 +328,55 @@ describe('workspace agent message sending', () => {
       undefined,
       undefined
     )
+  })
+
+  it('reconciles an open upload preview after finalizing a new session attachment', async () => {
+    const attachment = createAttachment()
+    const finalizedAttachment = createAttachment({
+      sessionId: 'transport-session-1',
+      path: '/Users/example/.open-science/uploads/default-project/transport-session-1/notes.txt'
+    })
+    vi.stubGlobal('window', {
+      api: {
+        uploads: {
+          finalizeSession: vi.fn().mockResolvedValue([finalizedAttachment])
+        }
+      }
+    })
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem({
+      id: 'upload:upload-1',
+      sessionId: '.pending',
+      type: 'file',
+      source: 'upload',
+      title: 'notes.txt',
+      path: attachment.path,
+      format: 'text',
+      name: 'notes.txt'
+    })
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'transport-session-1',
+        cwd: '/workspace/project'
+      }),
+      resumeSession: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      text: '',
+      attachments: [attachment],
+      cwd: '/workspace/project'
+    })
+    await flushRuntimeTasks()
+
+    expect(usePreviewWorkbenchStore.getState().items).toMatchObject([
+      {
+        id: 'upload:upload-1',
+        sessionId: 'transport-session-1',
+        path: finalizedAttachment.path
+      }
+    ])
   })
 
   it('retries ACP session creation for an unbound pending conversation', async () => {

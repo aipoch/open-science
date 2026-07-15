@@ -7,9 +7,9 @@ import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import {
   getArtifactExtension,
+  getArtifactPreviewFormat,
   getArtifactName,
-  isImageArtifact,
-  isPdfArtifact
+  isImageArtifact
 } from './artifact-preview-utils'
 import { getImageMimeTypeForExtension } from './preview-support'
 import { PdfThumbnail } from './previews/renderers/PdfThumbnail'
@@ -52,16 +52,6 @@ const getImageMimeType = (artifact: MessageArtifact): string => {
 
   return getImageMimeTypeForExtension(getArtifactExtension(artifact))
 }
-
-const isCsvArtifact = (artifact: MessageArtifact): boolean => {
-  const extension = getArtifactExtension(artifact)
-  const mimeType = artifact.mimeType ?? ''
-
-  return extension === 'csv' || extension === 'tsv' || mimeType.includes('csv')
-}
-
-const isFastaArtifact = (artifact: MessageArtifact): boolean =>
-  ['fa', 'faa', 'fasta', 'fna'].includes(getArtifactExtension(artifact))
 
 const isTextSkeletonArtifact = (artifact: MessageArtifact): boolean =>
   TEXT_SKELETON_EXTENSIONS.has(getArtifactExtension(artifact))
@@ -286,13 +276,22 @@ export const ArtifactPreview = ({
   source?: PreviewFileSource
 }): React.JSX.Element => {
   const artifactName = getArtifactName(artifact)
+  // Renderer selection is source-neutral; source remains relevant only to the nested file reader.
+  const format = getArtifactPreviewFormat(artifact)
 
   // PDFs render their first page as a thumbnail; the component fetches its own full bytes.
-  if (isPdfArtifact(artifact)) {
-    return <PdfThumbnail path={artifact.path} name={artifactName} source={source} />
+  if (format === 'pdf') {
+    return (
+      <PdfThumbnail
+        path={artifact.path}
+        name={artifactName}
+        source={source}
+        version={JSON.stringify([artifact.size ?? null, artifact.mtimeMs ?? null])}
+      />
+    )
   }
 
-  if (isImageArtifact(artifact)) {
+  if (format === 'image') {
     const mimeType = getImageMimeType(artifact)
 
     if (!preview || preview.encoding !== 'base64' || preview.truncated || !mimeType) {
@@ -311,11 +310,11 @@ export const ArtifactPreview = ({
     )
   }
 
-  if (preview && isCsvArtifact(artifact)) {
+  if (preview && format === 'csv') {
     return <CsvPreview artifact={artifact} preview={preview} />
   }
 
-  if (preview && isFastaArtifact(artifact)) {
+  if (preview && format === 'fasta') {
     return <FastaPreview preview={preview} />
   }
 

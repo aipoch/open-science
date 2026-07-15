@@ -118,6 +118,30 @@ describe('preview file item helpers', () => {
     })
   })
 
+  it('uses the same preview format list for generated files and uploads', () => {
+    const artifactItem = createPreviewFileItemFromArtifact(
+      createManagedArtifact({
+        path: '/workspace/results/analysis.treefile',
+        fileUrl: 'file:///workspace/results/analysis.treefile',
+        name: 'analysis.treefile',
+        mimeType: undefined
+      }),
+      'session-1'
+    )
+    const uploadItem = createPreviewFileItemFromUpload(
+      createUploadAttachment({
+        name: 'analysis.treefile',
+        originalName: 'analysis.treefile',
+        path: '/uploads/session-1/analysis.treefile',
+        mimeType: undefined
+      }),
+      'session-1'
+    )
+
+    expect(artifactItem?.format).toBe('text')
+    expect(uploadItem.format).toBe('text')
+  })
+
   it('creates artifact mention preview items without an explicit source', () => {
     expect(createPreviewFileItemFromMention(createMentionPart(), 'session-1')).toEqual({
       id: 'artifact-9',

@@ -108,6 +108,85 @@ describe('preview workbench store', () => {
     })
   })
 
+  it('reconciles finalized upload paths across project slices without opening new tabs', () => {
+    const store = usePreviewWorkbenchStore.getState()
+
+    store.activateProject('project-a')
+    store.upsertAndActivateItem({
+      id: 'upload:upload-a',
+      sessionId: '.pending',
+      type: 'file',
+      source: 'upload',
+      title: 'a.csv',
+      path: '/uploads/default-project/.pending/a.csv',
+      format: 'csv',
+      name: 'a.csv'
+    })
+    store.activateProject('project-b')
+    store.upsertAndActivateItem({
+      id: 'upload:upload-b',
+      sessionId: '.pending',
+      type: 'file',
+      source: 'upload',
+      title: 'b.csv',
+      path: '/uploads/default-project/.pending/b.csv',
+      format: 'csv',
+      name: 'b.csv'
+    })
+
+    usePreviewWorkbenchStore.getState().reconcileFinalizedUploads([
+      {
+        id: 'upload-a',
+        sessionId: 'session-a',
+        name: 'a.csv',
+        originalName: 'a.csv',
+        path: '/uploads/default-project/session-a/a.csv',
+        mimeType: 'text/csv',
+        size: 12
+      },
+      {
+        id: 'upload-b',
+        sessionId: 'session-b',
+        name: 'b.csv',
+        originalName: 'b.csv',
+        path: '/uploads/default-project/session-b/b.csv',
+        mimeType: 'text/csv',
+        size: 12
+      },
+      {
+        id: 'upload-never-opened',
+        sessionId: 'session-b',
+        name: 'hidden.csv',
+        originalName: 'hidden.csv',
+        path: '/uploads/default-project/session-b/hidden.csv',
+        mimeType: 'text/csv',
+        size: 12
+      }
+    ])
+
+    expect(usePreviewWorkbenchStore.getState().items).toMatchObject([
+      {
+        id: 'upload:upload-b',
+        sessionId: 'session-b',
+        path: '/uploads/default-project/session-b/b.csv'
+      }
+    ])
+
+    usePreviewWorkbenchStore.getState().activateProject('project-a')
+    expect(usePreviewWorkbenchStore.getState().items).toMatchObject([
+      {
+        id: 'upload:upload-a',
+        sessionId: 'session-a',
+        path: '/uploads/default-project/session-a/a.csv'
+      }
+    ])
+    expect(
+      usePreviewWorkbenchStore
+        .getState()
+        .items.some((item) => item.id === 'upload:upload-never-opened')
+    ).toBe(false)
+  })
+
   it('owns preview item timestamps instead of trusting caller input', () => {
     const itemWithCallerTimestamps = {
       id: 'file:session-1:/workspace/project/report.md',

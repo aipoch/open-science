@@ -13,6 +13,7 @@ import {
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import type { ArtifactReference } from '../../../../shared/artifacts'
 import type { MessagePart } from '../../../../shared/session-persistence'
+import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
 import { useSessionStore } from '../../stores/session-store'
 import { useAcpRuntime } from './useAcpRuntime'
 import { applyWorkspaceRuntimeEvent, syncWorkspacePermissionState } from './workspace-events'
@@ -86,6 +87,8 @@ const finalizeWorkspaceAttachments = async (
     messageId,
     uploads: finalizedAttachments
   })
+  // Keep tabs opened from staged attachments pointed at the files after their final move.
+  usePreviewWorkbenchStore.getState().reconcileFinalizedUploads(finalizedAttachments)
 
   return finalizedAttachments
 }

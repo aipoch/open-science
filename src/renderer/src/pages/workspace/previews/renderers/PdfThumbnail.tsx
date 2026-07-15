@@ -9,11 +9,16 @@ import { readPdfBytes } from '../pdf-bytes'
 // Roughly the card width; rendering the first page near this size keeps the data URL small.
 const THUMBNAIL_WIDTH = 220
 
-// Rendered first-page data URLs are cached by path so scrolling the file list never re-renders a PDF.
+// Rendered first-page data URLs are cached by source, path, and version.
 const thumbnailCache = new Map<string, string>()
 
-const renderFirstPage = async (path: string, source: PreviewFileSource): Promise<string> => {
-  const cached = thumbnailCache.get(path)
+// Renders page one and stores it under the caller's versioned identity for future tile reuse.
+const renderFirstPage = async (
+  path: string,
+  source: PreviewFileSource,
+  requestKey: string
+): Promise<string> => {
+  const cached = thumbnailCache.get(requestKey)
   if (cached) return cached
 
   const bytes = await readPdfBytes(path, source)
@@ -35,7 +40,7 @@ const renderFirstPage = async (path: string, source: PreviewFileSource): Promise
     page.cleanup()
 
     const dataUrl = canvas.toDataURL('image/png')
-    thumbnailCache.set(path, dataUrl)
+    thumbnailCache.set(requestKey, dataUrl)
     return dataUrl
   } finally {
     await document.destroy()
@@ -49,37 +54,52 @@ const PdfIconFallback = (): React.JSX.Element => (
   </div>
 )
 
+// Displays a version-aware first-page preview while stale, loading, and failed requests use an icon.
 export const PdfThumbnail = ({
   path,
   name,
-  source = 'artifact'
+  source = 'artifact',
+  version
 }: {
   path: string
   name: string
   source?: PreviewFileSource
+  version: string
 }): React.JSX.Element => {
-  const [dataUrl, setDataUrl] = useState<string | undefined>(() => thumbnailCache.get(path))
-  const [failed, setFailed] = useState(false)
+  const requestKey = JSON.stringify([source, path, version])
+  const [result, setResult] = useState<{
+    requestKey: string
+    status: 'ready' | 'error'
+  } | null>(null)
 
   useEffect(() => {
-    if (dataUrl) return
+    // Keying status prevents a late result from one path/version from affecting the next request.
+    if (thumbnailCache.has(requestKey)) return
+
     let canceled = false
 
-    renderFirstPage(path, source)
-      .then((url) => {
-        if (!canceled) setDataUrl(url)
+    renderFirstPage(path, source, requestKey)
+      .then(() => {
+        if (!canceled) setResult({ requestKey, status: 'ready' })
       })
       .catch((error) => {
         console.error('Failed to render PDF thumbnail', error)
-        if (!canceled) setFailed(true)
+        if (!canceled) setResult({ requestKey, status: 'error' })
       })
 
     return () => {
       canceled = true
     }
-  }, [dataUrl, path, source])
+  }, [path, requestKey, source])
 
-  if (failed) return <PdfIconFallback />
+  const dataUrl = thumbnailCache.get(requestKey)
+  const currentStatus = dataUrl
+    ? 'ready'
+    : result?.requestKey === requestKey
+      ? result.status
+      : undefined
+
+  if (currentStatus === 'error') return <PdfIconFallback />
   if (!dataUrl) return <PdfIconFallback />
 
   return (

@@ -445,6 +445,181 @@ describe('ProjectFilesView', () => {
     expect(container.querySelector('img[alt="Preview of uploaded_image.png"]')).not.toBeNull()
   })
 
+  it('uses the same text preview capability for generated files and uploads', async () => {
+    const treePreview = {
+      content: '(sample_a:0.1,sample_b:0.2);',
+      encoding: 'utf8' as const,
+      size: 30,
+      truncated: false
+    }
+    vi.mocked(window.api.artifacts.readPreview).mockResolvedValue(treePreview)
+    vi.mocked(window.api.uploads.readPreview).mockResolvedValue(treePreview)
+
+    await renderView([
+      createSession({
+        messages: [
+          createMessage({
+            uploads: [
+              createUpload({
+                name: 'uploaded.treefile',
+                originalName: 'uploaded.treefile',
+                path: '/uploads/uploaded.treefile',
+                mimeType: undefined,
+                size: 30
+              })
+            ]
+          })
+        ],
+        artifacts: [
+          {
+            id: 'artifact-tree',
+            kind: 'managed-file',
+            path: '/workspace/generated.treefile',
+            fileUrl: 'file:///workspace/generated.treefile',
+            name: 'generated.treefile',
+            mimeType: undefined,
+            size: 30,
+            mtimeMs: 1710000002000
+          }
+        ]
+      })
+    ])
+
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(window.api.artifacts.readPreview).toHaveBeenCalledWith(
+      expect.objectContaining({ path: '/workspace/generated.treefile', encoding: 'utf8' })
+    )
+    expect(window.api.uploads.readPreview).toHaveBeenCalledWith(
+      expect.objectContaining({ path: '/uploads/uploaded.treefile', encoding: 'utf8' })
+    )
+    expect(container.querySelectorAll('[data-testid="artifact-skeleton-preview"]')).toHaveLength(2)
+  })
+
+  it('retries an uploaded CSV thumbnail after its pending path is finalized', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.mocked(window.api.uploads.readPreview)
+      .mockRejectedValueOnce(new Error('ENOENT: pending upload moved'))
+      .mockResolvedValueOnce({
+        content: 'sample,value\nalpha,1\n',
+        encoding: 'utf8',
+        size: 21,
+        truncated: false
+      })
+
+    await renderView([
+      createSession({
+        messages: [
+          createMessage({
+            uploads: [
+              createUpload({
+                sessionId: '.pending',
+                name: 'results.csv',
+                originalName: 'results.csv',
+                path: '/uploads/.pending/results.csv',
+                mimeType: 'text/csv',
+                size: 21
+              })
+            ]
+          })
+        ]
+      })
+    ])
+
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const { useSessionStore } = await import('@/stores/session-store')
+    await act(async () => {
+      useSessionStore.getState().replaceMessageUploads({
+        sessionId: 'session-1',
+        messageId: 'message-1',
+        uploads: [
+          createUpload({
+            name: 'results.csv',
+            originalName: 'results.csv',
+            path: '/uploads/session-1/results.csv',
+            mimeType: 'text/csv',
+            size: 21
+          })
+        ]
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(consoleError).toHaveBeenCalledWith(
+      'Failed to read project file preview',
+      expect.any(Error)
+    )
+    expect(window.api.uploads.readPreview).toHaveBeenCalledTimes(2)
+    expect(window.api.uploads.readPreview).toHaveBeenLastCalledWith(
+      expect.objectContaining({ path: '/uploads/session-1/results.csv', encoding: 'utf8' })
+    )
+    expect(container.textContent).toContain('1 rows · 2 columns')
+  })
+
+  it('hides a stale thumbnail while a new file version is loading', async () => {
+    vi.mocked(window.api.uploads.readPreview)
+      .mockResolvedValueOnce({
+        content: 'legacy_column,value\nold,1\n',
+        encoding: 'utf8',
+        size: 26,
+        truncated: false
+      })
+      .mockImplementationOnce(() => new Promise(() => undefined))
+
+    await renderView([
+      createSession({
+        messages: [
+          createMessage({
+            uploads: [
+              createUpload({
+                name: 'results.csv',
+                originalName: 'results.csv',
+                path: '/uploads/.pending/results.csv',
+                mimeType: 'text/csv',
+                size: 26
+              })
+            ]
+          })
+        ]
+      })
+    ])
+
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(container.textContent).toContain('legacy_column')
+
+    const { useSessionStore } = await import('@/stores/session-store')
+    await act(async () => {
+      useSessionStore.getState().replaceMessageUploads({
+        sessionId: 'session-1',
+        messageId: 'message-1',
+        uploads: [
+          createUpload({
+            name: 'results.csv',
+            originalName: 'results.csv',
+            path: '/uploads/session-1/results.csv',
+            mimeType: 'text/csv',
+            size: 27
+          })
+        ]
+      })
+      await Promise.resolve()
+    })
+
+    expect(window.api.uploads.readPreview).toHaveBeenCalledTimes(2)
+    expect(container.textContent).not.toContain('legacy_column')
+  })
+
   it('middle-truncates file names in the card style while preserving the extension', async () => {
     await renderView([
       createSession({

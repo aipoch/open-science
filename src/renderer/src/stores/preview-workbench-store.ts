@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 import type { NotebookSessionReference } from '../../../shared/notebook'
+import type { UploadedAttachment } from '../../../shared/uploads'
 
 export type PreviewPanelState = 'open' | 'collapsed'
 export type PreviewFileFormat =
@@ -60,6 +61,7 @@ type PreviewWorkbenchStoreData = PreviewSlice & {
 
 type PreviewWorkbenchStore = PreviewWorkbenchStoreData & {
   activateProject: (projectId: string, restored?: RestoredPreviewSlice) => void
+  reconcileFinalizedUploads: (uploads: UploadedAttachment[]) => void
   upsertItem: (item: PreviewItem) => void
   upsertAndActivateItem: (item: PreviewItem) => void
   activateItem: (itemId: string) => void
@@ -147,6 +149,26 @@ const getRepairedActiveItemId = (
   return items[Math.min(removedIndex, items.length - 1)]?.id
 }
 
+// Updates matching upload tabs while preserving array identity when no item changes.
+const reconcileUploadPreviewItems = (
+  items: StoredPreviewItem[],
+  uploadByPreviewId: Map<string, UploadedAttachment>,
+  updatedAt: number
+): StoredPreviewItem[] => {
+  let changed = false
+  const reconciledItems = items.map((item) => {
+    if (item.type !== 'file' || item.source !== 'upload') return item
+
+    const upload = uploadByPreviewId.get(item.id)
+    if (!upload || (upload.path === item.path && upload.sessionId === item.sessionId)) return item
+
+    changed = true
+    return { ...item, sessionId: upload.sessionId, path: upload.path, updatedAt }
+  })
+
+  return changed ? reconciledItems : items
+}
+
 export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get) => ({
   ...createInitialPreviewWorkbenchState(),
 
@@ -175,6 +197,36 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
       delete byProject[projectId]
 
       return { ...targetSlice, activeProjectId: projectId, byProject }
+    })
+  },
+
+  // Repairs already-open upload tabs after staged files move into their permanent session folder.
+  reconcileFinalizedUploads: (uploads) => {
+    if (uploads.length === 0) return
+
+    const uploadByPreviewId = new Map(uploads.map((upload) => [`upload:${upload.id}`, upload]))
+    const updatedAt = Date.now()
+
+    set((state) => {
+      const items = reconcileUploadPreviewItems(state.items, uploadByPreviewId, updatedAt)
+      let byProject = state.byProject
+
+      // Repair inactive project slices too without creating tabs for uploads never opened by users.
+      for (const [projectId, slice] of Object.entries(state.byProject)) {
+        const reconciledItems = reconcileUploadPreviewItems(
+          slice.items,
+          uploadByPreviewId,
+          updatedAt
+        )
+        if (reconciledItems === slice.items) continue
+
+        if (byProject === state.byProject) byProject = { ...state.byProject }
+        byProject[projectId] = { ...slice, items: reconciledItems }
+      }
+
+      if (items === state.items && byProject === state.byProject) return state
+
+      return { items, byProject }
     })
   },
 
