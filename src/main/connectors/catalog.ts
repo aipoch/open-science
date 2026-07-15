@@ -41,10 +41,11 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'pubmed',
     displayName: 'PubMed',
-    description: 'Biomedical literature via NCBI E-utilities.',
+    description:
+      'Biomedical literature via NCBI E-utilities, the PMC ID Converter and Europe PMC — search, metadata, related articles, citation lookup, ID conversion, full text and copyright.',
     useWhen:
-      'Use when searching the biomedical literature for articles, publication counts, or titles about a disease, gene, drug, or clinical topic. Sourced from PubMed (NCBI).',
-    sources: ['PubMed'],
+      'Use to search the biomedical literature and retrieve article metadata (authors, abstract, DOIs, MeSH), find related/similar articles, resolve citations to PMIDs, convert between PMID/PMCID/DOI, fetch open-access full text from PubMed Central, or check copyright/license status. Sourced from PubMed (NCBI), PMC and Europe PMC.',
+    sources: ['PubMed', 'PMC', 'Europe PMC'],
     termsUrl: 'https://www.ncbi.nlm.nih.gov/home/about/policies/',
     requiresNcbi: true,
     group: 'directory'

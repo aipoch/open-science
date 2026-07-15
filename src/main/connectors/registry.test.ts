@@ -8,7 +8,7 @@ describe('registry + catalog', () => {
     expect(getDescriptor('chemistry', 'nope')).toBeUndefined()
   })
   it('lists tools for a connector', () => {
-    expect(getConnectorTools('pubmed').map((t) => t.id)).toContain('pubmed_search')
+    expect(getConnectorTools('pubmed').map((t) => t.id)).toContain('search_articles')
   })
   it('catalog ids and registry ids are consistent', () => {
     for (const meta of CONNECTOR_CATALOG) expect(ALL_CONNECTOR_IDS).toContain(meta.id)
