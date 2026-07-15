@@ -14,6 +14,7 @@ import { ConnectorService } from './connectors/service'
 import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './connectors/provision'
 import { registerFileSaveHandlers } from './file-save'
 import { registerGithubIpcHandlers } from './github-ipc'
+import { KetcherBroker } from './ketcher/broker'
 import { registerLogsIpcHandlers } from './logs-ipc'
 import { registerNotebookIpcHandlers } from './notebook/ipc'
 import { NotebookLocalRpcServer } from './notebook/local-rpc-server'
@@ -24,6 +25,7 @@ import { registerSettingsIpcHandlers } from './settings/ipc'
 import { getAppClaudeConfigDir } from './settings/provider-env'
 import { createDefaultSettingsService, type SettingsService } from './settings/service'
 import type { StoredConnectors } from './settings/types'
+import type { KetcherMountNotice, KetcherReply } from '../shared/ketcher'
 import { resolveStorageRoot } from './storage-root'
 import { registerUpdateIpcHandlers } from './update/ipc'
 import { startUpdateScheduler } from './update/scheduler'
@@ -111,6 +113,16 @@ const registerIpcHandlers = ({ mainEntryPath }: IpcRegistrationOptions): void =>
     requestApproval: ({ connector, method, args }) =>
       approvalBroker.request({ connector, method, argsPreview: previewArgs(args) })
   })
+  // Bridges the main-process Ketcher tool host to live sketcher tiles in the renderer(s): it pushes
+  // open/command events and resolves each command when the addressed tile replies.
+  const ketcherBroker = new KetcherBroker({
+    generateId: () => randomUUID(),
+    send: (channel, payload) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.webContents.send(channel, payload)
+      }
+    }
+  })
   const notebookRpcServer = new NotebookLocalRpcServer(notebookService, { connectorService })
   // The RPC server needs the runtime service to dispatch to, and the runtime service needs the RPC
   // server's (lazily-started) connection for host.mcp() env injection — wire the second half here to
@@ -124,6 +136,17 @@ const registerIpcHandlers = ({ mainEntryPath }: IpcRegistrationOptions): void =>
       approvalBroker.respond(request.id, request.decision)
     }
   )
+
+  // Sketcher tiles report their lifecycle and answer commands through the Ketcher broker.
+  ipcMain.handle('ketcher:mounted', (_event, notice: KetcherMountNotice) => {
+    ketcherBroker.mount(notice.artifactId)
+  })
+  ipcMain.handle('ketcher:unmounted', (_event, notice: KetcherMountNotice) => {
+    ketcherBroker.unmount(notice.artifactId)
+  })
+  ipcMain.handle('ketcher:reply', (_event, reply: KetcherReply) => {
+    ketcherBroker.reply(reply)
+  })
 
   void refreshConnectorSkillDocs(
     settingsService,

@@ -232,6 +232,10 @@ class AcpRuntime {
   private artifactSessionSequence = 0
   private artifactRunSequence = 0
   private notebookSessionSequence = 0
+  // The artifact run of the turn currently being prompted, exposed so the main-process Ketcher tool host
+  // can attribute its generated .ket artifacts to the same run (host.mcp calls carry no session context).
+  private activeArtifactRun: ActiveArtifactRun | undefined
+  private activeArtifactRunSessionId: string | undefined
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
   constructor(private readonly options: AcpRuntimeOptions) {
@@ -832,6 +836,8 @@ class AcpRuntime {
     try {
       // Create a fresh run context before prompting so MCP writes can be attributed to this turn.
       artifactRun = await this.activateArtifactRun(request.sessionId)
+      this.activeArtifactRun = artifactRun
+      this.activeArtifactRunSessionId = request.sessionId
       // Prepend a short steering nudge naming the picked skills. It goes only into the content sent to
       // the agent; the user-facing message event keeps the original text (which already shows /Name).
       const promptText = await this.applySkillNudge(request.text, forced)
@@ -914,6 +920,8 @@ class AcpRuntime {
           text: errorMessage(error)
         })
       }
+      this.activeArtifactRun = undefined
+      this.activeArtifactRunSessionId = undefined
       this.promptInFlightSessionIds.delete(request.sessionId)
       this.emitState()
       // A disabled skill forced for this turn is restored now: clear the force set, then schedule a
@@ -1424,6 +1432,22 @@ class AcpRuntime {
       projectName,
       artifactSessionId
     )
+  }
+
+  // Exposes the active turn's artifact run context so the Ketcher tool host can write its .ket artifacts
+  // into the same pending run (they are then finalized onto the turn's message like any generated file).
+  // Undefined between turns, so a sketcher tool called outside a prompt fails with a clear error.
+  getActiveArtifactRunContext():
+    | { projectName: string; sessionId: string; artifactSessionId: string; runId: string }
+    | undefined {
+    if (!this.activeArtifactRun || !this.activeArtifactRunSessionId) return undefined
+
+    return {
+      projectName: this.resolveSessionProjectName(this.activeArtifactRunSessionId),
+      sessionId: this.activeArtifactRunSessionId,
+      artifactSessionId: this.activeArtifactRun.artifactSessionId,
+      runId: this.activeArtifactRun.runId
+    }
   }
 
   // Marks a new assistant turn as the active artifact run before the model can call the MCP tool.
