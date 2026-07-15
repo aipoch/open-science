@@ -197,7 +197,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     displayName: 'Cancer Models',
     description: 'Cancer genomics study records via the cBioPortal REST API.',
     useWhen:
-      'Use when you need cancer genomics study data — searching cBioPortal cancer studies by keyword (cancer type, cohort name), or looking up a known study by its cBioPortal study id (cancer type, sample counts, citation).',
+      "Use when you need cancer genomics data from cBioPortal — listing or looking up cancer studies (cancer type, sample counts, citation), the mutations of a gene in a study (recurrent protein changes, mutation types), a gene's mutation frequency across several studies, discrete copy-number alterations (deletions/amplifications) of a gene, or a study's clinical attributes and survival endpoints.",
     sources: ['cBioPortal'],
     termsUrl: 'https://www.cbioportal.org/faq',
     requiresNcbi: false
