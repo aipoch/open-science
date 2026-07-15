@@ -16,6 +16,9 @@ const ctx: ToolContext = {
   },
   postJson: async () => {
     throw new Error('map_reactome_pathways must not use ctx.postJson (text/plain body, not JSON)')
+  },
+  fetchJsonWithHeaders: async () => {
+    throw new Error('map_reactome_pathways must not use ctx.fetchJsonWithHeaders')
   }
 }
 

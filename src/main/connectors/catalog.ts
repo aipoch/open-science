@@ -124,16 +124,6 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     requiresNcbi: false
   },
   {
-    id: 'geo',
-    displayName: 'GEO',
-    description: 'Gene-expression / functional-genomics datasets via NCBI GEO DataSets.',
-    useWhen:
-      'Use when searching gene-expression / functional-genomics datasets (NCBI GEO) — series and datasets by disease, tissue, organism, or assay.',
-    sources: ['GEO'],
-    termsUrl: 'https://www.ncbi.nlm.nih.gov/home/about/policies/',
-    requiresNcbi: true
-  },
-  {
     id: 'chembl',
     displayName: 'ChEMBL',
     description: 'Bioactive drug-like small molecules via the ChEMBL REST API.',
@@ -219,12 +209,13 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'omics_archives',
     displayName: 'Omics Archives',
-    description: 'Functional-genomics experiments in ArrayExpress (BioStudies).',
+    description:
+      'Omics data archives — expression (ArrayExpress, GEO), metabolomics (MetaboLights), metagenomics (MGnify) and proteomics (PRIDE).',
     useWhen:
-      'Use when finding or looking up functional-genomics experiments and omics datasets in ArrayExpress / BioStudies — by keyword or by accession (title, type, organism, release date).',
-    sources: ['ArrayExpress'],
+      'Use when finding or looking up omics datasets across the major archives — functional-genomics / expression experiments in ArrayExpress (BioStudies) or NCBI GEO series (by keyword, organism, assay, or accession, with per-sample metadata); metabolomics studies and data files in MetaboLights (MTBLS); metagenomics studies and analyses in MGnify (MGYS, by free text or biome lineage); or proteomics projects and proteins in PRIDE Archive (PXD, by keyword/organism/instrument/disease, or protein↔project). Sourced from ArrayExpress, GEO, MetaboLights, MGnify and PRIDE.',
+    sources: ['ArrayExpress', 'GEO', 'MetaboLights', 'MGnify', 'PRIDE'],
     termsUrl: 'https://www.ebi.ac.uk/about/terms-of-use',
-    requiresNcbi: false
+    requiresNcbi: true
   },
   {
     id: 'cellguide',
