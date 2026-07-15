@@ -74,10 +74,11 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'variants',
     displayName: 'Variants',
-    description: 'Genetic variant clinical significance via ClinVar.',
+    description:
+      'Human genetic variants — gnomAD population frequencies/constraint, ClinVar records/search (direct NCBI), dbSNP, structural and mitochondrial variants.',
     useWhen:
-      'Use when you need ClinVar records for a gene or genetic variant — clinical significance and summaries.',
-    sources: ['ClinVar'],
+      'Use when you need human genetic-variant data — gnomAD population allele frequencies, gene constraint (pLI/LOEUF), structural or mitochondrial variants, and build liftover; ClinVar clinical significance (gnomAD mirror or direct NCBI search/records by accession or rsID); or dbSNP RefSNP records and region lookups.',
+    sources: ['gnomAD', 'ClinVar', 'dbSNP'],
     termsUrl: 'https://www.ncbi.nlm.nih.gov/clinvar/docs/maintenance_use/',
     requiresNcbi: true
   },
@@ -113,16 +114,6 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
       'Use when you need a macromolecular 3D structure or a molecular interaction — experimental PDB entries (search, summaries, polymer entities, ligands), AlphaFold predicted models, EMDB cryo-EM metadata/validation, curated Complex Portal complexes, or IntAct binary interactions and networks.',
     sources: ['PDB', 'AlphaFold', 'EMDB', 'Complex Portal', 'IntAct'],
     termsUrl: 'https://www.rcsb.org/pages/usage-policy',
-    requiresNcbi: false
-  },
-  {
-    id: 'gnomad',
-    displayName: 'gnomAD',
-    description: 'Population variant frequencies via the gnomAD GraphQL API.',
-    useWhen:
-      'Use when you need population allele frequencies or variant data for a gene or genetic variant from gnomAD.',
-    sources: ['gnomAD'],
-    termsUrl: 'https://gnomad.broadinstitute.org/policies',
     requiresNcbi: false
   },
   {
