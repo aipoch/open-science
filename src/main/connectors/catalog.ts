@@ -105,11 +105,12 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   },
   {
     id: 'structures',
-    displayName: 'Structures',
-    description: 'Protein 3D structures via PDB and AlphaFold.',
+    displayName: 'Structures & Interactions',
+    description:
+      'Structures and molecular interactions — PDB structures, AlphaFold predictions, EMDB cryo-EM entries, Complex Portal complexes, IntAct interaction networks.',
     useWhen:
-      'Use when you need a protein 3D structure — an experimental PDB entry by PDB id, or an AlphaFold predicted model by UniProt accession.',
-    sources: ['PDB', 'AlphaFold'],
+      'Use when you need a macromolecular 3D structure or a molecular interaction — experimental PDB entries (search, summaries, polymer entities, ligands), AlphaFold predicted models, EMDB cryo-EM metadata/validation, curated Complex Portal complexes, or IntAct binary interactions and networks.',
+    sources: ['PDB', 'AlphaFold', 'EMDB', 'Complex Portal', 'IntAct'],
     termsUrl: 'https://www.rcsb.org/pages/usage-policy',
     requiresNcbi: false
   },
