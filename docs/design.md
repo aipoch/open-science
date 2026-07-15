@@ -511,9 +511,9 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 ### Onboarding
 
 - Root: `h-svh overflow-y-auto bg-bg-10 text-text-000`.
-- Container: `mx-auto min-h-full w-full max-w-[960px] px-8 py-7`.
+- Container: `mx-auto min-h-full w-full max-w-[1040px] px-8 py-7`.
 - Brand: reuse the exact Home treatment, `font-serif text-[26px] font-medium leading-none tracking-[-0.02em] text-text-000`; do not recolor it with `primary`.
-- Main layout: `mt-12 grid grid-cols-[260px_minmax(0,1fr)] gap-12`; the left column is unframed introduction/progress, and the right column is the only visible work card.
+- Main layout: `mt-12 grid grid-cols-[240px_minmax(0,1fr)] gap-10`; the left column is unframed introduction/progress, and the right column is the only visible work card.
 - Work surface: one shadcn `Card`, `min-h-[420px] gap-0 rounded-lg bg-bg-000 py-0 shadow-card ring-1 ring-border-200`; do not nest visual cards inside it.
 - Current step uses `bg-primary text-primary-foreground`; completed and inactive labels remain neutral.
 - Commands use shadcn `Button`; primary commands inherit the shared deep-green `primary` variant.
