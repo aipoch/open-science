@@ -28,6 +28,17 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     requiresNcbi: false
   },
   {
+    id: 'ketcher',
+    displayName: 'Ketcher Chemistry',
+    description:
+      'Interactive 2D molecule sketcher — open an editable Ketcher canvas and read structures back.',
+    useWhen:
+      'Use when you want to draw, show, or edit a 2D chemical structure interactively for the user — open a live Ketcher sketcher (optionally seeded from SMILES, a molfile, a reaction, or KET), replace the structure on the canvas, highlight specific atoms or bonds, or read the current structure back as KET/molfile/SMILES. Powered by the in-app Ketcher editor with the standalone Indigo (WASM) backend.',
+    sources: ['Ketcher', 'Indigo'],
+    termsUrl: 'https://github.com/epam/ketcher/blob/master/LICENSE',
+    requiresNcbi: false
+  },
+  {
     id: 'literature',
     displayName: 'Literature Graph',
     description:

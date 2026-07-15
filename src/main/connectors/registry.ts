@@ -11,6 +11,7 @@ import { EXPRESSION_TOOLS } from './descriptors/expression'
 import { GENES_TOOLS } from './descriptors/genes'
 import { GENOMES_TOOLS } from './descriptors/genomes'
 import { HUMAN_GENETICS_TOOLS } from './descriptors/human-genetics'
+import { KETCHER_TOOLS } from './descriptors/ketcher'
 import { LITERATURE_TOOLS } from './descriptors/literature'
 import { OMICS_ARCHIVES_TOOLS } from './descriptors/omics-archives'
 import { PROTEIN_ANNOTATION_TOOLS } from './descriptors/protein-annotation'
@@ -37,6 +38,7 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...GENES_TOOLS,
   ...GENOMES_TOOLS,
   ...HUMAN_GENETICS_TOOLS,
+  ...KETCHER_TOOLS,
   ...LITERATURE_TOOLS,
   ...OMICS_ARCHIVES_TOOLS,
   ...PROTEIN_ANNOTATION_TOOLS,

@@ -263,4 +263,65 @@ describe('ConnectorService', () => {
       await expect(svc.call('nope', 'do_thing', {})).rejects.toThrow(/not enabled/)
     })
   })
+
+  describe('ketcher app connector', () => {
+    it('runs the gate then diverts an enabled ketcher call to the injected ketcherService', async () => {
+      const call = vi.fn().mockResolvedValue({ artifact_id: 'a:1:x.ket', filename: 'x.ket' })
+      const svc = new ConnectorService({
+        ketcherService: { call },
+        getConnectors: () => ({ enabledIds: [], autoAllowIds: [] }),
+        resolveApiKey: () => undefined
+      })
+      const out = await svc.call('ketcher', 'open_sketcher', { smiles: 'CCO' })
+      expect(out).toEqual({ artifact_id: 'a:1:x.ket', filename: 'x.ket' })
+      expect(call).toHaveBeenCalledWith('open_sketcher', { smiles: 'CCO' })
+    })
+
+    it('rejects a blocked ketcher tool before diverting', async () => {
+      const call = vi.fn()
+      const svc = new ConnectorService({
+        ketcherService: { call },
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          blockedToolIds: ['ketcher/open_sketcher']
+        }),
+        resolveApiKey: () => undefined
+      })
+      await expect(svc.call('ketcher', 'open_sketcher', {})).rejects.toThrow(/blocked by policy/)
+      expect(call).not.toHaveBeenCalled()
+    })
+
+    it('requests approval for an ask-flagged ketcher tool before diverting', async () => {
+      const call = vi.fn().mockResolvedValue({ ok: true })
+      const requestApproval = vi.fn().mockResolvedValue('allow')
+      const svc = new ConnectorService({
+        ketcherService: { call },
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          askToolIds: ['ketcher/set_structure']
+        }),
+        resolveApiKey: () => undefined,
+        requestApproval
+      })
+      await svc.call('ketcher', 'set_structure', { artifact_id: 'a', smiles: 'CCO' })
+      expect(requestApproval).toHaveBeenCalledWith({
+        connector: 'ketcher',
+        method: 'set_structure',
+        args: { artifact_id: 'a', smiles: 'CCO' }
+      })
+      expect(call).toHaveBeenCalled()
+    })
+
+    it('errors when the ketcher runtime is not configured', async () => {
+      const svc = new ConnectorService({
+        getConnectors: () => ({ enabledIds: [], autoAllowIds: [] }),
+        resolveApiKey: () => undefined
+      })
+      await expect(svc.call('ketcher', 'open_sketcher', {})).rejects.toThrow(
+        /ketcher runtime not configured/
+      )
+    })
+  })
 })

@@ -15,6 +15,7 @@ import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './connectors/
 import { registerFileSaveHandlers } from './file-save'
 import { registerGithubIpcHandlers } from './github-ipc'
 import { KetcherBroker } from './ketcher/broker'
+import { KetcherService, type KetcherRunContext } from './ketcher/service'
 import { registerLogsIpcHandlers } from './logs-ipc'
 import { registerNotebookIpcHandlers } from './notebook/ipc'
 import { NotebookLocalRpcServer } from './notebook/local-rpc-server'
@@ -25,7 +26,7 @@ import { registerSettingsIpcHandlers } from './settings/ipc'
 import { getAppClaudeConfigDir } from './settings/provider-env'
 import { createDefaultSettingsService, type SettingsService } from './settings/service'
 import type { StoredConnectors } from './settings/types'
-import type { KetcherMountNotice, KetcherReply } from '../shared/ketcher'
+import type { KetcherMountNotice, KetcherReply, KetcherSaveRequest } from '../shared/ketcher'
 import { resolveStorageRoot } from './storage-root'
 import { registerUpdateIpcHandlers } from './update/ipc'
 import { startUpdateScheduler } from './update/scheduler'
@@ -106,13 +107,6 @@ const registerIpcHandlers = ({ mainEntryPath }: IpcRegistrationOptions): void =>
       }
     }
   })
-  const connectorService = new ConnectorService({
-    getConnectors: () => connectorsSnapshot,
-    resolveApiKey: (ref) => tryDecryptKey(ref),
-    mcpClientManager,
-    requestApproval: ({ connector, method, args }) =>
-      approvalBroker.request({ connector, method, argsPreview: previewArgs(args) })
-  })
   // Bridges the main-process Ketcher tool host to live sketcher tiles in the renderer(s): it pushes
   // open/command events and resolves each command when the addressed tile replies.
   const ketcherBroker = new KetcherBroker({
@@ -122,6 +116,22 @@ const registerIpcHandlers = ({ mainEntryPath }: IpcRegistrationOptions): void =>
         if (!window.isDestroyed()) window.webContents.send(channel, payload)
       }
     }
+  })
+  // Resolved after the ACP runtime is created below (it owns the active turn's run context). open_sketcher
+  // reads it to attribute its .ket artifact to the current turn's pending run.
+  let resolveKetcherRunContext: () => KetcherRunContext | undefined = () => undefined
+  const ketcherService = new KetcherService({
+    broker: ketcherBroker,
+    repository: artifactRepository,
+    resolveRunContext: () => resolveKetcherRunContext()
+  })
+  const connectorService = new ConnectorService({
+    getConnectors: () => connectorsSnapshot,
+    resolveApiKey: (ref) => tryDecryptKey(ref),
+    mcpClientManager,
+    ketcherService,
+    requestApproval: ({ connector, method, args }) =>
+      approvalBroker.request({ connector, method, argsPreview: previewArgs(args) })
   })
   const notebookRpcServer = new NotebookLocalRpcServer(notebookService, { connectorService })
   // The RPC server needs the runtime service to dispatch to, and the runtime service needs the RPC
@@ -147,6 +157,9 @@ const registerIpcHandlers = ({ mainEntryPath }: IpcRegistrationOptions): void =>
   ipcMain.handle('ketcher:reply', (_event, reply: KetcherReply) => {
     ketcherBroker.reply(reply)
   })
+  ipcMain.handle('ketcher:save', (_event, request: KetcherSaveRequest) =>
+    ketcherService.save(request.artifactId, request.ket)
+  )
 
   void refreshConnectorSkillDocs(
     settingsService,
@@ -170,6 +183,8 @@ const registerIpcHandlers = ({ mainEntryPath }: IpcRegistrationOptions): void =>
     notebookRpcServer,
     settingsService
   })
+  // The Ketcher tool host resolves the active turn's run through the runtime, now that it exists.
+  resolveKetcherRunContext = () => runtime.getActiveArtifactRunContext()
   // Switching the active provider takes effect on the next reconnect. Defer that reconnect until any
   // in-flight prompt finishes so switching never interrupts a running turn; the shared config dir keeps
   // the conversation's context across the switch.

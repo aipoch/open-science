@@ -17,6 +17,9 @@ type McpClientManagerLike = {
 type ConnectorServiceDeps = {
   engine?: ParserEngine
   mcpClientManager?: McpClientManagerLike
+  // The interactive Ketcher app is registered like a bundled connector for settings/policy/skill-doc,
+  // but its calls drive a live renderer tile instead of an HTTP parser — so dispatch is diverted here.
+  ketcherService?: { call(method: string, args: Record<string, unknown>): Promise<unknown> }
   getConnectors: () => StoredConnectors | undefined
   resolveApiKey: (ref?: string) => string | undefined
   // Human approval gate for a tool call that isn't pre-approved. Absent (e.g. in tests) means the
@@ -68,6 +71,13 @@ export class ConnectorService {
       throw new Error(`tool blocked by policy: ${connector}/${method}`)
     }
     await this.ensureApproved(connector, method, args)
+
+    // Ketcher runs the same enabled/blocked/approval gate as any bundled connector, then diverts to the
+    // main-process tool host (it drives a renderer tile and cannot go through the fetch-only engine).
+    if (connector === 'ketcher') {
+      if (!this.deps.ketcherService) throw new Error('ketcher runtime not configured')
+      return this.deps.ketcherService.call(method, args)
+    }
 
     return this.engine.call(descriptor, args, this.credentials())
   }
