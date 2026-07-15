@@ -33,6 +33,9 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@prisma/client": "^6.19.3",
     "electron-updater": "^6.3.9",
+    "ketcher-core": "^3.17.0",
+    "ketcher-react": "^3.17.0",
+    "ketcher-standalone": "^3.17.0",
     "pdfjs-dist": "^4.10.38",
     "zod": "^4.4.3"
   },
