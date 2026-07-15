@@ -462,7 +462,7 @@ export const OPENALEX_LITERATURE_TOOLS: ToolDescriptor[] = [
     returns:
       '{query, filters (applied filter object), venue_resolved? , sort, api_total (meta.count), n_records_returned, records_truncated (api_total > returned), records[]} — each record the lean work shape.',
     example:
-      'result = host.mcp("literature", "openalex_search_works", {"query": "CRISPR base editing", "year_from": 2020, "open_access_only": true, "sort": "cited_by_count", "max_records": 25})',
+      'result = host.mcp("literature", "openalex_search_works", {"query": "CRISPR base editing", "year_from": 2020, "open_access_only": True, "sort": "cited_by_count", "max_records": 25})',
     run: async (ctx, a) => {
       const query = a.query != null && String(a.query).trim() !== '' ? String(a.query) : null
       const sort = String(a.sort ?? 'relevance')

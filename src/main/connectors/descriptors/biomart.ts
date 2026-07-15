@@ -216,7 +216,7 @@ export const BIOMART_TOOLS: ToolDescriptor[] = [
     id: 'list_common_attributes',
     connector: 'biomart',
     description:
-      'List the commonly used attributes for a dataset (a curated high-signal subset). Use this before list_all_attributes to pick attributes for get_data.',
+      'List the commonly used attributes for a dataset (a curated high-signal subset). Use this before list_all_attributes to pick attributes for get_data. `mart` is accepted for signature parity but ignored; the query keys off `dataset`.',
     input: {
       type: 'object',
       properties: { mart: { type: 'string' }, dataset: { type: 'string' } },
@@ -242,7 +242,7 @@ export const BIOMART_TOOLS: ToolDescriptor[] = [
     id: 'list_all_attributes',
     connector: 'biomart',
     description:
-      'List all attributes available for a dataset, minus homologs and microarray probes (which are bulky and rarely needed). Can be large; prefer list_common_attributes first.',
+      'List all attributes available for a dataset, minus homologs and microarray probes (which are bulky and rarely needed). Can be large; prefer list_common_attributes first. `mart` is accepted for signature parity but ignored; the query keys off `dataset`.',
     input: {
       type: 'object',
       properties: { mart: { type: 'string' }, dataset: { type: 'string' } },
@@ -272,7 +272,7 @@ export const BIOMART_TOOLS: ToolDescriptor[] = [
     id: 'list_filters',
     connector: 'biomart',
     description:
-      'List the filters available for a dataset. Filters narrow a get_data query (e.g. chromosome_name, biotype) and are passed to get_data as a filters dict.',
+      'List the filters available for a dataset. Filters narrow a get_data query (e.g. chromosome_name, biotype) and are passed to get_data as a filters dict. `mart` is accepted for signature parity but ignored; the query keys off `dataset`.',
     input: {
       type: 'object',
       properties: { mart: { type: 'string' }, dataset: { type: 'string' } },
@@ -294,7 +294,7 @@ export const BIOMART_TOOLS: ToolDescriptor[] = [
     id: 'get_data',
     connector: 'biomart',
     description:
-      'Run a BioMart query: retrieve the requested attributes for a dataset, optionally narrowed by filters. This is the main data-retrieval tool.',
+      'Run a BioMart query: retrieve the requested attributes for a dataset, optionally narrowed by filters. This is the main data-retrieval tool. `mart` is accepted for signature parity but ignored; the query keys off `dataset`.',
     input: {
       type: 'object',
       properties: {
@@ -327,7 +327,7 @@ export const BIOMART_TOOLS: ToolDescriptor[] = [
     id: 'get_translation',
     connector: 'biomart',
     description:
-      'Translate a single identifier from one attribute type to another (e.g. an HGNC symbol to an Ensembl gene ID) within a dataset.',
+      'Translate a single identifier from one attribute type to another (e.g. an HGNC symbol to an Ensembl gene ID) within a dataset. `mart` is accepted for signature parity but ignored; the query keys off `dataset`.',
     input: {
       type: 'object',
       properties: {
@@ -363,7 +363,7 @@ export const BIOMART_TOOLS: ToolDescriptor[] = [
     id: 'batch_translate',
     connector: 'biomart',
     description:
-      'Translate many identifiers from one attribute type to another in a single query — more efficient than repeated get_translation calls.',
+      'Translate many identifiers from one attribute type to another in a single query — more efficient than repeated get_translation calls. `mart` is accepted for signature parity but ignored; the query keys off `dataset`.',
     input: {
       type: 'object',
       properties: {

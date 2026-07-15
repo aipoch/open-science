@@ -631,8 +631,7 @@ const COMPOUND_INPUT = {
       description: 'Filter by clinical phase. 4 = approved.'
     },
     limit: { type: 'integer', minimum: 1, maximum: 1000, default: 20 }
-  },
-  required: ['name']
+  }
 }
 
 export const CHEMBL_TOOLS: ToolDescriptor[] = [
@@ -640,13 +639,15 @@ export const CHEMBL_TOOLS: ToolDescriptor[] = [
     id: 'compound_search',
     connector: 'chembl',
     description:
-      'Search ChEMBL chemical compounds by name (default), ChEMBL id, or molecular structure. By name: case-insensitive synonym substring match (falls back to a preferred-name match). By chembl_id: direct record lookup. By smiles: Tanimoto similarity search when similarity_threshold is set, else a substructure search (structure walks are capped and disclose walk_truncated/upstream_total). Optional max_phase filters by clinical stage. Use drug_search instead when searching by therapeutic indication.',
+      'Search ChEMBL chemical compounds by name (default), ChEMBL id, or molecular structure. By name: case-insensitive synonym substring match (falls back to a preferred-name match). By chembl_id: direct record lookup. By smiles: Tanimoto similarity search when similarity_threshold is set, else a substructure search (structure walks are capped and disclose walk_truncated/upstream_total). Optional max_phase filters by clinical stage. Pass at least one of name, chembl_id, or smiles. Use drug_search instead when searching by therapeutic indication.',
     input: COMPOUND_INPUT,
-    required: ['name'],
     returns:
       '`{ count, total (verified upstream total_count), truncated, compounds: [ { molecule_chembl_id, pref_name, molecule_type, max_phase, first_approval, oral, parenteral, topical, black_box_warning, therapeutic_flag, natural_product, withdrawn_flag, molecule_properties: { alogp, aromatic_rings, full_mwt, hba, hbd, heavy_atoms, psa, rtb, ro3_pass, num_ro5_violations, qed_weighted, molecular_formula, mw_freebase, np_likeness_score, med_chem_friendly, molecular_species }, smiles, inchi, inchi_key, synonyms: [str], chirality, score, atc_classifications, molecule_hierarchy, ... } ] }`. Structure searches may add `walk_truncated` + `upstream_total`.',
     example: 'result = host.mcp("chembl", "compound_search", {"name": "aspirin", "limit": 5})',
     run: async (ctx, a) => {
+      if (!a.name && !a.chembl_id && !a.smiles) {
+        throw new Error('compound_search requires at least one of name, chembl_id, or smiles.')
+      }
       const limit = clampLimit(a.limit)
       const maxPhase = a.max_phase
 
@@ -767,7 +768,7 @@ export const CHEMBL_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ count, total (distinct parents, or filtered count when a post-filter is set), truncated, indication_query: { term, match_field, only_approved }, total_indication_rows, drugs: [ { molecule_chembl_id, pref_name, molecule_type, max_phase, first_approval, oral, parenteral, therapeutic_flag, black_box_warning (0/1), topical (0/1), withdrawn_flag, molecule_properties, molecule_structures, molecule_synonyms, best_phase_for_ind, efo_terms: [str], indication_rows: [drugind_id], warning_summary: [ { warning_type, warning_class, warning_country, warning_year } ], ... } ] }`.',
     example:
-      'result = host.mcp("chembl", "drug_search", {"indication": "hypertension", "only_approved": true, "limit": 10})',
+      'result = host.mcp("chembl", "drug_search", {"indication": "hypertension", "only_approved": True, "limit": 10})',
     run: async (ctx, a) => {
       const limit = clampLimit(a.limit)
       // Post-filters need the full parent set joined; otherwise bound the join to the first page.

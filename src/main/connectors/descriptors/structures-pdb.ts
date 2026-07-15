@@ -501,7 +501,7 @@ export const STRUCTURES_PDB_TOOLS: ToolDescriptor[] = [
     returns:
       '{pdb_id, n_polymer_entities (entry total when entity_ids=null, else null), polymer_entity_ids, truncated, records:[{rcsb_id, entity_id, description, polymer_type, sequence_length, source_organisms, uniprot_ids, reference_sequence_identifiers, uniprot_aligned_regions, sequence?}], not_found:[...], sequences_omitted?}.',
     example:
-      'result = host.mcp("structures", "pdb_get_entities", {"pdb_id": "1TUP", "include_sequences": true})',
+      'result = host.mcp("structures", "pdb_get_entities", {"pdb_id": "1TUP", "include_sequences": True})',
     run: async (ctx, a) => {
       const pdbId = asStr(a.pdb_id).toUpperCase()
       const includeSequences = a.include_sequences === true
