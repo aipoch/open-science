@@ -1,9 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Copy } from 'lucide-react'
 
-import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { cn } from '@/lib/utils'
 import type { PreviewToolItem } from '@/stores/preview-workbench-store'
 
 import type {
@@ -11,6 +7,8 @@ import type {
   NotebookSessionReference,
   NotebookSessionState
 } from '../../../../shared/notebook'
+import { NotebookCodeBlock } from './notebook-code'
+import { deriveErrorLine, detectCellLanguage, isProblemRunStatus } from './notebook-cell-utils'
 
 export type NotebookPreviewItem = PreviewToolItem & {
   toolKind: 'notebook'
@@ -20,64 +18,6 @@ export type NotebookPreviewItem = PreviewToolItem & {
 type NotebookPreviewProps = {
   item: NotebookPreviewItem
 }
-
-const pythonKeywords = new Set([
-  'and',
-  'as',
-  'assert',
-  'async',
-  'await',
-  'break',
-  'class',
-  'continue',
-  'def',
-  'del',
-  'elif',
-  'else',
-  'except',
-  'False',
-  'finally',
-  'for',
-  'from',
-  'global',
-  'if',
-  'import',
-  'in',
-  'is',
-  'lambda',
-  'None',
-  'nonlocal',
-  'not',
-  'or',
-  'pass',
-  'raise',
-  'return',
-  'True',
-  'try',
-  'while',
-  'with',
-  'yield'
-])
-
-const pythonBuiltins = new Set([
-  'dict',
-  'enumerate',
-  'float',
-  'int',
-  'len',
-  'list',
-  'open',
-  'print',
-  'range',
-  'set',
-  'str',
-  'sum',
-  'tuple',
-  'zip'
-])
-
-const codeTokenPattern =
-  /#[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b\d+(?:\.\d+)?\b|\b[A-Za-z_]\w*\b|\s+|./g
 
 // Converts any IPC failure into displayable text without losing non-Error values.
 const getErrorMessage = (error: unknown): string =>
@@ -96,31 +36,6 @@ const createNotebookRequest = (
   workspaceCwd: notebook.workspaceCwd
 })
 
-// Provides lightweight Python token coloring without introducing a full Markdown/code editor.
-const highlightPythonCode = (code: string): React.ReactNode[] => {
-  const tokens = code.match(codeTokenPattern) ?? []
-
-  return tokens.map((token, index) => {
-    const className = token.startsWith('#')
-      ? 'text-text-300'
-      : token.startsWith('"') || token.startsWith("'")
-        ? 'text-primary'
-        : /^\d/.test(token)
-          ? 'text-primary'
-          : pythonKeywords.has(token)
-            ? 'font-semibold text-primary'
-            : pythonBuiltins.has(token)
-              ? 'text-text-100'
-              : 'text-text-000'
-
-    return (
-      <span key={`${token}-${index}`} className={className}>
-        {token}
-      </span>
-    )
-  })
-}
-
 // Collapses stdout, stderr, and traceback into the text block shown under each run.
 const getRunOutputText = (run: NotebookRunRecord | undefined): string => {
   if (!run) return ''
@@ -130,113 +45,72 @@ const getRunOutputText = (run: NotebookRunRecord | undefined): string => {
     .join('\n')
 }
 
-// Groups all non-success terminal states that should be styled as diagnostic output.
-const isProblemRunStatus = (status: NotebookRunRecord['status']): boolean =>
-  status === 'failed' || status === 'timeout' || status === 'interrupted'
-
-// Maps persisted run status to the small status indicator color.
-const runStatusClassName = (status: NotebookRunRecord['status']): string =>
-  status === 'completed'
-    ? 'text-primary'
-    : isProblemRunStatus(status)
-      ? 'text-danger-000'
-      : 'text-primary'
-
-// Renders the captured output for one run, preserving whitespace for tracebacks.
+// Renders the captured output for one run: stdout and diagnostics as separate blocks, collapsed by
+// default so long tracebacks don't dominate the cell list.
 const NotebookRunOutput = ({ run }: { run: NotebookRunRecord }): React.JSX.Element | null => {
-  const outputText = getRunOutputText(run)
+  const stdout = run.text.stdout
+  const stderr = [run.text.stderr, run.text.traceback]
+    .filter((value) => value.trim().length > 0)
+    .join('\n')
 
-  if (!outputText) return null
+  if (stdout.trim().length === 0 && stderr.trim().length === 0) return null
 
   return (
-    <details className="mt-2" open>
+    <details className="mt-2">
       <summary className="cursor-pointer text-xs text-text-300 hover:text-text-200">output</summary>
-      <pre
-        className={cn(
-          'mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap rounded bg-bg-200 p-2 font-mono text-xs text-text-200',
-          isProblemRunStatus(run.status) && 'border-l-2 border-danger-000/50 text-danger-000'
-        )}
-      >
-        {outputText}
-      </pre>
+      {stdout.trim().length > 0 ? (
+        <pre className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap rounded bg-bg-200 p-2 font-mono text-xs text-text-200">
+          {stdout}
+        </pre>
+      ) : null}
+      {stderr.trim().length > 0 ? (
+        <pre className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap rounded bg-bg-200 p-2 font-mono text-xs text-danger-000">
+          {stderr}
+        </pre>
+      ) : null}
     </details>
   )
 }
 
-// Renders code with stable line numbers while keeping the text selectable and scrollable.
-const LineNumberedCode = ({ code }: { code: string }): React.JSX.Element => {
-  const lines = code.length > 0 ? code.split('\n') : ['']
-  const lineNumberWidth = String(lines.length).length + 1
+// Displays one durable execution record from run.json in chronological order. The zero-based index
+// is the cell number shown in [n], and a failed run marks the offending line.
+const NotebookRunCell = ({
+  run,
+  index
+}: {
+  run: NotebookRunRecord
+  index: number
+}): React.JSX.Element => {
+  const isProblem = isProblemRunStatus(run.status)
+  const errorLine = isProblem ? deriveErrorLine(run.text.traceback) : undefined
+  const language = detectCellLanguage(run.script)
 
   return (
-    <div className="font-mono text-[13px] leading-[1.5]">
-      {lines.map((line, index) => (
-        <div key={`${index}-${line}`} className="flex min-w-max">
-          <span
-            className="inline-block select-none pr-4 text-right text-text-300"
-            style={{ minWidth: `${lineNumberWidth + 1}ch` }}
-          >
-            {index + 1}
-          </span>
-          <span className="min-w-0 flex-1 whitespace-pre">{highlightPythonCode(line)}</span>
+    <div className="px-4 py-3" data-testid="notebook-cell">
+      <div className="mb-2 flex items-center justify-between text-xs">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="font-mono text-text-300">[{index}]</span>
+          <span className="rounded bg-bg-300 px-1.5 py-0.5 text-text-200">{language}</span>
+          {run.source === 'user' ? (
+            <span className="rounded bg-accent px-1.5 py-0.5 font-medium text-accent">you</span>
+          ) : null}
+          {isProblem ? (
+            errorLine ? (
+              <span className="rounded bg-danger-000 px-1.5 py-0.5 font-medium text-white">
+                error (line {errorLine})
+              </span>
+            ) : (
+              <span className="rounded bg-danger-900 px-1.5 py-0.5 text-danger-000">error</span>
+            )
+          ) : null}
         </div>
-      ))}
+        <span className="font-mono text-text-300">{language}</span>
+      </div>
+      <NotebookCodeBlock code={run.script} highlightLine={errorLine} />
+      <NotebookRunOutput run={run} />
     </div>
   )
 }
-
-// Shows the executed script for a run with a lightweight copy affordance.
-const NotebookCodeBlock = ({ code }: { code: string }): React.JSX.Element => (
-  <div className="relative group w-full overflow-auto bg-bg-200">
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="absolute right-2 top-2 bg-bg-300/80 text-text-300 opacity-60 backdrop-blur-sm hover:bg-bg-300 hover:text-text-100 focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100"
-            aria-label="Copy to clipboard"
-            onClick={() => {
-              void navigator.clipboard.writeText(code)
-            }}
-          >
-            <Copy className="size-3.5" aria-hidden="true" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>Copy to clipboard</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-    <pre className="m-0 w-max min-w-full overflow-auto p-4 font-mono text-[13px] leading-[1.5]">
-      <code>
-        <LineNumberedCode code={code} />
-      </code>
-    </pre>
-  </div>
-)
-
-// Displays one durable execution record from run.json in chronological order.
-const NotebookRunCell = ({ run }: { run: NotebookRunRecord }): React.JSX.Element => (
-  <div className="px-4 py-3" data-testid="notebook-cell">
-    <div className="mb-2 flex items-center justify-between text-xs">
-      <div className="flex min-w-0 items-center gap-2">
-        <span className="font-mono text-text-300">[{run.executionCount ?? ''}]</span>
-        <span className="rounded bg-bg-300 px-1.5 py-0.5 text-text-200">python</span>
-        {run.source === 'user' ? (
-          <span className="rounded bg-accent px-1.5 py-0.5 font-medium text-accent">you</span>
-        ) : null}
-        {isProblemRunStatus(run.status) ? (
-          <span className="rounded bg-danger-900 px-1.5 py-0.5 text-danger-000">{run.status}</span>
-        ) : null}
-      </div>
-      <span className={cn('font-mono text-text-300', runStatusClassName(run.status))}>
-        {run.status === 'running' ? 'running' : ''}
-      </span>
-    </div>
-    <NotebookCodeBlock code={run.script} />
-    <NotebookRunOutput run={run} />
-  </div>
-)
 
 // Mirrors terminal-originated runs in the bottom terminal scrollback.
 const TerminalScrollback = ({ runs }: { runs: NotebookRunRecord[] }): React.JSX.Element => (
@@ -409,8 +283,8 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
           <div className="flex h-full min-h-0 flex-col overflow-auto">
             <div className="min-h-0 flex-1 overflow-y-auto" data-testid="notebook-cells">
               <div className="divide-y divide-border-100">
-                {runs.map((run) => (
-                  <NotebookRunCell key={run.runId} run={run} />
+                {runs.map((run, index) => (
+                  <NotebookRunCell key={run.runId} run={run} index={index} />
                 ))}
               </div>
             </div>

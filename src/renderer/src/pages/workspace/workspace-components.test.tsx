@@ -124,7 +124,9 @@ describe('workspace page component boundaries', () => {
       readFileSync(workspaceToolActivityStylePath, 'utf8'),
       readFileSync(workspaceWebSearchActivityRowPath, 'utf8'),
       readFileSync(resolve(__dirname, 'DeleteSessionDialog.tsx'), 'utf8'),
-      readFileSync(resolve(__dirname, 'RenameSessionDialog.tsx'), 'utf8')
+      readFileSync(resolve(__dirname, 'RenameSessionDialog.tsx'), 'utf8'),
+      readFileSync(resolve(__dirname, 'SessionNotebookDialog.tsx'), 'utf8'),
+      readFileSync(resolve(__dirname, 'notebook-code.tsx'), 'utf8')
     ].join('\n')
 
     for (const hardcodedColor of [
@@ -155,7 +157,9 @@ describe('workspace page component boundaries', () => {
       readFileSync(workspaceToolActivityStylePath, 'utf8'),
       readFileSync(workspaceWebSearchActivityRowPath, 'utf8'),
       readFileSync(resolve(__dirname, 'DeleteSessionDialog.tsx'), 'utf8'),
-      readFileSync(resolve(__dirname, 'RenameSessionDialog.tsx'), 'utf8')
+      readFileSync(resolve(__dirname, 'RenameSessionDialog.tsx'), 'utf8'),
+      readFileSync(resolve(__dirname, 'SessionNotebookDialog.tsx'), 'utf8'),
+      readFileSync(resolve(__dirname, 'notebook-code.tsx'), 'utf8')
     ].join('\n')
     const mainCssSource = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
 
@@ -625,16 +629,18 @@ describe('preview workbench integration', () => {
     expect(notebookPreviewSource).toContain('const TerminalInput')
     expect(notebookPreviewSource).toContain('data-testid="notebook-cells"')
     expect(notebookPreviewSource).toContain('data-testid="kernel-terminal-input"')
-    expect(notebookPreviewSource).toContain('highlightPythonCode')
+    expect(notebookPreviewSource).toContain("import { NotebookCodeBlock } from './notebook-code'")
     expect(notebookPreviewSource).toContain('window.api.notebook.state')
     expect(notebookPreviewSource).toContain('window.api.notebook.execute')
     expect(notebookPreviewSource).toContain('window.api.notebook.onChanged')
     expect(notebookPreviewSource).toContain('notebookState?.runs')
     expect(notebookPreviewSource).toContain("source: 'user'")
     expect(notebookPreviewSource).toContain("inputKind: 'terminal'")
-    expect(notebookPreviewSource).toContain("import { Button } from '@/components/ui/button'")
-    expect(notebookPreviewSource).toContain("from '@/components/ui/tooltip'")
-    expect(notebookPreviewSource).toContain('const isProblemRunStatus')
+    expect(notebookPreviewSource).toContain(
+      "import { deriveErrorLine, detectCellLanguage, isProblemRunStatus } from './notebook-cell-utils'"
+    )
+    expect(notebookPreviewSource).toContain('[{index}]')
+    expect(notebookPreviewSource).toContain('detectCellLanguage(run.script)')
     expect(notebookPreviewSource).not.toContain('aria-label="Refresh notebook"')
     expect(notebookPreviewSource).not.toContain('aria-label="Restart notebook"')
     expect(notebookPreviewSource).not.toContain('text-text-400')

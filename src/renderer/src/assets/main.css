@@ -38,6 +38,9 @@
   --color-text-300: var(--text-300);
   --color-danger-000: var(--danger-000);
   --color-danger-900: var(--danger-900);
+  --color-syntax-keyword: var(--syntax-keyword);
+  --color-syntax-string: var(--syntax-string);
+  --color-syntax-number: var(--syntax-number);
   --color-action-panel-toggle: var(--action-panel-toggle);
   --color-surface-control-hover: var(--surface-control-hover);
   --color-message-user-text: var(--message-user-text);
@@ -71,6 +74,11 @@
   --rail-card-bg: 0 0% 100%;
   --danger-000: hsl(0 45% 38%);
   --danger-900: hsl(0 55% 95%);
+  /* Notebook code highlighting: distinct blue/green/purple hues so keywords, strings, and numbers
+     read apart from plain text on the warm paper surface. */
+  --syntax-keyword: hsl(222 60% 46%);
+  --syntax-string: hsl(140 52% 32%);
+  --syntax-number: hsl(280 48% 48%);
   --action-panel-toggle: hsl(0 0% 42%);
   --surface-control-hover: hsl(38 20% 90%);
   --message-user-text: hsl(0 0% 12%);
