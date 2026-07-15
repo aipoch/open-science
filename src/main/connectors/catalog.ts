@@ -250,10 +250,11 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'research_resources',
     displayName: 'Research Resources',
-    description: 'Antibody catalog lookups via the Antibody Registry.',
+    description:
+      'Funding-opportunity search (Grants.gov) and antibody catalog lookups (Antibody Registry).',
     useWhen:
-      'Use when you need a research antibody by target, name, or catalog text — RRID, vendor, target, and clonality. Sourced from the Antibody Registry.',
-    sources: ['Antibody Registry'],
+      'Use when you need U.S. federal funding opportunities from Grants.gov (search by keyword, opportunity number, CFDA/ALN, agency such as NIH/NSF/FDA, status, eligibility, or funding category — complete, count-verified, with facet breakdowns) or research antibodies from the Antibody Registry (full-text search by target/name/catalog, lookup by RRID/accession, exact catalog-number matching, and registry statistics — with RRID, vendor, target, clone, and species). Sourced from Grants.gov and the Antibody Registry.',
+    sources: ['Grants.gov', 'Antibody Registry'],
     termsUrl: 'https://www.antibodyregistry.org/',
     requiresNcbi: false
   },
