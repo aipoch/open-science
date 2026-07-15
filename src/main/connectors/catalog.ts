@@ -29,12 +29,13 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   },
   {
     id: 'literature',
-    displayName: 'Literature',
-    description: 'Scientific literature via arXiv.',
+    displayName: 'Literature Graph',
+    description:
+      'Scholarly literature graph — OpenAlex works/authors/venues/citations, arXiv metadata.',
     useWhen:
-      'Use when searching the scientific or preprint literature for papers, titles, or abstracts on a topic, method, or field. Sourced from arXiv.',
-    sources: ['arXiv'],
-    termsUrl: 'https://info.arxiv.org/help/license/index.html',
+      'Use when exploring the scholarly literature graph — searching works/papers by topic with citation counts and authors, following a work’s citations or references, looking up authors (ORCID, h-index, institution) or a venue/journal, or searching arXiv preprints. Sourced from OpenAlex and arXiv.',
+    sources: ['OpenAlex', 'arXiv'],
+    termsUrl: 'https://docs.openalex.org/additional-help/terms',
     requiresNcbi: false
   },
   {
@@ -128,16 +129,6 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     sources: ['GEO'],
     termsUrl: 'https://www.ncbi.nlm.nih.gov/home/about/policies/',
     requiresNcbi: true
-  },
-  {
-    id: 'openalex',
-    displayName: 'OpenAlex',
-    description: 'Scholarly works across all disciplines via OpenAlex.',
-    useWhen:
-      'Use when searching scholarly works across all disciplines — papers by topic/keyword with citation counts, authors, year, and DOI. Sourced from OpenAlex.',
-    sources: ['OpenAlex'],
-    termsUrl: 'https://docs.openalex.org/additional-help/terms',
-    requiresNcbi: false
   },
   {
     id: 'chembl',
