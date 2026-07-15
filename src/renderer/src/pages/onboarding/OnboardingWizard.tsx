@@ -36,6 +36,8 @@ const OnboardingWizard = (): React.JSX.Element => {
   const isDetectingClaude = useSettingsStore((state) => state.isDetectingClaude)
   const isInstalling = useSettingsStore((state) => state.isInstalling)
   const installLogs = useSettingsStore((state) => state.installLogs)
+  const installProgress = useSettingsStore((state) => state.installProgress)
+  const installError = useSettingsStore((state) => state.installError)
   const npmAvailable = useSettingsStore((state) => state.npmAvailable)
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const load = useSettingsStore((state) => state.load)
@@ -129,6 +131,8 @@ const OnboardingWizard = (): React.JSX.Element => {
               <ClaudeInstallCard
                 isInstalling={isInstalling}
                 installLogs={installLogs}
+                installProgress={installProgress}
+                installError={installError}
                 npmAvailable={npmAvailable}
                 onInstall={(source) => void installClaude(source)}
               />

@@ -172,7 +172,12 @@ describe('managed-claude: download + verify', () => {
   })
 
   it('emits determinate download progress ticks that finish at the total', async () => {
-    const chunks = [Buffer.alloc(100, 1), Buffer.alloc(100, 2), Buffer.alloc(100, 3), Buffer.alloc(100, 4)]
+    const chunks = [
+      Buffer.alloc(100, 1),
+      Buffer.alloc(100, 2),
+      Buffer.alloc(100, 3),
+      Buffer.alloc(100, 4)
+    ]
     const payload = Buffer.concat(chunks)
     const events: ClaudeInstallEvent[] = []
     await downloadAndVerify({
@@ -293,7 +298,8 @@ describe('managed-claude: install orchestration', () => {
     expect(phases).toEqual(expect.arrayContaining(['resolving', 'downloading', 'extracting']))
     expect(
       events.some(
-        (e) => e.kind === 'log' && e.stream === 'system' && /Installed Claude 2\.1\.209/.test(e.chunk)
+        (e) =>
+          e.kind === 'log' && e.stream === 'system' && /Installed Claude 2\.1\.209/.test(e.chunk)
       )
     ).toBe(true)
   })

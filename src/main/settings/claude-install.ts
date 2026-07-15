@@ -208,7 +208,12 @@ const runInstall = async ({
 
   const spec = getInstallSpawnSpec(source, process.platform, npmPrefixOverride)
 
-  onEvent({ kind: 'log', installId, stream: 'system', chunk: `$ ${spec.command} ${spec.args.join(' ')}` })
+  onEvent({
+    kind: 'log',
+    installId,
+    stream: 'system',
+    chunk: `$ ${spec.command} ${spec.args.join(' ')}\n`
+  })
 
   return new Promise<ClaudeInstallResult>((resolve) => {
     let child: ChildProcessWithoutNullStreams
@@ -248,7 +253,12 @@ const runInstall = async ({
 
     const timer = setTimeout(() => {
       timedOut = true
-      onEvent({ kind: 'log', installId, stream: 'system', chunk: 'Install timed out; terminating.' })
+      onEvent({
+        kind: 'log',
+        installId,
+        stream: 'system',
+        chunk: 'Install timed out; terminating.\n'
+      })
       child.kill()
     }, timeoutMs)
 
@@ -340,7 +350,7 @@ const runInstallWithFallback = async ({
     kind: 'log',
     installId,
     stream: 'system',
-    chunk: 'Official installer looks unavailable in your region; falling back to npm…'
+    chunk: 'Official installer looks unavailable in your region; falling back to npm…\n'
   })
 
   return runInstall({ source: 'npm', installId, onEvent, timeoutMs, spawnImpl, npmPrefixWritable })

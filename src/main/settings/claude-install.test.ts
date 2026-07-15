@@ -143,7 +143,9 @@ describe('claude-install: run', () => {
 
     expect(result).toMatchObject({ installId: 'install-1', ok: true, exitCode: 0 })
     expect(
-      logs.some((e) => e.kind === 'log' && e.stream === 'stdout' && e.chunk.includes('adding package'))
+      logs.some(
+        (e) => e.kind === 'log' && e.stream === 'stdout' && e.chunk.includes('adding package')
+      )
     ).toBe(true)
     expect(logs.some((e) => e.kind === 'log' && e.stream === 'stderr')).toBe(true)
   })
@@ -234,7 +236,9 @@ describe('claude-install: run with region-block fallback', () => {
 
     expect(commands).toEqual(['bash', 'npm'])
     expect(result.ok).toBe(true)
-    expect(logs.some((e) => e.kind === 'log' && e.stream === 'system' && /region/i.test(e.chunk))).toBe(true)
+    expect(
+      logs.some((e) => e.kind === 'log' && e.stream === 'system' && /region/i.test(e.chunk))
+    ).toBe(true)
   })
 
   it('does not fall back when npm is unavailable', async () => {

@@ -1,34 +1,55 @@
 import { useMemo, useState } from 'react'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
-import type { ClaudeInstallSource } from '../../../../shared/settings'
+import type { ClaudeInstallProgressEvent, ClaudeInstallSource } from '../../../../shared/settings'
 import { getClaudeInstallSources, getNodeInstallHint } from '../../../../shared/settings'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
+import { describeInstallProgress } from './claude-install-progress'
 
 type ClaudeInstallCardProps = {
   isInstalling: boolean
   installLogs: string[]
+  // Latest progress tick driving the bar; null/undefined when no install is running.
+  installProgress?: ClaudeInstallProgressEvent | null
+  // Error from the last install attempt; when set, the log pane is force-shown for triage.
+  installError?: string
   // Whether npm is available on the host; disables/deprioritizes the npm source when false.
   npmAvailable: boolean
   onInstall: (source: ClaudeInstallSource) => void
 }
 
-// Source picker + one-click installer with a live log pane and an always-visible, copyable command so
-// manual installers are never blocked. Shared by the onboarding wizard and the settings page.
+// Source picker + one-click installer with a progress bar and an error-aware, collapsible log pane
+// (hidden on success, force-shown on failure) plus an always-visible, copyable command so manual
+// installers are never blocked. Shared by the onboarding wizard and the settings page.
 const ClaudeInstallCard = ({
   isInstalling,
   installLogs,
+  installProgress,
+  installError,
   npmAvailable,
   onInstall
 }: ClaudeInstallCardProps): React.JSX.Element => {
   // Default to the app-managed download — it needs no Node.js/npm and works behind region blocks.
   const [source, setSource] = useState<ClaudeInstallSource>('managed')
+  const [showLog, setShowLog] = useState(false)
   // Sources carry platform-specific copy (e.g. install.ps1 vs install.sh), so resolve them for the
   // host the app is running on.
   const installSources = useMemo(() => getClaudeInstallSources(window.api?.platform), [])
   const nodeHint = useMemo(() => getNodeInstallHint(window.api?.platform), [])
   const selectedSource = installSources.find((item) => item.id === source)
   const npmMissing = source === 'npm' && !npmAvailable
+
+  // Show the bar while an install runs; fall back to a generic indeterminate label before the first
+  // progress tick arrives.
+  const progress = installProgress
+    ? describeInstallProgress(installProgress)
+    : isInstalling
+      ? { label: 'Starting…' }
+      : null
+  const percent = progress?.fraction != null ? Math.round(progress.fraction * 100) : undefined
+
+  // A failed install force-shows the log for triage; otherwise it stays behind the toggle.
+  const logVisible = showLog || Boolean(installError)
 
   // Option label with an inline "(npm not found)" hint for sources that need npm when it's missing.
   const sourceLabel = (item: (typeof installSources)[number]): string =>
@@ -105,13 +126,59 @@ const ClaudeInstallCard = ({
         {isInstalling ? 'Installing…' : 'Install with one click'}
       </button>
 
+      {progress ? (
+        <div className="mt-3 space-y-1.5">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>{progress.label}</span>
+            {percent != null ? <span>{percent}%</span> : null}
+          </div>
+          <div
+            role="progressbar"
+            aria-label="Install progress"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={percent}
+            data-indeterminate={percent == null ? 'true' : undefined}
+            className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+          >
+            <div
+              className={
+                percent != null
+                  ? 'h-full rounded-full bg-primary transition-[width] duration-300'
+                  : 'install-progress-indeterminate h-full w-1/3 rounded-full bg-primary'
+              }
+              style={percent != null ? { width: `${percent}%` } : undefined}
+            />
+          </div>
+        </div>
+      ) : null}
+
+      {installError ? (
+        <p className="mt-3 text-xs text-destructive" role="alert">
+          {installError}
+        </p>
+      ) : null}
+
       {installLogs.length > 0 ? (
-        <pre
-          className="mt-3 max-h-48 overflow-auto rounded-lg bg-foreground/5 px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-foreground/80"
-          aria-label="Install log"
-        >
-          {installLogs.join('')}
-        </pre>
+        <div className="mt-3">
+          {!installError ? (
+            <button
+              type="button"
+              onClick={() => setShowLog((visible) => !visible)}
+              className="text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              {logVisible ? 'Hide log' : 'Show log'}
+            </button>
+          ) : null}
+          {logVisible ? (
+            <pre
+              className="mt-2 max-h-48 overflow-auto rounded-lg bg-foreground/5 px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-foreground/80"
+              aria-label="Install log"
+            >
+              {installLogs.join('')}
+            </pre>
+          ) : null}
+        </div>
       ) : null}
     </div>
   )

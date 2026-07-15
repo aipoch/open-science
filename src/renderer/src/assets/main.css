@@ -163,4 +163,19 @@
       @apply block! w-full min-w-0 max-w-full!;
     }
   }
+
+  /* Indeterminate install progress bar: a short segment sweeping left→right while a shelled
+   * installer (npm/official) streams output with no byte total to report. */
+  @keyframes install-progress-indeterminate {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(400%);
+    }
+  }
+
+  .install-progress-indeterminate {
+    animation: install-progress-indeterminate 1.2s ease-in-out infinite;
+  }
 }

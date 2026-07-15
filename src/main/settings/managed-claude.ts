@@ -202,7 +202,13 @@ const downloadAndVerify = async ({
         const percent = Math.floor((received / totalBytes) * 100)
         if (percent > lastPercent) {
           lastPercent = percent
-          onEvent({ kind: 'progress', installId, phase: 'downloading', receivedBytes: received, totalBytes })
+          onEvent({
+            kind: 'progress',
+            installId,
+            phase: 'downloading',
+            receivedBytes: received,
+            totalBytes
+          })
         }
       }
 
@@ -412,7 +418,12 @@ const installManagedClaude = async ({
 
     try {
       onEvent({ kind: 'progress', installId, phase: 'resolving' })
-      onEvent({ kind: 'log', installId, stream: 'system', chunk: `Resolving Claude from ${registry} …` })
+      onEvent({
+        kind: 'log',
+        installId,
+        stream: 'system',
+        chunk: `Resolving Claude from ${registry} …\n`
+      })
       const resolution = await resolveNativePackage({ registry, platform, version, fetchJson })
 
       await downloadAndVerify({
@@ -434,7 +445,12 @@ const installManagedClaude = async ({
       if (!found) throw new Error(`Native package did not contain ${platform.binName}`)
       if (process.platform !== 'win32') await chmod(destPath, 0o755)
 
-      onEvent({ kind: 'log', installId, stream: 'system', chunk: `Installed Claude ${resolution.version}.` })
+      onEvent({
+        kind: 'log',
+        installId,
+        stream: 'system',
+        chunk: `Installed Claude ${resolution.version}.\n`
+      })
 
       return {
         result: { installId, ok: true },
@@ -443,7 +459,12 @@ const installManagedClaude = async ({
       }
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error)
-      onEvent({ kind: 'log', installId, stream: 'system', chunk: `${registry} failed: ${lastError}` })
+      onEvent({
+        kind: 'log',
+        installId,
+        stream: 'system',
+        chunk: `${registry} failed: ${lastError}\n`
+      })
     } finally {
       await rm(tgzPath, { force: true }).catch(() => undefined)
     }
