@@ -261,7 +261,7 @@ describe('session persistence repository (per-session files)', () => {
 
   it('uses the isolated dev directory name when requested', () => {
     expect(getSessionPersistenceDir('/Users/example', DEV_SESSION_DIR_NAME)).toBe(
-      join('/Users/example', '.open-science-dev')
+      join('/Users/example', '.open-science-project')
     )
   })
 })
