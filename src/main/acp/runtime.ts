@@ -83,6 +83,11 @@ type AcpRuntimeOptions = {
   uploads?: AcpRuntimeUploadOptions
   notebook?: AcpRuntimeNotebookOptions
   skills?: AcpRuntimeSkillsOptions
+  // Bounds the network-bound reconnect+resume so Resume always resolves; the fast attached-session
+  // path is never timed. Injectable timer mirrors the approval broker so tests stay deterministic.
+  resumeTimeoutMs?: number
+  setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
+  clearTimer?: (handle: ReturnType<typeof setTimeout>) => void
 }
 
 // Turn-scoped skill force-load hooks, wired from the settings service. Optional so tests that construct
@@ -223,6 +228,10 @@ class AcpRuntime {
   private readonly callbacks: AcpRuntimeCallbacks
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
   private readonly skillsHooks: AcpRuntimeSkillsOptions | undefined
+  // Bounded resume network timeout + injectable timers (defaults to real setTimeout/clearTimeout).
+  private readonly resumeTimeoutMs: number
+  private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
+  private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void
   private readonly artifactOptions: AcpRuntimeArtifactOptions | undefined
   private readonly notebookOptions: AcpRuntimeNotebookOptions | undefined
   private readonly artifactRepository: ArtifactRepository | undefined
@@ -242,6 +251,9 @@ class AcpRuntime {
     this.callbacks = options.callbacks ?? {}
     this.spawnAgent = options.spawnAgent
     this.skillsHooks = options.skills
+    this.resumeTimeoutMs = options.resumeTimeoutMs ?? 30_000
+    this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
+    this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle))
     this.artifactOptions = options.artifacts
     this.notebookOptions = options.notebook
     this.artifactRepository = options.artifacts
@@ -532,6 +544,51 @@ class AcpRuntime {
       return { sessionId: request.sessionId, cwd: sessionCwd }
     }
 
+    // The reconnect + session/resume handshake spawns a fresh agent and is network-bound, so it is
+    // wrapped in a bounded timeout that tears down the half-open connection if the agent stalls.
+    return this.resumeSessionWithTimeout(request, sessionCwd, projectName)
+  }
+
+  // Races the network-bound resume against a timeout so a stalled agent handshake cannot hang Resume
+  // forever. On timeout the half-open connection is torn down so the next Resume reconnects cleanly.
+  private async resumeSessionWithTimeout(
+    request: AcpResumeSessionRequest,
+    sessionCwd: string,
+    projectName: string
+  ): Promise<AcpCreateSessionResponse> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let timedOut = false
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = this.setTimer(() => {
+        timedOut = true
+        reject(new Error('ACP session resume timed out.'))
+      }, this.resumeTimeoutMs)
+    })
+
+    try {
+      return await Promise.race([
+        this.resumeSessionNetwork(request, sessionCwd, projectName),
+        timeout
+      ])
+    } catch (error) {
+      if (timedOut) {
+        await this.disconnect(false)
+      }
+
+      throw error
+    } finally {
+      if (timer !== undefined) {
+        this.clearTimer(timer)
+      }
+    }
+  }
+
+  // Performs the connect + session/resume handshake for a session the runtime does not yet hold.
+  private async resumeSessionNetwork(
+    request: AcpResumeSessionRequest,
+    sessionCwd: string,
+    projectName: string
+  ): Promise<AcpCreateSessionResponse> {
     const connection = await this.ensureConnected(sessionCwd)
     // Resume is optional in ACP, so fail early when the agent did not advertise it.
     if (!this.supportsSessionResume) {

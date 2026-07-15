@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 
 import type {
+  AcpConnectionStatus,
   AcpPermissionGrant,
   AcpPermissionRequest,
   AcpRuntimeEvent
@@ -14,7 +15,7 @@ import type { UploadedAttachment } from '../../../../shared/uploads'
 import type { ArtifactReference } from '../../../../shared/artifacts'
 import type { MessagePart } from '../../../../shared/session-persistence'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
-import { useSessionStore } from '../../stores/session-store'
+import { useSessionStore, type ChatMessage } from '../../stores/session-store'
 import { useAcpRuntime } from './useAcpRuntime'
 import { applyWorkspaceRuntimeEvent, syncWorkspacePermissionState } from './workspace-events'
 
@@ -61,12 +62,35 @@ const getResumeFailureMessage = (error: unknown): string => {
     return 'Session workspace is missing; start a new conversation.'
   }
 
+  if (/timed out/i.test(message)) {
+    return 'Agent session resume timed out; click Resume to try again.'
+  }
+
   return 'Agent session resume failed'
 }
 
 // Keeps attachment-finalization failures displayable without assuming Error instances.
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
+
+// Classifies a failed prompt against the live connection status: an abnormal drop (status 'closed'/
+// 'error') shows the Resume banner so the user can reconnect and continue, while a turn-level error
+// (connection still up, e.g. a gateway 5xx) surfaces as a normal session error. Reading the status at
+// failure time avoids the race where failRun would flip the session out of 'running' first.
+const failOrMarkDisconnected = async (sessionId: string, message: string): Promise<void> => {
+  try {
+    const snapshot = await window.api.acp.getState()
+
+    if (snapshot.status === 'closed' || snapshot.status === 'error') {
+      useSessionStore.getState().markDisconnected(sessionId)
+      return
+    }
+  } catch {
+    // Fall back to a plain error if the live status read fails.
+  }
+
+  useSessionStore.getState().failRun(sessionId, message)
+}
 
 // Moves staged uploads into the session directory and updates the already-visible user message.
 const finalizeWorkspaceAttachments = async (
@@ -232,13 +256,13 @@ const startPendingSessionPrompt = (
       .sendPrompt(runtimeSessionId, content, promptAttachments, forcedSkillIds, referencedArtifacts)
       .then((snapshot) => {
         if (!snapshot) {
-          useSessionStore.getState().failRun(runtimeSessionId, 'Agent run failed')
+          void failOrMarkDisconnected(runtimeSessionId, 'Agent run failed')
         }
       })
       .catch((error) => {
-        // A rejected prompt (e.g. an upstream gateway 5xx) must surface as a visible session error
-        // instead of being swallowed as an unhandled rejection.
-        useSessionStore.getState().failRun(runtimeSessionId, getErrorMessage(error))
+        // A rejected prompt surfaces as a Resume banner if the connection dropped, otherwise a
+        // visible session error, instead of being swallowed as an unhandled rejection.
+        void failOrMarkDisconnected(runtimeSessionId, getErrorMessage(error))
       })
   })()
 }
@@ -368,13 +392,13 @@ const sendWorkspaceMessage = async (
       .sendPrompt(targetSessionId, content, promptAttachments, forcedSkillIds, referencedArtifacts)
       .then((snapshot) => {
         if (!snapshot) {
-          useSessionStore.getState().failRun(targetSessionId, 'Agent run failed')
+          void failOrMarkDisconnected(targetSessionId, 'Agent run failed')
         }
       })
       .catch((error) => {
-        // A rejected prompt (e.g. an upstream gateway 5xx) must surface as a visible session error
-        // instead of being swallowed as an unhandled rejection.
-        useSessionStore.getState().failRun(targetSessionId, getErrorMessage(error))
+        // A rejected prompt surfaces as a Resume banner if the connection dropped, otherwise a
+        // visible session error, instead of being swallowed as an unhandled rejection.
+        void failOrMarkDisconnected(targetSessionId, getErrorMessage(error))
       })
 
     return appended
@@ -405,6 +429,26 @@ const sendWorkspaceMessage = async (
   )
 
   return pending
+}
+
+// Finds the interrupted user turn to continue after a reconnect: the most recent user message that
+// has no successful assistant reply after it (a half-streamed reply is failed on disconnect, so it
+// does not count). Returns undefined when the last turn was already answered, so a redundant Resume
+// does not re-send it.
+const findInterruptedUserTurn = (messages: ChatMessage[]): ChatMessage | undefined => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+
+    if (message.role !== 'user') continue
+
+    const hasSuccessfulReply = messages
+      .slice(index + 1)
+      .some((later) => later.role === 'agent' && later.status !== 'error')
+
+    return hasSuccessfulReply ? undefined : message
+  }
+
+  return undefined
 }
 
 // Explicitly re-attaches an interrupted session's ACP runtime so the user can keep chatting. On
@@ -442,6 +486,49 @@ const resumeInterruptedWorkspaceSession = async (
     useSessionStore.getState().markResumed(sessionId)
   } catch (error) {
     useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
+    return
+  }
+
+  // Continue the interrupted turn if it never got a successful reply. Removing the stale user message
+  // first avoids a duplicate bubble, since the shared send path re-appends and re-prompts it once.
+  const interruptedTurn = findInterruptedUserTurn(session.messages)
+
+  if (!interruptedTurn) return
+
+  useSessionStore.getState().removeMessage(sessionId, interruptedTurn.id)
+
+  await sendWorkspaceMessage(runtime, {
+    sessionId,
+    text: interruptedTurn.content,
+    attachments: interruptedTurn.uploads ?? [],
+    parts: interruptedTurn.parts,
+    cwd: resumeCwd,
+    projectId: session.projectId,
+    permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE
+  })
+}
+
+// Flags running sessions as disconnected on a TRANSITION into a dropped connection state. Abnormal
+// drops (agent crash / gateway drop) go through main's handleConnectionClosed → status 'closed';
+// deliberate mid-prompt disconnects use disconnect(false) (no 'closed' emit) and idle provider/skills
+// reconnects have no running session, so neither reaches markDisconnected here.
+const markRunningSessionsDisconnectedOnDrop = (
+  previousStatus: AcpConnectionStatus,
+  currentStatus: AcpConnectionStatus
+): void => {
+  const droppedNow =
+    (currentStatus === 'closed' || currentStatus === 'error') &&
+    previousStatus !== 'closed' &&
+    previousStatus !== 'error'
+
+  if (!droppedNow) return
+
+  const { sessions, markDisconnected } = useSessionStore.getState()
+
+  for (const session of sessions) {
+    if (session.status === 'running' || session.status === 'waiting-permission') {
+      markDisconnected(session.id)
+    }
   }
 }
 
@@ -461,6 +548,9 @@ const useWorkspaceAgentRuntime = (): {
 } => {
   const runtime = useAcpRuntime()
   const eventProcessor = useRef(createWorkspaceRuntimeEventProcessor())
+  // Tracks the last connection status so the disconnect effect fires only on a transition, not on
+  // every unrelated snapshot re-render.
+  const previousStatusRef = useRef(runtime.state.status)
 
   // Applies each visible runtime event once and trims ids that fell out of the runtime window.
   useEffect(() => {
@@ -471,6 +561,14 @@ const useWorkspaceAgentRuntime = (): {
   useEffect(() => {
     syncWorkspacePermissionState(runtime.state.pendingPermissions)
   }, [runtime.state.pendingPermissions])
+
+  // An abnormal live drop (agent crash / gateway drop) surfaces as a transition into 'closed'/'error'
+  // while a session is still running. Flag those sessions so the Resume banner appears.
+  useEffect(() => {
+    const previousStatus = previousStatusRef.current
+    previousStatusRef.current = runtime.state.status
+    markRunningSessionsDisconnectedOnDrop(previousStatus, runtime.state.status)
+  }, [runtime.state.status])
 
   // Creates a session if needed, records the user message, then starts the prompt in the background.
   const sendMessage = useCallback(
@@ -575,6 +673,7 @@ const useWorkspaceAgentRuntime = (): {
 
 export {
   createWorkspaceRuntimeEventProcessor,
+  markRunningSessionsDisconnectedOnDrop,
   processVisibleWorkspaceRuntimeEvents,
   resumeInterruptedWorkspaceSession,
   sendWorkspaceMessage,

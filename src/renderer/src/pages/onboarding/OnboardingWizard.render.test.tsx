@@ -286,7 +286,7 @@ describe('OnboardingWizard', () => {
     expect(container.textContent).not.toContain('Base URL is required.')
 
     const testButton = Array.from(container.querySelectorAll('button')).find((button) =>
-      /test connection/i.test(button.textContent ?? '')
+      /test & continue/i.test(button.textContent ?? '')
     )
     await act(async () => {
       testButton?.click()

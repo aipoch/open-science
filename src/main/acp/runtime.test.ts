@@ -980,6 +980,57 @@ describe('ACP runtime session management', () => {
     )
   })
 
+  it('times out and tears down a reconnect when the agent never answers session/resume', async () => {
+    const process = new FakeAgentProcess()
+    const resumeReceived = createDeferred()
+
+    // A fresh agent that advertises resume support but leaves session/resume pending forever.
+    acp
+      .agent({ name: 'stuck-agent' })
+      .onRequest(acp.methods.agent.initialize, () => ({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        agentCapabilities: {
+          loadSession: false,
+          sessionCapabilities: { close: {}, resume: {} }
+        },
+        authMethods: []
+      }))
+      .onRequest(acp.methods.agent.session.resume, () => {
+        resumeReceived.resolve(undefined)
+        return new Promise<never>(() => {})
+      })
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+
+    // Capture the injected timer callback so the test can fire the resume timeout deterministically.
+    let fireResumeTimeout: (() => void) | undefined
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      resumeTimeoutMs: 1000,
+      setTimer: (fn) => {
+        fireResumeTimeout = fn
+        return 0 as unknown as ReturnType<typeof setTimeout>
+      },
+      clearTimer: () => {}
+    })
+
+    const resume = runtime.resumeSession({ sessionId: 'stuck-session', cwd: '/workspace' })
+
+    // Wait until the resume request is genuinely in flight, then trip the injected timeout.
+    await resumeReceived.promise
+    fireResumeTimeout?.()
+
+    await expect(resume).rejects.toThrow(/timed out/i)
+    // The half-open connection is torn down so a retry reconnects cleanly.
+    expect(process.killed).toBe(true)
+  })
+
   it('adopts a fresh session under the same id when a replaced agent no longer holds it', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['adopted-session-1'], { resumeNotFound: true })

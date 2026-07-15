@@ -1223,5 +1223,31 @@ describe('session store', () => {
       expect(session.error).toBeUndefined()
       expect(session.status).toBe('idle')
     })
+
+    it('markDisconnected flags a live drop and settles the half-streamed reply, keeping the user turn', () => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'transport-session-1',
+        content: 'Read the files',
+        cwd: '/workspace/project'
+      })
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'assistant-message-1',
+        eventId: 'event-1',
+        content: 'I started'
+      })
+
+      useSessionStore.getState().markDisconnected('transport-session-1')
+
+      const session = useSessionStore.getState().sessions[0]
+
+      expect(session.status).toBe('error')
+      expect(session.interrupted).toBe(true)
+      expect(session.error).toBe('Connection lost — Resume to reconnect and continue.')
+      expect(session.activeRun).toBeUndefined()
+      // The user prompt is preserved so Resume can continue it; the streamed reply is failed off.
+      expect(session.messages[0]).toMatchObject({ role: 'user', content: 'Read the files' })
+      expect(session.messages[1]).toMatchObject({ content: 'I started', status: 'error' })
+    })
   })
 })

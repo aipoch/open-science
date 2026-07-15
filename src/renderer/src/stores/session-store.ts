@@ -162,6 +162,8 @@ type SessionStore = SessionStoreData & {
   finishRun: (sessionId: string) => void
   failRun: (sessionId: string, error: string) => void
   markResumed: (sessionId: string) => void
+  markDisconnected: (sessionId: string) => void
+  removeMessage: (sessionId: string, messageId: string) => void
   upsertToolActivity: (input: UpsertToolActivityInput) => void
   setPermissionPending: (sessionId: string) => void
   clearPermissionPending: (sessionId: string) => void
@@ -1012,6 +1014,44 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               status: 'idle',
               error: undefined,
               interrupted: undefined,
+              updatedAt: Date.now()
+            }
+          : session
+      )
+    }))
+  },
+
+  // Flags a session dropped by a live connection loss so the Resume banner appears; like failRun it
+  // settles any half-streamed message/open tool so nothing hangs in a perpetually-running state.
+  markDisconnected: (sessionId) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              status: 'error',
+              activeRun: undefined,
+              interrupted: true,
+              error: 'Connection lost — Resume to reconnect and continue.',
+              messages: failStreamingMessages(session.messages),
+              activities: failOpenActivities(session.activities),
+              updatedAt: Date.now()
+            }
+          : session
+      )
+    }))
+  },
+
+  // Drops a single message by id (used to remove a stale interrupted user turn before it is re-sent).
+  removeMessage: (sessionId, messageId) => {
+    if (!sessionId || !messageId) return
+
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              messages: session.messages.filter((message) => message.id !== messageId),
               updatedAt: Date.now()
             }
           : session

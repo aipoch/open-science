@@ -9,6 +9,7 @@ import {
 } from '../../stores/preview-workbench-store'
 import {
   createWorkspaceRuntimeEventProcessor,
+  markRunningSessionsDisconnectedOnDrop,
   processVisibleWorkspaceRuntimeEvents,
   resumeInterruptedWorkspaceSession,
   sendWorkspaceMessage
@@ -465,6 +466,83 @@ describe('workspace agent message sending', () => {
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
+  it('shows the Resume banner when a prompt fails during a live connection drop', async () => {
+    vi.stubGlobal('window', {
+      api: {
+        acp: {
+          getState: vi
+            .fn()
+            .mockResolvedValue({ ...createSnapshot(['session-1']), status: 'closed' })
+        }
+      }
+    })
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(undefined)
+    }
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'earlier turn',
+      cwd: '/workspace/project'
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'hello',
+      cwd: '/workspace/project'
+    })
+    await flushRuntimeTasks()
+    await flushRuntimeTasks()
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      interrupted: true,
+      error: 'Connection lost — Resume to reconnect and continue.'
+    })
+  })
+
+  it('shows a plain error, not the Resume banner, when a prompt fails but the connection is up', async () => {
+    vi.stubGlobal('window', {
+      api: {
+        acp: {
+          getState: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+        }
+      }
+    })
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(undefined)
+    }
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'earlier turn',
+      cwd: '/workspace/project'
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'hello',
+      cwd: '/workspace/project'
+    })
+    await flushRuntimeTasks()
+    await flushRuntimeTasks()
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.status).toBe('error')
+    expect(session.interrupted).toBeFalsy()
+    expect(session.error).toBe('Agent run failed')
+  })
+
   it('marks restored sessions running before resume finishes to block duplicate submits', async () => {
     const resumeCanFinish = createDeferred<{ sessionId: string; cwd?: string }>()
     const runtime = {
@@ -658,5 +736,113 @@ describe('resuming an interrupted session on demand', () => {
       status: 'error',
       error: 'Session workspace is missing; start a new conversation.'
     })
+  })
+
+  it('flags a running session as disconnected when the connection drops', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Keep working',
+      cwd: '/workspace/project',
+      projectId: 'default-project'
+    })
+    expect(useSessionStore.getState().sessions[0].status).toBe('running')
+
+    markRunningSessionsDisconnectedOnDrop('connected', 'closed')
+
+    const session = useSessionStore.getState().sessions[0]
+
+    expect(session.status).toBe('error')
+    expect(session.interrupted).toBe(true)
+    expect(session.error).toBe('Connection lost — Resume to reconnect and continue.')
+  })
+
+  it('does not flag an idle session on drop so provider/skills reconnects stay silent', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'All done',
+      cwd: '/workspace/project'
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    markRunningSessionsDisconnectedOnDrop('connected', 'closed')
+
+    expect(useSessionStore.getState().sessions[0].interrupted).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].status).toBe('idle')
+  })
+
+  it('reconnects and re-sends the interrupted user turn exactly once', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Continue the analysis',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    // A live drop leaves the last user turn unanswered and flags the session for Resume.
+    useSessionStore.getState().markDisconnected('session-1')
+
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn(),
+      resumeSession: vi
+        .fn()
+        .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+    await flushRuntimeTasks()
+
+    expect(runtime.resumeSession).toHaveBeenCalled()
+    expect(runtime.sendPrompt).toHaveBeenCalledTimes(1)
+    expect(runtime.sendPrompt).toHaveBeenCalledWith(
+      'session-1',
+      'Continue the analysis',
+      [],
+      undefined,
+      undefined
+    )
+
+    const session = useSessionStore.getState().sessions[0]
+    const userMessages = session.messages.filter((message) => message.role === 'user')
+
+    // The stale turn was removed and re-appended once, so there is no duplicate user bubble.
+    expect(userMessages).toHaveLength(1)
+    expect(userMessages[0].content).toBe('Continue the analysis')
+    expect(session.interrupted).toBeUndefined()
+  })
+
+  it('reconnects without re-sending when the last turn was already answered', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Earlier prompt',
+      cwd: '/workspace/project',
+      projectId: 'default-project'
+    })
+    // A completed assistant reply means the turn was answered before the drop.
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: 'Here is the answer'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    useSessionStore.getState().markDisconnected('session-1')
+
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn(),
+      resumeSession: vi
+        .fn()
+        .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
+      sendPrompt: vi.fn()
+    }
+
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+    await flushRuntimeTasks()
+
+    expect(runtime.resumeSession).toHaveBeenCalledTimes(1)
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
   })
 })
