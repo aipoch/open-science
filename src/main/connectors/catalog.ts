@@ -51,21 +51,23 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   },
   {
     id: 'genes',
-    displayName: 'Genes & Proteins',
-    description: 'Protein and gene annotation via UniProt and MyGene.',
+    displayName: 'Genes & Ontologies',
+    description:
+      'Gene/protein identity and ontology terms — mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways.',
     useWhen:
-      'Use when you need protein or gene annotation — a UniProt entry (protein name, gene, function) for an accession, or resolving a gene symbol to identifiers (Entrez/Ensembl).',
-    sources: ['UniProt', 'MyGene'],
+      'Use when you need to resolve gene symbols/identifiers (mygene.info), fetch UniProt protein records, look up or search ontology terms (EFO, GO, CL, ChEBI, MONDO via OLS4), retrieve GO annotations for a protein (QuickGO), or map genes to Reactome pathways.',
+    sources: ['MyGene', 'UniProt', 'OLS', 'QuickGO', 'Reactome'],
     termsUrl: 'https://www.uniprot.org/help/license',
     requiresNcbi: false
   },
   {
     id: 'genomes',
     displayName: 'Genomes',
-    description: 'Gene genomic location and identifiers via Ensembl.',
+    description:
+      'Genome annotation, variants, homology, sequence and browser tracks — Ensembl REST and the UCSC Genome Browser.',
     useWhen:
-      "Use when you need a gene's Ensembl ID, genomic location (chromosome/coordinates), or biotype — from a species + gene symbol, or an Ensembl ID.",
-    sources: ['Ensembl'],
+      'Use when you need Ensembl gene/transcript annotation, cross-references, VEP variant consequences, orthologues/paralogues, sequence, or region overlaps — or UCSC Genome Browser tracks, track data, conservation scores, TFBS clusters and chromosome sizes.',
+    sources: ['Ensembl', 'UCSC'],
     termsUrl: 'https://www.ensembl.org/info/about/legal/disclaimer.html',
     requiresNcbi: false
   },
@@ -165,10 +167,11 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'human_genetics',
     displayName: 'Human Genetics',
-    description: 'Genome-wide association study results via the GWAS Catalog.',
+    description:
+      'Human genetic association evidence — GWAS Catalog, eQTL Catalogue, and PheWeb PheWAS portals (FinnGen, BioBank Japan).',
     useWhen:
-      'Use when you need genome-wide association study (GWAS) evidence — variant-trait associations mapped to a gene symbol, or associations reported for a specific dbSNP variant (rsID), including p-value, risk allele, and mapped trait.',
-    sources: ['GWAS Catalog'],
+      'Use when you need human genetic-association evidence — GWAS Catalog associations/studies/traits for a variant, gene or trait; eQTL Catalogue molecular-QTL datasets and associations; or PheWAS scans (variant- or gene-level) from FinnGen and BioBank Japan PheWeb portals.',
+    sources: ['GWAS Catalog', 'eQTL Catalogue', 'PheWeb'],
     termsUrl: 'https://www.ebi.ac.uk/gwas/docs/about',
     requiresNcbi: false
   },
