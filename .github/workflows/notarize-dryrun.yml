@@ -1,0 +1,38 @@
+name: Notarize macOS (dry-run)
+
+# Manual, no-publish macOS notarization check.
+#
+# Builds + SIGNS the current ref's mac app (mac only, verify suite skipped for speed), submits it to
+# Apple's notary service, staples the ticket, and re-emits the stapled dmg/zip as run artifacts you
+# can download from the run. It touches NO GitHub Release — unlike notarize-mac.yml's own
+# workflow_dispatch path, which clobbers stapled assets back onto an existing release. Use this to
+# confirm the current build passes notarization before cutting a real release.
+#
+# It reuses the exact release-path jobs (build.yml -> notarize-mac.yml's workflow_call entry) minus
+# the publish step, so a green run means `stapler validate` passed (notarization actually succeeded).
+# Re-runnable with no side effects. No-ops (job succeeds, nothing tested) if APPLE_API_KEY_P8_BASE64
+# is not configured — the gate lives in notarize-mac.yml.
+on:
+  workflow_dispatch:
+
+# Read-only: this path never writes to a Release or any repo contents. build + notarize only move
+# pipeline artifacts around.
+permissions:
+  contents: read
+
+jobs:
+  # Signed mac-only build (no verify, no publish). Uploads macos-arm64 / macos-x64 run artifacts.
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      mac_only: true
+      skip_verify: true
+    secrets: inherit
+
+  # Notarize + staple those artifacts and re-emit the stapled versions (the workflow_call path's
+  # normal behavior — the destructive --clobber-to-release step is dispatch-only, so nothing is
+  # published here). Deliberately no publish job follows.
+  notarize:
+    needs: build
+    uses: ./.github/workflows/notarize-mac.yml
+    secrets: inherit
