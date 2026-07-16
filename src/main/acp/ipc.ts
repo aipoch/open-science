@@ -19,6 +19,7 @@ import type {
 import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../../shared/artifacts'
 import { AcpRuntime } from './runtime'
 import { installAgentShutdownGuard } from './shutdown-guard'
+import { AgentMcpHttpHost } from './mcp-http-host'
 import type { ArtifactRepository } from '../artifacts/repository'
 import type { ArtifactRunRegistry } from '../artifacts/run-registry'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
@@ -69,6 +70,9 @@ const createRuntime = ({
     // Resolve the active framework + provider credentials/model on every connect so framework and
     // provider switches apply on reconnect.
     resolveBackend: () => settingsService.resolveActiveAgentBackend(),
+    // Serves the artifact/notebook MCP over local http for frameworks that reject stdio MCP (opencode);
+    // Claude ignores it and keeps launching them over stdio.
+    mcpHttpHost: new AgentMcpHttpHost(),
     // Turn-scoped skill force-load: the runtime uses these to respawn with a picked-but-disabled skill
     // for one prompt and to build the steering nudge naming the picked skills.
     skills: {

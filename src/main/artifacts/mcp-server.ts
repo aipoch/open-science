@@ -225,6 +225,7 @@ const runArtifactMcpServer = async (
 
 export {
   ARTIFACT_MCP_SERVER_ARG,
+  ARTIFACT_MCP_SERVER_NAME,
   createArtifactMcpEnvironmentFromProcess,
   createArtifactMcpServer,
   createArtifactMcpServerConfig,

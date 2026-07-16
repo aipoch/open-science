@@ -51,12 +51,19 @@ import {
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 import { AcpPermissionBroker } from './permission-broker'
 import { applyCurrentModeUpdate } from './permission-profile-controller'
-import { createArtifactMcpServerConfig } from '../artifacts/mcp-server'
+import {
+  ARTIFACT_MCP_SERVER_NAME,
+  createArtifactMcpServerConfig,
+  type ArtifactMcpEnvironment
+} from '../artifacts/mcp-server'
+import { AgentMcpHttpHost } from './mcp-http-host'
 import { ArtifactRepository, getArtifactCurrentRunFilePath } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import {
+  NOTEBOOK_MCP_SERVER_NAME,
   NOTEBOOK_SYSTEM_PROMPT_APPEND,
   createNotebookMcpServerConfig,
+  type NotebookMcpEnvironment,
   type NotebookRpcConnection
 } from '../notebook/mcp-server'
 import { getNotebookSessionRoot } from '../notebook/repository'
@@ -89,6 +96,9 @@ type AcpRuntimeOptions = {
   // The agent backend to drive. Defaults to Claude Code; selecting another (opencode) swaps only the
   // framework-coupled behavior (spawn, session meta, permission-mode mapping) via AgentFramework.
   framework?: AgentFramework
+  // Local http host for the artifact/notebook MCP servers, used for frameworks that reject stdio MCP
+  // (opencode). Absent ⇒ those frameworks run without artifact/notebook tooling.
+  mcpHttpHost?: AgentMcpHttpHost
   // Bounds the network-bound reconnect+resume so Resume always resolves; the fast attached-session
   // path is never timed. Injectable timer mirrors the approval broker so tests stay deterministic.
   resumeTimeoutMs?: number
@@ -247,6 +257,7 @@ class AcpRuntime {
   private readonly skillsHooks: AcpRuntimeSkillsOptions | undefined
   // Mutable: refreshed from resolveBackend on each connect so a framework switch applies on reconnect.
   private framework: AgentFramework
+  private readonly mcpHttpHost: AgentMcpHttpHost | undefined
   // Bounded resume network timeout + injectable timers (defaults to real setTimeout/clearTimeout).
   private readonly resumeTimeoutMs: number
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
@@ -271,6 +282,7 @@ class AcpRuntime {
     this.spawnAgent = options.spawnAgent
     this.skillsHooks = options.skills
     this.framework = options.framework ?? claudeCodeFramework
+    this.mcpHttpHost = options.mcpHttpHost
     this.resumeTimeoutMs = options.resumeTimeoutMs ?? 30_000
     this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
     this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle))
@@ -1396,14 +1408,14 @@ class AcpRuntime {
     this.artifactSessionIds.set(sessionId, artifactSessionId)
   }
 
-  // Provides the agent with exactly one artifact MCP server scoped to this session's storage context.
-  private createArtifactMcpServers(
+  // Builds the artifact MCP environment for one session, shared by the stdio config and the http host.
+  private buildArtifactEnvironment(
     artifactSessionId: string,
     notebookSessionId: string,
     sessionCwd: string,
     projectName: string
-  ): McpServer[] {
-    if (!this.artifactOptions || !artifactSessionId) return []
+  ): ArtifactMcpEnvironment | undefined {
+    if (!this.artifactOptions || !artifactSessionId) return undefined
 
     const allowedImportRoots = [
       sessionCwd,
@@ -1412,15 +1424,36 @@ class AcpRuntime {
         : [])
     ]
 
+    return {
+      storageRoot: this.artifactOptions.dataRoot,
+      projectName,
+      sessionId: artifactSessionId,
+      currentRunFile: this.getArtifactCurrentRunFile(artifactSessionId, projectName),
+      allowedImportRoots
+    }
+  }
+
+  // Provides the agent with exactly one artifact MCP server scoped to this session's storage context.
+  private createArtifactMcpServers(
+    artifactSessionId: string,
+    notebookSessionId: string,
+    sessionCwd: string,
+    projectName: string
+  ): McpServer[] {
+    const environment = this.buildArtifactEnvironment(
+      artifactSessionId,
+      notebookSessionId,
+      sessionCwd,
+      projectName
+    )
+
+    if (!environment || !this.artifactOptions) return []
+
     return [
       createArtifactMcpServerConfig({
         command: this.artifactOptions.mcpCommand ?? process.execPath,
         entryPath: this.artifactOptions.mcpEntryPath,
-        storageRoot: this.artifactOptions.dataRoot,
-        projectName,
-        sessionId: artifactSessionId,
-        currentRunFile: this.getArtifactCurrentRunFile(artifactSessionId, projectName),
-        allowedImportRoots
+        ...environment
       })
     ]
   }
@@ -1441,25 +1474,44 @@ class AcpRuntime {
     this.notebookOptions.registerSessionAlias?.(notebookSessionId, sessionId)
   }
 
+  // Builds the notebook MCP environment for one session, shared by the stdio config and the http host.
+  private async buildNotebookEnvironment(
+    notebookSessionId: string,
+    sessionCwd: string,
+    projectName: string
+  ): Promise<NotebookMcpEnvironment | undefined> {
+    if (!this.notebookOptions || !notebookSessionId) return undefined
+
+    const connection = await this.resolveNotebookRpcConnection()
+
+    return {
+      endpoint: connection.endpoint,
+      token: connection.token,
+      projectName,
+      sessionId: notebookSessionId,
+      workspaceCwd: sessionCwd
+    }
+  }
+
   // Provides the agent with a notebook MCP server scoped to this session's runtime route.
   private async createNotebookMcpServers(
     notebookSessionId: string,
     sessionCwd: string,
     projectName: string
   ): Promise<McpServer[]> {
-    if (!this.notebookOptions || !notebookSessionId) return []
+    const environment = await this.buildNotebookEnvironment(
+      notebookSessionId,
+      sessionCwd,
+      projectName
+    )
 
-    const connection = await this.resolveNotebookRpcConnection()
+    if (!environment || !this.notebookOptions) return []
 
     return [
       createNotebookMcpServerConfig({
         command: this.notebookOptions.mcpCommand ?? process.execPath,
         entryPath: this.notebookOptions.mcpEntryPath,
-        endpoint: connection.endpoint,
-        token: connection.token,
-        projectName,
-        sessionId: notebookSessionId,
-        workspaceCwd: sessionCwd
+        ...environment
       })
     ]
   }
@@ -1489,32 +1541,86 @@ class AcpRuntime {
     sessionCwd: string
     projectName: string
   }): Promise<McpServer[]> {
-    // The artifact/notebook servers are stdio; a framework that only accepts http/sse MCP (opencode)
-    // gets none until they're exposed over http, so a basic turn still runs instead of failing on an
-    // unsupported stdio server config.
-    if (!this.framework.acceptsStdioMcp) {
-      return []
-    }
+    // The artifact/notebook servers are stdio. A framework that only accepts http/sse MCP (opencode)
+    // gets them over the http host when one is wired; without a host it gets none so a basic turn still
+    // runs instead of failing on an unsupported stdio server config.
+    const servers = this.framework.acceptsStdioMcp
+      ? [
+          ...this.createArtifactMcpServers(
+            artifactSessionId,
+            notebookSessionId,
+            sessionCwd,
+            projectName
+          ),
+          ...(await this.createNotebookMcpServers(notebookSessionId, sessionCwd, projectName))
+        ]
+      : await this.createHttpMcpServers(
+          artifactSessionId,
+          notebookSessionId,
+          sessionCwd,
+          projectName
+        )
 
-    const servers = [
-      ...this.createArtifactMcpServers(
-        artifactSessionId,
-        notebookSessionId,
-        sessionCwd,
-        projectName
-      ),
-      ...(await this.createNotebookMcpServers(notebookSessionId, sessionCwd, projectName))
-    ]
-
-    // Log the MCP server launch specs (command + args, no secrets) — a bad command/entry path in a
-    // packaged build can make the agent stall while it waits on an MCP server that never starts.
+    // Log the MCP server launch specs (command/url, no secrets) — a bad command/entry path or an
+    // unstarted host can make the agent stall while it waits on an MCP server that never responds.
     log.info('session MCP servers', {
       count: servers.length,
       servers: servers.map((server) => {
-        const record = server as { name?: string; command?: string; args?: unknown }
-        return { name: record.name, command: record.command, args: record.args }
+        const record = server as { name?: string; command?: string; url?: string; args?: unknown }
+        return { name: record.name, command: record.command, url: record.url, args: record.args }
       })
     })
+
+    return servers
+  }
+
+  // Serves the artifact/notebook MCP over the local http host for frameworks that reject stdio MCP.
+  // Registers each session's environment under its app-owned id and returns http McpServer configs
+  // pointing at the host, authenticated with the host token. No host wired ⇒ no servers (basic turn).
+  private async createHttpMcpServers(
+    artifactSessionId: string,
+    notebookSessionId: string,
+    sessionCwd: string,
+    projectName: string
+  ): Promise<McpServer[]> {
+    if (!this.mcpHttpHost) return []
+
+    const { token } = await this.mcpHttpHost.ensureStarted()
+    const authHeader = { name: 'authorization', value: `Bearer ${token}` }
+    const servers: McpServer[] = []
+
+    const artifactEnvironment = this.buildArtifactEnvironment(
+      artifactSessionId,
+      notebookSessionId,
+      sessionCwd,
+      projectName
+    )
+
+    if (artifactEnvironment) {
+      this.mcpHttpHost.registerArtifact(artifactSessionId, artifactEnvironment)
+      servers.push({
+        type: 'http',
+        name: ARTIFACT_MCP_SERVER_NAME,
+        url: this.mcpHttpHost.urlFor('artifact', artifactSessionId),
+        headers: [authHeader]
+      })
+    }
+
+    const notebookEnvironment = await this.buildNotebookEnvironment(
+      notebookSessionId,
+      sessionCwd,
+      projectName
+    )
+
+    if (notebookEnvironment) {
+      this.mcpHttpHost.registerNotebook(notebookSessionId, notebookEnvironment)
+      servers.push({
+        type: 'http',
+        name: NOTEBOOK_MCP_SERVER_NAME,
+        url: this.mcpHttpHost.urlFor('notebook', notebookSessionId),
+        headers: [authHeader]
+      })
+    }
 
     return servers
   }
@@ -1523,10 +1629,17 @@ class AcpRuntime {
   // — skills are materialized whenever the app runs), plus artifact/notebook tooling instructions when
   // those services are wired. The active framework decides how these are delivered (Claude's preset
   // append vs opencode's prompt prefix).
+  // Whether artifact/notebook MCP tooling reaches the agent this run: either the framework takes stdio
+  // MCP directly (Claude) or an http host is wired to serve it (opencode). Drives both the MCP configs
+  // and whether their system-prompt guidance is sent.
+  private mcpToolingAvailable(): boolean {
+    return this.framework.acceptsStdioMcp || Boolean(this.mcpHttpHost)
+  }
+
   private getSystemPromptAppends(): string[] {
-    // Artifact/notebook guidance names MCP tools that only exist when the framework accepts stdio MCP;
-    // omit it otherwise so the agent isn't told to use tools it wasn't given (see createMcpServers).
-    const toolsAvailable = this.framework.acceptsStdioMcp
+    // Artifact/notebook guidance names MCP tools that only exist when that tooling is actually wired for
+    // this framework; omit it otherwise so the agent isn't told to use tools it wasn't given.
+    const toolsAvailable = this.mcpToolingAvailable()
 
     return [
       SKILLS_READ_GUARD_SYSTEM_PROMPT_APPEND,

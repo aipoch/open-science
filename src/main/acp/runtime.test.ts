@@ -9,6 +9,7 @@ import { PassThrough, Readable, Writable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpRuntime } from './runtime'
+import { AgentMcpHttpHost } from './mcp-http-host'
 import { opencodeFramework } from '../agent-framework'
 import { ArtifactRepository } from '../artifacts/repository'
 import { UploadRepository } from '../uploads/repository'
@@ -685,6 +686,53 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.newSessions[0]._meta).toBeUndefined()
     expect(fakeAgent.prompts[0].text).toContain('hello opencode')
     expect(fakeAgent.prompts[0].text).not.toContain('write_artifact_file')
+  })
+
+  it('serves artifact/notebook MCP over the http host for an http-only framework', async () => {
+    const root = await createTemporaryRoot()
+    const httpHost = new AgentMcpHttpHost()
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['oc-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework,
+      mcpHttpHost: httpHost,
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js'
+      },
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:1/notebook', token: 'nb' })
+      }
+    })
+
+    try {
+      await runtime.createSession({ cwd: '/workspace' })
+
+      const servers = fakeAgent.newSessions[0].mcpServers as Array<{
+        type?: string
+        name?: string
+        url?: string
+        headers?: Array<{ name: string; value: string }>
+      }>
+
+      // opencode gets http MCP configs (not stdio) pointing at the local host, with bearer auth.
+      expect(servers.map((server) => server.type)).toEqual(['http', 'http'])
+      expect(servers.map((server) => server.name)).toEqual(
+        expect.arrayContaining(['open-science-artifacts', 'open-science-notebook'])
+      )
+      const artifactServer = servers.find((server) => server.name === 'open-science-artifacts')
+      expect(artifactServer?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp\/artifact\//)
+      expect(artifactServer?.headers?.[0]).toMatchObject({ name: 'authorization' })
+    } finally {
+      await httpHost.close()
+    }
   })
 
   it('allows prompts from different sessions to run concurrently', async () => {
