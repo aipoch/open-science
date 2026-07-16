@@ -948,6 +948,14 @@ class AcpRuntime {
     this.framework = backend.framework
     this.pendingSessionModel = backend.sessionModel
 
+    // Surfaces which backend + model this connect uses, so a fallback to the framework's own default
+    // model (e.g. opencode with no app model to inject) is diagnosable in the log rather than silent.
+    log.info('agent backend resolved', {
+      framework: backend.framework.id,
+      sessionModel: backend.sessionModel ?? '(framework default)',
+      args: backend.args ?? []
+    })
+
     return this.framework.spawn({
       executablePath: backend.executablePath,
       env: backend.env,
