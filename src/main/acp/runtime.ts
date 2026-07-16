@@ -268,6 +268,9 @@ class AcpRuntime {
   private readonly artifactRunRegistry: ArtifactRunRegistry | undefined
   private readonly uploadRepository: UploadRepository | undefined
   private readonly artifactSessionIds = new Map<string, string>()
+  // app session id -> the notebook routing id registered with the http MCP host, so it can be
+  // unregistered on session delete (the artifact routing id is tracked in artifactSessionIds).
+  private readonly notebookRoutingIds = new Map<string, string>()
   private artifactSessionSequence = 0
   private artifactRunSequence = 0
   private notebookSessionSequence = 0
@@ -842,6 +845,8 @@ class AcpRuntime {
     this.sessionProjectNames.clear()
     this.permissionProfiles.clear()
     this.artifactSessionIds.clear()
+    this.notebookRoutingIds.clear()
+    this.mcpHttpHost?.clear()
     this.agentToAppSessionId.clear()
     this.currentSessionId = undefined
     this.supportsSessionClose = false
@@ -1116,11 +1121,14 @@ class AcpRuntime {
 
       session.dispose()
       this.permissionBroker.cancelForSession(request.sessionId)
+      // Drop this session's http MCP host registrations (no-op when no host / stdio framework).
+      this.unregisterHttpMcpSession(request.sessionId)
       this.sessions.delete(request.sessionId)
       this.sessionCwds.delete(request.sessionId)
       this.sessionProjectNames.delete(request.sessionId)
       this.permissionProfiles.delete(request.sessionId)
       this.artifactSessionIds.delete(request.sessionId)
+      this.notebookRoutingIds.delete(request.sessionId)
       this.promptInFlightSessionIds.delete(request.sessionId)
       this.currentSessionId =
         this.currentSessionId === request.sessionId
@@ -1469,7 +1477,12 @@ class AcpRuntime {
 
   // Lets the local notebook RPC layer map pre-start aliases to the final ACP session id.
   private rememberNotebookSession(sessionId: string, notebookSessionId: string): void {
-    if (!this.notebookOptions || !notebookSessionId || notebookSessionId === sessionId) return
+    if (!this.notebookOptions || !notebookSessionId) return
+
+    // Record the routing id the http MCP host was registered under, for later unregister.
+    this.notebookRoutingIds.set(sessionId, notebookSessionId)
+
+    if (notebookSessionId === sessionId) return
 
     this.notebookOptions.registerSessionAlias?.(notebookSessionId, sessionId)
   }
@@ -1572,6 +1585,17 @@ class AcpRuntime {
     })
 
     return servers
+  }
+
+  // Drops one session's artifact/notebook registrations from the http MCP host (no-op without a host).
+  private unregisterHttpMcpSession(appSessionId: string): void {
+    if (!this.mcpHttpHost) return
+
+    const artifactRoutingId = this.artifactSessionIds.get(appSessionId)
+    if (artifactRoutingId) this.mcpHttpHost.unregister(artifactRoutingId)
+
+    const notebookRoutingId = this.notebookRoutingIds.get(appSessionId)
+    if (notebookRoutingId) this.mcpHttpHost.unregister(notebookRoutingId)
   }
 
   // Serves the artifact/notebook MCP over the local http host for frameworks that reject stdio MCP.
@@ -1962,6 +1986,8 @@ class AcpRuntime {
     this.sessionCwds.clear()
     this.sessionProjectNames.clear()
     this.artifactSessionIds.clear()
+    this.notebookRoutingIds.clear()
+    this.mcpHttpHost?.clear()
     this.agentToAppSessionId.clear()
     this.currentSessionId = undefined
     this.supportsSessionClose = false

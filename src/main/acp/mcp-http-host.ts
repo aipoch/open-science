@@ -127,6 +127,11 @@ class AgentMcpHttpHost {
     this.sessions.delete(routingId)
   }
 
+  // Drops every registered environment (e.g. on runtime disconnect); the server keeps running for reuse.
+  clear(): void {
+    this.sessions.clear()
+  }
+
   // Builds the per-session MCP endpoint URL the agent connects to for one kind.
   urlFor(kind: ServerKind, routingId: string): string {
     if (!this.endpoint) {
