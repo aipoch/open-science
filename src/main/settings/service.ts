@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
-import { access, readdir } from 'node:fs/promises'
+import { access, mkdir, readdir, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
 
@@ -56,7 +56,14 @@ import {
   resolveVendorModelsUrl
 } from '../../shared/provider-registry'
 import { resolveStorageRoot } from '../storage-root'
+import {
+  DEFAULT_AGENT_FRAMEWORK_ID,
+  getAgentFramework,
+  type AgentFrameworkId,
+  type ResolvedAgentBackend
+} from '../agent-framework'
 import { createDefaultDetectDeps, detectClaude, type ClaudeDetectDeps } from './claude-detect'
+import { detectOpencode } from './opencode-detect'
 import { provisionAppClaudeConfigDir } from './claude-config-provision'
 import { detectNpmAvailable, runInstallWithFallback } from './claude-install'
 import { runEnvironmentCheck } from './environment-check'
@@ -949,6 +956,72 @@ class SettingsService {
     }
 
     return { envOverrides, executablePath }
+  }
+
+  // Resolves the active agent backend for one connect: the selected framework plus its spawn inputs.
+  // Claude reuses the existing provider-env path unchanged; other frameworks (opencode) map the active
+  // provider to their own native config (a generated opencode.json) via the framework adapter and get
+  // it written to disk before spawn. The framework can be forced with OPEN_SCIENCE_AGENT_FRAMEWORK for
+  // the spike until the settings selector lands.
+  async resolveActiveAgentBackend(): Promise<ResolvedAgentBackend> {
+    const settings = await this.repository.getSettings()
+    const forced = process.env.OPEN_SCIENCE_AGENT_FRAMEWORK
+    const frameworkId: AgentFrameworkId =
+      forced === 'opencode' || forced === 'claude-code'
+        ? forced
+        : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
+    const framework = getAgentFramework(frameworkId)
+
+    if (framework.id === 'claude-code') {
+      // Unchanged Claude path: skills provisioning + Anthropic-shaped env + local-auth handling.
+      const { envOverrides, executablePath } = await this.resolveActiveSpawnConfig()
+
+      return { framework, executablePath, env: envOverrides }
+    }
+
+    // opencode: no CLAUDE_CONFIG_DIR / skills provisioning; the adapter maps the provider onto its own
+    // config file, which is written before the agent spawns.
+    const activeProvider = settings.activeProviderId
+      ? settings.providers.find((provider) => provider.id === settings.activeProviderId)
+      : undefined
+
+    if (!activeProvider) {
+      throw new Error('No active model provider is configured. Configure one in settings.')
+    }
+
+    const executablePath = await this.resolveOpencodeExecutable(settings.opencodePath)
+    const modelConfig = framework.prepareModelConfig(
+      this.resolveProvider(activeProvider, settings.activeModel),
+      { storageRoot: this.storageRoot, executablePath }
+    )
+    await this.writeAgentConfigFiles(modelConfig.configFiles)
+
+    return { framework, executablePath, env: modelConfig.env ?? {}, args: modelConfig.args }
+  }
+
+  // Locates the opencode binary: an explicitly stored path wins, else a best-effort PATH lookup.
+  private async resolveOpencodeExecutable(storedPath: string | undefined): Promise<string> {
+    if (storedPath) return storedPath
+
+    const detected = await detectOpencode()
+
+    if (!detected) {
+      throw new Error(
+        'opencode executable not found. Install opencode or set its path in settings.'
+      )
+    }
+
+    return detected
+  }
+
+  // Writes a framework's generated config files (e.g. opencode.json) to disk ahead of spawn.
+  private async writeAgentConfigFiles(
+    files: { path: string; content: string }[] | undefined
+  ): Promise<void> {
+    for (const file of files ?? []) {
+      await mkdir(dirname(file.path), { recursive: true })
+      await writeFile(file.path, file.content, 'utf8')
+    }
   }
 
   // Maps a stored provider to its masked renderer view, flagging custom keys that no longer decrypt.

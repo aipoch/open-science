@@ -1,6 +1,7 @@
 import type { ClaudeInfo, ProviderType, ProviderValidationFailure } from '../../shared/settings'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { OfficialVendorId } from '../../shared/provider-registry'
+import type { AgentFrameworkId } from '../agent-framework'
 
 // Main-process-only stored shapes for settings.json. These carry the encrypted key reference and a
 // non-secret masked hint; the plaintext key never lives here (only transiently in service memory).
@@ -70,6 +71,10 @@ export type StoredConnectors = {
 export type StoredSettings = {
   version: typeof SETTINGS_FILE_VERSION
   claude?: ClaudeInfo
+  // Selected agent backend. Absent means the default (Claude Code). Switching needs a reconnect.
+  agentFrameworkId?: AgentFrameworkId
+  // Explicit path to the opencode executable when auto-detection can't find it. Absent = detect on PATH.
+  opencodePath?: string
   activeProviderId?: string
   // Active model within the active provider; backfilled from the provider's own model on load when a
   // pre-v2 settings file (which had no per-model selection) is read.

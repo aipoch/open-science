@@ -37,8 +37,11 @@ import {
   type PermissionProfileId,
   type SessionPermissionProfileState
 } from '../../shared/permission-profiles'
-import type { SpawnClaudeAgentAcpOptions } from './agent-process'
-import { claudeCodeFramework, type AgentFramework } from '../agent-framework'
+import {
+  claudeCodeFramework,
+  type AgentFramework,
+  type ResolvedAgentBackend
+} from '../agent-framework'
 import { createLogger } from '../logger'
 import {
   extractProviderToolName,
@@ -75,9 +78,10 @@ type AcpRuntimeOptions = {
   defaultCwd: string
   callbacks?: AcpRuntimeCallbacks
   spawnAgent?: () => ChildProcessWithoutNullStreams
-  // Resolves the current active-provider spawn config at connect time so switching providers takes
-  // effect on reconnect. Ignored when an explicit spawnAgent is provided (tests inject that directly).
-  resolveSpawnConfig?: () => Promise<SpawnClaudeAgentAcpOptions> | SpawnClaudeAgentAcpOptions
+  // Resolves the active agent backend (framework + spawn inputs) at connect time so a framework or
+  // provider switch takes effect on reconnect. Ignored when an explicit spawnAgent is provided (tests
+  // inject that directly).
+  resolveBackend?: () => Promise<ResolvedAgentBackend> | ResolvedAgentBackend
   artifacts?: AcpRuntimeArtifactOptions
   uploads?: AcpRuntimeUploadOptions
   notebook?: AcpRuntimeNotebookOptions
@@ -241,7 +245,8 @@ class AcpRuntime {
   private readonly callbacks: AcpRuntimeCallbacks
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
   private readonly skillsHooks: AcpRuntimeSkillsOptions | undefined
-  private readonly framework: AgentFramework
+  // Mutable: refreshed from resolveBackend on each connect so a framework switch applies on reconnect.
+  private framework: AgentFramework
   // Bounded resume network timeout + injectable timers (defaults to real setTimeout/clearTimeout).
   private readonly resumeTimeoutMs: number
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
@@ -867,33 +872,26 @@ class AcpRuntime {
   }
 
   // Creates the agent process, preferring an injected spawner (tests) and otherwise resolving the
-  // current active-provider spawn config so each reconnect uses up-to-date credentials.
+  // active agent backend so each reconnect uses the current framework + up-to-date credentials.
   private async spawnAgentProcess(): Promise<ChildProcessWithoutNullStreams> {
     if (this.spawnAgent) {
       return this.spawnAgent()
     }
 
-    const config = this.options.resolveSpawnConfig
-      ? await this.options.resolveSpawnConfig()
-      : undefined
+    const backend = this.options.resolveBackend ? await this.options.resolveBackend() : undefined
 
-    if (!config) {
+    if (!backend) {
       throw new Error('ACP agent spawn configuration is not available.')
     }
 
-    if (!config.executablePath) {
-      throw new Error(
-        'Claude executable path is not configured. Complete Claude detection in settings first.'
-      )
-    }
+    // Adopt the framework this reconnect resolved so session meta, permission mapping, and the spawn
+    // itself all agree with the current selection.
+    this.framework = backend.framework
 
-    // The framework owns the actual spawn; the resolved provider env/executable pass through unchanged.
-    // TODO(spike): route provider→model config through framework.prepareModelConfig once opencode
-    // detection + a framework-aware resolveSpawnConfig land (envOverrides is resolved upstream today).
     return this.framework.spawn({
-      executablePath: config.executablePath,
-      env: config.envOverrides ?? {},
-      args: []
+      executablePath: backend.executablePath,
+      env: backend.env,
+      args: backend.args ?? []
     })
   }
 

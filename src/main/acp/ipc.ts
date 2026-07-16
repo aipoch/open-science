@@ -66,8 +66,9 @@ const createRuntime = ({
     appVersion: app.getVersion(),
     // Packaged macOS apps often start with cwd at "/" or the app bundle; use home instead.
     defaultCwd: homedir(),
-    // Read the active provider's credentials/model on every connect so provider switches apply.
-    resolveSpawnConfig: () => settingsService.resolveActiveSpawnConfig(),
+    // Resolve the active framework + provider credentials/model on every connect so framework and
+    // provider switches apply on reconnect.
+    resolveBackend: () => settingsService.resolveActiveAgentBackend(),
     // Turn-scoped skill force-load: the runtime uses these to respawn with a picked-but-disabled skill
     // for one prompt and to build the steering nudge naming the picked skills.
     skills: {

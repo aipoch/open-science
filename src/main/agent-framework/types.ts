@@ -80,3 +80,13 @@ export interface AgentFramework {
   // Config-dir-materialized skills (Claude). Absent ⇒ the app hides the skills UI + force-load path.
   readonly supportsSkills: boolean
 }
+
+// The resolved agent backend for one connect: which framework to drive plus its already-resolved spawn
+// inputs (executable + env + args). Produced by the settings layer at connect time so a framework or
+// provider switch takes effect on reconnect.
+export type ResolvedAgentBackend = {
+  framework: AgentFramework
+  executablePath: string
+  env: Record<string, string>
+  args?: string[]
+}
