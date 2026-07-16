@@ -15,10 +15,12 @@ name: Notarize macOS (dry-run)
 on:
   workflow_dispatch:
 
-# Read-only: this path never writes to a Release or any repo contents. build + notarize only move
-# pipeline artifacts around.
+# Must grant contents: write because the reusable notarize-mac.yml declares it at the workflow level
+# (for its dispatch-only clobber-to-release path) — a called workflow cannot request more permission
+# than its caller grants, so a narrower scope here fails the run at startup. This dry-run's call path
+# never writes to a Release; the grant only satisfies the reusable workflow's declared permissions.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   # Signed mac-only build (no verify, no publish). Uploads macos-arm64 / macos-x64 run artifacts.
