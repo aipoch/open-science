@@ -73,4 +73,24 @@ describe('UpdateDialog', () => {
     act(() => button?.click())
     expect(download).toHaveBeenCalled()
   })
+
+  it('shows "Restart to update" when a ready update applies in place (win/linux)', () => {
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: { state: 'ready', current: '0.1.0', latest: '0.2.0', applyKind: 'restart' }
+    })
+    act(() => root.render(<UpdateDialog />))
+    expect(document.body.textContent).toContain('Restart to update')
+    expect(document.body.textContent).not.toContain('Open installer')
+  })
+
+  it('shows "Open installer" when a ready update applies via installer (mac)', () => {
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: { state: 'ready', current: '0.1.0', latest: '0.2.0', applyKind: 'installer' }
+    })
+    act(() => root.render(<UpdateDialog />))
+    expect(document.body.textContent).toContain('Open installer')
+    expect(document.body.textContent).not.toContain('Restart to update')
+  })
 })

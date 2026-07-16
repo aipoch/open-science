@@ -12,7 +12,7 @@ type UpdateStore = {
   openDialog: () => void
   closeDialog: () => void
   download: () => Promise<void>
-  openInstaller: () => Promise<void>
+  apply: () => Promise<void>
 }
 
 // Single source of truth for update state in the renderer. The main process broadcasts every
@@ -58,10 +58,10 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
     set({ status: await api.download() })
   },
 
-  openInstaller: async () => {
+  apply: async () => {
     const api = window.api?.update
     if (!api) return
-    const status = await api.openInstaller()
+    const status = await api.apply()
     if (status) set({ status })
   }
 }))

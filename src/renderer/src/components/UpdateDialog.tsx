@@ -1,4 +1,4 @@
-import { Download, ExternalLink, X } from 'lucide-react'
+import { Download, ExternalLink, RefreshCw, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
@@ -14,7 +14,7 @@ const UpdateDialog = (): React.JSX.Element | null => {
   const isOpen = useUpdateStore((state) => state.isDialogOpen)
   const closeDialog = useUpdateStore((state) => state.closeDialog)
   const download = useUpdateStore((state) => state.download)
-  const openInstaller = useUpdateStore((state) => state.openInstaller)
+  const apply = useUpdateStore((state) => state.apply)
 
   if (!isOpen || !status.latest) return null
 
@@ -92,11 +92,20 @@ const UpdateDialog = (): React.JSX.Element | null => {
             {isReady ? (
               <button
                 type="button"
-                onClick={() => void openInstaller()}
+                onClick={() => void apply()}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
               >
-                <ExternalLink className="size-4" aria-hidden="true" />
-                Open installer
+                {status.applyKind === 'restart' ? (
+                  <>
+                    <RefreshCw className="size-4" aria-hidden="true" />
+                    Restart to update
+                  </>
+                ) : (
+                  <>
+                    <ExternalLink className="size-4" aria-hidden="true" />
+                    Open installer
+                  </>
+                )}
               </button>
             ) : (
               <button

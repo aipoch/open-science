@@ -7,6 +7,7 @@ import { APP } from '../../shared/app-config'
 import { isNewer, selectDownload, type UpdateStatus } from '../../shared/update'
 import { downloadInstaller } from './downloader'
 import { fetchManifest } from './manifest'
+import type { UpdateStrategy } from './strategy'
 
 export type UpdateServiceDeps = {
   fetchImpl?: typeof fetch
@@ -18,7 +19,7 @@ export type UpdateServiceDeps = {
   // Resolves where to save the installer, or null if the user cancels. Injected in tests; the
   // default is platform-aware (see resolveSavePath).
   promptSavePath?: (defaultFileName: string) => Promise<string | null>
-  // Filesystem + shell hooks, injected in tests so openInstaller never touches Electron/disk.
+  // Filesystem + shell hooks, injected in tests so apply never touches Electron/disk.
   fileExists?: (path: string) => boolean
   openPath?: (path: string) => Promise<string>
   openExternal?: (url: string) => Promise<void>
@@ -43,7 +44,7 @@ const installerFileName = (url: string): string => {
 
 // Owns the update lifecycle and the single UpdateStatus. Every transition is broadcast so all
 // renderer stores stay in sync. All I/O is injectable for tests; production reads Electron/OS.
-export class UpdateService {
+export class UpdateService implements UpdateStrategy {
   private status: UpdateStatus
   private readonly fetchImpl?: typeof fetch
   private readonly platform: NodeJS.Platform
@@ -67,7 +68,7 @@ export class UpdateService {
     this.fileExists = deps.fileExists ?? existsSync
     this.openPath = deps.openPath ?? ((path) => shell.openPath(path))
     this.openExternal = deps.openExternal ?? ((url) => shell.openExternal(url))
-    this.status = { state: 'idle', current: this.currentVersion }
+    this.status = { state: 'idle', current: this.currentVersion, applyKind: 'installer' }
   }
 
   // Platform-aware save location. Windows/Linux write straight to the Downloads folder (no OS
@@ -90,9 +91,11 @@ export class UpdateService {
     return this.status
   }
 
+  // Manifest flow always applies via an installer, so stamp applyKind here so every broadcast status
+  // carries it (the renderer picks the "Open installer" vs "Restart" action off this field).
   private setStatus(next: UpdateStatus): void {
-    this.status = next
-    this.broadcast('update:status', next)
+    this.status = { ...next, applyKind: 'installer' }
+    this.broadcast('update:status', this.status)
   }
 
   async check(): Promise<UpdateStatus> {
@@ -166,7 +169,7 @@ export class UpdateService {
   // Opens the downloaded installer. If the file is gone (e.g. the user deleted it) or fails to open,
   // drop back to 'available' so the user can re-download in place — the download metadata is still on
   // the status. With no installer for this platform at all, send them to the public download page.
-  async openInstaller(): Promise<UpdateStatus> {
+  async apply(): Promise<UpdateStatus> {
     const { localPath, download } = this.status
     if (localPath && this.fileExists(localPath)) {
       const error = await this.openPath(localPath)

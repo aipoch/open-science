@@ -22,6 +22,9 @@ export type UpdateStatus = {
   progress?: number // 0-100 while downloading
   localPath?: string // set when state === 'ready'
   error?: string
+  // How the renderer applies a ready update: open the downloaded installer (mac manual reinstall) or
+  // restart into an in-place electron-updater install (win/linux). Set by the active strategy.
+  applyKind?: 'installer' | 'restart'
 }
 
 export type AppInfo = { name: string; version: string; copyright: string }

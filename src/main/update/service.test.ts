@@ -66,6 +66,18 @@ describe('UpdateService.check', () => {
     expect(status.state).toBe('error')
     expect(status.error).toBe('offline')
   })
+
+  it('stamps applyKind "installer" on every emitted status', async () => {
+    const service = new UpdateService({
+      fetchImpl: (() => Promise.resolve(jsonResponse(manifest))) as unknown as typeof fetch,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      broadcast: vi.fn()
+    })
+    const status = await service.check()
+    expect(status.applyKind).toBe('installer')
+  })
 })
 
 describe('UpdateService.download', () => {
@@ -177,7 +189,7 @@ describe('UpdateService.download', () => {
   })
 })
 
-describe('UpdateService.openInstaller', () => {
+describe('UpdateService.apply', () => {
   let dir = ''
   afterEach(async () => {
     if (dir) await rm(dir, { recursive: true, force: true })
@@ -227,7 +239,7 @@ describe('UpdateService.openInstaller', () => {
     const openPath = vi.fn(() => Promise.resolve(''))
     const service = await downloadedService(target, { openPath })
 
-    const status = await service.openInstaller()
+    const status = await service.apply()
 
     expect(openPath).toHaveBeenCalledWith(target)
     expect(status.state).toBe('ready')
@@ -239,7 +251,7 @@ describe('UpdateService.openInstaller', () => {
     const openPath = vi.fn(() => Promise.resolve(''))
     const service = await downloadedService(target, { openPath, fileExists: () => false })
 
-    const status = await service.openInstaller()
+    const status = await service.apply()
 
     expect(openPath).not.toHaveBeenCalled()
     expect(status.state).toBe('available')

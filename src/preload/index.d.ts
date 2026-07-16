@@ -195,7 +195,7 @@ interface OpenScienceAPI {
     getStatus(): Promise<UpdateStatus>
     check(): Promise<UpdateStatus>
     download(): Promise<UpdateStatus>
-    openInstaller(): Promise<UpdateStatus>
+    apply(): Promise<UpdateStatus>
     onStatus(listener: (status: UpdateStatus) => void): RemoveListener
     onProgress(listener: (percent: number) => void): RemoveListener
   }

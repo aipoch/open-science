@@ -32,7 +32,7 @@ describe('useUpdateStore', () => {
         onProgress,
         check: vi.fn(),
         download: vi.fn(),
-        openInstaller: vi.fn()
+        apply: vi.fn()
       }
     }
 
@@ -58,7 +58,7 @@ describe('useUpdateStore', () => {
         onProgress: vi.fn(),
         check: vi.fn(),
         download: vi.fn(),
-        openInstaller: vi.fn()
+        apply: vi.fn()
       }
     }
 
