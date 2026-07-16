@@ -13,9 +13,12 @@ name: Notarize macOS
 #   - workflow_dispatch{ tag } — standalone repair/backfill. Notarizes + staples the mac assets
 #     already attached to an existing Release, clobbers them back, and refreshes SHA256SUMS.txt.
 #
-# Time cap is enforced two ways: notarytool `--wait --timeout` bounds the Apple wait per file, and
-# job-level `timeout-minutes` bounds the whole job. On timeout/failure the job fails but the Apple
-# submission keeps running, so simply re-running this workflow re-checks and staples — no rebuild.
+# Time cap is enforced two ways: each dmg is submitted, then waited on for at most 15m
+# (`notarytool wait --timeout 15m`), and the job as a whole is bounded by `timeout-minutes: 20`.
+# The submission id is captured before waiting, so on a timeout the log still shows it plus the
+# `notarytool info <id>` command to check the real status. A timeout is NOT a rejection — the Apple
+# submission keeps running; publish (which needs this job) is skipped, so nothing bad is published,
+# and re-running this workflow re-checks + staples with no rebuild.
 on:
   workflow_call:
     inputs:
@@ -38,8 +41,8 @@ jobs:
   notarize:
     name: Notarize + staple ${{ matrix.arch }}
     runs-on: macos-14
-    # Hard ceiling so a stuck notarization can never run forever (see also notarytool --timeout).
-    timeout-minutes: 45
+    # Hard ceiling so a stuck notarization can never run forever (see also the wait --timeout below).
+    timeout-minutes: 20
     strategy:
       # One arch's Apple hiccup must not cancel the other.
       fail-fast: false
@@ -107,20 +110,41 @@ jobs:
             echo "::error::APPLE_API_KEY_ID / APPLE_API_ISSUER are not set — cannot notarize"; exit 1
           fi
 
-          # submit <file>: blocks until Apple settles, capped at 25m; fails (with the log) unless Accepted.
+          # submit <file>: submit first (capture the id), then wait up to 15m for a verdict.
+          # Splitting it out guarantees the submission id is known even if the wait times out, so
+          # the log always shows how to check the real status independently (notarytool info).
           submit() {
-            echo "==> notarize: $1"
-            xcrun notarytool submit "$1" \
+            local f="$1" id status
+            echo "==> submit: $f"
+            xcrun notarytool submit "$f" \
               --key "$key" --key-id "$KEY_ID" --issuer "$ISSUER" \
-              --wait --timeout 25m --output-format json | tee "$nt"
-            local id status
+              --no-wait --output-format json > "$nt"
+            cat "$nt"
             id=$(grep -o '"id":"[^"]*"' "$nt" | head -1 | cut -d'"' -f4)
+            if [ -z "$id" ]; then echo "::error::could not read submission id for $f"; exit 1; fi
+
+            echo "==> submission id: $id — waiting up to 15m"
+            xcrun notarytool wait "$id" \
+              --key "$key" --key-id "$KEY_ID" --issuer "$ISSUER" \
+              --timeout 15m --output-format json > "$nt" 2>/dev/null || true
             status=$(grep -o '"status":"[^"]*"' "$nt" | head -1 | cut -d'"' -f4)
-            if [ "$status" != "Accepted" ]; then
-              echo "::error::notarization returned '$status' for $1"
-              xcrun notarytool log "$id" --key "$key" --key-id "$KEY_ID" --issuer "$ISSUER" || true
-              exit 1
-            fi
+            cat "$nt"
+
+            case "$status" in
+              Accepted) return 0 ;;
+              Invalid|Rejected)
+                # Real bad build — will never pass Gatekeeper. Show the per-issue reasons.
+                echo "::error::notarization REJECTED ($status) for $f — fix signing/entitlements:"
+                xcrun notarytool log "$id" --key "$key" --key-id "$KEY_ID" --issuer "$ISSUER" || true
+                exit 1 ;;
+              *)
+                # Timed out / still In Progress — Apple is slow, NOT a rejection. Nothing is published.
+                echo "::error::notarization did NOT finish within 15m for $f (Apple slow, not a rejection)."
+                echo "::error::submission id: $id"
+                echo "Check the real status any time (independent of CI), then re-run this job once Accepted:"
+                echo "  xcrun notarytool info $id --key <AuthKey.p8> --key-id $KEY_ID --issuer $ISSUER"
+                exit 1 ;;
+            esac
           }
 
           for dmg in mac/*-mac-*.dmg; do
