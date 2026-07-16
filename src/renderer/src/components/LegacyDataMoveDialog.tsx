@@ -28,8 +28,9 @@ const LegacyDataMoveDialog = ({
 }: LegacyDataMoveDialogProps): React.JSX.Element => {
   // When set, hand off to the shared migration modal targeting this parent; null returns to the prompt.
   const [migrationTarget, setMigrationTarget] = useState<string | null>(null)
-  // The exact <home>/OpenScience path "Move to OpenScience" would create. Resolved server-side (not
-  // from getInfo's defaultDataRoot, which for a legacy install is the hidden config root itself).
+  // The exact <home>/OpenScience path "Move to OpenScience" would create. Resolved server-side via
+  // inspectDataRoot(defaultParent) rather than getInfo's dataRoot, which for a legacy install is the
+  // hidden config root itself.
   const [destination, setDestination] = useState<string | undefined>(undefined)
   const [pickError, setPickError] = useState<string | undefined>(undefined)
   const [isPicking, setIsPicking] = useState(false)

@@ -190,7 +190,7 @@ describe('storage IPC handlers', () => {
     expect(info.dataRoot).toBe(dataRoot)
     expect(info.isDefault).toBe(false)
     // Even from a custom root, the default and its parent are reported so Settings can offer a
-    // one-click return to `<home>/OpenScience`.
+    // one-click return to `<home>/OpenScience` and show the destination.
     expect(info.defaultDataRoot).toBe(join('/home/user', 'OpenScience'))
     expect(info.defaultParent).toBe('/home/user')
     expect(info.usage.totalBytes).toBe(0)

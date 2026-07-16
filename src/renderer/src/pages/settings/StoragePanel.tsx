@@ -61,7 +61,6 @@ const StoragePanel = (): React.JSX.Element => {
     kind: DataRootKind
     dataRoot: string
     error?: string
-    warning?: string
   } | null>(null)
   const [migrationTarget, setMigrationTarget] = useState<string | null>(null)
   const [adoptConfirmOpen, setAdoptConfirmOpen] = useState(false)
@@ -230,7 +229,8 @@ const StoragePanel = (): React.JSX.Element => {
                     onClick={() => void handleUseDefault()}
                     className="mt-2 text-xs text-muted-foreground underline underline-offset-2 transition-colors hover:text-foreground"
                   >
-                    Or move it back to the default location
+                    Or move it back to the default location{' '}
+                    <span className="font-mono no-underline">({info.defaultDataRoot})</span>
                   </button>
                 ) : null}
 
@@ -273,17 +273,6 @@ const StoragePanel = (): React.JSX.Element => {
                     </p>
                   </>
                 )}
-
-                {/* Non-blocking caution (e.g. spaced path on macOS/Linux): the action stays enabled,
-                    but the user is told before committing. */}
-                {kind && inspection?.warning ? (
-                  <p
-                    className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/5 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-400"
-                    role="alert"
-                  >
-                    {inspection.warning}
-                  </p>
-                ) : null}
 
                 {kind === 'invalid' && inspection?.error ? (
                   <p className="mt-2 text-xs text-destructive" role="alert">

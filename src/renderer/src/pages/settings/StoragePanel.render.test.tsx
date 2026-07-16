@@ -387,39 +387,6 @@ describe('StoragePanel', () => {
     ).not.toHaveBeenCalled()
   })
 
-  it('shows a non-blocking caution for a spaced path but keeps the action enabled', async () => {
-    ;(
-      window as unknown as { api: { storage: { pickDirectory: ReturnType<typeof vi.fn> } } }
-    ).api.storage.pickDirectory.mockResolvedValue('/mnt/my data')
-    ;(
-      window as unknown as { api: { storage: { inspectDataRoot: ReturnType<typeof vi.fn> } } }
-    ).api.storage.inspectDataRoot.mockResolvedValue({
-      kind: 'move',
-      dataRoot: '/mnt/my data/OpenScience',
-      warning: 'This path contains a space. Python or R environments may fail to run.'
-    })
-
-    await act(async () => {
-      root.render(<StoragePanel />)
-    })
-    await act(async () => {
-      await Promise.resolve()
-    })
-    await openEditor()
-    await act(async () => {
-      clickButton((button) => button.textContent?.includes('Browse') ?? false)
-      await Promise.resolve()
-    })
-
-    // The caution is shown...
-    expect(container.textContent).toContain('Python or R environments may fail to run')
-    // ...but the move action stays enabled (a warning does not block, unlike an invalid error).
-    const changeButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Change location'
-    )
-    expect(changeButton?.disabled).toBe(false)
-  })
-
   it('a path classified as invalid shows the inline error and disables both actions', async () => {
     ;(
       window as unknown as { api: { storage: { pickDirectory: ReturnType<typeof vi.fn> } } }
@@ -484,6 +451,8 @@ describe('StoragePanel', () => {
         button.textContent?.includes('move it back to the default location')
       )
     ).toBe(true)
+    // The destination (default data root) is shown so the user sees where "back to default" goes.
+    expect(container.textContent).toContain('/home/u/OpenScience')
   })
 
   it('does not offer return-to-default when the current root is already the default', async () => {

@@ -28,11 +28,32 @@ export type ValidateResult = { ok: true } | { ok: false; error: string }
 // migration, or the user's own pre-existing folder) - the pointer should switch to it as-is,
 // never be moved into. 'invalid' carries a user-facing reason.
 export type DataRootKind = 'move' | 'adopt' | 'invalid'
-export type ClassifyResult = { kind: DataRootKind; error?: string; warning?: string }
+export type ClassifyResult = { kind: DataRootKind; error?: string }
 
-// Non-blocking caution for a spaced path on macOS/Linux (see classifyDataRoot). Exported for tests.
-export const SPACE_PATH_WARNING =
-  'This path contains a space. Python or R environments may fail to run from a spaced path on macOS and Linux — a folder without spaces is safer.'
+// Windows' historical MAX_PATH. Long-path opt-outs exist but aren't something we can rely on across
+// every tool a user's Python/R environment might shell out to, so the app guards against it directly.
+const WINDOWS_MAX_PATH = 260
+// Headroom reserved for the app's deepest nested paths (artifacts/notebooks/runtime) under the root.
+const WINDOWS_NESTED_RESERVE = 110
+
+// Optional injectable deps for classifyDataRoot, so its write probe can be exercised in tests without
+// depending on platform-specific filesystem permission semantics (chmod is a POSIX-only no-op on
+// Windows).
+type ClassifyDataRootDeps = { canWrite?: (dir: string) => Promise<boolean> }
+
+// Real write probe (create + delete a temp file) instead of only fs.access(W_OK): access() checks
+// POSIX bits but NOT macOS TCC (Documents/Desktop/Downloads/external & network volumes) or read-only
+// mounts, so a folder can look writable yet reject the actual write.
+const defaultCanWrite = async (dir: string): Promise<boolean> => {
+  try {
+    const probePath = join(dir, `.open-science-write-test-${randomUUID()}`)
+    await writeFile(probePath, '')
+    await rm(probePath, { force: true })
+    return true
+  } catch {
+    return false
+  }
+}
 
 // Classifies a candidate data root against the current one. `parent` is a directory the user
 // picked; the app derives the data root from it (`dataRootForPicked`) rather than
@@ -40,7 +61,8 @@ export const SPACE_PATH_WARNING =
 // (missing dir, permission denied) is mapped to an 'invalid' result with a user-facing message.
 export const classifyDataRoot = async (
   parent: string,
-  currentDataRoot: string
+  currentDataRoot: string,
+  deps: ClassifyDataRootDeps = {}
 ): Promise<ClassifyResult> => {
   const resolvedParent = resolve(parent)
   const current = resolve(currentDataRoot)
@@ -66,14 +88,29 @@ export const classifyDataRoot = async (
     return { kind: 'invalid', error: 'Choose a location outside the current data folder.' }
   }
 
-  // Spaces are allowed on every platform, but on macOS/Linux they can break conda/venv: Unix shebang
-  // lines (#!/path/bin/python) can't contain a space, so pip/conda console scripts become unrunnable.
-  // A move/adopt to a spaced path therefore carries a NON-BLOCKING caution there. Windows has no
-  // shebangs and treats spaced paths as normal, so no warning is attached.
-  const spaceWarning =
-    process.platform !== 'win32' && /\s/.test(target) ? SPACE_PATH_WARNING : undefined
-  const withWarning = (result: ClassifyResult): ClassifyResult =>
-    spaceWarning && result.kind !== 'invalid' ? { ...result, warning: spaceWarning } : result
+  // On macOS/Linux, a spaced path can break conda/venv: Unix shebang lines (#!/path/bin/python)
+  // can't contain a space, so pip/conda console scripts become unrunnable. Unlike the rest of this
+  // module's warnings-that-don't-block, this is a hard rejection there. Windows has no shebangs and
+  // routinely has spaced profile paths (C:\Users\John Doe), so spaces are allowed there.
+  if (process.platform !== 'win32' && /\s/.test(target)) {
+    return {
+      kind: 'invalid',
+      error:
+        "Choose a folder whose path has no spaces — Python or R environments can't run reliably from a spaced path on macOS or Linux."
+    }
+  }
+
+  // Windows' MAX_PATH (260 chars) applies to the full path of every file the app creates, not just
+  // the root itself — a root that already eats most of the budget leaves no room for anything nested
+  // under artifacts/notebooks/runtime. Reject early, before any fs access, so the failure is a clear
+  // upfront message instead of a cryptic ENAMETOOLONG mid-migration or mid-notebook-run.
+  if (process.platform === 'win32' && target.length + WINDOWS_NESTED_RESERVE > WINDOWS_MAX_PATH) {
+    return {
+      kind: 'invalid',
+      error:
+        "This location's path is too long for Windows. Choose a folder closer to the drive root so your files stay within Windows' 260-character path limit."
+    }
+  }
 
   try {
     const info = await stat(resolvedParent)
@@ -85,16 +122,10 @@ export const classifyDataRoot = async (
     return { kind: 'invalid', error: 'The selected folder does not exist.' }
   }
 
-  // Real write probe (create + delete a temp file) instead of only fs.access(W_OK): access() checks
-  // POSIX bits but NOT macOS TCC (Documents/Desktop/Downloads/external & network volumes) or
-  // read-only mounts, so a folder can look writable yet reject the actual write. Probing here surfaces
-  // TCC-denied, read-only, and out-of-space cases up front with a clear message, before any migration
-  // starts (rather than failing mid-copy with a cryptic error).
-  try {
-    const probePath = join(resolvedParent, `.open-science-write-test-${randomUUID()}`)
-    await writeFile(probePath, '')
-    await rm(probePath, { force: true })
-  } catch {
+  // Probing here surfaces TCC-denied, read-only, and out-of-space cases up front with a clear
+  // message, before any migration starts (rather than failing mid-copy with a cryptic error).
+  const canWrite = deps.canWrite ?? defaultCanWrite
+  if (!(await canWrite(resolvedParent))) {
     return {
       kind: 'invalid',
       error:
@@ -119,7 +150,7 @@ export const classifyDataRoot = async (
       return { kind: 'invalid', error: 'The selected folder is not usable.' }
     }
   } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return withWarning({ kind: 'move' })
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return { kind: 'move' }
     return { kind: 'invalid', error: 'The selected folder is not usable.' }
   }
 
@@ -133,11 +164,11 @@ export const classifyDataRoot = async (
   const looksLikeOurData = entries.some(
     (entry) => entry.isDirectory() && (MIGRATED_DIRS as readonly string[]).includes(entry.name)
   )
-  if (looksLikeOurData) return withWarning({ kind: 'adopt' })
+  if (looksLikeOurData) return { kind: 'adopt' }
 
   // runtime/ doesn't count as content: a folder holding only runtime (or nothing) is treated as empty.
   const meaningfulEntries = entries.filter((entry) => entry.name !== 'runtime')
-  if (meaningfulEntries.length === 0) return withWarning({ kind: 'move' })
+  if (meaningfulEntries.length === 0) return { kind: 'move' }
 
   return {
     kind: 'invalid',

@@ -16,7 +16,6 @@ import {
   DATA_ROOT_DIRS,
   MIGRATED_DIRS,
   runDataRootMigration,
-  SPACE_PATH_WARNING,
   validateNewDataRoot
 } from './migration-service'
 
@@ -89,7 +88,7 @@ describe('classifyDataRoot', () => {
     expect(result).toEqual({ kind: 'invalid', error: 'The selected folder does not exist.' })
   })
 
-  it('allows a spaced path but attaches a caution on macOS/Linux (conda/venv shebang limit)', async () => {
+  it('rejects a spaced path on macOS/Linux (conda/venv shebang limit)', async () => {
     const original = process.platform
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
     const spacedParent = await mkdtemp(join(tmpdir(), 'ds migsvc spaced '))
@@ -97,15 +96,15 @@ describe('classifyDataRoot', () => {
     try {
       const result = await classifyDataRoot(spacedParent, currentDataRoot)
 
-      // Not blocked — proceeds as a move — but carries the non-blocking spaced-path warning.
-      expect(result).toEqual({ kind: 'move', warning: SPACE_PATH_WARNING })
+      expect(result.kind).toBe('invalid')
+      expect(result.error).toMatch(/no spaces/i)
     } finally {
       Object.defineProperty(process, 'platform', { value: original, configurable: true })
       await rm(spacedParent, { recursive: true, force: true })
     }
   })
 
-  it('allows a spaced path with NO caution on Windows (spaces are normal there)', async () => {
+  it('allows a spaced path on Windows (spaces are normal there)', async () => {
     const original = process.platform
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
     const spacedParent = await mkdtemp(join(tmpdir(), 'ds migsvc spaced win '))
@@ -117,6 +116,54 @@ describe('classifyDataRoot', () => {
     } finally {
       Object.defineProperty(process, 'platform', { value: original, configurable: true })
       await rm(spacedParent, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a target whose path is too long for Windows MAX_PATH', async () => {
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+
+    try {
+      // No fs access happens before this check trips, so a synthetic (never-created) long path
+      // works. A plain posix-style absolute path is used rather than a `C:\...` one because Node's
+      // `path` module picks win32 vs. posix semantics from the real host platform at import time,
+      // not from this mocked process.platform.
+      const longParent = `/${'a'.repeat(220)}`
+      const result = await classifyDataRoot(longParent, currentDataRoot)
+
+      expect(result.kind).toBe('invalid')
+      expect(result.error).toMatch(/too long|260/i)
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original, configurable: true })
+    }
+  })
+
+  it('does not reject a normal short target on Windows for length', async () => {
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+
+    try {
+      const result = await classifyDataRoot(emptyParent, currentDataRoot)
+
+      expect(result.kind).not.toBe('invalid')
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original, configurable: true })
+    }
+  })
+
+  it('does not enforce MAX_PATH on non-Windows platforms, even for a very long path', async () => {
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+
+    try {
+      const longParent = `/tmp/${'a'.repeat(220)}`
+      const result = await classifyDataRoot(longParent, currentDataRoot)
+
+      // POSIX has no MAX_PATH; this only fails (or not) for unrelated reasons (missing dir), never
+      // for length.
+      expect(result.error).not.toMatch(/too long|260/i)
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original, configurable: true })
     }
   })
 
@@ -147,6 +194,15 @@ describe('classifyDataRoot', () => {
       }
     }
   )
+
+  it('classifies a parent as invalid when the injected write probe reports failure (all platforms)', async () => {
+    const result = await classifyDataRoot(emptyParent, currentDataRoot, {
+      canWrite: async () => false
+    })
+
+    expect(result.kind).toBe('invalid')
+    expect(result.error).toMatch(/can't write/i)
+  })
 
   it('classifies a parent with no OpenScience subdir as move', async () => {
     const result = await classifyDataRoot(emptyParent, currentDataRoot)

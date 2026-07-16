@@ -145,8 +145,6 @@ const OnboardingWizard = (): React.JSX.Element => {
   // 'adopt' shows the "used as-is" note; 'move' is the ordinary empty-folder case. Irrelevant once
   // chosenParent is cleared back to the default.
   const [chosenKind, setChosenKind] = useState<'move' | 'adopt' | null>(null)
-  // Non-blocking caution for the chosen location (e.g. a spaced path on macOS/Linux).
-  const [chosenWarning, setChosenWarning] = useState<string | undefined>(undefined)
   const [locationError, setLocationError] = useState<string | undefined>(undefined)
   const [confirmRestart, setConfirmRestart] = useState(false)
   const [isRelaunching, setIsRelaunching] = useState(false)
@@ -239,7 +237,6 @@ const OnboardingWizard = (): React.JSX.Element => {
     setChosenParent(picked)
     setChosenDataRoot(result.dataRoot)
     setChosenKind(result.kind)
-    setChosenWarning(result.warning)
     setLocationError(undefined)
   }
 
@@ -247,7 +244,6 @@ const OnboardingWizard = (): React.JSX.Element => {
     setChosenParent('')
     setChosenDataRoot('')
     setChosenKind(null)
-    setChosenWarning(undefined)
     setLocationError(undefined)
   }
 
@@ -616,15 +612,6 @@ const OnboardingWizard = (): React.JSX.Element => {
                         <p className="mt-2 text-xs text-text-100">
                           This folder already contains Open Science data — it will be used as-is
                           (nothing is moved).
-                        </p>
-                      ) : null}
-
-                      {chosenWarning ? (
-                        <p
-                          className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/5 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-400"
-                          role="alert"
-                        >
-                          {chosenWarning}
                         </p>
                       ) : null}
 

@@ -9,9 +9,10 @@ export type StorageUsage = { categories: UsageCategory[]; totalBytes: number }
 export type StorageInfo = {
   dataRoot: string
   isDefault: boolean
-  // The default data root and the parent that reproduces it. Lets Settings offer a one-click
-  // "return to default" (relocate back to <home>/OpenScience) when the current root is custom:
-  // defaultParent is fed to the same inspect/migrate flow a browsed folder would be.
+  // The default data root and the parent that reproduces it. `defaultParent` is fed to the same
+  // inspect/migrate flow a browsed folder would be; `defaultDataRoot` is the derived destination
+  // shown to the user in Settings' one-click "return to default" affordance (accurate there because
+  // the affordance only appears when the current root is custom, i.e. the default is <home>/OpenScience).
   defaultDataRoot: string
   defaultParent: string
   // True only when settings.dataRoot is explicitly configured but the resolved directory is gone
@@ -58,7 +59,4 @@ export type DataRootInspection = {
   kind: DataRootKind
   dataRoot: string
   error?: string
-  // Non-blocking caution (e.g. a spaced path on macOS/Linux): the action still proceeds, but the
-  // UI surfaces this so the user isn't surprised by a later broken Python/R environment.
-  warning?: string
 }
