@@ -23,6 +23,8 @@ export const claudeCodeFramework: AgentFramework = {
   id: 'claude-code',
   displayName: 'Claude Code',
   supportsSkills: true,
+  // Claude launches stdio MCP servers directly — the app's artifact/notebook tooling relies on this.
+  acceptsStdioMcp: true,
 
   spawn(input: AgentSpawnInput): ChildProcessWithoutNullStreams {
     // Still routes through the existing spawner; env carries the resolved provider overrides.

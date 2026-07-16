@@ -79,6 +79,11 @@ export interface AgentFramework {
 
   // Config-dir-materialized skills (Claude). Absent ⇒ the app hides the skills UI + force-load path.
   readonly supportsSkills: boolean
+
+  // Whether the framework accepts stdio MCP servers via ACP session mcpServers. opencode advertises
+  // http/sse only, so stdio servers must not be handed to it — the app's artifact/notebook tooling
+  // (currently stdio) is gated off for such frameworks until it is exposed over http/sse.
+  readonly acceptsStdioMcp: boolean
 }
 
 // The resolved agent backend for one connect: which framework to drive plus its already-resolved spawn

@@ -1489,6 +1489,13 @@ class AcpRuntime {
     sessionCwd: string
     projectName: string
   }): Promise<McpServer[]> {
+    // The artifact/notebook servers are stdio; a framework that only accepts http/sse MCP (opencode)
+    // gets none until they're exposed over http, so a basic turn still runs instead of failing on an
+    // unsupported stdio server config.
+    if (!this.framework.acceptsStdioMcp) {
+      return []
+    }
+
     const servers = [
       ...this.createArtifactMcpServers(
         artifactSessionId,
@@ -1517,10 +1524,14 @@ class AcpRuntime {
   // those services are wired. The active framework decides how these are delivered (Claude's preset
   // append vs opencode's prompt prefix).
   private getSystemPromptAppends(): string[] {
+    // Artifact/notebook guidance names MCP tools that only exist when the framework accepts stdio MCP;
+    // omit it otherwise so the agent isn't told to use tools it wasn't given (see createMcpServers).
+    const toolsAvailable = this.framework.acceptsStdioMcp
+
     return [
       SKILLS_READ_GUARD_SYSTEM_PROMPT_APPEND,
-      ...(this.artifactOptions ? [ARTIFACT_FILE_SYSTEM_PROMPT_APPEND] : []),
-      ...(this.notebookOptions ? [NOTEBOOK_SYSTEM_PROMPT_APPEND] : [])
+      ...(toolsAvailable && this.artifactOptions ? [ARTIFACT_FILE_SYSTEM_PROMPT_APPEND] : []),
+      ...(toolsAvailable && this.notebookOptions ? [NOTEBOOK_SYSTEM_PROMPT_APPEND] : [])
     ]
   }
 

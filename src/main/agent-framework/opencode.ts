@@ -55,6 +55,9 @@ export const opencodeFramework: AgentFramework = {
   displayName: 'opencode',
   // opencode has agents/commands, not config-dir skills; hide the skills UI + force-load path.
   supportsSkills: false,
+  // Handshake shows opencode advertises mcpCapabilities http+sse only (no stdio). Until the app exposes
+  // its artifact/notebook MCP over http, they're gated off for opencode and only basic turns run.
+  acceptsStdioMcp: false,
 
   spawn(input: AgentSpawnInput): ChildProcessWithoutNullStreams {
     // `opencode acp` starts the ACP subprocess over stdio, matching the app's existing transport.

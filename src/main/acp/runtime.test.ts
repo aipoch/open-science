@@ -9,6 +9,7 @@ import { PassThrough, Readable, Writable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpRuntime } from './runtime'
+import { opencodeFramework } from '../agent-framework'
 import { ArtifactRepository } from '../artifacts/repository'
 import { UploadRepository } from '../uploads/repository'
 import {
@@ -655,6 +656,35 @@ describe('ACP runtime session management', () => {
       mimeType: 'application/octet-stream',
       uri: expect.stringContaining('data.bin')
     })
+  })
+
+  it('withholds stdio MCP servers and tool guidance for an http-only framework (opencode)', async () => {
+    const root = await createTemporaryRoot()
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['oc-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      // opencode advertises http/sse MCP only (acceptsStdioMcp: false) and carries no Claude _meta.
+      framework: opencodeFramework,
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js'
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'hello opencode' })
+
+    // The stdio artifact server is withheld and no Claude _meta is sent; the artifact tool guidance is
+    // dropped so the agent is never told to use a tool it wasn't given.
+    expect(fakeAgent.newSessions[0].mcpServers).toEqual([])
+    expect(fakeAgent.newSessions[0]._meta).toBeUndefined()
+    expect(fakeAgent.prompts[0].text).toContain('hello opencode')
+    expect(fakeAgent.prompts[0].text).not.toContain('write_artifact_file')
   })
 
   it('allows prompts from different sessions to run concurrently', async () => {
