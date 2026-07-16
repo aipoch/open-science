@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, normalize, parse } from 'node:path'
 
 import type {
+  AgentFrameworkId,
   ClaudeInfo,
   ProviderType,
   ProviderValidationFailure,
@@ -369,6 +370,11 @@ class SettingsRepository {
   // Records the detected claude executable metadata for later spawns.
   async setClaudeInfo(claude: ClaudeInfo): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, claude }))
+  }
+
+  // Persists the selected agent backend; applied on the next reconnect.
+  async setAgentFramework(id: AgentFrameworkId): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, agentFrameworkId: id }))
   }
 
   // Stamps the onboarding-completed time exactly once; later calls leave the first value intact.

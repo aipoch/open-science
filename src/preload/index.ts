@@ -79,6 +79,7 @@ import type {
   RefreshProviderModelsRequest,
   RefreshProviderModelsResult,
   SetActiveProviderRequest,
+  SetAgentFrameworkRequest,
   SetSkillEnabledRequest,
   SettingsSnapshot,
   SkillDetailView,
@@ -188,6 +189,7 @@ type OpenScienceAPI = {
     upsertProvider: (request: UpsertProviderRequest) => Promise<SettingsSnapshot>
     deleteProvider: (request: DeleteProviderRequest) => Promise<SettingsSnapshot>
     setActiveProvider: (request: SetActiveProviderRequest) => Promise<SettingsSnapshot>
+    setAgentFramework: (request: SetAgentFrameworkRequest) => Promise<SettingsSnapshot>
     validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
     refreshProviderModels: (
       request: RefreshProviderModelsRequest
@@ -417,6 +419,8 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('settings:delete-provider', request) as Promise<SettingsSnapshot>,
     setActiveProvider: (request) =>
       ipcRenderer.invoke('settings:set-active-provider', request) as Promise<SettingsSnapshot>,
+    setAgentFramework: (request) =>
+      ipcRenderer.invoke('settings:set-agent-framework', request) as Promise<SettingsSnapshot>,
     validateProvider: (request) =>
       ipcRenderer.invoke('settings:validate-provider', request) as Promise<ValidateProviderResult>,
     refreshProviderModels: (request) =>

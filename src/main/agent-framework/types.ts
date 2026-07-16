@@ -3,10 +3,12 @@ import type { SessionModeState } from '@agentclientprotocol/sdk'
 
 import type { PermissionProfileApplication } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
+import type { AgentFrameworkId } from '../../shared/settings'
 import type { ResolvedProvider } from '../settings/provider-env'
 
-// The agent frameworks the app can drive over ACP. Adding one means implementing AgentFramework.
-export type AgentFrameworkId = 'claude-code' | 'opencode'
+// The agent frameworks the app can drive over ACP (id union defined in shared settings so the renderer
+// and persisted settings share it). Adding one means implementing AgentFramework.
+export type { AgentFrameworkId }
 
 // A config file the framework needs on disk before spawn (e.g. a generated opencode.json). The
 // runtime writes these and points the framework at them via env/args.

@@ -11,6 +11,8 @@ import type {
   EnvironmentCheckResult,
   ManagedClaudeRegistry,
   Preflight,
+  AgentFrameworkId,
+  AgentFrameworkView,
   ProviderType,
   ProviderView,
   RefreshProviderModelsResult,
@@ -49,6 +51,9 @@ type SettingsStoreData = {
   // Active model within the active provider; undefined means the provider's own default.
   activeModel: string | undefined
   providers: ProviderView[]
+  // Selected agent backend and the frameworks available to choose from.
+  agentFrameworkId: AgentFrameworkId
+  agentFrameworks: AgentFrameworkView[]
   onboardingCompletedAt: number | undefined
   // Bundled skills with their enabled state, loaded lazily when the Skills panel opens.
   skills: SkillView[]
@@ -109,6 +114,8 @@ type SettingsStore = SettingsStoreData & {
   // Activates a provider and, optionally, a specific model within it (composer model switch). An
   // omitted model lets main fall back to the provider's default.
   setActiveProvider: (providerId: string, model?: string) => Promise<void>
+  // Switches the agent backend (main reconnects so the next prompt uses it).
+  setAgentFramework: (id: AgentFrameworkId) => Promise<void>
   deleteProvider: (providerId: string) => Promise<void>
   openSettings: () => void
   closeSettings: () => void
@@ -177,6 +184,8 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   activeProviderId: undefined,
   activeModel: undefined,
   providers: [],
+  agentFrameworkId: 'claude-code',
+  agentFrameworks: [],
   onboardingCompletedAt: undefined,
   skills: [],
   connectors: [],
@@ -205,6 +214,8 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   activeProviderId: snapshot.activeProviderId,
   activeModel: snapshot.activeModel,
   providers: snapshot.providers,
+  agentFrameworkId: snapshot.agentFrameworkId,
+  agentFrameworks: snapshot.agentFrameworks,
   onboardingCompletedAt: snapshot.onboardingCompletedAt
 })
 
@@ -468,6 +479,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
     set(applySnapshot(snapshot))
     await get().refreshPreflight()
+  },
+
+  // Switches the agent backend; main reconnects so the choice applies on the next prompt.
+  setAgentFramework: async (id) => {
+    set(applySnapshot(await window.api.settings.setAgentFramework({ id })))
   },
 
   deleteProvider: async (providerId) => {

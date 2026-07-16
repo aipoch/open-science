@@ -200,7 +200,8 @@ describe('SettingsPage layout', () => {
       generalTab?.click()
     })
 
-    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(3)
+    // Agent framework + Diagnostics + Community (AppVersion is not a settings-section).
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(4)
     expect(document.body.querySelector('[data-slot="settings-row"]')).not.toBeNull()
 
     // The Diagnostics panel surfaces the log file path plus Open and Reveal controls.

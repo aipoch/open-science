@@ -59,6 +59,7 @@ import { resolveStorageRoot } from '../storage-root'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
   getAgentFramework,
+  listAgentFrameworks,
   type AgentFrameworkId,
   type ResolvedAgentBackend
 } from '../agent-framework'
@@ -201,8 +202,21 @@ class SettingsService {
       activeProviderId: settings.activeProviderId,
       activeModel: settings.activeModel,
       providers: settings.providers.map((provider) => this.toProviderView(provider)),
+      agentFrameworkId: settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
+      agentFrameworks: listAgentFrameworks().map((framework) => ({
+        id: framework.id,
+        displayName: framework.displayName,
+        supportsSkills: framework.supportsSkills
+      })),
       onboardingCompletedAt: settings.onboardingCompletedAt
     }
+  }
+
+  // Selects the agent backend to drive; the caller reconnects so the choice applies to the next spawn.
+  async setAgentFramework(id: AgentFrameworkId): Promise<SettingsSnapshot> {
+    await this.repository.setAgentFramework(id)
+
+    return this.getSettingsView()
   }
 
   // The full skill catalog across every source: bundled (featured) + imported + personal.

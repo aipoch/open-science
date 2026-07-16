@@ -12,6 +12,7 @@ import type {
   ClaudeInstallEvent,
   RefreshProviderModelsRequest,
   SetActiveProviderRequest,
+  SetAgentFrameworkRequest,
   AddCustomServerRequest,
   RemoveCustomServerRequest,
   SetCustomServerEnabledRequest,
@@ -90,6 +91,18 @@ const registerSettingsIpcHandlers = ({
       const snapshot = await service.setActiveProvider(request.id, request.model)
 
       // Switching providers requires a fresh agent process so the new credentials take effect.
+      onActiveProviderChanged?.()
+
+      return snapshot
+    }
+  )
+  ipcMain.handle(
+    'settings:set-agent-framework',
+    async (_event, request: SetAgentFrameworkRequest) => {
+      const snapshot = await service.setAgentFramework(request.id)
+
+      // Switching frameworks needs a fresh agent process, exactly like a provider switch — the live
+      // process is a different backend binary, so the choice only takes effect on reconnect.
       onActiveProviderChanged?.()
 
       return snapshot

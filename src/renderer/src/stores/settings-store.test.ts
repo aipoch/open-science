@@ -52,7 +52,9 @@ type AcpApi = {
 const snapshot = (providers: SettingsSnapshot['providers']): SettingsSnapshot => ({
   claude: {},
   activeProviderId: undefined,
-  providers
+  providers,
+  agentFrameworkId: 'claude-code',
+  agentFrameworks: [{ id: 'claude-code', displayName: 'Claude Code', supportsSkills: true }]
 })
 
 const providerView = (id: string): SettingsSnapshot['providers'][number] => ({

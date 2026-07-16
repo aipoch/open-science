@@ -72,6 +72,18 @@ export const providerValidationFailed = (provider: {
   (provider.lastValidatedAt === undefined ||
     provider.lastValidationFailure.at >= provider.lastValidatedAt)
 
+// The agent backends the app can drive over ACP. Persisted settings and the UI reference these ids;
+// the main-process AgentFramework registry is keyed by the same union.
+export type AgentFrameworkId = 'claude-code' | 'opencode'
+
+// Renderer-facing descriptor for one selectable agent framework (built from the main registry).
+export type AgentFrameworkView = {
+  id: AgentFrameworkId
+  displayName: string
+  // Whether this framework materializes app skills; the renderer hides the skills UI when false.
+  supportsSkills: boolean
+}
+
 // Full renderer snapshot of settings state.
 export type SettingsSnapshot = {
   claude: ClaudeInfo
@@ -80,8 +92,15 @@ export type SettingsSnapshot = {
   // own model; for official providers it's the chosen catalog entry. Undefined until a provider exists.
   activeModel?: string
   providers: ProviderView[]
+  // The selected agent backend, and the frameworks available to choose from.
+  agentFrameworkId: AgentFrameworkId
+  agentFrameworks: AgentFrameworkView[]
   // Timestamp of first-run onboarding completion; undefined until it finishes at least once.
   onboardingCompletedAt?: number
+}
+
+export type SetAgentFrameworkRequest = {
+  id: AgentFrameworkId
 }
 
 // The two hard startup gates. Kept as plain booleans so the wizard can target the first unmet step.
