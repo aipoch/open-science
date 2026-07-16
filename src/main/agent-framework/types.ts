@@ -96,4 +96,8 @@ export type ResolvedAgentBackend = {
   executablePath: string
   env: Record<string, string>
   args?: string[]
+  // Model to apply per session via the ACP `model` configOption, for frameworks that select the model
+  // over the protocol rather than via env (opencode). Undefined ⇒ the framework's env/config drives it
+  // (Claude uses ANTHROPIC_MODEL). Applied best-effort: skipped when the agent advertises no match.
+  sessionModel?: string
 }

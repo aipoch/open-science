@@ -7,6 +7,7 @@ import type {
   PromptResponse,
   RequestPermissionRequest,
   RequestPermissionResponse,
+  SessionConfigOption,
   SessionModeState,
   SessionNotification
 } from '@agentclientprotocol/sdk'
@@ -49,6 +50,7 @@ import {
   toAcpRuntimeEvent
 } from './runtime-events'
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
+import { matchSessionModelOption } from './session-config'
 import { AcpPermissionBroker } from './permission-broker'
 import { applyCurrentModeUpdate } from './permission-profile-controller'
 import {
@@ -258,6 +260,9 @@ class AcpRuntime {
   // Mutable: refreshed from resolveBackend on each connect so a framework switch applies on reconnect.
   private framework: AgentFramework
   private readonly mcpHttpHost: AgentMcpHttpHost | undefined
+  // Model to apply per session via the ACP model configOption (opencode); undefined for env-driven
+  // frameworks (Claude). Refreshed from the resolved backend on each connect.
+  private pendingSessionModel: string | undefined
   // Bounded resume network timeout + injectable timers (defaults to real setTimeout/clearTimeout).
   private readonly resumeTimeoutMs: number
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
@@ -373,6 +378,38 @@ class AcpRuntime {
       effectiveMode: application.state.currentModeId,
       autoReviewStrategy: application.state.autoReviewStrategy
     })
+  }
+
+  // Applies the active model to a freshly built/resumed session via the ACP model configOption, for
+  // frameworks that select the model over the protocol (opencode). No-op for env-driven frameworks
+  // (pendingSessionModel undefined) or when the agent advertises no matching model option — the agent
+  // then keeps its own default. Best-effort: a failure is logged, never fatal to the session.
+  private async applySessionModel(session: ActiveSession): Promise<void> {
+    if (!this.pendingSessionModel || !this.connection) return
+
+    const configOptions = (
+      session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } }
+    ).newSessionResponse?.configOptions
+    const selection = matchSessionModelOption(configOptions, this.pendingSessionModel)
+
+    if (!selection) {
+      log.info('no matching session model option', { desiredModel: this.pendingSessionModel })
+      return
+    }
+
+    try {
+      await this.connection.agent.request(acp.methods.agent.session.setConfigOption, {
+        sessionId: session.sessionId,
+        configId: selection.configId,
+        value: selection.value
+      })
+      log.info('session model applied', { sessionId: session.sessionId, model: selection.value })
+    } catch (error) {
+      log.warn('set session model failed', {
+        sessionId: session.sessionId,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
   }
 
   // Starts a fresh agent process connection and initializes protocol capabilities.
@@ -527,6 +564,8 @@ class AcpRuntime {
       session.dispose()
       throw error
     }
+
+    await this.applySessionModel(session)
 
     this.sessions.set(session.sessionId, session)
     this.sessionCwds.set(session.sessionId, sessionCwd)
@@ -699,6 +738,7 @@ class AcpRuntime {
         throw error
       }
 
+      await this.applySessionModel(adopted)
       this.adoptSession(request.sessionId, adopted, sessionCwd, projectName)
       this.emitState()
 
@@ -721,6 +761,8 @@ class AcpRuntime {
       session.dispose()
       throw error
     }
+
+    await this.applySessionModel(session)
 
     this.sessions.set(request.sessionId, session)
     this.sessionCwds.set(request.sessionId, sessionCwd)
@@ -904,6 +946,7 @@ class AcpRuntime {
     // Adopt the framework this reconnect resolved so session meta, permission mapping, and the spawn
     // itself all agree with the current selection.
     this.framework = backend.framework
+    this.pendingSessionModel = backend.sessionModel
 
     return this.framework.spawn({
       executablePath: backend.executablePath,

@@ -1004,13 +1004,22 @@ class SettingsService {
     }
 
     const executablePath = await this.resolveOpencodeExecutable(settings.opencodePath)
-    const modelConfig = framework.prepareModelConfig(
-      this.resolveProvider(activeProvider, settings.activeModel),
-      { storageRoot: this.storageRoot, executablePath }
-    )
+    const provider = this.resolveProvider(activeProvider, settings.activeModel)
+    const modelConfig = framework.prepareModelConfig(provider, {
+      storageRoot: this.storageRoot,
+      executablePath
+    })
     await this.writeAgentConfigFiles(modelConfig.configFiles)
 
-    return { framework, executablePath, env: modelConfig.env ?? {}, args: modelConfig.args }
+    // opencode picks the model from its own provider config; drive the app's active model over the ACP
+    // session model configOption (applied best-effort per session by the runtime).
+    return {
+      framework,
+      executablePath,
+      env: modelConfig.env ?? {},
+      args: modelConfig.args,
+      sessionModel: provider.model
+    }
   }
 
   // Locates the opencode binary: an explicitly stored path wins, else a best-effort PATH lookup.
