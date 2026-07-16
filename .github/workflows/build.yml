@@ -120,21 +120,19 @@ jobs:
 
       # Build the renderer + main (incl. typecheck), then package with electron-builder.
       #
-      # macOS signing: electron-builder auto-imports CSC_LINK (base64 .p12) to sign, then notarizes
-      # when APPLE_ID creds are present. With no cert, signing is skipped and the afterPack hook
-      # (build/adhoc-sign.cjs) applies a valid ad-hoc signature so Gatekeeper shows the bypassable
-      # "unidentified developer" prompt instead of "damaged". Linux has no signing concept.
-      # All secrets are optional today — the build works with none set.
+      # macOS signing: this step only SIGNS (Developer ID), it never notarizes. Notarization +
+      # stapling is decoupled into notarize-mac.yml so the build never blocks on Apple's servers
+      # (see that workflow and release.yml). electron-builder auto-imports CSC_LINK (base64 .p12)
+      # to sign a stable build; with no cert — or for any nightly (kept ad-hoc for speed) — signing
+      # is skipped and the afterPack hook (build/adhoc-sign.cjs) applies a valid ad-hoc signature so
+      # Gatekeeper shows the bypassable "unidentified developer" prompt instead of "damaged". Linux
+      # has no signing concept. All secrets are optional — the build works with none set.
       - name: Build & package
         shell: bash
         env:
           # macOS Developer ID (real signing when present, ad-hoc fallback otherwise)
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-          # macOS notarization (notarytool)
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           npm run build
           # Nightly: override the packaged version with `<base>-nightly.<short-sha>` (valid semver
@@ -145,15 +143,17 @@ jobs:
             base=$(node -p "require('./package.json').version")
             eb_ver=(-c.extraMetadata.version="${base}-nightly.${GITHUB_SHA::7}")
           fi
-          if [ "${{ matrix.platform }}" = "mac" ] && [ -n "$CSC_LINK" ]; then
-            # Real Developer ID cert present -> sign + notarize (override the config's notarize:false).
-            npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" --publish never -c.mac.notarize=true
+          if [ "${{ matrix.platform }}" = "mac" ] && [ "${{ inputs.nightly }}" != "true" ] && [ -n "$CSC_LINK" ]; then
+            # Stable build with a Developer ID cert -> SIGN ONLY (notarize:false). Notarization +
+            # stapling happens later in notarize-mac.yml, so this job never waits on Apple.
+            npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" --publish never -c.mac.notarize=false
           else
-            # No cert: GitHub injects unset secrets as EMPTY strings, and electron-builder mis-reads an
-            # empty CSC_LINK as a certificate path — it resolves to the cwd and dies with
-            # "<repo path> not a file". Drop the empty vars and disable auto-discovery so electron-builder
-            # skips its own signing entirely; the afterPack hook (build/adhoc-sign.cjs) ad-hoc signs instead.
-            unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+            # No cert, or a nightly build (ad-hoc on purpose): skip electron-builder's own signing.
+            # GitHub injects unset secrets as EMPTY strings, and electron-builder mis-reads an empty
+            # CSC_LINK as a certificate path — it resolves to the cwd and dies with
+            # "<repo path> not a file". Drop the empty vars and disable auto-discovery so it skips
+            # signing entirely; the afterPack hook (build/adhoc-sign.cjs) ad-hoc signs instead.
+            unset CSC_LINK CSC_KEY_PASSWORD
             export CSC_IDENTITY_AUTO_DISCOVERY=false
             npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" --publish never
           fi

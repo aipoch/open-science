@@ -1,0 +1,192 @@
+name: Notarize macOS
+
+# Decoupled macOS notarization + stapling.
+#
+# The build (build.yml) only SIGNS the mac dmg/zip; this workflow submits them to Apple's notary
+# service, waits (with a hard time cap — no custom polling), staples the ticket, and re-emits the
+# stapled artifacts. Splitting it out of the build means a slow notarization never ties up the build
+# matrix, and it can be re-run on its own without a rebuild.
+#
+# Two entry points:
+#   - workflow_call — used by release.yml right after build. Operates on the run's signed mac
+#     artifacts and re-uploads the stapled versions (overwrite) so the publish job attaches them.
+#   - workflow_dispatch{ tag } — standalone repair/backfill. Notarizes + staples the mac assets
+#     already attached to an existing Release, clobbers them back, and refreshes SHA256SUMS.txt.
+#
+# Time cap is enforced two ways: notarytool `--wait --timeout` bounds the Apple wait per file, and
+# job-level `timeout-minutes` bounds the whole job. On timeout/failure the job fails but the Apple
+# submission keeps running, so simply re-running this workflow re-checks and staples — no rebuild.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Unused by the release path (operates on run artifacts); present for symmetry.'
+        required: false
+        type: string
+        default: ''
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag whose mac assets to notarize + staple (e.g. v0.1.0)'
+        required: true
+
+# gh release upload/download in the dispatch path needs write access to release assets.
+permissions:
+  contents: write
+
+jobs:
+  notarize:
+    name: Notarize + staple ${{ matrix.arch }}
+    runs-on: macos-14
+    # Hard ceiling so a stuck notarization can never run forever (see also notarytool --timeout).
+    timeout-minutes: 45
+    strategy:
+      # One arch's Apple hiccup must not cancel the other.
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
+    steps:
+      # Notarization is optional: if the API key secret isn't configured, no-op so a tagged release
+      # still succeeds with the ad-hoc mac build (today's behavior) instead of failing here. Every
+      # real step below is gated on this.
+      - name: Gate on API key presence
+        id: gate
+        env:
+          P8_B64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+        run: |
+          if [ -n "${P8_B64:-}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::APPLE_API_KEY_P8_BASE64 not set — skipping notarization; mac stays as built."
+          fi
+
+      # release.yml path: pull this run's signed artifacts for the arch (uploaded by build.yml).
+      - name: Download signed mac artifact (from this run)
+        if: steps.gate.outputs.enabled == 'true' && github.event_name != 'workflow_dispatch'
+        uses: actions/download-artifact@v8
+        with:
+          name: macos-${{ matrix.arch }}
+          path: mac
+
+      # Standalone path: pull the arch's signed assets straight off the existing Release.
+      - name: Download signed mac assets (from the release)
+        if: steps.gate.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p mac
+          gh release download "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" \
+            --pattern "*-mac-${{ matrix.arch }}.dmg" \
+            --pattern "*-mac-${{ matrix.arch }}.zip" \
+            --dir mac
+
+      # App Store Connect API key (.p8), stored base64-encoded so it survives as a single secret.
+      - name: Write App Store Connect API key
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          P8_B64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+        run: |
+          printf '%s' "$P8_B64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+
+      # Notarize the dmg (Apple ticks every cdhash inside it, including the .app), then staple. The
+      # zip ships the same signed .app, so its ticket already exists from the dmg submission — just
+      # staple that .app and repackage (stapler cannot target a .zip directly). No second submission.
+      - name: Notarize + staple
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/AuthKey.p8"
+          nt="$RUNNER_TEMP/notarytool.json"
+          shopt -s nullglob
+
+          if [ -z "${KEY_ID:-}" ] || [ -z "${ISSUER:-}" ]; then
+            echo "::error::APPLE_API_KEY_ID / APPLE_API_ISSUER are not set — cannot notarize"; exit 1
+          fi
+
+          # submit <file>: blocks until Apple settles, capped at 25m; fails (with the log) unless Accepted.
+          submit() {
+            echo "==> notarize: $1"
+            xcrun notarytool submit "$1" \
+              --key "$key" --key-id "$KEY_ID" --issuer "$ISSUER" \
+              --wait --timeout 25m --output-format json | tee "$nt"
+            local id status
+            id=$(grep -o '"id":"[^"]*"' "$nt" | head -1 | cut -d'"' -f4)
+            status=$(grep -o '"status":"[^"]*"' "$nt" | head -1 | cut -d'"' -f4)
+            if [ "$status" != "Accepted" ]; then
+              echo "::error::notarization returned '$status' for $1"
+              xcrun notarytool log "$id" --key "$key" --key-id "$KEY_ID" --issuer "$ISSUER" || true
+              exit 1
+            fi
+          }
+
+          for dmg in mac/*-mac-*.dmg; do
+            submit "$dmg"
+            xcrun stapler staple "$dmg"
+            xcrun stapler validate "$dmg"
+          done
+
+          for zip in mac/*-mac-*.zip; do
+            work=$(mktemp -d)
+            ditto -x -k "$zip" "$work"
+            app=$(find "$work" -maxdepth 1 -name '*.app' -print -quit)
+            if [ -z "$app" ]; then echo "no .app inside $zip — skipping"; continue; fi
+            xcrun stapler staple "$app"      # ticket already issued via the dmg submission above
+            xcrun stapler validate "$app"
+            ditto -c -k --keepParent "$app" "$zip"   # repackage the stapled .app over the zip
+          done
+
+      # release.yml path: replace this run's signed artifact with the stapled one (same name), so the
+      # publish job's merge-multiple download picks up the stapled dmg/zip. overwrite deletes the
+      # prior artifact of this name in the run. The now-stale mac blockmap/latest-mac.yml are dropped
+      # (mac auto-update is disabled), leaving only the two user-facing downloads.
+      - name: Re-emit stapled artifact (for publish)
+        if: steps.gate.outputs.enabled == 'true' && github.event_name != 'workflow_dispatch'
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-${{ matrix.arch }}
+          overwrite: true
+          retention-days: 1
+          path: |
+            mac/*-mac-*.dmg
+            mac/*-mac-*.zip
+          if-no-files-found: error
+
+      # Standalone path: push the stapled dmg/zip back onto the Release, replacing the signed-only ones.
+      - name: Clobber stapled assets onto the release
+        if: steps.gate.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ inputs.tag }}" mac/*-mac-*.dmg mac/*-mac-*.zip \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
+  # Standalone path only: after both archs are stapled + clobbered, rebuild SHA256SUMS.txt so it
+  # matches the re-stapled bytes. (In the release.yml path, the publish job regenerates it over the
+  # already-stapled artifacts, so no refresh is needed there.)
+  refresh-checksums:
+    if: github.event_name == 'workflow_dispatch'
+    needs: notarize
+    runs-on: ubuntu-latest
+    steps:
+      - name: Recompute + upload SHA256SUMS.txt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          dir=$(mktemp -d)
+          gh release download "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --dir "$dir" \
+            --pattern '*.dmg' --pattern '*.zip' --pattern '*.exe' \
+            --pattern '*.AppImage' --pattern '*.deb'
+          (
+            cd "$dir"
+            shopt -s nullglob
+            files=(*.dmg *.zip *.exe *.AppImage *.deb)
+            [ ${#files[@]} -gt 0 ] && sha256sum "${files[@]}" > SHA256SUMS.txt
+            cat SHA256SUMS.txt
+          )
+          gh release upload "${{ inputs.tag }}" "$dir/SHA256SUMS.txt" \
+            --repo "$GITHUB_REPOSITORY" --clobber
