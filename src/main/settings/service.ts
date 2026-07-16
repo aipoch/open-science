@@ -64,7 +64,7 @@ import {
   type ResolvedAgentBackend
 } from '../agent-framework'
 import { createDefaultDetectDeps, detectClaude, type ClaudeDetectDeps } from './claude-detect'
-import { detectOpencode } from './opencode-detect'
+import { detectOpencode, readOpencodeUserConfig } from './opencode-detect'
 import { provisionAppClaudeConfigDir } from './claude-config-provision'
 import { detectNpmAvailable, runInstallWithFallback } from './claude-install'
 import { runEnvironmentCheck } from './environment-check'
@@ -1007,7 +1007,10 @@ class SettingsService {
     const provider = this.resolveProvider(activeProvider, settings.activeModel)
     const modelConfig = framework.prepareModelConfig(provider, {
       storageRoot: this.storageRoot,
-      executablePath
+      executablePath,
+      // Merge onto the user's own opencode config so their providers/mcp survive; auth.json is loaded
+      // by opencode separately and is never touched.
+      baseConfig: await readOpencodeUserConfig()
     })
     await this.writeAgentConfigFiles(modelConfig.configFiles)
 

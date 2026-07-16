@@ -26,29 +26,55 @@ import type {
 // Env var opencode reads to locate its config file.
 const OPENCODE_CONFIG_ENV = 'OPENCODE_CONFIG'
 
-// Maps the app's Anthropic-compatible custom gateway onto an opencode `anthropic` provider block.
-// TODO(spike): verify the real opencode.json schema + `provider/model` id scheme on a live build;
-// handle official/local providers and opencode-only providers (defer to `opencode auth login`).
-const buildOpencodeConfig = (provider: ResolvedProvider): string => {
-  const model = provider.model ? `anthropic/${provider.model}` : undefined
+// The app's providers are Anthropic `/v1/messages`-compatible (custom gateways and official vendors),
+// so they map onto opencode's built-in `anthropic` provider with a `baseURL`/`apiKey` override. An
+// OpenAI-format gateway would instead need a custom provider with `npm: "@ai-sdk/openai-compatible"`;
+// the app does not expose such providers today, so that branch is intentionally not built yet.
+const OPENCODE_PROVIDER_ID = 'anthropic'
 
-  return JSON.stringify(
-    {
-      $schema: 'https://opencode.ai/config.json',
-      ...(model ? { model } : {}),
-      provider: {
-        anthropic: {
-          options: {
-            ...(provider.baseUrl ? { baseURL: provider.baseUrl } : {}),
-            ...(provider.key ? { apiKey: provider.key } : {})
-          }
-        }
+const asRecord = (value: unknown): Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+
+// Builds opencode's config by MERGING the app's active provider/model onto the user's existing config
+// so their own providers, mcp servers, and auth are preserved. The model is both selected (top-level
+// `model`) and registered under the provider's `models` map — without the registration opencode does
+// not recognize a non-catalog model id (e.g. a custom gateway's `deepseek-v4-pro`) and silently falls
+// back to its own default. Verified against opencode 1.17.13.
+const buildOpencodeConfig = (
+  provider: ResolvedProvider,
+  baseConfig: Record<string, unknown> = {}
+): string => {
+  const bareModel = provider.model
+  const baseProviders = asRecord(baseConfig.provider)
+  const baseProvider = asRecord(baseProviders[OPENCODE_PROVIDER_ID])
+  const baseOptions = asRecord(baseProvider.options)
+  const baseModels = asRecord(baseProvider.models)
+
+  const merged: Record<string, unknown> = {
+    $schema: 'https://opencode.ai/config.json',
+    ...baseConfig,
+    ...(bareModel ? { model: `${OPENCODE_PROVIDER_ID}/${bareModel}` } : {}),
+    provider: {
+      ...baseProviders,
+      [OPENCODE_PROVIDER_ID]: {
+        ...baseProvider,
+        options: {
+          ...baseOptions,
+          ...(provider.baseUrl ? { baseURL: provider.baseUrl } : {}),
+          ...(provider.key ? { apiKey: provider.key } : {})
+        },
+        // Register the model so opencode treats a non-catalog id as a real, selectable model.
+        ...(bareModel ? { models: { ...baseModels, [bareModel]: {} } } : {})
       }
-    },
-    null,
-    2
-  )
+    }
+  }
+
+  return JSON.stringify(merged, null, 2)
 }
+
+export { buildOpencodeConfig }
 
 export const opencodeFramework: AgentFramework = {
   id: 'opencode',
@@ -69,12 +95,13 @@ export const opencodeFramework: AgentFramework = {
   },
 
   prepareModelConfig(provider: ResolvedProvider, ctx: ModelConfigContext): AgentModelConfig {
-    // opencode reads a config file, not ANTHROPIC_* env; point OPENCODE_CONFIG at a generated one.
+    // opencode reads a config file, not ANTHROPIC_* env; point OPENCODE_CONFIG at an app-owned file
+    // that merges the app's provider/model onto the user's existing opencode config.
     const configPath = join(ctx.storageRoot, 'opencode', 'opencode.json')
 
     return {
       env: { [OPENCODE_CONFIG_ENV]: configPath },
-      configFiles: [{ path: configPath, content: buildOpencodeConfig(provider) }]
+      configFiles: [{ path: configPath, content: buildOpencodeConfig(provider, ctx.baseConfig) }]
     }
   },
 

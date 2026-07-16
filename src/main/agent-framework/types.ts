@@ -33,6 +33,9 @@ export type ModelConfigContext = {
   storageRoot: string
   // Absolute path to the detected framework executable (claude / opencode).
   executablePath: string
+  // The framework's existing user config (e.g. opencode's global opencode.json), read by the settings
+  // layer so the adapter can merge onto it instead of replacing the user's own providers/mcp.
+  baseConfig?: Record<string, unknown>
 }
 
 // System-prompt guidance the runtime wants appended for a session (artifact routing, notebook, skill
