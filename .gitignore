@@ -80,7 +80,6 @@ local/
 .crush/
 .goose/
 .mcp/
-.playwright-cli/
 .serena/
 .taskmaster/
 

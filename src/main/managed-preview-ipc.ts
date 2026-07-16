@@ -31,15 +31,6 @@ type ManagedPreviewOwnerRegistry = {
   register: (event: IpcMainInvokeEvent) => OwnerTicket
 }
 
-const createManagedPreviewHandlers = (
-  resources: ManagedPreviewResources
-): ManagedPreviewHandlers => ({
-  acquire: (ownerId, request) => resources.acquire(ownerId, request),
-  readRange: (ownerId, request) => resources.readRange(ownerId, request),
-  release: (ownerId, request) => resources.release(ownerId, request),
-  releaseOwner: (ownerId) => resources.releaseOwner(ownerId)
-})
-
 // Couples every capability to the renderer process that acquired it.
 const createManagedPreviewOwnerRegistry = (
   handlers: ManagedPreviewHandlers
@@ -88,24 +79,19 @@ const createManagedPreviewOwnerRegistry = (
 }
 
 const registerManagedPreviewIpcHandlers = (resources: ManagedPreviewResources): void => {
-  const handlers = createManagedPreviewHandlers(resources)
-  const owners = createManagedPreviewOwnerRegistry(handlers)
+  const owners = createManagedPreviewOwnerRegistry(resources)
   const ownerId = (event: IpcMainInvokeEvent): number => owners.register(event).ownerId
 
   ipcMain.handle('preview-resources:acquire', (event, request: AcquireManagedPreviewRequest) =>
     owners.acquire(event, request)
   )
   ipcMain.handle('preview-resources:read-range', (event, request: ReadManagedPreviewRangeRequest) =>
-    handlers.readRange(ownerId(event), request)
+    resources.readRange(ownerId(event), request)
   )
   ipcMain.handle('preview-resources:release', (event, request: ReleaseManagedPreviewRequest) =>
-    handlers.release(ownerId(event), request)
+    resources.release(ownerId(event), request)
   )
 }
 
-export {
-  createManagedPreviewHandlers,
-  createManagedPreviewOwnerRegistry,
-  registerManagedPreviewIpcHandlers
-}
+export { createManagedPreviewOwnerRegistry, registerManagedPreviewIpcHandlers }
 export type { ManagedPreviewHandlers }

@@ -84,6 +84,30 @@ describe('PdfPreviewContent', () => {
     )
   })
 
+  it('uses each PDF page aspect ratio instead of stretching it into a fixed frame', async () => {
+    getPage.mockResolvedValue({
+      getViewport: vi.fn(() => ({ width: 900, height: 450 })),
+      render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
+      cleanup: vi.fn()
+    })
+
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent path="/workspace/landscape.pdf" name="landscape.pdf" source="artifact" />
+      )
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(getPage).toHaveBeenCalledWith(1)
+    expect(container.querySelector<HTMLElement>('[data-page-number="1"]')?.style.aspectRatio).toBe(
+      '2 / 1'
+    )
+  })
+
   it('destroys the loading task when PDF parsing fails', async () => {
     const destroyLoadingTask = vi.fn().mockResolvedValue(undefined)
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)

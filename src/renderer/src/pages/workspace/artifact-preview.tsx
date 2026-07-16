@@ -13,6 +13,7 @@ import {
   isImageArtifact
 } from './artifact-preview-utils'
 import { PdfThumbnail } from './previews/renderers/PdfThumbnail'
+import { createPreviewResourceKey } from './previews/preview-resource-key'
 import { useManagedPreviewResource } from './previews/useManagedPreviewResource'
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
@@ -272,13 +273,13 @@ const ManagedImageThumbnail = ({
   source: PreviewFileSource
   enabled: boolean
 }): React.JSX.Element => {
-  const requestKey = JSON.stringify([
+  const requestKey = createPreviewResourceKey({
     source,
-    artifact.path,
-    artifact.mimeType ?? null,
-    artifact.size ?? null,
-    artifact.mtimeMs ?? null
-  ])
+    path: artifact.path,
+    mimeType: artifact.mimeType,
+    size: artifact.size,
+    mtimeMs: artifact.mtimeMs
+  })
   const [failedRequestKey, setFailedRequestKey] = useState<string | undefined>(undefined)
   const hasFailed = failedRequestKey === requestKey
   // A decode failure disables the hook, which releases the protocol capability immediately.

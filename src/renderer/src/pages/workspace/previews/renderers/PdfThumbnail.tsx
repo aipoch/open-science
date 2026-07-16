@@ -7,6 +7,7 @@ import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
 import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import { isUnavailableFileError } from '../preview-errors'
+import { createPreviewResourceKey } from '../preview-resource-key'
 import { useNearViewport } from '../useNearViewport'
 
 const THUMBNAIL_WIDTH = 220
@@ -273,7 +274,7 @@ export const PdfThumbnail = ({
   size?: number
   mtimeMs?: number
 }): React.JSX.Element => {
-  const requestKey = JSON.stringify([source, path, mimeType ?? null, size ?? null, mtimeMs ?? null])
+  const requestKey = createPreviewResourceKey({ source, path, mimeType, size, mtimeMs })
   const [setElement, isNearViewport] = useNearViewport<HTMLDivElement>()
   const [result, setResult] = useState<{ requestKey: string; status: 'ready' | 'error' } | null>(
     null

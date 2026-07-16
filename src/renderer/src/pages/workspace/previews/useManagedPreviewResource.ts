@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react'
 import type { ManagedPreviewResource } from '../../../../../shared/preview-resources'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
+import { createPreviewResourceKey } from './preview-resource-key'
+
 type ManagedPreviewResourceState =
   | { status: 'idle'; resource?: undefined; error?: undefined }
   | { status: 'loading'; resource?: undefined; error?: undefined }
@@ -22,13 +24,7 @@ const useManagedPreviewResource = (
 ): ManagedPreviewResourceState => {
   const [result, setResult] = useState<ManagedPreviewResourceResult | null>(null)
   // File metadata invalidates a capability when the same path is replaced in place.
-  const requestKey = JSON.stringify([
-    item.source ?? 'artifact',
-    item.path,
-    item.mimeType ?? null,
-    item.size ?? null,
-    item.mtimeMs ?? null
-  ])
+  const requestKey = createPreviewResourceKey(item)
 
   useEffect(() => {
     if (!enabled) return

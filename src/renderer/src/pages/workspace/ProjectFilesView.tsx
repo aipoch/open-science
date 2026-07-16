@@ -30,6 +30,7 @@ import {
 } from './preview-file-item'
 import type { MessageArtifact } from './preview-file-item'
 import { getPreviewThumbnailReadEncoding } from './preview-support'
+import { getPreviewFileReader } from './previews/preview-file-reader'
 import { useNearViewport } from './previews/useNearViewport'
 import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
 
@@ -101,8 +102,7 @@ const createProjectFilePreviewTarget = (
 const readProjectFilePreview = async (
   target: ReadableProjectFilePreviewTarget
 ): Promise<ProjectFilePreviewReadResult> => {
-  const readPreview =
-    target.source === 'upload' ? window.api.uploads.readPreview : window.api.artifacts.readPreview
+  const readPreview = getPreviewFileReader(target.source)
 
   try {
     const preview = await readPreview({

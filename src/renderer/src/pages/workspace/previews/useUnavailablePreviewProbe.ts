@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
+import { getPreviewFileReader } from './preview-file-reader'
 import { isUnavailableFileError } from './preview-errors'
 
 type UnavailableProbeResult = {
@@ -27,8 +28,7 @@ const useUnavailablePreviewProbe = ({
     if (!enabled || hasCurrentResult) return
 
     let canceled = false
-    const readPreview =
-      source === 'upload' ? window.api.uploads.readPreview : window.api.artifacts.readPreview
+    const readPreview = getPreviewFileReader(source)
 
     // One byte verifies path availability without retaining file content in the card.
     void readPreview({ path, maxBytes: 1, encoding: 'base64' }).then(

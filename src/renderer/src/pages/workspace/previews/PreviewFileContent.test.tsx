@@ -308,6 +308,23 @@ describe('PreviewFileContent', () => {
     expect(container.querySelector('[data-testid="source-line-number"]')).not.toBeNull()
   })
 
+  it('uses paged source instead of parsing a truncated molecule record', async () => {
+    vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
+      content: 'partial molecule record',
+      encoding: 'utf8',
+      size: 40,
+      offset: 0,
+      nextOffset: 23,
+      truncated: true
+    })
+
+    await renderFile(createFileItem({ format: 'molecule', name: 'large.mol' }))
+
+    expect(container.querySelector('[aria-label="Next preview page"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="source-line-number"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Structure preview of large.mol"]')).toBeNull()
+  })
+
   it('renders HTML from a managed stream inside a script sandbox', async () => {
     await renderFile(createFileItem({ format: 'html', name: 'report.html' }))
 

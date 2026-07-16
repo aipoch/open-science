@@ -5,6 +5,7 @@ import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import { isUnavailableFileError } from '../preview-errors'
+import { createPreviewResourceKey } from '../preview-resource-key'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { useNearViewport } from '../useNearViewport'
 
@@ -26,6 +27,7 @@ const PdfPageCanvas = ({
   const [setContainer, isNearViewport] = useNearViewport<HTMLDivElement>()
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [aspectRatio, setAspectRatio] = useState(3 / 4)
 
   useEffect(() => {
     if (!isNearViewport) return
@@ -64,6 +66,8 @@ const PdfPageCanvas = ({
         const context = canvas.getContext('2d')
         if (!context) throw new Error('Canvas 2D context unavailable.')
 
+        // Match the actual PDF page geometry so landscape and non-standard pages are not stretched.
+        setAspectRatio(viewport.width / viewport.height)
         canvas.width = viewport.width
         canvas.height = viewport.height
         renderTask = loadedPage.render({ canvasContext: context, viewport })
@@ -88,7 +92,8 @@ const PdfPageCanvas = ({
   return (
     <div
       ref={setContainer}
-      className="relative mx-auto mb-3 aspect-[3/4] w-full max-w-3xl bg-bg-000 shadow-sm"
+      className="relative mx-auto mb-3 w-full max-w-3xl bg-bg-000 shadow-sm"
+      style={{ aspectRatio }}
       data-page-number={pageNumber}
     >
       {displayedStatus === 'loading' || (displayedStatus === 'idle' && isNearViewport) ? (
@@ -123,7 +128,7 @@ export const PdfPreviewContent = ({
   size?: number
   mtimeMs?: number
 }): React.JSX.Element => {
-  const requestKey = JSON.stringify([source, path, mimeType ?? null, size ?? null, mtimeMs ?? null])
+  const requestKey = createPreviewResourceKey({ source, path, mimeType, size, mtimeMs })
   const [documentState, setDocumentState] = useState<DocumentState | null>(null)
   const pageDisposersRef = useRef(new Set<() => void>())
   const registerPageDisposer = useCallback((dispose: () => void): (() => void) => {

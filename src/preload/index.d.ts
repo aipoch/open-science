@@ -241,7 +241,6 @@ interface OpenScienceAPI {
     finalizeSession(request: FinalizeUploadSessionRequest): Promise<UploadedAttachment[]>
     // Reads a bounded preview from upload storage using the same preview result shape as artifacts.
     readPreview(request: ReadArtifactPreviewRequest): Promise<ArtifactPreviewResult>
-    // Reads a whole upload as base64 bytes for viewers that need the full file (e.g. PDF preview).
   }
   notebook: {
     state(request: NotebookSessionRequest): Promise<NotebookSessionState>

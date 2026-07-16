@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import type { ArtifactPreviewResult } from '../../../../../shared/artifacts'
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
+import { getPreviewFileReader } from './preview-file-reader'
 import { isUnavailableFileError } from './preview-errors'
 
 export const PREVIEW_TEXT_MAX_BYTES = 1024 * 1024
@@ -59,8 +60,7 @@ export const usePreviewFileContent = ({
 
   useEffect(() => {
     let canceled = false
-    const readPreview =
-      source === 'upload' ? window.api.uploads.readPreview : window.api.artifacts.readPreview
+    const readPreview = getPreviewFileReader(source)
 
     void readPreview({ path, maxBytes, encoding, offset })
       .then((preview) => {

@@ -1,12 +1,13 @@
-import { FileWarning, FlaskConical } from 'lucide-react'
+import { FlaskConical } from 'lucide-react'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 
 import { cn } from '@/lib/utils'
 
 import { getFileExtension } from '../../preview-support'
-import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
+import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { usePreviewFileContent } from '../usePreviewFileContent'
+import { SourcePreviewContent } from './SourcePreview'
 import { buildReactionMarkup } from './reaction-markup'
 
 type OclModule = typeof import('openchemlib')
@@ -130,14 +131,19 @@ export const MoleculePreviewRenderer = ({ item }: PreviewFileRendererProps): Rea
 
   if (state.status === 'error' || state.preview.encoding !== 'utf8') {
     return (
-      <PreviewFallbackCard
-        icon={FileWarning}
+      <PreviewErrorCard
         path={item.path}
         name={item.name}
         source={item.source}
-        message="Structure file couldn't be read for preview"
+        error={state.status === 'error' ? state.error : undefined}
+        fallbackMessage="Structure file couldn't be read for preview"
       />
     )
+  }
+
+  // A bounded fragment may end mid-record, so keep large structures readable through source pages.
+  if (state.preview.truncated || state.pagination.pageNumber > 1) {
+    return <SourcePreviewContent content={state.preview.content} pagination={state.pagination} />
   }
 
   return (

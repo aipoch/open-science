@@ -4,6 +4,7 @@ import { useState } from 'react'
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
 import { PreviewErrorCard, PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
+import { createPreviewResourceKey } from '../preview-resource-key'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { useManagedPreviewResource } from '../useManagedPreviewResource'
 
@@ -22,7 +23,7 @@ export const PreviewImageContent = ({
   size?: number
   mtimeMs?: number
 }): React.JSX.Element => {
-  const requestKey = JSON.stringify([source, path, mimeType ?? null, size ?? null, mtimeMs ?? null])
+  const requestKey = createPreviewResourceKey({ source, path, mimeType, size, mtimeMs })
   const [failedRequestKey, setFailedRequestKey] = useState<string | undefined>(undefined)
   const hasFailed = failedRequestKey === requestKey
   // A decode failure disables the hook, which releases the protocol capability immediately.
