@@ -68,27 +68,6 @@ describe('artifact repository', () => {
     await expect(readFile(artifact.path, 'utf8')).resolves.toBe('<report />')
   })
 
-  it('reads full artifact bytes as base64 for viewers, only within the managed tree', async () => {
-    const root = await createStorageRoot()
-    const repository = new ArtifactRepository(root)
-    const bytes = Buffer.from('%PDF-1.4 artifact bytes')
-    const artifact = await repository.writePendingFile({
-      projectName: 'default-project',
-      sessionId: 'session-1',
-      runId: 'run-1',
-      filename: 'report.pdf',
-      mimeType: 'application/pdf',
-      source: createInlineSource(bytes.toString('base64'), 'base64')
-    })
-
-    const result = await repository.readManagedFileBytes({ path: artifact.path })
-
-    expect(result).toEqual({ data: bytes.toString('base64'), size: bytes.byteLength })
-    await expect(
-      repository.readManagedFileBytes({ path: join(root, 'outside.pdf') })
-    ).rejects.toThrow()
-  })
-
   it('writes large inline base64 artifacts without repository size limits', async () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)

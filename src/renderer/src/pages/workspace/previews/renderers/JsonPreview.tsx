@@ -33,6 +33,10 @@ export const JsonPreviewRenderer = ({ item }: PreviewFileRendererProps): React.J
     )
   }
 
+  if (state.preview.truncated || state.pagination.pageNumber > 1) {
+    return <SourcePreviewContent content={state.preview.content} pagination={state.pagination} />
+  }
+
   const { formatted, error } = formatJsonPreview(state.preview.content)
 
   const errorContent = error ? (
@@ -41,11 +45,5 @@ export const JsonPreviewRenderer = ({ item }: PreviewFileRendererProps): React.J
     </div>
   ) : undefined
 
-  return (
-    <SourcePreviewContent
-      content={formatted}
-      truncated={state.preview.truncated}
-      topContent={errorContent}
-    />
-  )
+  return <SourcePreviewContent content={formatted} topContent={errorContent} />
 }

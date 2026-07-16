@@ -16,6 +16,9 @@ import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './connectors/
 import { registerFileSaveHandlers } from './file-save'
 import { registerGithubIpcHandlers } from './github-ipc'
 import { registerLogsIpcHandlers } from './logs-ipc'
+import { registerManagedPreviewIpcHandlers } from './managed-preview-ipc'
+import { registerManagedPreviewProtocol } from './managed-preview-protocol'
+import { ManagedPreviewResources } from './managed-preview-resources'
 import { registerNotebookIpcHandlers } from './notebook/ipc'
 import { NotebookLocalRpcServer } from './notebook/local-rpc-server'
 import { registerProjectIpcHandlers } from './projects/ipc'
@@ -84,6 +87,13 @@ const registerIpcHandlers = ({ mainEntryPath }: IpcRegistrationOptions): void =>
   const artifactRunRegistry = new ArtifactRunRegistry()
   // Share one upload repository so composer staging, prompt finalization, and previews agree.
   const uploadRepository = createDefaultUploadRepository()
+  // One registry owns short-lived capability URLs for both managed artifact repositories.
+  const previewResources = new ManagedPreviewResources({
+    resolvePath: (source, request) =>
+      source === 'artifact'
+        ? artifactRepository.resolveManagedFilePath(request)
+        : uploadRepository.resolveManagedUploadPath(request)
+  })
   const notebookService = createDefaultNotebookRuntimeService()
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const settingsService = createDefaultSettingsService()
@@ -181,6 +191,8 @@ const registerIpcHandlers = ({ mainEntryPath }: IpcRegistrationOptions): void =>
       )
   })
   registerNotebookIpcHandlers(notebookService)
+  registerManagedPreviewIpcHandlers(previewResources)
+  registerManagedPreviewProtocol(previewResources)
   registerArtifactIpcHandlers(artifactRepository, artifactRunRegistry)
   registerUploadIpcHandlers(uploadRepository)
   registerSessionPersistenceIpcHandlers()

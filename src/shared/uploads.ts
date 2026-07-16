@@ -34,16 +34,6 @@ export type DeleteUploadRequest = {
   path: string
 }
 
-export type ReadUploadBytesRequest = {
-  path: string
-}
-
-// Full-file bytes for a managed upload, base64-encoded so it survives IPC structured cloning.
-export type UploadBytesResult = {
-  data: string
-  size: number
-}
-
 export type FinalizeUploadSessionRequest = {
   sessionId: string
   attachments: UploadedAttachment[]

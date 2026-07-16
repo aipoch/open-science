@@ -25,7 +25,7 @@ export const FastaPreviewRenderer = ({ item }: PreviewFileRendererProps): React.
   return (
     <SourcePreviewContent
       content={state.preview.content}
-      truncated={state.preview.truncated}
+      pagination={state.pagination}
       lineClassName="break-all"
     />
   )

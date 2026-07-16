@@ -166,6 +166,17 @@ describe('preview persistence projections', () => {
     })
   })
 
+  it('round-trips file version metadata used by preview resource identity', () => {
+    usePreviewWorkbenchStore.setState({
+      panelState: 'open',
+      items: [createStoredFileItem({ size: 4096, mtimeMs: 1710000001000 })]
+    })
+
+    const restored = toRestoredSlice(toPersistedPreviewState(usePreviewWorkbenchStore.getState()))
+
+    expect(restored.items?.[0]).toMatchObject({ size: 4096, mtimeMs: 1710000001000 })
+  })
+
   it('re-evaluates persisted formats against current preview support', () => {
     const restored = toRestoredSlice({
       version: PREVIEW_STATE_VERSION,

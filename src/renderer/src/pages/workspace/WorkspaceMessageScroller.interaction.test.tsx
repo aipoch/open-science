@@ -87,6 +87,19 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     window.api = {
+      previewResources: {
+        acquire: vi.fn(({ path }: { path: string }) =>
+          Promise.resolve({
+            id: `resource:${path}`,
+            url: `open-science-preview://resource/${encodeURIComponent(path)}`,
+            size: 2048,
+            mimeType: 'image/png',
+            version: 1
+          })
+        ),
+        readRange: vi.fn(),
+        release: vi.fn().mockResolvedValue(undefined)
+      },
       artifacts: {
         readPreview: vi
           .fn()
@@ -154,7 +167,10 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       type: 'file',
       path: '/workspace/report.png',
       name: 'report.png',
-      format: 'image'
+      format: 'image',
+      mimeType: 'image/png',
+      size: 2048,
+      mtimeMs: 1710000000100
     })
   })
 
@@ -240,7 +256,66 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       source: 'upload',
       path: '/Users/example/.open-science/uploads/default-project/session-42/first.png',
       name: 'first.png',
-      format: 'image'
+      format: 'image',
+      mimeType: 'image/png',
+      size: 2048
     })
+  })
+
+  it('does not read a generated text thumbnail until its card approaches the viewport', async () => {
+    let intersectionCallback: IntersectionObserverCallback | undefined
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        observe = vi.fn()
+        unobserve = vi.fn()
+        disconnect = vi.fn()
+
+        constructor(callback: IntersectionObserverCallback) {
+          intersectionCallback = callback
+        }
+      }
+    )
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const session = createSession({
+      status: 'idle',
+      messages: [
+        createMessage({
+          id: 'reply-1',
+          role: 'agent',
+          content: 'Created the file',
+          artifactIds: ['artifact-1']
+        })
+      ],
+      artifacts: [
+        {
+          id: 'artifact-1',
+          kind: 'managed-file',
+          path: '/workspace/report.txt',
+          fileUrl: 'file:///workspace/report.txt',
+          name: 'report.txt',
+          mimeType: 'text/plain',
+          size: 2048,
+          mtimeMs: 1710000000100
+        }
+      ]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(<WorkspaceMessageScroller activeSession={session} />)
+    })
+    expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
+
+    await act(async () => {
+      intersectionCallback?.(
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(window.api.artifacts.readPreview).toHaveBeenCalledTimes(1)
   })
 })

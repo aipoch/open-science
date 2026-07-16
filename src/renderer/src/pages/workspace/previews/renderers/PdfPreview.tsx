@@ -1,85 +1,204 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { FileWarning } from 'lucide-react'
 
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
 import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
-import { pdfjsLib } from '../pdfjs'
-import { readPdfBytes } from '../pdf-bytes'
+import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import type { PreviewFileRendererProps } from '../preview-types'
+import { useNearViewport } from '../useNearViewport'
 
-// Rendering every page of a huge PDF would freeze the panel; cap the preview at a sensible depth.
-const MAX_PREVIEW_PAGES = 30
+type PdfDocument = Awaited<ReturnType<typeof createManagedPdfLoadingTask>['promise']>
+type DocumentState =
+  | { requestKey: string; status: 'ready'; document: PdfDocument }
+  | { requestKey: string; status: 'error' }
 
-type LoadState = 'loading' | 'ready' | 'error'
+// Owns one lazy page canvas and releases its decoded bitmap outside the overscan window.
+const PdfPageCanvas = ({
+  document,
+  pageNumber,
+  registerDisposer
+}: {
+  document: PdfDocument
+  pageNumber: number
+  registerDisposer: (dispose: () => void) => () => void
+}): React.JSX.Element => {
+  const [setContainer, isNearViewport] = useNearViewport<HTMLDivElement>()
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+
+  useEffect(() => {
+    if (!isNearViewport) return
+
+    let canceled = false
+    let page: Awaited<ReturnType<PdfDocument['getPage']>> | undefined
+    let renderTask: ReturnType<Awaited<ReturnType<PdfDocument['getPage']>>['render']> | undefined
+    const canvas = canvasRef.current
+    let disposed = false
+    // Clear canvas backing storage on exit; removing the DOM node alone may retain its bitmap.
+    const dispose = (): void => {
+      if (disposed) return
+      disposed = true
+      canceled = true
+      renderTask?.cancel()
+      page?.cleanup()
+      if (canvas) {
+        canvas.width = 0
+        canvas.height = 0
+      }
+    }
+    const unregisterDisposer = registerDisposer(dispose)
+
+    void document
+      .getPage(pageNumber)
+      .then(async (loadedPage) => {
+        page = loadedPage
+        if (canceled || !canvas) {
+          loadedPage.cleanup()
+          page = undefined
+          return
+        }
+
+        const scale = Math.min(2, Math.max(1, window.devicePixelRatio || 1))
+        const viewport = loadedPage.getViewport({ scale })
+        const context = canvas.getContext('2d')
+        if (!context) throw new Error('Canvas 2D context unavailable.')
+
+        canvas.width = viewport.width
+        canvas.height = viewport.height
+        renderTask = loadedPage.render({ canvasContext: context, viewport })
+        await renderTask.promise
+        if (!canceled) setStatus('ready')
+      })
+      .catch((error: unknown) => {
+        if (!canceled) {
+          console.error(`Failed to render PDF page ${pageNumber}`, error)
+          setStatus('error')
+        }
+      })
+
+    return () => {
+      unregisterDisposer()
+      dispose()
+    }
+  }, [document, isNearViewport, pageNumber, registerDisposer])
+
+  const displayedStatus = isNearViewport ? status : 'idle'
+
+  return (
+    <div
+      ref={setContainer}
+      className="relative mx-auto mb-3 aspect-[3/4] w-full max-w-3xl bg-bg-000 shadow-sm"
+      data-page-number={pageNumber}
+    >
+      {displayedStatus === 'loading' || (displayedStatus === 'idle' && isNearViewport) ? (
+        <div className="absolute inset-0">
+          <PreviewLoadingContent />
+        </div>
+      ) : null}
+      {displayedStatus === 'error' ? (
+        <div className="absolute inset-0 flex items-center justify-center text-[12px] text-text-300">
+          Page {pageNumber} could not be rendered
+        </div>
+      ) : null}
+      {isNearViewport ? (
+        <canvas ref={canvasRef} width={0} height={0} className="block size-full object-contain" />
+      ) : null}
+    </div>
+  )
+}
 
 export const PdfPreviewContent = ({
   path,
   name,
-  source = 'artifact'
+  source = 'artifact',
+  mimeType,
+  size,
+  mtimeMs
 }: {
   path: string
   name: string
   source?: PreviewFileSource
+  mimeType?: string
+  size?: number
+  mtimeMs?: number
 }): React.JSX.Element => {
-  const containerRef = useRef<HTMLDivElement | null>(null)
-  // Track the outcome per path so the status is derived, not reset synchronously inside the effect.
-  const [rendered, setRendered] = useState<{ path: string; status: 'ready' | 'error' } | null>(null)
+  const requestKey = JSON.stringify([source, path, mimeType ?? null, size ?? null, mtimeMs ?? null])
+  const [documentState, setDocumentState] = useState<DocumentState | null>(null)
+  const pageDisposersRef = useRef(new Set<() => void>())
+  const registerPageDisposer = useCallback((dispose: () => void): (() => void) => {
+    pageDisposersRef.current.add(dispose)
+    return () => pageDisposersRef.current.delete(dispose)
+  }, [])
 
   useEffect(() => {
     let canceled = false
-    const container = containerRef.current
+    let document: PdfDocument | undefined
+    let loadingTask: ReturnType<typeof createManagedPdfLoadingTask> | undefined
+    let resourceId: string | undefined
+    let disposePromise: Promise<void> | undefined
+    const dispose = (): Promise<void> => {
+      disposePromise ??= (async () => {
+        // Cancel page renders before destroying their shared PDF.js document and resource.
+        for (const disposePage of pageDisposersRef.current) disposePage()
+        pageDisposersRef.current.clear()
 
-    const render = async (): Promise<void> => {
-      const bytes = await readPdfBytes(path, source)
-      // getDocument transfers the buffer, so hand it a copy it can consume freely.
-      const document = await pdfjsLib.getDocument({ data: bytes }).promise
-
-      try {
-        if (canceled || !container) return
-        container.replaceChildren()
-
-        const scale = Math.min(2, Math.max(1, window.devicePixelRatio || 1))
-        const pageCount = Math.min(document.numPages, MAX_PREVIEW_PAGES)
-
-        for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
-          const page = await document.getPage(pageNumber)
-          if (canceled) return
-
-          const viewport = page.getViewport({ scale })
-          const canvas = window.document.createElement('canvas')
-          const context = canvas.getContext('2d')
-          if (!context) continue
-
-          canvas.width = viewport.width
-          canvas.height = viewport.height
-          canvas.className = 'mx-auto mb-3 h-auto w-full max-w-3xl rounded-sm shadow-sm'
-          container.appendChild(canvas)
-
-          await page.render({ canvasContext: context, viewport }).promise
-          page.cleanup()
+        try {
+          if (document) await document.destroy()
+          else if (loadingTask) await loadingTask.destroy()
+        } catch (error) {
+          console.error('Failed to destroy PDF preview', error)
         }
 
-        if (!canceled) setRendered({ path, status: 'ready' })
-      } finally {
-        await document.destroy()
-      }
+        if (resourceId) {
+          try {
+            await window.api.previewResources.release({ resourceId })
+          } catch (error) {
+            console.error('Failed to release PDF preview resource', error)
+          }
+        }
+      })()
+      return disposePromise
     }
 
-    render().catch((error) => {
-      console.error('Failed to render PDF preview', error)
-      if (!canceled) setRendered({ path, status: 'error' })
-    })
+    void (async () => {
+      try {
+        const resource = await window.api.previewResources.acquire({
+          source,
+          path,
+          ...(mimeType ? { mimeType } : {})
+        })
+        resourceId = resource.id
+        if (canceled) {
+          await dispose()
+          return
+        }
+
+        loadingTask = createManagedPdfLoadingTask(resource)
+        document = await loadingTask.promise
+        if (canceled) {
+          await dispose()
+          return
+        }
+
+        setDocumentState({ requestKey, status: 'ready', document })
+      } catch (error: unknown) {
+        console.error('Failed to load PDF preview', error)
+        if (!canceled) setDocumentState({ requestKey, status: 'error' })
+        await dispose()
+      }
+    })()
 
     return () => {
       canceled = true
+      if (resourceId) void dispose()
     }
-  }, [path, source])
+  }, [mimeType, path, requestKey, source])
 
-  // Until the effect resolves for the current path, the file is still loading.
-  const status: LoadState = rendered?.path === path ? rendered.status : 'loading'
+  const currentDocumentState = documentState?.requestKey === requestKey ? documentState : null
+  const hasError = currentDocumentState?.status === 'error'
 
-  if (status === 'error') {
+  if (hasError) {
     return (
       <PreviewFallbackCard
         icon={FileWarning}
@@ -91,18 +210,38 @@ export const PdfPreviewContent = ({
     )
   }
 
+  const document = currentDocumentState?.status === 'ready' ? currentDocumentState.document : null
+  const pageCount = document?.numPages ?? 0
+
   return (
     <div className="relative size-full overflow-auto bg-bg-20 p-4">
-      {status === 'loading' && (
+      {!document ? (
         <div className="absolute inset-0">
           <PreviewLoadingContent />
         </div>
-      )}
-      <div ref={containerRef} />
+      ) : null}
+      {document
+        ? Array.from({ length: pageCount }, (_, index) => (
+            // Each page mounts its canvas only inside the viewport overscan window.
+            <PdfPageCanvas
+              key={index + 1}
+              document={document}
+              pageNumber={index + 1}
+              registerDisposer={registerPageDisposer}
+            />
+          ))
+        : null}
     </div>
   )
 }
 
 export const PdfPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => (
-  <PdfPreviewContent path={item.path} name={item.name} source={item.source} />
+  <PdfPreviewContent
+    path={item.path}
+    name={item.name}
+    source={item.source}
+    mimeType={item.mimeType}
+    size={item.size}
+    mtimeMs={item.mtimeMs}
+  />
 )

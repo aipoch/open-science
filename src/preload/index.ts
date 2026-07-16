@@ -19,9 +19,7 @@ import type {
   ArtifactFile,
   ArtifactPreviewResult,
   FinalizeRunArtifactsRequest,
-  ManagedFileBytesResult,
   OpenArtifactFileRequest,
-  ReadArtifactBytesRequest,
   ReadArtifactPreviewRequest
 } from '../shared/artifacts'
 import type { SaveBlobFileRequest, SaveBlobFileResult } from '../shared/file-save'
@@ -45,6 +43,13 @@ import type {
   PersistedPreviewState,
   SavePreviewStateRequest
 } from '../shared/preview-state'
+import type {
+  AcquireManagedPreviewRequest,
+  ManagedPreviewRangeResult,
+  ManagedPreviewResource,
+  ReadManagedPreviewRangeRequest,
+  ReleaseManagedPreviewRequest
+} from '../shared/preview-resources'
 import type {
   CreateProjectRequest,
   DeleteProjectRequest,
@@ -103,9 +108,7 @@ import type { AppInfo, UpdateStatus } from '../shared/update'
 import type {
   DeleteUploadRequest,
   FinalizeUploadSessionRequest,
-  ReadUploadBytesRequest,
   StageUploadFilesRequest,
-  UploadBytesResult,
   UploadedAttachment
 } from '../shared/uploads'
 
@@ -226,6 +229,11 @@ type OpenScienceAPI = {
     save: (request: SavePreviewStateRequest) => Promise<void>
     delete: (request: DeletePreviewStateRequest) => Promise<void>
   }
+  previewResources: {
+    acquire: (request: AcquireManagedPreviewRequest) => Promise<ManagedPreviewResource>
+    readRange: (request: ReadManagedPreviewRangeRequest) => Promise<ManagedPreviewRangeResult>
+    release: (request: ReleaseManagedPreviewRequest) => Promise<void>
+  }
   artifacts: {
     // Finalizes files produced during one runtime event after the renderer has selected a message.
     finalizeRunArtifacts: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
@@ -233,8 +241,6 @@ type OpenScienceAPI = {
     openFile: (request: OpenArtifactFileRequest) => Promise<void>
     // Reads a bounded text preview from managed generated files.
     readPreview: (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
-    // Reads a whole managed artifact as base64 bytes for viewers that need the full file.
-    readBytes: (request: ReadArtifactBytesRequest) => Promise<ManagedFileBytesResult>
   }
   uploads: {
     // Stages files selected or pasted in the renderer into app-managed upload storage.
@@ -245,8 +251,6 @@ type OpenScienceAPI = {
     finalizeSession: (request: FinalizeUploadSessionRequest) => Promise<UploadedAttachment[]>
     // Reads a bounded preview from upload storage using the same preview result shape as artifacts.
     readPreview: (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
-    // Reads a whole upload as base64 bytes for viewers that need the full file (e.g. PDF preview).
-    readBytes: (request: ReadUploadBytesRequest) => Promise<UploadBytesResult>
   }
   notebook: {
     state: (request: NotebookSessionRequest) => Promise<NotebookSessionState>
@@ -442,6 +446,16 @@ const api: OpenScienceAPI = {
     save: (request) => ipcRenderer.invoke('preview:save', request) as Promise<void>,
     delete: (request) => ipcRenderer.invoke('preview:delete', request) as Promise<void>
   },
+  previewResources: {
+    acquire: (request) =>
+      ipcRenderer.invoke('preview-resources:acquire', request) as Promise<ManagedPreviewResource>,
+    readRange: (request) =>
+      ipcRenderer.invoke(
+        'preview-resources:read-range',
+        request
+      ) as Promise<ManagedPreviewRangeResult>,
+    release: (request) => ipcRenderer.invoke('preview-resources:release', request) as Promise<void>
+  },
   artifacts: {
     // Keep generated file movement in the main process where filesystem trust checks live.
     finalizeRunArtifacts: (request) =>
@@ -449,9 +463,7 @@ const api: OpenScienceAPI = {
     openFile: (request) => ipcRenderer.invoke('artifacts:open-file', request) as Promise<void>,
     // Keep preview reads on the same managed-file trust path as opening files.
     readPreview: (request) =>
-      ipcRenderer.invoke('artifacts:read-preview', request) as Promise<ArtifactPreviewResult>,
-    readBytes: (request) =>
-      ipcRenderer.invoke('artifacts:read-bytes', request) as Promise<ManagedFileBytesResult>
+      ipcRenderer.invoke('artifacts:read-preview', request) as Promise<ArtifactPreviewResult>
   },
   uploads: {
     // Upload IPC remains behind the preload bridge so renderer code never receives raw fs access.
@@ -461,9 +473,7 @@ const api: OpenScienceAPI = {
     finalizeSession: (request) =>
       ipcRenderer.invoke('uploads:finalize-session', request) as Promise<UploadedAttachment[]>,
     readPreview: (request) =>
-      ipcRenderer.invoke('uploads:read-preview', request) as Promise<ArtifactPreviewResult>,
-    readBytes: (request) =>
-      ipcRenderer.invoke('uploads:read-bytes', request) as Promise<UploadBytesResult>
+      ipcRenderer.invoke('uploads:read-preview', request) as Promise<ArtifactPreviewResult>
   },
   notebook: {
     // Notebook commands stay behind typed IPC so renderer code never talks to local RPC directly.

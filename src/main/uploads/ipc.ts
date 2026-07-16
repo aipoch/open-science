@@ -4,7 +4,6 @@ import type { ReadArtifactPreviewRequest } from '../../shared/artifacts'
 import type {
   DeleteUploadRequest,
   FinalizeUploadSessionRequest,
-  ReadUploadBytesRequest,
   StageUploadFilesRequest
 } from '../../shared/uploads'
 import { resolveStorageRoot } from '../storage-root'
@@ -27,9 +26,6 @@ const registerUploadIpcHandlers = (repository = createDefaultUploadRepository())
   )
   ipcMain.handle('uploads:read-preview', (_event, request: ReadArtifactPreviewRequest) =>
     repository.readManagedUploadPreview(request)
-  )
-  ipcMain.handle('uploads:read-bytes', (_event, request: ReadUploadBytesRequest) =>
-    repository.readManagedUploadBytes(request)
   )
 }
 

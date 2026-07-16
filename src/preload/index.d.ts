@@ -17,9 +17,7 @@ import type {
   ArtifactFile,
   ArtifactPreviewResult,
   FinalizeRunArtifactsRequest,
-  ManagedFileBytesResult,
   OpenArtifactFileRequest,
-  ReadArtifactBytesRequest,
   ReadArtifactPreviewRequest
 } from '../shared/artifacts'
 import type { SaveBlobFileRequest, SaveBlobFileResult } from '../shared/file-save'
@@ -43,6 +41,13 @@ import type {
   PersistedPreviewState,
   SavePreviewStateRequest
 } from '../shared/preview-state'
+import type {
+  AcquireManagedPreviewRequest,
+  ManagedPreviewRangeResult,
+  ManagedPreviewResource,
+  ReadManagedPreviewRangeRequest,
+  ReleaseManagedPreviewRequest
+} from '../shared/preview-resources'
 import type {
   CreateProjectRequest,
   DeleteProjectRequest,
@@ -101,9 +106,7 @@ import type { AppInfo, UpdateStatus } from '../shared/update'
 import type {
   DeleteUploadRequest,
   FinalizeUploadSessionRequest,
-  ReadUploadBytesRequest,
   StageUploadFilesRequest,
-  UploadBytesResult,
   UploadedAttachment
 } from '../shared/uploads'
 
@@ -211,11 +214,15 @@ interface OpenScienceAPI {
     save(request: SavePreviewStateRequest): Promise<void>
     delete(request: DeletePreviewStateRequest): Promise<void>
   }
+  previewResources: {
+    acquire(request: AcquireManagedPreviewRequest): Promise<ManagedPreviewResource>
+    readRange(request: ReadManagedPreviewRangeRequest): Promise<ManagedPreviewRangeResult>
+    release(request: ReleaseManagedPreviewRequest): Promise<void>
+  }
   artifacts: {
     finalizeRunArtifacts(request: FinalizeRunArtifactsRequest): Promise<ArtifactFile[]>
     openFile(request: OpenArtifactFileRequest): Promise<void>
     readPreview(request: ReadArtifactPreviewRequest): Promise<ArtifactPreviewResult>
-    readBytes(request: ReadArtifactBytesRequest): Promise<ManagedFileBytesResult>
   }
   uploads: {
     // Stages files selected or pasted in the renderer into app-managed upload storage.
@@ -227,7 +234,6 @@ interface OpenScienceAPI {
     // Reads a bounded preview from upload storage using the same preview result shape as artifacts.
     readPreview(request: ReadArtifactPreviewRequest): Promise<ArtifactPreviewResult>
     // Reads a whole upload as base64 bytes for viewers that need the full file (e.g. PDF preview).
-    readBytes(request: ReadUploadBytesRequest): Promise<UploadBytesResult>
   }
   notebook: {
     state(request: NotebookSessionRequest): Promise<NotebookSessionState>

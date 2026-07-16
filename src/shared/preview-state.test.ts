@@ -97,6 +97,14 @@ describe('normalizePersistedPreviewState item sanitization', () => {
     expect(state.items[0]?.source).toBe('upload')
   })
 
+  it('preserves finite file version metadata', () => {
+    const state = normalizePersistedPreviewState({
+      items: [{ ...validItem, size: 4096, mtimeMs: 1710000001000 }]
+    })
+
+    expect(state.items[0]).toMatchObject({ size: 4096, mtimeMs: 1710000001000 })
+  })
+
   it('ignores non-string field values, falling back to defaults or dropping the item', () => {
     // A non-string title falls back to name; a non-string path fails the guard and drops the item.
     const stringTitle = normalizePersistedPreviewState({ items: [{ ...validItem, title: 123 }] })

@@ -4,11 +4,7 @@ import { describe, expect, it } from 'vitest'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 
 import { ArtifactPreview } from './artifact-preview'
-import {
-  getArtifactExtension,
-  getArtifactsForPreviewRead,
-  shouldReadArtifactPreview
-} from './artifact-preview-utils'
+import { getArtifactExtension, shouldReadArtifactPreview } from './artifact-preview-utils'
 
 type PreviewArtifact = React.ComponentProps<typeof ArtifactPreview>['artifact']
 
@@ -99,40 +95,5 @@ describe('artifact preview rendering', () => {
     expect(html).toContain('data-testid="artifact-skeleton-preview"')
     expect(html).toContain('<svg')
     expect(html).not.toContain('NWK')
-  })
-})
-
-describe('artifact preview read selection', () => {
-  it('reads only visible previewable artifacts and skips cached or oversized image previews', () => {
-    const artifacts = Array.from({ length: 7 }, (_, index) =>
-      createArtifact({
-        id: `artifact-${index + 1}`,
-        name: `file-${index + 1}.txt`,
-        mimeType: 'text/plain',
-        size: 128,
-        mtimeMs: 1710000000000 + index
-      })
-    )
-    const oversizedImage = createArtifact({
-      id: 'artifact-image',
-      name: 'large.png',
-      mimeType: 'image/png',
-      size: 1024 * 1024 + 1
-    })
-
-    const targets = getArtifactsForPreviewRead({
-      artifacts: [...artifacts, oversizedImage],
-      visibleCount: 5,
-      cachedPreviews: {
-        'artifact-1': createPreview('cached')
-      }
-    })
-
-    expect(targets.map((artifact) => artifact.id)).toEqual([
-      'artifact-2',
-      'artifact-3',
-      'artifact-4',
-      'artifact-5'
-    ])
   })
 })

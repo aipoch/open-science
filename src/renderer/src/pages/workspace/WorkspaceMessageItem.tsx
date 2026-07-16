@@ -4,30 +4,22 @@ import { cn, formatByteSize } from '@/lib/utils'
 import type { ChatMessage, ChatSession } from '@/stores/session-store'
 import { Collapsible } from 'radix-ui'
 import { FileText, Image as ImageIcon } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { MessagePart } from '../../../../shared/session-persistence'
 import { getUploadedAttachmentName } from '../../../../shared/uploads'
 
 import { ArtifactPreview } from './artifact-preview'
 import {
-  ARTIFACT_IMAGE_PREVIEW_BYTES,
   ARTIFACT_PREVIEW_BYTES,
-  getArtifactPreviewCacheKey,
   getArtifactName,
-  getArtifactsForPreviewRead,
-  isImageArtifact
+  shouldReadArtifactPreview
 } from './artifact-preview-utils'
+import { useNearViewport } from './previews/useNearViewport'
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
 type MessageUploadAttachment = NonNullable<ChatMessage['uploads']>[number]
 type ArtifactMentionPart = Extract<MessagePart, { type: 'artifact' }>
-type ArtifactPreviewState = Record<string, ArtifactPreviewResult | undefined>
-type ArtifactPreviewCache = {
-  key: string
-  previews: ArtifactPreviewState
-}
-
 type WorkspaceMessageItemProps = {
   message: ChatMessage
   onPreviewArtifact: (artifact: MessageArtifact) => void
@@ -59,21 +51,63 @@ const mentionButtonClassName =
 const assistantMessageSurfaceClassName =
   'relative w-full max-w-[56rem] text-sm leading-relaxed text-text-000 md:text-[15px]'
 
+// Owns the bounded text data for one message thumbnail only while its card is near the viewport.
+const VisibleArtifactPreview = ({
+  artifact,
+  requestKey
+}: {
+  artifact: MessageArtifact
+  requestKey: string
+}): React.JSX.Element => {
+  const [previewState, setPreviewState] = useState<{
+    requestKey: string
+    preview: ArtifactPreviewResult | undefined
+  } | null>(null)
+
+  useEffect(() => {
+    if (!shouldReadArtifactPreview(artifact)) return
+
+    let canceled = false
+    void window.api.artifacts
+      .readPreview({ path: artifact.path, maxBytes: ARTIFACT_PREVIEW_BYTES, encoding: 'utf8' })
+      .then((preview) => {
+        if (!canceled) setPreviewState({ requestKey, preview })
+      })
+      .catch((error: unknown) => {
+        console.error('Failed to read artifact preview', error)
+        if (!canceled) setPreviewState({ requestKey, preview: undefined })
+      })
+
+    return () => {
+      canceled = true
+    }
+  }, [artifact, requestKey])
+
+  const preview = previewState?.requestKey === requestKey ? previewState.preview : undefined
+  return <ArtifactPreview artifact={artifact} preview={preview} isVisible />
+}
+
 // Thumbnail button for one generated file; clicking it previews the file instead of opening it.
 const ArtifactCard = ({
   artifact,
-  onPreviewArtifact,
-  preview
+  onPreviewArtifact
 }: {
   artifact: MessageArtifact
   onPreviewArtifact: (artifact: MessageArtifact) => void
-  preview?: ArtifactPreviewResult
 }): React.JSX.Element => {
   const artifactName = getArtifactName(artifact)
   const sizeLabel = formatByteSize(artifact.size) ?? ''
+  const [setElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
+  const requestKey = JSON.stringify([
+    artifact.id,
+    artifact.path,
+    artifact.size ?? null,
+    artifact.mtimeMs ?? null
+  ])
 
   return (
     <button
+      ref={setElement}
       type="button"
       className={cn('group flex min-w-0 flex-col', artifactCardClassName)}
       onClick={() => {
@@ -83,7 +117,12 @@ const ArtifactCard = ({
       title={artifact.path}
     >
       <div className={artifactPreviewClassName}>
-        <ArtifactPreview artifact={artifact} preview={preview} />
+        {/* Unmount the reader outside the overscan window so message history stays lightweight. */}
+        {isNearViewport ? (
+          <VisibleArtifactPreview artifact={artifact} requestKey={requestKey} />
+        ) : (
+          <ArtifactPreview artifact={artifact} isVisible={false} />
+        )}
       </div>
       <div className="flex min-w-0 flex-1 items-center px-2">
         <span className="min-w-0 flex-1 truncate text-[12px] leading-5">{artifactName}</span>
@@ -104,68 +143,8 @@ const MessageArtifactList = ({
   artifacts: MessageArtifact[]
 }): React.JSX.Element | null => {
   const [expanded, setExpanded] = useState(false)
-  const [artifactPreviewCache, setArtifactPreviewCache] = useState<ArtifactPreviewCache>({
-    key: '',
-    previews: {}
-  })
-  const previewKey = useMemo(() => getArtifactPreviewCacheKey(artifacts), [artifacts])
-  const artifactPreviews = useMemo(
-    () => (artifactPreviewCache.key === previewKey ? artifactPreviewCache.previews : {}),
-    [artifactPreviewCache, previewKey]
-  )
   const visibleCount = expanded ? artifacts.length : ARTIFACT_GALLERY_VISIBLE_COUNT
   const visibleArtifacts = artifacts.slice(0, visibleCount)
-
-  useEffect(() => {
-    const previewArtifacts = getArtifactsForPreviewRead({
-      artifacts,
-      cachedPreviews: artifactPreviews,
-      visibleCount
-    })
-    let canceled = false
-
-    if (previewArtifacts.length === 0) return
-
-    void Promise.all(
-      previewArtifacts.map(async (artifact) => {
-        try {
-          const preview = await window.api.artifacts.readPreview({
-            path: artifact.path,
-            maxBytes: isImageArtifact(artifact)
-              ? ARTIFACT_IMAGE_PREVIEW_BYTES
-              : ARTIFACT_PREVIEW_BYTES,
-            encoding: isImageArtifact(artifact) ? 'base64' : 'utf8'
-          })
-
-          return { artifactId: artifact.id, preview }
-        } catch (error) {
-          console.error('Failed to read artifact preview', error)
-          return { artifactId: artifact.id, preview: undefined }
-        }
-      })
-    ).then((previews) => {
-      if (canceled) return
-
-      setArtifactPreviewCache((currentCache) => {
-        const currentPreviews = currentCache.key === previewKey ? currentCache.previews : {}
-
-        return {
-          key: previewKey,
-          previews: previews.reduce<ArtifactPreviewState>(
-            (nextPreviews, item) => {
-              nextPreviews[item.artifactId] = item.preview
-              return nextPreviews
-            },
-            { ...currentPreviews }
-          )
-        }
-      })
-    })
-
-    return () => {
-      canceled = true
-    }
-  }, [artifactPreviews, artifacts, previewKey, visibleCount])
 
   if (artifacts.length === 0) return null
 
@@ -183,7 +162,6 @@ const MessageArtifactList = ({
               key={artifact.id}
               artifact={artifact}
               onPreviewArtifact={onPreviewArtifact}
-              preview={artifactPreviews[artifact.id]}
             />
           ))}
           {remainingCount > 0 ? (

@@ -1,10 +1,12 @@
 import { FileWarning } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { cn } from '@/lib/utils'
+import { MANAGED_PREVIEW_LOAD_ERROR } from '../../../../../../shared/preview-resources'
 
 import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
 import type { PreviewFileRendererProps } from '../preview-types'
+import { useManagedPreviewResource } from '../useManagedPreviewResource'
 import { usePreviewFileContent } from '../usePreviewFileContent'
 import { SourcePreviewContent } from './SourcePreview'
 
@@ -15,19 +17,13 @@ const HTML_PREVIEW_MODES: { id: HtmlPreviewMode; label: string; ariaLabel: strin
   { id: 'source', label: 'Source', ariaLabel: 'Show HTML source' }
 ]
 
-const createSandboxedHtmlDocument = (content: string): string => {
-  const csp =
-    "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
-
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><base href="about:srcdoc"></head><body>${content}</body></html>`
-}
-
-export const HtmlPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => {
-  const [mode, setMode] = useState<HtmlPreviewMode>('render')
+const HtmlSourceContent = ({
+  item,
+  topContent
+}: PreviewFileRendererProps & { topContent: React.ReactNode }): React.JSX.Element => {
   const state = usePreviewFileContent({ path: item.path, source: item.source })
 
   if (state.status === 'loading') return <PreviewLoadingContent />
-
   if (state.status === 'error' || state.preview.encoding !== 'utf8') {
     return (
       <PreviewFallbackCard
@@ -39,6 +35,46 @@ export const HtmlPreviewRenderer = ({ item }: PreviewFileRendererProps): React.J
       />
     )
   }
+
+  return (
+    <SourcePreviewContent
+      content={state.preview.content}
+      pagination={state.pagination}
+      topContent={topContent}
+    />
+  )
+}
+
+export const HtmlPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => {
+  const [mode, setMode] = useState<HtmlPreviewMode>('render')
+  const requestKey = JSON.stringify([
+    item.source ?? 'artifact',
+    item.path,
+    item.mimeType ?? null,
+    item.size ?? null,
+    item.mtimeMs ?? null
+  ])
+  const [failedRequestKey, setFailedRequestKey] = useState<string | undefined>(undefined)
+  const hasFailed = failedRequestKey === requestKey
+  const iframeRef = useRef<HTMLIFrameElement | null>(null)
+  const resourceState = useManagedPreviewResource(item, mode === 'render' && !hasFailed)
+
+  useEffect(() => {
+    if (resourceState.status !== 'ready') return
+
+    const handleMessage = (event: MessageEvent): void => {
+      if (
+        event.data === MANAGED_PREVIEW_LOAD_ERROR &&
+        event.source === iframeRef.current?.contentWindow
+      ) {
+        // Disabling the hook releases the failed capability while Source mode stays available.
+        setFailedRequestKey(requestKey)
+      }
+    }
+
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
+  }, [requestKey, resourceState])
 
   const modeToggle = (
     <div className="flex shrink-0 items-center justify-between border-b border-border-300 bg-bg-000 px-3 py-2">
@@ -63,28 +99,36 @@ export const HtmlPreviewRenderer = ({ item }: PreviewFileRendererProps): React.J
   )
 
   if (mode === 'source') {
+    return <HtmlSourceContent item={item} topContent={modeToggle} />
+  }
+
+  if (resourceState.status === 'loading') return <PreviewLoadingContent />
+  if (resourceState.status === 'error' || resourceState.status === 'idle' || hasFailed) {
     return (
-      <SourcePreviewContent
-        content={state.preview.content}
-        truncated={state.preview.truncated}
-        topContent={modeToggle}
-      />
+      <div className="flex size-full flex-col overflow-hidden bg-bg-10">
+        {modeToggle}
+        <div className="min-h-0 flex-1">
+          <PreviewFallbackCard
+            icon={FileWarning}
+            path={item.path}
+            name={item.name}
+            source={item.source}
+            message="HTML couldn't be read for preview"
+          />
+        </div>
+      </div>
     )
   }
 
   return (
     <div className="flex size-full flex-col overflow-hidden bg-bg-10">
       {modeToggle}
-      {state.preview.truncated ? (
-        <div className="shrink-0 border-b border-border-300 bg-bg-000 px-3 py-2 text-[12px] text-text-300">
-          Preview truncated because the file is large
-        </div>
-      ) : null}
       <iframe
+        ref={iframeRef}
         title={`Preview of ${item.name}`}
-        sandbox=""
+        sandbox="allow-scripts"
         referrerPolicy="no-referrer"
-        srcDoc={createSandboxedHtmlDocument(state.preview.content)}
+        src={resourceState.resource.url}
         className="min-h-0 flex-1 border-0 bg-bg-000"
       />
     </div>

@@ -7,14 +7,4 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url
 ).toString()
 
-// Decodes a base64 payload (from the read-bytes IPC) into the byte array pdfjs expects.
-export const base64ToUint8Array = (base64: string): Uint8Array => {
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index)
-  }
-  return bytes
-}
-
 export { pdfjsLib }
