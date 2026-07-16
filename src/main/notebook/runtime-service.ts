@@ -62,7 +62,10 @@ type NotebookRuntimeServiceCallbacks = {
 type McpRpcConnection = { endpoint: string; token: string }
 
 type NotebookRuntimeServiceOptions = {
-  storageRoot: string
+  // Config root: source of the app-owned claude config dir (protected from the kernel). Never relocated.
+  configRoot: string
+  // Data root: where notebook workspaces, data, and the runtime install live (user-relocatable).
+  dataRoot: string
   projectName: string
   repository?: NotebookRunRepository
   executorFactory?: (sessionId: string) => NotebookExecutor
@@ -136,7 +139,7 @@ class NotebookRuntimeService {
   private mcpRpcConnectionResolver: (() => Promise<McpRpcConnection>) | undefined
 
   constructor(private readonly options: NotebookRuntimeServiceOptions) {
-    this.repository = options.repository ?? new NotebookRunRepository(options.storageRoot)
+    this.repository = options.repository ?? new NotebookRunRepository(options.dataRoot)
     this.mcpRpcConnectionResolver = options.getMcpRpcConnection
   }
 
@@ -310,7 +313,7 @@ class NotebookRuntimeService {
         notebookSessionRoot: session.notebookSessionRoot,
         dataRoot: session.dataRoot,
         runtimeRoot: session.runtimeRoot,
-        protectedDirs: [getAppClaudeConfigDir(this.options.storageRoot)],
+        protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
         timeoutMs: request.timeoutMs,
         mcpRpcEndpoint: mcpRpc?.endpoint,
         mcpRpcToken: mcpRpc?.token
@@ -437,7 +440,7 @@ class NotebookRuntimeService {
       notebookSessionRoot: document.notebookSessionRoot,
       dataRoot: document.dataRoot,
       runtimeRoot: document.kernel.runtimeRoot,
-      runJsonPath: getNotebookRunJsonPath(this.options.storageRoot, projectName, request.sessionId)
+      runJsonPath: getNotebookRunJsonPath(this.options.dataRoot, projectName, request.sessionId)
     }
   }
 
@@ -474,6 +477,13 @@ class NotebookRuntimeService {
     this.sessions.clear()
   }
 
+  // Lists sessions with a cell mid-execution, for the pre-migration active-session warning.
+  getActiveNotebookSessions(): { projectName: string; sessionId: string }[] {
+    return Array.from(this.sessions.values())
+      .filter((session) => session.activeRunId !== undefined)
+      .map((session) => ({ projectName: session.projectName, sessionId: session.sessionId }))
+  }
+
   // Creates or returns the runtime session bound to an ACP/chat session id.
   private async ensureSession(request: NotebookSessionRequest): Promise<RuntimeSession> {
     const projectName = request.projectName ?? this.options.projectName
@@ -501,7 +511,7 @@ class NotebookRuntimeService {
       notebookSessionRoot: document.notebookSessionRoot,
       dataRoot: document.dataRoot,
       runtimeRoot: document.kernel.runtimeRoot,
-      runJsonPath: getNotebookRunJsonPath(this.options.storageRoot, projectName, request.sessionId),
+      runJsonPath: getNotebookRunJsonPath(this.options.dataRoot, projectName, request.sessionId),
       cells: [],
       executionCount: document.runs.length,
       executor: this.createExecutor(request.sessionId),
@@ -569,7 +579,7 @@ class NotebookRuntimeService {
       ...run,
       notebookSessionRoot: session.notebookSessionRoot,
       dataRoot: session.dataRoot,
-      runtimeRoot: getRuntimeRoot(this.options.storageRoot),
+      runtimeRoot: getRuntimeRoot(this.options.dataRoot),
       kernelName: 'python3'
     }
   }

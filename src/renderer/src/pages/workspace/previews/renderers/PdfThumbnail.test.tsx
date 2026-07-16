@@ -69,7 +69,12 @@ describe('PdfThumbnail', () => {
       )
       await flushMicrotasks()
     })
-    expect(consoleError).toHaveBeenCalledWith('Failed to render PDF thumbnail', expect.any(Error))
+    // The pending path fails with ENOENT — an expected "unavailable" case during recovery — so it
+    // is handled silently (icon fallback) rather than logged as an error.
+    expect(consoleError).not.toHaveBeenCalledWith(
+      'Failed to render PDF thumbnail',
+      expect.any(Error)
+    )
 
     await act(async () => {
       root.render(

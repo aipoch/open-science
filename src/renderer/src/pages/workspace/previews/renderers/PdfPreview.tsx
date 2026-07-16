@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { FileWarning } from 'lucide-react'
 
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
-import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
+import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import { pdfjsLib } from '../pdfjs'
 import { readPdfBytes } from '../pdf-bytes'
+import { isUnavailableFileError } from '../preview-errors'
 import type { PreviewFileRendererProps } from '../preview-types'
 
 // Rendering every page of a huge PDF would freeze the panel; cap the preview at a sensible depth.
@@ -24,7 +24,11 @@ export const PdfPreviewContent = ({
 }): React.JSX.Element => {
   const containerRef = useRef<HTMLDivElement | null>(null)
   // Track the outcome per path so the status is derived, not reset synchronously inside the effect.
-  const [rendered, setRendered] = useState<{ path: string; status: 'ready' | 'error' } | null>(null)
+  const [rendered, setRendered] = useState<{
+    path: string
+    status: 'ready' | 'error'
+    error?: unknown
+  } | null>(null)
 
   useEffect(() => {
     let canceled = false
@@ -67,8 +71,8 @@ export const PdfPreviewContent = ({
     }
 
     render().catch((error) => {
-      console.error('Failed to render PDF preview', error)
-      if (!canceled) setRendered({ path, status: 'error' })
+      if (!isUnavailableFileError(error)) console.error('Failed to render PDF preview', error)
+      if (!canceled) setRendered({ path, status: 'error', error })
     })
 
     return () => {
@@ -81,12 +85,12 @@ export const PdfPreviewContent = ({
 
   if (status === 'error') {
     return (
-      <PreviewFallbackCard
-        icon={FileWarning}
+      <PreviewErrorCard
         path={path}
         name={name}
         source={source}
-        message="This PDF couldn't be rendered for preview"
+        error={rendered?.error}
+        fallbackMessage="This PDF couldn't be rendered for preview"
       />
     )
   }

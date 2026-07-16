@@ -7,7 +7,7 @@ import {
   getFileExtension,
   getImageMimeTypeForExtension
 } from '../../preview-support'
-import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
+import { PreviewErrorCard, PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { usePreviewFileContent } from '../usePreviewFileContent'
 
@@ -29,14 +29,23 @@ export const PreviewImageContent = ({
 
   if (state.status === 'loading') return <PreviewLoadingContent />
 
+  // A read failure is either a missing file (badged "no longer available") or a genuine error;
+  // PreviewErrorCard picks the message. Non-error cases (too large / unparseable) keep their copy.
+  if (state.status === 'error') {
+    return (
+      <PreviewErrorCard
+        path={path}
+        name={name}
+        source={source}
+        error={state.error}
+        fallbackMessage="File is too large or couldn't be parsed for preview"
+      />
+    )
+  }
+
   const mimeType = getImageMimeTypeForExtension(getFileExtension(name))
 
-  if (
-    state.status === 'error' ||
-    state.preview.truncated ||
-    state.preview.encoding !== 'base64' ||
-    !mimeType
-  ) {
+  if (state.preview.truncated || state.preview.encoding !== 'base64' || !mimeType) {
     return (
       <PreviewFallbackCard
         icon={ImageOff}

@@ -5,6 +5,7 @@ import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
 import { pdfjsLib } from '../pdfjs'
 import { readPdfBytes } from '../pdf-bytes'
+import { isUnavailableFileError } from '../preview-errors'
 
 // Roughly the card width; rendering the first page near this size keeps the data URL small.
 const THUMBNAIL_WIDTH = 220
@@ -83,7 +84,7 @@ export const PdfThumbnail = ({
         if (!canceled) setResult({ requestKey, status: 'ready' })
       })
       .catch((error) => {
-        console.error('Failed to render PDF thumbnail', error)
+        if (!isUnavailableFileError(error)) console.error('Failed to render PDF thumbnail', error)
         if (!canceled) setResult({ requestKey, status: 'error' })
       })
 

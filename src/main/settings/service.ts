@@ -178,6 +178,12 @@ class SettingsService {
     this.installManagedClaudeImpl = options.installManagedClaudeImpl ?? installManagedClaude
   }
 
+  // Returns the raw stored settings document (unmasked), for main-process bootstrap needs (e.g. priming
+  // the data-root cache) that shouldn't go through the renderer-safe view.
+  async getStoredSettings(): Promise<StoredSettings> {
+    return this.repository.getSettings()
+  }
+
   // Returns the renderer-safe (masked) snapshot of settings.
   async getSettingsView(): Promise<SettingsSnapshot> {
     const settings = await this.repository.getSettings()
@@ -454,6 +460,25 @@ class SettingsService {
     await this.repository.markOnboardingComplete(Date.now())
 
     return this.getSettingsView()
+  }
+
+  // Records that the one-time legacy-absolute-path normalization pass has succeeded, so later
+  // launches skip it. The caller is responsible for only invoking this after the pass actually
+  // completed without throwing (see normalizeLegacyDataPaths).
+  async markPathsNormalized(): Promise<void> {
+    await this.repository.markPathsNormalized(Date.now())
+  }
+
+  // Persists the new data-root path after a successful migration (see storage/migration-service.ts).
+  // The caller is responsible for only invoking this once the move itself has succeeded.
+  async setDataRoot(path: string): Promise<void> {
+    await this.repository.setDataRoot(path)
+  }
+
+  // Records that the user has answered the one-time legacy-data-move prompt (moved, relocated, or
+  // declined), so it is never shown again. Idempotent-once at the repository layer.
+  async dismissLegacyDataMovePrompt(): Promise<void> {
+    await this.repository.markLegacyDataMovePromptDismissed(Date.now())
   }
 
   // Encrypts any new key, recomputes its mask, and inserts/updates the provider record.

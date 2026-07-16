@@ -570,6 +570,24 @@ describe('SettingsService: onboarding', () => {
     const view = await service.getSettingsView()
     expect(view.onboardingCompletedAt).toBe(snapshot.onboardingCompletedAt)
   })
+
+  it('marks legacy paths normalized and persists it across a fresh read', async () => {
+    const service = createService()
+
+    await service.markPathsNormalized()
+
+    const settings = await service.getStoredSettings()
+    expect(settings.pathsNormalizedAt).toBeTypeOf('number')
+  })
+
+  it('persists a new dataRoot across a fresh read', async () => {
+    const service = createService()
+
+    await service.setDataRoot('/mnt/new-data')
+
+    const settings = await service.getStoredSettings()
+    expect(settings.dataRoot).toBe('/mnt/new-data')
+  })
 })
 
 describe('SettingsService: skills', () => {

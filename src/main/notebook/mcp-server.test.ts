@@ -39,7 +39,8 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain(
       'only applies when using open-science-notebook tools'
     )
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('~/.open-science/runtime/')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('OPEN_SCIENCE_RUNTIME_DIR')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('~/.open-science/runtime/')
     // The prompt guides relative writes to the working directory rather than a guessed absolute path.
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('writable session workspace')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('plain relative paths')

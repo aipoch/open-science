@@ -1,10 +1,10 @@
-import { Box, FileWarning } from 'lucide-react'
+import { Box } from 'lucide-react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { GLViewer } from '3dmol'
 
 import { cn } from '@/lib/utils'
 
-import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
+import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { usePreviewFileContent } from '../usePreviewFileContent'
 
@@ -322,12 +322,12 @@ export const PdbPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JS
 
   if (state.status === 'error' || state.preview.encoding !== 'utf8') {
     return (
-      <PreviewFallbackCard
-        icon={FileWarning}
+      <PreviewErrorCard
         path={item.path}
         name={item.name}
         source={item.source}
-        message="PDB couldn't be read for preview"
+        error={state.status === 'error' ? state.error : undefined}
+        fallbackMessage="PDB couldn't be read for preview"
       />
     )
   }

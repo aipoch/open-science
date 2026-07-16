@@ -11,6 +11,7 @@ import {
   type PersistedSessionManifest,
   type SaveSessionManifestRequest
 } from '../../shared/session-persistence'
+import { decodeSessionDataPaths, encodeSessionDataPaths } from './session-data-paths'
 
 const SESSIONS_DIR = 'sessions'
 const MANIFEST_FILE = 'manifest.json'
@@ -114,7 +115,7 @@ class SessionRepository {
     const filePath = this.sessionFilePath(session.projectId, session.id)
 
     await mkdir(this.projectDir(session.projectId), { recursive: true })
-    await this.atomicWrite(filePath, createSessionFile(session))
+    await this.atomicWrite(filePath, createSessionFile(encodeSessionDataPaths(session)))
   }
 
   private async writeManifest(request: SaveSessionManifestRequest): Promise<void> {
@@ -175,7 +176,7 @@ class SessionRepository {
         return undefined
       }
 
-      return { ...session, projectId }
+      return decodeSessionDataPaths({ ...session, projectId })
     } catch (error) {
       if (!isMissingFileError(error)) {
         await this.backupInvalidFile(filePath).catch(() => undefined)

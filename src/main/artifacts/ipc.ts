@@ -8,7 +8,7 @@ import type {
   ReadArtifactBytesRequest,
   ReadArtifactPreviewRequest
 } from '../../shared/artifacts'
-import { resolveStorageRoot } from '../storage-root'
+import { resolveDataRoot } from '../storage-root'
 import { ArtifactRepository } from './repository'
 import { ArtifactRunRegistry } from './run-registry'
 
@@ -117,9 +117,9 @@ const finalizeRunArtifacts = async (
   return artifacts
 }
 
-// Uses the same persistence root as sessions so artifacts survive app restarts with chat history.
+// Artifacts are data-class: they follow the configurable data root (defaults to the config root).
 const createDefaultArtifactRepository = (): ArtifactRepository =>
-  new ArtifactRepository(resolveStorageRoot())
+  new ArtifactRepository(resolveDataRoot())
 
 // Registers the renderer-visible artifact commands without exposing internal message-file listing.
 const registerArtifactIpcHandlers = (
