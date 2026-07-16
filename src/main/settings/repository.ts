@@ -377,6 +377,11 @@ class SettingsRepository {
     return this.mutate((settings) => ({ ...settings, agentFrameworkId: id }))
   }
 
+  // Records the detected opencode executable path for later spawns + the settings status card.
+  async setOpencodePath(path: string): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, opencodePath: path }))
+  }
+
   // Stamps the onboarding-completed time exactly once; later calls leave the first value intact.
   async markOnboardingComplete(timestamp: number): Promise<StoredSettings> {
     return this.mutate((settings) =>

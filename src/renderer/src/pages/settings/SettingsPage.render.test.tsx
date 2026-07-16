@@ -14,7 +14,20 @@ let root: Root
 const installApi = (): void => {
   ;(window as unknown as { api: unknown }).api = {
     settings: {
-      getSettings: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
+      getSettings: vi.fn().mockResolvedValue({
+        claude: {},
+        opencode: {},
+        providers: [],
+        agentFrameworkId: 'claude-code',
+        agentFrameworks: [{ id: 'claude-code', displayName: 'Claude Code', supportsSkills: true }]
+      }),
+      detectOpencode: vi.fn().mockResolvedValue({
+        claude: {},
+        opencode: {},
+        providers: [],
+        agentFrameworkId: 'claude-code',
+        agentFrameworks: [{ id: 'claude-code', displayName: 'Claude Code', supportsSkills: true }]
+      }),
       getPreflight: vi.fn().mockResolvedValue({ claudeReady: true, activeProviderReady: true }),
       isEncryptionAvailable: vi.fn().mockResolvedValue(true),
       isNpmAvailable: vi.fn().mockResolvedValue(true),

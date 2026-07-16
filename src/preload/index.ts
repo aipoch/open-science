@@ -185,6 +185,7 @@ type OpenScienceAPI = {
     isNpmAvailable: () => Promise<boolean>
     checkEnvironment: () => Promise<EnvironmentCheckResult>
     detectClaude: () => Promise<ClaudeDetectResult>
+    detectOpencode: () => Promise<SettingsSnapshot>
     installClaude: (request: InstallClaudeRequest) => Promise<ClaudeInstallResult>
     upsertProvider: (request: UpsertProviderRequest) => Promise<SettingsSnapshot>
     deleteProvider: (request: DeleteProviderRequest) => Promise<SettingsSnapshot>
@@ -411,6 +412,8 @@ const api: OpenScienceAPI = {
     checkEnvironment: () =>
       ipcRenderer.invoke('settings:check-environment') as Promise<EnvironmentCheckResult>,
     detectClaude: () => ipcRenderer.invoke('settings:detect-claude') as Promise<ClaudeDetectResult>,
+    detectOpencode: () =>
+      ipcRenderer.invoke('settings:detect-opencode') as Promise<SettingsSnapshot>,
     installClaude: (request) =>
       ipcRenderer.invoke('settings:install-claude', request) as Promise<ClaudeInstallResult>,
     upsertProvider: (request) =>

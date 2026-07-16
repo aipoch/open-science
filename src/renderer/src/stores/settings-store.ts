@@ -13,6 +13,7 @@ import type {
   Preflight,
   AgentFrameworkId,
   AgentFrameworkView,
+  OpencodeInfo,
   ProviderType,
   ProviderView,
   RefreshProviderModelsResult,
@@ -54,6 +55,8 @@ type SettingsStoreData = {
   // Selected agent backend and the frameworks available to choose from.
   agentFrameworkId: AgentFrameworkId
   agentFrameworks: AgentFrameworkView[]
+  // Detected opencode executable, for the framework-aware detection card.
+  opencode: OpencodeInfo
   onboardingCompletedAt: number | undefined
   // Bundled skills with their enabled state, loaded lazily when the Skills panel opens.
   skills: SkillView[]
@@ -73,6 +76,7 @@ type SettingsStoreData = {
   // Transient UI state for the wizard/settings page.
   isCheckingEnvironment: boolean
   isDetectingClaude: boolean
+  isDetectingOpencode: boolean
   isInstalling: boolean
   installLogs: string[]
   // Latest progress tick driving the install progress bar; null when no install is active.
@@ -94,6 +98,8 @@ type SettingsStore = SettingsStoreData & {
   refreshPreflight: () => Promise<Preflight>
   checkEnvironment: () => Promise<EnvironmentCheckResult | undefined>
   detectClaude: () => Promise<ClaudeDetectResult>
+  // Detects the opencode executable and refreshes its status card.
+  detectOpencode: () => Promise<void>
   installClaude: (
     source: ClaudeInstallSource,
     managedRegistry?: ManagedClaudeRegistry
@@ -186,6 +192,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   providers: [],
   agentFrameworkId: 'claude-code',
   agentFrameworks: [],
+  opencode: {},
   onboardingCompletedAt: undefined,
   skills: [],
   connectors: [],
@@ -199,6 +206,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   environmentCheckError: undefined,
   isCheckingEnvironment: false,
   isDetectingClaude: false,
+  isDetectingOpencode: false,
   isInstalling: false,
   installLogs: [],
   installProgress: null,
@@ -216,6 +224,7 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   providers: snapshot.providers,
   agentFrameworkId: snapshot.agentFrameworkId,
   agentFrameworks: snapshot.agentFrameworks,
+  opencode: snapshot.opencode,
   onboardingCompletedAt: snapshot.onboardingCompletedAt
 })
 
@@ -484,6 +493,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   // Switches the agent backend; main reconnects so the choice applies on the next prompt.
   setAgentFramework: async (id) => {
     set(applySnapshot(await window.api.settings.setAgentFramework({ id })))
+  },
+
+  // Detects the opencode executable and refreshes its status card.
+  detectOpencode: async () => {
+    set({ isDetectingOpencode: true })
+
+    try {
+      set(applySnapshot(await window.api.settings.detectOpencode()))
+    } finally {
+      set({ isDetectingOpencode: false })
+    }
   },
 
   deleteProvider: async (providerId) => {

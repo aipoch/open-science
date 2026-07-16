@@ -168,6 +168,7 @@ interface OpenScienceAPI {
     isNpmAvailable(): Promise<boolean>
     checkEnvironment(): Promise<EnvironmentCheckResult>
     detectClaude(): Promise<ClaudeDetectResult>
+    detectOpencode(): Promise<SettingsSnapshot>
     installClaude(request: InstallClaudeRequest): Promise<ClaudeInstallResult>
     upsertProvider(request: UpsertProviderRequest): Promise<SettingsSnapshot>
     deleteProvider(request: DeleteProviderRequest): Promise<SettingsSnapshot>

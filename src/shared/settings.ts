@@ -20,6 +20,11 @@ export type ClaudeInfo = {
   version?: string
 }
 
+// Detected opencode executable metadata (path only; opencode reports no version over ACP detection).
+export type OpencodeInfo = {
+  resolvedPath?: string
+}
+
 // Result of probing the machine for a runnable claude executable.
 export type ClaudeDetectResult = {
   found: boolean
@@ -87,6 +92,8 @@ export type AgentFrameworkView = {
 // Full renderer snapshot of settings state.
 export type SettingsSnapshot = {
   claude: ClaudeInfo
+  // Detected opencode executable, for the framework-aware detection card.
+  opencode: OpencodeInfo
   activeProviderId?: string
   // The active model within the active provider. For custom/claude-default this mirrors the provider's
   // own model; for official providers it's the chosen catalog entry. Undefined until a provider exists.

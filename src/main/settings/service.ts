@@ -199,6 +199,7 @@ class SettingsService {
 
     return {
       claude: settings.claude ?? {},
+      opencode: { resolvedPath: settings.opencodePath },
       activeProviderId: settings.activeProviderId,
       activeModel: settings.activeModel,
       providers: settings.providers.map((provider) => this.toProviderView(provider)),
@@ -215,6 +216,18 @@ class SettingsService {
   // Selects the agent backend to drive; the caller reconnects so the choice applies to the next spawn.
   async setAgentFramework(id: AgentFrameworkId): Promise<SettingsSnapshot> {
     await this.repository.setAgentFramework(id)
+
+    return this.getSettingsView()
+  }
+
+  // Detects the opencode executable and persists its path, mirroring detectClaude. Returns the refreshed
+  // snapshot so the settings card reflects the result.
+  async detectOpencode(): Promise<SettingsSnapshot> {
+    const resolvedPath = await detectOpencode()
+
+    if (resolvedPath) {
+      await this.repository.setOpencodePath(resolvedPath)
+    }
 
     return this.getSettingsView()
   }
