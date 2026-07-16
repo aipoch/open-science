@@ -1,4 +1,4 @@
-provider: github
-owner: aipoch
-repo: open-science
+provider: generic
+url: https://statics.aipoch.com/open-science/app/stable
+channel: latest
 updaterCacheDirName: open-science-updater

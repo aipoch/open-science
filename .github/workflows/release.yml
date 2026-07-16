@@ -71,10 +71,10 @@ jobs:
             artifacts/*.deb
 
       # Attach user-facing artifacts + checksums: installers (dmg/exe/AppImage/deb) and portable
-      # zips (mac + win). Auto-update metadata (latest*.yml / blockmap) is intentionally NOT published:
-      # the zips here are plain downloads, not update feeds — arm64/x64 build on separate runners and
-      # each emits its own latest-mac.yml (they'd collide), and Squirrel.Mac can't auto-update an
-      # unsigned build anyway. Revisit latest*.yml once a Developer ID cert is configured.
+      # zips (mac + win), plus the win/linux electron-updater feed files (latest.yml, latest-linux.yml)
+      # and blockmaps so the mirror-to-website job can republish them to the CDN feed. macOS latest-mac*
+      # .yml is still excluded: arm64/x64 build on separate runners and each emits its own (they'd
+      # collide), and Squirrel.Mac can't auto-update the unsigned mac build anyway (no Developer ID).
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
@@ -88,3 +88,6 @@ jobs:
             artifacts/*.AppImage
             artifacts/*.deb
             artifacts/SHA256SUMS.txt
+            artifacts/latest.yml
+            artifacts/latest-linux.yml
+            artifacts/*.blockmap
