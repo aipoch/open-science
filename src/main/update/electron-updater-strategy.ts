@@ -12,7 +12,7 @@ export interface MinimalAutoUpdater {
   on(event: string, listener: (...args: unknown[]) => void): unknown
   checkForUpdates(): Promise<unknown>
   downloadUpdate(): Promise<unknown>
-  quitAndInstall(): void
+  quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void
 }
 
 export type ElectronUpdaterDeps = {
@@ -130,8 +130,11 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     return this.status
   }
 
+  // Triggered by the user's "Restart to update" click once the download is ready. Silent install
+  // (isSilent=true) so the assisted NSIS installer never shows its wizard, and isForceRunAfter=true so
+  // the app relaunches into the new version after the in-place swap. per-user install = no UAC prompt.
   async apply(): Promise<UpdateStatus> {
-    this.updater.quitAndInstall()
+    this.updater.quitAndInstall(true, true)
     return this.status
   }
 }

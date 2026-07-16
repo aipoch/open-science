@@ -84,7 +84,7 @@ describe('ElectronUpdaterStrategy', () => {
     expect(status.error).toBe('boom')
   })
 
-  it('apply calls quitAndInstall', async () => {
+  it('apply installs silently and relaunches (quitAndInstall(true, true))', async () => {
     const updater = new FakeUpdater()
     const strategy = new ElectronUpdaterStrategy({
       updater,
@@ -93,5 +93,6 @@ describe('ElectronUpdaterStrategy', () => {
     })
     await strategy.apply()
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true)
   })
 })
