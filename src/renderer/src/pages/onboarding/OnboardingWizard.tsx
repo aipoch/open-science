@@ -435,7 +435,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                     disabled={isSaving}
                     className="px-4"
                   >
-                    {isSaving ? 'Testing connection…' : 'Test connection & finish'}
+                    {isSaving ? 'Testing connection…' : 'Test & continue'}
                   </Button>
                 </CardFooter>
               </>
