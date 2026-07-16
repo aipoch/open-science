@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { JSX, PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -114,5 +114,57 @@ describe('WorkspaceMessageItem mention pills', () => {
       path: '/p/clinical trial03.pdf',
       source: 'artifact'
     })
+  })
+})
+
+describe('WorkspaceMessageItem missing artifact badge', () => {
+  afterEach(() => {
+    delete (window as unknown as { api?: unknown }).api
+  })
+
+  it('badges a generated file whose source is missing on disk', async () => {
+    const enoent = Object.assign(new Error('ENOENT: no such file or directory'), {
+      code: 'ENOENT'
+    })
+    ;(window as unknown as { api: unknown }).api = {
+      artifacts: { readPreview: vi.fn().mockRejectedValue(enoent) }
+    }
+
+    const message = createMessage({ id: 'm-assistant', role: 'agent', content: 'Done' })
+    const artifacts = [
+      {
+        id: 'artifact-gone',
+        kind: 'managed-file' as const,
+        path: '/p/gone.png',
+        fileUrl: 'file:///p/gone.png',
+        name: 'gone.png',
+        mimeType: 'image/png',
+        size: 10,
+        mtimeMs: 1
+      }
+    ]
+
+    await act(async () => {
+      root.render(
+        <StrictMode>
+          <WorkspaceMessageItem
+            message={message}
+            artifacts={artifacts}
+            onPreviewArtifact={noop}
+            onPreviewUploadAttachment={noop}
+            onOpenSkillMention={noop}
+            onPreviewMentionArtifact={noop}
+          />
+        </StrictMode>
+      )
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // The existence probe rejected with ENOENT, so the thumbnail carries the "Missing" tag.
+    expect(container.textContent).toContain('Missing')
   })
 })

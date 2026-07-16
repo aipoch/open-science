@@ -99,6 +99,14 @@ import type {
   ValidateProviderRequest,
   ValidateProviderResult
 } from '../shared/settings'
+import type {
+  ActiveSessionInfo,
+  DataRootInspection,
+  DataRootValidationResult,
+  MigrationOutcome,
+  MigrationProgress,
+  StorageInfo
+} from '../shared/storage'
 import type { AppInfo, UpdateStatus } from '../shared/update'
 import type {
   DeleteUploadRequest,
@@ -278,6 +286,33 @@ type OpenScienceAPI = {
     ) => Promise<{ sessionId: string; status: 'shutdown' }>
     onAvailable: (listener: AcpListener<NotebookAvailableEvent>) => RemoveListener
     onChanged: (listener: AcpListener<NotebookChangedEvent>) => RemoveListener
+  }
+  storage: {
+    getInfo: () => Promise<StorageInfo>
+    detectActive: () => Promise<ActiveSessionInfo[]>
+    // Opens the native folder picker; resolves null on cancel.
+    pickDirectory: () => Promise<string | null>
+    // Onboarding location step: check a candidate parent before letting the user commit to it.
+    validateDataRoot: (parent: string) => Promise<DataRootValidationResult>
+    // Settings + onboarding: classify a candidate parent (move/adopt/invalid) without committing.
+    inspectDataRoot: (parent: string) => Promise<DataRootInspection>
+    migrate: (parent: string) => Promise<MigrationOutcome>
+    // No-move pointer switch: set dataRoot then relaunch. Accepts both a 'move' (first-run, no
+    // data to move yet) and an 'adopt' (existing data folder) target - use `migrate` instead for
+    // an already-active data root's move-with-copy. `markOnboarding` is set by onboarding only.
+    setDataRootAndRelaunch: (
+      parent: string,
+      markOnboarding?: boolean
+    ) => Promise<DataRootValidationResult>
+    cancelMigrate: () => Promise<void>
+    // Phase 2: commit the copied-but-uncommitted move (setDataRoot -> delete old -> relaunch).
+    // Returns only on failure (switchoverFailed); on success the app relaunches.
+    commitAndRelaunch: (parent: string) => Promise<MigrationOutcome>
+    // Throw away a completed-but-uncommitted copy ("Keep current location"); stays on the old root.
+    discardMigratedCopy: (parent: string) => Promise<void>
+    // Mark the one-time legacy-data-move prompt as answered (declined / keep-here) so it's not shown again.
+    dismissLegacyMovePrompt: () => Promise<void>
+    onProgress: (listener: AcpListener<MigrationProgress>) => RemoveListener
   }
 }
 
@@ -505,6 +540,32 @@ const api: OpenScienceAPI = {
       }>,
     onAvailable: (listener) => onIpcMessage('notebook:available', listener),
     onChanged: (listener) => onIpcMessage('notebook:changed', listener)
+  },
+  storage: {
+    getInfo: () => ipcRenderer.invoke('storage:get-info') as Promise<StorageInfo>,
+    detectActive: () => ipcRenderer.invoke('storage:detect-active') as Promise<ActiveSessionInfo[]>,
+    pickDirectory: () => ipcRenderer.invoke('storage:pick-directory') as Promise<string | null>,
+    validateDataRoot: (parent) =>
+      ipcRenderer.invoke('storage:validate-data-root', {
+        parent
+      }) as Promise<DataRootValidationResult>,
+    inspectDataRoot: (parent) =>
+      ipcRenderer.invoke('storage:inspect-data-root', { parent }) as Promise<DataRootInspection>,
+    migrate: (parent) =>
+      ipcRenderer.invoke('storage:migrate', { parent }) as Promise<MigrationOutcome>,
+    setDataRootAndRelaunch: (parent, markOnboarding) =>
+      ipcRenderer.invoke('storage:set-data-root-and-relaunch', {
+        parent,
+        markOnboarding
+      }) as Promise<DataRootValidationResult>,
+    cancelMigrate: () => ipcRenderer.invoke('storage:cancel-migrate') as Promise<void>,
+    commitAndRelaunch: (parent) =>
+      ipcRenderer.invoke('storage:commit-and-relaunch', { parent }) as Promise<MigrationOutcome>,
+    discardMigratedCopy: (parent) =>
+      ipcRenderer.invoke('storage:discard-migrated-copy', { parent }) as Promise<void>,
+    dismissLegacyMovePrompt: () =>
+      ipcRenderer.invoke('storage:dismiss-legacy-move-prompt') as Promise<void>,
+    onProgress: (listener) => onIpcMessage('storage:migrate-progress', listener)
   }
 }
 

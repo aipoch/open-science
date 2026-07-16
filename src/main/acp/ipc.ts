@@ -23,7 +23,7 @@ import type { ArtifactRunRegistry } from '../artifacts/run-registry'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import { NotebookRunRepository } from '../notebook/repository'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
-import { resolveStorageRoot } from '../storage-root'
+import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import type { SettingsService } from '../settings/service'
 import type { UploadRepository } from '../uploads/repository'
 
@@ -58,7 +58,8 @@ const createRuntime = ({
   notebookRpcServer,
   settingsService
 }: AcpIpcOptions): AcpRuntime => {
-  const storageRoot = resolveStorageRoot()
+  const configRoot = resolveConfigRoot()
+  const dataRoot = resolveDataRoot()
 
   return new AcpRuntime({
     appVersion: app.getVersion(),
@@ -76,7 +77,8 @@ const createRuntime = ({
     },
     artifacts: {
       // Reuse the session persistence root so chat state and generated files move together.
-      storageRoot,
+      configRoot,
+      dataRoot,
       projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
       mcpEntryPath,
       repository,
@@ -145,12 +147,13 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntime => {
 
 // Creates the shared notebook runtime used by both renderer IPC and agent MCP calls.
 const createDefaultNotebookRuntimeService = (): NotebookRuntimeService => {
-  const storageRoot = resolveStorageRoot()
+  const dataRoot = resolveDataRoot()
 
   return new NotebookRuntimeService({
-    storageRoot,
+    configRoot: resolveConfigRoot(),
+    dataRoot,
     projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
-    repository: new NotebookRunRepository(storageRoot),
+    repository: new NotebookRunRepository(dataRoot),
     callbacks: {
       onNotebookAvailable: (event) => broadcast('notebook:available', event),
       onNotebookChanged: (event) => broadcast('notebook:changed', event)

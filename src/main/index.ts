@@ -35,10 +35,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       import('@electron-toolkit/utils'),
       import('../../resources/icon.png?asset')
     ])
-  const [{ registerIpcHandlers }, { createMainWindow }] = await Promise.all([
-    import('./ipc'),
-    import('./windows')
-  ])
+  const [{ registerIpcHandlers }, { createMainWindow }, { installMigrationQuitGuard }] =
+    await Promise.all([import('./ipc'), import('./windows'), import('./storage/migration-state')])
 
   // Dev runs get a "(DEV)" suffix so the app name, macOS menu, and per-app paths (logs, userData)
   // are visibly distinct from an installed build — and don't collide with it.
@@ -85,7 +83,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   })
 
   // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
-  registerIpcHandlers({ mainEntryPath })
+  await registerIpcHandlers({ mainEntryPath })
+
+  // Warn (rather than silently tear down) if the user tries to quit mid data-root migration.
+  installMigrationQuitGuard(app)
 
   createMainWindow()
 

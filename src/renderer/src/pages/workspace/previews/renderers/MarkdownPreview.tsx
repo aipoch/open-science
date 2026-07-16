@@ -1,8 +1,6 @@
-import { FileWarning } from 'lucide-react'
-
 import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 
-import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
+import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { usePreviewFileContent } from '../usePreviewFileContent'
 
@@ -13,12 +11,12 @@ export const MarkdownPreviewRenderer = ({ item }: PreviewFileRendererProps): Rea
 
   if (state.status === 'error' || state.preview.encoding !== 'utf8') {
     return (
-      <PreviewFallbackCard
-        icon={FileWarning}
+      <PreviewErrorCard
         path={item.path}
         name={item.name}
         source={item.source}
-        message="Markdown couldn't be read for preview"
+        error={state.status === 'error' ? state.error : undefined}
+        fallbackMessage="Markdown couldn't be read for preview"
       />
     )
   }

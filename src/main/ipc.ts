@@ -16,16 +16,32 @@ import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './connectors/
 import { registerFileSaveHandlers } from './file-save'
 import { registerGithubIpcHandlers } from './github-ipc'
 import { registerLogsIpcHandlers } from './logs-ipc'
+import { createLogger } from './logger'
 import { registerNotebookIpcHandlers } from './notebook/ipc'
 import { NotebookLocalRpcServer } from './notebook/local-rpc-server'
-import { registerProjectIpcHandlers } from './projects/ipc'
-import { registerSessionPersistenceIpcHandlers } from './session-persistence/ipc'
+import {
+  createDefaultPreviewStateRepository,
+  createDefaultProjectRepository,
+  registerProjectIpcHandlers
+} from './projects/ipc'
+import {
+  createDefaultSessionRepository,
+  registerSessionPersistenceIpcHandlers
+} from './session-persistence/ipc'
 import { tryDecryptKey } from './settings/crypto'
 import { registerSettingsIpcHandlers } from './settings/ipc'
 import { getAppClaudeConfigDir } from './settings/provider-env'
 import { createDefaultSettingsService, type SettingsService } from './settings/service'
 import type { StoredConnectors } from './settings/types'
-import { resolveStorageRoot } from './storage-root'
+import { registerStorageIpcHandlers } from './storage/ipc'
+import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
+import {
+  computeDefaultDataRoot,
+  initDataRoot,
+  resolveDataRoot,
+  resolveStorageRoot,
+  samePath
+} from './storage-root'
 import { registerUpdateIpcHandlers } from './update/ipc'
 import { startUpdateScheduler } from './update/scheduler'
 import { createDefaultUploadRepository, registerUploadIpcHandlers } from './uploads/ipc'
@@ -78,15 +94,54 @@ const refreshConnectorSkillDocs = async (
 }
 
 // Registers every main-process IPC surface used by the renderer.
-const registerIpcHandlers = ({ mainEntryPath }: IpcRegistrationOptions): void => {
+const registerIpcHandlers = async ({ mainEntryPath }: IpcRegistrationOptions): Promise<void> => {
+  // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
+  const settingsService = createDefaultSettingsService()
+  const storedSettings = await settingsService.getStoredSettings()
+  // Prime the data-root cache from settings before any data repository is constructed below. A change
+  // to this value only takes effect after a restart, so reading it once here is sufficient.
+  initDataRoot(storedSettings.dataRoot)
+  // Recovery breadcrumb: if settings.json is ever lost/corrupted, the resolved dataRoot from the
+  // last successful launch is still findable in the logs, so a user with data at a non-default
+  // location isn't left guessing where it went.
+  createLogger('storage').info('data root resolved', {
+    dataRoot: resolveDataRoot(),
+    isDefault: samePath(resolveDataRoot(), computeDefaultDataRoot())
+  })
+
+  // Constructed once here (rather than left to each register*IpcHandlers' own default) so the
+  // one-time legacy-path normalization pass below can share the exact instances the IPC surface uses.
+  const sessionRepository = createDefaultSessionRepository()
+  const projectRepository = createDefaultProjectRepository()
+  const previewStateRepository = createDefaultPreviewStateRepository()
+
+  // One-time conversion of any legacy absolute data-root paths on disk (pre-$DATA-sentinel installs)
+  // into the portable "$DATA/..." form, guarded so it only ever runs once. Never allowed to block
+  // startup on failure: an error is logged and the marker stays unset, so the pass simply retries on
+  // the next launch.
+  if (!storedSettings.pathsNormalizedAt) {
+    try {
+      await normalizeLegacyDataPaths({
+        sessionRepository,
+        previewStateRepository,
+        projectRepository,
+        dataRoot: resolveDataRoot()
+      })
+      await settingsService.markPathsNormalized()
+    } catch (error) {
+      createLogger('storage').error(
+        'legacy path normalization failed; will retry next launch',
+        error
+      )
+    }
+  }
+
   // Share one repository and registry so runtime artifact claims and renderer finalization meet.
   const artifactRepository = createDefaultArtifactRepository()
   const artifactRunRegistry = new ArtifactRunRegistry()
   // Share one upload repository so composer staging, prompt finalization, and previews agree.
   const uploadRepository = createDefaultUploadRepository()
   const notebookService = createDefaultNotebookRuntimeService()
-  // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
-  const settingsService = createDefaultSettingsService()
 
   // Read fresh on every call so a future connectors-settings mutation (Plan 2 UI) only needs to call
   // refreshConnectorSkillDocs again to take effect, without reconstructing the connector service.
@@ -181,10 +236,17 @@ const registerIpcHandlers = ({ mainEntryPath }: IpcRegistrationOptions): void =>
       )
   })
   registerNotebookIpcHandlers(notebookService)
+  // Registered after the acp/notebook handlers exist: migration needs to interrupt both runtimes.
+  registerStorageIpcHandlers({
+    runtime,
+    notebook: notebookService,
+    getActivePromptSessions: () => runtime.getActivePromptSessions(),
+    settingsService
+  })
   registerArtifactIpcHandlers(artifactRepository, artifactRunRegistry)
   registerUploadIpcHandlers(uploadRepository)
-  registerSessionPersistenceIpcHandlers()
-  registerProjectIpcHandlers()
+  registerSessionPersistenceIpcHandlers(sessionRepository)
+  registerProjectIpcHandlers(projectRepository, previewStateRepository)
 }
 
 export { registerIpcHandlers }

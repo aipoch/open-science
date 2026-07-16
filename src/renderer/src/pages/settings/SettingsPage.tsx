@@ -1,6 +1,7 @@
 import {
   ArrowLeft,
   ArrowRight,
+  Cloud,
   Maximize2,
   Minimize2,
   Plus,
@@ -20,6 +21,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { ClaudeInstallCard } from './ClaudeInstallCard'
 import { ClaudeStatusCard } from './ClaudeStatusCard'
 import { GeneralPanel } from './GeneralPanel'
+import { StoragePanel } from './StoragePanel'
 import { SkillsPanel, type SkillsView } from './SkillsPanel'
 import { ConnectorsPanel, type ConnectorsView } from './ConnectorsPanel'
 import { ConnectorDetailView } from './ConnectorDetailView'
@@ -72,7 +74,7 @@ const toUpsertRequest = (
 
 // Left-nav panels, grouped in the sidebar. "Capabilities" holds agent extensions (Skills); "Workspace"
 // holds environment/config (Model manages Claude + providers, General holds app settings incl. logs).
-type SettingsPanelId = 'model' | 'skills' | 'connectors' | 'general'
+type SettingsPanelId = 'model' | 'skills' | 'connectors' | 'general' | 'storage'
 
 type SettingsPanel = {
   id: SettingsPanelId
@@ -92,6 +94,7 @@ const SETTINGS_GROUPS: ReadonlyArray<{ label: string; panels: ReadonlyArray<Sett
     label: 'Workspace',
     panels: [
       { id: 'model', label: 'Model', Icon: SlidersHorizontal },
+      { id: 'storage', label: 'Storage', Icon: Cloud },
       { id: 'general', label: 'General', Icon: Settings2 }
     ]
   }
@@ -586,6 +589,8 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                   ) : (
                     <ConnectorsPanel onNavigate={navigateConnectors} />
                   )
+                ) : activePanel === 'storage' ? (
+                  <StoragePanel />
                 ) : activePanel === 'general' ? (
                   <GeneralPanel />
                 ) : isProviderFormOpen ? (

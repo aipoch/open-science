@@ -1,5 +1,5 @@
 import { Check, ChevronDown, File, Folder, Paperclip } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   DropdownMenu,
@@ -22,6 +22,7 @@ import {
   ARTIFACT_PREVIEW_BYTES,
   getArtifactPreviewFormat
 } from './artifact-preview-utils'
+import { FILE_MISSING_TAG, isUnavailableFileError } from './previews/preview-errors'
 import {
   buildProjectFileLibrary,
   type ProjectArtifactFileNode,
@@ -130,7 +131,11 @@ const readProjectFilePreview = async (
 
     return { id: target.id, cacheKey: target.cacheKey, preview }
   } catch (error) {
-    console.error('Failed to read project file preview', error)
+    // An unavailable file (missing / outside storage) is expected here and badged separately;
+    // don't spam the console for it — only genuine read failures warrant an error.
+    if (!isUnavailableFileError(error)) {
+      console.error('Failed to read project file preview', error)
+    }
     return { id: target.id, cacheKey: target.cacheKey, preview: undefined }
   }
 }
@@ -216,6 +221,7 @@ const FileTile = ({
   size,
   timestamp,
   previewLabel,
+  missing = false,
   onPreview
 }: {
   name: string
@@ -225,6 +231,7 @@ const FileTile = ({
   size?: number
   timestamp?: number
   previewLabel: string
+  missing?: boolean
   onPreview: () => void
 }): React.JSX.Element => {
   const sizeLabel = formatByteSize(size)
@@ -241,9 +248,16 @@ const FileTile = ({
     >
       <span
         data-testid="project-file-preview"
-        className="h-[82px] w-full overflow-hidden bg-bg-200"
+        className="relative h-[82px] w-full overflow-hidden bg-bg-200"
       >
-        <ArtifactPreview artifact={previewArtifact} preview={preview} source={source} />
+        <span className={cn('block size-full', missing && 'opacity-40')}>
+          <ArtifactPreview artifact={previewArtifact} preview={preview} source={source} />
+        </span>
+        {missing ? (
+          <span className="absolute left-1.5 top-1.5 rounded bg-text-000/75 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-bg-000 shadow-sm">
+            {FILE_MISSING_TAG}
+          </span>
+        ) : null}
       </span>
       <span
         data-testid="project-file-meta"
@@ -348,6 +362,10 @@ const ProjectFilesView = (): React.JSX.Element => {
   const [collapsedSectionIds, setCollapsedSectionIds] = useState<Set<string>>(() => new Set())
   const [selectedFilterId, setSelectedFilterId] = useState('all')
   const [filePreviews, setFilePreviews] = useState<ProjectFilePreviewState>({})
+  // Ids of files whose on-disk source is gone (deleted / disconnected drive), badged "Missing".
+  const [missingFileIds, setMissingFileIds] = useState<Set<string>>(() => new Set())
+  // Paths already existence-probed, so scrolling/re-renders never re-check the same file.
+  const probedPathsRef = useRef<Set<string>>(new Set())
   // Only the active project's sessions contribute files, so the library never mixes projects.
   const sessions = useMemo(
     () => allSessions.filter((session) => session.projectId === activeProjectId),
@@ -461,6 +479,45 @@ const ProjectFilesView = (): React.JSX.Element => {
     }
   }, [filePreviews, previewTargets])
 
+  // Existence probe for the "Missing" badge: a deleted/disconnected file must be perceivable on the
+  // tile, not just when opened. A tiny read is enough — it resolves if the file exists and rejects
+  // with ENOENT if not — and it covers every file type (including PDFs, which render their own
+  // thumbnail and never go through the preview read above). Paths are marked probed only once a run
+  // commits its results (NOT synchronously): under React StrictMode the first effect pass is
+  // canceled, so pre-claiming would let the surviving pass skip every path and never badge anything.
+  useEffect(() => {
+    const targets = previewTargets.filter((target) => !probedPathsRef.current.has(target.path))
+    if (targets.length === 0) return
+
+    let canceled = false
+
+    void Promise.all(
+      targets.map(async (target) => {
+        const readPreview =
+          target.source === 'upload'
+            ? window.api.uploads.readPreview
+            : window.api.artifacts.readPreview
+
+        try {
+          await readPreview({ path: target.path, maxBytes: 1, encoding: 'base64' })
+          return { id: target.id, path: target.path, missing: false }
+        } catch (error) {
+          return { id: target.id, path: target.path, missing: isUnavailableFileError(error) }
+        }
+      })
+    ).then((results) => {
+      if (canceled) return
+      results.forEach((result) => probedPathsRef.current.add(result.path))
+      const newlyMissing = results.filter((result) => result.missing).map((result) => result.id)
+      if (newlyMissing.length === 0) return
+      setMissingFileIds((current) => new Set([...current, ...newlyMissing]))
+    })
+
+    return () => {
+      canceled = true
+    }
+  }, [previewTargets])
+
   const toggleSection = (sectionId: string): void => {
     setCollapsedSectionIds((currentIds) => {
       const nextIds = new Set(currentIds)
@@ -531,6 +588,7 @@ const ProjectFilesView = (): React.JSX.Element => {
                     size={file.size}
                     timestamp={file.timestamp}
                     previewLabel={`Preview uploaded file ${file.name}`}
+                    missing={missingFileIds.has(file.id)}
                     onPreview={() => previewUploadFile(file)}
                   />
                 ))}
@@ -571,6 +629,7 @@ const ProjectFilesView = (): React.JSX.Element => {
                           size={file.size}
                           timestamp={file.artifact.mtimeMs}
                           previewLabel={`Preview generated file ${file.name}`}
+                          missing={missingFileIds.has(file.id)}
                           onPreview={() => previewArtifactFile(file, group.sessionId)}
                         />
                       ))}

@@ -64,5 +64,9 @@ const registerSessionPersistenceIpcHandlers = (
   )
 }
 
-export { createSessionPersistenceHandlers, registerSessionPersistenceIpcHandlers }
+export {
+  createDefaultSessionRepository,
+  createSessionPersistenceHandlers,
+  registerSessionPersistenceIpcHandlers
+}
 export type { SessionPersistenceRepository }

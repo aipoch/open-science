@@ -4,7 +4,7 @@ import { cn, formatByteSize } from '@/lib/utils'
 import type { ChatMessage, ChatSession } from '@/stores/session-store'
 import { Collapsible } from 'radix-ui'
 import { FileText, Image as ImageIcon } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { MessagePart } from '../../../../shared/session-persistence'
 import { getUploadedAttachmentName } from '../../../../shared/uploads'
@@ -18,6 +18,7 @@ import {
   getArtifactsForPreviewRead,
   isImageArtifact
 } from './artifact-preview-utils'
+import { FILE_MISSING_TAG, isUnavailableFileError } from './previews/preview-errors'
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
 type MessageUploadAttachment = NonNullable<ChatMessage['uploads']>[number]
@@ -63,11 +64,13 @@ const assistantMessageSurfaceClassName =
 const ArtifactCard = ({
   artifact,
   onPreviewArtifact,
-  preview
+  preview,
+  missing = false
 }: {
   artifact: MessageArtifact
   onPreviewArtifact: (artifact: MessageArtifact) => void
   preview?: ArtifactPreviewResult
+  missing?: boolean
 }): React.JSX.Element => {
   const artifactName = getArtifactName(artifact)
   const sizeLabel = formatByteSize(artifact.size) ?? ''
@@ -82,8 +85,15 @@ const ArtifactCard = ({
       aria-label={`Preview generated file ${artifactName}`}
       title={artifact.path}
     >
-      <div className={artifactPreviewClassName}>
-        <ArtifactPreview artifact={artifact} preview={preview} />
+      <div className={cn('relative', artifactPreviewClassName)}>
+        <span className={cn('block size-full', missing && 'opacity-40')}>
+          <ArtifactPreview artifact={artifact} preview={preview} />
+        </span>
+        {missing ? (
+          <span className="absolute left-1 top-1 rounded bg-text-000/75 px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wide text-bg-000 shadow-sm">
+            {FILE_MISSING_TAG}
+          </span>
+        ) : null}
       </div>
       <div className="flex min-w-0 flex-1 items-center px-2">
         <span className="min-w-0 flex-1 truncate text-[12px] leading-5">{artifactName}</span>
@@ -108,6 +118,9 @@ const MessageArtifactList = ({
     key: '',
     previews: {}
   })
+  // Ids of generated files whose source is gone from disk, badged "Missing" on the thumbnail.
+  const [missingArtifactIds, setMissingArtifactIds] = useState<Set<string>>(() => new Set())
+  const probedPathsRef = useRef<Set<string>>(new Set())
   const previewKey = useMemo(() => getArtifactPreviewCacheKey(artifacts), [artifacts])
   const artifactPreviews = useMemo(
     () => (artifactPreviewCache.key === previewKey ? artifactPreviewCache.previews : {}),
@@ -139,7 +152,11 @@ const MessageArtifactList = ({
 
           return { artifactId: artifact.id, preview }
         } catch (error) {
-          console.error('Failed to read artifact preview', error)
+          // Unavailable files (missing / outside storage) are expected and badged; keep the console
+          // for genuine read failures only.
+          if (!isUnavailableFileError(error)) {
+            console.error('Failed to read artifact preview', error)
+          }
           return { artifactId: artifact.id, preview: undefined }
         }
       })
@@ -167,6 +184,45 @@ const MessageArtifactList = ({
     }
   }, [artifactPreviews, artifacts, previewKey, visibleCount])
 
+  // Existence probe for the "Missing" badge (mirrors the Files grid): a tiny 1-byte read that
+  // resolves if the file exists and rejects with ENOENT if not, covering every type — including
+  // PDFs, which render their own thumbnail and skip the preview read above. Paths are marked probed
+  // only after a run commits (NOT synchronously): StrictMode cancels the first pass, so pre-claiming
+  // would let the surviving pass skip everything and never badge.
+  useEffect(() => {
+    const targets = artifacts
+      .slice(0, visibleCount)
+      .filter((artifact) => !probedPathsRef.current.has(artifact.path))
+    if (targets.length === 0) return
+
+    let canceled = false
+
+    void Promise.all(
+      targets.map(async (artifact) => {
+        try {
+          await window.api.artifacts.readPreview({
+            path: artifact.path,
+            maxBytes: 1,
+            encoding: 'base64'
+          })
+          return { id: artifact.id, path: artifact.path, missing: false }
+        } catch (error) {
+          return { id: artifact.id, path: artifact.path, missing: isUnavailableFileError(error) }
+        }
+      })
+    ).then((results) => {
+      if (canceled) return
+      results.forEach((result) => probedPathsRef.current.add(result.path))
+      const newlyMissing = results.filter((result) => result.missing).map((result) => result.id)
+      if (newlyMissing.length === 0) return
+      setMissingArtifactIds((current) => new Set([...current, ...newlyMissing]))
+    })
+
+    return () => {
+      canceled = true
+    }
+  }, [artifacts, visibleCount])
+
   if (artifacts.length === 0) return null
 
   const remainingCount = artifacts.length - visibleArtifacts.length
@@ -184,6 +240,7 @@ const MessageArtifactList = ({
               artifact={artifact}
               onPreviewArtifact={onPreviewArtifact}
               preview={artifactPreviews[artifact.id]}
+              missing={missingArtifactIds.has(artifact.id)}
             />
           ))}
           {remainingCount > 0 ? (

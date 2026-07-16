@@ -82,6 +82,16 @@ export type StoredSettings = {
   // (default-on), so new bundled skills are enabled automatically.
   disabledSkillIds?: string[]
   connectors?: StoredConnectors
+  // Absolute path of the relocatable data root (artifacts/notebooks/runtime/uploads). Absent means
+  // "use the config root" (default). Only written after a successful migration; a change needs a restart.
+  dataRoot?: string
+  // Set once the one-time legacy-absolute-path-to-$DATA normalization pass has completed successfully.
+  // Absent means it still needs to run (or a previous attempt failed and should retry).
+  pathsNormalizedAt?: number
+  // Set once the user has answered the one-time "move your legacy .open-science data into the
+  // visible OpenScience folder" prompt (by moving, choosing another folder, or declining). Absent
+  // means it has never been answered, so an eligible legacy install may still be offered the prompt.
+  legacyDataMovePromptDismissedAt?: number
 }
 
 // Canonical empty settings used for a first run or an unreadable file.

@@ -7,6 +7,7 @@ import type {
   NotebookWorkingFile
 } from '../../shared/notebook'
 import { NOTEBOOK_RUN_FILE, NOTEBOOKS_DIR } from '../../shared/notebook'
+import { decodeRunDocumentDataPaths, encodeRunDocumentDataPaths } from './run-document-data-paths'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
@@ -164,8 +165,11 @@ class NotebookRunRepository {
     try {
       const rawDocument = await readFile(filePath, 'utf8')
       const document = JSON.parse(rawDocument) as NotebookRunDocument
+      // Decode $DATA sentinels against the current data root before recomputing session roots,
+      // so a relocated data root and the decoded working-file paths agree.
+      const decoded = decodeRunDocumentDataPaths(document, this.storageRoot)
 
-      return normalizeDocument(this.storageRoot, request, document)
+      return normalizeDocument(this.storageRoot, request, decoded)
     } catch (error) {
       if (!isMissingFileError(error)) {
         throw error
@@ -254,6 +258,8 @@ class NotebookRunRepository {
     const filePath = getNotebookRunJsonPath(this.storageRoot, safeProjectName, safeSessionId)
     const rawDocument = await readFile(filePath, 'utf8')
     const document = JSON.parse(rawDocument) as NotebookRunDocument
+    // Decode before normalization for the same reason as loadOrCreate above.
+    const decoded = decodeRunDocumentDataPaths(document, this.storageRoot)
 
     return normalizeDocument(
       this.storageRoot,
@@ -261,7 +267,7 @@ class NotebookRunRepository {
         projectName: safeProjectName,
         sessionId: safeSessionId
       },
-      document
+      decoded
     )
   }
 
@@ -281,7 +287,10 @@ class NotebookRunRepository {
 
       const temporaryPath = `${filePath}.${Date.now()}-${this.saveSequence}.tmp`
 
-      await writeFile(temporaryPath, `${JSON.stringify(document, null, 2)}\n`, 'utf8')
+      // Encode only the serialized copy: `directory` above must stay derived from the absolute
+      // in-memory `document.notebookSessionRoot`, never from the $DATA-sentinel-encoded copy.
+      const encoded = encodeRunDocumentDataPaths(document, this.storageRoot)
+      await writeFile(temporaryPath, `${JSON.stringify(encoded, null, 2)}\n`, 'utf8')
       await rename(temporaryPath, filePath)
     })
 
