@@ -167,7 +167,15 @@ jobs:
           if [ "${{ matrix.platform }}" = "mac" ] && [ "${{ inputs.nightly }}" != "true" ] && [ -n "$CSC_LINK" ]; then
             # Stable build with a Developer ID cert -> SIGN ONLY (notarize:false). Notarization +
             # stapling happens later in notarize-mac.yml, so this job never waits on Apple.
-            npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" --publish never -c.mac.notarize=false
+            #
+            # Per-arch update channel: arm64 and x64 build on separate runners and would both emit
+            # `latest-mac.yml`, colliding at the feed root. Setting the electron-updater channel to the
+            # arch makes each build emit its own `${arch}-mac.yml` and bake `channel: ${arch}` into its
+            # app-update.yml, so each installed arch polls only its own feed. (win/linux keep the
+            # default `latest` channel.)
+            mac_channel="${{ matrix.name }}"; mac_channel="${mac_channel#macos-}"
+            npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" --publish never \
+              -c.mac.notarize=false -c.publish.channel="$mac_channel"
           else
             # No cert, or a nightly build (ad-hoc on purpose): skip electron-builder's own signing.
             # GitHub injects unset secrets as EMPTY strings, and electron-builder mis-reads an empty
@@ -193,4 +201,5 @@ jobs:
             dist/*.deb
             dist/*.blockmap
             dist/latest*.yml
+            dist/*-mac.yml
           if-no-files-found: error

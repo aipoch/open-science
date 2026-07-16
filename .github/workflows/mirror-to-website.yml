@@ -108,17 +108,17 @@ jobs:
             "s3://$S3_BUCKET/$S3_PREFIX/version.json" \
             --cache-control "no-cache" --content-type "application/json" --only-show-errors
 
-      # electron-updater feed files (win latest.yml, linux latest-linux.yml) must live at the channel
-      # root (a stable url the updater always polls), but the installers + blockmaps they reference live
-      # under releases/<version>/. Rewrite each feed's bare `path:`/`url:` filenames to that versioned
-      # subpath so the updater resolves them against the channel root. Missing feeds (e.g. a mac-only
-      # backfill) are simply skipped.
+      # electron-updater feed files (win latest.yml, linux latest-linux.yml, and the per-arch mac
+      # feeds arm64-mac.yml / x64-mac.yml) must live at the channel root (a stable url the updater
+      # always polls), but the installers + blockmaps they reference live under releases/<version>/.
+      # Rewrite each feed's bare `path:`/`url:` filenames to that versioned subpath so the updater
+      # resolves them against the channel root. Missing feeds (e.g. a mac-only backfill) are skipped.
       - name: Rewrite update feed paths
         env:
           VERSION: ${{ steps.ref.outputs.version }}
         run: |
           shopt -s nullglob
-          for yml in dist-assets/latest.yml dist-assets/latest-linux.yml; do
+          for yml in dist-assets/latest.yml dist-assets/latest-linux.yml dist-assets/*-mac.yml; do
             [ -f "$yml" ] || continue
             node -e '
               const fs = require("fs");
@@ -141,7 +141,7 @@ jobs:
           S3_PREFIX: ${{ vars.S3_PREFIX }}
         run: |
           shopt -s nullglob
-          for yml in dist-assets/latest.yml dist-assets/latest-linux.yml; do
+          for yml in dist-assets/latest.yml dist-assets/latest-linux.yml dist-assets/*-mac.yml; do
             [ -f "$yml" ] || continue
             aws s3 cp "$yml" "s3://$S3_BUCKET/$S3_PREFIX/$(basename "$yml")" \
               --cache-control "no-cache" --content-type "text/yaml" --only-show-errors
