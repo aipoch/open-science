@@ -43,6 +43,41 @@ describe('ComposerModelPicker', () => {
     render()
 
     expect(container.querySelector('[aria-label="Select model"]')).toBeNull()
+    expect(container.querySelector('[aria-label="No model available — open settings"]')).toBeNull()
+  })
+
+  it('warns and opens settings when no model is configured', () => {
+    const openSettings = vi.fn()
+    useSettingsStore.setState({ providers: [], openSettings })
+    render()
+
+    // No picker, but a warning affordance the user can click to fix the missing model.
+    expect(container.querySelector('[aria-label="Select model"]')).toBeNull()
+    const warning = container.querySelector<HTMLButtonElement>(
+      '[aria-label="No model available — open settings"]'
+    )
+    expect(warning).not.toBeNull()
+    expect(warning?.textContent).toContain('No model available')
+
+    act(() => warning?.click())
+    expect(openSettings).toHaveBeenCalledTimes(1)
+  })
+
+  it('warns when the only provider has failed validation', () => {
+    useSettingsStore.setState({
+      providers: [
+        provider({
+          id: 'broken',
+          models: ['m'],
+          lastValidationFailure: { at: 1, category: 'auth', message: 'bad key' }
+        })
+      ]
+    })
+    render()
+
+    expect(
+      container.querySelector('[aria-label="No model available — open settings"]')
+    ).not.toBeNull()
   })
 
   it('shows the active model label when multiple options exist', () => {

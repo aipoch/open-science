@@ -1,4 +1,4 @@
-import { Check, ChevronDown } from 'lucide-react'
+import { AlertTriangle, Check, ChevronDown } from 'lucide-react'
 
 import {
   DropdownMenu,
@@ -25,18 +25,37 @@ const triggerClassName =
 const optionLabel = (option: ProviderModelOption): string => option.model || option.providerName
 
 // Model/provider switcher shown in the composer toolbar. Reads the settings store directly (the store
-// is global) so the presentational ConversationPanel needn't thread provider state through. Renders
-// nothing unless there's more than one selectable (provider, model) — with a single option there's
-// nothing to switch between.
+// is global) so the presentational ConversationPanel needn't thread provider state through. With no
+// selectable model it shows a warning that opens Settings; with a single option it renders nothing
+// (there's nothing to switch between); otherwise it renders the switcher.
 const ComposerModelPicker = (): React.JSX.Element | null => {
   const providers = useSettingsStore((state) => state.providers)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
   const activeModel = useSettingsStore((state) => state.activeModel)
   const setActiveProvider = useSettingsStore((state) => state.setActiveProvider)
+  const openSettings = useSettingsStore((state) => state.openSettings)
 
   const options = selectProviderModelOptions(providers)
 
-  if (options.length <= 1) return null
+  // No selectable (provider, model): the user has nothing to send with — either nothing is configured
+  // or every provider failed its last test. Warn instead of hiding so the empty toolbar isn't a
+  // silent dead end; clicking opens Settings to add or fix a provider.
+  if (options.length === 0) {
+    return (
+      <button
+        type="button"
+        onClick={() => openSettings()}
+        className="flex h-8 items-center gap-1.5 rounded-md px-2.5 text-sm text-amber-700 hover:bg-amber-50 transition-colors"
+        aria-label="No model available — open settings"
+      >
+        <AlertTriangle className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
+        <span className="truncate">No model available</span>
+      </button>
+    )
+  }
+
+  // A single option leaves nothing to switch between, so the picker stays hidden.
+  if (options.length === 1) return null
 
   // The active option matches by provider and model; an undefined activeModel maps to the empty-model
   // "default" entry.
