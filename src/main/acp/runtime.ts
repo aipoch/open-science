@@ -37,7 +37,8 @@ import {
   type PermissionProfileId,
   type SessionPermissionProfileState
 } from '../../shared/permission-profiles'
-import { spawnClaudeAgentAcp, type SpawnClaudeAgentAcpOptions } from './agent-process'
+import type { SpawnClaudeAgentAcpOptions } from './agent-process'
+import { claudeCodeFramework, type AgentFramework } from '../agent-framework'
 import { createLogger } from '../logger'
 import {
   extractProviderToolName,
@@ -46,10 +47,7 @@ import {
 } from './runtime-events'
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 import { AcpPermissionBroker } from './permission-broker'
-import {
-  applyCurrentModeUpdate,
-  resolvePermissionProfileApplication
-} from './permission-profile-controller'
+import { applyCurrentModeUpdate } from './permission-profile-controller'
 import { createArtifactMcpServerConfig } from '../artifacts/mcp-server'
 import { ArtifactRepository, getArtifactCurrentRunFilePath } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
@@ -84,6 +82,9 @@ type AcpRuntimeOptions = {
   uploads?: AcpRuntimeUploadOptions
   notebook?: AcpRuntimeNotebookOptions
   skills?: AcpRuntimeSkillsOptions
+  // The agent backend to drive. Defaults to Claude Code; selecting another (opencode) swaps only the
+  // framework-coupled behavior (spawn, session meta, permission-mode mapping) via AgentFramework.
+  framework?: AgentFramework
   // Bounds the network-bound reconnect+resume so Resume always resolves; the fast attached-session
   // path is never timed. Injectable timer mirrors the approval broker so tests stay deterministic.
   resumeTimeoutMs?: number
@@ -240,6 +241,7 @@ class AcpRuntime {
   private readonly callbacks: AcpRuntimeCallbacks
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
   private readonly skillsHooks: AcpRuntimeSkillsOptions | undefined
+  private readonly framework: AgentFramework
   // Bounded resume network timeout + injectable timers (defaults to real setTimeout/clearTimeout).
   private readonly resumeTimeoutMs: number
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
@@ -263,6 +265,7 @@ class AcpRuntime {
     this.callbacks = options.callbacks ?? {}
     this.spawnAgent = options.spawnAgent
     this.skillsHooks = options.skills
+    this.framework = options.framework ?? claudeCodeFramework
     this.resumeTimeoutMs = options.resumeTimeoutMs ?? 30_000
     this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
     this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle))
@@ -332,7 +335,7 @@ class AcpRuntime {
     session: ActiveSession,
     profile: PermissionProfileId
   ): Promise<void> {
-    const application = resolvePermissionProfileApplication(profile, session.modes)
+    const application = this.framework.mapPermissionProfile(profile, session.modes)
 
     if (application.modeId && application.modeId !== session.modes?.currentModeId) {
       if (!this.connection) throw new Error('ACP connection is not available.')
@@ -490,7 +493,7 @@ class AcpRuntime {
           sessionCwd,
           projectName
         }),
-        ...this.createSessionMeta()
+        ...this.buildSessionMetaArg()
       })
       .start()
 
@@ -637,7 +640,7 @@ class AcpRuntime {
           sessionCwd,
           projectName
         }),
-        ...this.createSessionMeta()
+        ...this.buildSessionMetaArg()
       })
     } catch (error) {
       if (!isUnresumableSessionError(error)) throw error
@@ -661,7 +664,7 @@ class AcpRuntime {
             sessionCwd,
             projectName
           }),
-          ...this.createSessionMeta()
+          ...this.buildSessionMetaArg()
         })
         .start()
 
@@ -878,7 +881,20 @@ class AcpRuntime {
       throw new Error('ACP agent spawn configuration is not available.')
     }
 
-    return spawnClaudeAgentAcp(config)
+    if (!config.executablePath) {
+      throw new Error(
+        'Claude executable path is not configured. Complete Claude detection in settings first.'
+      )
+    }
+
+    // The framework owns the actual spawn; the resolved provider env/executable pass through unchanged.
+    // TODO(spike): route provider→model config through framework.prepareModelConfig once opencode
+    // detection + a framework-aware resolveSpawnConfig land (envOverrides is resolved upstream today).
+    return this.framework.spawn({
+      executablePath: config.executablePath,
+      env: config.envOverrides ?? {},
+      args: []
+    })
   }
 
   // Sends one prompt turn to the targeted session and streams updates until stop.
@@ -950,7 +966,14 @@ class AcpRuntime {
         : undefined
       // Prepend a short steering nudge naming the picked skills. It goes only into the content sent to
       // the agent; the user-facing message event keeps the original text (which already shows /Name).
-      const promptText = await this.applySkillNudge(request.text, forced)
+      // Framework-neutral delivery of the system-prompt guidance: Claude carries it in session _meta so
+      // the prefix is empty and the prompt is unchanged; opencode has no preset, so its guidance rides as
+      // a prompt prefix here, ahead of the skill nudge and the user's text.
+      const { promptPrefix } = this.framework.buildSessionSetup({
+        systemPromptAppends: this.getSystemPromptAppends()
+      })
+      const nudgedText = await this.applySkillNudge(request.text, forced)
+      const promptText = promptPrefix ? `${promptPrefix}\n\n${nudgedText}` : nudgedText
       const promptContent = await this.createPromptContent(request.sessionId, {
         ...request,
         text: promptText
@@ -1491,33 +1514,29 @@ class AcpRuntime {
     return servers
   }
 
-  // Builds Claude-specific session metadata: system-prompt guidance for artifact/notebook tooling, plus
-  // a settingSources restriction to the "user" scope (our app-owned CLAUDE_CONFIG_DIR). This is required:
-  // the "project"/"local" scopes are read from the workspace cwd's `.claude`, and when the cwd is under
-  // the home tree that resolves to the user's own ~/.claude — whose `env` block (e.g. a proxy
-  // ANTHROPIC_BASE_URL) would otherwise override the active provider's endpoint. Restricting to "user"
-  // loads only the clean app dir's settings + the app's own skills/plugins/commands.
-  private createSessionMeta(): { _meta: Record<string, unknown> } {
-    const appendSections = [
-      // The skill-privacy guardrail always applies — skills are materialized whenever the app runs.
+  // Collects the system-prompt guidance appended to every session: the skill-privacy guardrail (always
+  // — skills are materialized whenever the app runs), plus artifact/notebook tooling instructions when
+  // those services are wired. The active framework decides how these are delivered (Claude's preset
+  // append vs opencode's prompt prefix).
+  private getSystemPromptAppends(): string[] {
+    return [
       SKILLS_READ_GUARD_SYSTEM_PROMPT_APPEND,
       ...(this.artifactOptions ? [ARTIFACT_FILE_SYSTEM_PROMPT_APPEND] : []),
       ...(this.notebookOptions ? [NOTEBOOK_SYSTEM_PROMPT_APPEND] : [])
     ]
+  }
 
-    const meta: Record<string, unknown> = {
-      claudeCode: { options: { settingSources: ['user'] } }
-    }
+  // Builds the ACP `_meta` argument for session/new and session/resume, delegating the framework-specific
+  // shape to the active framework. For Claude this is the claudeCode.settingSources restriction (pins the
+  // app-owned config dir so a workspace ~/.claude env block can't override the active provider endpoint)
+  // plus the system-prompt preset carrying the appends; opencode returns no meta and delivers the appends
+  // as a prompt prefix instead.
+  private buildSessionMetaArg(): { _meta?: Record<string, unknown> } {
+    const setup = this.framework.buildSessionSetup({
+      systemPromptAppends: this.getSystemPromptAppends()
+    })
 
-    if (appendSections.length > 0) {
-      meta.systemPrompt = {
-        type: 'preset',
-        preset: 'claude_code',
-        append: appendSections.join('\n\n')
-      }
-    }
-
-    return { _meta: meta }
+    return setup.meta ? { _meta: setup.meta } : {}
   }
 
   // Resolves the artifact/notebook storage project for a session, defaulting to the runtime constant.
