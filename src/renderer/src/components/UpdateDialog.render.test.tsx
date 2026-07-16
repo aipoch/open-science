@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useUpdateStore } from '@/stores/update-store'
 import { UpdateDialog } from './UpdateDialog'
+import { APP } from '../../../shared/app-config'
 
 // Markdown rendering is covered by AgentMarkdown's own tests; stub it to a plain passthrough so this
 // render test stays deterministic and independent of the streamdown pipeline.
@@ -92,5 +93,17 @@ describe('UpdateDialog', () => {
     act(() => root.render(<UpdateDialog />))
     expect(document.body.textContent).toContain('Open installer')
     expect(document.body.textContent).not.toContain('Restart to update')
+  })
+
+  it('offers a manual download fallback when the update errors', () => {
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: { state: 'error', current: '0.1.0', latest: '0.2.0', error: 'Install failed' }
+    })
+    act(() => root.render(<UpdateDialog />))
+    expect(document.body.textContent).toContain('Install failed')
+    const link = document.body.querySelector(`a[href="${APP.update.downloadPage}"]`)
+    expect(link).not.toBeNull()
+    expect(link?.textContent).toContain('Download manually')
   })
 })

@@ -76,9 +76,14 @@ const UpdateDialog = (): React.JSX.Element | null => {
           ) : null}
 
           {status.state === 'error' ? (
-            <p className="mt-3 text-xs text-destructive" role="alert">
-              {status.error ?? 'Update failed'}
-            </p>
+            <div className="mt-3" role="alert">
+              <p className="text-xs text-destructive">{status.error ?? 'Update failed'}</p>
+              {/* Fallback when the in-app update fails (e.g. a blocked/failed in-place install): let the
+                  user grab the installer by hand, mirroring the macOS manual-reinstall path. */}
+              <ExternalTextLink href={APP.update.downloadPage} className="mt-1 text-xs">
+                Download manually
+              </ExternalTextLink>
+            </div>
           ) : null}
 
           <div className="mt-4 flex items-center justify-end gap-2">
