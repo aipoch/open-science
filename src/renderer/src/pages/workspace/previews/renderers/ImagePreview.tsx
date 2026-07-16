@@ -3,7 +3,7 @@ import { useState } from 'react'
 
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
-import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
+import { PreviewErrorCard, PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { useManagedPreviewResource } from '../useManagedPreviewResource'
 
@@ -30,7 +30,20 @@ export const PreviewImageContent = ({
 
   if (state.status === 'loading') return <PreviewLoadingContent />
 
-  if (state.status === 'error' || state.status === 'idle' || hasFailed) {
+  // Acquisition errors preserve the upstream missing/outside-storage distinction.
+  if (state.status === 'error') {
+    return (
+      <PreviewErrorCard
+        path={path}
+        name={name}
+        source={source}
+        error={state.error}
+        fallbackMessage="Image couldn't be loaded for preview"
+      />
+    )
+  }
+
+  if (state.status === 'idle' || hasFailed) {
     return (
       <PreviewFallbackCard
         icon={ImageOff}

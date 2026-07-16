@@ -123,6 +123,57 @@ describe('PdfThumbnail', () => {
     expect(window.api.previewResources.release).toHaveBeenCalled()
   })
 
+  it('recovers silently after a pending path disappears and the finalized path succeeds', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.mocked(window.api.previewResources.acquire)
+      .mockRejectedValueOnce(new Error('ENOENT: pending upload moved'))
+      .mockResolvedValueOnce({
+        id: 'resource:/uploads/session-1/report.pdf',
+        url: 'open-science-preview://resource/report.pdf',
+        size: 40 * 1024 * 1024,
+        mimeType: 'application/pdf',
+        version: 2
+      })
+
+    await act(async () => {
+      root.render(
+        <PdfThumbnail
+          path="/uploads/.pending/report.pdf"
+          name="report.pdf"
+          source="upload"
+          size={4096}
+          mtimeMs={1}
+        />
+      )
+      await flushMicrotasks()
+    })
+
+    // Missing pending files are expected during finalization and should degrade to the icon quietly.
+    expect(consoleError).not.toHaveBeenCalledWith(
+      'Failed to render PDF thumbnail',
+      expect.any(Error)
+    )
+
+    await act(async () => {
+      root.render(
+        <PdfThumbnail
+          path="/uploads/session-1/report.pdf"
+          name="report.pdf"
+          source="upload"
+          size={4096}
+          mtimeMs={2}
+        />
+      )
+      await flushMicrotasks()
+    })
+
+    expect(window.api.previewResources.acquire).toHaveBeenLastCalledWith({
+      source: 'upload',
+      path: '/uploads/session-1/report.pdf'
+    })
+    expect(container.querySelector('img[alt="Preview of report.pdf"]')).not.toBeNull()
+  })
+
   it('does not acquire or render until the thumbnail enters the preload viewport', async () => {
     let intersectionCallback: IntersectionObserverCallback | undefined
     vi.stubGlobal(

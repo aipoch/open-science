@@ -18,6 +18,7 @@ import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 
 import { ArtifactPreview } from './artifact-preview'
 import { ARTIFACT_PREVIEW_BYTES, getArtifactPreviewFormat } from './artifact-preview-utils'
+import { FILE_MISSING_TAG, isUnavailableFileError } from './previews/preview-errors'
 import {
   buildProjectFileLibrary,
   type ProjectArtifactFileNode,
@@ -30,6 +31,7 @@ import {
 import type { MessageArtifact } from './preview-file-item'
 import { getPreviewThumbnailReadEncoding } from './preview-support'
 import { useNearViewport } from './previews/useNearViewport'
+import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
 
 type ProjectFilesFilterOption = {
   id: string
@@ -111,7 +113,11 @@ const readProjectFilePreview = async (
 
     return { id: target.id, cacheKey: target.cacheKey, preview }
   } catch (error) {
-    console.error('Failed to read project file preview', error)
+    // An unavailable file (missing / outside storage) is expected here and badged separately;
+    // don't spam the console for it — only genuine read failures warrant an error.
+    if (!isUnavailableFileError(error)) {
+      console.error('Failed to read project file preview', error)
+    }
     return { id: target.id, cacheKey: target.cacheKey, preview: undefined }
   }
 }
@@ -231,6 +237,11 @@ const FileTile = ({
     source,
     artifact: previewArtifact
   })
+  const missing = useUnavailablePreviewProbe({
+    enabled: isNearViewport,
+    path: previewArtifact.path,
+    source
+  })
 
   return (
     <button
@@ -243,14 +254,21 @@ const FileTile = ({
     >
       <span
         data-testid="project-file-preview"
-        className="h-[82px] w-full overflow-hidden bg-bg-200"
+        className="relative h-[82px] w-full overflow-hidden bg-bg-200"
       >
-        {/* Unmount the reader outside the overscan window so tile previews release local data. */}
-        {isNearViewport ? (
-          <VisibleProjectFilePreview artifact={previewArtifact} target={target} />
-        ) : (
-          <ArtifactPreview artifact={previewArtifact} source={source} isVisible={false} />
-        )}
+        <span className={cn('block size-full', missing && 'opacity-40')}>
+          {/* Unmount the reader outside the overscan window so tile previews release local data. */}
+          {isNearViewport ? (
+            <VisibleProjectFilePreview artifact={previewArtifact} target={target} />
+          ) : (
+            <ArtifactPreview artifact={previewArtifact} source={source} isVisible={false} />
+          )}
+        </span>
+        {missing ? (
+          <span className="absolute left-1.5 top-1.5 rounded bg-text-000/75 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-bg-000 shadow-sm">
+            {FILE_MISSING_TAG}
+          </span>
+        ) : null}
       </span>
       <span
         data-testid="project-file-meta"

@@ -26,7 +26,8 @@ describe('notebook runtime service', () => {
     const root = await createStorageRoot()
     const executions: NotebookExecutionRequest[] = []
     const service = new NotebookRuntimeService({
-      storageRoot: root,
+      configRoot: root,
+      dataRoot: root,
       projectName: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
@@ -155,7 +156,8 @@ describe('notebook runtime service', () => {
   it('captures executor failures as failed run summaries instead of throwing', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
-      storageRoot: root,
+      configRoot: root,
+      dataRoot: root,
       projectName: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
@@ -191,7 +193,8 @@ describe('notebook runtime service', () => {
   it('records terminal submissions in the shared run history', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
-      storageRoot: root,
+      configRoot: root,
+      dataRoot: root,
       projectName: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
@@ -239,7 +242,8 @@ describe('notebook runtime service', () => {
     const availableSessions: string[] = []
     const changedSessions: string[] = []
     const service = new NotebookRuntimeService({
-      storageRoot: root,
+      configRoot: root,
+      dataRoot: root,
       projectName: 'default-project',
       repository: new NotebookRunRepository(root),
       callbacks: {
@@ -304,7 +308,8 @@ describe('notebook runtime service', () => {
     const root = await createStorageRoot()
     const executions: NotebookExecutionRequest[] = []
     const service = new NotebookRuntimeService({
-      storageRoot: root,
+      configRoot: root,
+      dataRoot: root,
       projectName: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
@@ -344,7 +349,8 @@ describe('notebook runtime service', () => {
   it('returns null when a session has no persisted notebook run history', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
-      storageRoot: root,
+      configRoot: root,
+      dataRoot: root,
       projectName: 'default-project',
       repository: new NotebookRunRepository(root)
     })
@@ -363,7 +369,8 @@ describe('notebook runtime service', () => {
 
     // Execute against one service instance, then throw it away to simulate an app restart.
     const firstService = new NotebookRuntimeService({
-      storageRoot: root,
+      configRoot: root,
+      dataRoot: root,
       projectName: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
@@ -388,7 +395,8 @@ describe('notebook runtime service', () => {
 
     // A fresh service has no in-memory session, mirroring the state after relaunch.
     const restartedService = new NotebookRuntimeService({
-      storageRoot: root,
+      configRoot: root,
+      dataRoot: root,
       projectName: 'default-project',
       repository: new NotebookRunRepository(root)
     })
@@ -415,7 +423,8 @@ describe('notebook runtime service', () => {
     let maxConcurrent = 0
     const releases: Array<() => void> = []
     const service = new NotebookRuntimeService({
-      storageRoot: root,
+      configRoot: root,
+      dataRoot: root,
       projectName: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
@@ -498,7 +507,8 @@ describe('notebook runtime service', () => {
     let maxConcurrent = 0
     const releases = new Map<string, () => void>()
     const service = new NotebookRuntimeService({
-      storageRoot: root,
+      configRoot: root,
+      dataRoot: root,
       projectName: 'default-project',
       repository: new NotebookRunRepository(root),
       // Each session gets its own executor; the shared counter proves both can be in flight at once.

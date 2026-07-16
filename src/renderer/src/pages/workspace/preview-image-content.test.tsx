@@ -169,4 +169,31 @@ describe('PreviewImageContent', () => {
       resourceId: 'resource-1'
     })
   })
+
+  it('shows the missing-file message when the image no longer exists on disk', async () => {
+    const enoent = Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' })
+    vi.mocked(window.api.previewResources.acquire).mockRejectedValue(enoent)
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(<PreviewImageContent path="/workspace/gone.png" name="gone.png" />)
+    })
+
+    expect(container.textContent).toContain('This file is no longer available')
+    expect(container.textContent).not.toContain("couldn't be parsed for preview")
+  })
+
+  it('shows the outside-storage message when the path is outside the current storage root', async () => {
+    vi.mocked(window.api.previewResources.acquire).mockRejectedValue(
+      new Error('Artifact file is outside artifact storage.')
+    )
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(<PreviewImageContent path="/elsewhere/photo.png" name="photo.png" />)
+    })
+
+    expect(container.textContent).toContain("isn't in your current storage location")
+    expect(container.textContent).not.toContain('no longer available')
+  })
 })

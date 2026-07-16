@@ -1,10 +1,9 @@
-import { FileWarning } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 import { cn } from '@/lib/utils'
 import { MANAGED_PREVIEW_LOAD_ERROR } from '../../../../../../shared/preview-resources'
 
-import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
+import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { useManagedPreviewResource } from '../useManagedPreviewResource'
 import { usePreviewFileContent } from '../usePreviewFileContent'
@@ -26,12 +25,12 @@ const HtmlSourceContent = ({
   if (state.status === 'loading') return <PreviewLoadingContent />
   if (state.status === 'error' || state.preview.encoding !== 'utf8') {
     return (
-      <PreviewFallbackCard
-        icon={FileWarning}
+      <PreviewErrorCard
         path={item.path}
         name={item.name}
         source={item.source}
-        message="HTML couldn't be read for preview"
+        error={state.status === 'error' ? state.error : undefined}
+        fallbackMessage="HTML couldn't be read for preview"
       />
     )
   }
@@ -108,12 +107,12 @@ export const HtmlPreviewRenderer = ({ item }: PreviewFileRendererProps): React.J
       <div className="flex size-full flex-col overflow-hidden bg-bg-10">
         {modeToggle}
         <div className="min-h-0 flex-1">
-          <PreviewFallbackCard
-            icon={FileWarning}
+          <PreviewErrorCard
             path={item.path}
             name={item.name}
             source={item.source}
-            message="HTML couldn't be read for preview"
+            error={resourceState.status === 'error' ? resourceState.error : undefined}
+            fallbackMessage="HTML couldn't be read for preview"
           />
         </div>
       </div>

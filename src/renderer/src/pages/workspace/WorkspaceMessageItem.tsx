@@ -15,7 +15,9 @@ import {
   getArtifactName,
   shouldReadArtifactPreview
 } from './artifact-preview-utils'
+import { FILE_MISSING_TAG, isUnavailableFileError } from './previews/preview-errors'
 import { useNearViewport } from './previews/useNearViewport'
+import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
 type MessageUploadAttachment = NonNullable<ChatMessage['uploads']>[number]
@@ -74,7 +76,8 @@ const VisibleArtifactPreview = ({
         if (!canceled) setPreviewState({ requestKey, preview })
       })
       .catch((error: unknown) => {
-        console.error('Failed to read artifact preview', error)
+        // Missing or cross-root files are represented by the card badge, not noisy console errors.
+        if (!isUnavailableFileError(error)) console.error('Failed to read artifact preview', error)
         if (!canceled) setPreviewState({ requestKey, preview: undefined })
       })
 
@@ -104,6 +107,11 @@ const ArtifactCard = ({
     artifact.size ?? null,
     artifact.mtimeMs ?? null
   ])
+  const missing = useUnavailablePreviewProbe({
+    enabled: isNearViewport,
+    path: artifact.path,
+    source: 'artifact'
+  })
 
   return (
     <button
@@ -116,13 +124,20 @@ const ArtifactCard = ({
       aria-label={`Preview generated file ${artifactName}`}
       title={artifact.path}
     >
-      <div className={artifactPreviewClassName}>
-        {/* Unmount the reader outside the overscan window so message history stays lightweight. */}
-        {isNearViewport ? (
-          <VisibleArtifactPreview artifact={artifact} requestKey={requestKey} />
-        ) : (
-          <ArtifactPreview artifact={artifact} isVisible={false} />
-        )}
+      <div className={cn('relative', artifactPreviewClassName)}>
+        <span className={cn('block size-full', missing && 'opacity-40')}>
+          {/* Unmount the reader outside the overscan window so message history stays lightweight. */}
+          {isNearViewport ? (
+            <VisibleArtifactPreview artifact={artifact} requestKey={requestKey} />
+          ) : (
+            <ArtifactPreview artifact={artifact} isVisible={false} />
+          )}
+        </span>
+        {missing ? (
+          <span className="absolute left-1 top-1 rounded bg-text-000/75 px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wide text-bg-000 shadow-sm">
+            {FILE_MISSING_TAG}
+          </span>
+        ) : null}
       </div>
       <div className="flex min-w-0 flex-1 items-center px-2">
         <span className="min-w-0 flex-1 truncate text-[12px] leading-5">{artifactName}</span>
@@ -145,7 +160,6 @@ const MessageArtifactList = ({
   const [expanded, setExpanded] = useState(false)
   const visibleCount = expanded ? artifacts.length : ARTIFACT_GALLERY_VISIBLE_COUNT
   const visibleArtifacts = artifacts.slice(0, visibleCount)
-
   if (artifacts.length === 0) return null
 
   const remainingCount = artifacts.length - visibleArtifacts.length

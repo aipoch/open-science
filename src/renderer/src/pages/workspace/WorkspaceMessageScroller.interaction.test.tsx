@@ -316,6 +316,9 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       await Promise.resolve()
     })
 
-    expect(window.api.artifacts.readPreview).toHaveBeenCalledTimes(1)
+    const thumbnailReads = vi
+      .mocked(window.api.artifacts.readPreview)
+      .mock.calls.filter(([request]) => request.maxBytes !== 1)
+    expect(thumbnailReads).toHaveLength(1)
   })
 })

@@ -6,6 +6,7 @@ import type { ManagedPreviewResource } from '../../../../../../shared/preview-re
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
 import { createManagedPdfLoadingTask } from '../managed-pdf-document'
+import { isUnavailableFileError } from '../preview-errors'
 import { useNearViewport } from '../useNearViewport'
 
 const THUMBNAIL_WIDTH = 220
@@ -299,7 +300,7 @@ export const PdfThumbnail = ({
       })
       .catch((error: unknown) => {
         if (isAbortError(error)) return
-        console.error('Failed to render PDF thumbnail', error)
+        if (!isUnavailableFileError(error)) console.error('Failed to render PDF thumbnail', error)
         if (subscribed) setResult({ requestKey, status: 'error' })
       })
 

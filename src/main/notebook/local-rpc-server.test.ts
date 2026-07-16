@@ -25,7 +25,8 @@ describe('notebook local RPC server', () => {
   it('requires a bearer token and dispatches notebook execute calls', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
-      storageRoot: root,
+      configRoot: root,
+      dataRoot: root,
       projectName: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
@@ -91,7 +92,8 @@ describe('notebook local RPC server', () => {
   it('maps pre-start notebook session aliases to the final ACP session id', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
-      storageRoot: root,
+      configRoot: root,
+      dataRoot: root,
       projectName: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({

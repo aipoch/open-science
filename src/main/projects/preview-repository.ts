@@ -5,6 +5,7 @@ import {
   normalizePersistedPreviewState,
   type PersistedPreviewState
 } from '../../shared/preview-state'
+import { decodeDataPath, encodeDataPath } from '../storage/data-path'
 
 // Only the preview-state delegate is needed; typing to this subset keeps the repository unit-testable
 // with a lightweight mock instead of a real (engine-backed) PrismaClient.
@@ -33,12 +34,18 @@ class PreviewStateRepository {
 
     if (!row) return null
 
-    return normalizePersistedPreviewState({
+    const state = normalizePersistedPreviewState({
       version: PREVIEW_STATE_VERSION,
       panelState: row.panelState,
       activeItemId: row.activeItemId ?? undefined,
       items: parseItems(row.items)
     })
+
+    // Resolve item paths against the current data root so a relocated root needs no rewrite.
+    return {
+      ...state,
+      items: state.items.map((item) => ({ ...item, path: decodeDataPath(item.path) ?? item.path }))
+    }
   }
 
   // Upserts a project's preview state, sanitizing before writing so only durable fields are stored.
@@ -47,7 +54,10 @@ class PreviewStateRepository {
     const data = {
       panelState: normalized.panelState,
       activeItemId: normalized.activeItemId ?? null,
-      items: JSON.stringify(normalized.items)
+      // Item paths under the data root are stored as portable $DATA sentinels.
+      items: JSON.stringify(
+        normalized.items.map((item) => ({ ...item, path: encodeDataPath(item.path) ?? item.path }))
+      )
     }
     const client = await this.getClient()
 

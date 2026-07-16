@@ -1,11 +1,20 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+// Item-path encode/decode falls back to resolveDataRoot(), which reads electron's app.getPath.
+vi.mock('electron', () => ({
+  app: { getPath: () => '/home/user', isPackaged: true }
+}))
 
 import type { PersistedPreviewState } from '../../shared/preview-state'
 import { PreviewStateRepository } from './preview-repository'
 import { createProjectDbClient, ensureProjectSchema } from './prisma-client'
+
+// Matches the mocked app.getPath('home') + isPackaged resolution in storage-root.ts: with no
+// legacy config-root data present, computeDefaultDataRoot() is `<home>/OpenScience`.
+const DATA_ROOT = '/home/user/OpenScience'
 
 // Proves the runtime ProjectPreviewState DDL is byte-compatible with the generated client against a
 // real (temp) SQLite database, and that the durable projection round-trips + sanitizes on read.
@@ -75,5 +84,44 @@ describe('preview state repository (integration)', () => {
     await repository.delete('project-a')
     await expect(repository.get('project-a')).resolves.toBeNull()
     await expect(repository.delete('project-a')).resolves.toBeUndefined()
+  })
+
+  it('persists an item path under the data root as a $DATA sentinel and decodes it back on read', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-preview-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await ensureProjectSchema(client)
+
+    const repository = new PreviewStateRepository(() => Promise.resolve(client))
+    const absolutePath = join(DATA_ROOT, 'artifacts/p/s/m/plot.png')
+
+    await repository.save(
+      'project-a',
+      createState({
+        activeItemId: 'file:session-1:plot',
+        items: [
+          {
+            id: 'file:session-1:plot',
+            sessionId: 'session-1',
+            title: 'plot.png',
+            source: 'artifact',
+            path: absolutePath,
+            format: 'image',
+            name: 'plot.png'
+          }
+        ]
+      })
+    )
+
+    // Stored row: the data-root prefix is replaced with the portable $DATA sentinel.
+    const row = await client.projectPreviewState.findUnique({ where: { projectId: 'project-a' } })
+    expect(row?.items).toContain('$DATA/artifacts/p/s/m/plot.png')
+    expect(row?.items).not.toContain(DATA_ROOT)
+
+    // Read back: the sentinel resolves to an absolute path under the current data root.
+    const loaded = await repository.get('project-a')
+    expect(loaded?.items[0].path).toBe(absolutePath)
   })
 })

@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react'
 import type { ArtifactPreviewResult } from '../../../../../shared/artifacts'
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
+import { isUnavailableFileError } from './preview-errors'
+
 export const PREVIEW_TEXT_MAX_BYTES = 1024 * 1024
 
 type PreviewPagination = {
@@ -65,7 +67,9 @@ export const usePreviewFileContent = ({
         if (!canceled) setState({ status: 'ready', preview, requestKey })
       })
       .catch((error) => {
-        console.error('Failed to read file preview', error)
+        // Unavailable files (missing / outside storage) surface as a handled preview state; only
+        // log genuine read failures to avoid console noise for deleted/relocated files.
+        if (!isUnavailableFileError(error)) console.error('Failed to read file preview', error)
         if (!canceled) setState({ status: 'error', error, requestKey })
       })
 

@@ -14,7 +14,7 @@ vi.mock('electron', () => ({
   ipcMain: { handle: vi.fn() }
 }))
 
-import { DEV_SESSION_DIR_NAME } from '../session-persistence/repository'
+import { dataFolderName } from '../storage-root'
 import { createDefaultUploadRepository } from './ipc'
 
 describe('default upload repository', () => {
@@ -25,7 +25,7 @@ describe('default upload repository', () => {
     homeRoot = undefined
   })
 
-  it('stores and previews uploads under the dev-aware storage root', async () => {
+  it('stores and previews uploads under the default data root', async () => {
     homeRoot = await mkdtemp(join(tmpdir(), 'open-science-upload-ipc-'))
     electronState.homePath = homeRoot
     const repository = createDefaultUploadRepository()
@@ -41,10 +41,11 @@ describe('default upload repository', () => {
       ]
     })
 
+    // Uploads follow the configurable data root; a fresh dev install defaults to <home>/OpenScience-DEV.
     expect(attachment.path).toBe(
       join(
         homeRoot,
-        DEV_SESSION_DIR_NAME,
+        dataFolderName(),
         'uploads',
         'default-project',
         '.pending',

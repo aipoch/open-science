@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -182,7 +182,7 @@ describe('ProjectFilesView', () => {
     vi.unstubAllGlobals()
   })
 
-  const renderView = async (sessions: ChatSession[]): Promise<void> => {
+  const renderView = async (sessions: ChatSession[], strict = false): Promise<void> => {
     const { useSessionStore } = await import('@/stores/session-store')
     const { useNavigationStore } = await import('@/stores/navigation-store')
     const { ProjectFilesView } = await import('./ProjectFilesView')
@@ -195,7 +195,7 @@ describe('ProjectFilesView', () => {
     useNavigationStore.setState({ view: 'workspace', activeProjectId: 'default' })
     root = createRoot(container)
     await act(async () => {
-      root.render(<ProjectFilesView />)
+      root.render(strict ? <StrictMode>{<ProjectFilesView />}</StrictMode> : <ProjectFilesView />)
     })
   }
 
@@ -419,7 +419,7 @@ describe('ProjectFilesView', () => {
     expect(generatedButton?.textContent).toContain('2 hours ago')
   })
 
-  it('streams generated and uploaded image thumbnails without base64 reads', async () => {
+  it('streams image bodies without loading them into base64 preview content', async () => {
     await renderView([
       createSession({
         messages: [
@@ -463,8 +463,16 @@ describe('ProjectFilesView', () => {
       path: '/uploads/uploaded_image.png',
       mimeType: 'image/png'
     })
-    expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
-    expect(window.api.uploads.readPreview).not.toHaveBeenCalled()
+    expect(
+      vi
+        .mocked(window.api.artifacts.readPreview)
+        .mock.calls.every(([request]) => request.maxBytes === 1)
+    ).toBe(true)
+    expect(
+      vi
+        .mocked(window.api.uploads.readPreview)
+        .mock.calls.every(([request]) => request.maxBytes === 1)
+    ).toBe(true)
     expect(
       container.querySelector('img[alt="Preview of typhoon_tracks.png"]')?.getAttribute('src')
     ).toContain('open-science-preview://')
@@ -620,6 +628,44 @@ describe('ProjectFilesView', () => {
     })
   })
 
+  it('badges a file whose source is missing on disk', async () => {
+    const enoent = Object.assign(new Error('ENOENT: no such file or directory'), {
+      code: 'ENOENT'
+    })
+    ;(window.api.artifacts.readPreview as ReturnType<typeof vi.fn>).mockRejectedValue(enoent)
+
+    // Rendered under StrictMode: the existence probe must survive the dev double-invoke (its first
+    // effect pass is canceled), which a synchronous path-claim would break.
+    await renderView(
+      [
+        createSession({
+          artifacts: [
+            {
+              id: 'artifact-gone',
+              kind: 'managed-file',
+              path: '/workspace/gone.png',
+              fileUrl: 'file:///workspace/gone.png',
+              name: 'gone.png',
+              mimeType: 'image/png',
+              size: 4096,
+              mtimeMs: 1710000002000
+            }
+          ]
+        })
+      ],
+      true
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // The existence probe rejected with ENOENT, so the tile carries the "Missing" tag.
+    expect(container.textContent).toContain('Missing')
+  })
+
   it('uses the same text preview capability for generated files and uploads', async () => {
     const treePreview = {
       content: '(sample_a:0.1,sample_b:0.2);',
@@ -676,14 +722,24 @@ describe('ProjectFilesView', () => {
 
   it('retries an uploaded CSV thumbnail after its pending path is finalized', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    vi.mocked(window.api.uploads.readPreview)
-      .mockRejectedValueOnce(new Error('ENOENT: pending upload moved'))
-      .mockResolvedValueOnce({
+    // The existence probe issues a 1-byte read per file; key the mock on maxBytes so it neither
+    // consumes the thumbnail-read sequence below nor badges the pending upload as missing.
+    let thumbnailReads = 0
+    vi.mocked(window.api.uploads.readPreview).mockImplementation((request) => {
+      if (request.maxBytes === 1) {
+        return Promise.resolve({ content: '', encoding: 'base64', size: 0, truncated: false })
+      }
+      thumbnailReads += 1
+      if (thumbnailReads === 1) {
+        return Promise.reject(new Error('ENOENT: pending upload moved'))
+      }
+      return Promise.resolve({
         content: 'sample,value\nalpha,1\n',
         encoding: 'utf8',
         size: 21,
         truncated: false
       })
+    })
 
     await renderView([
       createSession({
@@ -728,26 +784,37 @@ describe('ProjectFilesView', () => {
       await Promise.resolve()
     })
 
-    expect(consoleError).toHaveBeenCalledWith(
+    // The pending-path read failed with ENOENT, which is an expected unavailable-file error and is
+    // deliberately not logged; only the successful retry should surface the finalized content.
+    expect(consoleError).not.toHaveBeenCalledWith(
       'Failed to read project file preview',
       expect.any(Error)
     )
-    expect(window.api.uploads.readPreview).toHaveBeenCalledTimes(2)
-    expect(window.api.uploads.readPreview).toHaveBeenLastCalledWith(
+    expect(window.api.uploads.readPreview).toHaveBeenCalledWith(
       expect.objectContaining({ path: '/uploads/session-1/results.csv', encoding: 'utf8' })
     )
     expect(container.textContent).toContain('1 rows · 2 columns')
   })
 
   it('hides a stale thumbnail while a new file version is loading', async () => {
-    vi.mocked(window.api.uploads.readPreview)
-      .mockResolvedValueOnce({
-        content: 'legacy_column,value\nold,1\n',
-        encoding: 'utf8',
-        size: 26,
-        truncated: false
-      })
-      .mockImplementationOnce(() => new Promise(() => undefined))
+    // Key the mock on maxBytes so the existence probe's 1-byte read never consumes the versioned
+    // thumbnail-read sequence (legacy resolves, the next version hangs while loading).
+    let thumbnailReads = 0
+    vi.mocked(window.api.uploads.readPreview).mockImplementation((request) => {
+      if (request.maxBytes === 1) {
+        return Promise.resolve({ content: '', encoding: 'base64', size: 0, truncated: false })
+      }
+      thumbnailReads += 1
+      if (thumbnailReads === 1) {
+        return Promise.resolve({
+          content: 'legacy_column,value\nold,1\n',
+          encoding: 'utf8',
+          size: 26,
+          truncated: false
+        })
+      }
+      return new Promise(() => undefined)
+    })
 
     await renderView([
       createSession({
@@ -791,7 +858,9 @@ describe('ProjectFilesView', () => {
       await Promise.resolve()
     })
 
-    expect(window.api.uploads.readPreview).toHaveBeenCalledTimes(2)
+    expect(window.api.uploads.readPreview).toHaveBeenCalledWith(
+      expect.objectContaining({ path: '/uploads/session-1/results.csv', encoding: 'utf8' })
+    )
     expect(container.textContent).not.toContain('legacy_column')
   })
 
@@ -956,13 +1025,14 @@ describe('ProjectFilesView', () => {
       await Promise.resolve()
     })
 
-    expect(window.api.artifacts.readPreview).toHaveBeenCalledTimes(2)
-    expect(window.api.artifacts.readPreview).toHaveBeenNthCalledWith(
-      1,
+    const thumbnailReads = vi
+      .mocked(window.api.artifacts.readPreview)
+      .mock.calls.filter(([request]) => request.maxBytes !== 1)
+    expect(thumbnailReads).toHaveLength(2)
+    expect(thumbnailReads[0]?.[0]).toEqual(
       expect.objectContaining({ path: '/workspace/first.txt' })
     )
-    expect(window.api.artifacts.readPreview).toHaveBeenNthCalledWith(
-      2,
+    expect(thumbnailReads[1]?.[0]).toEqual(
       expect.objectContaining({ path: '/workspace/second.txt' })
     )
   })

@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { FileWarning } from 'lucide-react'
 
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
-import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
+import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import { createManagedPdfLoadingTask } from '../managed-pdf-document'
+import { isUnavailableFileError } from '../preview-errors'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { useNearViewport } from '../useNearViewport'
 
 type PdfDocument = Awaited<ReturnType<typeof createManagedPdfLoadingTask>['promise']>
 type DocumentState =
   | { requestKey: string; status: 'ready'; document: PdfDocument }
-  | { requestKey: string; status: 'error' }
+  | { requestKey: string; status: 'error'; error: unknown }
 
 // Owns one lazy page canvas and releases its decoded bitmap outside the overscan window.
 const PdfPageCanvas = ({
@@ -183,8 +183,8 @@ export const PdfPreviewContent = ({
 
         setDocumentState({ requestKey, status: 'ready', document })
       } catch (error: unknown) {
-        console.error('Failed to load PDF preview', error)
-        if (!canceled) setDocumentState({ requestKey, status: 'error' })
+        if (!isUnavailableFileError(error)) console.error('Failed to load PDF preview', error)
+        if (!canceled) setDocumentState({ requestKey, status: 'error', error })
         await dispose()
       }
     })()
@@ -200,12 +200,12 @@ export const PdfPreviewContent = ({
 
   if (hasError) {
     return (
-      <PreviewFallbackCard
-        icon={FileWarning}
+      <PreviewErrorCard
         path={path}
         name={name}
         source={source}
-        message="This PDF couldn't be rendered for preview"
+        error={currentDocumentState.error}
+        fallbackMessage="This PDF couldn't be rendered for preview"
       />
     )
   }

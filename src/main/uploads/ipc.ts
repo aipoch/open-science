@@ -6,12 +6,12 @@ import type {
   FinalizeUploadSessionRequest,
   StageUploadFilesRequest
 } from '../../shared/uploads'
-import { resolveStorageRoot } from '../storage-root'
+import { resolveDataRoot } from '../storage-root'
 import { UploadRepository } from './repository'
 
-// Uses the shared dev-aware root so uploads remain readable by every preview entry point.
+// Uploads are data-class: they follow the configurable data root (defaults to the config root).
 const createDefaultUploadRepository = (): UploadRepository =>
-  new UploadRepository(resolveStorageRoot())
+  new UploadRepository(resolveDataRoot())
 
 // Registers the small upload IPC surface used by the renderer composer and preview panel.
 const registerUploadIpcHandlers = (repository = createDefaultUploadRepository()): void => {

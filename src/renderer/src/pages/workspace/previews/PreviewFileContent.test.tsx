@@ -236,6 +236,31 @@ describe('PreviewFileContent', () => {
     expect(container.textContent).not.toContain('first')
   })
 
+  // Degradation for design §20.4: a session-referenced file deleted from disk (or on a
+  // disconnected drive) must surface a handled "unavailable" state instead of crashing or
+  // blanking - readManagedFilePreview rejects with ENOENT, and the renderer must catch it.
+  it('shows an unavailable message instead of crashing when the file no longer exists on disk', async () => {
+    const enoent = Object.assign(new Error('ENOENT: no such file or directory'), {
+      code: 'ENOENT'
+    })
+    vi.mocked(window.api.artifacts.readPreview).mockRejectedValue(enoent)
+
+    await renderFile(
+      createFileItem({ format: 'text', name: 'gone.txt', path: '/workspace/gone.txt' })
+    )
+
+    expect(container.textContent).toContain('This file is no longer available')
+    expect(container.querySelector('pre')).toBeNull()
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('button')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(window.api.artifacts.openFile).toHaveBeenCalledWith({ path: '/workspace/gone.txt' })
+  })
+
   it('renders line numbers next to formatted JSON previews', async () => {
     vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
       content: '{"name":"sample","values":[1,true]}',
