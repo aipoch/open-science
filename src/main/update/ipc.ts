@@ -2,12 +2,12 @@ import { ipcMain } from 'electron'
 
 import { APP } from '../../shared/app-config'
 import type { AppInfo, UpdateStatus } from '../../shared/update'
-import { UpdateService } from './service'
+import { createUpdateStrategy } from './create-strategy'
 import type { UpdateStrategy } from './strategy'
 
 // Registers the renderer-callable update commands. Returns the strategy so the scheduler can drive it.
 export const registerUpdateIpcHandlers = (
-  strategy: UpdateStrategy = new UpdateService()
+  strategy: UpdateStrategy = createUpdateStrategy()
 ): UpdateStrategy => {
   ipcMain.handle('update:get-app-info', (): AppInfo => ({
     name: APP.name,
