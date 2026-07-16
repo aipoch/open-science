@@ -1,26 +1,27 @@
 # Open Science
 
-**A downloadable, open-source AI research workbench that turns natural-language tasks into traceable analysis, code, and artifacts.**
-
 [![Download](https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=for-the-badge&logo=github)](https://github.com/aipoch/open-science/releases/latest)
 [![Latest release](https://img.shields.io/github/v/release/aipoch/open-science?style=for-the-badge&color=4dabf7)](https://github.com/aipoch/open-science/releases/latest)
 [![License](https://img.shields.io/badge/License-Apache--2.0-4dabf7?style=for-the-badge)](LICENSE)
 ![Status](https://img.shields.io/badge/Status-Public%20Alpha-ff9f43?style=for-the-badge)
 [![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/85dKfuGM9)
+[![YouTube](https://img.shields.io/badge/YouTube-AIPOCH_AI-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://www.youtube.com/@AIPOCH_AI)
+[![Follow on X](https://img.shields.io/badge/Follow%20on%20X-%40aipoch__ai-212529?style=for-the-badge&logo=x&logoColor=white)](https://x.com/aipoch_ai)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-AIPOCH-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/company/pochai)
 
-Open Science is a local desktop application for researchers. Create a project, describe a task in plain language, and let the agent read files, run code, search the web, call scientific data connectors, and return reports, tables, figures, and an inspectable activity history in one workspace.
+**An open-source, model-agnostic AI workbench for scientific discovery.** Open Science is a local desktop application for researchers. Create a project, describe a task in plain language, and let the agent read files, run code, search the web, call scientific data connectors, and return reports, tables, figures, and an inspectable activity history in one workspace.
 
-**The application is available now.** The current stable release is [v0.2.2](https://github.com/aipoch/open-science/releases/tag/v0.2.2), with installers for macOS, Windows, and Linux. The complete `plan → execute → produce → preview` workflow runs end to end today; the [Current Status](#current-status) section separates shipped functionality from the deeper reproducibility and multi-agent work still ahead.
+> ⭐ **Star the repo:** If this project has been helpful, we'd greatly appreciate a star on GitHub. Starring the repository encourages continued development. It only takes a second, but it has a meaningful impact on the project.
+
+> 💡**The application is available now.** The current stable release is [v0.2.2](https://github.com/aipoch/open-science/releases/tag/v0.2.2), with installers for macOS, Windows, and Linux. The complete `plan → execute → produce → preview` workflow runs end to end today; the [Current Status](#current-status) section separates shipped functionality from the deeper reproducibility and multi-agent work still ahead.
 
 <p align="center">
   <img src="docs/images/readme/workspace.jpg" alt="Open Science project workspace showing an agent response, generated artifacts, and an in-app Markdown report preview" width="900">
 </p>
 
-> **Science is not a privilege.** Open Science is built so researchers can inspect, run, extend, and self-host their research software without depending on one subscription, billing region, model vendor, or closed platform.
-
 ## Table of Contents
 
-- [Quick Start](#quick-start)
+- [Quick Start](#-quick-start)
 - [Product Tour](#product-tour)
 - [Frequently Asked Questions](#frequently-asked-questions)
 - [Why Open Science](#why-open-science)
@@ -39,7 +40,7 @@ Open Science is a local desktop application for researchers. Create a project, d
 - [License](#license)
 - [Star History](#star-history)
 
-## Quick Start
+## 🚀 Quick Start
 
 ### 1. Download the app
 
@@ -47,10 +48,10 @@ Open the [latest release](https://github.com/aipoch/open-science/releases/latest
 
 | Your computer                       | Download                                                                             |
 | ----------------------------------- | ------------------------------------------------------------------------------------ |
-| macOS — Apple Silicon (M1 or newer) | `open-science-<version>-mac-arm64.dmg`                                               |
-| macOS — Intel                       | `open-science-<version>-mac-x64.dmg`                                                 |
-| Windows x64                         | `open-science-<version>-win-x64-setup.exe`                                           |
-| Linux x64                           | `open-science-<version>-linux-x86_64.AppImage` or `open-science_<version>_amd64.deb` |
+| macOS — Apple Silicon (M1 or newer) | `open-science-{version}-mac-arm64.dmg`                                               |
+| macOS — Intel                       | `open-science-{version}-mac-x64.dmg`                                                 |
+| Windows x64                         | `open-science-{version}-win-x64-setup.exe`                                           |
+| Linux x64                           | `open-science-{version}-linux-x86_64.AppImage` or `open-science_{version}_amd64.deb` |
 
 Each release includes `SHA256SUMS.txt` and build provenance. See [Verifying your download](SECURITY.md#verifying-your-download) before installation if you need to validate the package.
 
@@ -132,27 +133,27 @@ Open Science checks for new releases, shows a concise version summary, links to 
 
 ## Frequently Asked Questions
 
-**Q: What should I do the first time I open Open Science?**
+### **Q: What should I do the first time I open Open Science?**
 
 A: Complete **Prepare environment** and **Model provider**. Fix required rows marked `Action needed`, use `Install missing runtime` if offered, click `Check again`, and then test a model connection.
 
-**Q: What is an API Key, and where do I get one?**
+### **Q: What is an API Key, and where do I get one?**
 
 A: An API Key is a secret credential issued by a model provider. Create or copy one from that provider's developer/API console. The provider may bill requests made with the key. Treat it like a password: never share it or commit it to a repository.
 
-**Q: Do I need an API Key?**
+### **Q: Do I need an API Key?**
 
 A: Not if you choose `Local Claude` and already have a working Claude Code login on this computer. Built-in cloud providers and custom gateways require their own keys.
 
-**Q: Why does the model connection test fail?**
+### **Q: Why does the model connection test fail?**
 
 A: Check the API Key for missing characters or spaces, verify the Base URL and region, use the provider's exact model ID, and confirm network access and account balance. For `Local Claude`, run `claude` in a terminal and complete login before testing again.
 
-**Q: Why is `Continue` disabled during setup?**
+### **Q: Why is `Continue` disabled during setup?**
 
 A: At least one required environment check has not passed. Fix the row marked `Action needed`, return to automatic detection, and click `Check again`. Python is optional and only affects Notebook execution.
 
-**Q: Does my research data stay on my computer?**
+### **Q: Does my research data stay on my computer?**
 
 A: Projects, sessions, files, settings, and configured credentials are stored locally by default. Content needed for model requests, web searches, or connector calls may still be sent to the external service you selected, so review sensitive inputs and provider policies before running a task.
 
