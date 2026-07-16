@@ -17,7 +17,8 @@ export function ToolPermissionControl({
   label
 }: ToolPermissionControlProps): React.JSX.Element {
   const segment = (active: boolean, allow: boolean): string => {
-    const base = 'grid h-6 w-7 place-items-center rounded-md transition-colors'
+    const base =
+      'grid h-6 w-7 place-items-center rounded-md transition-colors motion-reduce:transition-none'
     if (active) {
       return `${base} bg-card shadow-sm ${allow ? 'text-emerald-600' : 'text-foreground'}`
     }

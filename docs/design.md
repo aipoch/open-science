@@ -127,25 +127,26 @@ The light theme uses a warm off-white page background, white cards, and a deep-g
   --action-panel-toggle: hsl(0 0% 42%);
   --surface-control-hover: hsl(38 20% 90%);
   --message-user-text: hsl(0 0% 12%);
+  --always-black: 0 0% 0%;
 
   /* shadcn semantic tokens */
-  --background: oklch(0.985 0.01 96);
-  --foreground: oklch(0.19 0.025 236);
-  --card: oklch(0.998 0.004 96);
-  --card-foreground: oklch(0.19 0.025 236);
-  --popover: oklch(0.998 0.004 96);
-  --popover-foreground: oklch(0.19 0.025 236);
+  --background: #fafaf8;
+  --foreground: #202321;
+  --card: #ffffff;
+  --card-foreground: #202321;
+  --popover: #ffffff;
+  --popover-foreground: #202321;
   --primary: oklch(0.47 0.105 184);
   --primary-foreground: oklch(0.985 0.008 180);
-  --secondary: oklch(0.94 0.018 93);
-  --secondary-foreground: oklch(0.23 0.03 235);
-  --muted: oklch(0.94 0.018 93);
-  --muted-foreground: oklch(0.48 0.035 235);
+  --secondary: #ececea;
+  --secondary-foreground: #202321;
+  --muted: #ececea;
+  --muted-foreground: #646762;
   --accent: oklch(0.87 0.115 82);
   --accent-foreground: oklch(0.2 0.03 62);
   --destructive: oklch(0.58 0.22 25);
-  --border: oklch(0.87 0.018 92);
-  --input: oklch(0.87 0.018 92);
+  --border: #dededa;
+  --input: #dededa;
   --ring: oklch(0.58 0.11 184);
 }
 ```
@@ -241,18 +242,18 @@ Workspace tokens share the same visual intent as several shadcn tokens. Workspac
 
 Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shared surface colors, see **Workspace ↔ shadcn Equivalence** above.
 
-| Token                               | Tailwind class                     | Light value                                                                   | Usage                                             |
-| ----------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------- |
-| `--bg-400`                          | `bg-bg-400`                        | `hsl(45 10% 88%)`                                                             | Sidebar row action hover                          |
-| `--text-300`                        | `text-text-300`                    | `hsl(43 3% 57%)`                                                              | Footer/action icon default color and loading dots |
-| `--rail-card-bg`                    | `bg-rail-card-bg`                  | `hsl(0 0% 100%)`                                                              | Sidebar rail card                                 |
-| `--danger-000` / `--danger-900`     | `text-danger-000`, `bg-danger-900` | `hsl(0 45% 38%)`, `hsl(0 55% 95%)`                                            | Destructive session menu and dialog actions       |
-| `--action-panel-toggle`             | `text-action-panel-toggle`         | `hsl(0 0% 42%)`                                                               | Collapsed preview toggle                          |
-| `--surface-control-hover`           | `hover:bg-surface-control-hover`   | `hsl(38 20% 90%)`                                                             | Header icon control hover                         |
-| `--message-user-text`               | `text-message-user-text`           | `hsl(0 0% 12%)`                                                               | User message bubble text                          |
-| `--shadow-card`                     | `shadow-card`                      | `0 0 0 1px rgb(10 10 10 / 0.06), 0 4px 24px rgb(10 10 10 / 0.04)`             | Sidebar rail card and composer dock               |
-| `--shadow-card-opaque`              | `shadow-card-opaque`               | `0 0 0 1px rgb(10 10 10 / 0.08), 0 8px 28px rgb(10 10 10 / 0.1)`              | Composer form                                     |
-| `--shadow-menu` / `--shadow-dialog` | `shadow-menu`, `shadow-dialog`     | `0 4px 16px hsl(var(--always-black) / 10%)`, `0 8px 32px rgb(10 10 10 / 12%)` | Session menus and modal dialogs                   |
+| Token                               | Tailwind class                     | Light value                                                       | Usage                                             |
+| ----------------------------------- | ---------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------- |
+| `--bg-400`                          | `bg-bg-400`                        | `hsl(45 10% 88%)`                                                 | Sidebar row action hover                          |
+| `--text-300`                        | `text-text-300`                    | `hsl(43 3% 57%)`                                                  | Footer/action icon default color and loading dots |
+| `--rail-card-bg`                    | `bg-rail-card-bg`                  | `hsl(0 0% 100%)`                                                  | Sidebar rail card                                 |
+| `--danger-000` / `--danger-900`     | `text-danger-000`, `bg-danger-900` | `hsl(0 45% 38%)`, `hsl(0 55% 95%)`                                | Destructive session menu and dialog actions       |
+| `--action-panel-toggle`             | `text-action-panel-toggle`         | `hsl(0 0% 42%)`                                                   | Collapsed preview toggle                          |
+| `--surface-control-hover`           | `hover:bg-surface-control-hover`   | `hsl(38 20% 90%)`                                                 | Header icon control hover                         |
+| `--message-user-text`               | `text-message-user-text`           | `hsl(0 0% 12%)`                                                   | User message bubble text                          |
+| `--shadow-card`                     | `shadow-card`                      | `0 0 0 1px rgb(10 10 10 / 0.06), 0 4px 24px rgb(10 10 10 / 0.04)` | Sidebar rail card and composer dock               |
+| `--shadow-card-opaque`              | `shadow-card-opaque`               | `0 0 0 1px rgb(10 10 10 / 0.08), 0 8px 28px rgb(10 10 10 / 0.1)`  | Composer form                                     |
+| `--shadow-menu` / `--shadow-dialog` | `shadow-menu`, `shadow-dialog`     | `0 2px 8px rgb(0 0 0 / 0.08)`, `0 8px 32px rgb(10 10 10 / 12%)`   | Menus and modal dialogs                           |
 
 ### Border Opacity
 
@@ -268,11 +269,11 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 
 | Semantic role           | Light value             | Dark value            |
 | ----------------------- | ----------------------- | --------------------- |
-| Page background         | `rgb(253 253 252)`      | `rgb(31 31 30)`       |
-| Primary text            | `rgb(18 18 18)`         | `rgb(248 248 246)`    |
+| Page background         | `rgb(250 250 248)`      | `rgb(31 31 30)`       |
+| Primary text            | `rgb(32 35 33)`         | `rgb(248 248 246)`    |
 | Secondary text          | `rgb(55 55 52)`         | `rgb(195 194 183)`    |
-| Weak text / icons       | `rgb(123 121 116)`      | `rgb(148 146 139)`    |
-| Active background       | `rgb(239 238 235)`      | `rgb(18 18 18)`       |
+| Weak text / icons       | `rgb(100 103 98)`       | `rgb(148 146 139)`    |
+| Active background       | `rgb(236 236 234)`      | `rgb(18 18 18)`       |
 | Card / menu background  | `rgb(255 255 255)`      | `rgb(44 44 42)`       |
 | Primary actions / links | `oklch(0.47 0.105 184)` | `oklch(0.68 0.1 184)` |
 | Focus ring              | `oklch(0.58 0.11 184)`  | `oklch(0.7 0.1 184)`  |
@@ -294,9 +295,9 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 
 - Global base: `--radius: 0.5rem`.
 - Small buttons, tabs, and toolbar buttons: `rounded-md`, approximately `6px`.
-- Inputs, menu items, and navigation items: `rounded-lg` or `rounded-md`, approximately `8px`.
+- Inputs, shared menu items, and navigation items: `rounded-lg`, `8px`.
 - Cards / viewer panels: `rounded-lg`; viewer radius is `8px`.
-- Dialog / DropdownMenuContent: `rounded-xl`, `12px`.
+- Dialog: `rounded-xl`, `12px`; shared DropdownMenu / Select content: `rounded-lg`, `8px`.
 - Composer: `rounded-2xl`, `16px`.
 - Pills, drag handles, and status dots: `rounded-full`.
 
@@ -305,7 +306,7 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Page root: `bg-background text-foreground` on Home and generic shells; workspace shell surfaces use `bg-bg-10`.
 - Standard card: `bg-card text-card-foreground border shadow-sm`.
 - Large viewer panel: `bg-card rounded-lg shadow-sm`; a single ring shadow may replace an explicit border.
-- Hover / active: `bg-accent text-accent-foreground`.
+- Shared control hover / open: `bg-muted text-foreground`; content-level active surfaces may use `bg-accent text-accent-foreground` where specified.
 - Weak container: `bg-muted/50`.
 - Inline code / resource reference: `bg-accent/50 text-primary rounded-md px-1.5 py-0.5 font-mono text-sm`.
 - Workspace shell surfaces use `bg-bg-10`; white workspace surfaces use `bg-bg-000`.
@@ -326,13 +327,13 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 
 - All focusable controls use `focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50`.
 - Inputs may add `focus-visible:border-ring/50`; the light focus border target is `rgb(134 182 239)`.
-- Disabled controls use `disabled:pointer-events-none disabled:opacity-50`.
+- Disabled controls use `disabled:pointer-events-none disabled:opacity-50`; shared buttons also use `touch-manipulation`.
 - Sidebar buttons and icon triggers may use `cursor-pointer`; decorative row wrappers provide hover/active styling only and must not imply a click target outside the nested button.
 - Hover, focus, and active states must not change width, height, padding, or border width.
 
 ### Motion
 
-- Standard interaction: `transition-colors duration-150`.
+- Standard interaction: `transition-colors duration-150 motion-reduce:transition-none`.
 - Inline action reveal: `transition-opacity duration-150`, default `opacity-0`, then `opacity-100` on hover or focus-visible.
 - Workspace interactions use `transition-colors duration-200 ease-out`.
 - Session row action reveal uses `transition-[opacity,color,background-color] duration-200 ease-out`.
@@ -355,12 +356,13 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 
 - Primary action: `Button variant="default"` for create, confirm, and save actions.
 - Secondary action: `Button variant="secondary"`.
-- Outline action: `Button variant="outline"`; light borders use `border-border/30`.
+- Outline action: `Button variant="outline"`; default is `border-border bg-card text-foreground`, and hover / `aria-expanded` use `bg-muted` without changing geometry.
 - Lightweight / icon action: `Button variant="ghost" size="icon"`.
 - Destructive action: `Button variant="destructive"` or menu item `text-destructive focus:text-destructive`.
-- Default button: `h-9 px-4 rounded-lg text-sm font-medium`.
-- Compact button: `h-8 px-3 rounded-md text-xs font-medium`; the top create button is `32px` tall.
-- Icon button: usually `size-8 rounded-md`; top bars and viewer toolbar buttons may use `size-7`.
+- Default button: `h-8 px-2.5 rounded-lg text-sm font-medium`.
+- Small button: `h-7 px-2.5 text-[0.8rem]`; large button: `h-9 px-2.5`.
+- Icon button: usually `size-8 rounded-lg`; compact top bars and row actions use `size-7`.
+- Focus is `focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50`; disabled is non-interactive at `opacity-50`. Button feedback uses an explicit transition property list and disables it for reduced motion.
 
 ### External Link
 
@@ -381,8 +383,8 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 
 - Use `Dialog` for regular form dialogs.
 - Use `AlertDialog` for destructive confirmations.
-- Medium `DialogContent`: `sm:max-w-[576px] max-h-[85svh] rounded-xl border bg-background p-0 shadow-lg`; target size is approximately `576px x 612px`.
-- Large settings `DialogContent`: `sm:max-w-[960px] h-[min(688px,calc(100svh-2rem))] rounded-xl bg-card p-0 shadow-md`.
+- Medium `DialogContent`: `sm:max-w-[576px] max-h-[85svh] overscroll-contain rounded-xl border bg-background p-0 shadow-lg`; target size is approximately `576px x 612px`.
+- Large settings `DialogContent`: `sm:max-w-[960px] h-[min(688px,calc(100svh-2rem))] overscroll-contain rounded-xl bg-card p-0 shadow-md`.
 - Compact workspace rename/delete dialogs: `w-[min(420px,calc(100vw-2rem))] rounded-2xl bg-bg-000 p-6 text-text-000 shadow-dialog`, without header/footer dividers.
 - Header: `px-5 py-4`, with `border-b` when needed.
 - Body: `px-5 py-5`; form items use `space-y-4` or `space-y-6`.
@@ -395,16 +397,16 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 ### DropdownMenu / Popover / Select
 
 - Use DropdownMenu for action menus, Popover for lightweight auxiliary layers, and Select for single-value selection.
-- `DropdownMenuContent` / `PopoverContent`: `rounded-xl border bg-popover p-1.5 text-popover-foreground shadow-md`; menu target size is approximately `168px x 101px`.
+- `DropdownMenuContent`: `overscroll-contain rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-menu`; `shadow-menu` is `0 2px 8px rgb(0 0 0 / 0.08)`. Popovers may keep their domain-specific layout.
 - Menu header / label: `px-2 pt-1 pb-0.5 text-xs text-muted-foreground`.
 - Item: `h-8 rounded-lg px-2 py-1.5 text-sm`.
-- Item hover / focus: `focus:bg-accent focus:text-accent-foreground`.
+- Shared item hover / keyboard highlight: `bg-muted text-foreground`; disabled items are non-interactive at `opacity-50`.
 - Session action menu content: `z-modal min-w-[9rem] rounded-xl border-[0.5px] border-border-200 bg-bg-000 p-1.5 shadow-menu`.
 - Session action trigger uses `MoreVertical`, opacity reveal on row hover/focus/menu-open, and an `aria-label` that includes the session title.
 - Session action items: `flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-text-100 data-[highlighted]:bg-bg-200 data-[highlighted]:text-text-000`.
 - Destructive session item: `text-danger-000 data-[highlighted]:bg-danger-900`; the menu includes only `Rename…` and `Delete`.
-- Select trigger: `h-8 rounded-lg bg-card/50 px-2 shadow-sm`; dark mode may use `bg-white/10`.
-- Select option: `min-h-8 rounded-lg px-3 py-1 text-sm`; selected state uses `bg-foreground/5` or the shadcn default active state.
+- Select trigger: `h-8 rounded-lg border border-border bg-card px-2.5`; hover and `data-state=open` use `bg-muted`, and keyboard focus uses the shared 3px ring.
+- Select content uses the same overscroll containment, surface, border, radius, and shadow as DropdownMenu. Options are `min-h-8 rounded-lg`; keyboard highlight uses `bg-muted text-foreground`.
 - Menus do not use a page scrim.
 
 ### Tabs / ToggleGroup
@@ -545,14 +547,17 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 
 ### Settings
 
-- Use a large `Dialog`; the default panel is bordered `rounded-xl border border-border bg-card shadow-dialog`. A maximize control enlarges it to `h-[80vh] w-[80vw]`; the restored size follows content density.
-- Left navigation: `w-52 shrink-0 border-r border-border bg-muted/40 p-3`, organized into labeled groups (for example Capabilities and Workspace). Each group has a `text-xs font-medium text-muted-foreground` heading over its rows.
-- Nav item: `h-8 w-full rounded-lg px-2 text-sm gap-2 hover:bg-accent`, with a `size-4` leading icon (`text-muted-foreground`) and a truncating label.
-- Active: `bg-accent text-accent-foreground font-medium`.
+- Use a large `Dialog`; the restored panel is `h-[min(688px,calc(100vh-2rem))] w-[min(960px,calc(100vw-2rem))] rounded-xl border border-border bg-card shadow-dialog`. Maximize uses `inset-4`, filling the viewport with a stable 16px margin and never shrinking the restored panel.
+- Settings consumes the global semantic palette: background `#FAFAF8`, card/popover `#FFFFFF`, muted/secondary `#ECECEA`, border/input `#DEDEDA`, foreground `#202321`, and muted foreground `#646762`. Do not scope token overrides to the dialog or use `body:has(...)`; Radix portals inherit these root tokens directly.
+- Left navigation: `w-52 shrink-0 border-r border-border bg-background p-3`, organized into labeled groups (for example Capabilities and Workspace). Each group has a `text-xs font-medium text-muted-foreground` heading over its rows.
+- Nav item: `h-8 w-full rounded-lg px-2 text-sm gap-2 hover:bg-muted`, with a `size-4` leading icon (`text-muted-foreground`) and a truncating label.
+- Active: `bg-muted text-foreground font-medium`; the neutral selection keeps deep green reserved for primary actions, focus, links, enabled switches, and success.
 - Content header: `h-12 border-b border-border px-3`, a space-between row. Left cluster: back / forward `size-7` icon buttons (`ArrowLeft` / `ArrowRight`, `disabled:opacity-40`), a `h-4 w-px bg-border` divider, then either a breadcrumb or a plain `h2 text-sm font-semibold` title. Right cluster: a maximize / restore `size-7` toggle (`Maximize2` / `Minimize2`) and a `size-7` close (`X`); both use `hover:bg-muted hover:text-foreground`.
 - Breadcrumb: a clickable root segment (`text-muted-foreground hover:text-foreground`), a muted `/` separator, and the truncated current page label in `text-foreground`, all at `text-sm font-semibold`.
-- Content area: scrolls independently (`min-h-0 flex-1 overflow-y-auto`); panels pad with `p-5`.
-- Form row: use `Field`; explanatory copy uses `FieldDescription` or `text-muted-foreground`.
+- Right content column uses `bg-card`; its content area scrolls independently (`min-h-0 flex-1 overflow-y-auto`). Panels pad with `p-5`, and maximize mode constrains inner content to `max-w-[880px]`.
+- First-level groups use `SettingsSection`: `text-base font-semibold` title, optional `text-[13px] leading-5 text-muted-foreground` description, and a hairline separator between groups. Do not wrap ordinary sections in cards.
+- Label/control pairs use `SettingsRow`: a two-column grid with the label and optional description on the left and a stable `12rem` to `20rem` control column on the right. Cards remain for repeated objects, install/status surfaces, paths, errors, and drop zones.
+- Form textareas use the shared `Textarea`; binary settings use the shared `Switch`.
 - Select fields use `Select`, with a `32px` trigger height.
 
 #### Skills panel
@@ -561,9 +566,9 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - List toolbar: a single row of `Select` source filter (`w-36`), a flex-1 search `Input` with a leading `Search` icon (`pl-8`, `type="search"`), and a right-aligned "Add skill" control.
 - "Add skill" is a neutral (not primary) `DropdownMenu` trigger: `h-8 rounded-lg border border-border bg-card px-2.5 text-sm font-medium hover:bg-muted`, with a leading `Plus` and a trailing `ChevronDown` (`opacity-70`). Its items — Write from scratch, Upload a skill, Import from GitHub — use `gap-2.5`, a leading icon, and a stacked label + `text-xs text-muted-foreground` hint.
 - Skills group by source (Featured / Imported / Personal). Each group header is a full-width collapse toggle: `text-sm font-semibold` label with a `ChevronDown` that rotates `-rotate-90` when collapsed, over a `text-xs text-muted-foreground` subtitle.
-- Skill row: `flex items-center gap-2 py-2.5`, rows separated by `divide-y divide-border`. The name (`text-sm`) over description (`text-xs text-muted-foreground`) is a flex-1 button opening the detail page; trailing controls are a `size-7` edit button (personal only), a `size-7` delete button (`hover:text-destructive`, non-featured only), and the enable toggle.
-- Enable toggle is an inline `role="switch"` (no shared Switch component): `h-5 w-9 rounded-full`, track `bg-primary` when on / `bg-muted` when off, with a `size-4` white knob that slides `translate-x-4`. The detail page reuses the same markup.
-- Skill detail page: header row pairs a `size-6` scroll icon (`ScrollText`, `text-primary`) + `text-heading font-semibold` name + a rounded source badge (`bg-muted text-xs text-muted-foreground`, e.g. Featured) against the same enable toggle, with a `text-xs text-muted-foreground` "Updated N days ago" line and a `[text-wrap:pretty]` description below. A **Files** section (`border-t border-border pt-4`) renders the `SKILL.md` body via `AgentMarkdown`; a **Details** section lists frontmatter Author / License / Third-party as stacked `text-xs` label + `text-sm` value rows, shown only when present.
+- Skill row: `flex min-h-14 items-center gap-2 py-2.5`, rows separated by `divide-y divide-border`. The name (`text-sm`) over description (`text-xs text-muted-foreground`) is a flex-1 button opening the detail page; trailing controls use `SettingsIconAction` (`Button ghost icon-sm` + Tooltip) for edit and delete, followed by the enable switch.
+- Enable controls use the shared shadcn `Switch`, with `bg-primary` when checked and `bg-input` when unchecked. Skills, Connectors, and their detail pages reuse the same component.
+- Skill detail page: header row pairs a `size-6` scroll icon (`ScrollText`, `text-primary`) + `text-base font-semibold` name + a rounded source badge (`bg-muted text-xs text-muted-foreground`, e.g. Featured) against the same enable switch, with a `text-xs text-muted-foreground` "Updated N days ago" line and a `[text-wrap:pretty]` description below. A **Files** section (`border-t border-border pt-4`) renders the `SKILL.md` body via `AgentMarkdown`; a **Details** section lists frontmatter Author / License / Third-party as stacked `text-xs` label + `text-sm` value rows, shown only when present.
 - Editor (create / edit) is sectioned Identity + Content + References: Content offers a Write / Upload toggle where pasting a `SKILL.md` auto-fills the frontmatter; References is a dropzone writing into the skill's `references/`.
 - Import from GitHub is Preview-first: no standalone import action initially, only a **Preview** button that scans the repo. Scanned candidates list with per-row checkboxes plus a **Select all** checkbox and an **Invert** text button; already-imported skills (matched by exact source URL or by the same folder name) show a muted `Imported` pill and are not pre-selected. The batch action, "Import selected (N)", is a neutral button (`border border-border bg-card hover:bg-muted`), never primary green.
 - Upload is a full-page dropzone (`Drag and drop or click to upload`) accepting a `.md` file or a `.zip` / `.skill` bundle, with a centered "Write from scratch instead" fallback. A dropped file is **parsed first, not imported**: on success it advances to a "Confirm import" page (parsed name, description, and — for a bundle — the file list), with a neutral **Import** button and a **Choose a different file** escape. Nothing is written until Import is confirmed.
@@ -581,7 +586,7 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 | Home              | Row actions                          | `Button ghost icon` + opacity reveal                                                     |
 | Dialog            | Close                                | `DialogClose` or `Button ghost icon`                                                     |
 | Dialog            | Cancel / confirm                     | `DialogFooter` + `Button secondary/default`                                              |
-| Settings          | Left navigation                      | `Button ghost` or `TabsTrigger`; active uses `bg-accent`                                 |
+| Settings          | Left navigation                      | `Button ghost` or `TabsTrigger`; active uses `bg-muted`                                  |
 | Settings          | Back / forward                       | `size-7` icon `button` (`ArrowLeft` / `ArrowRight`), `disabled:opacity-40`               |
 | Settings          | Breadcrumb root                      | Text `button` (`text-muted-foreground hover:text-foreground`)                            |
 | Settings          | Maximize / restore                   | `size-7` icon `button` (`Maximize2` / `Minimize2`)                                       |
@@ -590,8 +595,8 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 | Skills            | Add skill                            | Neutral `DropdownMenu` trigger (`border border-border bg-card`) + `Plus` / `ChevronDown` |
 | Skills            | Group header                         | Full-width collapse `button` + rotating `ChevronDown`                                    |
 | Skills            | Skill row                            | Flex-1 `button` → detail; hover reveals no extra chrome                                  |
-| Skills            | Edit / delete                        | `size-7` icon `button`; delete uses `hover:text-destructive`                             |
-| Skills            | Enable toggle                        | Inline `button role="switch"` (`h-5 w-9`)                                                |
+| Skills            | Edit / delete                        | `SettingsIconAction` (`Button ghost icon-sm` + `Tooltip`)                                |
+| Skills            | Enable toggle                        | Shared shadcn `Switch`                                                                   |
 | Skills            | Import selected                      | Neutral `button` (`border border-border bg-card`), not primary                           |
 | Sidebar           | Back / collapse                      | `Sidebar` + `Button ghost icon`                                                          |
 | Sidebar           | Navigation row                       | `SidebarMenuButton`                                                                      |

@@ -71,6 +71,9 @@ describe('ComposerPermissionProfilePicker', () => {
         <ComposerPermissionProfilePicker value="ask" onChange={onChange} disabled={false} />
       )
     })
+    const trigger = container.querySelector('[aria-label="Permission mode: Ask for approval"]')
+    expect(trigger?.getAttribute('data-slot')).toBe('button')
+    expect(trigger?.getAttribute('data-variant')).toBe('ghost')
     act(() =>
       findButton(
         'Auto-approve editsAuto-approve edits to files in the workspace. Still ask before commands, network, and MCP.'
@@ -95,6 +98,9 @@ describe('ComposerPermissionProfilePicker', () => {
 
     expect(onChange).not.toHaveBeenCalled()
     expect(container.textContent).toContain('Enable Full access?')
+    expect(findButton('Cancel').getAttribute('data-slot')).toBe('button')
+    expect(findButton('Cancel').getAttribute('data-variant')).toBe('outline')
+    expect(findButton('Enable').getAttribute('data-slot')).toBe('button')
 
     act(() => findButton('Enable').click())
     expect(onChange).toHaveBeenCalledWith('full')

@@ -1,5 +1,6 @@
 import { Check, ChevronDown } from 'lucide-react'
 
+import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -55,26 +56,28 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className={triggerClassName} aria-label="Select model">
-        {current ? (
-          <ProviderKindIcon
-            kindKey={providerKindKey(current.providerType, current.vendorId)}
-            className="size-4"
-          />
-        ) : null}
-        <span className="truncate">
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" className={triggerClassName} aria-label="Select model">
           {current ? (
-            <>
-              <span className="font-medium text-text-100">{optionLabel(current)}</span>
-              {current.model ? (
-                <span className="ml-1.5 text-text-300">· {current.providerName}</span>
-              ) : null}
-            </>
-          ) : (
-            'Select model'
-          )}
-        </span>
-        <ChevronDown className="size-3.5 shrink-0" aria-hidden="true" />
+            <ProviderKindIcon
+              kindKey={providerKindKey(current.providerType, current.vendorId)}
+              className="size-4"
+            />
+          ) : null}
+          <span className="truncate">
+            {current ? (
+              <>
+                <span className="font-medium text-text-100">{optionLabel(current)}</span>
+                {current.model ? (
+                  <span className="ml-1.5 text-text-300">· {current.providerName}</span>
+                ) : null}
+              </>
+            ) : (
+              'Select model'
+            )}
+          </span>
+          <ChevronDown className="size-3.5 shrink-0" aria-hidden="true" />
+        </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="max-h-[320px] min-w-[15rem] overflow-y-auto">
         {groups.map((group) => (

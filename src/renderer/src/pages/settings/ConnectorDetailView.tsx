@@ -7,7 +7,7 @@ import type {
 } from '../../../../shared/settings'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ConnectorGlyph } from './connector-icons'
-import { SkillToggle } from './SkillsPanel'
+import { SettingsToggle } from './SettingsLayout'
 import { ToolPermissionControl } from './ToolPermissionControl'
 
 type ConnectorDetailViewProps = {
@@ -79,7 +79,7 @@ const ConnectorDetailView = ({ id }: ConnectorDetailViewProps): React.JSX.Elemen
         <div className="flex min-w-0 items-center gap-3">
           <ConnectorGlyph size={28} />
           <div className="flex min-w-0 items-center gap-2">
-            <h1 className="truncate text-heading font-semibold text-foreground">
+            <h1 className="truncate text-base font-semibold text-foreground">
               {detail.displayName}
             </h1>
             <span className="inline-flex shrink-0 items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
@@ -87,9 +87,9 @@ const ConnectorDetailView = ({ id }: ConnectorDetailViewProps): React.JSX.Elemen
             </span>
           </div>
         </div>
-        <SkillToggle
+        <SettingsToggle
           enabled={enabled}
-          label={`Toggle ${detail.displayName}`}
+          aria-label={`Toggle ${detail.displayName}`}
           onToggle={() => void setConnectorEnabled(id, !enabled)}
         />
       </div>
@@ -109,9 +109,9 @@ const ConnectorDetailView = ({ id }: ConnectorDetailViewProps): React.JSX.Elemen
             time.
           </p>
         </div>
-        <SkillToggle
+        <SettingsToggle
           enabled={autoAllow}
-          label={`Skip approvals for ${id}`}
+          aria-label={`Skip approvals for ${id}`}
           onToggle={() => void setConnectorAutoAllow(id, !autoAllow)}
         />
       </div>
@@ -137,7 +137,7 @@ const ConnectorDetailView = ({ id }: ConnectorDetailViewProps): React.JSX.Elemen
                       className="flex min-w-0 flex-1 items-center gap-2 py-2.5 text-left"
                     >
                       <ChevronRight
-                        className={`size-4 shrink-0 text-muted-foreground transition-transform ${
+                        className={`size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${
                           isExpanded ? 'rotate-90' : ''
                         }`}
                         aria-hidden="true"

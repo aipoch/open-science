@@ -169,6 +169,19 @@ describe('workspace page component boundaries', () => {
     expect(workspaceSources).not.toContain('text-text-400')
   })
 
+  it('defines the token used by mention popup shadows', () => {
+    const mainCssSource = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
+    const mentionPopupSources = [
+      resolve(__dirname, 'composer/SkillMentionPopup.tsx'),
+      resolve(__dirname, 'composer/ArtifactMentionPopup.tsx')
+    ]
+      .map((path) => readFileSync(path, 'utf8'))
+      .join('\n')
+
+    expect(mentionPopupSources).toContain('var(--always-black)')
+    expect(mainCssSource).toContain('--always-black:')
+  })
+
   it('uses the shared primary token for every workspace emphasis state', () => {
     const emphasisSources = [
       conversationPanelPath,

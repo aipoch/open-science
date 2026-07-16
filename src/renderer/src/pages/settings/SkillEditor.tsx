@@ -3,9 +3,12 @@ import { useEffect, useMemo, useState } from 'react'
 
 import type { SkillReference } from '../../../../shared/settings'
 import { FileDropOverlay } from '@/components/FileDropOverlay'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { useSettingsStore } from '@/stores/settings-store'
+import { SettingsIconAction } from './SettingsLayout'
 
 export type SkillDraft = {
   id?: string
@@ -176,9 +179,9 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="max-w-2xl p-5">
+        <div className="p-5">
           <section>
-            <h3 className="text-base font-semibold text-foreground">Identity</h3>
+            <h2 className="text-base font-semibold text-foreground">Identity</h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
               How this skill appears in the catalog and to the agent.
             </p>
@@ -227,13 +230,13 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
               </label>
               <label className="flex flex-col gap-1.5">
                 <span className="text-sm font-medium text-foreground">Description</span>
-                <textarea
+                <Textarea
                   aria-label="Skill description"
                   value={description}
                   onChange={(event) => setDescription(event.target.value)}
                   rows={2}
                   placeholder="One sentence — what does this skill teach the agent, and when does it apply?"
-                  className="w-full resize-none rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                  className="resize-none text-sm"
                 />
                 <span className="text-xs text-muted-foreground">
                   This is how the agent decides when to use the skill — be specific.
@@ -247,7 +250,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
           <section>
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h3 className="text-base font-semibold text-foreground">Content</h3>
+                <h2 className="text-base font-semibold text-foreground">Content</h2>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   Markdown shown to the agent when the skill is invoked.
                 </p>
@@ -262,7 +265,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                   role="radio"
                   aria-checked={contentMode === 'write'}
                   onClick={() => setContentMode('write')}
-                  className={`inline-flex h-7 items-center rounded-md px-2.5 text-sm transition-colors ${
+                  className={`inline-flex h-7 items-center rounded-md px-2.5 text-sm transition-colors motion-reduce:transition-none ${
                     contentMode === 'write'
                       ? 'bg-card font-medium text-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground'
@@ -275,7 +278,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                   role="radio"
                   aria-checked={contentMode === 'upload'}
                   onClick={() => setContentMode('upload')}
-                  className={`inline-flex h-7 items-center rounded-md px-2.5 text-sm transition-colors ${
+                  className={`inline-flex h-7 items-center rounded-md px-2.5 text-sm transition-colors motion-reduce:transition-none ${
                     contentMode === 'upload'
                       ? 'bg-card font-medium text-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground'
@@ -288,13 +291,13 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
 
             {contentMode === 'write' ? (
               <>
-                <textarea
+                <Textarea
                   aria-label="Skill body"
                   value={body}
                   onChange={(event) => handleBodyChange(event.target.value)}
                   rows={16}
                   placeholder={'# Instructions\n\nStep-by-step guidance for the agent…'}
-                  className="mt-4 min-h-64 w-full resize-none rounded-lg border border-input bg-transparent px-2.5 py-2 font-mono text-[13px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                  className="mt-4 min-h-64 resize-none font-mono text-[13px]"
                 />
                 <p className="mt-1.5 text-xs text-muted-foreground">
                   Paste a full SKILL.md — if it has a <code className="font-mono">---</code>{' '}
@@ -306,7 +309,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                 type="button"
                 onClick={uploadContent}
                 {...contentDrop.dropZoneProps}
-                className="relative mt-4 flex w-full flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-8 text-center transition-colors hover:bg-muted/50"
+                className="relative mt-4 flex w-full flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-8 text-center transition-colors motion-reduce:transition-none hover:bg-muted/50"
               >
                 {contentDrop.isDragging ? (
                   <FileDropOverlay label="Drop to upload" className="rounded-lg" />
@@ -325,14 +328,14 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
           <div className="my-6 h-px bg-border" />
 
           <section>
-            <h3 className="text-base font-semibold text-foreground">References</h3>
+            <h2 className="text-base font-semibold text-foreground">References</h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
               Supporting files (scripts, templates, data) the skill can read at runtime.
             </p>
 
             <label
               {...referenceDrop.dropZoneProps}
-              className="relative mt-4 flex cursor-pointer flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-6 text-center transition-colors hover:bg-muted/50"
+              className="relative mt-4 flex cursor-pointer flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-6 text-center transition-colors motion-reduce:transition-none hover:bg-muted/50"
             >
               {referenceDrop.isDragging ? (
                 <FileDropOverlay label="Drop reference files" className="rounded-lg" />
@@ -360,16 +363,15 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                     <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">
                       references/{ref.path}
                     </span>
-                    <button
-                      type="button"
-                      aria-label={`Remove ${ref.path}`}
+                    <SettingsIconAction
+                      label={`Remove ${ref.path}`}
+                      icon={X}
                       onClick={() =>
                         setReferences((prev) => prev.filter((item) => item.path !== ref.path))
                       }
-                      className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
-                    >
-                      <X className="size-3.5" aria-hidden="true" />
-                    </button>
+                      className="size-6"
+                      danger
+                    />
                   </li>
                 ))}
               </ul>
@@ -379,21 +381,12 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
       </div>
 
       <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border bg-card px-5 py-3">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="inline-flex h-8 items-center rounded-lg px-3 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
+        <Button type="button" variant="ghost" onClick={onCancel}>
           Cancel
-        </button>
-        <button
-          type="button"
-          onClick={() => void handleSave()}
-          disabled={!canSave}
-          className="inline-flex h-8 items-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50"
-        >
+        </Button>
+        <Button type="button" onClick={() => void handleSave()} disabled={!canSave}>
           {saving ? 'Saving…' : initial.id ? 'Save' : 'Publish'}
-        </button>
+        </Button>
       </div>
     </div>
   )

@@ -61,6 +61,7 @@ describe('ProviderList', () => {
   it('shows the masked key and model but never a plaintext key', () => {
     renderList([provider()])
 
+    expect(container.querySelector('[data-slot="settings-list-row"]')).not.toBeNull()
     expect(container.textContent).toContain('sk-a…wxyz')
     expect(container.textContent).toContain('claude-sonnet-4-5')
     // A masked hint is displayed, but there is no way to render a real secret here.

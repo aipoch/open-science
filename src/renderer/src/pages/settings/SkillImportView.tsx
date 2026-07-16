@@ -1,6 +1,7 @@
 import { useState } from 'react'
 
 import type { ScannedSkillView, SkillView } from '../../../../shared/settings'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useSettingsStore } from '@/stores/settings-store'
 
@@ -87,9 +88,9 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
     })
 
   return (
-    <div className="max-w-2xl p-5">
-      <h2 className="text-lg font-semibold text-foreground">Import from GitHub</h2>
-      <p className="mt-0.5 text-sm text-muted-foreground">
+    <div className="p-5">
+      <h2 className="text-base font-semibold text-foreground">Import from GitHub</h2>
+      <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
         Preview a repo or skill folder (owner/repo, owner/repo@ref, or a github.com URL), then pick
         the skills you want to import.
       </p>
@@ -104,14 +105,15 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
             if (event.key === 'Enter') void runPreview()
           }}
         />
-        <button
+        <Button
           type="button"
+          variant="outline"
           onClick={() => void runPreview()}
           disabled={busy || input.trim().length === 0}
-          className="inline-flex h-8 shrink-0 items-center rounded-lg border border-border px-3 text-sm text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+          className="shrink-0"
         >
           {busy ? 'Working…' : 'Preview'}
-        </button>
+        </Button>
       </div>
       {message ? <p className="mt-2 text-xs text-muted-foreground">{message}</p> : null}
 
@@ -132,22 +134,18 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
                 />
                 Select all
               </label>
-              <button
-                type="button"
-                onClick={invertSelection}
-                className="text-xs text-muted-foreground transition-colors hover:text-foreground"
-              >
+              <Button type="button" variant="ghost" size="sm" onClick={invertSelection}>
                 Invert
-              </button>
+              </Button>
             </div>
-            <button
+            <Button
               type="button"
+              variant="outline"
               onClick={() => void importSelected()}
               disabled={busy || selected.size === 0}
-              className="inline-flex h-8 items-center rounded-lg border border-border bg-card px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
             >
               Import selected ({selected.size})
-            </button>
+            </Button>
           </div>
           <ul className="mt-2 flex flex-col divide-y divide-border">
             {scanned.map((skill) => (

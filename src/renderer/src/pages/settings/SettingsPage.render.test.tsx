@@ -84,6 +84,25 @@ afterEach(() => {
 
 describe('SettingsPage layout', () => {
   it('mounts the sidebar + content with grouped nav items and a close control', () => {
+    useSettingsStore.setState({
+      providers: [
+        {
+          id: 'p1',
+          type: 'custom',
+          name: 'Gateway',
+          baseUrl: 'https://gateway.test/v1',
+          model: 'test-model',
+          models: ['test-model'],
+          maskedKey: 'sk-a…wxyz',
+          hasKey: true,
+          needsKey: false,
+          lastValidatedAt: 1
+        }
+      ],
+      activeProviderId: 'p1',
+      activeModel: 'test-model'
+    })
+
     act(() => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
@@ -91,10 +110,14 @@ describe('SettingsPage layout', () => {
     // Dialog content is portaled to the document body.
     const dialog = document.body.querySelector('[role="dialog"]')
     expect(dialog).not.toBeNull()
+    expect(dialog?.getAttribute('data-slot')).toBe('settings-surface')
+    expect(dialog?.className).toContain('overscroll-contain')
 
     // Left navigation grouped as Capabilities (Skills) and Workspace (Model, General).
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
+    expect(nav?.className).toContain('bg-background')
+    expect(nav?.nextElementSibling?.className).toContain('bg-card')
     expect(nav?.textContent).toContain('Capabilities')
     expect(nav?.textContent).toContain('Workspace')
     const navItems = nav?.querySelectorAll('li') ?? []
@@ -108,10 +131,18 @@ describe('SettingsPage layout', () => {
 
     // The header shows the panel title and a close control.
     expect(document.body.querySelector('[aria-label="Close settings"]')).not.toBeNull()
+    expect(document.body.querySelector('[aria-label="Back"]')?.getAttribute('data-slot')).toBe(
+      'button'
+    )
+    expect(document.body.querySelector('[aria-label="Maximize"]')?.getAttribute('data-slot')).toBe(
+      'button'
+    )
 
     // The Model panel content is present (Claude + Providers sections).
     expect(document.body.textContent).toContain('Claude')
     expect(document.body.textContent).toContain('Providers')
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(2)
+    expect(document.body.querySelector('[data-slot="settings-row"]')).not.toBeNull()
   })
 
   it('opens Add provider as a history-driven sub-page and returns via the back arrow', () => {
@@ -167,6 +198,9 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       generalTab?.click()
     })
+
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(3)
+    expect(document.body.querySelector('[data-slot="settings-row"]')).not.toBeNull()
 
     // The Diagnostics panel surfaces the log file path plus Open and Reveal controls.
     expect(document.body.textContent).toContain('main.log')
@@ -367,5 +401,9 @@ describe('SettingsPage layout', () => {
     // After maximizing, the control flips to Restore.
     expect(document.body.querySelector('[aria-label="Restore"]')).not.toBeNull()
     expect(document.body.querySelector('[aria-label="Maximize"]')).toBeNull()
+    const dialog = document.body.querySelector<HTMLElement>('[data-slot="settings-surface"]')
+    expect(dialog?.className).toContain('inset-4')
+    expect(dialog?.className).not.toContain('h-[80vh]')
+    expect(dialog?.className).not.toContain('w-[80vw]')
   })
 })

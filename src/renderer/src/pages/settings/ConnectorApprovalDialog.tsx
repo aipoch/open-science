@@ -1,6 +1,7 @@
 import { ShieldAlert } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 
+import { Button } from '@/components/ui/button'
 import { useSettingsStore } from '@/stores/settings-store'
 
 // A modal approval card for an un-trusted connector call. A connector tool sends data to an external
@@ -36,7 +37,7 @@ export function ConnectorApprovalDialog(): React.JSX.Element | null {
         <Dialog.Content
           onInteractOutside={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => event.preventDefault()}
-          className="fixed left-1/2 top-1/2 z-[60] w-[min(440px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5 text-foreground shadow-dialog"
+          className="fixed left-1/2 top-1/2 z-[60] w-[min(440px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overscroll-contain rounded-xl border border-border bg-card p-5 text-foreground shadow-dialog"
         >
           <div className="flex items-start gap-3">
             <ShieldAlert className="mt-0.5 size-5 shrink-0 text-amber-500" aria-hidden="true" />
@@ -69,27 +70,15 @@ export function ConnectorApprovalDialog(): React.JSX.Element | null {
           </div>
 
           <div className="mt-4 flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={deny}
-              className="rounded-lg border border-border px-3 py-1.5 text-sm text-destructive transition-colors hover:bg-muted"
-            >
+            <Button type="button" variant="destructive" onClick={deny}>
               Deny
-            </button>
-            <button
-              type="button"
-              onClick={allowAlways}
-              className="rounded-lg border border-border px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-muted"
-            >
+            </Button>
+            <Button type="button" variant="outline" onClick={allowAlways}>
               Always allow
-            </button>
-            <button
-              type="button"
-              onClick={allowOnce}
-              className="rounded-lg border border-primary bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-            >
+            </Button>
+            <Button type="button" onClick={allowOnce}>
               Allow once
-            </button>
+            </Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

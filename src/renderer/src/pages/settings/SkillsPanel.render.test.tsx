@@ -103,7 +103,25 @@ describe('SkillsPanel (list view)', () => {
     expect(document.body.textContent).toContain('Alpha')
     expect(document.body.textContent).toContain('Mine')
     expect(document.body.querySelectorAll('[role="switch"]')).toHaveLength(3)
+    expect(document.body.querySelectorAll('[data-slot="switch"]')).toHaveLength(3)
+    const switches = document.body.querySelectorAll<HTMLElement>('[data-slot="switch"]')
+    expect(switches[0]?.getAttribute('data-state')).toBe('checked')
+    expect(switches[0]?.className).toContain('data-[state=checked]:bg-primary')
+    expect(switches[0]?.className).toContain('ml-1')
+    expect(switches[0]?.className).toContain('mr-3')
+    expect(switches[1]?.getAttribute('data-state')).toBe('unchecked')
+    expect(
+      switches[0]?.querySelector<HTMLElement>('[data-slot="switch-thumb"]')?.className
+    ).toContain('data-[state=checked]:translate-x')
+    expect(document.body.querySelectorAll('[data-slot="settings-list-row"]')).toHaveLength(3)
     expect(document.body.textContent).toContain('Add skill')
+    const addSkill = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Add skill')
+    )
+    expect(addSkill?.getAttribute('data-slot')).toBe('button')
+    expect(addSkill?.getAttribute('data-variant')).toBe('outline')
+    expect(addSkill?.className).toContain('bg-card')
+    expect(switches[0]?.className).toContain('motion-reduce:transition-none')
   })
 
   it('toggles a skill and navigates to its detail on row click', () => {
@@ -137,7 +155,16 @@ describe('SkillsPanel (list view)', () => {
       root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
     })
 
-    act(() => document.body.querySelector<HTMLButtonElement>('[aria-label="Delete Mine"]')?.click())
+    const edit = document.body.querySelector<HTMLButtonElement>('[aria-label="Edit Mine"]')
+    const remove = document.body.querySelector<HTMLButtonElement>('[aria-label="Delete Mine"]')
+    expect(edit?.getAttribute('data-slot')).toBe('button')
+    expect(remove?.getAttribute('data-slot')).toBe('button')
+    expect(edit?.getAttribute('data-size')).toBe('icon-sm')
+    expect(remove?.getAttribute('data-size')).toBe('icon-sm')
+    expect(edit?.getAttribute('data-state')).toBe('closed')
+    expect(remove?.getAttribute('data-state')).toBe('closed')
+
+    act(() => remove?.click())
     expect(useSettingsStore.getState().deleteSkill).toHaveBeenCalledWith('personal-mine')
   })
 })
@@ -150,6 +177,12 @@ describe('SkillsPanel (sub-views)', () => {
     })
 
     expect(document.body.textContent).toContain('Identity')
+    expect(
+      document.body.querySelector('[aria-label="Skill description"]')?.getAttribute('data-slot')
+    ).toBe('textarea')
+    expect(
+      document.body.querySelector('[aria-label="Skill body"]')?.getAttribute('data-slot')
+    ).toBe('textarea')
     setValue('Skill name', 'My New Skill')
     setValue('Skill body', '# Body')
 

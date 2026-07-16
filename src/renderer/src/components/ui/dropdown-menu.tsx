@@ -18,7 +18,7 @@ function DropdownMenuContent({
         data-slot="dropdown-menu-content"
         sideOffset={sideOffset}
         className={cn(
-          'z-50 min-w-[8rem] overflow-hidden rounded-lg border border-border-200 bg-bg-10 p-1.5 text-text-000 shadow-card',
+          'z-50 min-w-[8rem] overflow-hidden overscroll-contain rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-menu outline-none',
           className
         )}
         {...props}
@@ -35,7 +35,7 @@ function DropdownMenuItem({
     <DropdownMenuPrimitive.Item
       data-slot="dropdown-menu-item"
       className={cn(
-        'relative flex cursor-pointer items-center rounded-md px-2 py-1.5 text-sm outline-none transition-colors select-none hover:bg-bg-200 data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-bg-200 data-[highlighted]:text-text-000',
+        'relative flex min-h-8 cursor-pointer items-center rounded-lg px-2 py-1.5 text-sm outline-none transition-colors duration-150 select-none motion-reduce:transition-none hover:bg-muted data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-muted data-[highlighted]:text-foreground',
         className
       )}
       {...props}
@@ -50,7 +50,7 @@ function DropdownMenuLabel({
   return (
     <DropdownMenuPrimitive.Label
       data-slot="dropdown-menu-label"
-      className={cn('px-2 py-1 text-[12px] text-text-300', className)}
+      className={cn('px-2 py-1 text-xs text-muted-foreground', className)}
       {...props}
     />
   )
@@ -63,7 +63,7 @@ function DropdownMenuSeparator({
   return (
     <DropdownMenuPrimitive.Separator
       data-slot="dropdown-menu-separator"
-      className={cn('-mx-1 my-1 h-px bg-border-300/50', className)}
+      className={cn('-mx-1 my-1 h-px bg-border', className)}
       {...props}
     />
   )

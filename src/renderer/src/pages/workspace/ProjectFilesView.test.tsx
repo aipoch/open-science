@@ -248,7 +248,7 @@ describe('ProjectFilesView', () => {
     expect(document.body.textContent).not.toContain('This computer')
   })
 
-  it('uses subtle menu colors and hover feedback for filter items', async () => {
+  it('uses the global semantic menu surface and hover feedback for filter items', async () => {
     await renderView([
       createSession({
         title: 'Session A',
@@ -275,11 +275,21 @@ describe('ProjectFilesView', () => {
       clickDropdownTrigger(filterButton)
     })
 
+    expect(filterButton?.getAttribute('data-slot')).toBe('button')
+    expect(filterButton?.getAttribute('data-variant')).toBe('outline')
+    expect(filterButton?.className).toContain('rounded-lg')
+    expect(filterButton?.className).toContain('border-border')
+    expect(filterButton?.className).toContain('bg-card')
+    expect(filterButton?.className).toContain('hover:bg-muted')
+    expect(filterButton?.className).not.toContain('rounded-md')
+    expect(filterButton?.className).not.toContain('border-border-300')
+    expect(filterButton?.className).not.toContain('shadow-sm')
+    expect(filterButton?.className).not.toContain('hover:bg-bg-100')
     expect(document.body.querySelector('[data-slot="dropdown-menu-content"]')?.className).toContain(
-      'bg-bg-10'
+      'bg-popover'
     )
     expect(document.body.querySelector('[data-filter-id="all"]')?.className).toContain(
-      'hover:bg-bg-200'
+      'data-[highlighted]:bg-muted'
     )
   })
 

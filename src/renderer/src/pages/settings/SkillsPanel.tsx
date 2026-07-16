@@ -2,6 +2,7 @@ import { ChevronDown, Download, FileUp, Pencil, Plus, Search, Trash2 } from 'luc
 import { useEffect, useMemo, useState } from 'react'
 
 import type { SkillSource } from '../../../../shared/settings'
+import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,6 +16,7 @@ import { SkillDetailView } from './SkillDetailView'
 import { SkillEditor, SkillEditLoader } from './SkillEditor'
 import { SkillImportView } from './SkillImportView'
 import { SkillUploadView } from './SkillUploadView'
+import { SettingsIconAction, SettingsToggle } from './SettingsLayout'
 
 // The skills panel sub-view, driven by the settings navigation history so each is a breadcrumb page.
 export type SkillsView =
@@ -39,37 +41,6 @@ const SOURCE_GROUPS: ReadonlyArray<{ source: SkillSource; label: string; subtitl
   { source: 'imported', label: 'Imported', subtitle: 'Skills you added from GitHub.' },
   { source: 'personal', label: 'Personal', subtitle: 'Your custom skills.' }
 ]
-
-// A compact on/off toggle. The repo has no shared Switch component, so the control is inlined here and
-// reused by the detail view via the same markup.
-const SkillToggle = ({
-  enabled,
-  label,
-  onToggle
-}: {
-  enabled: boolean
-  label: string
-  onToggle: () => void
-}): React.JSX.Element => (
-  <button
-    type="button"
-    role="switch"
-    aria-checked={enabled}
-    aria-label={label}
-    onClick={onToggle}
-    className={
-      'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ' +
-      (enabled ? 'bg-primary' : 'bg-muted')
-    }
-  >
-    <span
-      className={
-        'inline-block size-4 rounded-full bg-white shadow transition-transform ' +
-        (enabled ? 'translate-x-4' : 'translate-x-0.5')
-      }
-    />
-  </button>
-)
 
 type SkillsPanelProps = {
   view: SkillsView
@@ -169,10 +140,12 @@ const SkillsPanel = ({ view, onNavigate }: SkillsPanelProps): React.JSX.Element 
           />
         </div>
         <DropdownMenu>
-          <DropdownMenuTrigger className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted">
-            <Plus className="size-4" aria-hidden="true" />
-            Add skill
-            <ChevronDown className="size-4 opacity-70" aria-hidden="true" />
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" className="shrink-0">
+              <Plus data-icon="inline-start" aria-hidden="true" />
+              Add skill
+              <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />
+            </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'create' })}>
@@ -218,7 +191,7 @@ const SkillsPanel = ({ view, onNavigate }: SkillsPanelProps): React.JSX.Element 
                 <span className="flex items-center gap-1 text-sm font-semibold text-foreground">
                   {group.label}
                   <ChevronDown
-                    className={`size-4 shrink-0 text-muted-foreground transition-transform ${
+                    className={`size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${
                       expanded ? '' : '-rotate-90'
                     }`}
                     aria-hidden="true"
@@ -231,7 +204,11 @@ const SkillsPanel = ({ view, onNavigate }: SkillsPanelProps): React.JSX.Element 
                 rows.length > 0 ? (
                   <ul className="mt-2 flex flex-col divide-y divide-border">
                     {rows.map((skill) => (
-                      <li key={skill.id} className="flex items-center gap-2 py-2.5">
+                      <li
+                        key={skill.id}
+                        data-slot="settings-list-row"
+                        className="flex min-h-14 items-center gap-2 py-2.5"
+                      >
                         <button
                           type="button"
                           onClick={() => onNavigate({ kind: 'detail', id: skill.id })}
@@ -245,28 +222,23 @@ const SkillsPanel = ({ view, onNavigate }: SkillsPanelProps): React.JSX.Element 
                           </span>
                         </button>
                         {skill.source === 'personal' ? (
-                          <button
-                            type="button"
-                            aria-label={`Edit ${skill.name}`}
+                          <SettingsIconAction
+                            label={`Edit ${skill.name}`}
+                            icon={Pencil}
                             onClick={() => onNavigate({ kind: 'edit', id: skill.id })}
-                            className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                          >
-                            <Pencil className="size-3.5" aria-hidden="true" />
-                          </button>
+                          />
                         ) : null}
                         {skill.source !== 'featured' ? (
-                          <button
-                            type="button"
-                            aria-label={`Delete ${skill.name}`}
+                          <SettingsIconAction
+                            label={`Delete ${skill.name}`}
+                            icon={Trash2}
                             onClick={() => void deleteSkill(skill.id)}
-                            className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
-                          >
-                            <Trash2 className="size-3.5" aria-hidden="true" />
-                          </button>
+                            danger
+                          />
                         ) : null}
-                        <SkillToggle
+                        <SettingsToggle
                           enabled={skill.enabled}
-                          label={`Toggle ${skill.name}`}
+                          aria-label={`Toggle ${skill.name}`}
                           onToggle={() => void setSkillEnabled(skill.id, !skill.enabled)}
                         />
                       </li>
@@ -290,4 +262,4 @@ const SkillsPanel = ({ view, onNavigate }: SkillsPanelProps): React.JSX.Element 
   )
 }
 
-export { SkillsPanel, SkillToggle }
+export { SkillsPanel }

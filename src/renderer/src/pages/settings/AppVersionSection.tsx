@@ -1,8 +1,10 @@
 import { Download, RefreshCw } from 'lucide-react'
 
 import logoUrl from '@/assets/logo.png'
+import { Button } from '@/components/ui/button'
 import { useUpdateStore } from '@/stores/update-store'
 import { APP } from '../../../../shared/app-config'
+import { SettingsRow, SettingsSection } from './SettingsLayout'
 
 // App identity + update control in Settings→General. Reads the shared update store so it stays in
 // sync with the external capsule; the update button opens the shared dialog (version + notes +
@@ -38,11 +40,9 @@ const AppVersionSection = (): React.JSX.Element => {
   })()
 
   return (
-    <section aria-label="App version">
-      <h3 className="mb-1 text-sm font-semibold text-foreground">About</h3>
-      <div className="rounded-xl border border-border p-4">
-        {/* Identity on the left, update controls on the same row to the right. */}
-        <div className="flex items-start justify-between gap-3">
+    <SettingsSection title="About" aria-label="App version">
+      <SettingsRow
+        label={
           <div className="flex min-w-0 items-center gap-3">
             <img src={logoUrl} alt="" className="size-12 rounded-lg" />
             <div className="min-w-0">
@@ -50,55 +50,52 @@ const AppVersionSection = (): React.JSX.Element => {
                 <span className="text-sm font-semibold text-foreground">{APP.name}</span>
                 <span className="text-xs text-muted-foreground tabular-nums">v{version}</span>
               </p>
-              <p className="mt-0.5 text-xs text-muted-foreground">{APP.copyright}</p>
+              <p className="mt-0.5 text-xs font-normal text-muted-foreground">{APP.copyright}</p>
             </div>
           </div>
-
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => void check()}
-              disabled={isChecking}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-bg-300 disabled:opacity-50"
-            >
-              <RefreshCw
-                className={isChecking ? 'size-4 animate-spin' : 'size-4'}
-                aria-hidden="true"
-              />
-              {isChecking ? 'Checking…' : 'Check now'}
-            </button>
-
-            {hasUpdate ? (
-              <button
-                type="button"
-                onClick={() => openDialog()}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-primary bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-              >
-                <Download className="size-4" aria-hidden="true" />
-                {isDownloading
-                  ? `Downloading ${status.progress ?? 0}%`
-                  : status.state === 'ready'
-                    ? 'Update ready'
-                    : `Update to ${status.latest}`}
-              </button>
-            ) : null}
-          </div>
-        </div>
-
-        {statusLine ? (
-          <p
-            className={
-              status.state === 'error'
-                ? 'mt-3 text-xs text-destructive'
-                : 'mt-3 text-xs text-muted-foreground'
-            }
-            role={status.state === 'error' ? 'alert' : undefined}
+        }
+        controlClassName="w-auto justify-self-end"
+      >
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void check()}
+            disabled={isChecking}
           >
-            {statusLine}
-          </p>
-        ) : null}
-      </div>
-    </section>
+            <RefreshCw
+              className={isChecking ? 'size-4 animate-spin' : 'size-4'}
+              aria-hidden="true"
+            />
+            {isChecking ? 'Checking…' : 'Check now'}
+          </Button>
+
+          {hasUpdate ? (
+            <Button type="button" onClick={() => openDialog()}>
+              <Download className="size-4" aria-hidden="true" />
+              {isDownloading
+                ? `Downloading ${status.progress ?? 0}%`
+                : status.state === 'ready'
+                  ? 'Update ready'
+                  : `Update to ${status.latest}`}
+            </Button>
+          ) : null}
+        </div>
+      </SettingsRow>
+
+      {statusLine ? (
+        <p
+          className={
+            status.state === 'error'
+              ? 'mt-2 text-xs text-destructive'
+              : 'mt-2 text-xs text-muted-foreground'
+          }
+          role={status.state === 'error' ? 'alert' : undefined}
+        >
+          {statusLine}
+        </p>
+      ) : null}
+    </SettingsSection>
   )
 }
 

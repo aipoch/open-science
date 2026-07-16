@@ -64,6 +64,8 @@ describe('ComposerModelPicker', () => {
     const trigger = container.querySelector('[aria-label="Select model"]')
     expect(trigger).not.toBeNull()
     expect(trigger?.textContent).toContain('glm-4.7')
+    expect(trigger?.getAttribute('data-slot')).toBe('button')
+    expect(trigger?.getAttribute('data-variant')).toBe('ghost')
   })
 
   it('offers one trigger across providers and reflects a custom provider label', () => {

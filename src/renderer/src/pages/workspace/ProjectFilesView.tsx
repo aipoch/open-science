@@ -9,6 +9,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
+import { Button } from '@/components/ui/button'
 import { cn, formatByteSize } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
@@ -196,7 +197,7 @@ const SectionHeader = ({
   >
     <ChevronDown
       className={cn(
-        'size-3 shrink-0 text-text-300 transition-transform',
+        'size-3 shrink-0 text-text-300 transition-transform motion-reduce:transition-none',
         isCollapsed && '-rotate-90'
       )}
       strokeWidth={2}
@@ -309,9 +310,10 @@ const ProjectFilesFilterMenu = ({
 }): React.JSX.Element => (
   <DropdownMenu>
     <DropdownMenuTrigger asChild>
-      <button
+      <Button
         type="button"
-        className="inline-flex h-8 max-w-[220px] items-center gap-1.5 rounded-md border border-border-300/60 bg-bg-000 px-2.5 text-sm text-text-000 shadow-sm hover:bg-bg-100"
+        variant="outline"
+        className="max-w-[220px] gap-1.5"
         aria-label="Filter project files"
       >
         <File className="size-3.5 shrink-0 text-text-300" strokeWidth={1.8} aria-hidden="true" />
@@ -321,7 +323,7 @@ const ProjectFilesFilterMenu = ({
           strokeWidth={2}
           aria-hidden="true"
         />
-      </button>
+      </Button>
     </DropdownMenuTrigger>
     <DropdownMenuContent align="start" className="w-[320px]">
       <DropdownMenuLabel>Artifacts</DropdownMenuLabel>

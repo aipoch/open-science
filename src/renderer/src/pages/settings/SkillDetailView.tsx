@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import type { SkillDetailView as SkillDetail } from '../../../../shared/settings'
 import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { useSettingsStore } from '@/stores/settings-store'
-import { SkillToggle } from './SkillsPanel'
+import { SettingsToggle } from './SettingsLayout'
 
 type SkillDetailViewProps = {
   skillId: string
@@ -58,15 +58,15 @@ const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element =
         <div className="flex min-w-0 items-center gap-3">
           <ScrollText className="size-6 shrink-0 text-primary" aria-hidden="true" />
           <div className="flex min-w-0 items-center gap-2">
-            <h1 className="truncate text-heading font-semibold text-foreground">{name}</h1>
+            <h1 className="truncate text-base font-semibold text-foreground">{name}</h1>
             <span className="inline-flex shrink-0 items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
               Featured
             </span>
           </div>
         </div>
-        <SkillToggle
+        <SettingsToggle
           enabled={enabled}
-          label={`Toggle ${name}`}
+          aria-label={`Toggle ${name}`}
           onToggle={() => void setSkillEnabled(skillId, !enabled)}
         />
       </div>

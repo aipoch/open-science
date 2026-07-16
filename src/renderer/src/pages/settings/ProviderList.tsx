@@ -1,13 +1,12 @@
 import { CircleCheck, Pencil, PlugZap, TriangleAlert, Trash2 } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
 
 import type { ProviderValidationFailure, ProviderView } from '../../../../shared/settings'
 import { providerValidationFailed } from '../../../../shared/settings'
 import { getOfficialVendor } from '../../../../shared/provider-registry'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { cn } from '@/lib/utils'
 import { ProviderKindIcon } from './provider-icons'
 import { providerKindKey } from './provider-form-value'
+import { SettingsIconAction } from './SettingsLayout'
 
 type ProviderListProps = {
   providers: ProviderView[]
@@ -18,15 +17,6 @@ type ProviderListProps = {
   onEdit: (provider: ProviderView) => void
   onDelete: (provider: ProviderView) => void
   onTest: (provider: ProviderView) => void
-}
-
-type IconActionButtonProps = {
-  // Accessible name and hover tooltip text (kept identical so the hover label is also the a11y name).
-  label: string
-  icon: LucideIcon
-  onClick: () => void
-  disabled?: boolean
-  danger?: boolean
 }
 
 // Concise, actionable reason for a failed connection test, shown on the unverified warning.
@@ -59,36 +49,6 @@ const describeType = (provider: ProviderView): string => {
     : 'Official'
 }
 
-// An icon-only row action with a hover tooltip. The label is exposed via aria-label for accessibility
-// and shown on hover via the shared tooltip so the actions row stays compact.
-const IconActionButton = ({
-  label,
-  icon: Icon,
-  onClick,
-  disabled = false,
-  danger = false
-}: IconActionButtonProps): React.JSX.Element => (
-  <Tooltip>
-    <TooltipTrigger asChild>
-      <button
-        type="button"
-        aria-label={label}
-        disabled={disabled}
-        onClick={onClick}
-        className={cn(
-          'inline-flex size-7 items-center justify-center rounded-lg border border-border text-foreground transition-colors hover:bg-muted',
-          danger && 'text-destructive hover:bg-destructive/10 hover:text-destructive',
-          // Disabled actions read as inert gray with no hover affordance (e.g. delete on the selected provider).
-          'disabled:pointer-events-none disabled:border-border disabled:text-muted-foreground disabled:opacity-50'
-        )}
-      >
-        <Icon className="size-3.5" strokeWidth={2} aria-hidden="true" />
-      </button>
-    </TooltipTrigger>
-    <TooltipContent>{label}</TooltipContent>
-  </Tooltip>
-)
-
 // Lists configured providers with their type, masked key, and model. Each row leads with the
 // select/selected control, followed by compact icon actions (test / edit / delete) with hover
 // tooltips. Shared by the settings page (the onboarding wizard uses the form directly).
@@ -102,7 +62,7 @@ const ProviderList = ({
 }: ProviderListProps): React.JSX.Element => {
   if (providers.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+      <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
         No providers yet. Add one to choose your model source.
       </div>
     )
@@ -126,7 +86,11 @@ const ProviderList = ({
           const canDelete = !isActiveSource && providers.length > 1
 
           return (
-            <li key={provider.id} className="rounded-xl border border-border p-3">
+            <li
+              key={provider.id}
+              data-slot="settings-list-row"
+              className="rounded-lg border border-border bg-card p-3"
+            >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
@@ -201,22 +165,29 @@ const ProviderList = ({
                     ) : null}
                   </div>
                 </div>
-              </div>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <IconActionButton
-                  label="Test connection"
-                  icon={PlugZap}
-                  onClick={() => onTest(provider)}
-                  disabled={isBusy}
-                />
-                <IconActionButton label="Edit" icon={Pencil} onClick={() => onEdit(provider)} />
-                <IconActionButton
-                  label="Delete"
-                  icon={Trash2}
-                  onClick={() => onDelete(provider)}
-                  disabled={!canDelete}
-                  danger
-                />
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <SettingsIconAction
+                    label="Test connection"
+                    icon={PlugZap}
+                    onClick={() => onTest(provider)}
+                    disabled={isBusy}
+                    className="border border-border text-foreground"
+                  />
+                  <SettingsIconAction
+                    label="Edit"
+                    icon={Pencil}
+                    onClick={() => onEdit(provider)}
+                    className="border border-border text-foreground"
+                  />
+                  <SettingsIconAction
+                    label="Delete"
+                    icon={Trash2}
+                    onClick={() => onDelete(provider)}
+                    disabled={!canDelete}
+                    className="border border-border"
+                    danger
+                  />
+                </div>
               </div>
             </li>
           )

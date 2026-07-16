@@ -13,6 +13,9 @@ import { Dialog } from 'radix-ui'
 import { useEffect, useState } from 'react'
 
 import type { ProviderView, UpsertProviderRequest } from '../../../../shared/settings'
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ClaudeInstallCard } from './ClaudeInstallCard'
 import { ClaudeStatusCard } from './ClaudeStatusCard'
@@ -32,6 +35,7 @@ import {
   type ProviderFormValue
 } from './provider-form-value'
 import { ProviderList } from './ProviderList'
+import { SettingsRow, SettingsSection } from './SettingsLayout'
 
 type SettingsPageProps = {
   open: boolean
@@ -392,19 +396,21 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   return (
     <Dialog.Root open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 motion-reduce:data-[state=closed]:animate-none motion-reduce:data-[state=open]:animate-none" />
         <Dialog.Content
+          data-slot="settings-surface"
           // Don't let a click/focus outside the dialog dismiss it. A Radix Select inside the panel
           // (provider type, active model, install source) portals its listbox outside the dialog's
           // DOM, so an outside-click meant only to close the open dropdown would otherwise also close
           // the whole panel. The dropdown's own dismiss still closes just the dropdown; the panel is
           // closed intentionally via the ✕ button or Escape.
           onInteractOutside={(event) => event.preventDefault()}
-          className={`fixed left-1/2 top-1/2 z-50 flex -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border border-border bg-card text-foreground shadow-dialog data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 ${
+          className={cn(
+            'fixed z-50 flex overflow-hidden overscroll-contain rounded-xl border border-border bg-card text-foreground shadow-dialog outline-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 motion-reduce:data-[state=closed]:animate-none motion-reduce:data-[state=open]:animate-none',
             isExpanded
-              ? 'h-[80vh] w-[80vw]'
-              : 'h-[min(640px,calc(100vh-2rem))] w-[min(920px,calc(100vw-2rem))]'
-          }`}
+              ? 'inset-4'
+              : 'left-1/2 top-1/2 h-[min(688px,calc(100vh-2rem))] w-[min(960px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2'
+          )}
         >
           {/* Radix requires a Title/Description for a11y; the visible panel title lives in the header. */}
           <Dialog.Title className="sr-only">Settings</Dialog.Title>
@@ -415,7 +421,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
           {/* Left navigation: grouped settings panels (Capabilities, Workspace). */}
           <nav
             aria-label="Settings"
-            className="flex w-52 shrink-0 flex-col gap-3 border-r border-border bg-muted/40 p-3"
+            className="flex w-52 shrink-0 flex-col gap-4 border-r border-border bg-background p-3"
           >
             {SETTINGS_GROUPS.map((group) => (
               <div key={group.label} className="flex flex-col gap-0.5">
@@ -438,10 +444,10 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                               model: { kind: 'list' }
                             })
                           }
-                          className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors ${
+                          className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors duration-150 motion-reduce:transition-none ${
                             isActive
                               ? 'bg-muted font-medium text-foreground'
-                              : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+                              : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                           }`}
                         >
                           <Icon
@@ -460,209 +466,228 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
 
           {/* Right column: header bar + scrollable panel content. */}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-card">
-            <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border px-3">
-              <div className="flex min-w-0 items-center gap-1">
-                {/* Browser-like history controls for the settings navigation. */}
-                <button
-                  type="button"
-                  onClick={goBack}
-                  disabled={!canGoBack}
-                  aria-label="Back"
-                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-                >
-                  <ArrowLeft className="size-4" aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  onClick={goForward}
-                  disabled={!canGoForward}
-                  aria-label="Forward"
-                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-                >
-                  <ArrowRight className="size-4" aria-hidden="true" />
-                </button>
-                <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
-                {breadcrumb !== null ? (
-                  <div className="flex min-w-0 items-center gap-1.5 text-sm font-semibold">
-                    <button
-                      type="button"
-                      onClick={() => navigate(breadcrumb.rootTo)}
-                      aria-label={`Back to ${breadcrumb.rootLabel.toLowerCase()}`}
-                      className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
-                    >
-                      {breadcrumb.rootLabel}
-                    </button>
-                    <span className="shrink-0 text-muted-foreground" aria-hidden="true">
-                      ›
-                    </span>
-                    <span className="truncate text-foreground">{breadcrumb.leaf}</span>
-                  </div>
-                ) : (
-                  <h2 className="truncate text-sm font-semibold text-foreground">
-                    {SETTINGS_PANELS.find((panel) => panel.id === activePanel)?.label}
-                  </h2>
-                )}
-              </div>
-              <div className="flex shrink-0 items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => setIsExpanded((value) => !value)}
-                  aria-label={isExpanded ? 'Restore' : 'Maximize'}
-                  className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                >
-                  {isExpanded ? (
-                    <Minimize2 className="size-4" aria-hidden="true" />
-                  ) : (
-                    <Maximize2 className="size-4" aria-hidden="true" />
-                  )}
-                </button>
-                <Dialog.Close
-                  aria-label="Close settings"
-                  className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                >
-                  <X className="size-4" aria-hidden="true" />
-                </Dialog.Close>
-              </div>
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              {activePanel === 'skills' ? (
-                <SkillsPanel view={skillsView} onNavigate={navigateSkills} />
-              ) : activePanel === 'connectors' ? (
-                connectorsView.kind === 'detail' ? (
-                  <ConnectorDetailView id={connectorsView.id} />
-                ) : connectorsView.kind === 'add' ? (
-                  <ConnectorAddForm
-                    initialTransport={connectorsView.transport}
-                    onDone={() => navigateConnectors({ kind: 'list' })}
-                    onCancel={() => navigateConnectors({ kind: 'list' })}
-                  />
-                ) : connectorsView.kind === 'edit' ? (
-                  <ConnectorAddForm
-                    editServer={customServers.find((s) => s.id === connectorsView.id)}
-                    onDone={() => navigateConnectors({ kind: 'list' })}
-                    onCancel={() => navigateConnectors({ kind: 'list' })}
-                  />
-                ) : (
-                  <ConnectorsPanel onNavigate={navigateConnectors} />
-                )
-              ) : activePanel === 'general' ? (
-                <GeneralPanel />
-              ) : isProviderFormOpen ? (
-                // Add/edit provider is a secondary page reached via the shared back/forward arrows.
-                <div className="p-5">
-                  {/* Keys are stored with OS encryption; warn (as onboarding does) when the keychain
-                      is unavailable so the reduced-protection fallback is never a silent surprise. */}
-                  {!encryptionAvailable ? (
-                    <p className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-                      Secure key storage is unavailable on this machine. Your key will be stored
-                      with reduced protection.
-                    </p>
-                  ) : null}
-                  <ProviderForm
-                    value={formValue}
-                    onChange={(patch) => setFormValue((current) => ({ ...current, ...patch }))}
-                    hasStoredKey={editingProvider?.hasKey}
-                    maskedKey={editingProvider?.maskedKey}
-                    needsKey={editingProvider?.needsKey}
-                    errors={formErrors}
-                    supportedModels={editingProvider?.models}
-                    onRefreshModels={
-                      editingProvider?.type === 'official' &&
-                      editingProvider.hasKey &&
-                      editingProvider.vendorId &&
-                      resolveVendorModelsUrl(editingProvider.vendorId, editingProvider.region)
-                        ? () => void handleRefreshModels(editingProvider.id)
-                        : undefined
-                    }
-                    isRefreshingModels={isRefreshingModels}
-                    disabled={isSaving}
-                    encryptionAvailable={encryptionAvailable}
-                  />
-                  {statusMessage ? (
-                    <p
-                      className={`mt-3 text-sm ${statusOk ? 'text-primary' : 'text-destructive'}`}
-                      role="alert"
-                    >
-                      {statusMessage}
-                    </p>
-                  ) : null}
-                  <div className="mt-6 flex justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={closeForm}
-                      disabled={isSaving}
-                      className="rounded-lg border border-border px-3 py-1.5 text-sm transition-colors hover:bg-muted disabled:opacity-50"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleSave()}
-                      disabled={!canSave}
-                      className="rounded-lg border border-primary bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-                    >
-                      {isSaving ? 'Saving…' : 'Save'}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-6 p-5">
-                  <section aria-label="Claude">
-                    <h3 className="mb-3 text-sm font-semibold text-foreground">Claude</h3>
-                    <div className="space-y-3">
-                      <ClaudeStatusCard
-                        claude={claude}
-                        claudeReady={preflight.claudeReady}
-                        isDetecting={isDetectingClaude}
-                        onDetect={() => void detectClaude()}
-                      />
-                      {!preflight.claudeReady ? (
-                        <ClaudeInstallCard
-                          isInstalling={isInstalling}
-                          installLogs={installLogs}
-                          installProgress={installProgress}
-                          installError={installError}
-                          npmAvailable={npmAvailable}
-                          onInstall={(source) => void installClaude(source)}
-                        />
-                      ) : null}
-                    </div>
-                  </section>
-
-                  <section aria-label="Providers" className="border-t border-border pt-6">
-                    <div className="mb-3 flex items-center justify-between">
-                      <h3 className="text-sm font-semibold text-foreground">Providers</h3>
+            <TooltipProvider delayDuration={300}>
+              <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-3">
+                <div className="flex min-w-0 items-center gap-1">
+                  {/* Browser-like history controls for the settings navigation. */}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={goBack}
+                        disabled={!canGoBack}
+                        aria-label="Back"
+                        className="shrink-0 rounded-lg text-muted-foreground disabled:opacity-40"
+                      >
+                        <ArrowLeft className="size-4" aria-hidden="true" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Back</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={goForward}
+                        disabled={!canGoForward}
+                        aria-label="Forward"
+                        className="shrink-0 rounded-lg text-muted-foreground disabled:opacity-40"
+                      >
+                        <ArrowRight className="size-4" aria-hidden="true" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Forward</TooltipContent>
+                  </Tooltip>
+                  <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
+                  {breadcrumb !== null ? (
+                    <div className="flex min-w-0 items-center gap-1.5 text-sm font-semibold">
                       <button
                         type="button"
-                        onClick={openCreate}
-                        className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+                        onClick={() => navigate(breadcrumb.rootTo)}
+                        aria-label={`Back to ${breadcrumb.rootLabel.toLowerCase()}`}
+                        className="shrink-0 text-muted-foreground transition-colors motion-reduce:transition-none hover:text-foreground"
                       >
-                        <Plus className="size-4" aria-hidden="true" />
-                        Add provider
+                        {breadcrumb.rootLabel}
                       </button>
+                      <span className="shrink-0 text-muted-foreground" aria-hidden="true">
+                        ›
+                      </span>
+                      <span className="truncate text-foreground">{breadcrumb.leaf}</span>
                     </div>
-
-                    {providers.length > 0 ? (
-                      <div className="mb-4 space-y-1.5">
-                        <span className="text-xs font-medium text-muted-foreground">
-                          Active model
-                        </span>
-                        <ActiveModelSelect />
-                      </div>
-                    ) : null}
-
-                    <ProviderList
-                      providers={providers}
-                      activeProviderId={activeProviderId}
-                      busyProviderId={busyProviderId}
-                      onEdit={openEdit}
-                      onDelete={(provider) => void deleteProvider(provider.id)}
-                      onTest={(provider) => void handleTest(provider)}
-                    />
-                  </section>
+                  ) : (
+                    <h2 className="truncate text-sm font-semibold text-foreground">
+                      {SETTINGS_PANELS.find((panel) => panel.id === activePanel)?.label}
+                    </h2>
+                  )}
                 </div>
-              )}
+                <div className="flex shrink-0 items-center gap-1">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => setIsExpanded((value) => !value)}
+                        aria-label={isExpanded ? 'Restore' : 'Maximize'}
+                        className="rounded-lg text-muted-foreground"
+                      >
+                        {isExpanded ? (
+                          <Minimize2 className="size-4" aria-hidden="true" />
+                        ) : (
+                          <Maximize2 className="size-4" aria-hidden="true" />
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>{isExpanded ? 'Restore' : 'Maximize'}</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <Dialog.Close asChild>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label="Close settings"
+                          className="rounded-lg text-muted-foreground"
+                        >
+                          <X className="size-4" aria-hidden="true" />
+                        </Button>
+                      </TooltipTrigger>
+                    </Dialog.Close>
+                    <TooltipContent>Close settings</TooltipContent>
+                  </Tooltip>
+                </div>
+              </div>
+            </TooltipProvider>
+
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className="mx-auto min-h-full w-full max-w-[880px]">
+                {activePanel === 'skills' ? (
+                  <SkillsPanel view={skillsView} onNavigate={navigateSkills} />
+                ) : activePanel === 'connectors' ? (
+                  connectorsView.kind === 'detail' ? (
+                    <ConnectorDetailView id={connectorsView.id} />
+                  ) : connectorsView.kind === 'add' ? (
+                    <ConnectorAddForm
+                      initialTransport={connectorsView.transport}
+                      onDone={() => navigateConnectors({ kind: 'list' })}
+                      onCancel={() => navigateConnectors({ kind: 'list' })}
+                    />
+                  ) : connectorsView.kind === 'edit' ? (
+                    <ConnectorAddForm
+                      editServer={customServers.find((s) => s.id === connectorsView.id)}
+                      onDone={() => navigateConnectors({ kind: 'list' })}
+                      onCancel={() => navigateConnectors({ kind: 'list' })}
+                    />
+                  ) : (
+                    <ConnectorsPanel onNavigate={navigateConnectors} />
+                  )
+                ) : activePanel === 'general' ? (
+                  <GeneralPanel />
+                ) : isProviderFormOpen ? (
+                  // Add/edit provider is a secondary page reached via the shared back/forward arrows.
+                  <div className="p-5">
+                    {/* Keys are stored with OS encryption; warn (as onboarding does) when the keychain
+                      is unavailable so the reduced-protection fallback is never a silent surprise. */}
+                    {!encryptionAvailable ? (
+                      <p className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                        Secure key storage is unavailable on this machine. Your key will be stored
+                        with reduced protection.
+                      </p>
+                    ) : null}
+                    <ProviderForm
+                      value={formValue}
+                      onChange={(patch) => setFormValue((current) => ({ ...current, ...patch }))}
+                      hasStoredKey={editingProvider?.hasKey}
+                      maskedKey={editingProvider?.maskedKey}
+                      needsKey={editingProvider?.needsKey}
+                      errors={formErrors}
+                      supportedModels={editingProvider?.models}
+                      onRefreshModels={
+                        editingProvider?.type === 'official' &&
+                        editingProvider.hasKey &&
+                        editingProvider.vendorId &&
+                        resolveVendorModelsUrl(editingProvider.vendorId, editingProvider.region)
+                          ? () => void handleRefreshModels(editingProvider.id)
+                          : undefined
+                      }
+                      isRefreshingModels={isRefreshingModels}
+                      disabled={isSaving}
+                      encryptionAvailable={encryptionAvailable}
+                    />
+                    {statusMessage ? (
+                      <p
+                        className={`mt-3 text-sm ${statusOk ? 'text-primary' : 'text-destructive'}`}
+                        role="alert"
+                      >
+                        {statusMessage}
+                      </p>
+                    ) : null}
+                    <div className="mt-6 flex justify-end gap-2">
+                      <Button type="button" variant="ghost" onClick={closeForm} disabled={isSaving}>
+                        Cancel
+                      </Button>
+                      <Button type="button" onClick={() => void handleSave()} disabled={!canSave}>
+                        {isSaving ? 'Saving…' : 'Save'}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-5 p-5">
+                    <SettingsSection title="Claude" aria-label="Claude">
+                      <div className="space-y-3">
+                        <ClaudeStatusCard
+                          claude={claude}
+                          claudeReady={preflight.claudeReady}
+                          isDetecting={isDetectingClaude}
+                          onDetect={() => void detectClaude()}
+                        />
+                        {!preflight.claudeReady ? (
+                          <ClaudeInstallCard
+                            isInstalling={isInstalling}
+                            installLogs={installLogs}
+                            installProgress={installProgress}
+                            installError={installError}
+                            npmAvailable={npmAvailable}
+                            onInstall={(source) => void installClaude(source)}
+                          />
+                        ) : null}
+                      </div>
+                    </SettingsSection>
+
+                    <SettingsSection
+                      title="Providers"
+                      aria-label="Providers"
+                      separated
+                      action={
+                        <Button type="button" variant="outline" onClick={openCreate}>
+                          <Plus className="size-4" aria-hidden="true" />
+                          Add provider
+                        </Button>
+                      }
+                    >
+                      {providers.length > 0 ? (
+                        <SettingsRow label="Active model" className="border-b border-border pt-0">
+                          <ActiveModelSelect />
+                        </SettingsRow>
+                      ) : null}
+
+                      <ProviderList
+                        providers={providers}
+                        activeProviderId={activeProviderId}
+                        busyProviderId={busyProviderId}
+                        onEdit={openEdit}
+                        onDelete={(provider) => void deleteProvider(provider.id)}
+                        onTest={(provider) => void handleTest(provider)}
+                      />
+                    </SettingsSection>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </Dialog.Content>

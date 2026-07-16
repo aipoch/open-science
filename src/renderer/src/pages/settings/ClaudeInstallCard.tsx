@@ -61,7 +61,7 @@ const ClaudeInstallCard = ({
     `${item.label}${item.requiresNpm && !npmAvailable ? ' (npm not found)' : ''}`
 
   return (
-    <Card className={cn('gap-0 py-0', embedded && 'rounded-none bg-transparent ring-0')}>
+    <Card className={cn('gap-0 rounded-lg py-0', embedded && 'rounded-none bg-transparent ring-0')}>
       <CardContent className={cn('p-4', embedded && 'px-0 py-0')}>
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-muted-foreground" htmlFor="install-source">

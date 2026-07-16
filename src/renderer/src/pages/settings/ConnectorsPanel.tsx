@@ -2,6 +2,7 @@ import { ChevronDown, Globe, Pencil, Plus, Search, Terminal, Trash2 } from 'luci
 import { useEffect, useMemo, useState } from 'react'
 
 import type { ConnectorView, CustomServerView } from '../../../../shared/settings'
+import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,7 +13,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ConnectorGlyph } from './connector-icons'
-import { SkillToggle } from './SkillsPanel'
+import { SettingsIconAction, SettingsSection, SettingsToggle } from './SettingsLayout'
 
 // The connectors panel sub-view, driven by the settings navigation history. The detail and add pages
 // are separate components owned by SettingsPage; this panel only renders the list + contact-email section.
@@ -124,7 +125,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
           <span className="flex items-center gap-1 text-sm font-semibold text-foreground">
             {label}
             <ChevronDown
-              className={`size-4 shrink-0 text-muted-foreground transition-transform ${
+              className={`size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${
                 expanded ? '' : '-rotate-90'
               }`}
               aria-hidden="true"
@@ -137,7 +138,11 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
           rows.length > 0 ? (
             <ul className="mt-2 flex flex-col divide-y divide-border">
               {rows.map((connector) => (
-                <li key={connector.id} className="flex items-center gap-3 py-2.5">
+                <li
+                  key={connector.id}
+                  data-slot="settings-list-row"
+                  className="flex min-h-14 items-center gap-3 py-2.5"
+                >
                   <ConnectorGlyph size={24} />
                   <button
                     type="button"
@@ -151,9 +156,9 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                       {connector.description}
                     </span>
                   </button>
-                  <SkillToggle
+                  <SettingsToggle
                     enabled={connector.enabled}
-                    label={connector.displayName}
+                    aria-label={connector.displayName}
                     onToggle={() => void setConnectorEnabled(connector.id, !connector.enabled)}
                   />
                 </li>
@@ -171,13 +176,16 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
 
   return (
     <div className="p-5">
-      <div className="mb-4 rounded-lg border border-border bg-card p-4">
-        <h3 className="text-sm font-semibold text-foreground">Contact email</h3>
-        <p className="mt-1 text-xs text-muted-foreground">
-          When allowed, shared with research data services that ask for a contact email (such as
-          those run by NCBI, EBI, and OurResearch) on requests made on your behalf.
-        </p>
-
+      <SettingsSection
+        title="Contact email"
+        description={
+          <>
+            When allowed, shared with research data services that ask for a contact email (such as
+            those run by NCBI, EBI, and OurResearch) on requests made on your behalf.
+          </>
+        }
+        className="mb-5"
+      >
         {editing ? (
           <div className="mt-3 flex flex-col gap-3">
             <div className="flex flex-col gap-1">
@@ -202,28 +210,22 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => void save()}
-                className="inline-flex h-8 items-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-              >
+              <Button type="button" onClick={() => void save()}>
                 Save
-              </button>
-              <button
-                type="button"
-                onClick={() => setEditing(false)}
-                className="inline-flex h-8 items-center rounded-lg border border-border bg-card px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted"
-              >
+              </Button>
+              <Button type="button" variant="outline" onClick={() => setEditing(false)}>
                 Cancel
-              </button>
+              </Button>
               {ncbi.hasApiKey ? (
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => void clearKey()}
-                  className="ml-auto text-xs text-muted-foreground transition-colors hover:text-destructive"
+                  className="ml-auto text-muted-foreground hover:text-destructive"
                 >
                   Clear key
-                </button>
+                </Button>
               ) : null}
             </div>
           </div>
@@ -232,16 +234,12 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
             <span className="min-w-0 flex-1 truncate text-sm text-foreground">
               {ncbi.contactEmail ?? 'Not set'}
             </span>
-            <button
-              type="button"
-              onClick={startEditing}
-              className="inline-flex h-8 shrink-0 items-center rounded-lg border border-border bg-card px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted"
-            >
+            <Button type="button" variant="outline" onClick={startEditing}>
               Edit
-            </button>
+            </Button>
           </div>
         )}
-      </div>
+      </SettingsSection>
 
       <div className="mb-4 flex items-center gap-2">
         <Select value={filter} onValueChange={(value) => setFilter(value as GroupFilter)}>
@@ -270,10 +268,12 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
           />
         </div>
         <DropdownMenu>
-          <DropdownMenuTrigger className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted">
-            <Plus className="size-4" aria-hidden="true" />
-            Add connector
-            <ChevronDown className="size-4 opacity-70" aria-hidden="true" />
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" className="shrink-0">
+              <Plus data-icon="inline-start" aria-hidden="true" />
+              Add connector
+              <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />
+            </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem
@@ -332,7 +332,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
               <span className="flex items-center gap-1 text-sm font-semibold text-foreground">
                 Custom
                 <ChevronDown
-                  className={`size-4 shrink-0 text-muted-foreground transition-transform ${
+                  className={`size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${
                     customExpanded ? '' : '-rotate-90'
                   }`}
                   aria-hidden="true"
@@ -345,7 +345,11 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
               visibleCustomServers.length > 0 ? (
                 <ul className="mt-2 flex flex-col divide-y divide-border">
                   {visibleCustomServers.map((server) => (
-                    <li key={server.id} className="flex items-center gap-3 py-2.5">
+                    <li
+                      key={server.id}
+                      data-slot="settings-list-row"
+                      className="flex min-h-14 items-center gap-3 py-2.5"
+                    >
                       <ConnectorGlyph size={24} />
                       <div className="min-w-0 flex-1">
                         <span className="block truncate text-sm text-foreground">
@@ -357,25 +361,20 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                           </span>
                         ) : null}
                       </div>
-                      <button
-                        type="button"
-                        aria-label={`Edit ${server.name}`}
+                      <SettingsIconAction
+                        label={`Edit ${server.name}`}
+                        icon={Pencil}
                         onClick={() => onNavigate({ kind: 'edit', id: server.id })}
-                        className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                      >
-                        <Pencil className="size-3.5" aria-hidden="true" />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Remove ${server.name}`}
+                      />
+                      <SettingsIconAction
+                        label={`Remove ${server.name}`}
+                        icon={Trash2}
                         onClick={() => void removeCustomServer(server.id)}
-                        className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
-                      >
-                        <Trash2 className="size-3.5" aria-hidden="true" />
-                      </button>
-                      <SkillToggle
+                        danger
+                      />
+                      <SettingsToggle
                         enabled={server.enabled}
-                        label={server.name}
+                        aria-label={server.name}
                         onToggle={() => void setCustomServerEnabled(server.id, !server.enabled)}
                       />
                     </li>
