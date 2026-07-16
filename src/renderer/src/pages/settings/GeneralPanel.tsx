@@ -5,7 +5,6 @@ import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { Button } from '@/components/ui/button'
 import { APP } from '../../../../shared/app-config'
-import { AgentFrameworkSection } from './AgentFrameworkSection'
 import { AppVersionSection } from './AppVersionSection'
 import { SettingsRow, SettingsSection } from './SettingsLayout'
 
@@ -73,8 +72,6 @@ const GeneralPanel = (): React.JSX.Element => {
   return (
     <div className="space-y-5 p-5">
       <AppVersionSection />
-
-      <AgentFrameworkSection />
 
       <SettingsSection
         title="Diagnostics"

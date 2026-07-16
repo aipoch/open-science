@@ -142,7 +142,9 @@ describe('SettingsPage layout', () => {
     // The Model panel content is present (Claude + Providers sections).
     expect(document.body.textContent).toContain('Claude')
     expect(document.body.textContent).toContain('Providers')
-    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(2)
+    expect(document.body.textContent).toContain('Agent framework')
+    // Agent framework + Claude + Providers.
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(3)
     expect(document.body.querySelector('[data-slot="settings-row"]')).not.toBeNull()
   })
 
@@ -200,8 +202,7 @@ describe('SettingsPage layout', () => {
       generalTab?.click()
     })
 
-    // Agent framework + Diagnostics + Community (AppVersion is not a settings-section).
-    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(4)
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(3)
     expect(document.body.querySelector('[data-slot="settings-row"]')).not.toBeNull()
 
     // The Diagnostics panel surfaces the log file path plus Open and Reveal controls.

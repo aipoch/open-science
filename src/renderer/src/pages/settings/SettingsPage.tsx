@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
+import { AgentFrameworkSection } from './AgentFrameworkSection'
 import { ClaudeInstallCard } from './ClaudeInstallCard'
 import { ClaudeStatusCard } from './ClaudeStatusCard'
 import { GeneralPanel } from './GeneralPanel'
@@ -643,6 +644,8 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                   </div>
                 ) : (
                   <div className="space-y-5 p-5">
+                    <AgentFrameworkSection />
+
                     <SettingsSection title="Claude" aria-label="Claude">
                       <div className="space-y-3">
                         <ClaudeStatusCard
