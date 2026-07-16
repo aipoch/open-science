@@ -22,6 +22,7 @@
 ## Table of Contents
 
 - [Quick Start](#quick-start)
+- [Frequently Asked Questions](#frequently-asked-questions)
 - [Why](#why)
 - [Open Science vs. Claude Science](#open-science-vs-claude-science)
 - [Vision](#vision)
@@ -98,6 +99,35 @@ npm run dev
 
 To run agent sessions inside the app, sign in with your Claude Code login (reused automatically if you already have one) or configure a custom model gateway in the app's settings; the app keeps this auth in its own config dir rather than reading `ANTHROPIC_*` variables from your shell. To package an installable app instead of running from source, see [Development & Packaging](#development--packaging).
 
+## Frequently Asked Questions
+
+**Q: What should I do the first time I open Open Science?**
+
+A: Complete the two setup steps: **Prepare environment** and **Model provider**. Fix any required row marked `Action needed`, use `Install missing runtime` if it is offered, then click `Check again`. Python is optional and is only needed for Notebook execution.
+
+**Q: What is an API Key, and where do I get one?**
+
+A: An API Key is a secret credential issued by a model provider that lets Open Science call its models on your behalf. Create or copy one from the provider's developer or API console; the provider may charge for the requests you make. Treat it like a password: never share it or commit it to a repository. Open Science stores configured keys locally.
+
+**Q: Do I need an API Key?**
+
+A: Not if you choose `Local Claude` and already have a working Claude Code login on this computer. Cloud providers and custom gateways require their own API Key. If the Local Claude test fails, run `claude` in a terminal, complete the login, and test again.
+
+**Q: Which model providers can I use?**
+
+A: Open Science supports Claude, DeepSeek, GLM, MiniMax, Local Claude, and custom gateways that implement the Anthropic-compatible messages API. For a custom gateway, the Base URL and model ID must exactly match the gateway's documentation; an OpenAI-compatible-only endpoint is not sufficient.
+
+**Q: Why does the model connection test fail?**
+
+A: Check the API Key for missing characters or extra spaces, verify the Base URL and region, use the provider's exact model ID, and confirm that your network and provider account are available. For Local Claude, make sure `claude` runs successfully and is logged in before retrying.
+
+**Q: Setup is complete. How do I start a research task?**
+
+A: Create a project, open a session, and describe the outcome you want in plain language. You can attach source files, reference existing project artifacts with `@`, choose a verified model, and select an approval mode before sending the task.
+
+**Q: Does my research data stay on my computer?**
+
+A: Projects, settings, and credentials are stored locally by default. Content needed for model requests, web searches, or connector calls may still be sent to the external service you selected, so review sensitive files, permissions, and provider policies before running a task.
 
 ## Why
 
