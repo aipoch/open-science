@@ -237,8 +237,9 @@ class ReviewRepository {
   // over-correction. Leaves checks with a different claim untouched.
   async incrementReflagCount(reviewId: string, claim: string): Promise<void> {
     const client = await this.getClient()
-    // Use $executeRawUnsafe because Prisma does not support column += 1 increment in updateMany.
-    // The parameterised query is safe: reviewId and claim are bound as positional parameters.
+    // Use the $executeRaw tagged template because Prisma does not support a column += 1 increment
+    // in updateMany. The query is safe: reviewId and claim are bound as positional parameters by the
+    // tagged template (not string-interpolated), so this is not $executeRawUnsafe.
     await client.$executeRaw`
       UPDATE "Finding"
       SET "reflagCount" = "reflagCount" + 1

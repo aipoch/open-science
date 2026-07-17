@@ -128,8 +128,13 @@ describe('REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND — yaml-grounded disciplines', (
       expect(rubric).toContain('submit_findings')
     })
 
-    it('specifies unified checks[] array', () => {
-      expect(rubric).toMatch(/checks\[\]|checks:.*array|unified.*checks/i)
+    it('specifies a checks array as the output', () => {
+      expect(rubric).toMatch(/checks:.*array|array of your findings|• checks/i)
+    })
+
+    it('keeps pass checks visible but consolidated (no one-card-per-value)', () => {
+      expect(rubric).toMatch(/consolidated pass checks|one per area you verified/i)
+      expect(rubric).toMatch(/never one per value|not one card per metric/i)
     })
 
     it('explicitly excludes summary field', () => {

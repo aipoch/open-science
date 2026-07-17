@@ -409,4 +409,22 @@ describe('ConversationPanel fix loop lock', () => {
     // The same cancel button is reused; the wiring to abort the loop happens in WorkspacePage
     expect(onCancelRun).toHaveBeenCalledTimes(1)
   })
+
+  it('cancel button is visible during the reviewer-review sub-phase (fix loop active, main agent idle)', () => {
+    const onCancelRun = vi.fn()
+    // Reviewer-review sub-phase: the fix loop is active but the main agent is idle (the reviewer runs in
+    // a separate ACP session, so the main session's status is not 'running'). The cancel affordance
+    // must still be reachable so the user can abort the loop during this window.
+    renderPanel({ activeSession: lockedSession, canSendMessage: false, onCancelRun })
+
+    const cancelButton = container.querySelector('[aria-label="Cancel run"]') as HTMLButtonElement
+    expect(cancelButton).not.toBeNull()
+    // The send button is replaced by cancel while the loop is active — not merely disabled.
+    expect(container.querySelector('[aria-label="Send message"]')).toBeNull()
+
+    act(() => {
+      cancelButton.click()
+    })
+    expect(onCancelRun).toHaveBeenCalledTimes(1)
+  })
 })

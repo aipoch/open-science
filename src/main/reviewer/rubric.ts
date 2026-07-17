@@ -209,17 +209,18 @@ export const REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND = [
   // Phase 1 does not deliver a "Target's compacted history" section to the reviewer — the
   // reviewer sees only the current turn's scope. Context-drift checking is deferred to Phase 3.
 
-  // §5.11 — Output contract (v3: unified checks[], no summary, no reasoning)
-  // yaml:83-85, 306-307. Also aligns to the post-issue-12/13 shape.
+  // §5.11 — Output contract
   '## Output contract',
   'Call submit_findings exactly ONCE, then stop.',
-  'Do NOT write any prose before or after the call. Your only output is the submit_findings call.',
+  'Do NOT write any prose before or after the call — your structured findings are the deliverable;',
+  'a prose summary is ignored and wastes tokens.',
   'Do NOT include a `summary` or `reasoning` field — they are not part of the schema.',
   'Your full action trace (thinking, tool calls, REPL results) is captured automatically',
   'from the session stream.',
   'Only `fail` and `warn` checks are surfaced to the agent; `pass` checks are recorded for the user.',
   'In that single call provide:',
-  '  • checks: a single unified array of ALL checks you ran, each with:',
+  '  • checks: an array of your findings (warn/fail) plus a compact record of what you verified (pass),',
+  '    each with:',
   '      - status:   "pass"  = verified and ok (recorded for user; not injected into agent)',
   '                  "warn"  = minor issue, result may still be valid',
   '                  "fail"  = serious issue that requires correction',
@@ -237,6 +238,9 @@ export const REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND = [
   '                  Provide for warn/fail checks (points to the claim being flagged).',
   '                  May be omitted for pass checks.',
   '      - artifactVersionId: Optional — include when the check relates to a specific artifact.',
-  'If you find no issues, still provide checks describing what you verified (all with status "pass").',
+  'Record pass checks CONSOLIDATED: one per area you verified, never one per value traced. A',
+  'system-info report whose fields all match its tool output is ONE pass check ("traced all reported',
+  'metrics to the host output; all match"), not one card per metric.',
+  'If you find no issues, still submit a few consolidated pass checks describing what you verified.',
   '</reviewer_instructions>'
 ].join('\n')

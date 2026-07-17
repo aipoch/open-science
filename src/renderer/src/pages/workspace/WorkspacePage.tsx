@@ -233,8 +233,8 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   // Composer controls follow only the selected session and persistence readiness.
   const canEditDraft = isSessionPersistenceReady
   // Sending is disabled while the current session is running, awaiting a decision, or locked by the
-  // fix loop (fixLoopActive). The fix loop lock persists across both the reviewer-審 sub-phase and
-  // the main agent-改 sub-phase; typing does not override the lock.
+  // fix loop (fixLoopActive). The fix loop lock persists across both the reviewer-review sub-phase and
+  // the main agent-fix sub-phase; typing does not override the lock.
   const canSendMessage =
     isSessionPersistenceReady &&
     !isUploadingAttachments &&

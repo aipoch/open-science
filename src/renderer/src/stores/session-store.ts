@@ -65,7 +65,7 @@ export type ChatSession = Omit<
   // offer an explicit Resume affordance. Never persisted (stripped in stripTransientSessionState).
   interrupted?: boolean
   // Transient: true while a Phase 3 fix loop is active for this session. Disables the send button
-  // for the duration of the loop (across reviewer-審 and agent-改 sub-phases). Never persisted.
+  // for the duration of the loop (across reviewer-review and agent-fix sub-phases). Never persisted.
   fixLoopActive?: boolean
 }
 

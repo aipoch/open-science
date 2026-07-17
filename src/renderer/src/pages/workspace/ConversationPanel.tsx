@@ -407,8 +407,12 @@ const ConversationPanel = ({
                         <ComposerModelPicker />
 
                         {activeSession?.status === 'running' ||
-                        activeSession?.status === 'waiting-permission' ? (
+                        activeSession?.status === 'waiting-permission' ||
+                        activeSession?.fixLoopActive ? (
                           // Running sessions expose cancel instead of send to prevent overlapping turns.
+                          // During a fix loop the main agent may be idle (the reviewer-review sub-phase runs
+                          // in a separate ACP session), so fixLoopActive keeps the cancel affordance
+                          // reachable across the whole loop, not just the agent-fix running turn.
                           <button
                             type="button"
                             onClick={onCancelRun}
