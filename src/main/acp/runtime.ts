@@ -742,7 +742,9 @@ class AcpRuntime {
       this.adoptSession(request.sessionId, adopted, sessionCwd, projectName)
       this.emitState()
 
-      return { sessionId: request.sessionId, cwd: sessionCwd }
+      // Agent-side context did not survive (the session was replaced by a framework/provider switch or
+      // an unresumable restart); tell the caller so it can replay a transcript into the next prompt.
+      return { sessionId: request.sessionId, cwd: sessionCwd, contextReset: true }
     }
     // The SDK exposes public helpers for new sessions only. The runtime keeps this adapter
     // narrow so resume can reuse the same update routing surface as newly-created sessions.
@@ -1039,7 +1041,11 @@ class AcpRuntime {
         systemPromptAppends: this.getSystemPromptAppends()
       })
       const nudgedText = await this.applySkillNudge(request.text, forced)
-      const promptText = promptPrefix ? `${promptPrefix}\n\n${nudgedText}` : nudgedText
+      // A history preamble (transcript replayed after a context reset) leads, then the framework guidance
+      // prefix, then the nudged user text. Absent segments drop out so the normal turn is unchanged.
+      const promptText = [request.historyPreamble, promptPrefix, nudgedText]
+        .filter((segment): segment is string => Boolean(segment))
+        .join('\n\n')
       const promptContent = await this.createPromptContent(request.sessionId, {
         ...request,
         text: promptText

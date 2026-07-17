@@ -1233,6 +1233,8 @@ describe('ACP runtime session management', () => {
       cwd: '/workspace'
     })
     expect(resumed.sessionId).toBe('switched-session')
+    // Signals the caller that agent-side context was lost so it can replay a transcript preamble.
+    expect(resumed.contextReset).toBe(true)
 
     await runtime.sendPrompt({ sessionId: 'switched-session', text: 'keep going' })
 
@@ -1243,6 +1245,37 @@ describe('ACP runtime session management', () => {
         { sessionId: 'switched-session', text: 'reply for adopted-session-1' }
       ])
     )
+  })
+
+  it('prepends a history preamble to the agent content but not the user-facing message', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['adopted-session-1'], { resumeNotFound: true })
+    const messageEvents: Array<{ role?: string; text?: string }> = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: {
+        onEvent: (event) => {
+          if (event.kind === 'message' && event.role === 'user') {
+            messageEvents.push({ role: event.role, text: event.text })
+          }
+        }
+      }
+    })
+
+    await runtime.resumeSession({ sessionId: 'switched-session', cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: 'switched-session',
+      text: 'keep going',
+      historyPreamble: 'PRIOR CONTEXT: the user asked to plot data.'
+    })
+
+    // The agent sees the replayed context ahead of the user's text...
+    expect(fakeAgent.prompts[0]?.text).toContain('PRIOR CONTEXT: the user asked to plot data.')
+    expect(fakeAgent.prompts[0]?.text).toContain('keep going')
+    // ...but the conversation bubble records only what the user actually typed.
+    expect(messageEvents).toEqual([{ role: 'user', text: 'keep going' }])
   })
 
   it('adopts a fresh session when the agent returns a generic Internal error on resume', async () => {

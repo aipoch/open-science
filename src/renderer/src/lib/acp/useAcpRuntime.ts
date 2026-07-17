@@ -59,7 +59,8 @@ const useAcpRuntime = (): {
     text: string,
     attachments?: AcpPromptRequest['attachments'],
     forcedSkillIds?: string[],
-    referencedArtifacts?: AcpPromptRequest['referencedArtifacts']
+    referencedArtifacts?: AcpPromptRequest['referencedArtifacts'],
+    historyPreamble?: AcpPromptRequest['historyPreamble']
   ) => Promise<AcpStateSnapshot | undefined>
   respondToPermission: (
     requestId: string,
@@ -214,7 +215,8 @@ const useAcpRuntime = (): {
       text: AcpPromptRequest['text'],
       attachments?: AcpPromptRequest['attachments'],
       forcedSkillIds?: string[],
-      referencedArtifacts?: AcpPromptRequest['referencedArtifacts']
+      referencedArtifacts?: AcpPromptRequest['referencedArtifacts'],
+      historyPreamble?: AcpPromptRequest['historyPreamble']
     ) =>
       runSnapshotAction(undefined, () =>
         window.api.acp.sendPrompt({
@@ -224,7 +226,9 @@ const useAcpRuntime = (): {
           // Omit the field entirely when no skills were picked so the request stays minimal.
           ...(forcedSkillIds && forcedSkillIds.length > 0 ? { forcedSkillIds } : {}),
           // Same minimal-request rule for `@`-mentioned artifacts.
-          ...(referencedArtifacts && referencedArtifacts.length > 0 ? { referencedArtifacts } : {})
+          ...(referencedArtifacts && referencedArtifacts.length > 0 ? { referencedArtifacts } : {}),
+          // Only present right after a context reset, when a transcript is replayed for continuity.
+          ...(historyPreamble ? { historyPreamble } : {})
         })
       ),
     [runSnapshotAction]

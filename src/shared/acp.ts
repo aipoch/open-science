@@ -106,6 +106,10 @@ export type AcpCreateSessionRequest = {
 export type AcpCreateSessionResponse = {
   sessionId: string
   cwd?: string
+  // True when a resume could not reattach the agent's own session and a fresh one was adopted under the
+  // same app id (framework switch, or a restart the agent could not resume). Agent-side context is gone,
+  // so the caller may replay a transcript preamble into the next prompt to restore continuity.
+  contextReset?: boolean
 }
 
 export type AcpResumeSessionRequest = {
@@ -128,6 +132,9 @@ export type AcpPromptRequest = {
   forcedSkillIds?: string[]
   // Existing files referenced via composer `@` mentions; appended as prompt content blocks.
   referencedArtifacts?: ArtifactReference[]
+  // Transcript of prior turns injected only into the content sent to the agent (never the user-facing
+  // message), so a freshly-adopted session after a framework switch keeps conversational continuity.
+  historyPreamble?: string
 }
 
 export type AcpCancelPromptRequest = {

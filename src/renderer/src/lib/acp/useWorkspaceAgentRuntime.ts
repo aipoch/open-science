@@ -17,6 +17,7 @@ import type { MessagePart } from '../../../../shared/session-persistence'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
 import { useSessionStore, type ChatMessage } from '../../stores/session-store'
 import { useAcpRuntime } from './useAcpRuntime'
+import { buildHistoryPreamble } from './history-preamble'
 import { applyWorkspaceRuntimeEvent, syncWorkspacePermissionState } from './workspace-events'
 
 type SendWorkspaceMessageInput = {
@@ -379,14 +380,24 @@ const sendWorkspaceMessage = async (
     if (!appended) return undefined
 
     // Persisted sessions are marked running locally before async resume closes duplicate submits.
+    // A resume that lands on a freshly-adopted session (framework switch, or an unresumable restart)
+    // lost the agent's context, so replay the prior turns as a preamble on this first prompt.
+    let historyPreamble: string | undefined
+
     if (resumeCwd) {
       try {
-        await runtime.resumeSession(
+        const resumeResult = await runtime.resumeSession(
           targetSessionId,
           resumeCwd,
           sessionProjectName,
           currentSession?.permissionProfile ?? permissionProfile
         )
+
+        if (resumeResult?.contextReset && currentSession) {
+          // currentSession was captured before the new user message was appended, so this is the
+          // prior conversation only — the turn being sent is not duplicated into the preamble.
+          historyPreamble = buildHistoryPreamble(currentSession.messages)
+        }
       } catch (error) {
         useSessionStore.getState().failRun(targetSessionId, getResumeFailureMessage(error))
         return appended
@@ -411,7 +422,14 @@ const sendWorkspaceMessage = async (
 
     // The hook returns after local state is updated; event listeners handle the streamed result.
     void runtime
-      .sendPrompt(targetSessionId, content, promptAttachments, forcedSkillIds, referencedArtifacts)
+      .sendPrompt(
+        targetSessionId,
+        content,
+        promptAttachments,
+        forcedSkillIds,
+        referencedArtifacts,
+        historyPreamble
+      )
       .then((snapshot) => {
         if (!snapshot) {
           void failOrMarkDisconnected(targetSessionId, 'Agent run failed')
