@@ -9,6 +9,7 @@ import type {
   PreviewSkillZipRequest,
   ScanRepoRequest,
   InstallClaudeRequest,
+  InstallOpencodeRequest,
   ClaudeInstallEvent,
   RefreshProviderModelsRequest,
   SetActiveProviderRequest,
@@ -69,7 +70,9 @@ const registerSettingsIpcHandlers = ({
   ipcMain.handle('settings:check-environment', () => service.checkEnvironment())
   ipcMain.handle('settings:detect-claude', () => service.detectClaude())
   ipcMain.handle('settings:detect-opencode', () => service.detectOpencode())
-  ipcMain.handle('settings:install-opencode', () => service.installOpencode(broadcastInstallEvent))
+  ipcMain.handle('settings:install-opencode', (_event, request: InstallOpencodeRequest) =>
+    service.installOpencode(request, broadcastInstallEvent)
+  )
 
   ipcMain.handle('settings:install-claude', (_event, request: InstallClaudeRequest) =>
     service.installClaude(request, broadcastInstallEvent)

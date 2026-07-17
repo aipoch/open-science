@@ -29,6 +29,22 @@ type InstallSpawnSpec = {
   shell?: boolean
 }
 
+// The per-tool coordinates the generic runner needs: the npm package to install and the shell/
+// PowerShell one-liners for the official installer. `scriptWindows` is optional — a tool with no
+// Windows PowerShell installer (e.g. opencode) simply omits it, and the script source is not offered
+// on Windows. Defaults to Claude so existing callers keep their exact behavior.
+export type InstallTarget = {
+  npmPackage: string
+  scriptUnix: string
+  scriptWindows?: string
+}
+
+export const CLAUDE_INSTALL_TARGET: InstallTarget = {
+  npmPackage: '@anthropic-ai/claude-code',
+  scriptUnix: 'curl -fsSL https://claude.ai/install.sh | bash',
+  scriptWindows: 'irm https://claude.ai/install.ps1 | iex'
+}
+
 // Builds the exact spawn command/args for a source on a given platform. Windows: npm runs through the
 // shell (npm.cmd), and the official installer is the PowerShell script (install.ps1); other platforms
 // keep npm bare and pipe the shell script through bash. On Unix, npm's global install is redirected to
@@ -40,12 +56,13 @@ type InstallSpawnSpec = {
 const getInstallSpawnSpec = (
   source: ClaudeInstallSource,
   platform: NodeJS.Platform = process.platform,
-  npmPrefixOverride?: string
+  npmPrefixOverride?: string,
+  target: InstallTarget = CLAUDE_INSTALL_TARGET
 ): InstallSpawnSpec => {
   const isWindows = platform === 'win32'
 
   if (source === 'npm') {
-    const baseArgs = ['i', '-g', '@anthropic-ai/claude-code']
+    const baseArgs = ['i', '-g', target.npmPackage]
 
     return {
       command: 'npm',
@@ -56,21 +73,22 @@ const getInstallSpawnSpec = (
     }
   }
 
-  return isWindows
-    ? {
-        command: 'powershell',
-        args: [
-          '-NoProfile',
-          '-ExecutionPolicy',
-          'Bypass',
-          '-Command',
-          'irm https://claude.ai/install.ps1 | iex'
-        ]
-      }
-    : {
-        command: 'bash',
-        args: ['-lc', 'curl -fsSL https://claude.ai/install.sh | bash']
-      }
+  if (isWindows) {
+    // A tool without a Windows PowerShell installer never reaches here (its source list hides the
+    // script on Windows); guard defensively so a mis-routed call fails loudly rather than silently.
+    if (!target.scriptWindows) {
+      throw new Error(
+        'No Windows install script for this tool; use npm or the app-managed download.'
+      )
+    }
+
+    return {
+      command: 'powershell',
+      args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', target.scriptWindows]
+    }
+  }
+
+  return { command: 'bash', args: ['-lc', target.scriptUnix] }
 }
 
 // Default guard so a hung network install cannot block the wizard forever.
@@ -169,6 +187,8 @@ export type RunInstallOptions = {
   // Injectable probe for whether npm's default global prefix is user-writable. When it is NOT (a
   // root-owned system prefix), the npm install is redirected to ~/.local so it never needs sudo.
   npmPrefixWritable?: () => Promise<boolean>
+  // Which tool to install (npm package + script one-liners). Defaults to Claude.
+  installTarget?: InstallTarget
 }
 
 // Options for the region-block-aware install. Extends the run options with an injectable npm probe so
@@ -200,7 +220,8 @@ const runInstall = async ({
   timeoutMs = DEFAULT_INSTALL_TIMEOUT_MS,
   spawnImpl = defaultInstallSpawn,
   platform = process.platform,
-  npmPrefixWritable = () => isNpmGlobalPrefixWritable()
+  npmPrefixWritable = () => isNpmGlobalPrefixWritable(),
+  installTarget
 }: RunInstallOptions): Promise<ClaudeInstallResult> => {
   // Redirect npm's global install to a user-owned prefix only off Windows and only when the default
   // global prefix isn't writable (would otherwise need sudo). Homebrew/nvm/volta users keep a plain
@@ -210,7 +231,7 @@ const runInstall = async ({
       ? join(homedir(), '.local')
       : undefined
 
-  const spec = getInstallSpawnSpec(source, platform, npmPrefixOverride)
+  const spec = getInstallSpawnSpec(source, platform, npmPrefixOverride, installTarget)
 
   onEvent({
     kind: 'log',
@@ -334,7 +355,8 @@ const runInstallWithFallback = async ({
   spawnImpl,
   platform,
   npmProbe,
-  npmPrefixWritable
+  npmPrefixWritable,
+  installTarget
 }: RunInstallWithFallbackOptions): Promise<ClaudeInstallResult> => {
   const result = await runInstall({
     source,
@@ -343,7 +365,8 @@ const runInstallWithFallback = async ({
     timeoutMs,
     spawnImpl,
     platform,
-    npmPrefixWritable
+    npmPrefixWritable,
+    installTarget
   })
 
   if (result.ok || source !== 'official-script' || !result.regionBlocked) return result
@@ -366,7 +389,8 @@ const runInstallWithFallback = async ({
     timeoutMs,
     spawnImpl,
     platform,
-    npmPrefixWritable
+    npmPrefixWritable,
+    installTarget
   })
 }
 

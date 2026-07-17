@@ -47,6 +47,7 @@ const createService = (
     userClaudeDir?: string
     executeClaudeProbe?: (executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>
     installManagedClaudeImpl?: ManagedInstallImpl
+    installManagedOpencodeImpl?: ManagedInstallImpl
   } = {}
 ): InstanceType<typeof SettingsService> =>
   new SettingsService({
@@ -57,12 +58,23 @@ const createService = (
     executeClaudeProbe: options.executeClaudeProbe,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     installManagedClaudeImpl: options.installManagedClaudeImpl as any,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    installManagedOpencodeImpl: options.installManagedOpencodeImpl as any,
     detectDeps: {
       env: {},
       homePath: '/home',
       platform: 'linux',
       isExecutable: () => Promise.resolve(true),
       getVersion: () => Promise.resolve(detectResult.version),
+      resolveNpmBinDirs: () => Promise.resolve([])
+    },
+    // Isolated so opencode detection never probes the real host during install tests.
+    opencodeDetectDeps: {
+      env: {},
+      homePath: '/home',
+      platform: 'linux',
+      isExecutable: () => Promise.resolve(false),
+      getVersion: () => Promise.resolve(undefined),
       resolveNpmBinDirs: () => Promise.resolve([])
     }
   })
@@ -830,6 +842,39 @@ describe('installClaude (app-managed source)', () => {
       'https://registry.npmmirror.com',
       'https://registry.npmjs.org'
     ])
+  })
+})
+
+describe('installOpencode', () => {
+  it('routes a managed install through the managed installer and persists path + version', async () => {
+    const service = createService(undefined, {
+      installManagedOpencodeImpl: async ({ installId }) => ({
+        result: { installId, ok: true },
+        resolvedPath: '/data/opencode-managed/bin/opencode',
+        version: '1.18.3'
+      })
+    })
+
+    const result = await service.installOpencode({ source: 'managed' }, () => undefined)
+
+    expect(result.ok).toBe(true)
+    expect((await service.getSettingsView()).opencode).toEqual({
+      resolvedPath: '/data/opencode-managed/bin/opencode',
+      version: '1.18.3'
+    })
+  })
+
+  it('does not persist opencode info when the managed install fails', async () => {
+    const service = createService(undefined, {
+      installManagedOpencodeImpl: async ({ installId }) => ({
+        result: { installId, ok: false, error: 'all registries failed' }
+      })
+    })
+
+    const result = await service.installOpencode({ source: 'managed' }, () => undefined)
+
+    expect(result.ok).toBe(false)
+    expect((await service.getSettingsView()).opencode).toEqual({})
   })
 })
 

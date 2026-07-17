@@ -311,6 +311,49 @@ export type InstallClaudeRequest = {
   managedRegistry?: ManagedClaudeRegistry
 }
 
+// Install request for OpenCode. Reuses the same three source kinds as Claude; the app-managed download
+// is the recommended default and the only cross-platform-guaranteed path (no user Node/npm needed).
+export type InstallOpencodeRequest = {
+  source: ClaudeInstallSource
+}
+
+// The ordered OpenCode install sources for a host platform, mirroring getClaudeInstallSources. The
+// app-managed native-binary download leads (works on every OS, including native Windows). npm follows
+// (`npm i -g opencode-ai`). The shell installer (`curl … | bash`) is offered only off Windows —
+// OpenCode ships no official Windows PowerShell installer, so Windows users take managed or npm.
+export const getOpencodeInstallSources = (
+  platform: string = 'linux'
+): ClaudeInstallSourceInfo[] => {
+  const isWindows = platform === 'win32'
+
+  const sources: ClaudeInstallSourceInfo[] = [
+    {
+      id: 'managed',
+      label: 'App-managed download (recommended)',
+      displayCommand: '',
+      requiresNpm: false,
+      description: 'Downloads a self-contained OpenCode — no Node.js or npm required.'
+    },
+    {
+      id: 'npm',
+      label: 'npm (global install)',
+      displayCommand: 'npm i -g opencode-ai',
+      requiresNpm: true
+    }
+  ]
+
+  if (!isWindows) {
+    sources.push({
+      id: 'official-script',
+      label: 'Official install script',
+      displayCommand: 'curl -fsSL https://opencode.ai/install | bash',
+      requiresNpm: false
+    })
+  }
+
+  return sources
+}
+
 // One streamed line of installer output. `installId` groups a single install run.
 export type ClaudeInstallLogEvent = {
   kind: 'log'

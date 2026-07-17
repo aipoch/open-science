@@ -106,7 +106,7 @@ type SettingsStore = SettingsStoreData & {
     managedRegistry?: ManagedClaudeRegistry
   ) => Promise<ClaudeInstallResult>
   // App-managed OpenCode install; shares the install progress/log state with installClaude.
-  installOpencode: () => Promise<ClaudeInstallResult>
+  installOpencode: (source?: ClaudeInstallSource) => Promise<ClaudeInstallResult>
   clearInstallLogs: () => void
   openEnvironmentRepair: () => void
   closeEnvironmentRepair: () => void
@@ -417,7 +417,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   },
 
   // App-managed OpenCode install, mirroring installClaude's shared progress/log handling.
-  installOpencode: async () => {
+  installOpencode: async (source = 'managed') => {
     set({ isInstalling: true, installLogs: [], installProgress: null, installError: undefined })
 
     const unsubscribe = window.api.settings.onInstallLog((event) => {
@@ -429,7 +429,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     })
 
     try {
-      const result = await window.api.settings.installOpencode()
+      const result = await window.api.settings.installOpencode({ source })
 
       // A successful install persisted opencode's path/version in main; reload so the card reflects it.
       set(applySnapshot(await window.api.settings.getSettings()))

@@ -21,6 +21,7 @@ import type {
   DeleteSkillRequest,
   EnvironmentCheckResult,
   InstallClaudeRequest,
+  InstallOpencodeRequest,
   NcbiCredentialsView,
   Preflight,
   ProviderApiType,
@@ -71,11 +72,16 @@ import {
   detectOpencode,
   type OpencodeDetectDeps
 } from './opencode-detect'
-import { installManagedOpencode, managedOpencodeDir } from './managed-opencode'
+import {
+  installManagedOpencode,
+  managedOpencodeDir,
+  type InstallManagedOpencodeOptions
+} from './managed-opencode'
 import { opencodeConfigDir } from '../agent-framework/opencode'
 import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import { provisionAppClaudeConfigDir } from './claude-config-provision'
 import { detectNpmAvailable, runInstallWithFallback } from './claude-install'
+import { OPENCODE_INSTALL_TARGET } from './opencode-install'
 import { runEnvironmentCheck } from './environment-check'
 import {
   DEFAULT_REGISTRIES,
@@ -160,6 +166,10 @@ export type SettingsServiceOptions = {
   installManagedClaudeImpl?: (
     options: InstallManagedClaudeOptions
   ) => Promise<ManagedInstallOutcome>
+  // Same for the managed OpenCode installer.
+  installManagedOpencodeImpl?: (
+    options: InstallManagedOpencodeOptions
+  ) => Promise<ManagedInstallOutcome>
 }
 
 // Orchestrates the settings units (repository + crypto + detect/install + validate) behind one
@@ -176,6 +186,9 @@ class SettingsService {
   private readonly executeClaudeProbe: ExecuteClaudeProbe
   private readonly installManagedClaudeImpl: (
     options: InstallManagedClaudeOptions
+  ) => Promise<ManagedInstallOutcome>
+  private readonly installManagedOpencodeImpl: (
+    options: InstallManagedOpencodeOptions
   ) => Promise<ManagedInstallOutcome>
   private providerSequence = 0
   // Skills force-loaded for the current turn: subtracted from the stored disabled set at spawn time so
@@ -204,6 +217,7 @@ class SettingsService {
     this.userSkills = options.userSkills ?? new UserSkillRepository(this.storageRoot)
     this.executeClaudeProbe = options.executeClaudeProbe ?? executeClaudeProbe
     this.installManagedClaudeImpl = options.installManagedClaudeImpl ?? installManagedClaude
+    this.installManagedOpencodeImpl = options.installManagedOpencodeImpl ?? installManagedOpencode
   }
 
   // Returns the raw stored settings document (unmasked), for main-process bootstrap needs (e.g. priming
@@ -527,20 +541,42 @@ class SettingsService {
     return result
   }
 
-  // App-managed OpenCode install (first recommendation, like Claude): downloads the native binary and
-  // persists its path + version. Streams progress on the shared install-log channel.
+  // Installs OpenCode from the requested source (app-managed download is the first recommendation, like
+  // Claude). Managed downloads the native binary and persists its path + version; npm/script shell out
+  // and then re-detect. Streams progress on the shared install-log channel.
   async installOpencode(
+    request: InstallOpencodeRequest,
     onEvent: (event: ClaudeInstallEvent) => void
   ): Promise<ClaudeInstallResult> {
     this.providerSequence += 1
     const installId = `install-opencode-${Date.now()}-${this.providerSequence}`
-    const outcome = await installManagedOpencode({ installId, onEvent, dataRoot: this.storageRoot })
 
-    if (outcome.result.ok && outcome.resolvedPath) {
-      await this.repository.setOpencodeInfo(outcome.resolvedPath, outcome.version)
+    if (request.source === 'managed') {
+      const outcome = await this.installManagedOpencodeImpl({
+        installId,
+        onEvent,
+        dataRoot: this.storageRoot
+      })
+
+      if (outcome.result.ok && outcome.resolvedPath) {
+        await this.repository.setOpencodeInfo(outcome.resolvedPath, outcome.version)
+      }
+
+      return outcome.result
     }
 
-    return outcome.result
+    const result = await runInstallWithFallback({
+      source: request.source,
+      installId,
+      onEvent,
+      installTarget: OPENCODE_INSTALL_TARGET
+    })
+
+    if (result.ok) {
+      await this.detectOpencode()
+    }
+
+    return result
   }
 
   // Records that first-run onboarding finished so later launches skip the wizard.
