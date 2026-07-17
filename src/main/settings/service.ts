@@ -66,7 +66,7 @@ import {
   type ResolvedAgentBackend
 } from '../agent-framework'
 import { createDefaultDetectDeps, detectClaude, type ClaudeDetectDeps } from './claude-detect'
-import { detectOpencode, readOpencodeUserConfig } from './opencode-detect'
+import { detectOpencode } from './opencode-detect'
 import { provisionAppClaudeConfigDir } from './claude-config-provision'
 import { detectNpmAvailable, runInstallWithFallback } from './claude-install'
 import { runEnvironmentCheck } from './environment-check'
@@ -1034,9 +1034,6 @@ class SettingsService {
     const modelConfig = framework.prepareModelConfig(provider, {
       storageRoot: this.storageRoot,
       executablePath,
-      // Merge onto the user's own opencode config so their providers/mcp survive; auth.json is loaded
-      // by opencode separately and is never touched.
-      baseConfig: await readOpencodeUserConfig(),
       // Connector conventions + tools, so opencode uses host.mcp instead of raw HTTP (it has no skill
       // docs like Claude). Enabled bundled connectors only.
       instructions: renderConnectorInstructions(this.enabledConnectorIds(settings.connectors))

@@ -23,8 +23,13 @@ import type {
 // delivery (prompt prefix, no preset), and skills (unsupported). Everything else reuses the generic
 // runtime. See docs/internal/pluggable-agent-framework-feasibility.md.
 
-// Env var opencode reads to locate its config file.
-const OPENCODE_CONFIG_ENV = 'OPENCODE_CONFIG'
+// opencode is isolated the way Claude uses CLAUDE_CONFIG_DIR: it reads config from
+// $XDG_CONFIG_HOME/opencode and auth/data from $XDG_DATA_HOME/opencode. Pointing both at app-owned
+// dirs means the app fully owns opencode's config + auth (the app provider is the only credential)
+// and the user's own ~/.config/opencode + auth.json are never read or written. Verified: with these
+// set, the user's global providers/auth disappear and only the app-injected provider remains.
+const opencodeConfigHome = (storageRoot: string): string => join(storageRoot, 'opencode', 'config')
+const opencodeDataHome = (storageRoot: string): string => join(storageRoot, 'opencode', 'data')
 
 // The app's providers are Anthropic `/v1/messages`-compatible (custom gateways and official vendors),
 // so they map onto opencode's built-in `anthropic` provider with a `baseURL`/`apiKey` override. An
@@ -104,25 +109,28 @@ export const opencodeFramework: AgentFramework = {
   },
 
   prepareModelConfig(provider: ResolvedProvider, ctx: ModelConfigContext): AgentModelConfig {
-    // opencode reads a config file, not ANTHROPIC_* env; point OPENCODE_CONFIG at an app-owned file
-    // that merges the app's provider/model onto the user's existing opencode config.
-    const configDir = join(ctx.storageRoot, 'opencode')
-    const configPath = join(configDir, 'opencode.json')
+    // Isolate opencode via app-owned XDG dirs (mirror of CLAUDE_CONFIG_DIR): opencode reads its config
+    // from $XDG_CONFIG_HOME/opencode and auth/data from $XDG_DATA_HOME/opencode. We own the whole
+    // config here, so the app provider/model is written clean (no merge with the user's global config).
+    const configHome = opencodeConfigHome(ctx.storageRoot)
+    const dataHome = opencodeDataHome(ctx.storageRoot)
+    const opencodeDir = join(configHome, 'opencode')
+    const configPath = join(opencodeDir, 'opencode.json')
     const configFiles = [{ path: configPath, content: '' }]
 
     // Connector conventions + tools, wired via opencode's `instructions` config so the agent uses
     // host.mcp instead of raw HTTP. Absolute path keeps it independent of the session cwd.
     const instructionPaths: string[] = []
     if (ctx.instructions) {
-      const instructionsPath = join(configDir, 'instructions', 'connectors.md')
+      const instructionsPath = join(opencodeDir, 'instructions', 'connectors.md')
       instructionPaths.push(instructionsPath)
       configFiles.push({ path: instructionsPath, content: ctx.instructions })
     }
 
-    configFiles[0].content = buildOpencodeConfig(provider, ctx.baseConfig, instructionPaths)
+    configFiles[0].content = buildOpencodeConfig(provider, {}, instructionPaths)
 
     return {
-      env: { [OPENCODE_CONFIG_ENV]: configPath },
+      env: { XDG_CONFIG_HOME: configHome, XDG_DATA_HOME: dataHome },
       configFiles
     }
   },
