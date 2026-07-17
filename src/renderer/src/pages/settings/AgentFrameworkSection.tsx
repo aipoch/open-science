@@ -1,7 +1,15 @@
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { useSettingsStore } from '@/stores/settings-store'
-import type { AgentFrameworkId } from '../../../../shared/settings'
+import type { AgentFrameworkId, AgentFrameworkView } from '../../../../shared/settings'
 import { SettingsRow, SettingsSection } from './SettingsLayout'
+
+// The selectable frameworks, used as a fallback so the dropdown always offers both even before the
+// first snapshot arrives (or if a stale main omits the list). The snapshot's own entries take
+// precedence when present, so live displayName/capability data wins.
+const KNOWN_FRAMEWORKS: AgentFrameworkView[] = [
+  { id: 'claude-code', displayName: 'Claude Code', supportsSkills: true },
+  { id: 'opencode', displayName: 'opencode', supportsSkills: false }
+]
 
 // Lets the user pick which agent backend drives their sessions. Switching persists the choice and
 // reconnects the agent (main drops the connection so the next prompt spawns the selected backend).
@@ -10,12 +18,12 @@ const AgentFrameworkSection = (): React.JSX.Element => {
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const setAgentFramework = useSettingsStore((state) => state.setAgentFramework)
 
-  // Before the first snapshot loads the list is empty; show the current id so the control is stable.
   const currentId = agentFrameworkId ?? 'claude-code'
-  const frameworks =
-    agentFrameworks && agentFrameworks.length > 0
-      ? agentFrameworks
-      : [{ id: currentId, displayName: currentId, supportsSkills: true }]
+  // Always list both frameworks (so switching is never blocked by an empty/partial list), preferring
+  // the snapshot's entry for each id when it exists.
+  const frameworks = KNOWN_FRAMEWORKS.map(
+    (known) => agentFrameworks?.find((framework) => framework.id === known.id) ?? known
+  )
   const selected = frameworks.find((framework) => framework.id === currentId)
 
   return (
