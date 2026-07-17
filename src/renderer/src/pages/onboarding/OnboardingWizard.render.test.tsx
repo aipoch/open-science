@@ -118,7 +118,13 @@ afterEach(() => {
 describe('OnboardingWizard', () => {
   it('keeps first-time users on the environment summary until they explicitly continue', async () => {
     useSettingsStore.setState({
-      preflight: { claudeReady: true, activeProviderReady: false },
+      preflight: {
+        claudeReady: true,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: true,
+        activeProviderReady: false
+      },
       claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
       environmentCheck: environment(true)
     })
@@ -141,7 +147,13 @@ describe('OnboardingWizard', () => {
 
   it('blocks continuation while any required environment check fails', async () => {
     useSettingsStore.setState({
-      preflight: { claudeReady: false, activeProviderReady: false },
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
       environmentCheck: environment(false)
     })
 
@@ -163,7 +175,13 @@ describe('OnboardingWizard', () => {
 
   it('Back returns from the model step to the Claude step', async () => {
     useSettingsStore.setState({
-      preflight: { claudeReady: true, activeProviderReady: false },
+      preflight: {
+        claudeReady: true,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: true,
+        activeProviderReady: false
+      },
       claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
       environmentCheck: environment(true)
     })
@@ -191,7 +209,13 @@ describe('OnboardingWizard', () => {
 
   it('defaults to automatic detection and keeps the original installer under the manual tab', async () => {
     useSettingsStore.setState({
-      preflight: { claudeReady: false, activeProviderReady: false },
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
       environmentCheck: environment(false)
     })
 
@@ -217,7 +241,13 @@ describe('OnboardingWizard', () => {
       .fn()
       .mockResolvedValue({ installId: 'i', ok: false, error: 'download integrity failed' })
     useSettingsStore.setState({
-      preflight: { claudeReady: false, activeProviderReady: false },
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
       environmentCheck: environment(false),
       installClaude
     })
@@ -239,13 +269,25 @@ describe('OnboardingWizard', () => {
     const checkEnvironment = vi.fn().mockImplementation(async () => {
       useSettingsStore.setState({
         environmentCheck: environment(true),
-        preflight: { claudeReady: true, activeProviderReady: false },
+        preflight: {
+          claudeReady: true,
+          opencodeReady: false,
+          agentFrameworkId: 'claude-code',
+          agentReady: true,
+          activeProviderReady: false
+        },
         claude: { resolvedPath: '/managed/claude', version: '2.1.0' }
       })
       return environment(true)
     })
     useSettingsStore.setState({
-      preflight: { claudeReady: false, activeProviderReady: false },
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
       environmentCheck: environment(false),
       checkEnvironment
     })
@@ -273,7 +315,13 @@ describe('OnboardingWizard', () => {
 
   it('shows structured install progress and a copyable technical log', async () => {
     useSettingsStore.setState({
-      preflight: { claudeReady: false, activeProviderReady: false },
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
       environmentCheck: environment(false),
       isInstalling: true,
       installLogs: ['Downloading Claude — 5 MB / 10.0 MB']
@@ -292,7 +340,13 @@ describe('OnboardingWizard', () => {
   it('uses a focused repair screen for previously completed onboarding', async () => {
     useSettingsStore.setState({
       onboardingCompletedAt: 1234,
-      preflight: { claudeReady: false, activeProviderReady: true },
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: true
+      },
       environmentCheck: environment(false)
     })
 
@@ -309,7 +363,13 @@ describe('OnboardingWizard', () => {
     const closeEnvironmentRepair = vi.fn()
     useSettingsStore.setState({
       onboardingCompletedAt: 1234,
-      preflight: { claudeReady: true, activeProviderReady: true },
+      preflight: {
+        claudeReady: true,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: true,
+        activeProviderReady: true
+      },
       environmentCheck: environment(true),
       closeEnvironmentRepair
     })
@@ -329,7 +389,13 @@ describe('OnboardingWizard', () => {
 
   it('defers required-field errors until the first submit attempt', async () => {
     useSettingsStore.setState({
-      preflight: { claudeReady: true, activeProviderReady: false },
+      preflight: {
+        claudeReady: true,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: true,
+        activeProviderReady: false
+      },
       claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
       environmentCheck: environment(true)
     })
@@ -363,7 +429,13 @@ describe('OnboardingWizard', () => {
     // reach the model and, finally, the location step.
     const readyEnvironment = (): void => {
       useSettingsStore.setState({
-        preflight: { claudeReady: true, activeProviderReady: false },
+        preflight: {
+          claudeReady: true,
+          opencodeReady: false,
+          agentFrameworkId: 'claude-code',
+          agentReady: true,
+          activeProviderReady: false
+        },
         claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
         environmentCheck: environment(true)
       })

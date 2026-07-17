@@ -296,7 +296,13 @@ describe('SettingsService: preflight & spawn config', () => {
     await service.validateProvider({ providerId: created.id })
     await service.setActiveProvider(created.id)
 
-    expect(await service.getPreflight()).toEqual({ claudeReady: true, activeProviderReady: true })
+    expect(await service.getPreflight()).toEqual({
+      claudeReady: true,
+      opencodeReady: false,
+      agentFrameworkId: 'claude-code',
+      agentReady: true,
+      activeProviderReady: true
+    })
   })
 
   it('builds spawn env from the active provider with the decrypted key', async () => {

@@ -184,6 +184,9 @@ type SettingsStore = SettingsStoreData & {
 
 const createInitialPreflight = (): Preflight => ({
   claudeReady: false,
+  opencodeReady: false,
+  agentFrameworkId: 'claude-code',
+  agentReady: false,
   activeProviderReady: false
 })
 

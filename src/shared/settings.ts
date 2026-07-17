@@ -148,9 +148,15 @@ export type SetAgentFrameworkRequest = {
   id: AgentFrameworkId
 }
 
-// The two hard startup gates. Kept as plain booleans so the wizard can target the first unmet step.
+// The hard startup gates. Kept as plain booleans so the wizard can target the first unmet step.
+// Per-framework readiness is exposed alongside `agentReady`, which reflects the currently-selected
+// framework — the gate a session actually depends on.
 export type Preflight = {
   claudeReady: boolean
+  opencodeReady: boolean
+  // Readiness of the selected agent framework (claudeReady or opencodeReady), plus which one it is.
+  agentFrameworkId: AgentFrameworkId
+  agentReady: boolean
   activeProviderReady: boolean
 }
 

@@ -415,10 +415,15 @@ class SettingsService {
     const claudePathExists = settings.claude?.resolvedPath
       ? await this.pathExists(settings.claude.resolvedPath)
       : false
+    const opencodePathExists = settings.opencodePath
+      ? await this.pathExists(settings.opencodePath)
+      : false
 
     return computePreflight({
       settings,
       claudePathExists,
+      opencodePathExists,
+      agentFrameworkId: settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
       isProviderKeyUsable: (provider) => this.isProviderKeyUsable(provider)
     })
   }
