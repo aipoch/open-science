@@ -262,9 +262,14 @@ class SettingsService {
     if (detected) {
       await this.repository.setOpencodeInfo(detected.resolvedPath, detected.version)
     } else {
-      // Nothing runnable found — clear any stale record so the card/gates reflect the uninstall
-      // instead of showing a version for a binary that no longer exists.
-      await this.repository.clearOpencodeInfo()
+      // Live probe found nothing. Only forget the stored record when its binary is actually gone from
+      // disk (a real uninstall) — a transient probe miss (e.g. a slow --version, a GUI PATH gap) must
+      // not wipe a still-installed opencode.
+      const cached = (await this.repository.getSettings()).opencodePath
+
+      if (cached && !(await this.pathExists(cached))) {
+        await this.repository.clearOpencodeInfo()
+      }
     }
 
     return this.getSettingsView()
@@ -489,6 +494,15 @@ class SettingsService {
 
     if (result.found && result.path) {
       await this.repository.setClaudeInfo({ resolvedPath: result.path, version: result.version })
+    } else {
+      // Live probe missed it. A GUI launch can have a narrower PATH than the installing shell, so only
+      // forget the cached record when the stored binary is actually gone from disk (a real uninstall) —
+      // mirroring checkEnvironment's cached-path resilience so the status surfaces cannot disagree.
+      const cached = (await this.repository.getSettings()).claude
+
+      if (cached?.resolvedPath && !(await this.pathExists(cached.resolvedPath))) {
+        await this.repository.setClaudeInfo({})
+      }
     }
 
     return result
@@ -1039,7 +1053,15 @@ class SettingsService {
   // Builds the spawn env for the active provider, read fresh so switching takes effect on reconnect.
   async resolveActiveSpawnConfig(): Promise<AgentSpawnConfig> {
     const settings = await this.repository.getSettings()
-    const executablePath = settings.claude?.resolvedPath
+    let executablePath = settings.claude?.resolvedPath
+
+    // Trust the stored path only if it still exists. A user who uninstalled Claude leaves a stale path
+    // behind; spawning it launches a ghost that dies immediately (surfacing as write EPIPE), so fall
+    // back to a live detect and, if that also finds nothing, fail with a clear, actionable message.
+    if (!executablePath || !(await this.pathExists(executablePath))) {
+      const detected = await detectClaude(this.detectDeps)
+      executablePath = detected.found ? detected.path : undefined
+    }
 
     if (!executablePath) {
       throw new Error('Claude executable is not configured. Complete onboarding in settings.')

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execPath } from 'node:process'
@@ -907,6 +907,48 @@ describe('detectOpencode', () => {
     expect(snapshot.opencode).toEqual({
       resolvedPath: '/usr/local/bin/opencode',
       version: '1.19.0'
+    })
+  })
+
+  it('keeps a still-present record when the live probe misses (GUI PATH gap, not an uninstall)', async () => {
+    // A real executable the probe fails to see (e.g. narrower GUI PATH). The record must survive.
+    const present = join(storageRoot, 'opencode-present')
+    await writeFile(present, '', 'utf8')
+    await chmod(present, 0o755)
+    await repository.setOpencodeInfo(present, '1.18.3')
+    const service = createService() // default deps find nothing
+
+    const snapshot = await service.detectOpencode()
+
+    expect(snapshot.opencode).toEqual({ resolvedPath: present, version: '1.18.3' })
+  })
+})
+
+describe('detectClaude hardening', () => {
+  it('forgets the recorded claude when its binary is gone from disk (uninstall)', async () => {
+    await repository.setClaudeInfo({ resolvedPath: '/gone/bin/claude', version: '2.1.0' })
+    // found:false + version:undefined makes the injected probe report nothing runnable.
+    const service = createService({ found: false, path: undefined, version: undefined })
+
+    await service.detectClaude()
+
+    // The stale path is forgotten (an empty claude record sanitizes away to undefined on read).
+    expect((await repository.getSettings()).claude?.resolvedPath).toBeUndefined()
+  })
+
+  it('keeps the cached claude on a transient probe miss when its binary still exists', async () => {
+    const present = join(storageRoot, 'claude-present')
+    await writeFile(present, '', 'utf8')
+    await chmod(present, 0o755)
+    await repository.setClaudeInfo({ resolvedPath: present, version: '2.1.0' })
+    const service = createService({ found: false, path: undefined, version: undefined })
+
+    await service.detectClaude()
+
+    // A GUI PATH gap must not wipe a still-installed claude.
+    expect((await repository.getSettings()).claude).toEqual({
+      resolvedPath: present,
+      version: '2.1.0'
     })
   })
 })
