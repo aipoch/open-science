@@ -36,8 +36,8 @@ const computePreflight = ({
 
   const activeProviderReady = Boolean(
     activeProvider &&
-      activeProvider.lastValidatedAt !== undefined &&
-      isProviderKeyUsable(activeProvider)
+    activeProvider.lastValidatedAt !== undefined &&
+    isProviderKeyUsable(activeProvider)
   )
 
   return { claudeReady, opencodeReady, agentFrameworkId, agentReady, activeProviderReady }
