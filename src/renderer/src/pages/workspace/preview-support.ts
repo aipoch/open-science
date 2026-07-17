@@ -112,9 +112,12 @@ const getPreviewFormatForMimeType = (mimeType: string): PreviewFileFormat => {
 
 // Looks up the render format for one file, defaulting to the unsupported fallback state.
 export const getPreviewFormat = (extension: string, mimeType?: string): PreviewFileFormat => {
-  const extensionFormat = PREVIEW_SUPPORTED_EXTENSIONS[extension.toLowerCase()]
+  const normalizedExtension = extension.toLowerCase()
+  const extensionFormat = PREVIEW_SUPPORTED_EXTENSIONS[normalizedExtension]
 
   if (extensionFormat) return extensionFormat
+  // Legacy Word documents must not enter the DOCX renderer through a misleading MIME type.
+  if (normalizedExtension === 'doc') return 'unknown'
 
   return getPreviewFormatForMimeType(mimeType ?? '')
 }

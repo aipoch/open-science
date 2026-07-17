@@ -265,7 +265,68 @@ describe('validateOfficePackage', () => {
     await expect(validateOfficePackage(docx, 'docx')).rejects.toThrow(/damaged or unsupported/i)
   })
 
-  it('rejects external relationships even when their type claims to be a hyperlink', async () => {
+  it('allows external hyperlinks in DOCX packages', async () => {
+    const docx = createZip([
+      { name: '[Content_Types].xml' },
+      {
+        name: 'word/document.xml',
+        data: encoder.encode('<document><body/></document>')
+      },
+      {
+        name: 'word/_rels/document.xml.rels',
+        data: relationshipsXml(
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/reference" TargetMode="External"/>'
+        )
+      }
+    ])
+
+    await expect(validateOfficePackage(docx, 'docx')).resolves.toBeUndefined()
+  })
+
+  it('continues to reject external media relationships in DOCX packages', async () => {
+    const docx = createZip([
+      { name: '[Content_Types].xml' },
+      {
+        name: 'word/document.xml',
+        data: encoder.encode('<document><body/></document>')
+      },
+      {
+        name: 'word/_rels/document.xml.rels',
+        data: relationshipsXml(
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="https://tracker.example/image.png" TargetMode="External"/>'
+        )
+      }
+    ])
+
+    await expect(validateOfficePackage(docx, 'docx')).rejects.toThrow(/external resources/i)
+  })
+
+  it.each([
+    [
+      'Type',
+      '<Relationship xmlns:x="urn:shadow" Id="rId1" x:Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="https://tracker.example/image.png" TargetMode="External"/>'
+    ],
+    [
+      'TargetMode',
+      '<Relationship xmlns:x="urn:shadow" Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="https://tracker.example/image.png" x:TargetMode="Internal" TargetMode="External"/>'
+    ]
+  ])('rejects namespace-shadowed %s attributes in external relationships', async (_name, xml) => {
+    const docx = createZip([
+      { name: '[Content_Types].xml' },
+      {
+        name: 'word/document.xml',
+        data: encoder.encode('<document><body/></document>')
+      },
+      {
+        name: 'word/_rels/document.xml.rels',
+        data: relationshipsXml(xml)
+      }
+    ])
+
+    await expect(validateOfficePackage(docx, 'docx')).rejects.toThrow(/external resources/i)
+  })
+
+  it('rejects external relationships in non-DOCX packages even when the type is a hyperlink', async () => {
     const pptx = createZip([
       { name: '[Content_Types].xml' },
       { name: 'ppt/presentation.xml' },

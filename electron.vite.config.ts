@@ -1,5 +1,6 @@
 import { resolve } from 'path'
 import { defineConfig } from 'electron-vite'
+import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
@@ -18,6 +19,15 @@ export default defineConfig({
       // needless rescans/HMR churn during dev.
       watch: { ignored: ['**/.claude/**'] }
     },
-    plugins: [react(), tailwindcss()]
+    plugins: [
+      // Apply upstream CJS interop for the spreadsheet Worker without injecting renderer presets.
+      fileViewerRenderers({
+        formats: ['xls', 'xlsx'],
+        inject: false,
+        chunkStrategy: 'none'
+      }),
+      react(),
+      tailwindcss()
+    ]
   }
 })

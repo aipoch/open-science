@@ -21,6 +21,10 @@ const EOCD_SIGNATURE = 0x06054b50
 const CENTRAL_ENTRY_SIGNATURE = 0x02014b50
 const LOCAL_ENTRY_SIGNATURE = 0x04034b50
 const UNICODE_PATH_EXTRA_FIELD_ID = 0x7075
+const DOCX_EXTERNAL_HYPERLINK_TYPES = new Set([
+  'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink',
+  'http://purl.oclc.org/ooxml/officeDocument/relationships/hyperlink'
+])
 
 type OoxmlPackageEntry = {
   name: string
@@ -362,8 +366,8 @@ const parsePackageXml = (
   }
 }
 
-// Blocks relationships that could make a rendered Office file fetch local or remote resources.
-const assertNoExternalResources = (data: Uint8Array): void => {
+// Allows inert DOCX hyperlinks while blocking relationships that could fetch external resources.
+const assertNoExternalResources = (data: Uint8Array, extension: OfficeFileExtension): void => {
   if (data.byteLength > MAX_RELATIONSHIPS_XML_BYTES) {
     throw new Error('This Office relationship file is too large to preview safely')
   }
@@ -379,10 +383,20 @@ const assertNoExternalResources = (data: Uint8Array): void => {
       }
 
       const targetMode = Object.values(tag.attributes)
-        .find((attribute) => attribute.local === 'TargetMode')
+        .find((attribute) => attribute.local === 'TargetMode' && attribute.prefix === '')
         ?.value.trim()
         .toLowerCase()
       if (targetMode === 'external') {
+        const relationshipType = Object.values(tag.attributes)
+          .find((attribute) => attribute.local === 'Type' && attribute.prefix === '')
+          ?.value.trim()
+        if (
+          extension === 'docx' &&
+          relationshipType &&
+          DOCX_EXTERNAL_HYPERLINK_TYPES.has(relationshipType)
+        ) {
+          return
+        }
         throw new Error('Office files with external resources cannot be previewed')
       }
     })
@@ -446,7 +460,7 @@ const verifyActualInflatedSizes = async (
     if (inflated.size !== entry.declaredUncompressedSize) throw invalidPackage()
 
     if (inflated.data && hasEntryExtension(entry.name, '.rels')) {
-      assertNoExternalResources(inflated.data)
+      assertNoExternalResources(inflated.data, extension)
     }
     if (inflated.data && extension === 'docx' && hasEntryExtension(entry.name, '.xml')) {
       assertDocxXmlComplexity(inflated.data)

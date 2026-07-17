@@ -65,8 +65,16 @@ describe('preview support format detection', () => {
     expect(getPreviewFormat('', mimeType)).toBe(expectedFormat)
   })
 
-  it('falls back to unknown for unsupported extensions and mime types', () => {
+  it('falls back to unknown for unsupported extensions and legacy Word documents', () => {
     expect(getPreviewFormat('zip', 'application/zip')).toBe('unknown')
+    expect(getPreviewFormat('doc')).toBe('unknown')
+    expect(
+      getPreviewFormat(
+        'doc',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      )
+    ).toBe('unknown')
+    expect(getPreviewFormat('', 'application/msword')).toBe('unknown')
   })
 
   it('derives the preview format from source-neutral file metadata', () => {

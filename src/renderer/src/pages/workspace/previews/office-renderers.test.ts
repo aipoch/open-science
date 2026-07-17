@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { renderOfficeFile } from './office-renderers'
 
@@ -62,15 +62,34 @@ describe('renderOfficeFile', () => {
     signal = new AbortController().signal
   })
 
+  afterEach(() => {
+    container.remove()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
   it('renders DOCX with active-content features disabled and cleans up Blob URLs', async () => {
     mocks.renderDocx.mockImplementation(async (_bytes, target: HTMLElement) => {
       const wrapper = document.createElement('div')
       wrapper.className = 'docx-wrapper'
+      wrapper.style.paddingLeft = '30px'
+      wrapper.style.paddingRight = '30px'
+      const page = document.createElement('section')
+      page.className = 'docx'
+      page.style.width = '800px'
       const image = document.createElement('img')
       image.src = 'blob:word-image'
-      wrapper.appendChild(image)
+      page.appendChild(image)
+      const link = document.createElement('a')
+      link.href = 'https://example.com/reference'
+      link.target = '_blank'
+      link.rel = 'noopener'
+      link.textContent = 'Reference'
+      page.appendChild(link)
+      wrapper.appendChild(page)
       target.appendChild(wrapper)
     })
+    Object.defineProperty(container, 'clientWidth', { configurable: true, value: 460 })
     const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
 
     const cleanup = await renderOfficeFile({
@@ -88,9 +107,15 @@ describe('renderOfficeFile', () => {
       renderComments: false,
       useBase64URL: true
     })
-    expect(container.querySelector<HTMLElement>('.docx-wrapper')?.style.alignItems).toBe(
-      'flex-start'
+    const wrapper = container.querySelector<HTMLElement>('.docx-wrapper')
+    expect(wrapper?.style.alignItems).toBe('center')
+    expect(wrapper?.style.getPropertyValue('--open-science-docx-scale')).toBe('0.5')
+    expect(container.querySelector('style[data-open-science-docx-fit]')?.textContent).toContain(
+      'zoom: var(--open-science-docx-scale, 1)'
     )
+    expect(container.querySelector('a')?.hasAttribute('href')).toBe(false)
+    expect(container.querySelector('a')?.hasAttribute('target')).toBe(false)
+    expect(container.querySelector('a')?.hasAttribute('rel')).toBe(false)
 
     await cleanup()
     expect(revokeObjectUrl).toHaveBeenCalledWith('blob:word-image')
@@ -122,6 +147,190 @@ describe('renderOfficeFile', () => {
     expect(container.childNodes).toHaveLength(0)
   })
 
+  it('removes the DOCX wrapper frame while preserving paper styling', async () => {
+    document.body.append(container)
+    mocks.renderDocx.mockImplementation(async (_bytes, target: HTMLElement) => {
+      const vendorStyle = document.createElement('style')
+      vendorStyle.textContent = `
+        .docx-wrapper { background: gray; padding: 30px; padding-bottom: 0; }
+        .docx-wrapper > section.docx {
+          background: white;
+          box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+          margin-bottom: 30px;
+        }
+      `
+      const wrapper = document.createElement('div')
+      wrapper.className = 'docx-wrapper'
+      const page = document.createElement('section')
+      page.className = 'docx'
+      page.style.width = '800px'
+      wrapper.appendChild(page)
+      target.append(vendorStyle, wrapper)
+    })
+    Object.defineProperty(container, 'clientWidth', { configurable: true, value: 800 })
+
+    const cleanup = await renderOfficeFile({
+      bytes,
+      extension: 'docx',
+      name: 'edge-to-edge.docx',
+      container,
+      signal
+    })
+
+    const wrapper = container.querySelector<HTMLElement>('.docx-wrapper')
+    const page = container.querySelector<HTMLElement>('section.docx')
+    const wrapperStyle = getComputedStyle(wrapper!)
+    const pageStyle = getComputedStyle(page!)
+    expect(wrapperStyle.backgroundColor).toBe('rgba(0, 0, 0, 0)')
+    expect(wrapperStyle.paddingLeft).toBe('0px')
+    expect(wrapperStyle.paddingRight).toBe('0px')
+    expect(wrapper?.style.getPropertyValue('--open-science-docx-scale')).toBe('1')
+    expect(pageStyle.backgroundColor).toBe('rgb(255, 255, 255)')
+    expect(pageStyle.boxShadow).not.toBe('none')
+    expect(pageStyle.marginBottom).toBe('30px')
+
+    await cleanup()
+  })
+
+  it('fits mixed DOCX page sizes using the widest rendered page', async () => {
+    mocks.renderDocx.mockImplementation(async (_bytes, target: HTMLElement) => {
+      const wrapper = document.createElement('div')
+      wrapper.className = 'docx-wrapper'
+      wrapper.style.paddingLeft = '30px'
+      wrapper.style.paddingRight = '30px'
+      for (const width of [600, 1000]) {
+        const page = document.createElement('section')
+        page.className = 'docx'
+        page.style.width = `${width}px`
+        wrapper.appendChild(page)
+      }
+      target.appendChild(wrapper)
+    })
+    Object.defineProperty(container, 'clientWidth', { configurable: true, value: 460 })
+
+    const cleanup = await renderOfficeFile({
+      bytes,
+      extension: 'docx',
+      name: 'mixed-layout.docx',
+      container,
+      signal
+    })
+
+    expect(
+      container
+        .querySelector<HTMLElement>('.docx-wrapper')
+        ?.style.getPropertyValue('--open-science-docx-scale')
+    ).toBe('0.4')
+
+    await cleanup()
+  })
+
+  it.each([
+    { containerWidth: 1260, expectedScale: '1', expectedAlignment: 'center' },
+    { containerWidth: 160, expectedScale: '0.25', expectedAlignment: 'flex-start' }
+  ])(
+    'clamps automatic DOCX fit for a $containerWidth px viewport',
+    async ({ containerWidth, expectedScale, expectedAlignment }) => {
+      mocks.renderDocx.mockImplementation(async (_bytes, target: HTMLElement) => {
+        const wrapper = document.createElement('div')
+        wrapper.className = 'docx-wrapper'
+        wrapper.style.paddingLeft = '30px'
+        wrapper.style.paddingRight = '30px'
+        const page = document.createElement('section')
+        page.className = 'docx'
+        page.style.width = '800px'
+        wrapper.appendChild(page)
+        target.appendChild(wrapper)
+      })
+      Object.defineProperty(container, 'clientWidth', {
+        configurable: true,
+        value: containerWidth
+      })
+
+      const cleanup = await renderOfficeFile({
+        bytes,
+        extension: 'docx',
+        name: 'bounded-layout.docx',
+        container,
+        signal
+      })
+
+      const wrapper = container.querySelector<HTMLElement>('.docx-wrapper')
+      expect(wrapper?.style.getPropertyValue('--open-science-docx-scale')).toBe(expectedScale)
+      expect(wrapper?.style.alignItems).toBe(expectedAlignment)
+
+      await cleanup()
+    }
+  )
+
+  it('updates DOCX fit after resize and disposes pending layout work', async () => {
+    let resizeCallback: ResizeObserverCallback | undefined
+    let frameCallback: FrameRequestCallback | undefined
+    let frameId = 0
+    const observe = vi.fn()
+    const disconnect = vi.fn()
+    const cancelAnimationFrame = vi.fn()
+    class TestResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallback = callback
+      }
+
+      observe = observe
+      disconnect = disconnect
+      unobserve = vi.fn()
+    }
+    vi.stubGlobal('ResizeObserver', TestResizeObserver)
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn((callback: FrameRequestCallback) => {
+        frameCallback = callback
+        frameId += 1
+        return frameId
+      })
+    )
+    vi.stubGlobal('cancelAnimationFrame', cancelAnimationFrame)
+
+    let containerWidth = 860
+    Object.defineProperty(container, 'clientWidth', {
+      configurable: true,
+      get: () => containerWidth
+    })
+    mocks.renderDocx.mockImplementation(async (_bytes, target: HTMLElement) => {
+      const wrapper = document.createElement('div')
+      wrapper.className = 'docx-wrapper'
+      wrapper.style.paddingLeft = '30px'
+      wrapper.style.paddingRight = '30px'
+      const page = document.createElement('section')
+      page.className = 'docx'
+      page.style.width = '800px'
+      wrapper.appendChild(page)
+      target.appendChild(wrapper)
+    })
+
+    const cleanup = await renderOfficeFile({
+      bytes,
+      extension: 'docx',
+      name: 'responsive.docx',
+      container,
+      signal
+    })
+    const wrapper = container.querySelector<HTMLElement>('.docx-wrapper')
+    expect(observe).toHaveBeenCalledWith(container)
+    expect(wrapper?.style.getPropertyValue('--open-science-docx-scale')).toBe('1')
+
+    containerWidth = 460
+    resizeCallback?.([], {} as ResizeObserver)
+    expect(requestAnimationFrame).toHaveBeenCalledOnce()
+    expect(wrapper?.style.getPropertyValue('--open-science-docx-scale')).toBe('1')
+    frameCallback?.(0)
+    expect(wrapper?.style.getPropertyValue('--open-science-docx-scale')).toBe('0.5')
+
+    resizeCallback?.([], {} as ResizeObserver)
+    await cleanup()
+    expect(disconnect).toHaveBeenCalledOnce()
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(2)
+  })
+
   it.each(['xls', 'xlsx'] as const)(
     'renders %s in the local spreadsheet Worker',
     async (extension) => {
@@ -149,9 +358,10 @@ describe('renderOfficeFile', () => {
           signal,
           onProgressiveRender: expect.any(Function),
           options: {
+            locale: 'zh-CN',
             spreadsheet: {
               worker: true,
-              workerUrl: 'local-sheet-worker.js'
+              workerUrl: new URL('local-sheet-worker.js', document.baseURI).href
             }
           }
         }
@@ -286,6 +496,28 @@ describe('renderOfficeFile', () => {
 
     expect(nativeConstructions).toBe(1)
     await cleanup()
+  })
+
+  it('reuses the handshaken Worker after the vendor resolves its URL', async () => {
+    const unmount = vi.fn()
+    mocks.renderSpreadsheet.mockImplementation(async (_buffer, _target, _type, context) => {
+      const configuredUrl = context?.options?.spreadsheet?.workerUrl
+      new Worker(new URL(configuredUrl, document.baseURI), { type: 'module' })
+      queueMicrotask(() => context?.onProgressiveRender?.())
+      return { unmount }
+    })
+
+    const cleanup = await renderOfficeFile({
+      bytes,
+      extension: 'xlsx',
+      name: 'results.xlsx',
+      container,
+      signal
+    })
+
+    expect(ReadyWorker.instances).toHaveLength(1)
+    await cleanup()
+    expect(unmount).toHaveBeenCalledOnce()
   })
 
   it('rejects when the spreadsheet renderer does not claim the handshaken Worker', async () => {

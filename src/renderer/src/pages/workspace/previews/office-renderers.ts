@@ -37,7 +37,88 @@ const clearContainer = (container: HTMLElement): void => {
   container.replaceChildren()
 }
 
+const DOCX_SCALE_PROPERTY = '--open-science-docx-scale'
+const DOCX_MIN_SCALE = 0.25
+const DOCX_MAX_SCALE = 1
+const DOCX_FIT_STYLE = `
+.docx-wrapper {
+  background: transparent;
+  padding: 0;
+}
+.docx-wrapper > section.docx {
+  zoom: var(${DOCX_SCALE_PROPERTY}, 1);
+  transform-origin: top center;
+}
+`
+
+// Fits the rendered paper width inside the preview viewport without reflowing Word page content.
+const applyDocxFit = (container: HTMLElement, wrapper: HTMLElement): void => {
+  const view = container.ownerDocument.defaultView
+  const pages = wrapper.querySelectorAll<HTMLElement>('section.docx')
+  if (!view || pages.length === 0) return
+
+  const wrapperStyle = view.getComputedStyle(wrapper)
+  const horizontalPadding =
+    Number.parseFloat(wrapperStyle.paddingLeft) + Number.parseFloat(wrapperStyle.paddingRight)
+  const availableWidth = container.clientWidth - horizontalPadding
+  // Mixed portrait and landscape documents must fit against their widest rendered paper.
+  const pageWidth = Math.max(
+    ...Array.from(pages, (page) => Number.parseFloat(view.getComputedStyle(page).width))
+  )
+  if (!Number.isFinite(availableWidth) || availableWidth <= 0 || !Number.isFinite(pageWidth)) return
+
+  const requestedScale = availableWidth / pageWidth
+  const scale = Math.min(DOCX_MAX_SCALE, Math.max(DOCX_MIN_SCALE, requestedScale))
+  // Center fitted pages, but keep the left edge reachable when minimum zoom still overflows.
+  wrapper.style.alignItems = requestedScale < DOCX_MIN_SCALE ? 'flex-start' : 'center'
+  wrapper.style.setProperty(DOCX_SCALE_PROPERTY, String(scale))
+}
+
+// Installs responsive paper fitting after docx-preview has populated its generated wrapper.
+const installDocxFit = (container: HTMLElement, wrapper: HTMLElement): OfficeRenderCleanup => {
+  const view = container.ownerDocument.defaultView
+  const style = container.ownerDocument.createElement('style')
+  style.dataset.openScienceDocxFit = 'true'
+  style.textContent = DOCX_FIT_STYLE
+  container.appendChild(style)
+  wrapper.style.alignItems = 'center'
+  applyDocxFit(container, wrapper)
+
+  let animationFrame: number | undefined
+  const scheduleFit = (): void => {
+    if (!view || animationFrame !== undefined) return
+    animationFrame = view.requestAnimationFrame(() => {
+      animationFrame = undefined
+      applyDocxFit(container, wrapper)
+    })
+  }
+  const ResizeObserverCtor = view?.ResizeObserver
+  const resizeObserver = ResizeObserverCtor ? new ResizeObserverCtor(scheduleFit) : undefined
+  resizeObserver?.observe(container)
+
+  return () => {
+    resizeObserver?.disconnect()
+    if (animationFrame !== undefined) view?.cancelAnimationFrame(animationFrame)
+    wrapper.style.removeProperty(DOCX_SCALE_PROPERTY)
+    wrapper.style.removeProperty('align-items')
+    style.remove()
+  }
+}
+
+// Keeps rendered hyperlinks visible as document text without allowing preview navigation or pings.
+const neutralizeDocxLinks = (container: HTMLElement): void => {
+  container.querySelectorAll<HTMLAnchorElement>('a').forEach((link) => {
+    for (const attribute of ['href', 'target', 'rel', 'download', 'ping', 'referrerpolicy']) {
+      link.removeAttribute(attribute)
+    }
+  })
+}
+
 const SPREADSHEET_WORKER_STARTUP_TIMEOUT_MS = 5_000
+
+// Canonicalizes Vite's relative worker asset so the vendor resolver and handshake compare one URL.
+const resolveSpreadsheetWorkerUrl = (workerUrl: string, container: HTMLElement): string =>
+  new URL(workerUrl, container.ownerDocument.baseURI).href
 
 // Handshakes the local spreadsheet Worker before vendor code takes ownership, preventing a silent
 // fallback to expensive workbook parsing on the renderer thread.
@@ -174,11 +255,13 @@ export const renderOfficeFile = async ({
       clearContainer(container)
       throw error
     }
+    neutralizeDocxLinks(container)
     const wrapper = container.querySelector<HTMLElement>('.docx-wrapper')
-    if (wrapper) wrapper.style.alignItems = 'flex-start'
+    const disposeFit = wrapper ? installDocxFit(container, wrapper) : undefined
     const blobUrls = collectBlobUrls(container)
 
     return () => {
+      disposeFit?.()
       blobUrls.forEach((url) => URL.revokeObjectURL(url))
       clearContainer(container)
     }
@@ -186,10 +269,11 @@ export const renderOfficeFile = async ({
 
   if (extension === 'xls' || extension === 'xlsx') {
     // Spreadsheet parsing stays in the bundled Worker; readiness means a real first paint occurred.
-    const [{ renderFileViewerSpreadsheet }, { default: workerUrl }] = await Promise.all([
+    const [{ renderFileViewerSpreadsheet }, { default: importedWorkerUrl }] = await Promise.all([
       import('@file-viewer/renderer-spreadsheet'),
       import('@file-viewer/renderer-spreadsheet/worker/sheetjs/sheet.worker?worker&url')
     ])
+    const workerUrl = resolveSpreadsheetWorkerUrl(importedWorkerUrl, container)
     const readyWorker = await createReadySpreadsheetWorker(workerUrl, container, signal)
     const MutationObserverCtor = container.ownerDocument.defaultView?.MutationObserver
     if (!MutationObserverCtor) {
@@ -240,6 +324,7 @@ export const renderOfficeFile = async ({
             signal,
             onProgressiveRender: markFirstPaint,
             options: {
+              locale: 'zh-CN',
               spreadsheet: {
                 worker: true,
                 workerUrl
