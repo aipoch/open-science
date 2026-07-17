@@ -212,6 +212,51 @@ describe('settings repository', () => {
     const reloaded = await new SettingsRepository(root).getSettings()
     expect(reloaded.onboardingCompletedAt).toBe(1234)
   })
+
+  it('stamps pathsNormalizedAt once, is idempotent, and survives a reload', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    const first = await repository.markPathsNormalized(1000)
+    expect(first.pathsNormalizedAt).toBe(1000)
+
+    // A second call must not overwrite or move the existing timestamp.
+    const second = await repository.markPathsNormalized(2000)
+    expect(second.pathsNormalizedAt).toBe(1000)
+
+    const reloaded = await new SettingsRepository(root).getSettings()
+    expect(reloaded.pathsNormalizedAt).toBe(1000)
+  })
+
+  it('sets dataRoot, overwrites on a later call, and survives a reload', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    const first = await repository.setDataRoot('/mnt/data-a')
+    expect(first.dataRoot).toBe('/mnt/data-a')
+
+    // Unlike the marker fields above, dataRoot is not idempotent-once: a later call must move it.
+    const second = await repository.setDataRoot('/mnt/data-b')
+    expect(second.dataRoot).toBe('/mnt/data-b')
+
+    const reloaded = await new SettingsRepository(root).getSettings()
+    expect(reloaded.dataRoot).toBe('/mnt/data-b')
+  })
+
+  it('stamps legacyDataMovePromptDismissedAt once, is idempotent, and survives a reload', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    const first = await repository.markLegacyDataMovePromptDismissed(1000)
+    expect(first.legacyDataMovePromptDismissedAt).toBe(1000)
+
+    // Answering again must never move the timestamp — the prompt stays dismissed for good.
+    const second = await repository.markLegacyDataMovePromptDismissed(2000)
+    expect(second.legacyDataMovePromptDismissedAt).toBe(1000)
+
+    const reloaded = await new SettingsRepository(root).getSettings()
+    expect(reloaded.legacyDataMovePromptDismissedAt).toBe(1000)
+  })
 })
 
 describe('settings repository: v2 official providers & activeModel migration', () => {

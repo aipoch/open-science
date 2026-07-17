@@ -22,7 +22,7 @@ const ClaudeStatusCard = ({
   onDetect,
   embedded = false
 }: ClaudeStatusCardProps): React.JSX.Element => (
-  <Card className={cn('gap-0 py-0', embedded && 'rounded-none bg-transparent ring-0')}>
+  <Card className={cn('gap-0 rounded-lg py-0', embedded && 'rounded-none bg-transparent ring-0')}>
     <CardContent className={cn('p-4', embedded && 'px-0 py-0')}>
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">

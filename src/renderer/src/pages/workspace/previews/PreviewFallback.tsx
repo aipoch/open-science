@@ -1,8 +1,15 @@
-import { File, FolderOpen, Loader2 } from 'lucide-react'
+import { File, FileWarning, FileX, FolderOpen, Loader2 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
+
+import {
+  FILE_MISSING_MESSAGE,
+  FILE_OUTSIDE_STORAGE_MESSAGE,
+  isMissingFileError,
+  isOutsideStorageError
+} from './preview-errors'
 
 const openFileExternally = async (path: string): Promise<void> => {
   try {
@@ -64,6 +71,44 @@ export const PreviewFallbackCard = ({
     <OpenExternallyButton path={path} source={source} />
   </div>
 )
+
+// Error fallback that distinguishes an unavailable file from a genuine render/parse failure. A
+// missing file (deleted/moved) and an outside-storage file (stale/cross-root path) both read as
+// unavailable and get the FileX icon, but with different copy — deleted vs "not in current
+// storage". Everything else keeps the renderer's type-specific message.
+export const PreviewErrorCard = ({
+  path,
+  name,
+  source = 'artifact',
+  error,
+  fallbackMessage
+}: {
+  path: string
+  name: string
+  source?: PreviewFileSource
+  error?: unknown
+  fallbackMessage: string
+}): React.JSX.Element => {
+  const missing = isMissingFileError(error)
+  const outside = !missing && isOutsideStorageError(error)
+  const unavailable = missing || outside
+
+  const message = missing
+    ? FILE_MISSING_MESSAGE
+    : outside
+      ? FILE_OUTSIDE_STORAGE_MESSAGE
+      : fallbackMessage
+
+  return (
+    <PreviewFallbackCard
+      icon={unavailable ? FileX : FileWarning}
+      path={path}
+      name={name}
+      source={source}
+      message={message}
+    />
+  )
+}
 
 export const PreviewUnsupportedContent = ({
   path,

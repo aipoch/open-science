@@ -12,6 +12,10 @@ const fsMock = vi.hoisted(() => ({
 }))
 
 vi.mock('node:fs/promises', () => fsMock)
+// Session encode/decode falls back to resolveDataRoot(), which reads electron's app.getPath.
+vi.mock('electron', () => ({
+  app: { getPath: () => '/home/user', isPackaged: true }
+}))
 
 const { SessionRepository } = await import('./repository')
 

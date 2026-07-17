@@ -53,8 +53,6 @@ const PREVIEW_SUPPORTED_EXTENSIONS: Record<string, PreviewFileFormat> = {
   yml: 'text'
 }
 
-export const PREVIEW_PANEL_IMAGE_MAX_BYTES = 10 * 1024 * 1024
-
 // Keeps MIME fallback narrow so unknown binary formats still land in the unsupported state.
 const getPreviewFormatForMimeType = (mimeType: string): PreviewFileFormat => {
   const normalizedMimeType = mimeType.toLowerCase().split(';')[0]?.trim() ?? ''
@@ -116,11 +114,8 @@ export const getPreviewFormatForFile = ({
 }): PreviewFileFormat => getPreviewFormat(getFileExtension(name), mimeType)
 
 // Selects the reader encoding used for lightweight thumbnails in file lists.
-export const getPreviewThumbnailReadEncoding = (
-  format: PreviewFileFormat
-): 'utf8' | 'base64' | undefined => {
-  if (format === 'image') return 'base64'
-  if (format === 'pdf' || format === 'unknown') return undefined
+export const getPreviewThumbnailReadEncoding = (format: PreviewFileFormat): 'utf8' | undefined => {
+  if (format === 'image' || format === 'pdf' || format === 'unknown') return undefined
 
   return 'utf8'
 }

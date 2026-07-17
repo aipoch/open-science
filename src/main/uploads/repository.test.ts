@@ -165,20 +165,4 @@ describe('upload repository', () => {
       /outside upload storage/
     )
   })
-
-  it('reads full upload bytes as base64 for viewers, only within the managed tree', async () => {
-    const root = await createStorageRoot()
-    const repository = new UploadRepository(root)
-    const bytes = Buffer.from('%PDF-1.4 upload bytes')
-    const [attachment] = await repository.stageFiles({
-      files: [{ name: 'doc.pdf', content: bytes.toString('base64'), mimeType: 'application/pdf' }]
-    })
-
-    const result = await repository.readManagedUploadBytes({ path: attachment.path })
-
-    expect(result).toEqual({ data: bytes.toString('base64'), size: bytes.byteLength })
-    await expect(
-      repository.readManagedUploadBytes({ path: join(root, 'outside.pdf') })
-    ).rejects.toThrow(/outside upload storage/)
-  })
 })

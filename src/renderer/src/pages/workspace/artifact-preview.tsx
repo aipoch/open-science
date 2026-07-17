@@ -1,6 +1,7 @@
 import type { ChatSession } from '@/stores/session-store'
 import { File, FileArchive, FileCode2, FileImage, FileSpreadsheet, FileText } from 'lucide-react'
 import { parse } from 'papaparse'
+import { useState } from 'react'
 
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
@@ -11,8 +12,9 @@ import {
   getArtifactName,
   isImageArtifact
 } from './artifact-preview-utils'
-import { getImageMimeTypeForExtension } from './preview-support'
 import { PdfThumbnail } from './previews/renderers/PdfThumbnail'
+import { createPreviewResourceKey } from './previews/preview-resource-key'
+import { useManagedPreviewResource } from './previews/useManagedPreviewResource'
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
 type ArtifactIconKind = 'archive' | 'code' | 'file' | 'image' | 'spreadsheet' | 'text'
@@ -45,13 +47,6 @@ const TEXT_SKELETON_EXTENSIONS = new Set(['iqtree', 'nwk', 'state', 'tree', 'tre
 
 const getArtifactExtensionLabel = (artifact: MessageArtifact): string =>
   getArtifactExtension(artifact).toUpperCase().slice(0, 6)
-
-// Prefers the artifact's own mime type over guessing from the extension when one is present.
-const getImageMimeType = (artifact: MessageArtifact): string => {
-  if (artifact.mimeType?.startsWith('image/')) return artifact.mimeType
-
-  return getImageMimeTypeForExtension(getArtifactExtension(artifact))
-}
 
 const isTextSkeletonArtifact = (artifact: MessageArtifact): boolean =>
   TEXT_SKELETON_EXTENSIONS.has(getArtifactExtension(artifact))
@@ -266,46 +261,90 @@ const FileTypePreview = ({ artifact }: { artifact: MessageArtifact }): React.JSX
   )
 }
 
+// Streams image bytes through a short-lived managed URL instead of copying them into renderer state.
+const ManagedImageThumbnail = ({
+  artifact,
+  name,
+  source,
+  enabled
+}: {
+  artifact: MessageArtifact
+  name: string
+  source: PreviewFileSource
+  enabled: boolean
+}): React.JSX.Element => {
+  const requestKey = createPreviewResourceKey({
+    source,
+    path: artifact.path,
+    mimeType: artifact.mimeType,
+    size: artifact.size,
+    mtimeMs: artifact.mtimeMs
+  })
+  const [failedRequestKey, setFailedRequestKey] = useState<string | undefined>(undefined)
+  const hasFailed = failedRequestKey === requestKey
+  // A decode failure disables the hook, which releases the protocol capability immediately.
+  const resourceState = useManagedPreviewResource(
+    {
+      path: artifact.path,
+      source,
+      mimeType: artifact.mimeType,
+      size: artifact.size,
+      mtimeMs: artifact.mtimeMs
+    },
+    enabled && !hasFailed
+  )
+
+  if (resourceState.status !== 'ready') return <FileTypePreview artifact={artifact} />
+
+  return (
+    <img
+      src={resourceState.resource.url}
+      alt={`Preview of ${name}`}
+      className="size-full object-cover object-top"
+      loading="lazy"
+      decoding="async"
+      draggable={false}
+      onError={() => setFailedRequestKey(requestKey)}
+    />
+  )
+}
+
 export const ArtifactPreview = ({
   artifact,
   preview,
-  source = 'artifact'
+  source = 'artifact',
+  isVisible = true
 }: {
   artifact: MessageArtifact
   preview?: ArtifactPreviewResult
   source?: PreviewFileSource
+  isVisible?: boolean
 }): React.JSX.Element => {
   const artifactName = getArtifactName(artifact)
   // Renderer selection is source-neutral; source remains relevant only to the nested file reader.
   const format = getArtifactPreviewFormat(artifact)
 
-  // PDFs render their first page as a thumbnail; the component fetches its own full bytes.
+  // PDFs render only their first page through the managed range transport.
   if (format === 'pdf') {
     return (
       <PdfThumbnail
         path={artifact.path}
         name={artifactName}
         source={source}
-        version={JSON.stringify([artifact.size ?? null, artifact.mtimeMs ?? null])}
+        mimeType={artifact.mimeType}
+        size={artifact.size}
+        mtimeMs={artifact.mtimeMs}
       />
     )
   }
 
   if (format === 'image') {
-    const mimeType = getImageMimeType(artifact)
-
-    if (!preview || preview.encoding !== 'base64' || preview.truncated || !mimeType) {
-      return <FileTypePreview artifact={artifact} />
-    }
-
     return (
-      <img
-        src={`data:${mimeType};base64,${preview.content}`}
-        alt={`Preview of ${artifactName}`}
-        className="size-full object-cover object-top"
-        loading="lazy"
-        decoding="async"
-        draggable={false}
+      <ManagedImageThumbnail
+        artifact={artifact}
+        name={artifactName}
+        source={source}
+        enabled={isVisible}
       />
     )
   }

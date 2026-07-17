@@ -18,6 +18,18 @@ on:
           nightly installers get distinct filenames (and in-app version) from stable releases.
         type: boolean
         default: false
+      mac_only:
+        description: >-
+          Build only the two macOS archs (skip Linux + Windows). Used by the notarization dry-run,
+          which only needs a signed mac build; release/nightly leave it false for the full matrix.
+        type: boolean
+        default: false
+      skip_verify:
+        description: >-
+          Skip the lint/typecheck/test job. Used by the notarization dry-run to test signing +
+          notarization in isolation; release/nightly leave it false so builds stay gated on tests.
+        type: boolean
+        default: false
 
 jobs:
   # Gate every packaged build on the quality suite so nightly (push to main) and release (tag) can
@@ -25,6 +37,8 @@ jobs:
   # release/verification environment (see pr-check.yml for why macOS). The build matrix `needs` this.
   verify:
     name: Verify (lint + typecheck + test)
+    # Skipped by the notarization dry-run (skip_verify), which only needs a signed mac build.
+    if: ${{ !inputs.skip_verify }}
     runs-on: macos-14
     steps:
       - name: Checkout
@@ -48,42 +62,49 @@ jobs:
       - name: Test (with coverage)
         run: npm run test:coverage
 
+  # Resolve the platform matrix. mac_only trims it to the two mac archs — used by the notarization
+  # dry-run (notarize-dryrun.yml), which only needs a signed mac build. With mac_only false (the
+  # release.yml / nightly.yml callers) the full matrix is emitted, so their behavior is unchanged.
+  setup:
+    name: Resolve platform matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - id: set
+        shell: bash
+        run: |
+          # Both mac archs build on Apple Silicon (macos-14). x64 is cross-packaged — electron pulls
+          # the x64 runtime and the only per-arch native artifact we ship (the Prisma query engine)
+          # comes from the schema's binaryTargets, pruned per-arch in the build job. This avoids the
+          # scarce Intel macos-13 runner. Windows' engine is query_engine-windows.dll.node (no `lib`
+          # prefix, .dll.node not .so/.dylib). engine_keep = substring of the engine file to keep.
+          mac='[
+            {"name":"macos-arm64","os":"macos-14","platform":"mac","eb_args":"--mac --arm64","engine_keep":"darwin-arm64"},
+            {"name":"macos-x64","os":"macos-14","platform":"mac","eb_args":"--mac --x64","engine_keep":"darwin.dylib"}
+          ]'
+          rest='[
+            {"name":"linux-x64","os":"ubuntu-latest","platform":"linux","eb_args":"--linux","engine_keep":".so.node"},
+            {"name":"windows-x64","os":"windows-latest","platform":"win","eb_args":"--win --x64","engine_keep":"windows.dll"}
+          ]'
+          if [ "${{ inputs.mac_only }}" = "true" ]; then
+            include=$(jq -c '.' <<<"$mac")
+          else
+            include=$(jq -c '. + $rest' --argjson rest "$rest" <<<"$mac")
+          fi
+          echo "matrix={\"include\":$include}" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build ${{ matrix.name }}
-    needs: verify
+    needs: [verify, setup]
+    # Run once the matrix is resolved. Tolerate a skipped verify (skip_verify dry-run) but still
+    # block on a real verify failure — matching the fail-closed behavior when verify runs.
+    if: ${{ always() && needs.setup.result == 'success' && (needs.verify.result == 'success' || needs.verify.result == 'skipped') }}
     runs-on: ${{ matrix.os }}
     strategy:
       # Don't let one platform's failure cancel the others.
       fail-fast: false
-      matrix:
-        include:
-          # Both mac archs build on Apple Silicon (macos-14). x64 is cross-packaged here — electron
-          # downloads the x64 runtime, and the only per-arch native artifact we ship (the Prisma
-          # query engine) is provided by the schema's binaryTargets, then pruned below. This avoids
-          # the scarce Intel `macos-13` runner (long queues). engine_keep = substring of the Prisma
-          # engine filename to keep for this build.
-          - name: macos-arm64
-            os: macos-14
-            platform: mac
-            eb_args: --mac --arm64
-            engine_keep: darwin-arm64
-          - name: macos-x64
-            os: macos-14
-            platform: mac
-            eb_args: --mac --x64
-            engine_keep: darwin.dylib
-          - name: linux-x64
-            os: ubuntu-latest
-            platform: linux
-            eb_args: --linux
-            engine_keep: .so.node
-          - name: windows-x64
-            os: windows-latest
-            platform: win
-            eb_args: --win --x64
-            # Windows' native engine is `query_engine-windows.dll.node` (note: no `lib` prefix, and
-            # `.dll.node` rather than `.so/.dylib`), which the broadened prune glob below matches.
-            engine_keep: windows.dll
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
 
     steps:
       - name: Checkout
@@ -146,7 +167,15 @@ jobs:
           if [ "${{ matrix.platform }}" = "mac" ] && [ "${{ inputs.nightly }}" != "true" ] && [ -n "$CSC_LINK" ]; then
             # Stable build with a Developer ID cert -> SIGN ONLY (notarize:false). Notarization +
             # stapling happens later in notarize-mac.yml, so this job never waits on Apple.
-            npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" --publish never -c.mac.notarize=false
+            #
+            # Per-arch update channel: arm64 and x64 build on separate runners and would both emit
+            # `latest-mac.yml`, colliding at the feed root. Setting the electron-updater channel to the
+            # arch makes each build emit its own `${arch}-mac.yml` and bake `channel: ${arch}` into its
+            # app-update.yml, so each installed arch polls only its own feed. (win/linux keep the
+            # default `latest` channel.)
+            mac_channel="${{ matrix.name }}"; mac_channel="${mac_channel#macos-}"
+            npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" --publish never \
+              -c.mac.notarize=false -c.publish.channel="$mac_channel"
           else
             # No cert, or a nightly build (ad-hoc on purpose): skip electron-builder's own signing.
             # GitHub injects unset secrets as EMPTY strings, and electron-builder mis-reads an empty
@@ -172,4 +201,5 @@ jobs:
             dist/*.deb
             dist/*.blockmap
             dist/latest*.yml
+            dist/*-mac.yml
           if-no-files-found: error

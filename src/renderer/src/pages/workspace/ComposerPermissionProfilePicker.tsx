@@ -7,6 +7,7 @@ import { AlertTriangle, Check, ChevronUp, Shield, ShieldAlert, ShieldCheck, X } 
 import { useState } from 'react'
 import { AlertDialog } from 'radix-ui'
 
+import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -82,8 +83,9 @@ const ComposerPermissionProfilePicker = ({
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild disabled={disabled}>
-          <button
+          <Button
             type="button"
+            variant="ghost"
             className="flex h-8 min-w-0 items-center gap-1.5 rounded-md px-2 text-[12px] text-text-100 transition-colors duration-200 ease-out hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50"
             aria-label={`Permission mode: ${selectedProfile.label}`}
           >
@@ -105,7 +107,7 @@ const ComposerPermissionProfilePicker = ({
               strokeWidth={2}
               aria-hidden="true"
             />
-          </button>
+          </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-80 p-1.5">
           {permissionProfiles.map((profile) => {
@@ -202,7 +204,7 @@ const ComposerPermissionProfilePicker = ({
       <AlertDialog.Root open={confirmFullAccess} onOpenChange={setConfirmFullAccess}>
         <AlertDialog.Portal>
           <AlertDialog.Overlay className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px]" />
-          <AlertDialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(440px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-bg-000 p-6 text-text-000 shadow-dialog">
+          <AlertDialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(440px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overscroll-contain rounded-2xl bg-bg-000 p-6 text-text-000 shadow-dialog">
             <div className="flex items-start gap-3">
               <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700">
                 <AlertTriangle className="size-5" strokeWidth={2} aria-hidden="true" />
@@ -220,21 +222,22 @@ const ComposerPermissionProfilePicker = ({
             </div>
             <div className="mt-6 flex justify-end gap-2">
               <AlertDialog.Cancel asChild>
-                <button
+                <Button
                   type="button"
-                  className="rounded-lg border border-border-200 px-3 py-2 text-sm hover:bg-bg-200"
+                  variant="outline"
+                  className="border-border-200 bg-bg-000 text-text-000 hover:bg-bg-200 hover:text-text-000"
                 >
                   Cancel
-                </button>
+                </Button>
               </AlertDialog.Cancel>
               <AlertDialog.Action asChild>
-                <button
+                <Button
                   type="button"
-                  className="rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700"
+                  className="bg-amber-600 text-white hover:bg-amber-700"
                   onClick={() => onChange('full')}
                 >
                   Enable
-                </button>
+                </Button>
               </AlertDialog.Action>
             </div>
           </AlertDialog.Content>

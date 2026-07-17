@@ -6,8 +6,10 @@ import type {
   CustomServerView,
   UpdateCustomServerRequest
 } from '../../../../shared/settings'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
 import { useSettingsStore } from '@/stores/settings-store'
 
 // Which kind of custom connector is being added: a local stdio command or a remote HTTP/SSE server.
@@ -17,8 +19,6 @@ type ConnectorMode = 'local' | 'remote'
 type RemoteTransport = Extract<CustomServerTransport, 'streamable_http' | 'sse'>
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
-const textareaClassName =
-  'w-full resize-none rounded-lg border border-input bg-transparent px-2.5 py-2 font-mono text-[13px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50'
 
 // Splits an arguments textarea on any whitespace/newlines into a positional arg list, dropping empties.
 const parseArgs = (raw: string): string[] =>
@@ -191,7 +191,7 @@ export function ConnectorAddForm({
   }
 
   const segmentButtonClassName = (active: boolean): string =>
-    `inline-flex h-7 items-center rounded-md px-3 text-sm transition-colors ${
+    `inline-flex h-7 items-center rounded-md px-3 text-sm transition-colors motion-reduce:transition-none ${
       active
         ? 'bg-card font-medium text-foreground shadow-sm'
         : 'text-muted-foreground hover:text-foreground'
@@ -294,13 +294,13 @@ export function ConnectorAddForm({
               <label className={fieldLabelClassName} htmlFor="connector-args">
                 Arguments <span className="text-muted-foreground">(optional)</span>
               </label>
-              <textarea
+              <Textarea
                 id="connector-args"
                 aria-label="Arguments"
                 value={argsText}
                 rows={2}
                 placeholder="-y @modelcontextprotocol/server-memory"
-                className={textareaClassName}
+                className="resize-none font-mono text-[13px]"
                 onChange={(event) => setArgsText(event.target.value)}
               />
               <p className="text-xs text-muted-foreground">Separated by spaces or newlines.</p>
@@ -310,13 +310,13 @@ export function ConnectorAddForm({
               <label className={fieldLabelClassName} htmlFor="connector-env">
                 Environment variables <span className="text-muted-foreground">(optional)</span>
               </label>
-              <textarea
+              <Textarea
                 id="connector-env"
                 aria-label="Environment variables"
                 value={envText}
                 rows={3}
                 placeholder={'KEY=value\nANOTHER_KEY=value'}
-                className={textareaClassName}
+                className="resize-none font-mono text-[13px]"
                 onChange={(event) => setEnvText(event.target.value)}
               />
               <p className="text-xs text-muted-foreground">
@@ -367,13 +367,13 @@ export function ConnectorAddForm({
               <label className={fieldLabelClassName} htmlFor="connector-headers">
                 Headers <span className="text-muted-foreground">(optional)</span>
               </label>
-              <textarea
+              <Textarea
                 id="connector-headers"
                 aria-label="Headers"
                 value={headersText}
                 rows={3}
                 placeholder={'Authorization: Bearer <token>\nX-Api-Key: <key>'}
-                className={textareaClassName}
+                className="resize-none font-mono text-[13px]"
                 onChange={(event) => setHeadersText(event.target.value)}
               />
               <p className="text-xs text-muted-foreground">
@@ -411,19 +411,10 @@ export function ConnectorAddForm({
         ) : null}
 
         <div className="flex items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="inline-flex h-8 items-center rounded-lg px-3 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
+          <Button type="button" variant="ghost" onClick={onCancel}>
             Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleSubmit()}
-            disabled={!canSubmit}
-            className="inline-flex h-8 items-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50"
-          >
+          </Button>
+          <Button type="button" onClick={() => void handleSubmit()} disabled={!canSubmit}>
             {submitting
               ? isEdit
                 ? 'Saving…'
@@ -431,7 +422,7 @@ export function ConnectorAddForm({
               : isEdit
                 ? 'Save changes'
                 : 'Add connector'}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

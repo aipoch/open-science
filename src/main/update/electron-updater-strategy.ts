@@ -42,9 +42,10 @@ const notesToString = (notes: unknown): string => {
   return ''
 }
 
-// win/linux strategy: wraps electron-updater for true in-place download + restart. Emits the same
-// UpdateStatus shape as UpdateService, always stamped applyKind:'restart'. Opt-in: autoDownload and
-// autoInstallOnAppQuit are disabled so nothing downloads/installs without a user action.
+// In-place auto-update strategy: wraps electron-updater for true download + restart on win/linux and
+// on signed stable macOS (Squirrel.Mac). Emits the same UpdateStatus shape as UpdateService, always
+// stamped applyKind:'restart'. Opt-in: autoDownload and autoInstallOnAppQuit are disabled so nothing
+// downloads/installs without a user action.
 export class ElectronUpdaterStrategy implements UpdateStrategy {
   private readonly updater: MinimalAutoUpdater
   private readonly currentVersion: string
@@ -130,9 +131,10 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     return this.status
   }
 
-  // Triggered by the user's "Restart to update" click once the download is ready. Silent install
-  // (isSilent=true) so the assisted NSIS installer never shows its wizard, and isForceRunAfter=true so
-  // the app relaunches into the new version after the in-place swap. per-user install = no UAC prompt.
+  // Triggered by the user's "Restart to update" click once the download is ready. On win/linux,
+  // isSilent=true keeps the assisted NSIS installer from showing its wizard and isForceRunAfter=true
+  // relaunches into the new version (per-user install = no UAC prompt). On macOS Squirrel.Mac swaps
+  // the .app and relaunches; it ignores isSilent, so the same call is correct there too.
   async apply(): Promise<UpdateStatus> {
     this.updater.quitAndInstall(true, true)
     return this.status

@@ -108,6 +108,17 @@ describe('PreviewFileContent', () => {
     document.body.appendChild(container)
     restorePdbLayoutMocks = undefined
     window.api = {
+      previewResources: {
+        acquire: vi.fn().mockResolvedValue({
+          id: 'resource-1',
+          url: 'open-science-preview://resource-1/report.html',
+          size: 88,
+          mimeType: 'text/html; charset=utf-8',
+          version: 1
+        }),
+        readRange: vi.fn(),
+        release: vi.fn().mockResolvedValue(undefined)
+      },
       artifacts: {
         openFile: vi.fn().mockResolvedValue(undefined),
         readPreview: vi.fn().mockResolvedValue({
@@ -162,7 +173,8 @@ describe('PreviewFileContent', () => {
     expect(window.api.artifacts.readPreview).toHaveBeenCalledWith({
       path: '/workspace/data.json',
       maxBytes: 1024 * 1024,
-      encoding: 'utf8'
+      encoding: 'utf8',
+      offset: 0
     })
     expect(container.querySelector('pre')?.textContent).toContain('"name": "sample"')
     expect(container.querySelector('pre')?.textContent).toContain('"values": [')
@@ -183,6 +195,72 @@ describe('PreviewFileContent', () => {
     expect(container.textContent).toContain('beta')
   })
 
+  it('loads the next bounded page of a large text preview on demand', async () => {
+    vi.mocked(window.api.artifacts.readPreview).mockImplementation(async (request) =>
+      request.offset === 5
+        ? ({
+            content: 'second page',
+            encoding: 'utf8',
+            size: 16,
+            offset: 5,
+            truncated: false
+          } as never)
+        : ({
+            content: 'first',
+            encoding: 'utf8',
+            size: 16,
+            offset: 0,
+            nextOffset: 5,
+            truncated: true
+          } as never)
+    )
+
+    await renderFile(
+      createFileItem({ format: 'text', name: 'large.txt', path: '/workspace/large.txt' })
+    )
+    expect(container.textContent).toContain('first')
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Next preview page"]')?.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(window.api.artifacts.readPreview).toHaveBeenLastCalledWith({
+      path: '/workspace/large.txt',
+      maxBytes: 1024 * 1024,
+      encoding: 'utf8',
+      offset: 5
+    })
+    expect(container.textContent).toContain('second page')
+    expect(container.textContent).not.toContain('first')
+  })
+
+  // Degradation for design §20.4: a session-referenced file deleted from disk (or on a
+  // disconnected drive) must surface a handled "unavailable" state instead of crashing or
+  // blanking - readManagedFilePreview rejects with ENOENT, and the renderer must catch it.
+  it('shows an unavailable message instead of crashing when the file no longer exists on disk', async () => {
+    const enoent = Object.assign(new Error('ENOENT: no such file or directory'), {
+      code: 'ENOENT'
+    })
+    vi.mocked(window.api.artifacts.readPreview).mockRejectedValue(enoent)
+
+    await renderFile(
+      createFileItem({ format: 'text', name: 'gone.txt', path: '/workspace/gone.txt' })
+    )
+
+    expect(container.textContent).toContain('This file is no longer available')
+    expect(container.querySelector('pre')).toBeNull()
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('button')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(window.api.artifacts.openFile).toHaveBeenCalledWith({ path: '/workspace/gone.txt' })
+  })
+
   it('renders line numbers next to formatted JSON previews', async () => {
     vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
       content: '{"name":"sample","values":[1,true]}',
@@ -197,22 +275,95 @@ describe('PreviewFileContent', () => {
     expect(container.textContent).toContain('"name": "sample"')
   })
 
-  it('renders HTML previews inside a scriptless sandboxed iframe', async () => {
+  it('uses paged source instead of parsing truncated JSON', async () => {
     vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
-      content:
-        '<!doctype html><h1>Report</h1><script>window.top.location="https://example.com"</script>',
+      content: '{"partial":',
       encoding: 'utf8',
-      size: 88,
-      truncated: false
+      size: 20,
+      offset: 0,
+      nextOffset: 11,
+      truncated: true
     })
 
+    await renderFile(createFileItem({ format: 'json', name: 'large.json' }))
+
+    expect(container.querySelector('[aria-label="Next preview page"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="source-line-number"]')).not.toBeNull()
+    expect(container.textContent).not.toContain('Invalid JSON')
+  })
+
+  it('uses paged source instead of rich rendering for truncated Markdown', async () => {
+    vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
+      content: '# Partial report',
+      encoding: 'utf8',
+      size: 40,
+      offset: 0,
+      nextOffset: 16,
+      truncated: true
+    })
+
+    await renderFile(createFileItem({ format: 'markdown', name: 'large.md' }))
+
+    expect(container.querySelector('[aria-label="Next preview page"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="source-line-number"]')).not.toBeNull()
+  })
+
+  it('uses paged source instead of parsing a truncated molecule record', async () => {
+    vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
+      content: 'partial molecule record',
+      encoding: 'utf8',
+      size: 40,
+      offset: 0,
+      nextOffset: 23,
+      truncated: true
+    })
+
+    await renderFile(createFileItem({ format: 'molecule', name: 'large.mol' }))
+
+    expect(container.querySelector('[aria-label="Next preview page"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="source-line-number"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Structure preview of large.mol"]')).toBeNull()
+  })
+
+  it('renders HTML from a managed stream inside a script sandbox', async () => {
     await renderFile(createFileItem({ format: 'html', name: 'report.html' }))
 
     const iframe = container.querySelector('iframe')
     expect(iframe).not.toBeNull()
-    expect(iframe?.getAttribute('sandbox')).toBe('')
+    expect(iframe?.getAttribute('sandbox')).toBe('allow-scripts')
     expect(iframe?.getAttribute('referrerpolicy')).toBe('no-referrer')
-    expect(iframe?.getAttribute('srcdoc')).toContain('<h1>Report</h1>')
+    expect(iframe?.getAttribute('src')).toBe('open-science-preview://resource-1/report.html')
+    expect(iframe?.hasAttribute('srcdoc')).toBe(false)
+    expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
+  })
+
+  it('falls back when the managed HTML URL cannot be loaded', async () => {
+    await renderFile(createFileItem({ format: 'html', name: 'report.html' }))
+    const iframe = container.querySelector('iframe')
+
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: 'open-science-preview-load-error',
+          source: iframe?.contentWindow ?? null
+        })
+      )
+    })
+
+    expect(container.querySelector('iframe')).toBeNull()
+    expect(container.textContent).toContain("HTML couldn't be read for preview")
+    expect(window.api.previewResources.release).toHaveBeenCalledWith({
+      resourceId: 'resource-1'
+    })
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Show HTML source"]')?.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(window.api.artifacts.readPreview).toHaveBeenCalledWith(
+      expect.objectContaining({ path: '/workspace/data.json', offset: 0 })
+    )
   })
 
   it('can switch HTML previews to numbered source', async () => {
@@ -225,12 +376,15 @@ describe('PreviewFileContent', () => {
 
     await renderFile(createFileItem({ format: 'html', name: 'report.html' }))
 
+    vi.mocked(window.api.artifacts.readPreview).mockClear()
+
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[aria-label="Show HTML source"]')?.click()
     })
 
     expect(container.querySelector('[data-testid="source-line-number"]')?.textContent).toBe('1')
     expect(container.textContent).toContain('<h1>Report</h1>')
+    expect(window.api.artifacts.readPreview).toHaveBeenCalledTimes(1)
   })
 
   it('renders FASTA previews as plain text with line numbers', async () => {
@@ -254,6 +408,23 @@ describe('PreviewFileContent', () => {
   describe('PDB previews', () => {
     beforeEach(() => {
       restorePdbLayoutMocks = installPdbLayoutMocks()
+    })
+
+    it('uses paged source instead of constructing a partial 3D model', async () => {
+      vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
+        content: 'ATOM      1  N   MET A',
+        encoding: 'utf8',
+        size: 48,
+        offset: 0,
+        nextOffset: 23,
+        truncated: true
+      })
+
+      await renderFile(createFileItem({ format: 'pdb', name: 'large.pdb' }))
+
+      expect(createViewer).not.toHaveBeenCalled()
+      expect(container.querySelector('[aria-label="Next preview page"]')).not.toBeNull()
+      expect(container.querySelector('[data-testid="source-line-number"]')).not.toBeNull()
     })
 
     it('renders PDB previews with 3Dmol style controls and model metadata', async () => {
@@ -514,7 +685,8 @@ describe('PreviewFileContent', () => {
     expect(window.api.uploads.readPreview).toHaveBeenCalledWith({
       path: '/Users/example/.open-science/uploads/default-project/session-1/notes.txt',
       maxBytes: 1024 * 1024,
-      encoding: 'utf8'
+      encoding: 'utf8',
+      offset: 0
     })
     expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
     expect(container.textContent).toContain('uploaded content')

@@ -1,4 +1,5 @@
 import { Check } from 'lucide-react'
+import { AlertDialog } from 'radix-ui'
 import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -13,12 +14,14 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { APP } from '../../../../shared/app-config'
+import type { StorageInfo } from '../../../../shared/storage'
 import type {
   ClaudeInstallResult,
   ClaudeInstallSource,
   UpsertProviderRequest
 } from '../../../../shared/settings'
 import { useSettingsStore } from '@/stores/settings-store'
+import { DataRootWarning } from '@/components/DataRootWarning'
 import { ClaudeInstallCard } from '../settings/ClaudeInstallCard'
 import { ClaudeStatusCard } from '../settings/ClaudeStatusCard'
 import { EnvironmentSetupCard } from './EnvironmentSetupCard'
@@ -31,55 +34,57 @@ import {
 } from '../settings/provider-form-value'
 import { describeValidation } from '../settings/validation-message'
 
-type WizardStep = 'claude' | 'provider'
+// Location is last: it doubles as the wizard's Finish step, so the confirm-restart dialog can
+// show only once the provider is already validated.
+type WizardStep = 'claude' | 'provider' | 'location'
 type EnvironmentMode = 'automatic' | 'manual'
 
-// Keeps the two-step sequence visible without turning the lightweight setup flow into navigation.
+const STEP_ORDER: WizardStep[] = ['claude', 'provider', 'location']
+const STEP_LABELS: Record<WizardStep, string> = {
+  claude: 'Environment',
+  provider: 'Model provider',
+  location: 'Data location'
+}
+
+// Keeps the three-step sequence visible without turning the lightweight setup flow into navigation.
 const OnboardingProgress = ({ step }: { step: WizardStep }): React.JSX.Element => {
-  const providerActive = step === 'provider'
+  const currentIndex = STEP_ORDER.indexOf(step)
 
   return (
     <ol aria-label="Setup progress" className="mt-7 space-y-3">
-      <li
-        aria-current={!providerActive ? 'step' : undefined}
-        className={cn(
-          'flex items-center gap-2 text-sm',
-          providerActive ? 'text-text-100' : 'font-medium text-text-000'
-        )}
-      >
-        <span
-          className={cn(
-            'flex size-5 shrink-0 items-center justify-center rounded-full text-[11px]',
-            providerActive
-              ? 'border border-primary/40 text-primary'
-              : 'bg-primary font-medium text-primary-foreground'
-          )}
-          aria-hidden="true"
-        >
-          {providerActive ? <Check className="size-3" strokeWidth={2.4} /> : '1'}
-        </span>
-        <span>Environment</span>
-      </li>
-      <li
-        aria-current={providerActive ? 'step' : undefined}
-        className={cn(
-          'flex items-center gap-2 text-sm',
-          providerActive ? 'font-medium text-text-000' : 'text-text-300'
-        )}
-      >
-        <span
-          className={cn(
-            'flex size-5 shrink-0 items-center justify-center rounded-full text-[11px]',
-            providerActive
-              ? 'bg-primary font-medium text-primary-foreground'
-              : 'border border-border-300 bg-bg-000'
-          )}
-          aria-hidden="true"
-        >
-          2
-        </span>
-        <span>Model provider</span>
-      </li>
+      {STEP_ORDER.map((wizardStep, index) => {
+        const state = index < currentIndex ? 'done' : index === currentIndex ? 'active' : 'upcoming'
+
+        return (
+          <li
+            key={wizardStep}
+            aria-current={state === 'active' ? 'step' : undefined}
+            className={cn(
+              'flex items-center gap-2 text-sm',
+              state === 'active'
+                ? 'font-medium text-text-000'
+                : state === 'done'
+                  ? 'text-text-100'
+                  : 'text-text-300'
+            )}
+          >
+            <span
+              className={cn(
+                'flex size-5 shrink-0 items-center justify-center rounded-full text-[11px]',
+                state === 'active'
+                  ? 'bg-primary font-medium text-primary-foreground'
+                  : state === 'done'
+                    ? 'border border-primary/40 text-primary'
+                    : 'border border-border-300 bg-bg-000'
+              )}
+              aria-hidden="true"
+            >
+              {state === 'done' ? <Check className="size-3" strokeWidth={2.4} /> : index + 1}
+            </span>
+            <span>{STEP_LABELS[wizardStep]}</span>
+          </li>
+        )
+      })}
     </ol>
   )
 }
@@ -96,9 +101,9 @@ const toUpsertRequest = (value: ProviderFormValue): UpsertProviderRequest => ({
 })
 
 // First-run gate: inspect the host (automatic checks, with the original manual installer kept as a
-// tab), then configure and validate a model provider. Reuses the same cards/form as the settings
-// page so both surfaces stay in sync. For completed users App can re-open only the environment
-// portion when a required dependency later disappears (recovery mode).
+// tab), configure and validate a model provider, then choose where data lives. Reuses the same
+// cards/form as the settings page so both surfaces stay in sync. For completed users App can
+// re-open only the environment portion when a required dependency later disappears (recovery mode).
 const OnboardingWizard = (): React.JSX.Element => {
   const claude = useSettingsStore((state) => state.claude)
   const preflight = useSettingsStore((state) => state.preflight)
@@ -126,6 +131,25 @@ const OnboardingWizard = (): React.JSX.Element => {
   const [step, setStep] = useState<WizardStep>('claude')
   const [environmentMode, setEnvironmentMode] = useState<EnvironmentMode>('automatic')
   const [automaticInstallError, setAutomaticInstallError] = useState<string | undefined>(undefined)
+
+  // Data-root location step. Only `dataRoot` is ever touched here — the config root (settings,
+  // sessions, db, claude, skills) always stays at its fixed default.
+  const [dataRootInfo, setDataRootInfo] = useState<StorageInfo | null>(null)
+  // The picked PARENT directory (what the browse dialog returns and what setDataRootAndRelaunch
+  // takes); empty means "keep the default". The actual data root is always
+  // `<chosenParent>/OpenScience`, derived server-side and shown via chosenDataRoot below.
+  const [chosenParent, setChosenParent] = useState('')
+  // Display-only: the derived `<parent>/OpenScience` path returned by inspectDataRoot, shown in
+  // place of the raw parent so the user sees the real final location.
+  const [chosenDataRoot, setChosenDataRoot] = useState('')
+  // 'adopt' shows the "used as-is" note; 'move' is the ordinary empty-folder case. Irrelevant once
+  // chosenParent is cleared back to the default.
+  const [chosenKind, setChosenKind] = useState<'move' | 'adopt' | null>(null)
+  const [locationError, setLocationError] = useState<string | undefined>(undefined)
+  const [confirmRestart, setConfirmRestart] = useState(false)
+  const [isRelaunching, setIsRelaunching] = useState(false)
+  const [relaunchError, setRelaunchError] = useState<string | undefined>(undefined)
+
   const [formValue, setFormValue] = useState<ProviderFormValue>(() =>
     createEmptyProviderFormValue()
   )
@@ -136,6 +160,17 @@ const OnboardingWizard = (): React.JSX.Element => {
   const [validationMessage, setValidationMessage] = useState<string | undefined>(undefined)
   const [validationOk, setValidationOk] = useState(false)
   const didRequestCheck = useRef(false)
+  // Guards against handleKeepDefault's completeOnboarding firing spuriously after Restart:
+  // AlertDialog.Action fires onOpenChange(false) on click (same as Cancel), and closures inside
+  // that handler can't see isRelaunching's update from the same synchronous batch, so a ref is
+  // used instead of state for this check.
+  const isRestartingRef = useRef(false)
+
+  // Fetch the default data location once, up front, so the Location step has something to show
+  // and the provider step can later tell whether the user's choice actually differs from it.
+  useEffect(() => {
+    void window.api.storage.getInfo().then(setDataRootInfo)
+  }, [])
 
   // App starts this check on every launch. This local fallback also keeps the wizard self-contained in
   // tests or alternate entry surfaces where it may be mounted without App as its parent.
@@ -189,6 +224,29 @@ const OnboardingWizard = (): React.JSX.Element => {
     }
   }
 
+  const handleBrowseLocation = async (): Promise<void> => {
+    const picked = await window.api.storage.pickDirectory()
+    if (!picked) return
+
+    const result = await window.api.storage.inspectDataRoot(picked)
+    if (result.kind === 'invalid') {
+      setLocationError(result.error)
+      return
+    }
+
+    setChosenParent(picked)
+    setChosenDataRoot(result.dataRoot)
+    setChosenKind(result.kind)
+    setLocationError(undefined)
+  }
+
+  const handleResetLocation = (): void => {
+    setChosenParent('')
+    setChosenDataRoot('')
+    setChosenKind(null)
+    setLocationError(undefined)
+  }
+
   const handleSaveProvider = async (): Promise<void> => {
     // First submit attempt surfaces any missing required fields instead of testing an incomplete draft.
     if (hasProviderFormErrors(formErrors)) {
@@ -205,10 +263,10 @@ const OnboardingWizard = (): React.JSX.Element => {
       setValidationOk(validation.ok)
       setValidationMessage(describeValidation(validation))
 
-      // A passing validation means both gates are satisfied: finish onboarding. The App gate then
-      // re-renders into Home once the marker lands.
       if (validation.ok) {
-        await completeOnboarding()
+        // Location is the last step now: it decides completeOnboarding vs. the relaunch, once the
+        // user confirms (or keeps) a location there.
+        setStep('location')
       }
     } catch (error) {
       setValidationOk(false)
@@ -218,7 +276,59 @@ const OnboardingWizard = (): React.JSX.Element => {
     }
   }
 
+  const handleFinishLocation = async (): Promise<void> => {
+    if (chosenParent) {
+      // A custom location was chosen: gate completeOnboarding behind the user's confirmation.
+      // Calling completeOnboarding immediately would flip the App-level startup gate to 'app'
+      // and unmount this wizard (and this confirm dialog) before it could ever be shown.
+      setConfirmRestart(true)
+    } else {
+      // Default kept: nothing more to do, the App gate takes it from here — no relaunch.
+      await completeOnboarding()
+    }
+  }
+
+  const handleKeepDefault = async (): Promise<void> => {
+    // AlertDialog.Action also fires onOpenChange(false) on click (it closes the dialog like Cancel
+    // does), which would otherwise call this a second time right after handleRestart. A ref (not
+    // isRelaunching state) is required here: both handlers run synchronously in the same click
+    // event, so a state-based check would still read the pre-update closure value.
+    if (isRestartingRef.current) return
+
+    setConfirmRestart(false)
+    await completeOnboarding()
+  }
+
+  const handleRestart = async (): Promise<void> => {
+    isRestartingRef.current = true
+    setConfirmRestart(false)
+    setIsRelaunching(true)
+
+    // Deliberately NOT calling the renderer completeOnboarding() here: it flips
+    // onboardingCompletedAt immediately, which would make App.tsx's startup gate swap this
+    // wizard for Home (showing the OLD data root) before setDataRootAndRelaunch even runs, and
+    // would turn the failure branch below into dead code. Instead the main-process handler marks
+    // onboarding complete itself, in the same step as setDataRoot, right before it relaunches -
+    // so the gate only flips once the new location is actually persisted.
+    const result = await window.api.storage.setDataRootAndRelaunch(chosenParent, true)
+    if (!result.ok) {
+      // The app is not relaunching; the gate was never flipped, so we're still on the wizard -
+      // surface the error here and let the user retry or fall back to Keep default.
+      isRestartingRef.current = false
+      setIsRelaunching(false)
+      setRelaunchError(result.error ?? 'Could not restart to apply the new location.')
+    }
+  }
+
   const environmentReady = environmentCheck?.ready ?? false
+
+  if (isRelaunching) {
+    return (
+      <main className="flex h-svh items-center justify-center bg-bg-10 text-text-000">
+        <p className="text-sm text-text-100">Setting up your workspace…</p>
+      </main>
+    )
+  }
 
   return (
     <main className="h-svh overflow-y-auto bg-bg-10 text-text-000">
@@ -249,13 +359,13 @@ const OnboardingWizard = (): React.JSX.Element => {
             <p className="mt-3 max-w-60 text-sm leading-5 text-text-100">
               {isRecovery
                 ? 'A required environment check changed since your last launch. Repair it to continue.'
-                : 'A quick host check confirms this computer is ready, then you connect the model you want to use.'}
+                : 'A quick host check confirms this computer is ready, you connect the model you want to use, then you choose where your data lives.'}
             </p>
-            {/* Recovery only reopens the environment portion, so the two-step tracker does not apply. */}
+            {/* Recovery only reopens the environment portion, so the step tracker does not apply. */}
             {!isRecovery ? <OnboardingProgress step={step} /> : null}
           </section>
 
-          {/* One stable work surface keeps the two setup steps aligned as their content changes. */}
+          {/* One stable work surface keeps the setup steps aligned as their content changes. */}
           <Card className="min-h-[420px] gap-0 rounded-lg bg-bg-000 py-0 shadow-card ring-1 ring-border-200">
             {step === 'claude' ? (
               <>
@@ -390,7 +500,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                   </Button>
                 </CardFooter>
               </>
-            ) : (
+            ) : step === 'provider' ? (
               <>
                 <CardHeader className="gap-1 rounded-t-lg px-6 py-5">
                   <CardTitle className="text-[15px] font-semibold">Connect a model</CardTitle>
@@ -439,10 +549,138 @@ const OnboardingWizard = (): React.JSX.Element => {
                   </Button>
                 </CardFooter>
               </>
+            ) : (
+              <>
+                <CardHeader className="gap-1 rounded-t-lg px-6 py-5">
+                  <CardTitle className="text-[15px] font-semibold">
+                    Where should Open Science store your data?
+                  </CardTitle>
+                  <CardDescription className="text-xs leading-5">
+                    Large files (artifacts, notebooks, environments) go here. Your settings and
+                    history always stay in the default location. You can change this later in
+                    Settings.
+                  </CardDescription>
+                </CardHeader>
+                <Separator className="bg-border-200" />
+
+                <CardContent className="flex-1 px-6 py-5">
+                  <section aria-label="Choose data location" className="space-y-5">
+                    {relaunchError ? (
+                      <p
+                        className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+                        role="alert"
+                      >
+                        Could not switch to the new location: {relaunchError} You can retry or keep
+                        the default location.
+                      </p>
+                    ) : null}
+
+                    <div className="rounded-xl border border-border-200 p-4">
+                      <span className="text-xs font-medium text-text-100">Location</span>
+                      <div className="mt-1 flex items-center gap-2">
+                        <p
+                          aria-label="Data location path"
+                          className="flex-1 truncate rounded-lg border border-border-200 bg-bg-000 px-2.5 py-1.5 font-mono text-xs"
+                        >
+                          {chosenDataRoot || dataRootInfo?.dataRoot || ''}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => void handleBrowseLocation()}
+                          className="inline-flex shrink-0 items-center rounded-lg border border-border-200 px-3 py-1.5 text-sm font-medium text-text-000 transition-colors hover:bg-bg-10"
+                        >
+                          Browse…
+                        </button>
+                      </div>
+
+                      {chosenDataRoot ? (
+                        <p className="mt-2 text-xs text-text-100">
+                          Your data will be stored in{' '}
+                          <span className="font-mono">{chosenDataRoot}</span>. Open Science will
+                          restart to set this up.{' '}
+                          <button
+                            type="button"
+                            onClick={handleResetLocation}
+                            className="underline underline-offset-2 hover:text-text-000"
+                          >
+                            Use default location instead
+                          </button>
+                        </p>
+                      ) : null}
+
+                      {chosenKind === 'adopt' ? (
+                        <p className="mt-2 text-xs text-text-100">
+                          This folder already contains Open Science data — it will be used as-is
+                          (nothing is moved).
+                        </p>
+                      ) : null}
+
+                      {locationError ? (
+                        <p className="mt-2 text-xs text-destructive" role="alert">
+                          {locationError}
+                        </p>
+                      ) : null}
+                    </div>
+
+                    <DataRootWarning />
+                  </section>
+                </CardContent>
+                <CardFooter className="mt-auto justify-end gap-2 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
+                  <Button type="button" variant="outline" onClick={() => setStep('provider')}>
+                    Back
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => void handleFinishLocation()}
+                    className="px-4"
+                  >
+                    Finish
+                  </Button>
+                </CardFooter>
+              </>
             )}
           </Card>
         </div>
       </div>
+
+      <AlertDialog.Root
+        open={confirmRestart}
+        onOpenChange={(open) => {
+          if (!open) void handleKeepDefault()
+        }}
+      >
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px]" />
+          <AlertDialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(420px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-bg-000 p-6 text-text-000 shadow-dialog">
+            <AlertDialog.Title className="text-base font-semibold text-text-000">
+              Restart to set up your data?
+            </AlertDialog.Title>
+            <AlertDialog.Description className="mt-2 text-sm leading-relaxed text-text-100">
+              Open Science will restart to set up your data at{' '}
+              <span className="font-mono">{chosenDataRoot}</span>.
+            </AlertDialog.Description>
+            <div className="mt-6 flex justify-end gap-2">
+              <AlertDialog.Cancel asChild>
+                <button
+                  type="button"
+                  className="rounded-lg border border-input px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
+                >
+                  Keep default
+                </button>
+              </AlertDialog.Cancel>
+              <AlertDialog.Action asChild>
+                <button
+                  type="button"
+                  onClick={() => void handleRestart()}
+                  className="rounded-lg border border-primary bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                >
+                  Restart
+                </button>
+              </AlertDialog.Action>
+            </div>
+          </AlertDialog.Content>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
     </main>
   )
 }

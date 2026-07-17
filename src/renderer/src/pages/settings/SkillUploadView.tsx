@@ -2,6 +2,7 @@ import { AlertTriangle, FileText, Info, Upload } from 'lucide-react'
 import { useState } from 'react'
 
 import { FileDropOverlay } from '@/components/FileDropOverlay'
+import { Button } from '@/components/ui/button'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { useSettingsStore } from '@/stores/settings-store'
 
@@ -164,9 +165,9 @@ const SkillUploadView = ({
     const replaceId = pending.kind === 'bundle' ? pending.replaceableId : undefined
 
     return (
-      <div className="max-w-2xl p-5">
-        <h2 className="text-lg font-semibold text-foreground">Confirm import</h2>
-        <p className="mt-0.5 text-sm text-muted-foreground">
+      <div className="p-5">
+        <h2 className="text-base font-semibold text-foreground">Confirm import</h2>
+        <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
           Review what will be added from <span className="text-foreground">{pending.fileName}</span>
           .
         </p>
@@ -220,44 +221,35 @@ const SkillUploadView = ({
         <div className="mt-4 flex items-center gap-2">
           {replaceId ? (
             <>
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={() => void confirm(replaceId)}
                 disabled={busy}
-                className="inline-flex h-8 items-center rounded-lg border border-border bg-card px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
               >
                 {busy ? 'Importing…' : `Replace "${pending.name}"`}
-              </button>
-              <button
-                type="button"
-                onClick={() => void confirm()}
-                disabled={busy}
-                className="inline-flex h-8 items-center rounded-lg px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-              >
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => void confirm()} disabled={busy}>
                 Import as a copy
-              </button>
+              </Button>
             </>
           ) : (
-            <button
-              type="button"
-              onClick={() => void confirm()}
-              disabled={busy}
-              className="inline-flex h-8 items-center rounded-lg border border-border bg-card px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-            >
+            <Button type="button" variant="outline" onClick={() => void confirm()} disabled={busy}>
               {busy ? 'Importing…' : 'Import'}
-            </button>
+            </Button>
           )}
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={() => {
               setPending(null)
               setMessage(null)
             }}
             disabled={busy}
-            className="inline-flex h-8 items-center rounded-lg px-3 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+            className="text-muted-foreground"
           >
             Choose a different file
-          </button>
+          </Button>
         </div>
         {duplicate ? (
           <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -274,15 +266,15 @@ const SkillUploadView = ({
   }
 
   return (
-    <div className="max-w-2xl p-5">
-      <h2 className="text-lg font-semibold text-foreground">Upload a skill</h2>
-      <p className="mt-0.5 text-sm text-muted-foreground">
+    <div className="p-5">
+      <h2 className="text-base font-semibold text-foreground">Upload a skill</h2>
+      <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
         Add a skill from a SKILL.md file or a .zip / .skill bundle on your computer.
       </p>
 
       <label
         {...dropZoneProps}
-        className="relative mt-4 flex cursor-pointer flex-col items-center gap-3 rounded-lg border border-dashed border-border bg-muted/20 px-6 py-10 text-center transition-colors hover:bg-muted/40"
+        className="relative mt-4 flex cursor-pointer flex-col items-center gap-3 rounded-lg border border-dashed border-border bg-muted/20 px-6 py-10 text-center transition-colors motion-reduce:transition-none hover:bg-muted/40"
       >
         {isDragging ? <FileDropOverlay label="Drop to upload" className="rounded-lg" /> : null}
         <input
@@ -307,13 +299,9 @@ const SkillUploadView = ({
       {message ? <ErrorBanner message={message} /> : null}
 
       <div className="mt-5 text-center">
-        <button
-          type="button"
-          onClick={onWriteInstead}
-          className="rounded-lg px-2.5 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
+        <Button type="button" variant="ghost" onClick={onWriteInstead}>
           Write from scratch instead
-        </button>
+        </Button>
       </div>
     </div>
   )

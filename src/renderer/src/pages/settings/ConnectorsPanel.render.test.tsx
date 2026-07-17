@@ -154,6 +154,13 @@ describe('ConnectorsPanel (groups)', () => {
     expect(document.body.textContent).toContain('My MCP')
     // Three featured toggles + one custom toggle.
     expect(document.body.querySelectorAll('[role="switch"]')).toHaveLength(4)
+    expect(document.body.querySelectorAll('[data-slot="settings-list-row"]')).toHaveLength(4)
+    expect(document.body.querySelector('[data-slot="settings-section"]')).not.toBeNull()
+    const addConnector = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.includes('Add connector'))
+    expect(addConnector?.getAttribute('data-slot')).toBe('button')
+    expect(addConnector?.getAttribute('data-variant')).toBe('outline')
   })
 
   it('toggles a featured connector and navigates to its detail on row click', () => {
@@ -180,9 +187,16 @@ describe('ConnectorsPanel (groups)', () => {
     act(() => document.body.querySelector<HTMLButtonElement>('[aria-label="My MCP"]')?.click())
     expect(useSettingsStore.getState().setCustomServerEnabled).toHaveBeenCalledWith('my-mcp', false)
 
-    act(() =>
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Remove My MCP"]')?.click()
-    )
+    const edit = document.body.querySelector<HTMLButtonElement>('[aria-label="Edit My MCP"]')
+    const remove = document.body.querySelector<HTMLButtonElement>('[aria-label="Remove My MCP"]')
+    expect(edit?.getAttribute('data-slot')).toBe('button')
+    expect(remove?.getAttribute('data-slot')).toBe('button')
+    expect(edit?.getAttribute('data-size')).toBe('icon-sm')
+    expect(remove?.getAttribute('data-size')).toBe('icon-sm')
+    expect(edit?.getAttribute('data-state')).toBe('closed')
+    expect(remove?.getAttribute('data-state')).toBe('closed')
+
+    act(() => remove?.click())
     expect(useSettingsStore.getState().removeCustomServer).toHaveBeenCalledWith('my-mcp')
   })
 

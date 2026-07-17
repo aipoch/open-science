@@ -104,7 +104,10 @@ type AcpRuntimeSkillsOptions = {
 }
 
 type AcpRuntimeArtifactOptions = {
-  storageRoot: string
+  // Config root: where the app-owned claude config dir lives (never relocated).
+  configRoot: string
+  // Data root: where artifacts/notebooks/runtime live (user-relocatable).
+  dataRoot: string
   projectName: string
   mcpEntryPath: string
   mcpCommand?: string
@@ -257,7 +260,7 @@ class AcpRuntime {
     this.artifactOptions = options.artifacts
     this.notebookOptions = options.notebook
     this.artifactRepository = options.artifacts
-      ? (options.artifacts.repository ?? new ArtifactRepository(options.artifacts.storageRoot))
+      ? (options.artifacts.repository ?? new ArtifactRepository(options.artifacts.dataRoot))
       : undefined
     this.artifactRunRegistry = options.artifacts
       ? (options.artifacts.runRegistry ?? new ArtifactRunRegistry())
@@ -302,6 +305,14 @@ class AcpRuntime {
       promptInFlight: promptInFlightSessionIds.length > 0,
       promptInFlightSessionIds
     }
+  }
+
+  // Lists sessions with an in-flight prompt, for the pre-migration active-session warning.
+  getActivePromptSessions(): { projectName: string; sessionId: string }[] {
+    return Array.from(this.promptInFlightSessionIds, (sessionId) => ({
+      projectName: this.resolveSessionProjectName(sessionId),
+      sessionId
+    }))
   }
 
   // Resolves an application profile against per-session ACP capabilities and applies the real Agent
@@ -1303,7 +1314,7 @@ class AcpRuntime {
   // App-owned directories the agent's Read tool must never read: the CLAUDE_CONFIG_DIR holds the
   // materialized skill files, whose (bundled/MCP) contents must not be surfaced into the conversation.
   private protectedReadRoots(): string[] {
-    return this.artifactOptions ? [getAppClaudeConfigDir(this.artifactOptions.storageRoot)] : []
+    return this.artifactOptions ? [getAppClaudeConfigDir(this.artifactOptions.configRoot)] : []
   }
 
   // Creates an app-owned artifact session id so new ACP sessions never decide their storage directory.
@@ -1334,7 +1345,7 @@ class AcpRuntime {
     const allowedImportRoots = [
       sessionCwd,
       ...(this.notebookOptions && notebookSessionId
-        ? [getNotebookSessionRoot(this.artifactOptions.storageRoot, projectName, notebookSessionId)]
+        ? [getNotebookSessionRoot(this.artifactOptions.dataRoot, projectName, notebookSessionId)]
         : [])
     ]
 
@@ -1342,7 +1353,7 @@ class AcpRuntime {
       createArtifactMcpServerConfig({
         command: this.artifactOptions.mcpCommand ?? process.execPath,
         entryPath: this.artifactOptions.mcpEntryPath,
-        storageRoot: this.artifactOptions.storageRoot,
+        storageRoot: this.artifactOptions.dataRoot,
         projectName,
         sessionId: artifactSessionId,
         currentRunFile: this.getArtifactCurrentRunFile(artifactSessionId, projectName),
@@ -1484,7 +1495,7 @@ class AcpRuntime {
     }
 
     return getArtifactCurrentRunFilePath(
-      this.artifactOptions.storageRoot,
+      this.artifactOptions.dataRoot,
       projectName,
       artifactSessionId
     )

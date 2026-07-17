@@ -1,6 +1,4 @@
-import { FileWarning } from 'lucide-react'
-
-import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
+import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { usePreviewFileContent } from '../usePreviewFileContent'
 import { SourcePreviewContent } from './SourcePreview'
@@ -12,12 +10,12 @@ export const FastaPreviewRenderer = ({ item }: PreviewFileRendererProps): React.
 
   if (state.status === 'error' || state.preview.encoding !== 'utf8') {
     return (
-      <PreviewFallbackCard
-        icon={FileWarning}
+      <PreviewErrorCard
         path={item.path}
         name={item.name}
         source={item.source}
-        message="FASTA couldn't be read for preview"
+        error={state.status === 'error' ? state.error : undefined}
+        fallbackMessage="FASTA couldn't be read for preview"
       />
     )
   }
@@ -25,7 +23,7 @@ export const FastaPreviewRenderer = ({ item }: PreviewFileRendererProps): React.
   return (
     <SourcePreviewContent
       content={state.preview.content}
-      truncated={state.preview.truncated}
+      pagination={state.pagination}
       lineClassName="break-all"
     />
   )

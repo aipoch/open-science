@@ -3,12 +3,10 @@ import { ipcMain, shell } from 'electron'
 import type { ArtifactFile, ArtifactPreviewResult } from '../../shared/artifacts'
 import type {
   FinalizeRunArtifactsRequest,
-  ManagedFileBytesResult,
   OpenArtifactFileRequest,
-  ReadArtifactBytesRequest,
   ReadArtifactPreviewRequest
 } from '../../shared/artifacts'
-import { resolveStorageRoot } from '../storage-root'
+import { resolveDataRoot } from '../storage-root'
 import { ArtifactRepository } from './repository'
 import { ArtifactRunRegistry } from './run-registry'
 
@@ -16,7 +14,6 @@ type ArtifactHandlers = {
   finalizeRunArtifacts: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
   openFile: (request: OpenArtifactFileRequest) => Promise<void>
   readPreview: (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
-  readBytes: (request: ReadArtifactBytesRequest) => Promise<ManagedFileBytesResult>
 }
 
 type ArtifactHandlerDependencies = {
@@ -76,8 +73,7 @@ const createArtifactHandlers = (
         throw new Error(openError)
       }
     },
-    readPreview: (request) => repository.readManagedFilePreview(request),
-    readBytes: (request) => repository.readManagedFileBytes(request)
+    readPreview: (request) => repository.readManagedFilePreview(request)
   }
 }
 
@@ -117,9 +113,9 @@ const finalizeRunArtifacts = async (
   return artifacts
 }
 
-// Uses the same persistence root as sessions so artifacts survive app restarts with chat history.
+// Artifacts are data-class: they follow the configurable data root (defaults to the config root).
 const createDefaultArtifactRepository = (): ArtifactRepository =>
-  new ArtifactRepository(resolveStorageRoot())
+  new ArtifactRepository(resolveDataRoot())
 
 // Registers the renderer-visible artifact commands without exposing internal message-file listing.
 const registerArtifactIpcHandlers = (
@@ -136,9 +132,6 @@ const registerArtifactIpcHandlers = (
   )
   ipcMain.handle('artifacts:read-preview', (_event, request: ReadArtifactPreviewRequest) =>
     handlers.readPreview(request)
-  )
-  ipcMain.handle('artifacts:read-bytes', (_event, request: ReadArtifactBytesRequest) =>
-    handlers.readBytes(request)
   )
 }
 

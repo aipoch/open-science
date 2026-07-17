@@ -1,7 +1,13 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { afterEach, describe, expect, it } from 'vitest'
+import { pathToFileURL } from 'node:url'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+// Session encode/decode falls back to resolveDataRoot(), which reads electron's app.getPath.
+vi.mock('electron', () => ({
+  app: { getPath: () => '/home/user', isPackaged: true }
+}))
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { DEV_SESSION_DIR_NAME, SessionRepository, getSessionPersistenceDir } from './repository'
@@ -122,7 +128,10 @@ describe('session persistence repository (per-session files)', () => {
     expect(sessions[0].artifacts?.[0]).toEqual({
       id: 'artifact-1',
       kind: 'workspace-file',
-      path: '/workspace/project/report.md'
+      path: '/workspace/project/report.md',
+      // Decode always recomputes fileUrl from the (possibly-relocated) resolved path; pathToFileURL
+      // drive-prefixes on Windows, so derive the expected the same way rather than hardcoding it.
+      fileUrl: pathToFileURL('/workspace/project/report.md').href
     })
   })
 

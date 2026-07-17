@@ -60,6 +60,9 @@ describe('ConnectorAddForm (local command)', () => {
       root.render(<ConnectorAddForm initialTransport="local" onDone={onDone} onCancel={vi.fn()} />)
     })
 
+    expect(document.body.querySelector('[aria-label="Arguments"]')?.getAttribute('data-slot')).toBe(
+      'textarea'
+    )
     setValue('Name', 'Memory')
     checkTrust()
 

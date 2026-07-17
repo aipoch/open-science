@@ -7,11 +7,17 @@ name: Notarize macOS
 # stapled artifacts. Splitting it out of the build means a slow notarization never ties up the build
 # matrix, and it can be re-run on its own without a rebuild.
 #
-# Two entry points:
-#   - workflow_call — used by release.yml right after build. Operates on the run's signed mac
-#     artifacts and re-uploads the stapled versions (overwrite) so the publish job attaches them.
-#   - workflow_dispatch{ tag } — standalone repair/backfill. Notarizes + staples the mac assets
-#     already attached to an existing Release, clobbers them back, and refreshes SHA256SUMS.txt.
+# Two entry points, selected by the `from_run` input (NOT github.event_name — see below):
+#   - workflow_call (from_run: true) — used by release.yml and notarize-dryrun.yml right after build.
+#     Operates on the run's signed mac artifacts and re-uploads the stapled versions (overwrite) so a
+#     downstream job attaches them.
+#   - workflow_dispatch{ tag } (from_run unset -> false) — standalone repair/backfill. Notarizes +
+#     staples the mac assets already attached to an existing Release, clobbers them back, and
+#     refreshes SHA256SUMS.txt.
+#
+# The mode MUST key off `from_run`, not github.event_name: a workflow_call triggered by a
+# workflow_dispatch run (the notarization dry-run) still reports event_name == 'workflow_dispatch',
+# which would wrongly select the Release path and submit an unrelated published build.
 #
 # Time cap is enforced two ways: each dmg is submitted, then waited on for at most 15m
 # (`notarytool wait --timeout 15m`), and the job as a whole is bounded by `timeout-minutes: 20`.
@@ -27,6 +33,13 @@ on:
         required: false
         type: string
         default: ''
+      from_run:
+        description: >-
+          Operate on THIS run's build artifacts (download by name, re-emit stapled) instead of an
+          existing Release. True for every workflow_call caller (release.yml, notarize-dryrun.yml).
+        required: false
+        type: boolean
+        default: true
   workflow_dispatch:
     inputs:
       tag:
@@ -64,9 +77,9 @@ jobs:
             echo "::notice::APPLE_API_KEY_P8_BASE64 not set — skipping notarization; mac stays as built."
           fi
 
-      # release.yml path: pull this run's signed artifacts for the arch (uploaded by build.yml).
+      # Call path (from_run): pull this run's signed artifacts for the arch (uploaded by build.yml).
       - name: Download signed mac artifact (from this run)
-        if: steps.gate.outputs.enabled == 'true' && github.event_name != 'workflow_dispatch'
+        if: steps.gate.outputs.enabled == 'true' && inputs.from_run
         uses: actions/download-artifact@v8
         with:
           name: macos-${{ matrix.arch }}
@@ -74,7 +87,7 @@ jobs:
 
       # Standalone path: pull the arch's signed assets straight off the existing Release.
       - name: Download signed mac assets (from the release)
-        if: steps.gate.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch'
+        if: steps.gate.outputs.enabled == 'true' && !inputs.from_run
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -163,12 +176,49 @@ jobs:
             ditto -c -k --keepParent "$app" "$zip"   # repackage the stapled .app over the zip
           done
 
-      # release.yml path: replace this run's signed artifact with the stapled one (same name), so the
-      # publish job's merge-multiple download picks up the stapled dmg/zip. overwrite deletes the
-      # prior artifact of this name in the run. The now-stale mac blockmap/latest-mac.yml are dropped
-      # (mac auto-update is disabled), leaving only the two user-facing downloads.
+      # Stapling repackaged the zip (new bytes), so electron-builder's ${arch}-mac.yml — written at
+      # build time over the PRE-staple zip — now carries a stale sha512/size that would fail the
+      # updater's signature check. Regenerate the feed from the stapled zip: recompute sha512 (base64)
+      # + size and emit a minimal, zip-only feed (no blockmap -> full-zip mac updates for v1). Derived
+      # purely from the stapled zip, so it is correct on both the call and standalone paths.
+      - name: Regenerate mac update feed
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs"), crypto = require("crypto"), path = require("path");
+            const arch = process.env.ARCH;
+            const zips = fs.readdirSync("mac").filter((f) => f.endsWith(`-mac-${arch}.zip`));
+            if (zips.length !== 1) {
+              console.error(`::error::expected exactly one mac-${arch} zip, found ${zips.length}`);
+              process.exit(1);
+            }
+            const zip = zips[0];
+            const buf = fs.readFileSync(path.join("mac", zip));
+            const sha512 = crypto.createHash("sha512").update(buf).digest("base64");
+            const m = zip.match(/-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)-mac-/);
+            const version = m ? m[1] : "0.0.0";
+            const yml =
+              `version: ${version}\n` +
+              `files:\n` +
+              `  - url: ${zip}\n` +
+              `    sha512: ${sha512}\n` +
+              `    size: ${buf.length}\n` +
+              `path: ${zip}\n` +
+              `sha512: ${sha512}\n` +
+              `releaseDate: ${JSON.stringify(new Date().toISOString())}\n`;
+            fs.writeFileSync(path.join("mac", `${arch}-mac.yml`), yml);
+            process.stdout.write(yml);
+          '
+
+      # Call path: replace this run's signed artifacts with the stapled ones (same names) plus the
+      # regenerated ${arch}-mac.yml feed, so the publish job's merge-multiple download picks them up.
+      # overwrite deletes the prior artifacts of this name in the run. The stale mac blockmap is dropped
+      # (v1 does full-zip mac updates), leaving the dmg, zip, and per-arch feed.
       - name: Re-emit stapled artifact (for publish)
-        if: steps.gate.outputs.enabled == 'true' && github.event_name != 'workflow_dispatch'
+        if: steps.gate.outputs.enabled == 'true' && inputs.from_run
         uses: actions/upload-artifact@v7
         with:
           name: macos-${{ matrix.arch }}
@@ -177,22 +227,24 @@ jobs:
           path: |
             mac/*-mac-*.dmg
             mac/*-mac-*.zip
+            mac/*-mac.yml
           if-no-files-found: error
 
-      # Standalone path: push the stapled dmg/zip back onto the Release, replacing the signed-only ones.
+      # Standalone path: push the stapled dmg/zip + regenerated feed back onto the Release, replacing
+      # the signed-only ones. (Re-mirror the tag afterward to publish the feed to the CDN.)
       - name: Clobber stapled assets onto the release
-        if: steps.gate.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch'
+        if: steps.gate.outputs.enabled == 'true' && !inputs.from_run
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "${{ inputs.tag }}" mac/*-mac-*.dmg mac/*-mac-*.zip \
+          gh release upload "${{ inputs.tag }}" mac/*-mac-*.dmg mac/*-mac-*.zip mac/*-mac.yml \
             --repo "$GITHUB_REPOSITORY" --clobber
 
   # Standalone path only: after both archs are stapled + clobbered, rebuild SHA256SUMS.txt so it
   # matches the re-stapled bytes. (In the release.yml path, the publish job regenerates it over the
   # already-stapled artifacts, so no refresh is needed there.)
   refresh-checksums:
-    if: github.event_name == 'workflow_dispatch'
+    if: ${{ !inputs.from_run }}
     needs: notarize
     runs-on: ubuntu-latest
     steps:

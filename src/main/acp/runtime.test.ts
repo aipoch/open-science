@@ -489,7 +489,8 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       uploads: { repository: uploadRepository },
       artifacts: {
-        storageRoot: root,
+        configRoot: root,
+        dataRoot: root,
         projectName: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         repository: artifactRepository
@@ -1183,7 +1184,8 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       artifacts: {
-        storageRoot: '/Users/example/.open-science',
+        configRoot: '/Users/example/.open-science',
+        dataRoot: '/Users/example/.open-science',
         projectName: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         mcpCommand: '/Applications/Open Science.app/Contents/MacOS/Open Science'
@@ -1245,7 +1247,8 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       artifacts: {
-        storageRoot: '/Users/example/.open-science',
+        configRoot: '/Users/example/.open-science',
+        dataRoot: '/Users/example/.open-science',
         projectName: 'default-project',
         mcpEntryPath: '/app/out/main/index.js'
       }
@@ -1275,7 +1278,8 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       artifacts: {
-        storageRoot: '/Users/example/.open-science',
+        configRoot: '/Users/example/.open-science',
+        dataRoot: '/Users/example/.open-science',
         projectName: 'default-project',
         mcpEntryPath: '/app/out/main/index.js'
       }
@@ -1366,7 +1370,8 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       artifacts: {
-        storageRoot: '/Users/example/.open-science',
+        configRoot: '/Users/example/.open-science',
+        dataRoot: '/Users/example/.open-science',
         projectName: 'default-project',
         mcpEntryPath: '/app/out/main/index.js'
       },
@@ -1412,7 +1417,8 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       artifacts: {
-        storageRoot: '/Users/example/.open-science',
+        configRoot: '/Users/example/.open-science',
+        dataRoot: '/Users/example/.open-science',
         projectName: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         mcpCommand: '/Applications/Open Science.app/Contents/MacOS/Open Science'
@@ -1439,7 +1445,8 @@ describe('ACP runtime session management', () => {
         onEvent: (event) => events.push({ role: event.role, text: event.text })
       },
       artifacts: {
-        storageRoot,
+        configRoot: storageRoot,
+        dataRoot: storageRoot,
         projectName: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         repository: new ArtifactRepository(storageRoot)
@@ -1517,7 +1524,8 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       artifacts: {
-        storageRoot,
+        configRoot: storageRoot,
+        dataRoot: storageRoot,
         projectName: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         mcpCommand: '/usr/bin/electron',
@@ -1592,7 +1600,8 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       artifacts: {
-        storageRoot,
+        configRoot: storageRoot,
+        dataRoot: storageRoot,
         projectName: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         mcpCommand: '/usr/bin/electron',
@@ -1643,7 +1652,8 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       artifacts: {
-        storageRoot: blockedStorageRoot,
+        configRoot: blockedStorageRoot,
+        dataRoot: blockedStorageRoot,
         projectName: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         mcpCommand: '/usr/bin/electron'

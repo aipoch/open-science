@@ -267,6 +267,24 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
 
   if (connectors) settings.connectors = connectors
 
+  const pathsNormalizedAt = asNumber(value.pathsNormalizedAt)
+
+  if (pathsNormalizedAt !== undefined) {
+    settings.pathsNormalizedAt = pathsNormalizedAt
+  }
+
+  const legacyDataMovePromptDismissedAt = asNumber(value.legacyDataMovePromptDismissedAt)
+
+  if (legacyDataMovePromptDismissedAt !== undefined) {
+    settings.legacyDataMovePromptDismissedAt = legacyDataMovePromptDismissedAt
+  }
+
+  const dataRoot = asString(value.dataRoot)
+
+  if (dataRoot) {
+    settings.dataRoot = dataRoot
+  }
+
   return settings
 }
 
@@ -350,6 +368,32 @@ class SettingsRepository {
         ? { ...settings, onboardingCompletedAt: timestamp }
         : settings
     )
+  }
+
+  // Stamps the legacy-path-normalization completion time exactly once; later calls leave the first
+  // value intact, so a caller can safely call this every launch once the pass has succeeded.
+  async markPathsNormalized(timestamp: number): Promise<StoredSettings> {
+    return this.mutate((settings) =>
+      settings.pathsNormalizedAt === undefined
+        ? { ...settings, pathsNormalizedAt: timestamp }
+        : settings
+    )
+  }
+
+  // Stamps the legacy-data-move prompt as answered exactly once (moved, relocated, or declined);
+  // later calls leave the first value intact, so the prompt is never shown again.
+  async markLegacyDataMovePromptDismissed(timestamp: number): Promise<StoredSettings> {
+    return this.mutate((settings) =>
+      settings.legacyDataMovePromptDismissedAt === undefined
+        ? { ...settings, legacyDataMovePromptDismissedAt: timestamp }
+        : settings
+    )
+  }
+
+  // Persists the new data-root path after a successful migration (see storage/migration-service.ts).
+  // Unlike the marker fields above this is not idempotent-once: each call overwrites the prior value.
+  async setDataRoot(path: string): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, dataRoot: path }))
   }
 
   // Adds or removes a skill id from the disabled set (default-on model), returning the new document.

@@ -203,4 +203,17 @@ describe('PreviewPanel', () => {
     expect(usePreviewWorkbenchStore.getState().items.map((item) => item.id)).toEqual(['item-2'])
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('item-2')
   })
+
+  it('unmounts active preview content while the panel is collapsed', async () => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({}))
+
+    await renderPanel()
+    expect(container.querySelector('[data-testid="file-content"]')).not.toBeNull()
+
+    await act(async () => usePreviewWorkbenchStore.getState().collapsePanel())
+    expect(container.querySelector('[data-testid="file-content"]')).toBeNull()
+
+    await act(async () => usePreviewWorkbenchStore.getState().openPanel())
+    expect(container.querySelector('[data-testid="file-content"]')).not.toBeNull()
+  })
 })

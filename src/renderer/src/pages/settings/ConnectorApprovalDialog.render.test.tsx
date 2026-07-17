@@ -60,6 +60,13 @@ describe('ConnectorApprovalDialog', () => {
     expect(document.body.textContent).toContain('BioMart')
     expect(document.body.textContent).toContain('get_data')
     expect(document.body.textContent).toContain('{"x":1}')
+    expect(button('Deny')?.getAttribute('data-slot')).toBe('button')
+    expect(button('Deny')?.getAttribute('data-variant')).toBe('destructive')
+    expect(button('Always allow')?.getAttribute('data-variant')).toBe('outline')
+    expect(button('Allow once')?.getAttribute('data-variant')).toBe('default')
+    expect(document.body.querySelector('[role="dialog"]')?.className).toContain(
+      'overscroll-contain'
+    )
   })
 
   it('Allow once responds allow without pre-trusting the connector', () => {

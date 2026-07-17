@@ -19,7 +19,9 @@ export const createPreviewFileItem = ({
   path,
   name,
   mimeType,
-  source
+  source,
+  size,
+  mtimeMs
 }: {
   id: string
   sessionId: string
@@ -27,6 +29,8 @@ export const createPreviewFileItem = ({
   name: string
   mimeType?: string
   source?: PreviewFileSource
+  size?: number
+  mtimeMs?: number
 }): PreviewFileItem => {
   const item: PreviewFileItem = {
     id,
@@ -40,6 +44,9 @@ export const createPreviewFileItem = ({
 
   // Only uploads need an explicit source because artifacts are the historical default.
   if (source) item.source = source
+  if (mimeType) item.mimeType = mimeType
+  if (typeof size === 'number') item.size = size
+  if (typeof mtimeMs === 'number') item.mtimeMs = mtimeMs
 
   return item
 }
@@ -58,7 +65,9 @@ export const createPreviewFileItemFromArtifact = (
     sessionId,
     path: artifact.path,
     name: artifactName,
-    mimeType: artifact.mimeType
+    mimeType: artifact.mimeType,
+    size: artifact.size,
+    mtimeMs: artifact.mtimeMs
   })
 }
 
@@ -75,7 +84,8 @@ export const createPreviewFileItemFromUpload = (
     source: 'upload',
     path: attachment.path,
     name: attachmentName,
-    mimeType: attachment.mimeType
+    mimeType: attachment.mimeType,
+    size: attachment.size
   })
 }
 

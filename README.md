@@ -4,6 +4,7 @@
 [![Latest release](https://img.shields.io/github/v/release/aipoch/open-science?style=for-the-badge&color=4dabf7)](https://github.com/aipoch/open-science/releases/latest)
 [![License](https://img.shields.io/badge/License-Apache--2.0-4dabf7?style=for-the-badge)](LICENSE)
 ![Status](https://img.shields.io/badge/Status-Actively%20Developed-ff9f43?style=for-the-badge)
+[![Discussions](https://img.shields.io/badge/Discussions-Welcome-9775fa?style=for-the-badge)](https://github.com/aipoch/open-science/discussions)
 [![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/85dKfuGM9)
 [![YouTube](https://img.shields.io/badge/YouTube-AIPOCH_AI-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://www.youtube.com/@AIPOCH_AI)
 [![Follow on X](https://img.shields.io/badge/Follow%20on%20X-%40aipoch__ai-212529?style=for-the-badge&logo=x&logoColor=white)](https://x.com/aipoch_ai)
@@ -106,7 +107,7 @@ Projects keep related sessions, uploads, generated files, and preview state toge
   </tr>
 </table>
 
-Open Science previews CSV/TSV, FASTA, HTML, images, JSON, Markdown, PDB structures, PDF, source code, text, and Notebook history. Preview limits do not truncate the underlying file—the full artifact stays available to the agent and external tools.
+Open Science previews common scientific data, documents, images, source code, molecular structures and reactions, and Notebook history. Preview limits do not truncate the underlying file—the full artifact stays available to the agent and external tools.
 
 ### Scientific skills and data connectors
 
@@ -202,7 +203,8 @@ This section describes durable product capabilities rather than a version-specif
 | **Models**                   | Built-in cloud providers, custom compatible gateways, Local Claude, connection validation, and model selection per session.                                            |
 | **Execution**                | A persistent Python Notebook kernel with durable code/output history and a user terminal shared with the agent.                                                        |
 | **Inputs and artifacts**     | File attachments, project-level file library, generated artifact cards, `@` references to existing uploads/outputs, and read-only multi-tab previews.                  |
-| **Preview formats**          | CSV/TSV, FASTA, HTML, common images, JSON, Markdown, PDB, PDF, source code, text, logs, configuration files, and Notebook history.                                     |
+| **Preview formats**          | Common scientific data, documents, images, source code, molecular structures and reactions, and Notebook history.                                                      |
+| **Local data management**    | Local project and application data, configurable storage location, and guided migration.                                                                               |
 | **Skills**                   | Featured and personal skills, package upload, GitHub preview/import, enable/disable controls, and explicit `/` selection in a session.                                 |
 | **Connectors**               | Built-in life-science connectors, custom local/remote MCP connectors, contact metadata, and connector/tool-level permissions.                                          |
 | **Safety controls**          | `Ask for approval`, `Auto-approve edits`, and `Full access` conversation profiles, plus per-connector and per-tool policies.                                           |

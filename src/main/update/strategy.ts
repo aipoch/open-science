@@ -1,8 +1,9 @@
 import type { UpdateStatus } from '../../shared/update'
 
 // The platform-agnostic update contract the IPC layer and scheduler drive. Two implementations exist:
-// UpdateService (macOS + fallback, manifest download + manual reinstall) and ElectronUpdaterStrategy
-// (win/linux, in-place download/restart). Both broadcast the same UpdateStatus.
+// ElectronUpdaterStrategy (win/linux, and signed stable macOS — in-place download/restart) and
+// UpdateService (dev/nightly macOS + any other fallback — manifest download + manual reinstall). Both
+// broadcast the same UpdateStatus. See create-strategy.ts for how the host is routed.
 export interface UpdateStrategy {
   getStatus(): UpdateStatus
   check(): Promise<UpdateStatus>
