@@ -66,8 +66,12 @@ import {
   type ResolvedAgentBackend
 } from '../agent-framework'
 import { createDefaultDetectDeps, detectClaude, type ClaudeDetectDeps } from './claude-detect'
-import { detectOpencode } from './opencode-detect'
-import { installManagedOpencode } from './managed-opencode'
+import {
+  createDefaultDetectDeps as createOpencodeDetectDeps,
+  detectOpencode,
+  type OpencodeDetectDeps
+} from './opencode-detect'
+import { installManagedOpencode, managedOpencodeDir } from './managed-opencode'
 import { opencodeConfigDir } from '../agent-framework/opencode'
 import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import { provisionAppClaudeConfigDir } from './claude-config-provision'
@@ -142,6 +146,7 @@ export type SettingsServiceOptions = {
   repository?: SettingsRepository
   storageRoot?: string
   detectDeps?: ClaudeDetectDeps
+  opencodeDetectDeps?: OpencodeDetectDeps
   // The machine's own Claude config dir, read to reuse its login for the "local" provider. Injectable
   // so tests don't touch the real ~/.claude.
   userClaudeDir?: string
@@ -164,6 +169,7 @@ class SettingsService {
   private readonly repository: SettingsRepository
   private readonly storageRoot: string
   private readonly detectDeps: ClaudeDetectDeps
+  private readonly opencodeDetectDeps: OpencodeDetectDeps
   private readonly userClaudeDir: string
   private readonly skillRegistry: SkillRegistry
   private readonly userSkills: UserSkillRepository
@@ -185,6 +191,13 @@ class SettingsService {
     this.detectDeps = {
       ...baseDetectDeps,
       extraDirs: [...(baseDetectDeps.extraDirs ?? []), managedClaudeDir(this.storageRoot)]
+    }
+    // Same rationale for opencode: probe the app-managed dir so a managed opencode is re-detected
+    // (its bare `which/where` PATH lookup would otherwise never see the app-owned install dir).
+    const baseOpencodeDetectDeps = options.opencodeDetectDeps ?? createOpencodeDetectDeps()
+    this.opencodeDetectDeps = {
+      ...baseOpencodeDetectDeps,
+      extraDirs: [...(baseOpencodeDetectDeps.extraDirs ?? []), managedOpencodeDir(this.storageRoot)]
     }
     this.userClaudeDir = options.userClaudeDir ?? defaultUserClaudeDir()
     this.skillRegistry = options.skillRegistry ?? new SkillRegistry()
@@ -230,7 +243,7 @@ class SettingsService {
   // Detects the opencode executable and persists its path, mirroring detectClaude. Returns the refreshed
   // snapshot so the settings card reflects the result.
   async detectOpencode(): Promise<SettingsSnapshot> {
-    const detected = await detectOpencode()
+    const detected = await detectOpencode(this.opencodeDetectDeps)
 
     if (detected) {
       await this.repository.setOpencodeInfo(detected.resolvedPath, detected.version)
@@ -1088,7 +1101,7 @@ class SettingsService {
   private async resolveOpencodeExecutable(storedPath: string | undefined): Promise<string> {
     if (storedPath) return storedPath
 
-    const detected = await detectOpencode()
+    const detected = await detectOpencode(this.opencodeDetectDeps)
 
     if (!detected) {
       throw new Error(
