@@ -11,8 +11,18 @@ import { SettingsRow, SettingsSection } from './SettingsLayout'
 // first snapshot arrives (or if a stale main omits the list). The snapshot's own entries take
 // precedence when present, so live displayName/capability data wins.
 const KNOWN_FRAMEWORKS: AgentFrameworkView[] = [
-  { id: 'claude-code', displayName: 'Claude Code', supportsSkills: true },
-  { id: 'opencode', displayName: 'OpenCode', supportsSkills: false }
+  {
+    id: 'claude-code',
+    displayName: 'Claude Code',
+    supportsSkills: true,
+    supportedApiTypes: ['anthropic']
+  },
+  {
+    id: 'opencode',
+    displayName: 'OpenCode',
+    supportsSkills: false,
+    supportedApiTypes: ['anthropic', 'openai']
+  }
 ]
 
 // Lets the user pick which agent backend drives their sessions. Because a session started on one

@@ -1,4 +1,9 @@
-import type { ClaudeInfo, ProviderType, ProviderValidationFailure } from '../../shared/settings'
+import type {
+  ClaudeInfo,
+  ProviderApiType,
+  ProviderType,
+  ProviderValidationFailure
+} from '../../shared/settings'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { OfficialVendorId } from '../../shared/provider-registry'
 import type { AgentFrameworkId } from '../agent-framework'
@@ -13,6 +18,9 @@ export type StoredProvider = {
   id: string
   type: ProviderType
   name: string
+  // Which chat API a custom gateway speaks. Official providers derive it from the registry; absent
+  // means 'anthropic' (all pre-existing providers).
+  apiType?: ProviderApiType
   baseUrl?: string
   model?: string
   // Set for official-vendor providers only.

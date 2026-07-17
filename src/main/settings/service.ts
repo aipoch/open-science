@@ -23,6 +23,7 @@ import type {
   InstallClaudeRequest,
   NcbiCredentialsView,
   Preflight,
+  ProviderApiType,
   ProviderDraft,
   ProviderView,
   RefreshProviderModelsRequest,
@@ -52,6 +53,7 @@ import {
   defaultVendorModel,
   getOfficialVendor,
   isOfficialVendorId,
+  resolveVendorApiType,
   resolveVendorBaseUrl,
   resolveVendorModelsUrl
 } from '../../shared/provider-registry'
@@ -208,7 +210,8 @@ class SettingsService {
       agentFrameworks: listAgentFrameworks().map((framework) => ({
         id: framework.id,
         displayName: framework.displayName,
-        supportsSkills: framework.supportsSkills
+        supportsSkills: framework.supportsSkills,
+        supportedApiTypes: [...framework.supportedApiTypes]
       })),
       onboardingCompletedAt: settings.onboardingCompletedAt
     }
@@ -597,6 +600,8 @@ class SettingsService {
 
       provider.baseUrl = baseUrl
       provider.model = model
+      // Which chat API this gateway speaks (drives per-framework availability); defaults to anthropic.
+      provider.apiType = request.apiType ?? existing?.apiType ?? 'anthropic'
       credentialsChanged = Boolean(request.key)
     } else {
       // claude-default: optional model override, no credentials of its own.
@@ -1074,6 +1079,16 @@ class SettingsService {
     }
   }
 
+  // The chat API a provider speaks: official providers come from the registry, custom gateways from
+  // their stored/drafted apiType, everything else defaults to Anthropic /v1/messages.
+  private resolveProviderApiType(provider: StoredProvider): ProviderApiType {
+    if (provider.type === 'official' && provider.vendorId) {
+      return resolveVendorApiType(provider.vendorId)
+    }
+
+    return provider.apiType ?? 'anthropic'
+  }
+
   // Maps a stored provider to its masked renderer view, flagging custom keys that no longer decrypt.
   private toProviderView(provider: StoredProvider): ProviderView {
     const hasKey = Boolean(provider.keyRef)
@@ -1085,6 +1100,7 @@ class SettingsService {
       id: provider.id,
       type: provider.type,
       name: provider.name,
+      apiType: this.resolveProviderApiType(provider),
       baseUrl: provider.baseUrl,
       model: provider.model,
       vendorId: provider.vendorId,

@@ -91,6 +91,8 @@ export const opencodeFramework: AgentFramework = {
   // Handshake shows opencode advertises mcpCapabilities http+sse only (no stdio). Until the app exposes
   // its artifact/notebook MCP over http, they're gated off for opencode and only basic turns run.
   acceptsStdioMcp: false,
+  // opencode speaks both Anthropic /v1/messages and OpenAI /v1/chat/completions.
+  supportedApiTypes: ['anthropic', 'openai'],
 
   spawn(input: AgentSpawnInput): ChildProcessWithoutNullStreams {
     // `opencode acp` starts the ACP subprocess over stdio, matching the app's existing transport.

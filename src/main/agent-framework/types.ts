@@ -3,7 +3,7 @@ import type { SessionModeState } from '@agentclientprotocol/sdk'
 
 import type { PermissionProfileApplication } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
-import type { AgentFrameworkId } from '../../shared/settings'
+import type { AgentFrameworkId, ChatApiEndpoint } from '../../shared/settings'
 import type { ResolvedProvider } from '../settings/provider-env'
 
 // The agent frameworks the app can drive over ACP (id union defined in shared settings so the renderer
@@ -93,6 +93,10 @@ export interface AgentFramework {
   // http/sse only, so stdio servers must not be handed to it — the app's artifact/notebook tooling
   // (currently stdio) is gated off for such frameworks until it is exposed over http/sse.
   readonly acceptsStdioMcp: boolean
+
+  // Chat endpoints this framework can drive. A provider is only selectable when it shares one:
+  // Claude Code speaks Anthropic /v1/messages; opencode speaks both.
+  readonly supportedApiTypes: readonly ChatApiEndpoint[]
 }
 
 // The resolved agent backend for one connect: which framework to drive plus its already-resolved spawn

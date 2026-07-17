@@ -14,6 +14,37 @@ export const SETTINGS_FILE_VERSION = 2
 // model catalog from the registry), or reuses the local claude auth.
 export type ProviderType = 'custom' | 'claude-default' | 'official'
 
+// The chat API a model endpoint speaks: `anthropic` = /v1/messages, `openai` = /v1/chat/completions.
+// A framework supports a set of these; a provider offers one or `both`.
+export type ChatApiEndpoint = 'anthropic' | 'openai'
+export type ProviderApiType = ChatApiEndpoint | 'both'
+
+// The concrete endpoint(s) a provider offers.
+export const providerEndpoints = (apiType: ProviderApiType): ChatApiEndpoint[] =>
+  apiType === 'both' ? ['anthropic', 'openai'] : [apiType]
+
+// A provider is usable by a framework only when they share at least one endpoint.
+export const isProviderCompatibleWith = (
+  apiType: ProviderApiType,
+  frameworkEndpoints: readonly ChatApiEndpoint[]
+): boolean => providerEndpoints(apiType).some((endpoint) => frameworkEndpoints.includes(endpoint))
+
+// The endpoint to actually use for a (provider, framework) pair. When both sides support OpenAI
+// /v1/chat/completions it wins (per product decision); otherwise the shared Anthropic endpoint; else
+// undefined when the pair is incompatible.
+export const preferredEndpoint = (
+  apiType: ProviderApiType,
+  frameworkEndpoints: readonly ChatApiEndpoint[]
+): ChatApiEndpoint | undefined => {
+  const shared = providerEndpoints(apiType).filter((endpoint) =>
+    frameworkEndpoints.includes(endpoint)
+  )
+
+  if (shared.length === 0) return undefined
+
+  return shared.includes('openai') ? 'openai' : 'anthropic'
+}
+
 // Detected claude executable metadata, persisted so later spawns skip re-detection.
 export type ClaudeInfo = {
   resolvedPath?: string
@@ -46,6 +77,9 @@ export type ProviderView = {
   id: string
   type: ProviderType
   name: string
+  // Which chat API this provider's endpoint speaks; drives per-framework availability. Absent ⇒
+  // treat as 'anthropic' (every existing provider).
+  apiType?: ProviderApiType
   baseUrl?: string
   model?: string
   // Set for official-vendor providers: which vendor and (where applicable) which regional endpoint.
@@ -84,6 +118,9 @@ export type AgentFrameworkId = 'claude-code' | 'opencode'
 // Renderer-facing descriptor for one selectable agent framework (built from the main registry).
 export type AgentFrameworkView = {
   id: AgentFrameworkId
+  // Chat endpoints this framework can drive; a provider is selectable only if it shares one. Absent ⇒
+  // treat as ['anthropic'].
+  supportedApiTypes?: ChatApiEndpoint[]
   displayName: string
   // Whether this framework materializes app skills; the renderer hides the skills UI when false.
   supportsSkills: boolean
@@ -123,6 +160,9 @@ export type ProviderDraft = {
   name?: string
   baseUrl?: string
   model?: string
+  // Which chat API a custom gateway speaks (form selector). Official providers take it from the
+  // registry; omitted defaults to 'anthropic'.
+  apiType?: ProviderApiType
   // Set when type is 'official': the chosen vendor and (where applicable) region. Base URL and model
   // catalog then come from the registry rather than the draft's baseUrl.
   vendorId?: OfficialVendorId

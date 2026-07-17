@@ -131,8 +131,14 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
       )
     : undefined
 
+  // Preserve the provider's chat-API type through the read; only known values survive.
+  const apiType = asString(value.apiType)
+
   if (baseUrl) provider.baseUrl = baseUrl
   if (model) provider.model = model
+  if (apiType === 'anthropic' || apiType === 'openai' || apiType === 'both') {
+    provider.apiType = apiType
+  }
   if (vendorId) provider.vendorId = vendorId
   if (region) provider.region = region
   if (fetchedModels && fetchedModels.length > 0) provider.fetchedModels = fetchedModels

@@ -7,6 +7,8 @@
 // that shifts over time — update the lists here as vendors publish new models. Only vendors with a
 // documented Anthropic-compatible endpoint belong here (e.g. OpenAI's native API does not qualify).
 
+import type { ProviderApiType } from './settings'
+
 export type OfficialVendorId =
   'anthropic' | 'deepseek' | 'zhipu' | 'minimax' | 'kimi' | 'kimiforcode'
 
@@ -27,6 +29,9 @@ export type OfficialVendor = {
   id: OfficialVendorId
   // Human-readable name shown in the provider-type picker and composer group headings.
   label: string
+  // Which chat API this vendor's endpoint speaks; drives per-framework availability. Absent ⇒
+  // 'anthropic' (every shipped vendor today exposes an Anthropic /v1/messages route).
+  apiType?: ProviderApiType
   // Anthropic-compatible model ids offered in the composer once a key is stored. First entry is the
   // default selection when the vendor is first added.
   models: string[]
@@ -199,6 +204,10 @@ export const resolveVendorModelsUrl = (
 // The default model for a freshly added vendor (first catalog entry).
 export const defaultVendorModel = (id: OfficialVendorId): string | undefined =>
   VENDORS_BY_ID.get(id)?.models[0]
+
+// The chat API a vendor speaks, defaulting to Anthropic /v1/messages when unset.
+export const resolveVendorApiType = (id: OfficialVendorId): ProviderApiType =>
+  VENDORS_BY_ID.get(id)?.apiType ?? 'anthropic'
 
 // Whether a vendor needs a region choice (more than one endpoint).
 export const vendorHasRegions = (id: OfficialVendorId): boolean =>

@@ -25,6 +25,8 @@ export const claudeCodeFramework: AgentFramework = {
   supportsSkills: true,
   // Claude launches stdio MCP servers directly — the app's artifact/notebook tooling relies on this.
   acceptsStdioMcp: true,
+  // Claude Code speaks only Anthropic /v1/messages.
+  supportedApiTypes: ['anthropic'],
 
   spawn(input: AgentSpawnInput): ChildProcessWithoutNullStreams {
     // Still routes through the existing spawner; env carries the resolved provider overrides.
