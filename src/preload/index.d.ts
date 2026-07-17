@@ -117,6 +117,7 @@ import type {
   StageUploadFilesRequest,
   UploadedAttachment
 } from '../shared/uploads'
+import type { ReviewWithChecks, ReviewRunRequest, ReviewUpdateEvent } from '../shared/reviewer'
 
 type RemoveListener = () => void
 type AcpListener<Payload> = (payload: Payload) => void
@@ -295,6 +296,24 @@ interface OpenScienceAPI {
     // Marks the one-time legacy-data-move prompt as answered (declined / keep-here) so it's not shown again.
     dismissLegacyMovePrompt(): Promise<void>
     onProgress(listener: AcpListener<MigrationProgress>): RemoveListener
+  }
+  reviewer: {
+    // Trigger a background review for the given turn. Fire-and-forget; updates come via onUpdated.
+    run(request: ReviewRunRequest): Promise<void>
+    // Load persisted reviews for a session (called at workspace startup).
+    getForSession(sessionId: string): Promise<ReviewWithChecks[]>
+    // Subscribe to review lifecycle/findings updates pushed from the main process.
+    onUpdated(listener: AcpListener<ReviewUpdateEvent>): RemoveListener
+    // Subscribe to loop-guard events: suppress (or, when clear=true, un-suppress) the next
+    // auto-review for the given session.
+    onSuppressNextAutoReview(
+      listener: AcpListener<{ sessionId: string; clear?: boolean }>
+    ): RemoveListener
+    // Fix loop lock: fired when the loop starts (lock composer) / ends or is aborted (unlock).
+    onFixLoopStart(listener: AcpListener<{ sessionId: string }>): RemoveListener
+    onFixLoopEnd(listener: AcpListener<{ sessionId: string }>): RemoveListener
+    // Sends an abort request to stop the running fix loop for a session.
+    abortFixLoop(sessionId: string): Promise<void>
   }
 }
 

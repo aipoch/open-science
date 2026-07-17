@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 import type { NotebookSessionReference } from '../../../shared/notebook'
+import type { FindingLocator } from '../../../shared/reviewer'
 import type { UploadedAttachment } from '../../../shared/uploads'
 
 export type PreviewPanelState = 'open' | 'collapsed'
@@ -40,8 +41,13 @@ export type PreviewFileItem = PreviewItemBase & {
 // Tool previews share the workbench chrome with files, but keep their own render path.
 export type PreviewToolItem = PreviewItemBase & {
   type: 'tool'
-  toolKind?: 'notebook' | 'files'
+  toolKind?: 'notebook' | 'files' | 'reviewer'
   notebook?: NotebookSessionReference
+  // Reviewer-specific: which session's reviews to show, which review to select, and the active
+  // finding to scroll to.
+  reviewerSessionId?: string
+  reviewerReviewId?: string
+  reviewerActiveFindingId?: string
 }
 
 export type PreviewItem = PreviewFileItem | PreviewToolItem
@@ -150,6 +156,27 @@ const createProjectFilesPreviewItem = (): PreviewToolItem => ({
   type: 'tool',
   toolKind: 'files',
   title: 'Files'
+})
+
+// Input for opening the Session reviewer panel; findingId/locator determine scroll position.
+export type SessionReviewerPreviewInput = {
+  sessionId: string
+  reviewId: string
+  findingId: string | undefined
+  locator: FindingLocator | undefined
+}
+
+// Builds a stable preview tab for the Session reviewer panel scoped to one session. The id is
+// session-scoped so "Go to transcript" from any card in the same session reuses the same tab.
+const createSessionReviewerPreviewItem = (input: SessionReviewerPreviewInput): PreviewToolItem => ({
+  id: `tool:${input.sessionId}:reviewer`,
+  sessionId: input.sessionId,
+  type: 'tool',
+  toolKind: 'reviewer',
+  title: 'Session Reviewer',
+  reviewerSessionId: input.sessionId,
+  reviewerReviewId: input.reviewId,
+  reviewerActiveFindingId: input.findingId
 })
 
 // Chooses a stable fallback tab when the active preview item is removed.
@@ -349,4 +376,8 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
   }
 }))
 
-export { createNotebookPreviewItem, createProjectFilesPreviewItem }
+export {
+  createNotebookPreviewItem,
+  createProjectFilesPreviewItem,
+  createSessionReviewerPreviewItem
+}

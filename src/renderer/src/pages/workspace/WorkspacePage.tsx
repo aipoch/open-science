@@ -21,6 +21,12 @@ import {
 } from '@/stores/preview-workbench-store'
 import type { ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
+import { useReviewStore } from '@/stores/review-store'
+import {
+  assembleReviewRunRequest,
+  suppressNextAutoReview,
+  clearSuppressNextAutoReview
+} from '@/lib/acp/workspace-events'
 import type { StageUploadFile, UploadedAttachment } from '../../../../shared/uploads'
 
 import { planComposerAttachmentIntake } from './composer-attachment-intake'
@@ -117,6 +123,8 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const selectSession = useSessionStore((state) => state.selectSession)
   const clearSelection = useSessionStore((state) => state.clearSelection)
   const renameSession = useSessionStore((state) => state.renameSession)
+  const setAutoReviewEnabled = useSessionStore((state) => state.setAutoReviewEnabled)
+  const setFixLoopActive = useSessionStore((state) => state.setFixLoopActive)
   // Only sessions belonging to the active project are shown in this workspace.
   const sessions = useMemo(
     () => allSessions.filter((session) => session.projectId === scopedProjectId),
@@ -152,6 +160,10 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const [draftDoc, setDraftDoc] = useState<ComposerDoc>(emptyDoc)
   const [newConversationPermissionProfile, setNewConversationPermissionProfile] =
     useState<PermissionProfileId>(DEFAULT_PERMISSION_PROFILE)
+  // Draft auto-review state for a not-yet-created conversation. Auto-review defaults on, so a new
+  // conversation starts enabled; the user can toggle it off before sending. On send it is stamped
+  // onto the created session (see sendCurrentMessage).
+  const [newConversationAutoReviewEnabled, setNewConversationAutoReviewEnabled] = useState(true)
   // Unsent composer state (rich doc + staged attachments) is kept per session (and per new conversation)
   // so switching away and back restores it. The active key's state is live; this map holds inactive keys.
   const composerDraftsRef = useRef<
@@ -187,15 +199,49 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     : undefined
   // Always-allow grants only exist for a bound session; new conversations have none yet.
   const activePermissionGrants = activeSession ? (permissionGrants?.[activeSession.id] ?? []) : []
+  // Auto-review defaults on: an existing session is enabled unless explicitly turned off; a new
+  // conversation uses the draft toggle (which also starts on).
+  const activeAutoReviewEnabled = activeSession
+    ? activeSession.autoReviewEnabled !== false
+    : newConversationAutoReviewEnabled
+  // True while any review for the active session is in the 'running' lifecycle.
+  // Using a shallow comparison via reviewsBySession to avoid new array reference on every render.
+  const activeSessionId = activeSession?.id
+  const isReviewing = useReviewStore((state) => {
+    if (!activeSessionId) return false
+    const reviews = state.reviewsBySession[activeSessionId]
+    return reviews ? reviews.some((review) => review.lifecycle === 'running') : false
+  })
+  // "Request review" is disabled when:
+  //   - there is no active session or no completed agent turn yet, OR
+  //   - the last turn already has a review (any lifecycle — no duplicate reviews), OR
+  //   - any review for this session is currently running (no concurrency).
+  const isRequestReviewDisabled = useReviewStore((state) => {
+    if (!activeSessionId) return true
+    if (!activeSession) return true
+    const lastAgentMessage = [...activeSession.messages].reverse().find((m) => m.role === 'agent')
+    if (!lastAgentMessage) return true
+    if (isReviewing) return true
+    const reviews = state.reviewsBySession[activeSessionId]
+    if (reviews) {
+      const hasReviewForLastTurn = reviews.some((r) => r.turnMessageId === lastAgentMessage.id)
+      if (hasReviewForLastTurn) return true
+    }
+    return false
+  })
+  const handleReviewUpdate = useReviewStore((state) => state.handleReviewUpdate)
   // Composer controls follow only the selected session and persistence readiness.
   const canEditDraft = isSessionPersistenceReady
-  // Sending is disabled while the current session is running or awaiting a decision.
+  // Sending is disabled while the current session is running, awaiting a decision, or locked by the
+  // fix loop (fixLoopActive). The fix loop lock persists across both the reviewer-審 sub-phase and
+  // the main agent-改 sub-phase; typing does not override the lock.
   const canSendMessage =
     isSessionPersistenceReady &&
     !isUploadingAttachments &&
     (!docIsEmpty(draftDoc) || attachments.length > 0) &&
     activeSession?.status !== 'running' &&
-    activeSession?.status !== 'waiting-permission'
+    activeSession?.status !== 'waiting-permission' &&
+    !activeSession?.fixLoopActive
   const canChangePermissionProfile =
     isSessionPersistenceReady &&
     activeSession?.status !== 'running' &&
@@ -329,10 +375,54 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     }
   }, [upsertPreviewItem])
 
+  // Subscribe to reviewer lifecycle updates so the card and Reviewing indicator stay live.
+  useEffect(() => {
+    const removeUpdatedListener = window.api.reviewer.onUpdated(handleReviewUpdate)
+
+    return () => {
+      removeUpdatedListener()
+    }
+  }, [handleReviewUpdate])
+
+  // Subscribe to the loop-guard channel: suppress the next auto-review when the [Auditor]
+  // correction prompt is about to fire, so the correction turn's stop does not re-trigger a review.
+  // A clear=true event cancels that suppression if the correction turn failed to send.
+  useEffect(() => {
+    const removeSuppressListener = window.api.reviewer.onSuppressNextAutoReview(
+      ({ sessionId, clear }) => {
+        if (clear) {
+          clearSuppressNextAutoReview(sessionId)
+        } else {
+          suppressNextAutoReview(sessionId)
+        }
+      }
+    )
+
+    return () => {
+      removeSuppressListener()
+    }
+  }, [])
+
+  // Subscribe to fix loop lifecycle events from the main process. When a fix loop starts for a
+  // session, set fixLoopActive=true to disable the send button. When it ends or is aborted, clear
+  // the flag. The lock is per-session: other sessions remain interactive.
+  useEffect(() => {
+    const removeStartListener = window.api.reviewer.onFixLoopStart(({ sessionId }) => {
+      setFixLoopActive(sessionId, true)
+    })
+    const removeEndListener = window.api.reviewer.onFixLoopEnd(({ sessionId }) => {
+      setFixLoopActive(sessionId, false)
+    })
+
+    return () => {
+      removeStartListener()
+      removeEndListener()
+    }
+  }, [setFixLoopActive])
+
   // The availability event only fires while the agent is live, so a session opened after relaunch
   // would lose its notebook entry until the next call. Probe persisted run.json on selection to
   // restore the composer entry immediately for any session that has used the notebook before.
-  const activeSessionId = activeSession?.id
   const activeSessionCwd = activeSession?.cwd
   // Notebooks are stored per project id (notebooks/<projectId>/<sessionId>), so the probe must pass
   // the session's project or it would look under the default project name and never find run.json.
@@ -407,6 +497,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     // The draft effect saves the outgoing doc/attachments and restores the new-conversation state.
     setAttachmentError(null)
     setNewConversationPermissionProfile(DEFAULT_PERMISSION_PROFILE)
+    setNewConversationAutoReviewEnabled(true)
     clearSelection()
   }
 
@@ -468,6 +559,10 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
 
     const doc = draftDoc
     const attachmentsForSend = attachments
+    // Capture new-conversation intent before send: auto-review defaults on, so only an explicit
+    // "off" needs to be stamped onto the created session (absent = on downstream).
+    const wasNewConversation = !activeSession
+    const draftAutoReviewEnabled = newConversationAutoReviewEnabled
 
     // Optimistically clear composer state; failed sends restore both doc and attachments below. Staged
     // files are consumed (moved into the session dir) by the runtime, so they are not deleted here.
@@ -496,7 +591,15 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
       if (!result) {
         setDraftDoc(doc)
         setAttachments(attachmentsForSend)
+        return
       }
+
+      // Carry the composer's auto-review choice onto the freshly created session. bindPendingSession
+      // preserves the field, so stamping the (pending) session id here survives the durable-id swap.
+      if (wasNewConversation && !draftAutoReviewEnabled) {
+        setAutoReviewEnabled(result.sessionId, false)
+      }
+      setNewConversationAutoReviewEnabled(true)
     })
   }
 
@@ -547,9 +650,22 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     setSessionToDelete(undefined)
   }
 
-  // Cancels the run for the currently visible session when one is selected.
+  // Cancels the run for the currently visible session when one is selected. During an active fix
+  // loop, also sends an abort signal to the main process to stop the loop and unlock the composer.
   const cancelActiveRun = (): void => {
-    if (activeSession) void cancelRun(activeSession.id)
+    if (!activeSession) return
+
+    const sessionId = activeSession.id
+
+    // If a fix loop is running, abort it. The abort handler in the main process will stop the loop;
+    // the renderer reacts to the FIX_LOOP_END event broadcast and clears fixLoopActive.
+    if (activeSession.fixLoopActive) {
+      void window.api.reviewer.abortFixLoop(sessionId).catch((error) => {
+        console.warn('Failed to abort fix loop:', error)
+      })
+    }
+
+    void cancelRun(sessionId)
   }
 
   // Re-attaches the visible interrupted session so the user can keep chatting; awaited by the banner.
@@ -573,6 +689,29 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     }
 
     void setPermissionProfile(activeSession.id, profile)
+  }
+
+  // Persists the auto-review toggle for the active session; for a not-yet-created conversation it
+  // updates the draft state, which sendCurrentMessage stamps onto the new session.
+  const changeAutoReviewEnabled = (enabled: boolean): void => {
+    if (!activeSession) {
+      setNewConversationAutoReviewEnabled(enabled)
+      return
+    }
+
+    setAutoReviewEnabled(activeSession.id, enabled)
+  }
+
+  // Manually triggers a review of the last completed turn, bypassing autoReviewEnabled and the
+  // suppressAutoReviewOnceFor loop guard. Disabled logic is enforced by isRequestReviewDisabled.
+  const requestManualReview = (): void => {
+    if (!activeSession) return
+
+    const request = assembleReviewRunRequest(activeSession.id)
+
+    if (!request) return
+
+    void window.api.reviewer.run(request)
   }
 
   // Revokes one always-allow grant for the visible session; new conversations have no grants.
@@ -648,6 +787,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
             permissionProfileState={activePermissionProfileState}
             permissionGrants={activePermissionGrants}
             canChangePermissionProfile={canChangePermissionProfile}
+            autoReviewEnabled={activeAutoReviewEnabled}
             onDraftDocChange={setDraftDoc}
             onSendMessage={sendCurrentMessage}
             onStageAttachmentFiles={stageAttachmentFiles}
@@ -660,6 +800,9 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
             onPermissionProfileChange={changePermissionProfile}
             onRevokePermissionGrant={revokeActivePermissionGrant}
             onClearPermissionGrants={clearActivePermissionGrants}
+            onAutoReviewToggle={changeAutoReviewEnabled}
+            onRequestReview={requestManualReview}
+            isRequestReviewDisabled={isRequestReviewDisabled}
           />
 
           <ResizableHandle

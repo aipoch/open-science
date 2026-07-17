@@ -170,6 +170,13 @@ describe('WorkspacePage draft preservation', () => {
       uploads: {
         deleteUpload,
         stageFiles
+      },
+      reviewer: {
+        onUpdated: vi.fn(() => vi.fn()),
+        onSuppressNextAutoReview: vi.fn(() => vi.fn()),
+        onFixLoopStart: vi.fn(() => vi.fn()),
+        onFixLoopEnd: vi.fn(() => vi.fn()),
+        abortFixLoop: vi.fn(() => Promise.resolve())
       }
     } as never
     container = document.createElement('div')

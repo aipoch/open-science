@@ -64,6 +64,9 @@ export type ChatSession = Omit<
   // Transient: set at hydration when a session was interrupted by an app restart, so the UI can
   // offer an explicit Resume affordance. Never persisted (stripped in stripTransientSessionState).
   interrupted?: boolean
+  // Transient: true while a Phase 3 fix loop is active for this session. Disables the send button
+  // for the duration of the loop (across reviewer-審 and agent-改 sub-phases). Never persisted.
+  fixLoopActive?: boolean
 }
 
 type SessionStoreData = {
@@ -168,6 +171,11 @@ type SessionStore = SessionStoreData & {
   setPermissionPending: (sessionId: string) => void
   clearPermissionPending: (sessionId: string) => void
   setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => void
+  // Persists the per-session auto-review toggle. true = on (default); false = off.
+  setAutoReviewEnabled: (sessionId: string, enabled: boolean) => void
+  // Sets or clears the per-session fix loop active flag. When true, the composer send button is
+  // disabled for this session; when false (loop ended or cancelled), send is re-enabled.
+  setFixLoopActive: (sessionId: string, active: boolean) => void
   renameSession: (sessionId: string, title: string) => void
   deleteSession: (sessionId: string) => void
   removeSessionsForProject: (projectId: string) => void
@@ -194,10 +202,12 @@ const stripTransientMessageState = (message: ChatMessage): PersistedChatMessage 
 }
 
 const stripTransientSessionState = (session: ChatSession): PersistedChatSession => {
-  const { activities, isPending, interrupted, messages, ...persistedSession } = session
+  const { activities, isPending, interrupted, fixLoopActive, messages, ...persistedSession } =
+    session
 
   void isPending
   void interrupted
+  void fixLoopActive
 
   // Persist a bounded projection of tool activities so the transcript survives restarts.
   const persistedActivities = activities
@@ -1097,6 +1107,37 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           ? {
               ...session,
               permissionProfile: profile,
+              updatedAt: Date.now()
+            }
+          : session
+      )
+    }))
+  },
+
+  // Persists the per-session auto-review toggle so finishRun can skip a review when disabled.
+  setAutoReviewEnabled: (sessionId, enabled) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              autoReviewEnabled: enabled,
+              updatedAt: Date.now()
+            }
+          : session
+      )
+    }))
+  },
+
+  // Sets or clears the per-session fix loop active flag. The flag is transient (never persisted)
+  // and gates canSendMessage in WorkspacePage: true blocks send for the duration of the fix loop.
+  setFixLoopActive: (sessionId, active) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              fixLoopActive: active,
               updatedAt: Date.now()
             }
           : session

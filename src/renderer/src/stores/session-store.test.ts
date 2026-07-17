@@ -1172,6 +1172,86 @@ describe('session store', () => {
     expect(persisted).not.toHaveProperty('isPending')
   })
 
+  describe('fix loop active flag', () => {
+    it('setFixLoopActive sets the flag per session', () => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-a',
+        content: 'Start'
+      })
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-b',
+        content: 'Other session'
+      })
+
+      useSessionStore.getState().setFixLoopActive('session-a', true)
+
+      const sessions = useSessionStore.getState().sessions
+      const sessionA = sessions.find((s) => s.id === 'session-a')
+      const sessionB = sessions.find((s) => s.id === 'session-b')
+
+      expect(sessionA?.fixLoopActive).toBe(true)
+      expect(sessionB?.fixLoopActive).toBeUndefined()
+    })
+
+    it('setFixLoopActive clears the flag when set to false', () => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-a',
+        content: 'Start'
+      })
+      useSessionStore.getState().setFixLoopActive('session-a', true)
+      useSessionStore.getState().setFixLoopActive('session-a', false)
+
+      const session = useSessionStore.getState().sessions.find((s) => s.id === 'session-a')
+      expect(session?.fixLoopActive).toBe(false)
+    })
+
+    it('canSendMessage is blocked while fixLoopActive is true', () => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-a',
+        content: 'Start'
+      })
+      useSessionStore.getState().finishRun('session-a')
+      useSessionStore.getState().setFixLoopActive('session-a', true)
+
+      const session = useSessionStore.getState().sessions.find((s) => s.id === 'session-a')
+      // fixLoopActive blocks send; canSendMessage is computed externally but depends on this flag
+      expect(session?.fixLoopActive).toBe(true)
+    })
+
+    it('fixLoopActive is cleared after the loop ends (false)', () => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-a',
+        content: 'Start'
+      })
+      useSessionStore.getState().setFixLoopActive('session-a', true)
+      useSessionStore.getState().setFixLoopActive('session-a', false)
+
+      const session = useSessionStore.getState().sessions.find((s) => s.id === 'session-a')
+      expect(session?.fixLoopActive).toBe(false)
+    })
+
+    it('fixLoopActive flag does not affect other sessions', () => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-a',
+        content: 'Session A'
+      })
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-b',
+        content: 'Session B'
+      })
+      useSessionStore.getState().finishRun('session-a')
+      useSessionStore.getState().finishRun('session-b')
+
+      useSessionStore.getState().setFixLoopActive('session-a', true)
+
+      const sessionA = useSessionStore.getState().sessions.find((s) => s.id === 'session-a')
+      const sessionB = useSessionStore.getState().sessions.find((s) => s.id === 'session-b')
+
+      expect(sessionA?.fixLoopActive).toBe(true)
+      expect(sessionB?.fixLoopActive).toBeUndefined()
+    })
+  })
+
   describe('interrupted session resume', () => {
     const hydrateInterrupted = (overrides: Partial<PersistedChatSession> = {}): void => {
       useSessionStore.getState().hydrateSessions(

@@ -27,6 +27,7 @@ import {
   createDefaultProjectRepository,
   registerProjectIpcHandlers
 } from './projects/ipc'
+import { registerReviewerIpcHandlers } from './reviewer/ipc'
 import {
   createDefaultSessionRepository,
   registerSessionPersistenceIpcHandlers
@@ -259,6 +260,11 @@ const registerIpcHandlers = async ({ mainEntryPath }: IpcRegistrationOptions): P
   registerUploadIpcHandlers(uploadRepository)
   registerSessionPersistenceIpcHandlers(sessionRepository)
   registerProjectIpcHandlers(projectRepository, previewStateRepository)
+  // Wire the reviewer backend into the app lifecycle: installs ipcMain.handle('reviewer:run', ...)
+  // and 'reviewer:get-for-session' so the renderer's fire-and-forget reviewer calls resolve to
+  // real handlers instead of no-ops. Passing the already-constructed AcpRuntime so the reviewer
+  // can spawn sessions under the same agent connection.
+  registerReviewerIpcHandlers({ acpRuntime: runtime })
 }
 
 export { registerIpcHandlers }

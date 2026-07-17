@@ -153,6 +153,13 @@ describe('WorkspacePage preview panel resize sync', () => {
       notebook: {
         onAvailable: vi.fn(() => vi.fn()),
         getReference: vi.fn(() => Promise.resolve(null))
+      },
+      reviewer: {
+        onUpdated: vi.fn(() => vi.fn()),
+        onSuppressNextAutoReview: vi.fn(() => vi.fn()),
+        onFixLoopStart: vi.fn(() => vi.fn()),
+        onFixLoopEnd: vi.fn(() => vi.fn()),
+        abortFixLoop: vi.fn(() => Promise.resolve())
       }
     } as never
     container = document.createElement('div')

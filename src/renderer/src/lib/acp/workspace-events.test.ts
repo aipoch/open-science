@@ -7,7 +7,13 @@ import {
   usePreviewWorkbenchStore
 } from '../../stores/preview-workbench-store'
 import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
-import { applyWorkspaceRuntimeEvent, syncWorkspacePermissionState } from './workspace-events'
+import {
+  applyWorkspaceRuntimeEvent,
+  assembleReviewRunRequest,
+  syncWorkspacePermissionState,
+  suppressNextAutoReview,
+  clearSuppressNextAutoReview
+} from './workspace-events'
 
 // Creates a runtime event with stable defaults for store adapter tests.
 const createEvent = (overrides: Partial<AcpRuntimeEvent>): AcpRuntimeEvent => ({
@@ -345,6 +351,86 @@ describe('workspace runtime events', () => {
     })
   })
 
+  describe('auto-review gate on stop event', () => {
+    it('triggers a review via window.api.reviewer.run when autoReviewEnabled is true (default)', async () => {
+      const reviewerRun = vi.fn().mockResolvedValue(undefined)
+
+      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+
+      // Add an agent message so triggerAutoReview finds a turnMessageId.
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'Analysis complete'
+      })
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
+
+      // Give the fire-and-forget promise time to settle.
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(reviewerRun).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: 'transport-session-1' })
+      )
+
+      vi.unstubAllGlobals()
+    })
+
+    it('does not trigger a review when autoReviewEnabled is false', async () => {
+      const reviewerRun = vi.fn().mockResolvedValue(undefined)
+
+      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+
+      // Disable auto-review on this session.
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', false)
+
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'Analysis complete'
+      })
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
+
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(reviewerRun).not.toHaveBeenCalled()
+
+      vi.unstubAllGlobals()
+    })
+
+    it('re-enables a review after toggling autoReviewEnabled back to true', async () => {
+      const reviewerRun = vi.fn().mockResolvedValue(undefined)
+
+      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', false)
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
+
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'Analysis complete'
+      })
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
+
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(reviewerRun).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: 'transport-session-1' })
+      )
+
+      vi.unstubAllGlobals()
+    })
+  })
+
   it('records finalize failures and retries when an artifact event is replayed', async () => {
     const finalizedArtifact = createArtifactFile({
       id: 'transport-session-1:message-1:result.txt',
@@ -385,5 +471,190 @@ describe('workspace runtime events', () => {
     expect(session.messages).toHaveLength(2)
     expect(session.messages[1].artifactIds).toEqual(['transport-session-1:message-1:result.txt'])
     expect(session.error).toBeUndefined()
+  })
+})
+
+describe('loop guard: suppressNextAutoReview', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-04T08:00:00.000Z'))
+    useSessionStore.setState(createInitialSessionState())
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Run the analysis'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'stream-1',
+      eventId: 'event-agent-1',
+      content: 'Analysis complete'
+    })
+  })
+
+  it('suppresses triggerAutoReview for exactly one stop, then resumes normal behavior', async () => {
+    const reviewerRun = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+
+    // Mark the next stop for suppression (simulates the [Auditor] correction turn).
+    suppressNextAutoReview('transport-session-1')
+
+    // First stop: suppressed (correction turn's stop).
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'stop-correction', kind: 'stop', sessionId: 'transport-session-1' })
+    )
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // reviewer.run must NOT have been called for the suppressed stop.
+    expect(reviewerRun).not.toHaveBeenCalled()
+
+    // Append another agent message so the next triggerAutoReview finds a turnMessageId.
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'stream-2',
+      eventId: 'event-agent-2',
+      content: 'Follow-up response'
+    })
+
+    // Second stop: normal turn — must NOT be suppressed.
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'stop-normal', kind: 'stop', sessionId: 'transport-session-1' })
+    )
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // reviewer.run called exactly once for the normal turn.
+    expect(reviewerRun).toHaveBeenCalledTimes(1)
+    expect(reviewerRun).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'transport-session-1' })
+    )
+
+    vi.unstubAllGlobals()
+  })
+
+  it('does not suppress a different session', async () => {
+    const reviewerRun = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+
+    // Suppress only 'other-session'.
+    suppressNextAutoReview('other-session')
+
+    // A stop for 'transport-session-1' should still trigger auto-review.
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'stop-1', kind: 'stop', sessionId: 'transport-session-1' })
+    )
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // transport-session-1 is not suppressed, reviewer.run fires.
+    expect(reviewerRun).toHaveBeenCalledTimes(1)
+
+    vi.unstubAllGlobals()
+  })
+
+  it('clearSuppressNextAutoReview cancels a pending suppression (correction turn failed to send)', async () => {
+    const reviewerRun = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+
+    // A correction was about to fire (suppress set), but its sendPrompt failed — clear the flag so
+    // the user's next real turn is not silently skipped.
+    suppressNextAutoReview('transport-session-1')
+    clearSuppressNextAutoReview('transport-session-1')
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'stop-next', kind: 'stop', sessionId: 'transport-session-1' })
+    )
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // The suppression was cleared, so the next turn's review fires normally.
+    expect(reviewerRun).toHaveBeenCalledTimes(1)
+
+    vi.unstubAllGlobals()
+  })
+})
+
+describe('assembleReviewRunRequest — shared turn selection', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-17T08:00:00.000Z'))
+    useSessionStore.setState(createInitialSessionState())
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Analyze the data'
+    })
+  })
+
+  it('returns undefined when the session has no completed agent turn', () => {
+    const result = assembleReviewRunRequest('transport-session-1')
+    expect(result).toBeUndefined()
+  })
+
+  it('returns undefined when the session does not exist', () => {
+    const result = assembleReviewRunRequest('nonexistent-session')
+    expect(result).toBeUndefined()
+  })
+
+  it('selects the last agent message as turnMessageId', () => {
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'stream-1',
+      eventId: 'event-agent-1',
+      content: 'Analysis complete'
+    })
+
+    const result = assembleReviewRunRequest('transport-session-1')
+    const session = useSessionStore.getState().sessions[0]
+    const lastAgent = [...session.messages].reverse().find((m) => m.role === 'agent')
+
+    expect(result).not.toBeUndefined()
+    expect(result!.sessionId).toBe('transport-session-1')
+    expect(result!.turnMessageId).toBe(lastAgent!.id)
+    expect(result!.mainSessionId).toBe('transport-session-1')
+  })
+
+  it('skips autoReviewEnabled — returns a request even when auto-review is off', () => {
+    useSessionStore.getState().setAutoReviewEnabled('transport-session-1', false)
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'stream-1',
+      eventId: 'event-agent-1',
+      content: 'Done'
+    })
+
+    const result = assembleReviewRunRequest('transport-session-1')
+
+    // assembleReviewRunRequest does not check autoReviewEnabled — manual path ignores the toggle.
+    expect(result).not.toBeUndefined()
+  })
+
+  it('picks the most recent of multiple agent turns', () => {
+    // First turn
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'stream-1',
+      eventId: 'event-1',
+      content: 'First response'
+    })
+    // Second user message
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Follow-up'
+    })
+    // Second agent turn
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'stream-2',
+      eventId: 'event-2',
+      content: 'Second response'
+    })
+
+    const result = assembleReviewRunRequest('transport-session-1')
+    const session = useSessionStore.getState().sessions[0]
+    const lastAgent = [...session.messages].reverse().find((m) => m.role === 'agent')
+
+    expect(result!.turnMessageId).toBe(lastAgent!.id)
   })
 })

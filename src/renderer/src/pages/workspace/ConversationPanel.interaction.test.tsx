@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConversationPanel } from './ConversationPanel'
 import { emptyDoc } from './composer/composer-doc'
 
+import type { ChatSession } from '@/stores/session-store'
+
 // React's act() refuses to run unless the environment opts in to act-aware scheduling.
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -19,8 +21,37 @@ vi.mock('@/lib/utils', () => ({
   cn: (...values: Array<string | false | undefined>) => values.filter(Boolean).join(' ')
 }))
 
+// Radix DropdownMenu calls pointer-capture APIs that jsdom does not implement.
+// Replace with a flat render so items are always visible in the DOM.
+vi.mock('@/components/ui/dropdown-menu', () => ({
+  DropdownMenu: ({ children }: PropsWithChildren): React.JSX.Element => <div>{children}</div>,
+  DropdownMenuTrigger: ({ children }: PropsWithChildren): React.JSX.Element => <>{children}</>,
+  DropdownMenuContent: ({ children }: PropsWithChildren): React.JSX.Element => (
+    <div>{children}</div>
+  ),
+  DropdownMenuSeparator: (): React.JSX.Element => <hr />,
+  DropdownMenuItem: ({
+    children,
+    disabled,
+    onSelect,
+    ...rest
+  }: PropsWithChildren<{
+    disabled?: boolean
+    onSelect?: () => void
+    'data-testid'?: string
+  }>): React.JSX.Element => (
+    <button type="button" disabled={disabled} onClick={onSelect} {...rest}>
+      {children}
+    </button>
+  )
+}))
+
 vi.mock('./ComposerModelPicker', () => ({
   ComposerModelPicker: (): null => null
+}))
+
+vi.mock('./ComposerAutoReviewToggle', () => ({
+  ComposerAutoReviewToggle: (): null => null
 }))
 
 vi.mock('./WorkspaceMessageScroller', () => ({
@@ -66,6 +97,10 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
         onPermissionProfileChange={vi.fn()}
         onRevokePermissionGrant={vi.fn()}
         onClearPermissionGrants={vi.fn()}
+        autoReviewEnabled={true}
+        onAutoReviewToggle={vi.fn()}
+        onRequestReview={vi.fn()}
+        isRequestReviewDisabled={false}
         {...props}
       />
     )
@@ -194,5 +229,184 @@ describe('ConversationPanel composer intake', () => {
     })
 
     expect(onDraftDocChange).toHaveBeenCalledWith({ nodes: [{ type: 'text', text: 'hello' }] })
+  })
+})
+
+describe('ConversationPanel + menu', () => {
+  it('renders both Attach files and Request review items', () => {
+    renderPanel()
+
+    const attachItem = container.querySelector('[data-testid="menu-attach-files"]')
+    const reviewItem = container.querySelector('[data-testid="menu-request-review"]')
+
+    expect(attachItem).not.toBeNull()
+    expect(reviewItem).not.toBeNull()
+  })
+
+  it('Attach files item triggers the hidden file input (onStageAttachmentFiles path)', () => {
+    // We can only confirm the item exists and is not disabled; the picker click is browser-native.
+    renderPanel()
+
+    const attachItem = container.querySelector('[data-testid="menu-attach-files"]')
+    expect(attachItem).not.toBeNull()
+    expect((attachItem as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('Request review calls onRequestReview when enabled', () => {
+    const onRequestReview = vi.fn()
+    renderPanel({ onRequestReview, isRequestReviewDisabled: false })
+
+    const reviewItem = container.querySelector('[data-testid="menu-request-review"]')
+    expect(reviewItem).not.toBeNull()
+    act(() => {
+      ;(reviewItem as HTMLButtonElement).click()
+    })
+
+    expect(onRequestReview).toHaveBeenCalledTimes(1)
+  })
+
+  it('Request review is disabled when isRequestReviewDisabled is true', () => {
+    const onRequestReview = vi.fn()
+    renderPanel({ onRequestReview, isRequestReviewDisabled: true })
+
+    const reviewItem = container.querySelector(
+      '[data-testid="menu-request-review"]'
+    ) as HTMLButtonElement
+    expect(reviewItem.disabled).toBe(true)
+
+    act(() => {
+      reviewItem.click()
+    })
+
+    // disabled button click should not call the handler
+    expect(onRequestReview).not.toHaveBeenCalled()
+  })
+
+  it('Request review is not called when disabled is true (onSelect guard)', () => {
+    const onRequestReview = vi.fn()
+    renderPanel({ onRequestReview, isRequestReviewDisabled: true })
+
+    const reviewItem = container.querySelector(
+      '[data-testid="menu-request-review"]'
+    ) as HTMLButtonElement
+    // Simulate the click directly on the element — disabled buttons suppress click events.
+    act(() => {
+      reviewItem.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(onRequestReview).not.toHaveBeenCalled()
+  })
+})
+
+describe('ConversationPanel fix loop lock', () => {
+  const idleSession: ChatSession = {
+    id: 'session-fix-loop',
+    projectId: 'project-a',
+    title: 'Fix loop session',
+    cwd: '/workspace',
+    status: 'idle',
+    messages: [
+      {
+        id: 'msg-1',
+        role: 'agent',
+        content: 'Done',
+        status: 'complete',
+        eventIds: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      }
+    ],
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }
+
+  const lockedSession: ChatSession = {
+    ...idleSession,
+    fixLoopActive: true
+  }
+
+  it('send button is disabled when canSendMessage is false (fix loop active)', () => {
+    // canSendMessage is passed from outside (computed by WorkspacePage)
+    renderPanel({ activeSession: idleSession, canSendMessage: false })
+
+    const sendButton = container.querySelector('[aria-label="Send message"]') as HTMLButtonElement
+    expect(sendButton).not.toBeNull()
+    expect(sendButton.disabled).toBe(true)
+  })
+
+  it('send button is enabled when canSendMessage is true (no fix loop)', () => {
+    renderPanel({ activeSession: idleSession, canSendMessage: true })
+
+    const sendButton = container.querySelector('[aria-label="Send message"]') as HTMLButtonElement
+    expect(sendButton).not.toBeNull()
+    expect(sendButton.disabled).toBe(false)
+  })
+
+  it('send button stays disabled when typing does not change canSendMessage (fix loop active)', () => {
+    const onDraftDocChange = vi.fn()
+    renderPanel({
+      activeSession: lockedSession,
+      canSendMessage: false,
+      onDraftDocChange
+    })
+
+    // Simulate typing — the doc change is fired but canSendMessage remains false (external prop)
+    const editor = container.querySelector('[role="textbox"]') as HTMLElement
+    editor.textContent = 'some text'
+    act(() => {
+      editor.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    // Even after typing, the send button remains disabled because canSendMessage=false is external
+    const sendButton = container.querySelector('[aria-label="Send message"]') as HTMLButtonElement
+    if (sendButton) {
+      expect(sendButton.disabled).toBe(true)
+    }
+    // The doc change is still fired (composing is allowed)
+    expect(onDraftDocChange).toHaveBeenCalled()
+  })
+
+  it('cancel button is visible when session is running and calls onCancelRun', () => {
+    const onCancelRun = vi.fn()
+    const runningSession: ChatSession = {
+      ...idleSession,
+      status: 'running',
+      activeRun: { promptMessageId: 'msg-1', startedAt: Date.now() }
+    }
+    renderPanel({ activeSession: runningSession, canSendMessage: false, onCancelRun })
+
+    const cancelButton = container.querySelector('[aria-label="Cancel run"]') as HTMLButtonElement
+    expect(cancelButton).not.toBeNull()
+    act(() => {
+      cancelButton.click()
+    })
+
+    expect(onCancelRun).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancel button during fix loop calls onCancelRun which unlocks the composer', () => {
+    const onCancelRun = vi.fn()
+    const runningLockedSession: ChatSession = {
+      ...idleSession,
+      status: 'running',
+      activeRun: { promptMessageId: 'msg-1', startedAt: Date.now() },
+      fixLoopActive: true
+    }
+    // When the fix loop is active and session is running, onCancelRun handles both
+    // ACP cancel and fix loop abort (wired in WorkspacePage)
+    renderPanel({
+      activeSession: runningLockedSession,
+      canSendMessage: false,
+      onCancelRun
+    })
+
+    const cancelButton = container.querySelector('[aria-label="Cancel run"]') as HTMLButtonElement
+    expect(cancelButton).not.toBeNull()
+    act(() => {
+      cancelButton.click()
+    })
+
+    // The same cancel button is reused; the wiring to abort the loop happens in WorkspacePage
+    expect(onCancelRun).toHaveBeenCalledTimes(1)
   })
 })

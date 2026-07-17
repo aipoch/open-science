@@ -119,6 +119,8 @@ import type {
   StageUploadFilesRequest,
   UploadedAttachment
 } from '../shared/uploads'
+import type { ReviewWithChecks, ReviewRunRequest, ReviewUpdateEvent } from '../shared/reviewer'
+import { REVIEWER_IPC } from '../shared/reviewer'
 
 type RemoveListener = () => void
 type AcpListener<Payload> = (payload: Payload) => void
@@ -317,6 +319,19 @@ type OpenScienceAPI = {
     // Mark the one-time legacy-data-move prompt as answered (declined / keep-here) so it's not shown again.
     dismissLegacyMovePrompt: () => Promise<void>
     onProgress: (listener: AcpListener<MigrationProgress>) => RemoveListener
+  }
+  reviewer: {
+    run: (request: ReviewRunRequest) => Promise<void>
+    getForSession: (sessionId: string) => Promise<ReviewWithChecks[]>
+    onUpdated: (listener: AcpListener<ReviewUpdateEvent>) => RemoveListener
+    onSuppressNextAutoReview: (
+      listener: AcpListener<{ sessionId: string; clear?: boolean }>
+    ) => RemoveListener
+    // Fix loop lock events.
+    onFixLoopStart: (listener: AcpListener<{ sessionId: string }>) => RemoveListener
+    onFixLoopEnd: (listener: AcpListener<{ sessionId: string }>) => RemoveListener
+    // Sends an abort request to stop the running fix loop for a session.
+    abortFixLoop: (sessionId: string) => Promise<void>
   }
 }
 
@@ -576,6 +591,23 @@ const api: OpenScienceAPI = {
     dismissLegacyMovePrompt: () =>
       ipcRenderer.invoke('storage:dismiss-legacy-move-prompt') as Promise<void>,
     onProgress: (listener) => onIpcMessage('storage:migrate-progress', listener)
+  },
+  reviewer: {
+    run: (request: ReviewRunRequest) =>
+      ipcRenderer.invoke(REVIEWER_IPC.RUN, request) as Promise<void>,
+    getForSession: (sessionId: string) =>
+      ipcRenderer.invoke(REVIEWER_IPC.GET_FOR_SESSION, sessionId) as Promise<ReviewWithChecks[]>,
+    onUpdated: (listener) => onIpcMessage(REVIEWER_IPC.UPDATED, listener),
+    onSuppressNextAutoReview: (listener: AcpListener<{ sessionId: string; clear?: boolean }>) =>
+      onIpcMessage(REVIEWER_IPC.SUPPRESS_NEXT_AUTO_REVIEW, listener),
+    // Fix loop lock: fired when the loop starts (lock composer) / ends or is aborted (unlock).
+    onFixLoopStart: (listener: AcpListener<{ sessionId: string }>) =>
+      onIpcMessage(REVIEWER_IPC.FIX_LOOP_START, listener),
+    onFixLoopEnd: (listener: AcpListener<{ sessionId: string }>) =>
+      onIpcMessage(REVIEWER_IPC.FIX_LOOP_END, listener),
+    // Sends an abort request to the main process to stop the running fix loop for a session.
+    abortFixLoop: (sessionId: string) =>
+      ipcRenderer.invoke(REVIEWER_IPC.ABORT_FIX_LOOP, sessionId) as Promise<void>
   }
 }
 

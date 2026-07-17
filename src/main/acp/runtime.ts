@@ -216,6 +216,11 @@ class AcpRuntime {
   private supportsSessionResume = false
   private readonly sessions = new Map<string, ActiveSession>()
   private readonly sessionCwds = new Map<string, string>()
+  // Ephemeral background reviewer sessions (built via buildReviewerSession). They are deliberately kept
+  // out of `this.sessions` — not tracked in the snapshot, not user-facing — but their tool calls still
+  // trigger permission requests over the shared agent connection. This set lets the permission handler
+  // recognise them and auto-approve without prompting (design §3: background review, no user interaction).
+  private readonly reviewerSessionIds = new Set<string>()
   // A replaced agent's own session id -> the app-facing id it was adopted under (after a provider
   // switch), so agent-origin events/permissions relabel into the conversation the renderer tracks.
   private readonly agentToAppSessionId = new Map<string, string>()
@@ -1613,6 +1618,13 @@ class AcpRuntime {
     })
 
     try {
+      // Background reviewer sessions run unattended with a restricted toolset: auto-approve their tool
+      // calls instead of routing to the renderer (which never sees these sessions) or throwing "Unknown
+      // ACP session" because they are intentionally not in `this.sessions`. See design §3.
+      if (this.reviewerSessionIds.has(params.sessionId)) {
+        return this.autoApproveReviewerPermission(params)
+      }
+
       const appSessionId = this.agentToAppSessionId.get(params.sessionId) ?? params.sessionId
 
       if (!this.sessions.has(appSessionId)) {
@@ -1638,6 +1650,34 @@ class AcpRuntime {
       })
       throw error
     }
+  }
+
+  // Selects an allow option for an unattended reviewer tool call. Prefers a one-shot allow (the reviewer
+  // session is ephemeral, so remembering an "always" grant is pointless) and falls back to allow_always,
+  // then the first option. A request with no allow option is cancelled rather than left hanging.
+  private autoApproveReviewerPermission(
+    params: RequestPermissionRequest
+  ): RequestPermissionResponse {
+    const allowOption =
+      params.options.find((option) => option.kind === 'allow_once') ??
+      params.options.find((option) => option.kind === 'allow_always') ??
+      params.options[0]
+
+    if (!allowOption) {
+      log.warn('reviewer permission request had no allow option; cancelling', {
+        sessionId: params.sessionId,
+        toolCallId: params.toolCall?.toolCallId
+      })
+      return { outcome: { outcome: 'cancelled' } }
+    }
+
+    log.debug('auto-approving reviewer tool call', {
+      sessionId: params.sessionId,
+      toolCallId: params.toolCall?.toolCallId,
+      optionId: allowOption.optionId
+    })
+
+    return { outcome: { outcome: 'selected', optionId: allowOption.optionId } }
   }
 
   // Normalizes low-level session notifications into runtime/workspace events.
@@ -1800,6 +1840,51 @@ class AcpRuntime {
   // Broadcasts the latest runtime snapshot if a listener is registered.
   private emitState(): void {
     this.callbacks.onStateChanged?.(this.getSnapshot())
+  }
+
+  // Creates an ephemeral reviewer ACP session using the existing agent connection. The reviewer
+  // session is isolated from main agent sessions: it is not tracked in this.sessions, does not
+  // appear in the snapshot, and callers are responsible for disposing it. This allows background
+  // review to run in parallel with the main session without affecting the main state machine.
+  async buildReviewerSession(request: {
+    cwd: string
+    mcpServers: McpServer[]
+    systemPromptAppend?: string
+  }): Promise<import('@agentclientprotocol/sdk').ActiveSession> {
+    const connection = await this.ensureConnected(request.cwd)
+
+    const meta: Record<string, unknown> = {
+      claudeCode: { options: { settingSources: ['user'] } }
+    }
+
+    if (request.systemPromptAppend) {
+      meta.systemPrompt = {
+        type: 'preset',
+        preset: 'claude_code',
+        append: request.systemPromptAppend
+      }
+    }
+
+    const session = await connection.agent
+      .buildSession({
+        cwd: request.cwd,
+        mcpServers: request.mcpServers,
+        _meta: meta
+      })
+      .start()
+
+    // Register so the permission handler recognises this session and auto-approves its tool calls.
+    // The orchestrator must call disposeReviewerSession() to unregister and tear it down.
+    this.reviewerSessionIds.add(session.sessionId)
+
+    return session
+  }
+
+  // Disposes an ephemeral reviewer session and unregisters it from the auto-approve set. Safe to call
+  // even if the session was never registered (e.g. it failed before start).
+  disposeReviewerSession(session: import('@agentclientprotocol/sdk').ActiveSession): void {
+    this.reviewerSessionIds.delete(session.sessionId)
+    session.dispose()
   }
 }
 
