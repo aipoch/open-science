@@ -1,29 +1,50 @@
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
-// Restores the byte representation used by parsers after IPC-safe Base64 transport.
-const base64ToUint8Array = (base64: string): Uint8Array => {
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
+const MANAGED_FILE_READ_CHUNK_BYTES = 1024 * 1024
 
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index)
-  }
-
-  return bytes
-}
-
-// Routes through the managed-file trust boundary and lets the main process reject oversized files
-// before reading or Base64-encoding their complete contents.
+// Acquires an owner-scoped capability, rejects oversized files from authoritative stat metadata,
+// and assembles bounded IPC ranges without restoring a general whole-file Base64 endpoint.
 export const readManagedFileBytes = async (
   path: string,
   source: PreviewFileSource,
-  maxBytes?: number
+  maxBytes: number
 ): Promise<Uint8Array> => {
-  const request = maxBytes === undefined ? { path } : { path, maxBytes }
-  const { data } =
-    source === 'upload'
-      ? await window.api.uploads.readBytes(request)
-      : await window.api.artifacts.readBytes(request)
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    throw new Error('Invalid managed file byte limit.')
+  }
 
-  return base64ToUint8Array(data)
+  const resource = await window.api.previewResources.acquire({ source, path })
+
+  try {
+    if (!Number.isSafeInteger(resource.size) || resource.size < 0) {
+      throw new Error('Managed preview returned an invalid file size.')
+    }
+    if (resource.size > maxBytes) {
+      throw new Error('Managed file is too large to read into memory.')
+    }
+
+    const bytes = new Uint8Array(resource.size)
+    for (let begin = 0; begin < resource.size; begin += MANAGED_FILE_READ_CHUNK_BYTES) {
+      const end = Math.min(resource.size, begin + MANAGED_FILE_READ_CHUNK_BYTES)
+      const range = await window.api.previewResources.readRange({
+        resourceId: resource.id,
+        begin,
+        end
+      })
+
+      if (
+        range.begin !== begin ||
+        range.end !== end ||
+        range.total !== resource.size ||
+        range.data.byteLength !== end - begin
+      ) {
+        throw new Error('Managed preview range did not match the requested file chunk.')
+      }
+      bytes.set(range.data, begin)
+    }
+
+    return bytes
+  } finally {
+    await window.api.previewResources.release({ resourceId: resource.id })
+  }
 }

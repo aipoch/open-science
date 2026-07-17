@@ -29,20 +29,32 @@ if (shouldRunArtifactMcpServer) {
 
 // Boots the Electron app only in normal UI mode, keeping artifact MCP mode free of Electron imports.
 async function startElectronApp(mainEntryPath: string): Promise<void> {
-  const [{ app, BrowserWindow, nativeImage }, { electronApp, optimizer }, { default: icon }] =
-    await Promise.all([
-      import('electron'),
-      import('@electron-toolkit/utils'),
-      import('../../resources/icon.png?asset')
-    ])
-  const [{ registerIpcHandlers }, { createMainWindow }] = await Promise.all([
+  const [
+    { app, BrowserWindow, nativeImage, protocol },
+    { electronApp, optimizer },
+    { default: icon }
+  ] = await Promise.all([
+    import('electron'),
+    import('@electron-toolkit/utils'),
+    import('../../resources/icon.png?asset')
+  ])
+  const [
+    { registerIpcHandlers },
+    { createMainWindow },
+    { MANAGED_PREVIEW_SCHEME },
+    { installMigrationQuitGuard }
+  ] = await Promise.all([
     import('./ipc'),
-    import('./windows')
+    import('./windows'),
+    import('./managed-preview-resources'),
+    import('./storage/migration-state')
   ])
 
   // Dev runs get a "(DEV)" suffix so the app name, macOS menu, and per-app paths (logs, userData)
   // are visibly distinct from an installed build — and don't collide with it.
   app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
+
+  protocol.registerSchemesAsPrivileged([MANAGED_PREVIEW_SCHEME])
 
   await app.whenReady()
 
@@ -85,7 +97,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   })
 
   // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
-  registerIpcHandlers({ mainEntryPath })
+  await registerIpcHandlers({ mainEntryPath })
+
+  // Warn (rather than silently tear down) if the user tries to quit mid data-root migration.
+  installMigrationQuitGuard(app)
 
   createMainWindow()
 

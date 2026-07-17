@@ -117,9 +117,22 @@ const PreviewPanel = ({
 }: PreviewPanelProps): React.JSX.Element => {
   const items = usePreviewWorkbenchStore((state) => state.items)
   const activeItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
+  const panelState = usePreviewWorkbenchStore((state) => state.panelState)
   const activateItem = usePreviewWorkbenchStore((state) => state.activateItem)
   const removeItem = usePreviewWorkbenchStore((state) => state.removeItem)
   const activeItem = items.find((item) => item.id === activeItemId)
+  // Remount replaced files and unmount collapsed content so renderer-owned resources are released.
+  const activeContentKey =
+    activeItem?.type === 'file'
+      ? JSON.stringify([
+          activeItem.id,
+          activeItem.source ?? 'artifact',
+          activeItem.path,
+          activeItem.mimeType ?? null,
+          activeItem.size ?? null,
+          activeItem.mtimeMs ?? null
+        ])
+      : (activeItem?.id ?? 'empty')
 
   const handleResize = (
     panelSize: PanelSize,
@@ -150,7 +163,9 @@ const PreviewPanel = ({
           />
         ) : null}
         <div className="flex-1 overflow-y-auto bg-bg-10">
-          <PreviewActiveContent item={activeItem} />
+          {!activeItem || panelState === 'open' ? (
+            <PreviewActiveContent key={activeContentKey} item={activeItem} />
+          ) : null}
         </div>
       </aside>
     </ResizablePanel>

@@ -17,11 +17,8 @@ import { useSessionStore } from '@/stores/session-store'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 
 import { ArtifactPreview } from './artifact-preview'
-import {
-  ARTIFACT_IMAGE_PREVIEW_BYTES,
-  ARTIFACT_PREVIEW_BYTES,
-  getArtifactPreviewFormat
-} from './artifact-preview-utils'
+import { ARTIFACT_PREVIEW_BYTES, getArtifactPreviewFormat } from './artifact-preview-utils'
+import { FILE_MISSING_TAG, isUnavailableFileError } from './previews/preview-errors'
 import {
   buildProjectFileLibrary,
   type ProjectArtifactFileNode,
@@ -33,6 +30,9 @@ import {
 } from './preview-file-item'
 import type { MessageArtifact } from './preview-file-item'
 import { getPreviewThumbnailReadEncoding } from './preview-support'
+import { getPreviewFileReader } from './previews/preview-file-reader'
+import { useNearViewport } from './previews/useNearViewport'
+import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
 
 type ProjectFilesFilterOption = {
   id: string
@@ -47,20 +47,20 @@ type ProjectFilePreviewTarget = {
   source: 'artifact' | 'upload'
   artifact: MessageArtifact
   cacheKey: string
-  encoding?: 'utf8' | 'base64'
+  encoding?: 'utf8'
 }
 
-type ReadableProjectFilePreviewTarget = ProjectFilePreviewTarget & {
-  encoding: 'utf8' | 'base64'
+type ReadableProjectFilePreviewTarget = Pick<
+  ProjectFilePreviewTarget,
+  'id' | 'path' | 'source' | 'cacheKey'
+> & {
+  encoding: 'utf8'
 }
 
 type ProjectFilePreviewEntry = {
   cacheKey: string
   preview: ArtifactPreviewResult | undefined
 }
-
-// Each stable file id retains only its current path/version preview entry.
-type ProjectFilePreviewState = Record<string, ProjectFilePreviewEntry | undefined>
 
 type ProjectFilePreviewReadResult = ProjectFilePreviewEntry & { id: string }
 
@@ -98,55 +98,57 @@ const createProjectFilePreviewTarget = (
   encoding: getPreviewThumbnailReadEncoding(getArtifactPreviewFormat(target.artifact))
 })
 
-// Skips unsupported, cached, and oversized image targets before any IPC reads start.
-const getMissingProjectFilePreviewTargets = (
-  targets: ProjectFilePreviewTarget[],
-  previews: ProjectFilePreviewState
-): ReadableProjectFilePreviewTarget[] =>
-  targets
-    .filter((target): target is ReadableProjectFilePreviewTarget => target.encoding !== undefined)
-    .filter((target) => previews[target.id]?.cacheKey !== target.cacheKey)
-    .filter(
-      (target) =>
-        target.encoding !== 'base64' ||
-        (typeof target.artifact.size === 'number' &&
-          target.artifact.size <= ARTIFACT_IMAGE_PREVIEW_BYTES)
-    )
-
 // Reads one tile through its source-specific IPC while retaining the source-neutral cache identity.
 const readProjectFilePreview = async (
   target: ReadableProjectFilePreviewTarget
 ): Promise<ProjectFilePreviewReadResult> => {
-  const readPreview =
-    target.source === 'upload' ? window.api.uploads.readPreview : window.api.artifacts.readPreview
+  const readPreview = getPreviewFileReader(target.source)
 
   try {
     const preview = await readPreview({
       path: target.path,
-      maxBytes:
-        target.encoding === 'base64' ? ARTIFACT_IMAGE_PREVIEW_BYTES : ARTIFACT_PREVIEW_BYTES,
+      maxBytes: ARTIFACT_PREVIEW_BYTES,
       encoding: target.encoding
     })
 
     return { id: target.id, cacheKey: target.cacheKey, preview }
   } catch (error) {
-    console.error('Failed to read project file preview', error)
+    // An unavailable file (missing / outside storage) is expected here and badged separately;
+    // don't spam the console for it — only genuine read failures warrant an error.
+    if (!isUnavailableFileError(error)) {
+      console.error('Failed to read project file preview', error)
+    }
     return { id: target.id, cacheKey: target.cacheKey, preview: undefined }
   }
 }
 
-// Merges one completed read batch without dropping cached entries for other visible files.
-const mergeProjectFilePreviews = (
-  currentPreviews: ProjectFilePreviewState,
-  previews: ProjectFilePreviewReadResult[]
-): ProjectFilePreviewState =>
-  previews.reduce<ProjectFilePreviewState>(
-    (nextPreviews, item) => {
-      nextPreviews[item.id] = { cacheKey: item.cacheKey, preview: item.preview }
-      return nextPreviews
-    },
-    { ...currentPreviews }
-  )
+// Owns the bounded text data for one project tile only while that tile is near the viewport.
+const VisibleProjectFilePreview = ({
+  artifact,
+  target
+}: {
+  artifact: MessageArtifact
+  target: ProjectFilePreviewTarget
+}): React.JSX.Element => {
+  const [previewEntry, setPreviewEntry] = useState<ProjectFilePreviewEntry | undefined>(undefined)
+  const { cacheKey, encoding, id, path, source } = target
+
+  useEffect(() => {
+    if (encoding === undefined) return
+
+    let canceled = false
+    void readProjectFilePreview({ cacheKey, encoding, id, path, source }).then((result) => {
+      if (!canceled) setPreviewEntry({ cacheKey: result.cacheKey, preview: result.preview })
+    })
+
+    return () => {
+      canceled = true
+    }
+  }, [cacheKey, encoding, id, path, source])
+
+  const preview = previewEntry?.cacheKey === cacheKey ? previewEntry.preview : undefined
+  return <ArtifactPreview artifact={artifact} preview={preview} source={source} isVisible />
+}
 
 const formatMiddleEllipsisName = (name: string): string => {
   if (name.length < 26) return name
@@ -211,7 +213,6 @@ const SectionHeader = ({
 const FileTile = ({
   name,
   previewArtifact,
-  preview,
   source,
   size,
   timestamp,
@@ -220,7 +221,6 @@ const FileTile = ({
 }: {
   name: string
   previewArtifact: MessageArtifact
-  preview?: ArtifactPreviewResult
   source: 'artifact' | 'upload'
   size?: number
   timestamp?: number
@@ -230,9 +230,22 @@ const FileTile = ({
   const sizeLabel = formatByteSize(size)
   const displayName = formatMiddleEllipsisName(name)
   const relativeTimeLabel = formatRelativeFileTime(timestamp)
+  const [setTileElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
+  const target = createProjectFilePreviewTarget({
+    id: previewArtifact.id,
+    path: previewArtifact.path,
+    source,
+    artifact: previewArtifact
+  })
+  const missing = useUnavailablePreviewProbe({
+    enabled: isNearViewport,
+    path: previewArtifact.path,
+    source
+  })
 
   return (
     <button
+      ref={setTileElement}
       type="button"
       className="flex h-[128px] min-w-0 flex-col overflow-hidden rounded-lg border border-border-300/50 bg-bg-000 text-left shadow-sm hover:border-border-200 hover:bg-bg-100"
       aria-label={previewLabel}
@@ -241,9 +254,21 @@ const FileTile = ({
     >
       <span
         data-testid="project-file-preview"
-        className="h-[82px] w-full overflow-hidden bg-bg-200"
+        className="relative h-[82px] w-full overflow-hidden bg-bg-200"
       >
-        <ArtifactPreview artifact={previewArtifact} preview={preview} source={source} />
+        <span className={cn('block size-full', missing && 'opacity-40')}>
+          {/* Unmount the reader outside the overscan window so tile previews release local data. */}
+          {isNearViewport ? (
+            <VisibleProjectFilePreview artifact={previewArtifact} target={target} />
+          ) : (
+            <ArtifactPreview artifact={previewArtifact} source={source} isVisible={false} />
+          )}
+        </span>
+        {missing ? (
+          <span className="absolute left-1.5 top-1.5 rounded bg-text-000/75 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-bg-000 shadow-sm">
+            {FILE_MISSING_TAG}
+          </span>
+        ) : null}
       </span>
       <span
         data-testid="project-file-meta"
@@ -347,7 +372,6 @@ const ProjectFilesView = (): React.JSX.Element => {
   const upsertAndActivateItem = usePreviewWorkbenchStore((state) => state.upsertAndActivateItem)
   const [collapsedSectionIds, setCollapsedSectionIds] = useState<Set<string>>(() => new Set())
   const [selectedFilterId, setSelectedFilterId] = useState('all')
-  const [filePreviews, setFilePreviews] = useState<ProjectFilePreviewState>({})
   // Only the active project's sessions contribute files, so the library never mixes projects.
   const sessions = useMemo(
     () => allSessions.filter((session) => session.projectId === activeProjectId),
@@ -404,63 +428,6 @@ const ProjectFilesView = (): React.JSX.Element => {
   const visibleFileCount =
     visibleUploadFiles.length +
     visibleArtifactGroups.reduce((total, group) => total + group.files.length, 0)
-  const previewTargets = useMemo<ProjectFilePreviewTarget[]>(
-    () => [
-      ...visibleUploadFiles.map((file) =>
-        createProjectFilePreviewTarget({
-          id: file.id,
-          path: file.attachment.path,
-          source: 'upload',
-          artifact: createUploadPreviewArtifact(file)
-        })
-      ),
-      ...visibleArtifactGroups.flatMap((group) =>
-        group.files.map((file) =>
-          createProjectFilePreviewTarget({
-            id: file.id,
-            path: file.artifact.path,
-            source: 'artifact',
-            artifact: file.artifact
-          })
-        )
-      )
-    ],
-    [visibleArtifactGroups, visibleUploadFiles]
-  )
-  // A previous version may remain cached while the current path loads; never render it as current.
-  const currentFilePreviewById = useMemo(
-    () =>
-      new Map(
-        previewTargets.map((target) => {
-          const entry = filePreviews[target.id]
-          return [
-            target.id,
-            entry?.cacheKey === target.cacheKey ? entry.preview : undefined
-          ] as const
-        })
-      ),
-    [filePreviews, previewTargets]
-  )
-
-  useEffect(() => {
-    // Version changes start a fresh batch; cleanup prevents superseded results from reaching state.
-    const missingTargets = getMissingProjectFilePreviewTargets(previewTargets, filePreviews)
-
-    if (missingTargets.length === 0) return
-
-    let canceled = false
-
-    void Promise.all(missingTargets.map(readProjectFilePreview)).then((previews) => {
-      if (canceled) return
-
-      setFilePreviews((currentPreviews) => mergeProjectFilePreviews(currentPreviews, previews))
-    })
-
-    return () => {
-      canceled = true
-    }
-  }, [filePreviews, previewTargets])
-
   const toggleSection = (sectionId: string): void => {
     setCollapsedSectionIds((currentIds) => {
       const nextIds = new Set(currentIds)
@@ -526,7 +493,6 @@ const ProjectFilesView = (): React.JSX.Element => {
                     key={file.id}
                     name={file.name}
                     previewArtifact={createUploadPreviewArtifact(file)}
-                    preview={currentFilePreviewById.get(file.id)}
                     source="upload"
                     size={file.size}
                     timestamp={file.timestamp}
@@ -566,7 +532,6 @@ const ProjectFilesView = (): React.JSX.Element => {
                           key={file.id}
                           name={file.name}
                           previewArtifact={file.artifact}
-                          preview={currentFilePreviewById.get(file.id)}
                           source="artifact"
                           size={file.size}
                           timestamp={file.artifact.mtimeMs}

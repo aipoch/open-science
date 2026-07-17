@@ -1,6 +1,4 @@
-import { FileWarning } from 'lucide-react'
-
-import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
+import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { usePreviewFileContent } from '../usePreviewFileContent'
 import { SourcePreviewContent } from './SourcePreview'
@@ -23,14 +21,18 @@ export const JsonPreviewRenderer = ({ item }: PreviewFileRendererProps): React.J
 
   if (state.status === 'error' || state.preview.encoding !== 'utf8') {
     return (
-      <PreviewFallbackCard
-        icon={FileWarning}
+      <PreviewErrorCard
         path={item.path}
         name={item.name}
         source={item.source}
-        message="JSON couldn't be read for preview"
+        error={state.status === 'error' ? state.error : undefined}
+        fallbackMessage="JSON couldn't be read for preview"
       />
     )
+  }
+
+  if (state.preview.truncated || state.pagination.pageNumber > 1) {
+    return <SourcePreviewContent content={state.preview.content} pagination={state.pagination} />
   }
 
   const { formatted, error } = formatJsonPreview(state.preview.content)
@@ -41,11 +43,5 @@ export const JsonPreviewRenderer = ({ item }: PreviewFileRendererProps): React.J
     </div>
   ) : undefined
 
-  return (
-    <SourcePreviewContent
-      content={formatted}
-      truncated={state.preview.truncated}
-      topContent={errorContent}
-    />
-  )
+  return <SourcePreviewContent content={formatted} topContent={errorContent} />
 }

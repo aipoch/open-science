@@ -67,6 +67,7 @@ export type ReadArtifactPreviewRequest = {
   path: string
   maxBytes?: number
   encoding?: 'utf8' | 'base64'
+  offset?: number
 }
 
 export type ArtifactPreviewResult = {
@@ -74,18 +75,8 @@ export type ArtifactPreviewResult = {
   encoding: 'utf8' | 'base64'
   size: number
   truncated: boolean
-}
-
-// Renderer request for the full bytes of one managed artifact (e.g. to render a PDF thumbnail).
-export type ReadArtifactBytesRequest = {
-  path: string
-  maxBytes?: number
-}
-
-// Full-file bytes for a managed artifact, base64-encoded so it survives IPC structured cloning.
-export type ManagedFileBytesResult = {
-  data: string
-  size: number
+  offset?: number
+  nextOffset?: number
 }
 
 // Repository request that moves pending run files into a durable message directory.

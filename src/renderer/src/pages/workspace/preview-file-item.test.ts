@@ -56,7 +56,10 @@ describe('preview file item helpers', () => {
       type: 'file',
       path: '/workspace/results/report.png',
       name: 'report.png',
-      format: 'image'
+      format: 'image',
+      mimeType: 'image/png',
+      size: 4096,
+      mtimeMs: 1710000001000
     })
   })
 
@@ -96,7 +99,9 @@ describe('preview file item helpers', () => {
       source: 'upload',
       path: '/Users/example/.open-science/uploads/default-project/session-1/safe-name.png',
       name: 'raw microscope image.png',
-      format: 'image'
+      format: 'image',
+      mimeType: 'image/png',
+      size: 2048
     })
   })
 

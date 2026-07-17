@@ -39,8 +39,8 @@ The byte path remains inside the existing managed-file boundary:
 
 ```text
 PreviewFileItem.path
-  -> preload uploads/artifacts.readBytes(maxBytes)
-  -> main-process path validation and pre-read size check
+  -> preload previewResources capability IPC
+  -> main-process path validation, stat metadata, and bounded range reads
   -> Uint8Array in the sandboxed renderer
   -> package validation
   -> format-specific renderer
@@ -80,8 +80,8 @@ Animations, videos, uncommon SmartArt, legacy `.ppt`, and exact Microsoft font m
 
 Office files are attacker-controlled containers. The preview boundary therefore applies these controls before handing bytes to a third-party renderer:
 
-- maximum compressed Office file size: 50 MiB, enforced by the main process before `readFile` and Base64 IPC encoding;
-- maximum compressed DOCX size: 10 MiB, also enforced before reading, because DOCX rendering is main-thread DOM work;
+- maximum compressed Office file size: 50 MiB, checked against authoritative main-process stat metadata before any range transfer;
+- maximum compressed DOCX size: 10 MiB, also checked before transfer, because DOCX rendering is main-thread DOM work;
 - maximum ZIP entries: 4,000;
 - maximum actual decompressed entry size: 32 MiB;
 - maximum actual decompressed total: 32 MiB for DOCX and 256 MiB otherwise;

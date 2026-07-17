@@ -75,4 +75,9 @@ const registerProjectIpcHandlers = (
   )
 }
 
-export { createProjectHandlers, registerProjectIpcHandlers }
+export {
+  createDefaultPreviewStateRepository,
+  createDefaultProjectRepository,
+  createProjectHandlers,
+  registerProjectIpcHandlers
+}

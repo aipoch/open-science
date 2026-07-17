@@ -1,0 +1,619 @@
+import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// Capture ipcMain.handle registrations; stub dialog/BrowserWindow/app so handlers can be invoked
+// directly without a real Electron runtime. isPackaged: true means dataFolderName() === 'OpenScience'.
+const handlers = new Map<string, (event: unknown, payload?: unknown) => unknown>()
+const showOpenDialog = vi.fn()
+const sentWindows: {
+  webContents: { send: ReturnType<typeof vi.fn> }
+  isDestroyed: () => boolean
+}[] = []
+const appRelaunch = vi.fn()
+const appExit = vi.fn()
+// Home is mutable so a few tests can point it at a real temp dir (legacy-in-place detection reads
+// the config root under home); it defaults to /home/user so every other test is unaffected.
+const electronHome = { path: '/home/user' }
+
+vi.mock('electron', () => ({
+  ipcMain: {
+    handle: (channel: string, handler: (event: unknown, payload?: unknown) => unknown) => {
+      handlers.set(channel, handler)
+    }
+  },
+  BrowserWindow: { getAllWindows: () => sentWindows },
+  dialog: { showOpenDialog: (...args: unknown[]) => showOpenDialog(...args) },
+  app: { getPath: () => electronHome.path, isPackaged: true, relaunch: appRelaunch, exit: appExit }
+}))
+
+const { initDataRoot } = await import('../storage-root')
+const { registerStorageIpcHandlers } = await import('./ipc')
+
+const invoke = (channel: string, payload?: unknown): Promise<unknown> =>
+  Promise.resolve(handlers.get(channel)!(undefined, payload))
+
+// Real fs calls inside validateNewDataRoot/classifyDataRoot need an actual event-loop turn, not
+// just a microtask flush, before the mocked runtime.disconnect() (the next await) is reached.
+const tick = (ms = 50): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+type FakeDeps = Parameters<typeof registerStorageIpcHandlers>[0]
+
+const fakeDeps = (overrides: Partial<FakeDeps> = {}): FakeDeps => ({
+  runtime: { disconnect: vi.fn().mockResolvedValue(undefined) },
+  notebook: {
+    shutdownAll: vi.fn().mockResolvedValue(undefined),
+    getActiveNotebookSessions: vi.fn().mockReturnValue([])
+  },
+  getActivePromptSessions: vi.fn().mockReturnValue([]),
+  settingsService: {
+    setDataRoot: vi.fn().mockResolvedValue(undefined),
+    markOnboardingComplete: vi.fn().mockResolvedValue(undefined),
+    dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
+    getStoredSettings: vi.fn().mockResolvedValue({})
+  },
+  relaunch: vi.fn(),
+  ...overrides
+})
+
+// Data folder name mirrors dataFolderName() for a packaged build (see the electron mock above).
+const dataRootFor = (parent: string): string => join(parent, 'OpenScience')
+
+let currentParent: string
+let dataRoot: string
+let targetParent: string
+let target: string
+
+beforeEach(async () => {
+  handlers.clear()
+  showOpenDialog.mockReset()
+  sentWindows.length = 0
+  currentParent = await mkdtemp(join(tmpdir(), 'ds-storage-ipc-current-'))
+  dataRoot = dataRootFor(currentParent)
+  await mkdir(dataRoot)
+  targetParent = await mkdtemp(join(tmpdir(), 'ds-storage-ipc-target-'))
+  target = dataRootFor(targetParent)
+})
+
+afterEach(async () => {
+  initDataRoot(undefined)
+  await rm(currentParent, { recursive: true, force: true })
+  await rm(targetParent, { recursive: true, force: true })
+})
+
+describe('storage IPC handlers', () => {
+  it('registers every storage channel', () => {
+    registerStorageIpcHandlers(fakeDeps())
+
+    for (const channel of [
+      'storage:get-info',
+      'storage:detect-active',
+      'storage:pick-directory',
+      'storage:migrate',
+      'storage:cancel-migrate',
+      'storage:validate-data-root',
+      'storage:inspect-data-root',
+      'storage:set-data-root-and-relaunch',
+      'storage:dismiss-legacy-move-prompt'
+    ]) {
+      expect(handlers.has(channel)).toBe(true)
+    }
+  })
+
+  it('get-info reports isDefault true when the data root falls back to the computed default', async () => {
+    initDataRoot(undefined)
+    registerStorageIpcHandlers(fakeDeps())
+
+    const info = (await invoke('storage:get-info')) as {
+      dataRoot: string
+      isDefault: boolean
+      defaultDataRoot: string
+      defaultParent: string
+    }
+
+    expect(info.isDefault).toBe(true)
+    // The default root is `<home>/OpenScience` (home mocked to /home/user), reproducible from home.
+    // Derive with join so the assertion holds on Windows (backslashes), not just POSIX.
+    expect(info.defaultDataRoot).toBe(join('/home/user', 'OpenScience'))
+    expect(info.defaultParent).toBe('/home/user')
+  })
+
+  it('get-info flags legacyDataMovePrompt for an unconfigured install with data in the config root', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'ds-legacy-home-'))
+    electronHome.path = home
+    try {
+      // Legacy layout: user data sits directly in the hidden config root, no OpenScience folder yet.
+      await mkdir(join(home, '.open-science', 'artifacts'), { recursive: true })
+      initDataRoot(undefined) // unconfigured -> resolves to the legacy config root
+      registerStorageIpcHandlers(fakeDeps()) // getStoredSettings -> {} (unset, never dismissed)
+
+      const info = (await invoke('storage:get-info')) as {
+        legacyDataMovePrompt: boolean
+        dataRoot: string
+      }
+
+      expect(info.dataRoot).toBe(join(home, '.open-science'))
+      expect(info.legacyDataMovePrompt).toBe(true)
+    } finally {
+      electronHome.path = '/home/user'
+      initDataRoot(undefined)
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('get-info clears legacyDataMovePrompt once the prompt has been dismissed', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'ds-legacy-home-'))
+    electronHome.path = home
+    try {
+      await mkdir(join(home, '.open-science', 'artifacts'), { recursive: true })
+      initDataRoot(undefined)
+      const deps = fakeDeps()
+      vi.mocked(deps.settingsService.getStoredSettings).mockResolvedValue({
+        legacyDataMovePromptDismissedAt: 123
+      })
+      registerStorageIpcHandlers(deps)
+
+      const info = (await invoke('storage:get-info')) as { legacyDataMovePrompt: boolean }
+
+      expect(info.legacyDataMovePrompt).toBe(false)
+    } finally {
+      electronHome.path = '/home/user'
+      initDataRoot(undefined)
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('dismiss-legacy-move-prompt persists via settingsService.dismissLegacyDataMovePrompt', async () => {
+    const deps = fakeDeps()
+    registerStorageIpcHandlers(deps)
+
+    await invoke('storage:dismiss-legacy-move-prompt')
+
+    expect(deps.settingsService.dismissLegacyDataMovePrompt).toHaveBeenCalledTimes(1)
+  })
+
+  it('get-info reports isDefault false and real usage/availableBytes for a relocated data root', async () => {
+    initDataRoot(dataRoot)
+    registerStorageIpcHandlers(fakeDeps())
+
+    const info = (await invoke('storage:get-info')) as {
+      dataRoot: string
+      isDefault: boolean
+      defaultDataRoot: string
+      defaultParent: string
+      usage: { totalBytes: number }
+      availableBytes: number
+    }
+
+    expect(info.dataRoot).toBe(dataRoot)
+    expect(info.isDefault).toBe(false)
+    // Even from a custom root, the default and its parent are reported so Settings can offer a
+    // one-click return to `<home>/OpenScience` and show the destination.
+    expect(info.defaultDataRoot).toBe(join('/home/user', 'OpenScience'))
+    expect(info.defaultParent).toBe('/home/user')
+    expect(info.usage.totalBytes).toBe(0)
+    expect(info.availableBytes).toBeGreaterThan(0)
+  })
+
+  it('get-info reports dataRootMissing false for a fresh install (unset dataRoot, default dir absent)', async () => {
+    initDataRoot(undefined)
+    registerStorageIpcHandlers(fakeDeps())
+
+    const info = (await invoke('storage:get-info')) as { dataRootMissing: boolean }
+
+    expect(info.dataRootMissing).toBe(false)
+  })
+
+  it('get-info reports dataRootMissing false when the configured dataRoot directory exists', async () => {
+    initDataRoot(dataRoot)
+    const deps = fakeDeps({
+      settingsService: {
+        setDataRoot: vi.fn().mockResolvedValue(undefined),
+        markOnboardingComplete: vi.fn().mockResolvedValue(undefined),
+        dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
+        getStoredSettings: vi.fn().mockResolvedValue({ dataRoot })
+      }
+    })
+    registerStorageIpcHandlers(deps)
+
+    const info = (await invoke('storage:get-info')) as { dataRootMissing: boolean }
+
+    expect(info.dataRootMissing).toBe(false)
+  })
+
+  it('get-info reports dataRootMissing true when the configured dataRoot directory is gone', async () => {
+    initDataRoot(target)
+    const deps = fakeDeps({
+      settingsService: {
+        setDataRoot: vi.fn().mockResolvedValue(undefined),
+        markOnboardingComplete: vi.fn().mockResolvedValue(undefined),
+        dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
+        getStoredSettings: vi.fn().mockResolvedValue({ dataRoot: target })
+      }
+    })
+    registerStorageIpcHandlers(deps)
+
+    const info = (await invoke('storage:get-info')) as { dataRootMissing: boolean }
+
+    expect(info.dataRootMissing).toBe(true)
+  })
+
+  it('detect-active maps runtime and notebook session sources into ActiveSessionInfo', async () => {
+    const deps = fakeDeps({
+      getActivePromptSessions: vi
+        .fn()
+        .mockReturnValue([{ projectName: 'p', sessionId: 'agent-1' }]),
+      notebook: {
+        shutdownAll: vi.fn().mockResolvedValue(undefined),
+        getActiveNotebookSessions: vi
+          .fn()
+          .mockReturnValue([{ projectName: 'p', sessionId: 'nb-1' }])
+      }
+    })
+    registerStorageIpcHandlers(deps)
+
+    await expect(invoke('storage:detect-active')).resolves.toEqual([
+      { projectName: 'p', sessionId: 'agent-1', kind: 'agent' },
+      { projectName: 'p', sessionId: 'nb-1', kind: 'notebook' }
+    ])
+  })
+
+  it('detect-active calls the notebook service as a method, preserving its `this` binding', async () => {
+    // Regression: the real notebook runtime service is a class whose getActiveNotebookSessions reads
+    // `this.sessions`. The handler must invoke it as a method — extracting it as a bare function
+    // reference drops `this` and throws "Cannot read properties of undefined (reading 'values')".
+    class FakeNotebookService {
+      private sessions = new Map([['nb-1', { projectName: 'p', sessionId: 'nb-1' }]])
+      shutdownAll = vi.fn().mockResolvedValue(undefined)
+      getActiveNotebookSessions(): { projectName: string; sessionId: string }[] {
+        return Array.from(this.sessions.values())
+      }
+    }
+    const deps = fakeDeps({
+      getActivePromptSessions: vi.fn().mockReturnValue([]),
+      notebook: new FakeNotebookService()
+    })
+    registerStorageIpcHandlers(deps)
+
+    await expect(invoke('storage:detect-active')).resolves.toEqual([
+      { projectName: 'p', sessionId: 'nb-1', kind: 'notebook' }
+    ])
+  })
+
+  it('pick-directory returns the injected value without touching the native dialog', async () => {
+    const deps = fakeDeps({ showOpenDialog: vi.fn().mockResolvedValue('/picked/path') })
+    registerStorageIpcHandlers(deps)
+
+    await expect(invoke('storage:pick-directory')).resolves.toBe('/picked/path')
+    expect(showOpenDialog).not.toHaveBeenCalled()
+  })
+
+  it('pick-directory falls back to the native dialog and returns null on cancel', async () => {
+    showOpenDialog.mockResolvedValue({ filePaths: [] })
+    registerStorageIpcHandlers(fakeDeps())
+
+    await expect(invoke('storage:pick-directory')).resolves.toBeNull()
+    expect(showOpenDialog).toHaveBeenCalledWith({
+      properties: ['openDirectory', 'createDirectory']
+    })
+  })
+
+  it('pick-directory returns null instead of rejecting when the native dialog throws', async () => {
+    showOpenDialog.mockRejectedValue(new Error('dialog unavailable'))
+    registerStorageIpcHandlers(fakeDeps())
+
+    await expect(invoke('storage:pick-directory')).resolves.toBeNull()
+  })
+
+  it('pick-directory returns null when the injected showOpenDialog throws', async () => {
+    const deps = fakeDeps({
+      showOpenDialog: vi.fn().mockRejectedValue(new Error('picker failed'))
+    })
+    registerStorageIpcHandlers(deps)
+
+    await expect(invoke('storage:pick-directory')).resolves.toBeNull()
+    expect(showOpenDialog).not.toHaveBeenCalled()
+  })
+
+  it('migrate copies into the target without committing (no setDataRoot, no relaunch)', async () => {
+    initDataRoot(dataRoot)
+    const deps = fakeDeps()
+    registerStorageIpcHandlers(deps)
+
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({
+      ok: true
+    })
+    expect(deps.runtime.disconnect).toHaveBeenCalledTimes(1)
+    // Phase 1 is copy-only: the pointer is not flipped and the app does not restart until the user
+    // clicks "Restart now" (storage:commit-and-relaunch).
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
+  it('commit-and-relaunch persists the derived target then relaunches', async () => {
+    initDataRoot(dataRoot)
+    const deps = fakeDeps()
+    registerStorageIpcHandlers(deps)
+
+    await expect(invoke('storage:commit-and-relaunch', { parent: targetParent })).resolves.toEqual({
+      ok: true
+    })
+    expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target)
+    expect(deps.relaunch).toHaveBeenCalledTimes(1)
+  })
+
+  it('commit-and-relaunch returns switchoverFailed and does NOT relaunch when setDataRoot throws', async () => {
+    initDataRoot(dataRoot)
+    const deps = fakeDeps({
+      settingsService: {
+        setDataRoot: vi.fn().mockRejectedValue(new Error('disk full')),
+        markOnboardingComplete: vi.fn().mockResolvedValue(undefined),
+        dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
+        getStoredSettings: vi.fn().mockResolvedValue({})
+      }
+    })
+    registerStorageIpcHandlers(deps)
+
+    const outcome = (await invoke('storage:commit-and-relaunch', { parent: targetParent })) as {
+      ok: boolean
+      switchoverFailed?: boolean
+    }
+
+    expect(outcome.ok).toBe(false)
+    expect(outcome.switchoverFailed).toBe(true)
+    expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
+  it('commit-and-relaunch invokes settingsService.setDataRoot as a method, preserving its `this`', async () => {
+    initDataRoot(dataRoot)
+    // Regression: the real settings service is a class whose setDataRoot reads `this.repository`.
+    // The commit handler must pass it wrapped, not as a bare reference — otherwise the pointer flip
+    // throws on undefined `this` and surfaces to the user as switchoverFailed.
+    const persisted: string[] = []
+    class FakeSettingsService {
+      private repository = { save: (path: string): void => void persisted.push(path) }
+      setDataRoot(path: string): Promise<void> {
+        this.repository.save(path)
+        return Promise.resolve()
+      }
+      markOnboardingComplete = vi.fn().mockResolvedValue(undefined)
+      dismissLegacyDataMovePrompt = vi.fn().mockResolvedValue(undefined)
+      getStoredSettings = vi.fn().mockResolvedValue({})
+    }
+    const deps = fakeDeps({ settingsService: new FakeSettingsService() })
+    registerStorageIpcHandlers(deps)
+
+    await expect(invoke('storage:commit-and-relaunch', { parent: targetParent })).resolves.toEqual({
+      ok: true
+    })
+    expect(persisted).toEqual([target])
+    expect(deps.relaunch).toHaveBeenCalledTimes(1)
+  })
+
+  it('discard-migrated-copy removes the derived target and leaves settings untouched', async () => {
+    initDataRoot(dataRoot)
+    await mkdir(target, { recursive: true })
+    await mkdir(join(target, 'artifacts'), { recursive: true })
+    const deps = fakeDeps()
+    registerStorageIpcHandlers(deps)
+
+    await invoke('storage:discard-migrated-copy', { parent: targetParent })
+
+    expect(existsSync(target)).toBe(false)
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
+  it('rejects a concurrent migrate call while one is already in flight', async () => {
+    initDataRoot(dataRoot)
+    let releaseDisconnect: (() => void) | undefined
+    const deps = fakeDeps({
+      runtime: {
+        disconnect: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              releaseDisconnect = resolve
+            })
+        )
+      }
+    })
+    registerStorageIpcHandlers(deps)
+
+    const first = invoke('storage:migrate', { parent: targetParent })
+    await tick()
+
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({
+      ok: false,
+      error: 'A migration is already in progress.'
+    })
+
+    releaseDisconnect?.()
+    await expect(first).resolves.toEqual({ ok: true })
+  })
+
+  it('cancel-migrate aborts the in-flight migration, surfacing a cancelled result', async () => {
+    initDataRoot(dataRoot)
+    let releaseDisconnect: (() => void) | undefined
+    const deps = fakeDeps({
+      runtime: {
+        disconnect: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              releaseDisconnect = resolve
+            })
+        )
+      }
+    })
+    registerStorageIpcHandlers(deps)
+
+    const migratePromise = invoke('storage:migrate', { parent: targetParent })
+    await tick()
+    await invoke('storage:cancel-migrate')
+    releaseDisconnect?.()
+
+    await expect(migratePromise).resolves.toMatchObject({ ok: false, cancelled: true })
+    expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
+  it("validate-data-root returns validateNewDataRoot's ok result for a parent with no OpenScience subdir", async () => {
+    initDataRoot(dataRoot)
+    registerStorageIpcHandlers(fakeDeps())
+
+    await expect(invoke('storage:validate-data-root', { parent: targetParent })).resolves.toEqual({
+      ok: true
+    })
+  })
+
+  it("validate-data-root surfaces validateNewDataRoot's error without throwing", async () => {
+    initDataRoot(dataRoot)
+    registerStorageIpcHandlers(fakeDeps())
+
+    await expect(invoke('storage:validate-data-root', { parent: currentParent })).resolves.toEqual({
+      ok: false,
+      error: 'The new location is the same as the current one.'
+    })
+  })
+
+  it('inspect-data-root returns move and the derived dataRoot for a parent with no OpenScience subdir', async () => {
+    initDataRoot(dataRoot)
+    registerStorageIpcHandlers(fakeDeps())
+
+    await expect(invoke('storage:inspect-data-root', { parent: targetParent })).resolves.toEqual({
+      kind: 'move',
+      dataRoot: target
+    })
+  })
+
+  it('inspect-data-root returns adopt when the derived target already holds our data', async () => {
+    initDataRoot(dataRoot)
+    await mkdir(join(target, 'artifacts'), { recursive: true })
+    registerStorageIpcHandlers(fakeDeps())
+
+    await expect(invoke('storage:inspect-data-root', { parent: targetParent })).resolves.toEqual({
+      kind: 'adopt',
+      dataRoot: target
+    })
+  })
+
+  it('inspect-data-root returns invalid with a reason and the derived dataRoot for an unusable parent', async () => {
+    initDataRoot(dataRoot)
+    registerStorageIpcHandlers(fakeDeps())
+
+    await expect(invoke('storage:inspect-data-root', { parent: currentParent })).resolves.toEqual({
+      kind: 'invalid',
+      dataRoot,
+      error: 'The new location is the same as the current one.'
+    })
+  })
+
+  it('set-data-root-and-relaunch persists the derived target and relaunches on a move parent', async () => {
+    initDataRoot(dataRoot)
+    const deps = fakeDeps()
+    registerStorageIpcHandlers(deps)
+
+    await expect(
+      invoke('storage:set-data-root-and-relaunch', { parent: targetParent })
+    ).resolves.toEqual({ ok: true })
+    expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target)
+    expect(deps.settingsService.markOnboardingComplete).not.toHaveBeenCalled()
+    expect(deps.relaunch).toHaveBeenCalledTimes(1)
+  })
+
+  it('set-data-root-and-relaunch persists the derived target and relaunches on an adopt parent (no move, no engine)', async () => {
+    initDataRoot(dataRoot)
+    await mkdir(join(target, 'artifacts'), { recursive: true })
+    const deps = fakeDeps()
+    registerStorageIpcHandlers(deps)
+
+    await expect(
+      invoke('storage:set-data-root-and-relaunch', { parent: targetParent })
+    ).resolves.toEqual({ ok: true })
+    expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target)
+    expect(deps.relaunch).toHaveBeenCalledTimes(1)
+  })
+
+  it('set-data-root-and-relaunch marks onboarding complete only when markOnboarding is true', async () => {
+    initDataRoot(dataRoot)
+    const deps = fakeDeps()
+    registerStorageIpcHandlers(deps)
+
+    await invoke('storage:set-data-root-and-relaunch', {
+      parent: targetParent,
+      markOnboarding: true
+    })
+
+    expect(deps.settingsService.markOnboardingComplete).toHaveBeenCalledTimes(1)
+  })
+
+  it('set-data-root-and-relaunch does not mark onboarding when markOnboarding is false or omitted', async () => {
+    initDataRoot(dataRoot)
+    const deps = fakeDeps()
+    registerStorageIpcHandlers(deps)
+
+    await invoke('storage:set-data-root-and-relaunch', {
+      parent: targetParent,
+      markOnboarding: false
+    })
+
+    expect(deps.settingsService.markOnboardingComplete).not.toHaveBeenCalled()
+  })
+
+  it('set-data-root-and-relaunch calls setDataRoot, then markOnboardingComplete, then relaunch, in order', async () => {
+    initDataRoot(dataRoot)
+    const callOrder: string[] = []
+    const deps = fakeDeps({
+      settingsService: {
+        setDataRoot: vi.fn().mockImplementation(async () => {
+          callOrder.push('setDataRoot')
+        }),
+        markOnboardingComplete: vi.fn().mockImplementation(async () => {
+          callOrder.push('markOnboardingComplete')
+        }),
+        dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
+        getStoredSettings: vi.fn().mockResolvedValue({})
+      },
+      relaunch: vi.fn().mockImplementation(() => {
+        callOrder.push('relaunch')
+      })
+    })
+    registerStorageIpcHandlers(deps)
+
+    await invoke('storage:set-data-root-and-relaunch', {
+      parent: targetParent,
+      markOnboarding: true
+    })
+
+    expect(callOrder).toEqual(['setDataRoot', 'markOnboardingComplete', 'relaunch'])
+  })
+
+  it('set-data-root-and-relaunch rejects an invalid parent without setting, marking, or relaunching', async () => {
+    initDataRoot(dataRoot)
+    const deps = fakeDeps()
+    registerStorageIpcHandlers(deps)
+
+    await expect(
+      invoke('storage:set-data-root-and-relaunch', { parent: currentParent, markOnboarding: true })
+    ).resolves.toEqual({
+      ok: false,
+      error: 'The new location is the same as the current one.'
+    })
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(deps.settingsService.markOnboardingComplete).not.toHaveBeenCalled()
+    expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
+  it('broadcasts migration progress to all windows by default', async () => {
+    initDataRoot(dataRoot)
+    sentWindows.push({ webContents: { send: vi.fn() }, isDestroyed: () => false })
+    registerStorageIpcHandlers(fakeDeps())
+
+    await invoke('storage:migrate', { parent: targetParent })
+
+    expect(sentWindows[0].webContents.send).toHaveBeenCalledWith(
+      'storage:migrate-progress',
+      expect.objectContaining({ phase: expect.any(String) })
+    )
+  })
+})

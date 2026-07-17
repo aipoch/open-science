@@ -18,6 +18,9 @@ export type PersistedPreviewFileItem = {
   path: string
   format: string
   name: string
+  mimeType?: string
+  size?: number
+  mtimeMs?: number
 }
 
 export type PersistedPreviewState = {
@@ -46,6 +49,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const asString = (value: unknown): string | undefined =>
   typeof value === 'string' ? value : undefined
 
+const asNonNegativeNumber = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined
+
 // Canonical empty state for projects that have never had a preview open.
 export const createEmptyPersistedPreviewState = (): PersistedPreviewState => ({
   version: PREVIEW_STATE_VERSION,
@@ -73,8 +79,14 @@ const sanitizePreviewFileItem = (value: unknown): PersistedPreviewFileItem | und
     name
   }
   const source = asString(value.source)
+  const mimeType = asString(value.mimeType)
+  const size = asNonNegativeNumber(value.size)
+  const mtimeMs = asNonNegativeNumber(value.mtimeMs)
 
   if (source) item.source = source
+  if (mimeType) item.mimeType = mimeType
+  if (size !== undefined) item.size = size
+  if (mtimeMs !== undefined) item.mtimeMs = mtimeMs
 
   return item
 }

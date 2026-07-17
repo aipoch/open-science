@@ -35,6 +35,9 @@ export type PreviewFileItem = PreviewItemBase & {
   path: string
   format: PreviewFileFormat
   name: string
+  mimeType?: string
+  size?: number
+  mtimeMs?: number
 }
 
 // Tool previews share the workbench chrome with files, but keep their own render path.

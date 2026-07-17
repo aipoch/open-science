@@ -84,7 +84,7 @@ export const OfficePreviewContent = ({
     }, OFFICE_PREVIEW_TIMEOUT_MS)
 
     const render = async (): Promise<void> => {
-      // Pass the format-specific limit across IPC so oversized files are rejected before readFile.
+      // Check the format-specific limit against managed stat metadata before any range transfer.
       const maxBytes =
         item.format === 'word'
           ? DOCX_PREVIEW_MAX_COMPRESSED_BYTES

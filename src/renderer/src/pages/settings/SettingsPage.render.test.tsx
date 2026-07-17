@@ -113,7 +113,7 @@ describe('SettingsPage layout', () => {
     expect(dialog?.getAttribute('data-slot')).toBe('settings-surface')
     expect(dialog?.className).toContain('overscroll-contain')
 
-    // Left navigation grouped as Capabilities (Skills) and Workspace (Model, General).
+    // Left navigation grouped as Capabilities (Skills) and Workspace (Model, Storage, General).
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
     expect(nav?.className).toContain('bg-background')
@@ -121,11 +121,12 @@ describe('SettingsPage layout', () => {
     expect(nav?.textContent).toContain('Capabilities')
     expect(nav?.textContent).toContain('Workspace')
     const navItems = nav?.querySelectorAll('li') ?? []
-    expect(navItems).toHaveLength(4)
+    expect(navItems).toHaveLength(5)
     expect(navItems[0]?.textContent).toContain('Skills')
     expect(navItems[1]?.textContent).toContain('Connectors')
     expect(navItems[2]?.textContent).toContain('Model')
-    expect(navItems[3]?.textContent).toContain('General')
+    expect(navItems[3]?.textContent).toContain('Storage')
+    expect(navItems[4]?.textContent).toContain('General')
     // Model is the default active panel.
     expect(nav?.querySelector('[aria-current="page"]')?.textContent).toContain('Model')
 

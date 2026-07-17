@@ -1,6 +1,8 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 
 import { useSessionPersistence } from '@/lib/session-persistence/session-persistence'
+import { DataRootMissingDialog } from '@/components/DataRootMissingDialog'
+import { LegacyDataMoveDialog } from '@/components/LegacyDataMoveDialog'
 import { UpdateDialog } from '@/components/UpdateDialog'
 import { HomePage } from '@/pages/home/HomePage'
 import { OnboardingWizard } from '@/pages/onboarding/OnboardingWizard'
@@ -27,11 +29,33 @@ const App = (): React.JSX.Element | null => {
   const closeSettings = useSettingsStore((state) => state.closeSettings)
   const enqueueApproval = useSettingsStore((state) => state.enqueueApproval)
   const initUpdates = useUpdateStore((state) => state.init)
+  // §20.4: settings.dataRoot configured but the folder is gone (deleted or an unmounted drive).
+  const [missingDataRoot, setMissingDataRoot] = useState<string | undefined>(undefined)
+  // Legacy (pre-§20) install whose data still lives in the hidden config root: offer the one-time
+  // "move it into the visible OpenScience folder" prompt. Null once absent/answered.
+  const [legacyMove, setLegacyMove] = useState<
+    { currentDataRoot: string; defaultParent: string } | undefined
+  >(undefined)
 
   // Load app info and subscribe to update-status broadcasts once at startup.
   useEffect(() => {
     initUpdates()
   }, [initUpdates])
+
+  // Checked once at startup, after the gate is settled: dataRootMissing only fires for an
+  // explicitly-configured root, which implies onboarding already completed - never during the
+  // wizard itself.
+  useEffect(() => {
+    void window.api.storage.getInfo().then((info) => {
+      if (info.dataRootMissing) setMissingDataRoot(info.dataRoot)
+      else if (info.legacyDataMovePrompt) {
+        setLegacyMove({
+          currentDataRoot: info.dataRoot,
+          defaultParent: info.defaultParent
+        })
+      }
+    })
+  }, [])
 
   // Subscribe once to connector approval requests from the main-process gate; they surface as a
   // modal the user must answer before the held connector call proceeds.
@@ -81,6 +105,18 @@ const App = (): React.JSX.Element | null => {
       <SettingsPage open={isSettingsOpen} onClose={closeSettings} />
       <ConnectorApprovalDialog />
       <UpdateDialog />
+      <DataRootMissingDialog
+        open={missingDataRoot !== undefined}
+        dataRoot={missingDataRoot ?? ''}
+        onResolved={() => setMissingDataRoot(undefined)}
+      />
+      {legacyMove !== undefined ? (
+        <LegacyDataMoveDialog
+          currentDataRoot={legacyMove.currentDataRoot}
+          defaultParent={legacyMove.defaultParent}
+          onDismiss={() => setLegacyMove(undefined)}
+        />
+      ) : null}
     </>
   )
 }

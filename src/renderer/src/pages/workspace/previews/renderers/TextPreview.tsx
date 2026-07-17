@@ -1,8 +1,6 @@
-import { FileWarning } from 'lucide-react'
-
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
-import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
+import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { usePreviewFileContent } from '../usePreviewFileContent'
 import { SourcePreviewContent } from './SourcePreview'
@@ -22,19 +20,17 @@ export const PreviewTextContent = ({
 
   if (state.status === 'error' || state.preview.encoding !== 'utf8') {
     return (
-      <PreviewFallbackCard
-        icon={FileWarning}
+      <PreviewErrorCard
         path={path}
         name={name}
         source={source}
-        message="File couldn't be read for preview"
+        error={state.status === 'error' ? state.error : undefined}
+        fallbackMessage="File couldn't be read for preview"
       />
     )
   }
 
-  return (
-    <SourcePreviewContent content={state.preview.content} truncated={state.preview.truncated} />
-  )
+  return <SourcePreviewContent content={state.preview.content} pagination={state.pagination} />
 }
 
 export const TextPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => (

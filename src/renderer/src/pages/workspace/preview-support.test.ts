@@ -75,7 +75,7 @@ describe('preview support format detection', () => {
   })
 
   it.each([
-    ['image', 'base64'],
+    ['image', undefined],
     ['csv', 'utf8'],
     ['fasta', 'utf8'],
     ['text', 'utf8'],

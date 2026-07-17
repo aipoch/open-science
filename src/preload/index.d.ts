@@ -17,9 +17,7 @@ import type {
   ArtifactFile,
   ArtifactPreviewResult,
   FinalizeRunArtifactsRequest,
-  ManagedFileBytesResult,
   OpenArtifactFileRequest,
-  ReadArtifactBytesRequest,
   ReadArtifactPreviewRequest
 } from '../shared/artifacts'
 import type { SaveBlobFileRequest, SaveBlobFileResult } from '../shared/file-save'
@@ -43,6 +41,13 @@ import type {
   PersistedPreviewState,
   SavePreviewStateRequest
 } from '../shared/preview-state'
+import type {
+  AcquireManagedPreviewRequest,
+  ManagedPreviewRangeResult,
+  ManagedPreviewResource,
+  ReadManagedPreviewRangeRequest,
+  ReleaseManagedPreviewRequest
+} from '../shared/preview-resources'
 import type {
   CreateProjectRequest,
   DeleteProjectRequest,
@@ -97,13 +102,19 @@ import type {
   ValidateProviderRequest,
   ValidateProviderResult
 } from '../shared/settings'
+import type {
+  ActiveSessionInfo,
+  DataRootInspection,
+  DataRootValidationResult,
+  MigrationOutcome,
+  MigrationProgress,
+  StorageInfo
+} from '../shared/storage'
 import type { AppInfo, UpdateStatus } from '../shared/update'
 import type {
   DeleteUploadRequest,
   FinalizeUploadSessionRequest,
-  ReadUploadBytesRequest,
   StageUploadFilesRequest,
-  UploadBytesResult,
   UploadedAttachment
 } from '../shared/uploads'
 
@@ -211,11 +222,15 @@ interface OpenScienceAPI {
     save(request: SavePreviewStateRequest): Promise<void>
     delete(request: DeletePreviewStateRequest): Promise<void>
   }
+  previewResources: {
+    acquire(request: AcquireManagedPreviewRequest): Promise<ManagedPreviewResource>
+    readRange(request: ReadManagedPreviewRangeRequest): Promise<ManagedPreviewRangeResult>
+    release(request: ReleaseManagedPreviewRequest): Promise<void>
+  }
   artifacts: {
     finalizeRunArtifacts(request: FinalizeRunArtifactsRequest): Promise<ArtifactFile[]>
     openFile(request: OpenArtifactFileRequest): Promise<void>
     readPreview(request: ReadArtifactPreviewRequest): Promise<ArtifactPreviewResult>
-    readBytes(request: ReadArtifactBytesRequest): Promise<ManagedFileBytesResult>
   }
   uploads: {
     // Stages files selected or pasted in the renderer into app-managed upload storage.
@@ -226,8 +241,6 @@ interface OpenScienceAPI {
     finalizeSession(request: FinalizeUploadSessionRequest): Promise<UploadedAttachment[]>
     // Reads a bounded preview from upload storage using the same preview result shape as artifacts.
     readPreview(request: ReadArtifactPreviewRequest): Promise<ArtifactPreviewResult>
-    // Reads a whole upload as base64 bytes for viewers that need the full file (e.g. PDF preview).
-    readBytes(request: ReadUploadBytesRequest): Promise<UploadBytesResult>
   }
   notebook: {
     state(request: NotebookSessionRequest): Promise<NotebookSessionState>
@@ -256,6 +269,32 @@ interface OpenScienceAPI {
     shutdown(request: NotebookSessionRequest): Promise<{ sessionId: string; status: 'shutdown' }>
     onAvailable(listener: AcpListener<NotebookAvailableEvent>): RemoveListener
     onChanged(listener: AcpListener<NotebookChangedEvent>): RemoveListener
+  }
+  storage: {
+    getInfo(): Promise<StorageInfo>
+    detectActive(): Promise<ActiveSessionInfo[]>
+    // Opens the native folder picker; resolves null on cancel.
+    pickDirectory(): Promise<string | null>
+    // Onboarding location step: check a candidate parent before letting the user commit to it.
+    // The final data root is always `<parent>/OpenScience`, never the parent itself.
+    validateDataRoot(parent: string): Promise<DataRootValidationResult>
+    // Settings + onboarding: classify a candidate parent (move/adopt/invalid) without committing;
+    // `dataRoot` on the result is the derived `<parent>/OpenScience` path.
+    inspectDataRoot(parent: string): Promise<DataRootInspection>
+    migrate(parent: string): Promise<MigrationOutcome>
+    // No-move pointer switch: set dataRoot then relaunch. Accepts both a 'move' (first-run, no
+    // data to move yet) and an 'adopt' (existing data folder) target - use `migrate` instead for
+    // an already-active data root's move-with-copy. `markOnboarding` is set by onboarding only.
+    setDataRootAndRelaunch(
+      parent: string,
+      markOnboarding?: boolean
+    ): Promise<DataRootValidationResult>
+    cancelMigrate(): Promise<void>
+    commitAndRelaunch(parent: string): Promise<MigrationOutcome>
+    discardMigratedCopy(parent: string): Promise<void>
+    // Marks the one-time legacy-data-move prompt as answered (declined / keep-here) so it's not shown again.
+    dismissLegacyMovePrompt(): Promise<void>
+    onProgress(listener: AcpListener<MigrationProgress>): RemoveListener
   }
 }
 

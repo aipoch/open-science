@@ -2,7 +2,7 @@ import { app, BrowserWindow, shell, type BrowserWindowConstructorOptions } from 
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { isAllowedExternalUrl } from './external-navigation'
+import { isAllowedExternalNavigation, isAllowedFrameNavigation } from './navigation-policy'
 
 const rendererEntry = join(__dirname, '../renderer/index.html')
 const preloadEntry = join(__dirname, '../preload/index.js')
@@ -35,10 +35,18 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
     window.show()
   })
 
-  // Never let document-generated links ask the OS to open local files or privileged URL schemes.
   window.webContents.setWindowOpenHandler((details) => {
-    if (isAllowedExternalUrl(details.url)) void shell.openExternal(details.url)
+    if (
+      isAllowedExternalNavigation(details.url, details.referrer.url, window.webContents.getURL())
+    ) {
+      void shell.openExternal(details.url)
+    }
     return { action: 'deny' }
+  })
+  window.webContents.on('will-frame-navigate', (details) => {
+    if (!isAllowedFrameNavigation(details.url, details.isMainFrame, window.webContents.getURL())) {
+      details.preventDefault()
+    }
   })
 
   return window

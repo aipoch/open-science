@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -141,6 +141,19 @@ describe('ProjectFilesView', () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     window.api = {
+      previewResources: {
+        acquire: vi.fn(({ path }: { path: string }) =>
+          Promise.resolve({
+            id: `resource:${path}`,
+            url: `open-science-preview://resource/${encodeURIComponent(path)}`,
+            size: 40 * 1024 * 1024,
+            mimeType: 'image/png',
+            version: 1
+          })
+        ),
+        readRange: vi.fn(),
+        release: vi.fn().mockResolvedValue(undefined)
+      },
       artifacts: {
         readPreview: vi.fn().mockResolvedValue({
           content: 'ZmFrZS1pbWFnZQ==',
@@ -166,9 +179,10 @@ describe('ProjectFilesView', () => {
     })
     container.remove()
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
-  const renderView = async (sessions: ChatSession[]): Promise<void> => {
+  const renderView = async (sessions: ChatSession[], strict = false): Promise<void> => {
     const { useSessionStore } = await import('@/stores/session-store')
     const { useNavigationStore } = await import('@/stores/navigation-store')
     const { ProjectFilesView } = await import('./ProjectFilesView')
@@ -181,7 +195,7 @@ describe('ProjectFilesView', () => {
     useNavigationStore.setState({ view: 'workspace', activeProjectId: 'default' })
     root = createRoot(container)
     await act(async () => {
-      root.render(<ProjectFilesView />)
+      root.render(strict ? <StrictMode>{<ProjectFilesView />}</StrictMode> : <ProjectFilesView />)
     })
   }
 
@@ -405,7 +419,7 @@ describe('ProjectFilesView', () => {
     expect(generatedButton?.textContent).toContain('2 hours ago')
   })
 
-  it('renders generated and uploaded file thumbnails with the existing preview reader path', async () => {
+  it('streams image bodies without loading them into base64 preview content', async () => {
     await renderView([
       createSession({
         messages: [
@@ -439,20 +453,217 @@ describe('ProjectFilesView', () => {
       await Promise.resolve()
     })
 
-    expect(window.api.artifacts.readPreview).toHaveBeenCalledWith(
-      expect.objectContaining({
-        path: '/workspace/typhoon_tracks.png',
-        encoding: 'base64'
+    expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
+      source: 'artifact',
+      path: '/workspace/typhoon_tracks.png',
+      mimeType: 'image/png'
+    })
+    expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
+      source: 'upload',
+      path: '/uploads/uploaded_image.png',
+      mimeType: 'image/png'
+    })
+    expect(
+      vi
+        .mocked(window.api.artifacts.readPreview)
+        .mock.calls.every(([request]) => request.maxBytes === 1)
+    ).toBe(true)
+    expect(
+      vi
+        .mocked(window.api.uploads.readPreview)
+        .mock.calls.every(([request]) => request.maxBytes === 1)
+    ).toBe(true)
+    expect(
+      container.querySelector('img[alt="Preview of typhoon_tracks.png"]')?.getAttribute('src')
+    ).toContain('open-science-preview://')
+    expect(
+      container.querySelector('img[alt="Preview of uploaded_image.png"]')?.getAttribute('src')
+    ).toContain('open-science-preview://')
+  })
+
+  it('reacquires an image thumbnail when the file changes at the same path', async () => {
+    const createImageSession = (size: number, mtimeMs: number): ChatSession =>
+      createSession({
+        artifacts: [
+          {
+            id: 'artifact-1',
+            kind: 'managed-file',
+            path: '/workspace/changing.png',
+            fileUrl: 'file:///workspace/changing.png',
+            name: 'changing.png',
+            mimeType: 'image/png',
+            size,
+            mtimeMs
+          }
+        ]
       })
-    )
-    expect(window.api.uploads.readPreview).toHaveBeenCalledWith(
-      expect.objectContaining({
-        path: '/uploads/uploaded_image.png',
-        encoding: 'base64'
+    await renderView([createImageSession(4096, 1710000002000)])
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const { useSessionStore } = await import('@/stores/session-store')
+    await act(async () => {
+      useSessionStore.setState({ sessions: [createImageSession(8192, 1710000003000)] })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
+    expect(window.api.previewResources.release).toHaveBeenCalledWith({
+      resourceId: 'resource:/workspace/changing.png'
+    })
+  })
+
+  it('passes MIME metadata when an extensionless image acquires its resource', async () => {
+    await renderView([
+      createSession({
+        artifacts: [
+          {
+            id: 'artifact-1',
+            kind: 'managed-file',
+            path: '/workspace/generated-image',
+            fileUrl: 'file:///workspace/generated-image',
+            name: 'generated-image',
+            mimeType: 'image/png',
+            size: 4096,
+            mtimeMs: 1710000002000
+          }
+        ]
       })
+    ])
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
+      source: 'artifact',
+      path: '/workspace/generated-image',
+      mimeType: 'image/png'
+    })
+  })
+
+  it('releases a thumbnail resource when the managed image cannot be decoded', async () => {
+    await renderView([
+      createSession({
+        artifacts: [
+          {
+            id: 'artifact-1',
+            kind: 'managed-file',
+            path: '/workspace/broken.png',
+            fileUrl: 'file:///workspace/broken.png',
+            name: 'broken.png',
+            mimeType: 'image/png',
+            size: 4096,
+            mtimeMs: 1710000002000
+          }
+        ]
+      })
+    ])
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      container.querySelector('img[alt="Preview of broken.png"]')?.dispatchEvent(new Event('error'))
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('img[alt="Preview of broken.png"]')).toBeNull()
+    expect(window.api.previewResources.release).toHaveBeenCalledWith({
+      resourceId: 'resource:/workspace/broken.png'
+    })
+  })
+
+  it('waits until a text thumbnail is near the viewport before reading its first chunk', async () => {
+    let intersectionCallback: IntersectionObserverCallback | undefined
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        observe = vi.fn()
+        unobserve = vi.fn()
+        disconnect = vi.fn()
+
+        constructor(callback: IntersectionObserverCallback) {
+          intersectionCallback = callback
+        }
+      }
     )
-    expect(container.querySelector('img[alt="Preview of typhoon_tracks.png"]')).not.toBeNull()
-    expect(container.querySelector('img[alt="Preview of uploaded_image.png"]')).not.toBeNull()
+
+    await renderView([
+      createSession({
+        artifacts: [
+          {
+            id: 'artifact-csv',
+            kind: 'managed-file',
+            path: '/workspace/results.csv',
+            fileUrl: 'file:///workspace/results.csv',
+            name: 'results.csv',
+            mimeType: 'text/csv',
+            size: 10 * 1024 * 1024,
+            mtimeMs: 1710000002000
+          }
+        ]
+      })
+    ])
+
+    expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
+
+    await act(async () => {
+      intersectionCallback?.(
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(window.api.artifacts.readPreview).toHaveBeenCalledWith({
+      path: '/workspace/results.csv',
+      maxBytes: 32768,
+      encoding: 'utf8'
+    })
+  })
+
+  it('badges a file whose source is missing on disk', async () => {
+    const enoent = Object.assign(new Error('ENOENT: no such file or directory'), {
+      code: 'ENOENT'
+    })
+    ;(window.api.artifacts.readPreview as ReturnType<typeof vi.fn>).mockRejectedValue(enoent)
+
+    // Rendered under StrictMode: the existence probe must survive the dev double-invoke (its first
+    // effect pass is canceled), which a synchronous path-claim would break.
+    await renderView(
+      [
+        createSession({
+          artifacts: [
+            {
+              id: 'artifact-gone',
+              kind: 'managed-file',
+              path: '/workspace/gone.png',
+              fileUrl: 'file:///workspace/gone.png',
+              name: 'gone.png',
+              mimeType: 'image/png',
+              size: 4096,
+              mtimeMs: 1710000002000
+            }
+          ]
+        })
+      ],
+      true
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // The existence probe rejected with ENOENT, so the tile carries the "Missing" tag.
+    expect(container.textContent).toContain('Missing')
   })
 
   it('uses the same text preview capability for generated files and uploads', async () => {
@@ -511,14 +722,24 @@ describe('ProjectFilesView', () => {
 
   it('retries an uploaded CSV thumbnail after its pending path is finalized', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    vi.mocked(window.api.uploads.readPreview)
-      .mockRejectedValueOnce(new Error('ENOENT: pending upload moved'))
-      .mockResolvedValueOnce({
+    // The existence probe issues a 1-byte read per file; key the mock on maxBytes so it neither
+    // consumes the thumbnail-read sequence below nor badges the pending upload as missing.
+    let thumbnailReads = 0
+    vi.mocked(window.api.uploads.readPreview).mockImplementation((request) => {
+      if (request.maxBytes === 1) {
+        return Promise.resolve({ content: '', encoding: 'base64', size: 0, truncated: false })
+      }
+      thumbnailReads += 1
+      if (thumbnailReads === 1) {
+        return Promise.reject(new Error('ENOENT: pending upload moved'))
+      }
+      return Promise.resolve({
         content: 'sample,value\nalpha,1\n',
         encoding: 'utf8',
         size: 21,
         truncated: false
       })
+    })
 
     await renderView([
       createSession({
@@ -563,26 +784,37 @@ describe('ProjectFilesView', () => {
       await Promise.resolve()
     })
 
-    expect(consoleError).toHaveBeenCalledWith(
+    // The pending-path read failed with ENOENT, which is an expected unavailable-file error and is
+    // deliberately not logged; only the successful retry should surface the finalized content.
+    expect(consoleError).not.toHaveBeenCalledWith(
       'Failed to read project file preview',
       expect.any(Error)
     )
-    expect(window.api.uploads.readPreview).toHaveBeenCalledTimes(2)
-    expect(window.api.uploads.readPreview).toHaveBeenLastCalledWith(
+    expect(window.api.uploads.readPreview).toHaveBeenCalledWith(
       expect.objectContaining({ path: '/uploads/session-1/results.csv', encoding: 'utf8' })
     )
     expect(container.textContent).toContain('1 rows · 2 columns')
   })
 
   it('hides a stale thumbnail while a new file version is loading', async () => {
-    vi.mocked(window.api.uploads.readPreview)
-      .mockResolvedValueOnce({
-        content: 'legacy_column,value\nold,1\n',
-        encoding: 'utf8',
-        size: 26,
-        truncated: false
-      })
-      .mockImplementationOnce(() => new Promise(() => undefined))
+    // Key the mock on maxBytes so the existence probe's 1-byte read never consumes the versioned
+    // thumbnail-read sequence (legacy resolves, the next version hangs while loading).
+    let thumbnailReads = 0
+    vi.mocked(window.api.uploads.readPreview).mockImplementation((request) => {
+      if (request.maxBytes === 1) {
+        return Promise.resolve({ content: '', encoding: 'base64', size: 0, truncated: false })
+      }
+      thumbnailReads += 1
+      if (thumbnailReads === 1) {
+        return Promise.resolve({
+          content: 'legacy_column,value\nold,1\n',
+          encoding: 'utf8',
+          size: 26,
+          truncated: false
+        })
+      }
+      return new Promise(() => undefined)
+    })
 
     await renderView([
       createSession({
@@ -626,7 +858,9 @@ describe('ProjectFilesView', () => {
       await Promise.resolve()
     })
 
-    expect(window.api.uploads.readPreview).toHaveBeenCalledTimes(2)
+    expect(window.api.uploads.readPreview).toHaveBeenCalledWith(
+      expect.objectContaining({ path: '/uploads/session-1/results.csv', encoding: 'utf8' })
+    )
     expect(container.textContent).not.toContain('legacy_column')
   })
 
@@ -730,5 +964,76 @@ describe('ProjectFilesView', () => {
         name: 'tree.png'
       }
     ])
+  })
+
+  it('does not restart a pending thumbnail read when another tile becomes visible', async () => {
+    const observed = new Map<Element, IntersectionObserverCallback>()
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        observe = vi.fn((element: Element) => observed.set(element, this.callback))
+        unobserve = vi.fn()
+        disconnect = vi.fn()
+
+        constructor(private readonly callback: IntersectionObserverCallback) {}
+      }
+    )
+    vi.mocked(window.api.artifacts.readPreview).mockImplementation(
+      () => new Promise(() => undefined)
+    )
+    await renderView([
+      createSession({
+        artifacts: [
+          {
+            id: 'artifact-1',
+            kind: 'managed-file',
+            path: '/workspace/first.txt',
+            fileUrl: 'file:///workspace/first.txt',
+            name: 'first.txt',
+            mimeType: 'text/plain',
+            size: 128,
+            mtimeMs: 1710000000100
+          },
+          {
+            id: 'artifact-2',
+            kind: 'managed-file',
+            path: '/workspace/second.txt',
+            fileUrl: 'file:///workspace/second.txt',
+            name: 'second.txt',
+            mimeType: 'text/plain',
+            size: 128,
+            mtimeMs: 1710000000200
+          }
+        ]
+      })
+    ])
+    const first = container.querySelector('[aria-label="Preview generated file first.txt"]')
+    const second = container.querySelector('[aria-label="Preview generated file second.txt"]')
+
+    await act(async () => {
+      observed.get(first as Element)?.(
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+      await Promise.resolve()
+    })
+    await act(async () => {
+      observed.get(second as Element)?.(
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+      await Promise.resolve()
+    })
+
+    const thumbnailReads = vi
+      .mocked(window.api.artifacts.readPreview)
+      .mock.calls.filter(([request]) => request.maxBytes !== 1)
+    expect(thumbnailReads).toHaveLength(2)
+    expect(thumbnailReads[0]?.[0]).toEqual(
+      expect.objectContaining({ path: '/workspace/first.txt' })
+    )
+    expect(thumbnailReads[1]?.[0]).toEqual(
+      expect.objectContaining({ path: '/workspace/second.txt' })
+    )
   })
 })

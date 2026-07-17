@@ -31,7 +31,10 @@ const toPersistedPreviewState = (state: PreviewStoreState): PersistedPreviewStat
       source: item.source,
       path: item.path,
       format: item.format,
-      name: item.name
+      name: item.name,
+      ...(item.mimeType ? { mimeType: item.mimeType } : {}),
+      ...(item.size !== undefined ? { size: item.size } : {}),
+      ...(item.mtimeMs !== undefined ? { mtimeMs: item.mtimeMs } : {})
     }))
 })
 
@@ -41,7 +44,10 @@ const toRestoredSlice = (
   sessions: ChatSession[] = []
 ): RestoredPreviewSlice => {
   // Hydrated sessions hold finalized upload paths while persisted tabs may still reference staging.
-  const uploadByPreviewId = new Map<string, { sessionId: string; path: string }>()
+  const uploadByPreviewId = new Map<
+    string,
+    { sessionId: string; path: string; size: number; mimeType?: string }
+  >()
 
   for (const session of sessions) {
     for (const message of session.messages) {
@@ -56,7 +62,8 @@ const toRestoredSlice = (
     activeItemId: persisted.activeItemId,
     items: persisted.items.map((item) => {
       const upload = item.source === 'upload' ? uploadByPreviewId.get(item.id) : undefined
-      const currentFormat = getPreviewFormatForFile({ name: item.name })
+      const mimeType = upload?.mimeType ?? item.mimeType
+      const currentFormat = getPreviewFormatForFile({ name: item.name, mimeType })
 
       return {
         id: item.id,
@@ -65,9 +72,14 @@ const toRestoredSlice = (
         type: 'file' as const,
         source: item.source as PreviewFileSource | undefined,
         path: upload?.path ?? item.path,
-        // MIME is not persisted, so keep its stored result only when the name cannot infer a format.
+        // Re-evaluate the format from current name/MIME metadata, falling back to the stored result.
         format: currentFormat === 'unknown' ? (item.format as PreviewFileFormat) : currentFormat,
-        name: item.name
+        name: item.name,
+        ...(mimeType ? { mimeType } : {}),
+        ...(upload?.size !== undefined || item.size !== undefined
+          ? { size: upload?.size ?? item.size }
+          : {}),
+        ...(item.mtimeMs !== undefined ? { mtimeMs: item.mtimeMs } : {})
       }
     })
   }
