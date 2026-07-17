@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execPath } from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -48,6 +48,8 @@ const createService = (
     executeClaudeProbe?: (executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>
     installManagedClaudeImpl?: ManagedInstallImpl
     installManagedOpencodeImpl?: ManagedInstallImpl
+    // When set, opencode detection resolves this path/version; otherwise it finds nothing.
+    opencodeDetected?: { path: string; version: string }
   } = {}
 ): InstanceType<typeof SettingsService> =>
   new SettingsService({
@@ -68,13 +70,17 @@ const createService = (
       getVersion: () => Promise.resolve(detectResult.version),
       resolveNpmBinDirs: () => Promise.resolve([])
     },
-    // Isolated so opencode detection never probes the real host during install tests.
+    // Isolated so opencode detection never probes the real host during tests. Finds nothing unless the
+    // caller declares an installed path (isExecutable/getVersion then answer for exactly that path).
     opencodeDetectDeps: {
-      env: {},
+      env: options.opencodeDetected ? { PATH: dirname(options.opencodeDetected.path) } : {},
       homePath: '/home',
       platform: 'linux',
-      isExecutable: () => Promise.resolve(false),
-      getVersion: () => Promise.resolve(undefined),
+      isExecutable: (path) => Promise.resolve(path === options.opencodeDetected?.path),
+      getVersion: (path) =>
+        Promise.resolve(
+          path === options.opencodeDetected?.path ? options.opencodeDetected.version : undefined
+        ),
       resolveNpmBinDirs: () => Promise.resolve([])
     }
   })
@@ -875,6 +881,33 @@ describe('installOpencode', () => {
 
     expect(result.ok).toBe(false)
     expect((await service.getSettingsView()).opencode).toEqual({})
+  })
+})
+
+describe('detectOpencode', () => {
+  it('clears a stale record when nothing runnable is found (e.g. after an uninstall)', async () => {
+    // Simulate a prior install still recorded in settings.
+    await repository.setOpencodeInfo('/gone/bin/opencode', '1.18.3')
+    const service = createService() // default deps find nothing
+
+    const snapshot = await service.detectOpencode()
+
+    // The stale path/version are forgotten so the card and gates reflect the uninstall.
+    expect(snapshot.opencode).toEqual({})
+    expect((await repository.getSettings()).opencodePath).toBeUndefined()
+  })
+
+  it('records the detected path + version when opencode is present', async () => {
+    const service = createService(undefined, {
+      opencodeDetected: { path: '/usr/local/bin/opencode', version: '1.19.0' }
+    })
+
+    const snapshot = await service.detectOpencode()
+
+    expect(snapshot.opencode).toEqual({
+      resolvedPath: '/usr/local/bin/opencode',
+      version: '1.19.0'
+    })
   })
 })
 

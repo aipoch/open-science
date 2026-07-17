@@ -408,6 +408,20 @@ class SettingsRepository {
     }))
   }
 
+  // Forgets the recorded opencode executable so the status card and gates reflect an uninstall. Called
+  // when a re-detect finds nothing; otherwise a stale path lingers and a spawn against the gone binary
+  // fails with EPIPE.
+  async clearOpencodeInfo(): Promise<StoredSettings> {
+    return this.mutate((settings) => {
+      const { opencodePath, opencodeVersion, ...rest } = settings
+
+      void opencodePath
+      void opencodeVersion
+
+      return rest
+    })
+  }
+
   // Stamps the onboarding-completed time exactly once; later calls leave the first value intact.
   async markOnboardingComplete(timestamp: number): Promise<StoredSettings> {
     return this.mutate((settings) =>

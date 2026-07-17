@@ -261,6 +261,10 @@ class SettingsService {
 
     if (detected) {
       await this.repository.setOpencodeInfo(detected.resolvedPath, detected.version)
+    } else {
+      // Nothing runnable found — clear any stale record so the card/gates reflect the uninstall
+      // instead of showing a version for a binary that no longer exists.
+      await this.repository.clearOpencodeInfo()
     }
 
     return this.getSettingsView()
@@ -1140,7 +1144,10 @@ class SettingsService {
 
   // Locates the opencode binary: an explicitly stored path wins, else a best-effort PATH lookup.
   private async resolveOpencodeExecutable(storedPath: string | undefined): Promise<string> {
-    if (storedPath) return storedPath
+    // Trust the stored path only if it still exists. A user who uninstalled opencode leaves a stale
+    // path behind; spawning it launches a ghost that dies immediately (surfacing as write EPIPE), so
+    // fall back to a live detect and, if that also finds nothing, fail with a clear, actionable message.
+    if (storedPath && (await this.pathExists(storedPath))) return storedPath
 
     const detected = await detectOpencode(this.opencodeDetectDeps)
 
