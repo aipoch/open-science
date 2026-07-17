@@ -665,7 +665,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                     <AgentFrameworkSection />
 
                     {agentFrameworkId === 'opencode' ? (
-                      <SettingsSection title="opencode" aria-label="opencode">
+                      <SettingsSection title="OpenCode" aria-label="OpenCode">
                         <OpencodeStatusCard
                           opencode={opencode}
                           isDetecting={isDetectingOpencode}

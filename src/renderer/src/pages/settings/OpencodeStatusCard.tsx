@@ -33,7 +33,7 @@ const OpencodeStatusCard = ({
               <XCircle className="size-4 text-muted-foreground" aria-hidden="true" />
             )}
             <span className="text-sm font-medium text-foreground">
-              {found ? 'opencode is installed' : 'opencode not detected'}
+              {found ? 'OpenCode is installed' : 'OpenCode not detected'}
             </span>
           </div>
           <Button
@@ -58,9 +58,9 @@ const OpencodeStatusCard = ({
           </dl>
         ) : (
           <p className="mt-3 text-xs text-muted-foreground">
-            Install opencode (see{' '}
+            Install OpenCode (see{' '}
             <ExternalTextLink href="https://opencode.ai/docs">opencode.ai/docs</ExternalTextLink>),
-            then re-detect. Your opencode providers and login are used as-is.
+            then re-detect.
           </p>
         )}
       </CardContent>

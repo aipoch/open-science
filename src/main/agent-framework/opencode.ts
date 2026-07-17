@@ -85,7 +85,7 @@ export { buildOpencodeConfig }
 
 export const opencodeFramework: AgentFramework = {
   id: 'opencode',
-  displayName: 'opencode',
+  displayName: 'OpenCode',
   // opencode has agents/commands, not config-dir skills; hide the skills UI + force-load path.
   supportsSkills: false,
   // Handshake shows opencode advertises mcpCapabilities http+sse only (no stdio). Until the app exposes
