@@ -111,9 +111,11 @@ export const opencodeFramework: AgentFramework = {
   // opencode discovers skills natively at <configDir>/skills/<name>/SKILL.md (same layout as Claude),
   // loaded on-demand via its skill tool; the app materializes the enabled set into the isolated config.
   supportsSkills: true,
-  // Handshake shows opencode advertises mcpCapabilities http+sse only (no stdio). Until the app exposes
-  // its artifact/notebook MCP over http, they're gated off for opencode and only basic turns run.
-  acceptsStdioMcp: false,
+  // opencode accepts stdio MCP servers over ACP (verified live vs 1.17.13: it launches a stdio server
+  // and sends it the MCP initialize handshake). Its mcpCapabilities advertise only http/sse because
+  // ACP has no stdio flag — stdio is the baseline transport. So opencode uses the SAME stdio artifact/
+  // notebook config as Claude; the http MCP host stays in the runtime but no framework needs it.
+  acceptsStdioMcp: true,
   // opencode speaks both Anthropic /v1/messages and OpenAI /v1/chat/completions.
   supportedApiTypes: ['anthropic', 'openai'],
 

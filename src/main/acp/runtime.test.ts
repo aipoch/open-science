@@ -659,7 +659,7 @@ describe('ACP runtime session management', () => {
     })
   })
 
-  it('withholds stdio MCP servers and tool guidance for an http-only framework (opencode)', async () => {
+  it('gives opencode the stdio artifact MCP server + tool guidance (it accepts stdio like Claude)', async () => {
     const root = await createTemporaryRoot()
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['oc-session'])
@@ -667,7 +667,7 @@ describe('ACP runtime session management', () => {
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
-      // opencode advertises http/sse MCP only (acceptsStdioMcp: false) and carries no Claude _meta.
+      // opencode accepts stdio MCP over ACP (verified live), so it gets the same stdio config as Claude.
       framework: opencodeFramework,
       artifacts: {
         configRoot: root,
@@ -680,12 +680,15 @@ describe('ACP runtime session management', () => {
     const session = await runtime.createSession({ cwd: '/workspace' })
     await runtime.sendPrompt({ sessionId: session.sessionId, text: 'hello opencode' })
 
-    // The stdio artifact server is withheld and no Claude _meta is sent; the artifact tool guidance is
-    // dropped so the agent is never told to use a tool it wasn't given.
-    expect(fakeAgent.newSessions[0].mcpServers).toEqual([])
+    // The artifact server is delivered over stdio (command/args, not a url) and its tool guidance rides
+    // opencode's prompt prefix. No Claude _meta is sent (that stays framework-specific).
+    const servers = fakeAgent.newSessions[0].mcpServers as Array<{ command?: string; url?: string }>
+    expect(servers).toHaveLength(1)
+    expect(servers[0].command).toBeTruthy()
+    expect(servers[0].url).toBeUndefined()
     expect(fakeAgent.newSessions[0]._meta).toBeUndefined()
     expect(fakeAgent.prompts[0].text).toContain('hello opencode')
-    expect(fakeAgent.prompts[0].text).not.toContain('write_artifact_file')
+    expect(fakeAgent.prompts[0].text).toContain('write_artifact_file')
   })
 
   it('serves artifact/notebook MCP over the http host for an http-only framework', async () => {
@@ -697,7 +700,9 @@ describe('ACP runtime session management', () => {
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
-      framework: opencodeFramework,
+      // A synthetic http-only framework keeps the http-host path covered now that opencode uses stdio;
+      // the AgentMcpHttpHost stays in the runtime for any future framework that rejects stdio MCP.
+      framework: { ...opencodeFramework, acceptsStdioMcp: false },
       mcpHttpHost: httpHost,
       artifacts: {
         configRoot: root,
