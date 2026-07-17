@@ -7,7 +7,8 @@
 // that shifts over time — update the lists here as vendors publish new models. Only vendors with a
 // documented Anthropic-compatible endpoint belong here (e.g. OpenAI's native API does not qualify).
 
-export type OfficialVendorId = 'anthropic' | 'deepseek' | 'zhipu' | 'minimax'
+export type OfficialVendorId =
+  'anthropic' | 'deepseek' | 'zhipu' | 'minimax' | 'kimi' | 'kimiforcode'
 
 // A selectable endpoint for vendors that publish more than one host — e.g. a Global vs. China region
 // (MiniMax) or a separate overseas/domestic console (GLM's Z.AI vs. BigModel). Each carries its own
@@ -65,7 +66,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   },
   {
     id: 'zhipu',
-    label: 'GLM (Z.AI / BigModel)',
+    label: 'Zhipu AI (GLM)',
     // GLM serves overseas from Z.AI and mainland China from BigModel (智谱) — different hosts and
     // separate consoles, so they are distinct endpoints rather than one base URL.
     regions: [
@@ -73,7 +74,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         id: 'global',
         label: 'Global (Z.AI)',
         baseUrl: 'https://api.z.ai/api/anthropic',
-        apiKeyUrl: 'https://z.ai/manage-apikey/apikey-list'
+        apiKeyUrl: 'https://z.ai'
       },
       {
         id: 'china',
@@ -82,7 +83,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         apiKeyUrl: 'https://open.bigmodel.cn/usercenter/apikeys'
       }
     ],
-    models: ['glm-5.2', 'glm-5-turbo', 'glm-4.7', 'glm-4.5-air']
+    models: ['glm-5.2', 'glm-5.1', 'glm-5', 'glm-5v-turbo', 'glm-5-turbo']
   },
   {
     id: 'minimax',
@@ -102,6 +103,25 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       }
     ],
     models: ['MiniMax-M3', 'MiniMax-M3[1m]', 'MiniMax-M2.7', 'MiniMax-M2.5']
+  },
+  {
+    id: 'kimi',
+    label: 'Kimi (Moonshot)',
+    // Moonshot's Anthropic-compatible route for the general Kimi platform. Models are billed per token
+    // and can be refreshed from the live list endpoint below.
+    baseUrl: 'https://api.moonshot.cn/anthropic',
+    apiKeyUrl: 'https://platform.kimi.com/console',
+    modelsListUrl: 'https://api.moonshot.cn/v1/models',
+    models: ['kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6', 'kimi-k2.5']
+  },
+  {
+    id: 'kimiforcode',
+    label: 'Kimi For Coding',
+    // The Kimi Code subscription endpoint: quota-based models (billed against a periodically refreshing
+    // quota rather than per token), so it ships a fixed catalog and exposes no live model list.
+    baseUrl: 'https://api.kimi.com/coding',
+    apiKeyUrl: 'https://www.kimi.com/code/docs',
+    models: ['kimi-k3', 'kimi-for-coding', 'kimi-for-coding-highspeed']
   }
 ]
 

@@ -66,7 +66,7 @@ describe('provider registry', () => {
     expect(resolveVendorApiKeyUrl('zhipu', 'china')).toBe(
       'https://open.bigmodel.cn/usercenter/apikeys'
     )
-    expect(resolveVendorApiKeyUrl('zhipu')).toBe('https://z.ai/manage-apikey/apikey-list')
+    expect(resolveVendorApiKeyUrl('zhipu')).toBe('https://z.ai')
   })
 
   it('returns undefined for unknown vendors', () => {
