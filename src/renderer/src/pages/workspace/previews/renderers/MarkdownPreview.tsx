@@ -3,6 +3,7 @@ import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { usePreviewFileContent } from '../usePreviewFileContent'
+import { SourcePreviewContent } from './SourcePreview'
 
 export const MarkdownPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => {
   const state = usePreviewFileContent({ path: item.path, source: item.source })
@@ -21,13 +22,12 @@ export const MarkdownPreviewRenderer = ({ item }: PreviewFileRendererProps): Rea
     )
   }
 
+  if (state.preview.truncated || state.pagination.pageNumber > 1) {
+    return <SourcePreviewContent content={state.preview.content} pagination={state.pagination} />
+  }
+
   return (
     <div className="size-full overflow-auto bg-bg-10 p-4">
-      {state.preview.truncated ? (
-        <div className="mb-3 rounded-md border border-border-300 bg-bg-000 px-3 py-2 text-[12px] text-text-300">
-          Preview truncated because the file is large
-        </div>
-      ) : null}
       <AgentMarkdown content={state.preview.content} />
     </div>
   )

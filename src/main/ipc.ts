@@ -17,6 +17,9 @@ import { registerFileSaveHandlers } from './file-save'
 import { registerGithubIpcHandlers } from './github-ipc'
 import { registerLogsIpcHandlers } from './logs-ipc'
 import { createLogger } from './logger'
+import { registerManagedPreviewIpcHandlers } from './managed-preview-ipc'
+import { registerManagedPreviewProtocol } from './managed-preview-protocol'
+import { ManagedPreviewResources } from './managed-preview-resources'
 import { registerNotebookIpcHandlers } from './notebook/ipc'
 import { NotebookLocalRpcServer } from './notebook/local-rpc-server'
 import {
@@ -141,6 +144,13 @@ const registerIpcHandlers = async ({ mainEntryPath }: IpcRegistrationOptions): P
   const artifactRunRegistry = new ArtifactRunRegistry()
   // Share one upload repository so composer staging, prompt finalization, and previews agree.
   const uploadRepository = createDefaultUploadRepository()
+  // One registry owns short-lived capability URLs for both managed artifact repositories.
+  const previewResources = new ManagedPreviewResources({
+    resolvePath: (source, request) =>
+      source === 'artifact'
+        ? artifactRepository.resolveManagedFilePath(request)
+        : uploadRepository.resolveManagedUploadPath(request)
+  })
   const notebookService = createDefaultNotebookRuntimeService()
 
   // Read fresh on every call so a future connectors-settings mutation (Plan 2 UI) only needs to call
@@ -236,6 +246,8 @@ const registerIpcHandlers = async ({ mainEntryPath }: IpcRegistrationOptions): P
       )
   })
   registerNotebookIpcHandlers(notebookService)
+  registerManagedPreviewIpcHandlers(previewResources)
+  registerManagedPreviewProtocol(previewResources)
   // Registered after the acp/notebook handlers exist: migration needs to interrupt both runtimes.
   registerStorageIpcHandlers({
     runtime,

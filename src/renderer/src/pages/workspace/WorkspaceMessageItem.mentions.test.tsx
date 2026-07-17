@@ -127,6 +127,10 @@ describe('WorkspaceMessageItem missing artifact badge', () => {
       code: 'ENOENT'
     })
     ;(window as unknown as { api: unknown }).api = {
+      previewResources: {
+        acquire: vi.fn().mockRejectedValue(enoent),
+        release: vi.fn().mockResolvedValue(undefined)
+      },
       artifacts: { readPreview: vi.fn().mockRejectedValue(enoent) }
     }
 

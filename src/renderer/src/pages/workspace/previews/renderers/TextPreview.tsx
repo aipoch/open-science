@@ -30,9 +30,7 @@ export const PreviewTextContent = ({
     )
   }
 
-  return (
-    <SourcePreviewContent content={state.preview.content} truncated={state.preview.truncated} />
-  )
+  return <SourcePreviewContent content={state.preview.content} pagination={state.pagination} />
 }
 
 export const TextPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => (

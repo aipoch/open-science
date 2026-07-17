@@ -3,18 +3,28 @@ import { useEffect, useState } from 'react'
 import type { ArtifactPreviewResult } from '../../../../../shared/artifacts'
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
+import { getPreviewFileReader } from './preview-file-reader'
 import { isUnavailableFileError } from './preview-errors'
 
 export const PREVIEW_TEXT_MAX_BYTES = 1024 * 1024
 
+type PreviewPagination = {
+  pageNumber: number
+  hasPrevious: boolean
+  hasNext: boolean
+  previousPage: () => void
+  nextPage: () => void
+}
+
 export type PreviewFileContentLoadState =
   | { status: 'loading' }
   | { status: 'error'; error: unknown }
-  | { status: 'ready'; preview: ArtifactPreviewResult }
+  | { status: 'ready'; preview: ArtifactPreviewResult; pagination: PreviewPagination }
 
-type PreviewFileContentInternalState = PreviewFileContentLoadState & {
-  requestKey: string
-}
+type PreviewFileContentInternalState =
+  | { requestKey: string; status: 'loading' }
+  | { requestKey: string; status: 'error'; error: unknown }
+  | { requestKey: string; status: 'ready'; preview: ArtifactPreviewResult }
 
 type UsePreviewFileContentRequest = {
   path: string
@@ -30,7 +40,19 @@ export const usePreviewFileContent = ({
   maxBytes = PREVIEW_TEXT_MAX_BYTES,
   encoding = 'utf8'
 }: UsePreviewFileContentRequest): PreviewFileContentLoadState => {
-  const requestKey = `${source}:${encoding}:${maxBytes}:${path}`
+  const fileKey = `${source}:${encoding}:${maxBytes}:${path}`
+  // Keep byte offsets, not prior page contents, so only the active page remains in memory.
+  const [pageState, setPageState] = useState<{ fileKey: string; offsets: number[]; index: number }>(
+    {
+      fileKey,
+      offsets: [0],
+      index: 0
+    }
+  )
+  const activePageState =
+    pageState.fileKey === fileKey ? pageState : { fileKey, offsets: [0], index: 0 }
+  const offset = activePageState.offsets[activePageState.index] ?? 0
+  const requestKey = `${fileKey}:${offset}`
   const [state, setState] = useState<PreviewFileContentInternalState>({
     status: 'loading',
     requestKey
@@ -38,10 +60,9 @@ export const usePreviewFileContent = ({
 
   useEffect(() => {
     let canceled = false
-    const readPreview =
-      source === 'upload' ? window.api.uploads.readPreview : window.api.artifacts.readPreview
+    const readPreview = getPreviewFileReader(source)
 
-    void readPreview({ path, maxBytes, encoding })
+    void readPreview({ path, maxBytes, encoding, offset })
       .then((preview) => {
         if (!canceled) setState({ status: 'ready', preview, requestKey })
       })
@@ -55,9 +76,40 @@ export const usePreviewFileContent = ({
     return () => {
       canceled = true
     }
-  }, [encoding, maxBytes, path, requestKey, source])
+  }, [encoding, maxBytes, offset, path, requestKey, source])
 
   if (state.requestKey !== requestKey) return { status: 'loading' }
 
-  return state
+  if (state.status !== 'ready') return state
+
+  const previousPage = (): void => {
+    setPageState((current) => {
+      const active = current.fileKey === fileKey ? current : activePageState
+      return { ...active, index: Math.max(0, active.index - 1) }
+    })
+  }
+  const nextPage = (): void => {
+    if (state.preview.nextOffset === undefined) return
+
+    setPageState((current) => {
+      const active = current.fileKey === fileKey ? current : activePageState
+      // Discard forward history when navigation continues from an earlier page.
+      const nextOffsets = active.offsets.slice(0, active.index + 1)
+      nextOffsets.push(state.preview.nextOffset as number)
+      return { fileKey, offsets: nextOffsets, index: active.index + 1 }
+    })
+  }
+
+  return {
+    ...state,
+    pagination: {
+      pageNumber: activePageState.index + 1,
+      hasPrevious: activePageState.index > 0,
+      hasNext: state.preview.nextOffset !== undefined,
+      previousPage,
+      nextPage
+    }
+  }
 }
+
+export type { PreviewPagination }

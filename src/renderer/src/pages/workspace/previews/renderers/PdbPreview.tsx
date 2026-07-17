@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { usePreviewFileContent } from '../usePreviewFileContent'
+import { SourcePreviewContent } from './SourcePreview'
 
 type ThreeDmolModule = typeof import('3dmol')
 type PdbStyle = 'cartoon' | 'stick' | 'sphere' | 'surface' | 'line'
@@ -330,6 +331,10 @@ export const PdbPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JS
         fallbackMessage="PDB couldn't be read for preview"
       />
     )
+  }
+
+  if (state.preview.truncated || state.pagination.pageNumber > 1) {
+    return <SourcePreviewContent content={state.preview.content} pagination={state.pagination} />
   }
 
   return <PdbPreviewViewer content={state.preview.content} name={item.name} />
