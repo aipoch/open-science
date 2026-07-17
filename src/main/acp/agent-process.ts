@@ -75,6 +75,17 @@ const spawnClaudeAgentAcp = ({
   // On Windows, a `claude.cmd` shim can't be spawned by the SDK without a shell (spawn EINVAL); resolve
   // it to the underlying cli.js so the SDK runs it via node. Native/Unix executables pass through.
   const resolvedExecutablePath = resolveClaudeExecutableForSpawn(executablePath)
+
+  // A win32 path still ending in .cmd/.bat here could not be resolved to the cli.js/.exe it wraps, so
+  // the SDK's shell-less spawn below will fail with `spawn EINVAL` (surfacing as an opaque
+  // acp:create-session "internal error"). Warn with the paths (no secrets) so the cause is actionable.
+  if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(resolvedExecutablePath)) {
+    log.warn('claude executable is an unresolved .cmd/.bat shim; spawn will likely fail (EINVAL)', {
+      executablePath: resolvedExecutablePath,
+      hint: 'Re-run Claude detection, or install the app-managed native binary in settings.'
+    })
+  }
+
   const env = buildAgentSpawnEnv(
     augmentedPathEnv(process.env),
     envOverrides,

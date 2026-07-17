@@ -112,15 +112,50 @@ describe('claude-detect', () => {
       expect(dirs).not.toContain('/opt/homebrew/bin')
     })
 
-    it('finds claude.cmd ahead of the bare name', async () => {
+    it('finds claude.cmd ahead of the bare name when it resolves to a spawnable target', async () => {
       const npmDir = win32.join('C:\\Users\\me\\AppData\\Roaming', 'npm')
-      const result = await detectClaude(winDeps({ [win32.join(npmDir, 'claude.cmd')]: '2.3.0' }))
+      const cmd = win32.join(npmDir, 'claude.cmd')
+      const result = await detectClaude(
+        winDeps(
+          { [cmd]: '2.3.0' },
+          // The shim resolves to the cli.js it wraps, so the ACP agent can spawn it via node.
+          { resolveSpawnTarget: (path) => (path === cmd ? win32.join(npmDir, 'cli.js') : path) }
+        )
+      )
+
+      expect(result).toEqual({ found: true, path: cmd, version: '2.3.0' })
+    })
+
+    it('skips a claude.cmd that cannot be spawn-resolved and falls through to claude.exe', async () => {
+      const npmDir = win32.join('C:\\Users\\me\\AppData\\Roaming', 'npm')
+      const result = await detectClaude(
+        winDeps(
+          {
+            [win32.join(npmDir, 'claude.cmd')]: '2.3.0',
+            [win32.join(npmDir, 'claude.exe')]: '2.4.0'
+          },
+          // Identity resolution leaves the shim a .cmd, so it is rejected as unspawnable.
+          { resolveSpawnTarget: (path) => path }
+        )
+      )
 
       expect(result).toEqual({
         found: true,
-        path: win32.join(npmDir, 'claude.cmd'),
-        version: '2.3.0'
+        path: win32.join(npmDir, 'claude.exe'),
+        version: '2.4.0'
       })
+    })
+
+    it('reports not found when the only candidate is an unspawnable .cmd shim', async () => {
+      const npmDir = win32.join('C:\\Users\\me\\AppData\\Roaming', 'npm')
+      const result = await detectClaude(
+        winDeps(
+          { [win32.join(npmDir, 'claude.cmd')]: '2.3.0' },
+          { resolveSpawnTarget: (path) => path }
+        )
+      )
+
+      expect(result).toEqual({ found: false })
     })
 
     it('finds claude.exe when no .cmd shim exists', async () => {

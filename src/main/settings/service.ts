@@ -371,21 +371,31 @@ class SettingsService {
   // Re-runs the complete host inspection on every app launch. Claude detection is part of the same
   // pass so a runtime installed outside Open Science between launches is picked up immediately.
   async checkEnvironment(): Promise<EnvironmentCheckResult> {
-    let claude = await this.detectClaude()
+    // Prefer a previously recorded runtime that still runs over this launch's re-detection. This keeps
+    // a healthy app-managed (or manually chosen) executable from being silently replaced by a PATH
+    // entry discovered later — e.g. an npm `claude.cmd` that only works via a shell — and uses the
+    // `--version` probe (not mere file existence) as the real usability signal, so a stale-but-present
+    // path is never reported as healthy.
+    const cached = (await this.repository.getSettings()).claude
+    let claude: ClaudeDetectResult | undefined
 
-    // A GUI launch can have a narrower PATH than the shell that originally installed Claude. Keep a
-    // previously resolved absolute path when it is still executable so automatic and manual status
-    // surfaces cannot disagree about the same healthy runtime.
-    if (!claude.found) {
-      const cached = (await this.repository.getSettings()).claude
+    if (cached?.resolvedPath) {
+      const version = await this.detectDeps.getVersion(cached.resolvedPath)
 
-      if (cached?.resolvedPath && (await this.pathExists(cached.resolvedPath))) {
-        claude = {
-          found: true,
-          path: cached.resolvedPath,
-          version: cached.version
+      if (version) {
+        claude = { found: true, path: cached.resolvedPath, version }
+
+        // Keep the stored version in sync when an in-place update changed it under the same path.
+        if (version !== cached.version) {
+          await this.repository.setClaudeInfo({ resolvedPath: cached.resolvedPath, version })
         }
       }
+    }
+
+    // No healthy recorded runtime: fall back to a full detection pass, which persists what it finds so
+    // a runtime installed outside Open Science between launches is picked up.
+    if (!claude) {
+      claude = await this.detectClaude()
     }
 
     return runEnvironmentCheck({

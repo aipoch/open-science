@@ -828,7 +828,7 @@ describe('installClaude (app-managed source)', () => {
 })
 
 describe('checkEnvironment', () => {
-  it('keeps a cached executable when a GUI PATH cannot rediscover it', async () => {
+  it('keeps a cached executable that still runs when a GUI PATH cannot rediscover it', async () => {
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
     const service = new SettingsService({
       repository,
@@ -838,8 +838,9 @@ describe('checkEnvironment', () => {
         env: {},
         homePath: '/home',
         platform: 'linux',
+        // PATH scan finds nothing, but the cached path still reports a version.
         isExecutable: () => Promise.resolve(false),
-        getVersion: () => Promise.resolve(undefined),
+        getVersion: (path) => Promise.resolve(path === execPath ? '2.1.0' : undefined),
         resolveNpmBinDirs: () => Promise.resolve([])
       }
     })
@@ -848,5 +849,56 @@ describe('checkEnvironment', () => {
 
     expect(result.claude).toEqual({ found: true, path: execPath, version: '2.1.0' })
     expect(result.checks.find((check) => check.id === 'claude')?.status).toBe('passed')
+  })
+
+  it('does not overwrite a healthy recorded executable with a freshly detected PATH entry', async () => {
+    const other = join(storageRoot, 'other-bin', 'claude')
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    const service = new SettingsService({
+      repository,
+      storageRoot,
+      userClaudeDir: join(storageRoot, 'no-user-claude'),
+      detectDeps: {
+        env: { PATH: join(storageRoot, 'other-bin') },
+        homePath: '/home',
+        platform: 'linux',
+        // A different claude is discoverable on PATH, but the cached one is still healthy.
+        isExecutable: (path) => Promise.resolve(path === other),
+        getVersion: (path) =>
+          Promise.resolve(path === execPath ? '2.1.0' : path === other ? '9.9.9' : undefined),
+        resolveNpmBinDirs: () => Promise.resolve([])
+      }
+    })
+
+    const result = await service.checkEnvironment()
+
+    // The recorded runtime is retained rather than being replaced by the PATH discovery.
+    expect(result.claude).toEqual({ found: true, path: execPath, version: '2.1.0' })
+    expect((await repository.getSettings()).claude?.resolvedPath).toBe(execPath)
+  })
+
+  it('re-detects when the recorded executable no longer reports a version', async () => {
+    const stale = join(storageRoot, 'stale', 'claude')
+    const found = join(storageRoot, 'found-bin', 'claude')
+    await repository.setClaudeInfo({ resolvedPath: stale, version: '2.1.0' })
+    const service = new SettingsService({
+      repository,
+      storageRoot,
+      userClaudeDir: join(storageRoot, 'no-user-claude'),
+      detectDeps: {
+        env: { PATH: join(storageRoot, 'found-bin') },
+        homePath: '/home',
+        platform: 'linux',
+        isExecutable: (path) => Promise.resolve(path === found),
+        // The cached path is dead (no version); detection finds a live one on PATH.
+        getVersion: (path) => Promise.resolve(path === found ? '2.2.0' : undefined),
+        resolveNpmBinDirs: () => Promise.resolve([])
+      }
+    })
+
+    const result = await service.checkEnvironment()
+
+    expect(result.claude).toEqual({ found: true, path: found, version: '2.2.0' })
+    expect((await repository.getSettings()).claude?.resolvedPath).toBe(found)
   })
 })
