@@ -490,9 +490,15 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     await get().refreshPreflight()
   },
 
-  // Switches the agent backend; main reconnects so the choice applies on the next prompt.
+  // Switches the agent backend; main reconnects so the choice applies on the next prompt. Surfaces
+  // failures (e.g. a stale preload bundle where the IPC is missing after a renderer-only hot reload)
+  // to the console instead of silently reverting the selector.
   setAgentFramework: async (id) => {
-    set(applySnapshot(await window.api.settings.setAgentFramework({ id })))
+    try {
+      set(applySnapshot(await window.api.settings.setAgentFramework({ id })))
+    } catch (error) {
+      console.error('Failed to switch agent framework', error)
+    }
   },
 
   // Detects the opencode executable and refreshes its status card.
