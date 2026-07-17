@@ -20,6 +20,8 @@ type SettingsApi = {
   isNpmAvailable: ReturnType<typeof vi.fn>
   checkEnvironment: ReturnType<typeof vi.fn>
   detectClaude: ReturnType<typeof vi.fn>
+  detectOpencode: ReturnType<typeof vi.fn>
+  setAgentFramework: ReturnType<typeof vi.fn>
   upsertProvider: ReturnType<typeof vi.fn>
   validateProvider: ReturnType<typeof vi.fn>
   refreshProviderModels: ReturnType<typeof vi.fn>
@@ -90,6 +92,14 @@ beforeEach(() => {
       claude: { found: true, path: '/bin/claude' }
     }),
     detectClaude: vi.fn().mockResolvedValue({ found: false }),
+    detectOpencode: vi.fn().mockImplementation(() => {
+      callLog.push('detectOpencode')
+      return Promise.resolve({ ...snapshot([]), agentFrameworkId: 'opencode' })
+    }),
+    setAgentFramework: vi.fn().mockImplementation((request: { id: string }) => {
+      callLog.push(`setFramework:${request.id}`)
+      return Promise.resolve({ ...snapshot([]), agentFrameworkId: request.id })
+    }),
     upsertProvider: vi.fn(),
     validateProvider: vi.fn(),
     refreshProviderModels: vi.fn(),
@@ -704,5 +714,28 @@ describe('settings store: connectors slice', () => {
     await useSettingsStore.getState().respondApproval('req-1', 'allow')
     expect(api.respondConnectorApproval).toHaveBeenCalledWith({ id: 'req-1', decision: 'allow' })
     expect(useSettingsStore.getState().pendingApprovals).toEqual([])
+  })
+})
+
+describe('settings store: setAgentFramework', () => {
+  beforeEach(() => {
+    useSettingsStore.setState(createInitialSettingsState())
+  })
+
+  it('switches, then live-detects the selected framework and refreshes preflight', async () => {
+    await useSettingsStore.getState().setAgentFramework('opencode')
+
+    // The switch persists first, then the newly-selected framework is re-detected so a
+    // just-installed (or just-deleted) binary is reflected before the readiness gate is recomputed.
+    expect(callLog).toEqual(['setFramework:opencode', 'detectOpencode'])
+    expect(api.getPreflight).toHaveBeenCalled()
+    expect(useSettingsStore.getState().agentFrameworkId).toBe('opencode')
+  })
+
+  it('re-detects Claude when switching back to claude-code', async () => {
+    await useSettingsStore.getState().setAgentFramework('claude-code')
+
+    expect(api.detectClaude).toHaveBeenCalled()
+    expect(api.detectOpencode).not.toHaveBeenCalled()
   })
 })

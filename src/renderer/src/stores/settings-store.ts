@@ -542,6 +542,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   setAgentFramework: async (id) => {
     try {
       set(applySnapshot(await window.api.settings.setAgentFramework({ id })))
+      // Live-detect the newly-selected framework so a binary installed (or deleted) since the last
+      // check is reflected right away, then refresh the readiness gate the install prompt keys off.
+      if (id === 'opencode') {
+        await get().detectOpencode()
+      } else {
+        await get().detectClaude()
+      }
+      await get().refreshPreflight()
     } catch (error) {
       console.error('Failed to switch agent framework', error)
     }

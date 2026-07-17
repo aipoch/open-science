@@ -1,19 +1,28 @@
-import { CheckCircle2, Download, RefreshCw, XCircle } from 'lucide-react'
+import { useMemo } from 'react'
+import { CheckCircle2, RefreshCw, XCircle } from 'lucide-react'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import type { ClaudeInstallProgressEvent, OpencodeInfo } from '../../../../shared/settings'
+import type {
+  ClaudeInstallProgressEvent,
+  ClaudeInstallSource,
+  OpencodeInfo
+} from '../../../../shared/settings'
+import { getOpencodeInstallSources } from '../../../../shared/settings'
+import { ClaudeInstallCard } from './ClaudeInstallCard'
 
 type OpencodeStatusCardProps = {
   opencode: OpencodeInfo
   isDetecting: boolean
   onDetect: () => void
-  // App-managed install (first recommendation, like Claude) shown when opencode isn't detected.
+  // Install picker (managed / npm / script, managed first) shown when opencode isn't detected.
   isInstalling: boolean
+  installLogs: string[]
   installProgress: ClaudeInstallProgressEvent | null
   installError: string | undefined
-  onInstall: () => void
+  npmAvailable: boolean
+  onInstall: (source: ClaudeInstallSource) => void
 }
 
 // Shows whether a runnable opencode executable was found (path + version) plus a re-detect action,
@@ -24,11 +33,14 @@ const OpencodeStatusCard = ({
   isDetecting,
   onDetect,
   isInstalling,
+  installLogs,
   installProgress,
   installError,
+  npmAvailable,
   onInstall
 }: OpencodeStatusCardProps): React.JSX.Element => {
   const found = Boolean(opencode.resolvedPath)
+  const installSources = useMemo(() => getOpencodeInstallSources(window.api?.platform), [])
 
   return (
     <Card className="gap-0 rounded-lg py-0">
@@ -73,26 +85,20 @@ const OpencodeStatusCard = ({
         ) : (
           <div className="mt-3 space-y-3">
             <p className="text-xs text-muted-foreground">
-              Install OpenCode with one click, or install it manually (see{' '}
+              OpenCode is required for this framework. Install it below, or install it manually (see{' '}
               <ExternalTextLink href="https://opencode.ai/docs">opencode.ai/docs</ExternalTextLink>)
               and re-detect.
             </p>
-            <Button type="button" onClick={onInstall} disabled={isInstalling}>
-              <Download className={isInstalling ? 'animate-pulse' : ''} aria-hidden="true" />
-              {isInstalling ? 'Installing…' : 'Install OpenCode'}
-            </Button>
-            {isInstalling && installProgress ? (
-              <p className="text-xs text-muted-foreground" role="status">
-                {installProgress.phase === 'downloading' && installProgress.totalBytes
-                  ? `Downloading… ${Math.round(((installProgress.receivedBytes ?? 0) / installProgress.totalBytes) * 100)}%`
-                  : `${installProgress.phase}…`}
-              </p>
-            ) : null}
-            {installError ? (
-              <p className="text-xs text-destructive" role="alert">
-                {installError}
-              </p>
-            ) : null}
+            <ClaudeInstallCard
+              embedded
+              sources={installSources}
+              isInstalling={isInstalling}
+              installLogs={installLogs}
+              installProgress={installProgress}
+              installError={installError}
+              npmAvailable={npmAvailable}
+              onInstall={onInstall}
+            />
           </div>
         )}
       </CardContent>

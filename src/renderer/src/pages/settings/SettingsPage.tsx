@@ -674,9 +674,11 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                           isDetecting={isDetectingOpencode}
                           onDetect={() => void detectOpencode()}
                           isInstalling={isInstalling}
+                          installLogs={installLogs}
                           installProgress={installProgress}
                           installError={installError}
-                          onInstall={() => void installOpencode()}
+                          npmAvailable={npmAvailable}
+                          onInstall={(source) => void installOpencode(source)}
                         />
                       </SettingsSection>
                     ) : (
