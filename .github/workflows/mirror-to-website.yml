@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (for the manifest script)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Tag from the Release event, or the manual input; version is the tag without a leading 'v'.
       - name: Resolve tag and version
@@ -45,7 +45,7 @@ jobs:
         run: gh release download "${{ steps.ref.outputs.tag }}" --repo "${{ github.repository }}" --dir dist-assets
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
 
