@@ -91,6 +91,31 @@ describe('buildOpencodeConfig', () => {
     expect(config.model).toBe('anthropic/deepseek-v4-pro')
   })
 
+  it('maps an openai (or both) provider to an @ai-sdk/openai-compatible provider block', () => {
+    const config = JSON.parse(
+      buildOpencodeConfig({
+        type: 'custom',
+        baseUrl: 'https://gw/v1',
+        model: 'gpt-x',
+        key: 'k',
+        apiType: 'openai'
+      })
+    )
+
+    expect(config.model).toBe('openai-compatible/gpt-x')
+    expect(config.provider['openai-compatible'].npm).toBe('@ai-sdk/openai-compatible')
+    expect(config.provider['openai-compatible'].options).toEqual({
+      baseURL: 'https://gw/v1',
+      apiKey: 'k'
+    })
+    expect(config.provider['openai-compatible'].models).toEqual({ 'gpt-x': {} })
+    // A 'both' provider prefers OpenAI on opencode (which supports both).
+    const both = JSON.parse(
+      buildOpencodeConfig({ type: 'custom', baseUrl: 'https://gw/v1', model: 'm', apiType: 'both' })
+    )
+    expect(both.model).toBe('openai-compatible/m')
+  })
+
   it('omits model + models registration when the provider has no model', () => {
     const config = JSON.parse(buildOpencodeConfig({ type: 'claude-default' }))
 

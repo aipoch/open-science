@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 
-import type { ProviderType } from '../../shared/settings'
+import type { ProviderApiType, ProviderType } from '../../shared/settings'
 import { normalizeAnthropicBaseUrl } from './base-url'
 
 // Resolves an active provider into the environment overrides that the ACP agent (and the claude
@@ -12,6 +12,9 @@ export type ResolvedProvider = {
   baseUrl?: string
   model?: string
   key?: string
+  // Which chat API the endpoint speaks; opencode uses it to pick the anthropic vs openai-compatible
+  // provider. Absent ⇒ anthropic.
+  apiType?: ProviderApiType
 }
 
 export type ProviderEnvOptions = {

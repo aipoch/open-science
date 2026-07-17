@@ -13,6 +13,7 @@ import type {
   Preflight,
   AgentFrameworkId,
   AgentFrameworkView,
+  ChatApiEndpoint,
   OpencodeInfo,
   ProviderType,
   ProviderView,
@@ -229,6 +230,16 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   opencode: snapshot.opencode,
   onboardingCompletedAt: snapshot.onboardingCompletedAt
 })
+
+// Stable fallback reference so the selector returns the same array identity across renders
+// (a fresh literal would make useSettingsStore re-render every tick and loop).
+const DEFAULT_FRAMEWORK_API_ENDPOINTS: ChatApiEndpoint[] = ['anthropic']
+
+// The chat endpoints the currently-selected agent framework can drive; a provider is only usable when
+// it shares one. Defaults to Anthropic /v1/messages before the framework list has loaded.
+export const selectFrameworkApiEndpoints = (state: SettingsStoreData): ChatApiEndpoint[] =>
+  state.agentFrameworks.find((framework) => framework.id === state.agentFrameworkId)
+    ?.supportedApiTypes ?? DEFAULT_FRAMEWORK_API_ENDPOINTS
 
 // A single selectable (provider, model) entry for the composer picker. `model` is '' for a provider
 // with no concrete model (a claude-default without an override), meaning "use the provider default".

@@ -7,6 +7,7 @@ import {
   type PermissionProfileApplication
 } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
+import { preferredEndpoint } from '../../shared/settings'
 import { augmentedPathEnv } from '../settings/shell-path'
 import type { ResolvedProvider } from '../settings/provider-env'
 import type {
@@ -37,11 +38,14 @@ const opencodeDataHome = (storageRoot: string): string => join(storageRoot, 'ope
 export const opencodeConfigDir = (storageRoot: string): string =>
   join(opencodeConfigHome(storageRoot), 'opencode')
 
-// The app's providers are Anthropic `/v1/messages`-compatible (custom gateways and official vendors),
-// so they map onto opencode's built-in `anthropic` provider with a `baseURL`/`apiKey` override. An
-// OpenAI-format gateway would instead need a custom provider with `npm: "@ai-sdk/openai-compatible"`;
-// the app does not expose such providers today, so that branch is intentionally not built yet.
-const OPENCODE_PROVIDER_ID = 'anthropic'
+// The opencode provider block used for each endpoint. Anthropic /v1/messages maps to opencode's
+// built-in `anthropic` provider; OpenAI /v1/chat/completions maps to a custom provider backed by the
+// `@ai-sdk/openai-compatible` package. opencode drives both, so the endpoint is chosen from the
+// provider's apiType (preferring OpenAI when it offers both).
+const OPENCODE_ENDPOINT_PROVIDER: Record<'anthropic' | 'openai', { id: string; npm?: string }> = {
+  anthropic: { id: 'anthropic' },
+  openai: { id: 'openai-compatible', npm: '@ai-sdk/openai-compatible' }
+}
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -59,8 +63,13 @@ const buildOpencodeConfig = (
   instructionPaths: string[] = []
 ): string => {
   const bareModel = provider.model
+  // opencode drives both endpoints; pick the one for this provider (openai wins when it offers both).
+  const endpoint =
+    preferredEndpoint(provider.apiType ?? 'anthropic', ['anthropic', 'openai']) ?? 'anthropic'
+  const { id: providerId, npm } = OPENCODE_ENDPOINT_PROVIDER[endpoint]
+
   const baseProviders = asRecord(baseConfig.provider)
-  const baseProvider = asRecord(baseProviders[OPENCODE_PROVIDER_ID])
+  const baseProvider = asRecord(baseProviders[providerId])
   const baseOptions = asRecord(baseProvider.options)
   const baseModels = asRecord(baseProvider.models)
   // Preserve any instructions the base config already declared, then append ours (de-duplicated).
@@ -72,12 +81,14 @@ const buildOpencodeConfig = (
   const merged: Record<string, unknown> = {
     $schema: 'https://opencode.ai/config.json',
     ...baseConfig,
-    ...(bareModel ? { model: `${OPENCODE_PROVIDER_ID}/${bareModel}` } : {}),
+    ...(bareModel ? { model: `${providerId}/${bareModel}` } : {}),
     ...(instructions.length > 0 ? { instructions } : {}),
     provider: {
       ...baseProviders,
-      [OPENCODE_PROVIDER_ID]: {
+      [providerId]: {
         ...baseProvider,
+        // A custom (openai-compatible) provider needs its npm package declared; anthropic is built-in.
+        ...(npm ? { npm } : {}),
         options: {
           ...baseOptions,
           ...(provider.baseUrl ? { baseURL: provider.baseUrl } : {}),

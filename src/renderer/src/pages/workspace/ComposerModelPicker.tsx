@@ -13,10 +13,12 @@ import { cn } from '@/lib/utils'
 import { ProviderKindIcon } from '../settings/provider-icons'
 import { providerKindKey } from '../settings/provider-form-value'
 import {
+  selectFrameworkApiEndpoints,
   selectProviderModelOptions,
   useSettingsStore,
   type ProviderModelOption
 } from '@/stores/settings-store'
+import { isProviderCompatibleWith } from '../../../../shared/settings'
 
 const triggerClassName =
   'flex h-8 max-w-[220px] items-center gap-1 rounded-md px-2.5 text-sm text-text-300 hover:bg-bg-200 hover:text-text-100 disabled:cursor-not-allowed disabled:opacity-50 transition-colors'
@@ -35,6 +37,11 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
   const activeModel = useSettingsStore((state) => state.activeModel)
   const setActiveProvider = useSettingsStore((state) => state.setActiveProvider)
   const openSettings = useSettingsStore((state) => state.openSettings)
+  const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
+
+  // A provider is selectable only when its API format is one the current framework can drive.
+  const isCompatible = (provider: (typeof providers)[number]): boolean =>
+    isProviderCompatibleWith(provider.apiType ?? 'anthropic', frameworkEndpoints)
 
   const options = selectProviderModelOptions(providers)
 
@@ -99,38 +106,48 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="max-h-[320px] min-w-[15rem] overflow-y-auto">
-        {groups.map((group) => (
-          <DropdownMenuGroup key={group.provider.id}>
-            <DropdownMenuLabel>{group.provider.name}</DropdownMenuLabel>
-            {group.options.map((option) => {
-              const isActive =
-                option.providerId === activeProviderId && option.model === activeKeyModel
+        {groups.map((group) => {
+          const compatible = isCompatible(group.provider)
 
-              return (
-                <DropdownMenuItem
-                  key={`${option.providerId}:${option.model}`}
-                  role="menuitemradio"
-                  aria-checked={isActive}
-                  onSelect={() => void setActiveProvider(option.providerId, option.model)}
-                  className={cn('gap-2', isActive && 'font-medium')}
-                >
-                  <ProviderKindIcon
-                    kindKey={providerKindKey(option.providerType, option.vendorId)}
-                    className="size-4 shrink-0"
-                  />
-                  <span className="min-w-0 flex-1 truncate">{optionLabel(option)}</span>
-                  {isActive ? (
-                    <Check
-                      className="size-4 shrink-0 text-primary"
-                      strokeWidth={2}
-                      aria-hidden="true"
+          return (
+            <DropdownMenuGroup key={group.provider.id}>
+              <DropdownMenuLabel>
+                {group.provider.name}
+                {compatible ? null : (
+                  <span className="ml-1 font-normal text-text-300">· unavailable</span>
+                )}
+              </DropdownMenuLabel>
+              {group.options.map((option) => {
+                const isActive =
+                  option.providerId === activeProviderId && option.model === activeKeyModel
+
+                return (
+                  <DropdownMenuItem
+                    key={`${option.providerId}:${option.model}`}
+                    role="menuitemradio"
+                    aria-checked={isActive}
+                    disabled={!compatible}
+                    onSelect={() => void setActiveProvider(option.providerId, option.model)}
+                    className={cn('gap-2', isActive && 'font-medium')}
+                  >
+                    <ProviderKindIcon
+                      kindKey={providerKindKey(option.providerType, option.vendorId)}
+                      className="size-4 shrink-0"
                     />
-                  ) : null}
-                </DropdownMenuItem>
-              )
-            })}
-          </DropdownMenuGroup>
-        ))}
+                    <span className="min-w-0 flex-1 truncate">{optionLabel(option)}</span>
+                    {isActive ? (
+                      <Check
+                        className="size-4 shrink-0 text-primary"
+                        strokeWidth={2}
+                        aria-hidden="true"
+                      />
+                    ) : null}
+                  </DropdownMenuItem>
+                )
+              })}
+            </DropdownMenuGroup>
+          )
+        })}
       </DropdownMenuContent>
     </DropdownMenu>
   )

@@ -1192,7 +1192,8 @@ class SettingsService {
         type: 'custom',
         baseUrl: resolveVendorBaseUrl(provider.vendorId, provider.region),
         model: modelOverride ?? defaultVendorModel(provider.vendorId),
-        key
+        key,
+        apiType: this.resolveProviderApiType(provider)
       }
     }
 
@@ -1200,7 +1201,8 @@ class SettingsService {
       type: provider.type,
       baseUrl: provider.baseUrl,
       model: modelOverride ?? provider.model,
-      key
+      key,
+      apiType: this.resolveProviderApiType(provider)
     }
   }
 

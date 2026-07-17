@@ -56,6 +56,7 @@ const toFormValue = (provider: ProviderView): ProviderFormValue =>
     name: provider.name,
     baseUrl: provider.baseUrl ?? '',
     model: provider.model ?? '',
+    apiType: provider.apiType ?? 'anthropic',
     vendorId: provider.vendorId,
     region: provider.region
   })
@@ -69,6 +70,7 @@ const toUpsertRequest = (
   name: value.name,
   baseUrl: value.baseUrl,
   model: value.model,
+  apiType: value.apiType,
   vendorId: value.vendorId,
   region: value.region,
   key: value.key || undefined
