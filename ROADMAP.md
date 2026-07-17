@@ -44,7 +44,7 @@ The current codebase is an early, working implementation of the first stretch of
 
 **Working today:**
 - ✅ Agent runtime with a full plan/execute/tool-call loop, wrapped over the Agent Client Protocol (ACP)
-- ✅ Multi-provider model configuration with per-model selection — built-in vendors (Claude, DeepSeek, GLM, MiniMax) plus custom gateways and local Claude, all over Anthropic-compatible endpoints, with live catalog refresh and mid-run switching
+- ✅ Multi-provider model configuration with per-model selection — built-in vendors (Claude, DeepSeek, Zhipu AI (GLM), MiniMax, Kimi (Moonshot)) plus custom gateways and local Claude, all over Anthropic-compatible endpoints, with live catalog refresh and mid-run switching
 - ✅ Electron + React + TypeScript desktop shell with a shadcn-based design system
 - ✅ Parallel multi-session workspace with typed tool-activity visualization (diffs, code blocks, web search rows)
 - ✅ Project layer with per-project, per-file session storage, migration from the legacy single-file format, and a home page
@@ -77,7 +77,7 @@ The product is organized into cooperating layers (see [`docs/PRD.md`](docs/PRD.m
 | Layer | Target capability | Current state | Status |
 | --- | --- | --- | --- |
 | **Agent Harness & Shell** | Planning/execution/reflection loop, multi-session UI, skill discovery, async notifications | Single-agent loop via ACP, parallel session mounting, typed tool-activity visualization; no skill discovery or notification bus yet | 🟡 |
-| **Model Layer** | Pluggable gateway across model vendors and locally-hosted models, per-agent routing | Multi-provider config with per-model selection (built-in vendors — Claude, DeepSeek, GLM, MiniMax — plus custom gateways + local Claude), but every provider is reached over an Anthropic-compatible endpoint; no native non-Anthropic protocols or per-agent routing yet | 🟡 |
+| **Model Layer** | Pluggable gateway across model vendors and locally-hosted models, per-agent routing | Multi-provider config with per-model selection (built-in vendors — Claude, DeepSeek, Zhipu AI (GLM), MiniMax, Kimi (Moonshot) — plus custom gateways + local Claude), but every provider is reached over an Anthropic-compatible endpoint; no native non-Anthropic protocols or per-agent routing yet | 🟡 |
 | **Project & Session Organization** | Durable per-project workspaces, session history, fast resume | Project CRUD, per-project/per-file session storage with migration, home page with recents | ✅ |
 | **Multi-Kernel Execution Engine** | Interchangeable Python / R / shell kernels with cross-kernel handoff | One persistent Python kernel with durable run history; no R or REPL control-plane kernel yet | 🟡 |
 | **Environment Management** | Create, switch, snapshot, and register reproducible compute environments | Uses a single managed runtime directory; no environment CRUD or snapshotting | ⬜ |
