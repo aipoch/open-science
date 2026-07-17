@@ -4,15 +4,20 @@ import { cn } from '@/lib/utils'
 import claudeLogo from '@/assets/provider-icons/claude.svg'
 import deepseekLogo from '@/assets/provider-icons/deepseek.svg'
 import minimaxLogo from '@/assets/provider-icons/minimax.svg'
+import zhipuLogo from '@/assets/provider-icons/zhipu.svg'
+import kimiLogo from '@/assets/provider-icons/kimi.svg'
 import type { OfficialVendorId } from '../../../../shared/provider-registry'
 
-// Official vendor brand marks, bundled as assets. GLM/Z.AI isn't included yet — drop its official SVG
-// in ../../assets/provider-icons and map it below; until then it falls back to a neutral glyph rather
-// than a made-up logo. Custom uses a plus-in-circle and local Claude a laptop (generic UI glyphs).
+// Official vendor brand marks, bundled as assets. Both Kimi providers (the general Moonshot platform
+// and Kimi For Coding) share the one Kimi mark. Any vendor without an entry falls back to a neutral
+// glyph rather than a made-up logo. Custom uses a plus-in-circle and local Claude a laptop.
 const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   anthropic: claudeLogo,
   deepseek: deepseekLogo,
-  minimax: minimaxLogo
+  minimax: minimaxLogo,
+  zhipu: zhipuLogo,
+  kimi: kimiLogo,
+  kimiforcode: kimiLogo
 }
 
 // Renders the icon for a provider-kind key ('custom', 'claude-default', or `official:<vendorId>`).

@@ -446,8 +446,8 @@ describe('SettingsService: official vendors', () => {
     ).providers[0]
 
     // A model in the catalog is honored.
-    let snapshot = await service.setActiveProvider(created.id, 'glm-4.7')
-    expect(snapshot.activeModel).toBe('glm-4.7')
+    let snapshot = await service.setActiveProvider(created.id, 'glm-5.2')
+    expect(snapshot.activeModel).toBe('glm-5.2')
 
     // An unknown model falls back to the vendor's first catalog entry.
     snapshot = await service.setActiveProvider(created.id, 'not-a-model')
