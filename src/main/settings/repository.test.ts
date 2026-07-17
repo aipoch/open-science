@@ -60,12 +60,13 @@ describe('settings repository', () => {
     const repository = new SettingsRepository(await createStorageRoot())
 
     await repository.setAgentFramework('opencode')
-    await repository.setOpencodePath('/usr/local/bin/opencode')
+    await repository.setOpencodeInfo('/usr/local/bin/opencode', '1.18.3')
 
     // sanitizeSettings must not strip these fields on read-back, or the selector can never switch.
     const settings = await repository.getSettings()
     expect(settings.agentFrameworkId).toBe('opencode')
     expect(settings.opencodePath).toBe('/usr/local/bin/opencode')
+    expect(settings.opencodeVersion).toBe('1.18.3')
   })
 
   it('replaces a provider in place on upsert by id', async () => {

@@ -51,9 +51,10 @@ export type ClaudeInfo = {
   version?: string
 }
 
-// Detected opencode executable metadata (path only; opencode reports no version over ACP detection).
+// Detected opencode executable metadata (resolved path + reported version), persisted for the card.
 export type OpencodeInfo = {
   resolvedPath?: string
+  version?: string
 }
 
 // Result of probing the machine for a runnable claude executable.

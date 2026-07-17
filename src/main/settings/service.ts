@@ -202,7 +202,7 @@ class SettingsService {
 
     return {
       claude: settings.claude ?? {},
-      opencode: { resolvedPath: settings.opencodePath },
+      opencode: { resolvedPath: settings.opencodePath, version: settings.opencodeVersion },
       activeProviderId: settings.activeProviderId,
       activeModel: settings.activeModel,
       providers: settings.providers.map((provider) => this.toProviderView(provider)),
@@ -227,10 +227,10 @@ class SettingsService {
   // Detects the opencode executable and persists its path, mirroring detectClaude. Returns the refreshed
   // snapshot so the settings card reflects the result.
   async detectOpencode(): Promise<SettingsSnapshot> {
-    const resolvedPath = await detectOpencode()
+    const detected = await detectOpencode()
 
-    if (resolvedPath) {
-      await this.repository.setOpencodePath(resolvedPath)
+    if (detected) {
+      await this.repository.setOpencodeInfo(detected.resolvedPath, detected.version)
     }
 
     return this.getSettingsView()
@@ -1066,7 +1066,7 @@ class SettingsService {
       )
     }
 
-    return detected
+    return detected.resolvedPath
   }
 
   // Writes a framework's generated config files (e.g. opencode.json) to disk ahead of spawn.

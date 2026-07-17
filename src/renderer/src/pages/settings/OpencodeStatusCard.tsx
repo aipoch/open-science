@@ -55,6 +55,12 @@ const OpencodeStatusCard = ({
                 {opencode.resolvedPath}
               </dd>
             </div>
+            {opencode.version ? (
+              <div className="flex gap-2">
+                <dt className="shrink-0">Version</dt>
+                <dd className="font-mono text-foreground/80">{opencode.version}</dd>
+              </div>
+            ) : null}
           </dl>
         ) : (
           <p className="mt-3 text-xs text-muted-foreground">

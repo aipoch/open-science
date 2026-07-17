@@ -81,8 +81,9 @@ export type StoredSettings = {
   claude?: ClaudeInfo
   // Selected agent backend. Absent means the default (Claude Code). Switching needs a reconnect.
   agentFrameworkId?: AgentFrameworkId
-  // Explicit path to the opencode executable when auto-detection can't find it. Absent = detect on PATH.
+  // Detected opencode executable path + reported version (for the status card). Absent = detect on PATH.
   opencodePath?: string
+  opencodeVersion?: string
   activeProviderId?: string
   // Active model within the active provider; backfilled from the provider's own model on load when a
   // pre-v2 settings file (which had no per-model selection) is read.
