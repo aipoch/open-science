@@ -53,7 +53,7 @@ jobs:
       # Checkout first (before downloading artifacts): the mac-feed merge step runs a repo script, and
       # actions/checkout cleans the working dir, which would wipe a pre-downloaded artifacts/.
       - name: Checkout (for the mac-feed merge script)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download all build artifacts
         uses: actions/download-artifact@v8

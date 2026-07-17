@@ -254,7 +254,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (for the mac-feed merge script)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Recompute + upload SHA256SUMS.txt
         env:
