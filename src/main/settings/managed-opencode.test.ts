@@ -1,0 +1,118 @@
+import { createHash } from 'node:crypto'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { Readable } from 'node:stream'
+import { gzipSync } from 'node:zlib'
+
+import { afterEach, describe, expect, it } from 'vitest'
+
+import { installManagedOpencode, managedOpencodeDir } from './managed-opencode'
+
+// One 512-byte ustar header + padded content — synthesizes the npm tarball shape the extractor reads.
+const tarEntry = (name: string, content: Buffer): Buffer => {
+  const header = Buffer.alloc(512)
+  header.write(name, 0, 'ascii')
+  header.write('0000644\0', 100, 'ascii')
+  header.write('0000000\0', 108, 'ascii')
+  header.write('0000000\0', 116, 'ascii')
+  header.write(`${content.length.toString(8).padStart(11, '0')}\0`, 124, 'ascii')
+  header.write('00000000000\0', 136, 'ascii')
+  header.write('        ', 148, 'ascii')
+  header.write('0', 156, 'ascii')
+  header.write('ustar\0', 257, 'ascii')
+  header.write('00', 263, 'ascii')
+  let sum = 0
+  for (const byte of header) sum += byte
+  header.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148, 'ascii')
+
+  const padded = Buffer.alloc(Math.ceil(content.length / 512) * 512)
+  content.copy(padded)
+  return Buffer.concat([header, padded])
+}
+
+const buildTgz = (entries: { name: string; content: Buffer }[]): Buffer =>
+  gzipSync(Buffer.concat([...entries.map((e) => tarEntry(e.name, e.content)), Buffer.alloc(1024)]))
+
+const sha512 = (data: Buffer): string =>
+  `sha512-${createHash('sha512').update(data).digest('base64')}`
+
+describe('installManagedOpencode', () => {
+  let root: string | undefined
+
+  afterEach(async () => {
+    if (root) {
+      await rm(root, { recursive: true, force: true })
+      root = undefined
+    }
+  })
+
+  it('resolves opencode-ai latest, downloads the platform package, extracts package/bin/opencode', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+    const tgz = buildTgz([
+      { name: 'package/package.json', content: Buffer.from('{"name":"opencode-darwin-arm64"}') },
+      { name: 'package/bin/opencode', content: Buffer.from('#!/bin/sh\necho opencode\n') }
+    ])
+    const integrity = sha512(tgz)
+
+    const fetchJson = async (url: string): Promise<unknown> => {
+      if (url.endsWith('/opencode-ai')) return { 'dist-tags': { latest: '1.18.3' } }
+      // Platform package metadata is requested at the resolved version.
+      expect(url).toContain('/opencode-darwin-arm64/1.18.3')
+      return { dist: { tarball: 'https://reg/opencode-darwin-arm64.tgz', integrity } }
+    }
+    const fetchTarball = async (): Promise<{
+      stream: NodeJS.ReadableStream
+      totalBytes?: number
+    }> => ({
+      stream: Readable.from(tgz),
+      totalBytes: tgz.length
+    })
+
+    const outcome = await installManagedOpencode({
+      installId: 'i1',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform: { key: 'darwin-arm64', binName: 'opencode' },
+      fetchJson,
+      fetchTarball,
+      tmpDir: root
+    })
+
+    expect(outcome.result.ok).toBe(true)
+    expect(outcome.version).toBe('1.18.3')
+    expect(outcome.resolvedPath).toBe(join(managedOpencodeDir(root), 'opencode'))
+    expect(await readFile(outcome.resolvedPath!, 'utf8')).toContain('echo opencode')
+  })
+
+  it('reports a structured failure (never throws) when the integrity check fails', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+    const tgz = buildTgz([{ name: 'package/bin/opencode', content: Buffer.from('x') }])
+
+    const fetchJson = async (url: string): Promise<unknown> =>
+      url.endsWith('/opencode-ai')
+        ? { 'dist-tags': { latest: '1.18.3' } }
+        : { dist: { tarball: 'https://reg/x.tgz', integrity: 'sha512-wrong' } }
+    const fetchTarball = async (): Promise<{
+      stream: NodeJS.ReadableStream
+      totalBytes?: number
+    }> => ({
+      stream: Readable.from(tgz)
+    })
+
+    const outcome = await installManagedOpencode({
+      installId: 'i2',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform: { key: 'darwin-arm64', binName: 'opencode' },
+      fetchJson,
+      fetchTarball,
+      tmpDir: root
+    })
+
+    expect(outcome.result.ok).toBe(false)
+    expect(outcome.resolvedPath).toBeUndefined()
+  })
+})

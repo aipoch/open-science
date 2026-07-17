@@ -555,6 +555,8 @@ const defaultFetchTarball: FetchTarball = async (url) => {
 
 export {
   DEFAULT_REGISTRIES,
+  defaultFetchJson,
+  defaultFetchTarball,
   downloadAndVerify,
   extractFileFromTgz,
   getManagedPlatform,
