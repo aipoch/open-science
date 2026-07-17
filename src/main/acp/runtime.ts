@@ -1118,9 +1118,10 @@ class AcpRuntime {
           return message.response
         }
 
-        log.debug('session update', { sessionId: request.sessionId })
         // Route the update under the app-facing id so a session adopted onto a new agent (after a
-        // provider switch) still streams into the same conversation the renderer is watching.
+        // provider switch) still streams into the same conversation the renderer is watching. (No
+        // per-update log line here: it fires once per streamed chunk and floods the console for no
+        // signal — 'prompt start'/'prompt stopped' already bracket the turn.)
         this.handleSessionUpdate(message.notification, request.sessionId)
       }
     } catch (error) {
