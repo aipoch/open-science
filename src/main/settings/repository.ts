@@ -296,6 +296,19 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
       normalized.length > root.length ? normalized.replace(/[\\/]+$/, '') : normalized
   }
 
+  // Selected agent backend; only the known ids survive so a bad value can't leak through.
+  const agentFrameworkId = asString(value.agentFrameworkId)
+
+  if (agentFrameworkId === 'claude-code' || agentFrameworkId === 'opencode') {
+    settings.agentFrameworkId = agentFrameworkId
+  }
+
+  const opencodePath = asString(value.opencodePath)
+
+  if (opencodePath) {
+    settings.opencodePath = opencodePath
+  }
+
   return settings
 }
 

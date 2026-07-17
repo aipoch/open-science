@@ -27,6 +27,9 @@ import type {
   ValidateProviderRequest
 } from '../../shared/settings'
 import { createDefaultSettingsService, SettingsService } from './service'
+import { createLogger } from '../logger'
+
+const log = createLogger('settings-ipc')
 
 // IPC channel names for the settings/onboarding surface. Kept together so preload and main agree.
 // Carries both log lines and progress ticks (a `ClaudeInstallEvent` discriminated union).
@@ -100,6 +103,7 @@ const registerSettingsIpcHandlers = ({
   ipcMain.handle(
     'settings:set-agent-framework',
     async (_event, request: SetAgentFrameworkRequest) => {
+      log.info('set agent framework requested', { id: request.id })
       const snapshot = await service.setAgentFramework(request.id)
 
       // Switching frameworks needs a fresh agent process, exactly like a provider switch — the live

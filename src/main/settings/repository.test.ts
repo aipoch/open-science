@@ -56,6 +56,18 @@ describe('settings repository', () => {
     expect(settings.providers[0]).toMatchObject({ id: 'p1', keyRef: 'enc:abc' })
   })
 
+  it('persists the agent framework + opencode path across a sanitized read', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    await repository.setAgentFramework('opencode')
+    await repository.setOpencodePath('/usr/local/bin/opencode')
+
+    // sanitizeSettings must not strip these fields on read-back, or the selector can never switch.
+    const settings = await repository.getSettings()
+    expect(settings.agentFrameworkId).toBe('opencode')
+    expect(settings.opencodePath).toBe('/usr/local/bin/opencode')
+  })
+
   it('replaces a provider in place on upsert by id', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 
