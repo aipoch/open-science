@@ -144,12 +144,17 @@ const registerIpcHandlers = async ({ mainEntryPath }: IpcRegistrationOptions): P
   const artifactRunRegistry = new ArtifactRunRegistry()
   // Share one upload repository so composer staging, prompt finalization, and previews agree.
   const uploadRepository = createDefaultUploadRepository()
+  // One source-neutral resolver keeps previews and user-requested exports on identical trust checks.
+  const resolveManagedFilePath = (
+    source: 'artifact' | 'upload',
+    request: { path: string }
+  ): Promise<string> =>
+    source === 'artifact'
+      ? artifactRepository.resolveManagedFilePath(request)
+      : uploadRepository.resolveManagedUploadPath(request)
   // One registry owns short-lived capability URLs for both managed artifact repositories.
   const previewResources = new ManagedPreviewResources({
-    resolvePath: (source, request) =>
-      source === 'artifact'
-        ? artifactRepository.resolveManagedFilePath(request)
-        : uploadRepository.resolveManagedUploadPath(request)
+    resolvePath: resolveManagedFilePath
   })
   const notebookService = createDefaultNotebookRuntimeService()
 
@@ -212,7 +217,7 @@ const registerIpcHandlers = async ({ mainEntryPath }: IpcRegistrationOptions): P
     }
   )
 
-  registerFileSaveHandlers()
+  registerFileSaveHandlers({ resolveManagedFilePath })
   registerLogsIpcHandlers()
   registerGithubIpcHandlers()
   const updateService = registerUpdateIpcHandlers()

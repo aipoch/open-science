@@ -22,7 +22,12 @@ import type {
   OpenArtifactFileRequest,
   ReadArtifactPreviewRequest
 } from '../shared/artifacts'
-import type { SaveBlobFileRequest, SaveBlobFileResult } from '../shared/file-save'
+import type {
+  SaveBlobFileRequest,
+  SaveBlobFileResult,
+  SaveManagedFileRequest,
+  SaveManagedFileResult
+} from '../shared/file-save'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
   AppendNotebookCodeCellRequest,
@@ -137,6 +142,7 @@ const onIpcMessage = <Payload>(channel: string, listener: AcpListener<Payload>):
 // Custom APIs for renderer
 type OpenScienceAPI = {
   saveBlobFile: (request: SaveBlobFileRequest) => Promise<SaveBlobFileResult>
+  saveManagedFile: (request: SaveManagedFileRequest) => Promise<SaveManagedFileResult>
   // Host platform (process.platform), e.g. 'win32' | 'darwin' | 'linux'. Lets the renderer pick
   // platform-correct copy such as the claude install command shown in the onboarding/settings card.
   platform: string
@@ -324,6 +330,8 @@ type OpenScienceAPI = {
 const api: OpenScienceAPI = {
   saveBlobFile: (request) =>
     ipcRenderer.invoke('file:save-blob', request) as Promise<SaveBlobFileResult>,
+  saveManagedFile: (request) =>
+    ipcRenderer.invoke('file:save-managed', request) as Promise<SaveManagedFileResult>,
   platform: process.platform,
   getRuntimeVersions: () => ({
     electron: process.versions.electron,

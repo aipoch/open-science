@@ -20,7 +20,12 @@ import type {
   OpenArtifactFileRequest,
   ReadArtifactPreviewRequest
 } from '../shared/artifacts'
-import type { SaveBlobFileRequest, SaveBlobFileResult } from '../shared/file-save'
+import type {
+  SaveBlobFileRequest,
+  SaveBlobFileResult,
+  SaveManagedFileRequest,
+  SaveManagedFileResult
+} from '../shared/file-save'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
   AppendNotebookCodeCellRequest,
@@ -123,6 +128,7 @@ type AcpListener<Payload> = (payload: Payload) => void
 
 interface OpenScienceAPI {
   saveBlobFile(request: SaveBlobFileRequest): Promise<SaveBlobFileResult>
+  saveManagedFile(request: SaveManagedFileRequest): Promise<SaveManagedFileResult>
   // Host platform (process.platform), e.g. 'win32' | 'darwin' | 'linux'.
   platform: string
   getRuntimeVersions(): {

@@ -141,6 +141,7 @@ describe('ProjectFilesView', () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     window.api = {
+      saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
       previewResources: {
         acquire: vi.fn(({ path }: { path: string }) =>
           Promise.resolve({
@@ -222,6 +223,72 @@ describe('ProjectFilesView', () => {
     expect(container.textContent).toContain('iso621_bridg...inase.fasta')
     expect(container.querySelector('[title="iso621_bridge_recombinase.fasta"]')).not.toBeNull()
     expect(container.textContent).not.toContain('Hidden session title')
+    expect(
+      container.querySelector('[data-testid="project-file-preview"]')?.parentElement?.parentElement
+        ?.className
+    ).toContain('focus-within:ring')
+  })
+
+  it('downloads an uploaded file without opening its preview', async () => {
+    const upload = createUpload()
+    await renderView([
+      createSession({
+        messages: [createMessage({ uploads: [upload] })]
+      })
+    ])
+
+    const downloadButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Download user upload.png"]'
+    )
+    expect(downloadButton).not.toBeNull()
+    expect(
+      downloadButton?.closest('[data-testid="download-tooltip-trigger"]')?.className
+    ).toContain('absolute')
+
+    await act(async () => {
+      downloadButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    expect(window.api.saveManagedFile).toHaveBeenCalledWith({
+      source: 'upload',
+      path: upload.path,
+      suggestedName: 'user upload.png'
+    })
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBeUndefined()
+  })
+
+  it('downloads a generated file through the artifact source', async () => {
+    await renderView([
+      createSession({
+        artifacts: [
+          {
+            id: 'artifact-download',
+            kind: 'managed-file',
+            path: '/workspace/report.pdf',
+            fileUrl: 'file:///workspace/report.pdf',
+            name: 'report.pdf',
+            mimeType: 'application/pdf',
+            size: 4096,
+            mtimeMs: 1710000002000
+          }
+        ]
+      })
+    ])
+
+    const downloadButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Download report.pdf"]'
+    )
+    await act(async () => {
+      downloadButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    expect(window.api.saveManagedFile).toHaveBeenCalledWith({
+      source: 'artifact',
+      path: '/workspace/report.pdf',
+      suggestedName: 'report.pdf'
+    })
   })
 
   it('opens a filter menu without This computer entries', async () => {
