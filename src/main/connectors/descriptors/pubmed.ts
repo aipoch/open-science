@@ -536,7 +536,7 @@ export const PUBMED_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "pmids": [str], "total_count": int, "returned_count": int, "query": str, "query_translation": str|null, "has_more": bool }` — `pmids` is one page (`max_results`, default 20) starting at `retstart`; `total_count` is the full PubMed match count. Feed PMIDs to `get_article_metadata`.',
     example:
-      'result = host.mcp("pubmed", "search_articles", {"query": "CRISPR gene editing", "max_results": 10})',
+      'const result = await host.mcp("pubmed", "search_articles", {"query": "CRISPR gene editing", "max_results": 10})',
     run: async (ctx, a) => {
       const query = String(a.query)
       const retstart = Number(a.retstart ?? 0)
@@ -588,7 +588,7 @@ export const PUBMED_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "articles": [ { "identifiers": {"pmid","pmc"?,"doi"?}, "title", "abstract", "doi"?, "journal": {"title","iso_abbreviation"}, "authors": [{"last_name"?,"fore_name"?,"initials"?,"collective_name"?,"affiliations":[str]}], "publication_date": {"year"?,"month"?,"day"?}, "mesh_terms": [str], "article_types": [str], "language", "citation": {"volume"?,"issue"?,"pages"?} } ], "count": int, "important_legal_notice": str }` — one article per requested PMID present in PubMed (input order).',
     example:
-      'result = host.mcp("pubmed", "get_article_metadata", {"pmids": ["35486828", "33264437"]})',
+      'const result = await host.mcp("pubmed", "get_article_metadata", {"pmids": ["35486828", "33264437"]})',
     run: async (ctx, a) => {
       const pmids = (Array.isArray(a.pmids) ? a.pmids : [a.pmids]).map((x) => String(x))
       const url = eutilsUrl(
@@ -629,7 +629,7 @@ export const PUBMED_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "linksets": [ { "dbfrom": "pubmed", "ids": [str], "linksetdbs": [ { "dbto": str, "linkname": str, "links": [str] } ] } ] }` — one linkset per input PMID; `links` are related ids, relevance-ranked for `pubmed_pubmed`, truncated to `max_results` when given.',
     example:
-      'result = host.mcp("pubmed", "find_related_articles", {"pmids": ["35486828"], "link_type": "pubmed_pubmed"})',
+      'const result = await host.mcp("pubmed", "find_related_articles", {"pmids": ["35486828"], "link_type": "pubmed_pubmed"})',
     run: async (ctx, a) => {
       const pmids = (Array.isArray(a.pmids) ? a.pmids : [a.pmids]).map((x) => String(x))
       const linkType = String(a.link_type ?? 'pubmed_pubmed')
@@ -690,7 +690,7 @@ export const PUBMED_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "citations": [ { "journal", "year", "volume", "first_page", "author", "pmid": str|null, "key": str, "status"?: "not_found"|"ambiguous"|..., "detail"? } ] }` — one entry per input citation (order preserved); `pmid` is set on a unique match, otherwise `status`/`detail` explain why.',
     example:
-      'result = host.mcp("pubmed", "lookup_article_by_citation", {"citations": [{"journal": "Science", "year": 1987, "volume": "235", "first_page": "182", "author": "Palmenberg AC"}]})',
+      'const result = await host.mcp("pubmed", "lookup_article_by_citation", {"citations": [{"journal": "Science", "year": 1987, "volume": "235", "first_page": "182", "author": "Palmenberg AC"}]})',
     run: async (ctx, a) => {
       const citations = (Array.isArray(a.citations) ? a.citations : []) as Json[]
       // Build the pipe-delimited, \r-joined bdata block (journal|year|volume|page|author|key|).
@@ -768,7 +768,7 @@ export const PUBMED_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "status": "ok", "response-date": str, "request": {...}, "records": [ { "pmcid": str|null, "pmid": str|null, "doi": str|null, "requested-id": str, "status"?: "error", "errmsg"? } ] }` — one record per input id (order preserved); missing identifiers are explicit null. `status="error"` with "not found in PMC" is the normal outcome for a PMID with no PMC deposit.',
     example:
-      'result = host.mcp("pubmed", "convert_article_ids", {"ids": ["PMC9046468"], "id_type": "pmcid"})',
+      'const result = await host.mcp("pubmed", "convert_article_ids", {"ids": ["PMC9046468"], "id_type": "pmcid"})',
     run: async (ctx, a) => {
       const ids = (Array.isArray(a.ids) ? a.ids : [a.ids]).map((x) => String(x))
       const idType = String(a.id_type ?? 'pmid')
@@ -823,7 +823,8 @@ export const PUBMED_TOOLS: ToolDescriptor[] = [
     required: ['pmc_ids'],
     returns:
       '`{ "important_legal_notice": str, "articles": [ { "identifiers": {"pmcid"?,"pmid"?,"doi"?}, "title", "full_text": str, "license"?, "doi"?, "abstract"?, "fulltext_status"?: str, "detail"? } ], "count": int }` — `full_text` is the section text joined by blank lines; `fulltext_status` (present when not "retrieved") is one of not_open_access / no_pmcid / xml_not_available / not_found / invalid_id.',
-    example: 'result = host.mcp("pubmed", "get_full_text_article", {"pmc_ids": ["PMC9046468"]})',
+    example:
+      'const result = await host.mcp("pubmed", "get_full_text_article", {"pmc_ids": ["PMC9046468"]})',
     run: async (ctx, a) => {
       // The field declares PMC intent, so a bare digit string is a PMC number — prefix it.
       const ids = (Array.isArray(a.pmc_ids) ? a.pmc_ids : [a.pmc_ids])
@@ -919,7 +920,7 @@ export const PUBMED_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "results": [ { "pmid", "pmc_id": str|null, "copyright": {"statement","year","holder"}, "license": {"type","url","is_open_access"}, "source": "pmc"|"pubmed"|"not_available", "checked_sources": [str], "available_at": {"pubmed_url","pmc_url"?,"doi_url"?} } ], "count": int, "summary": {"total_checked","found_in_pubmed","found_in_pmc","not_found","open_access_count"} }` — one result per input PMID.',
     example:
-      'result = host.mcp("pubmed", "get_copyright_status", {"pmids": ["35891187", "34375400"]})',
+      'const result = await host.mcp("pubmed", "get_copyright_status", {"pmids": ["35891187", "34375400"]})',
     run: async (ctx, a) => {
       const pmids = (Array.isArray(a.pmids) ? a.pmids : [a.pmids]).map((x) => String(x))
       const conv = await convertIds(ctx, pmids, 'pmid')

@@ -9,8 +9,10 @@ import { OnboardingWizard } from '@/pages/onboarding/OnboardingWizard'
 import { resolveStartupView } from '@/pages/onboarding/startup-gate'
 import { ConnectorApprovalDialog } from '@/pages/settings/ConnectorApprovalDialog'
 import { SettingsPage } from '@/pages/settings/SettingsPage'
+import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
 import { WorkspacePage } from '@/pages/workspace/WorkspacePage'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useUpdateStore } from '@/stores/update-store'
@@ -29,6 +31,9 @@ const App = (): React.JSX.Element | null => {
   const closeSettings = useSettingsStore((state) => state.closeSettings)
   const enqueueApproval = useSettingsStore((state) => state.enqueueApproval)
   const initUpdates = useUpdateStore((state) => state.init)
+  const initEnv = useNotebookEnvStore((state) => state.init)
+  const envUi = useNotebookEnvStore((state) => state.ui)
+  const retryEnv = useNotebookEnvStore((state) => state.retry)
   // §20.4: settings.dataRoot configured but the folder is gone (deleted or an unmounted drive).
   const [missingDataRoot, setMissingDataRoot] = useState<string | undefined>(undefined)
   // Legacy (pre-§20) install whose data still lives in the hidden config root: offer the one-time
@@ -41,6 +46,12 @@ const App = (): React.JSX.Element | null => {
   useEffect(() => {
     initUpdates()
   }, [initUpdates])
+
+  // Mirrors the main-process provisioner once at launch (Plan A auto-runs upgradeIfNeeded and
+  // broadcasts progress); the returned `ui` drives the top-level upgrade/error banner below.
+  useEffect(() => {
+    void initEnv()
+  }, [initEnv])
 
   // Checked once at startup, after the gate is settled: dataRootMissing only fires for an
   // explicitly-configured root, which implies onboarding already completed - never during the
@@ -97,6 +108,7 @@ const App = (): React.JSX.Element | null => {
 
   return (
     <>
+      <EnvStatusBanner ui={envUi} onRetry={() => void retryEnv()} />
       {view === 'home' ? (
         <HomePage />
       ) : (

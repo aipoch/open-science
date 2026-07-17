@@ -1,5 +1,5 @@
 import { createReadStream, createWriteStream } from 'node:fs'
-import { mkdir, readdir, rm, rmdir, stat } from 'node:fs/promises'
+import { chmod, mkdir, readdir, rm, rmdir, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
@@ -51,10 +51,14 @@ const listFiles = async (root: string): Promise<string[]> => {
   return out
 }
 
-// Copies a single file, streaming, creating parent dirs as needed.
+// Copies a single file, streaming, creating parent dirs as needed. The source mode is reapplied
+// afterwards: createWriteStream makes dest 0644, which would strip the executable bit — fatal for the
+// runtime/pkgs cache, whose extracted conda binaries and .dylibs micromamba hard-links into a
+// relocated env (a non-executable Rscript/.so then fails to spawn/load with EACCES).
 const copyFile = async (src: string, dest: string): Promise<void> => {
   await mkdir(dirname(dest), { recursive: true })
   await pipeline(createReadStream(src), createWriteStream(dest))
+  await chmod(dest, (await stat(src)).mode)
 }
 
 // Scans, copies, and verifies `from/<dir>` into `to/<dir>` for every dir in `dirs`. `from` is

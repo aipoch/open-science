@@ -414,7 +414,7 @@ export const BIORXIV_TOOLS: ToolDescriptor[] = [
     input: { type: 'object', properties: {} },
     returns:
       '`{ "success": true, "categories": [ { "name": str, "api_format": str, "description": null } ], "error": null }` — 27 entries.',
-    example: 'result = host.mcp("biorxiv", "get_categories", {})',
+    example: 'const result = await host.mcp("biorxiv", "get_categories", {})',
     run: async () => categoriesResponse()
   },
   {
@@ -442,7 +442,7 @@ export const BIORXIV_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "success": bool, "results": [ { "doi", "title", "authors", "date", "category", "version", "abstract_preview" } ], "cursor": int, "count": int, "total": int|null, "error": null }`. `total` is the window total (null when the route reports none).',
     example:
-      'result = host.mcp("biorxiv", "search_preprints", {"recent_days": 30, "category": "neuroscience", "limit": 20})',
+      'const result = await host.mcp("biorxiv", "search_preprints", {"recent_days": 30, "category": "neuroscience", "limit": 20})',
     run: async (ctx, a) => {
       const cursor = Number(a.cursor ?? 0)
       try {
@@ -479,7 +479,7 @@ export const BIORXIV_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ "success": bool, "preprint": { "doi", "title", "authors", "author_corresponding", "author_corresponding_institution", "date", "version", "type", "category", "license", "abstract", "jatsxml", "funding", "published_doi", "server", "pdf_url", "web_url", "n_versions" }, "error": str|null }`. On an unknown DOI: `success:false`, `preprint:null`, `error` set.',
-    example: 'result = host.mcp("biorxiv", "get_preprint", {"doi": "10.1101/339747"})',
+    example: 'const result = await host.mcp("biorxiv", "get_preprint", {"doi": "10.1101/339747"})',
     run: async (ctx, a) => {
       try {
         const server = checkServer(a.server)
@@ -524,7 +524,7 @@ export const BIORXIV_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "success": bool, "results": [ { "biorxiv_doi", ...link fields } ], "cursor": int, "count": int, "total": int|null, "error": null }`. With include_details each result carries every upstream field (published_doi, published_journal, preprint_title, dates, etc.); with include_details=false, only the summary subset.',
     example:
-      'result = host.mcp("biorxiv", "search_published_preprints", {"publisher": "10.1038", "date_from": "2024-01-01", "date_to": "2024-01-05", "limit": 10})',
+      'const result = await host.mcp("biorxiv", "search_published_preprints", {"publisher": "10.1038", "date_from": "2024-01-01", "date_to": "2024-01-05", "limit": 10})',
     run: async (ctx, a) => {
       const cursor = Number(a.cursor ?? 0)
       try {
@@ -582,7 +582,7 @@ export const BIORXIV_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "success": bool, "results": [ { "doi", "title", "authors", "date", "category", "version", "abstract_preview" } ], "cursor": int, "count": int, "total": int|null, "error": null }`. The funder route reports no total, so `total` is null when results exist; page with cursor until count < limit.',
     example:
-      'result = host.mcp("biorxiv", "search_by_funder", {"funder_ror_id": "021nxhr62", "date_from": "2025-04-10", "date_to": "2025-05-10", "limit": 10})',
+      'const result = await host.mcp("biorxiv", "search_by_funder", {"funder_ror_id": "021nxhr62", "date_from": "2025-04-10", "date_to": "2025-05-10", "limit": 10})',
     run: async (ctx, a) => {
       const cursor = Number(a.cursor ?? 0)
       try {
@@ -614,7 +614,8 @@ export const BIORXIV_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ "success": bool, "results": [ { "month"|"year", "new_papers", "new_papers_cumulative", "revised_papers", "revised_papers_cumulative" } ], "error": null }`. Monthly rows carry "month" (YYYY-MM); yearly rows carry "year".',
-    example: 'result = host.mcp("biorxiv", "get_content_statistics", {"interval": "yearly"})',
+    example:
+      'const result = await host.mcp("biorxiv", "get_content_statistics", {"interval": "yearly"})',
     run: async (ctx, a) => {
       try {
         return contentStatsResponse(await statsRows(ctx, 'sum', resolveInterval(a)))
@@ -636,7 +637,8 @@ export const BIORXIV_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ "success": bool, "results": [ { "month"|"year", "abstract_views", "full_text_views", "pdf_downloads", "abstract_cumulative", "full_text_cumulative", "pdf_cumulative" } ], "error": null }`. Monthly rows carry "month" (YYYY-MM); yearly rows carry "year".',
-    example: 'result = host.mcp("biorxiv", "get_usage_statistics", {"interval": "yearly"})',
+    example:
+      'const result = await host.mcp("biorxiv", "get_usage_statistics", {"interval": "yearly"})',
     run: async (ctx, a) => {
       try {
         return usageStatsResponse(await statsRows(ctx, 'usage', resolveInterval(a)))

@@ -1,6 +1,7 @@
 import type { ClaudeInfo, ProviderType, ProviderValidationFailure } from '../../shared/settings'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { OfficialVendorId } from '../../shared/provider-registry'
+import type { PackageMirror } from '../../shared/mirror'
 
 // Main-process-only stored shapes for settings.json. These carry the encrypted key reference and a
 // non-secret masked hint; the plaintext key never lives here (only transiently in service memory).
@@ -82,6 +83,8 @@ export type StoredSettings = {
   // (default-on), so new bundled skills are enabled automatically.
   disabledSkillIds?: string[]
   connectors?: StoredConnectors
+  // Non-secret package-mirror overrides (conda/pypi/cran). Absent means public hosts.
+  packageMirror?: PackageMirror
   // Absolute path of the relocatable data root (artifacts/notebooks/runtime/uploads). Absent means
   // "use the config root" (default). Only written after a successful migration; a change needs a restart.
   dataRoot?: string

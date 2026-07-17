@@ -2,12 +2,12 @@ import { CONNECTOR_CATALOG } from './catalog'
 import { getConnectorTools } from './registry'
 
 const CONVENTIONS = [
-  'Reach this service ONLY via `host.mcp` from the notebook kernel. It runs synchronously and returns the result directly — assign it: `result = host.mcp(server, method, {...})`. Arguments go as a dict, or as keywords (`host.mcp(server, method, term=...)`).',
-  "The result is a ready-to-use native Python value — a dict or list for most tools, sometimes a string or number. It is already parsed (not a JSON string). Each tool's **Returns** block gives its exact shape and field meanings; how you inspect or process it is up to you.",
-  'The notebook kernel is a persistent shared session: the variable you assign a result to stays available in later cells, so reuse it instead of running the call again. Each call hits the rate-limited upstream — never re-issue the same call to look at or reprocess a result you already have.',
+  'Reach this service ONLY from the REPL control-plane kernel: call it inside the `repl_execute` tool as `const result = await host.mcp(server, method, {...})`. host.mcp is async — always `await` it. The python and r DATA cells have NO connector access; do not call host.mcp (or urllib / requests / fetch) from them — it will fail.',
+  "The result is a ready-to-use native JavaScript value — an object or array for most tools, sometimes a string or number. It is already parsed (not a JSON string). Each tool's **Returns** block gives its exact shape and field meanings; how you inspect or process it is up to you.",
+  'The REPL is a persistent session: assign a result you will reuse to `globalThis` (e.g. `globalThis.hits = result`) so later `repl_execute` calls can see it, instead of running the call again. Each call hits the rate-limited upstream — never re-issue the same call to look at or reprocess a result you already have.',
   'Do NOT reimplement these calls with raw HTTP (urllib / requests / httpx / fetch) or hit the upstream endpoints directly — that bypasses the approval gate, per-tool policy, credentials, and rate limits, and can leak project data.',
   'Prefer bulk/list tools over per-item loops — the upstream API is rate-limited and shared across subagents.',
-  'Pass large results between cells via `./handoff/*.json`, not the model context.'
+  'To use a result in a python or r cell, have the REPL write it to `./handoff/<name>.json` (the shared `$OPEN_SCIENCE_HANDOFF_DIR`), then read that file from the data cell — not through the model context.'
 ].join('\n')
 
 // Placeholder value for one JSON-Schema field in a call example: an enum's first choice or the field's
@@ -57,17 +57,17 @@ function exampleArgs(schema: unknown): string | undefined {
   return entries.length ? `{${entries.join(', ')}}` : undefined
 }
 
-// Renders one tool's usage example as a copyable python cell. Prefers the descriptor's hand-authored
-// `example` (a single call with realistic args); otherwise builds a bare call from the schema. A tool
-// with no concrete args renders as `host.mcp(server, method)` (no third argument) — passing a literal
-// `...` there would reach the bridge as Ellipsis and raise, so it must be omitted.
+// Renders one tool's usage example as a copyable repl_execute (JS) cell. Prefers the descriptor's
+// hand-authored `example` (a single `await host.mcp(...)` call with realistic args); otherwise builds a
+// bare call from the schema. A tool with no concrete args renders as `await host.mcp(server, method)`
+// (no third argument) — passing a literal `...` there would reach the bridge and raise, so it's omitted.
 function renderExample(server: string, tool: string, schema: unknown, example?: string): string {
-  if (example) return `Example:\n\n\`\`\`python\n${example}\n\`\`\`\n`
+  if (example) return `Example:\n\n\`\`\`js\n${example}\n\`\`\`\n`
   const args = exampleArgs(schema)
   const call = args
     ? `host.mcp("${server}", "${tool}", ${args})`
     : `host.mcp("${server}", "${tool}")`
-  return `Example:\n\n\`\`\`python\nresult = ${call}\n\`\`\`\n`
+  return `Example:\n\n\`\`\`js\nconst result = await ${call}\n\`\`\`\n`
 }
 
 // Renders one connector's tools as a searchable skill document (frontmatter + conventions + methods).

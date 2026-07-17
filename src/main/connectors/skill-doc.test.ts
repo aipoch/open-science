@@ -29,13 +29,13 @@ describe('renderSkillDoc', () => {
       md.indexOf('### search_articles'),
       md.indexOf('### get_article_metadata')
     )
-    const py = block
-      .slice(block.indexOf('```python') + '```python'.length, block.lastIndexOf('```'))
+    const code = block
+      .slice(block.indexOf('```js\n') + '```js\n'.length, block.lastIndexOf('```'))
       .trim()
-    expect(py).toBe(
-      'result = host.mcp("pubmed", "search_articles", {"query": "CRISPR gene editing", "max_results": 10})'
+    expect(code).toBe(
+      'const result = await host.mcp("pubmed", "search_articles", {"query": "CRISPR gene editing", "max_results": 10})'
     )
-    expect(py).not.toContain('#') // no per-tool comment/prose
+    expect(code).not.toContain('#') // no per-tool comment/prose
   })
   it('does not hardcode a processing/display method in the doc', () => {
     // Requirement: the skill doc states facts (shape lives in Returns, result is a Python value) but
@@ -60,7 +60,7 @@ describe('renderSkillDoc', () => {
         }
       ]
     )
-    expect(md).toContain('result = host.mcp("acme", "do_thing", {"q": "..."})')
+    expect(md).toContain('const result = await host.mcp("acme", "do_thing", {"q": "..."})')
   })
   it('renders a no-arg tool without a third argument (never a literal ...)', () => {
     // A literal `...` as the args positional reaches the bridge as Ellipsis and raises; a no-arg tool
@@ -68,12 +68,12 @@ describe('renderSkillDoc', () => {
     const md = renderCustomSkillDoc({ name: 'acme' }, [
       { name: 'ping', inputSchema: { type: 'object', properties: {} } }
     ])
-    expect(md).toContain('result = host.mcp("acme", "ping")')
+    expect(md).toContain('const result = await host.mcp("acme", "ping")')
     expect(md).not.toContain('"ping", ...)') // never a literal Ellipsis as the args positional
   })
-  it('frames the calling convention positively (assign the sync dict result)', () => {
+  it('frames the calling convention positively (await the repl host.mcp call)', () => {
     const md = renderSkillDoc('pubmed')
-    expect(md).toContain('result = host.mcp(server, method, {...})')
+    expect(md).toContain('const result = await host.mcp(server, method, {...})')
   })
   it('documents the return shape so agents need not probe it', () => {
     const md = renderSkillDoc('pubmed')
@@ -87,8 +87,8 @@ describe('renderSkillDoc', () => {
     // instead of reusing the variable it had already assigned.
     const md = renderSkillDoc('pubmed')
     expect(md).toContain('persistent')
-    expect(md).toContain('native Python')
-    expect(md).toMatch(/reuse it instead of running the call again/)
+    expect(md).toContain('native JavaScript')
+    expect(md).toMatch(/instead of running the call again/)
     expect(md).toMatch(/never re-(issue|call)/i)
   })
   it('gives custom MCP servers the same reuse guidance', () => {
@@ -98,6 +98,6 @@ describe('renderSkillDoc', () => {
       [{ name: 'do_thing', inputSchema: { type: 'object', properties: { q: { type: 'string' } } } }]
     )
     expect(md).toContain('persistent')
-    expect(md).toMatch(/reuse it instead of running the call again/)
+    expect(md).toMatch(/instead of running the call again/)
   })
 })

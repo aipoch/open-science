@@ -20,6 +20,7 @@ import type {
   ClaudeInstallSource,
   UpsertProviderRequest
 } from '../../../../shared/settings'
+import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { DataRootWarning } from '@/components/DataRootWarning'
 import { ClaudeInstallCard } from '../settings/ClaudeInstallCard'
@@ -33,6 +34,7 @@ import {
   type ProviderFormValue
 } from '../settings/provider-form-value'
 import { describeValidation } from '../settings/validation-message'
+import { deriveProvisionUi } from '../workspace/provisioning-view'
 
 // Location is last: it doubles as the wizard's Finish step, so the confirm-restart dialog can
 // show only once the provider is already validated.
@@ -128,6 +130,15 @@ const OnboardingWizard = (): React.JSX.Element => {
   const isRecovery = onboardingCompletedAt !== undefined
   // First-time setup always starts on the visible environment summary, even when every check has
   // already passed. The user explicitly continues to model configuration after reviewing it.
+
+  const envInit = useNotebookEnvStore((s) => s.init)
+  const envProvision = useNotebookEnvStore((s) => s.provision)
+  const envStatus = useNotebookEnvStore((s) => s.status)
+  const envScope = useNotebookEnvStore((s) => s.scope)
+  const envProgress = useNotebookEnvStore((s) => s.progress)
+  const envError = useNotebookEnvStore((s) => s.error)
+  const didKickEnv = useRef(false)
+
   const [step, setStep] = useState<WizardStep>('claude')
   const [environmentMode, setEnvironmentMode] = useState<EnvironmentMode>('automatic')
   const [automaticInstallError, setAutomaticInstallError] = useState<string | undefined>(undefined)
@@ -185,6 +196,20 @@ const OnboardingWizard = (): React.JSX.Element => {
       void checkEnvironment()
     }
   }, [environmentCheck, environmentCheckError, isCheckingEnvironment, checkEnvironment])
+
+  // Background python provisioning runs in parallel with the claude/provider steps above (spec
+  // §6.1) — never blocks advancing the wizard. Guarded so re-renders don't refire it, and skipped
+  // if python is already materialized (a returning user who re-enters onboarding).
+  useEffect(() => {
+    if (didKickEnv.current) return
+    didKickEnv.current = true
+    void (async () => {
+      await envInit()
+      if (!useNotebookEnvStore.getState().status.pythonReady) await envProvision('python')
+    })()
+  }, [envInit, envProvision])
+
+  const envUi = deriveProvisionUi(envStatus, envScope, envProgress, envError)
 
   // Onboarding always creates a provider, so required fields must be filled before it can continue.
   const formErrors = getProviderFormErrors(formValue)
@@ -641,6 +666,17 @@ const OnboardingWizard = (): React.JSX.Element => {
             )}
           </Card>
         </div>
+
+        {envUi.kind !== 'ready' ? (
+          <div
+            data-testid="onboarding-env-progress"
+            className="mt-4 rounded border p-3 text-xs text-text-100"
+          >
+            {envUi.kind === 'preparing'
+              ? `${envUi.message || 'Preparing Python environment…'} (${Math.round(envUi.progress * 100)}%)`
+              : 'Environment preparation will continue in the app — the notebook opens when it is ready.'}
+          </div>
+        ) : null}
       </div>
 
       <AlertDialog.Root

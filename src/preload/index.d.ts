@@ -34,12 +34,14 @@ import type {
   NotebookChangedEvent,
   ExecuteNotebookCodeRequest,
   FinishNotebookCodeCellRequest,
+  NotebookLanguage,
   NotebookRunSummary,
   NotebookSessionReference,
   NotebookSessionRequest,
   NotebookSessionState,
   RunNotebookCellRequest
 } from '../shared/notebook'
+import type { ProvisionProgress, ProvisionStatus } from '../shared/notebook-env'
 import type {
   DeletePreviewStateRequest,
   LoadPreviewStateRequest,
@@ -77,6 +79,7 @@ import type {
   RefreshProviderModelsRequest,
   RefreshProviderModelsResult,
   SetActiveProviderRequest,
+  SetPackageMirrorRequest,
   SetSkillEnabledRequest,
   SettingsSnapshot,
   SkillDetailView,
@@ -107,6 +110,7 @@ import type {
   ValidateProviderRequest,
   ValidateProviderResult
 } from '../shared/settings'
+import type { PackageMirror } from '../shared/mirror'
 import type {
   ActiveSessionInfo,
   DataRootInspection,
@@ -176,6 +180,8 @@ interface OpenScienceAPI {
       request: RefreshProviderModelsRequest
     ): Promise<RefreshProviderModelsResult>
     markOnboardingComplete(): Promise<SettingsSnapshot>
+    getPackageMirror(): Promise<PackageMirror>
+    setPackageMirror(request: SetPackageMirrorRequest): Promise<PackageMirror>
     listSkills(): Promise<SkillView[]>
     getSkillDetail(id: string): Promise<SkillDetailView>
     setSkillEnabled(request: SetSkillEnabledRequest): Promise<SkillView[]>
@@ -276,6 +282,12 @@ interface OpenScienceAPI {
     shutdown(request: NotebookSessionRequest): Promise<{ sessionId: string; status: 'shutdown' }>
     onAvailable(listener: AcpListener<NotebookAvailableEvent>): RemoveListener
     onChanged(listener: AcpListener<NotebookChangedEvent>): RemoveListener
+  }
+  notebookEnv: {
+    getStatus(): Promise<ProvisionStatus>
+    provision(lang: NotebookLanguage): Promise<void>
+    repair(lang: NotebookLanguage): Promise<void>
+    onProgress(listener: (progress: ProvisionProgress) => void): RemoveListener
   }
   storage: {
     getInfo(): Promise<StorageInfo>

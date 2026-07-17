@@ -171,12 +171,28 @@ class NotebookLocalRpcServer {
         this.service.finishCodeCell(request as unknown as FinishNotebookCodeCellRequest),
       runCell: (request) => this.service.runCell(request as unknown as RunNotebookCellRequest),
       execute: (request) => this.service.execute(request as unknown as ExecuteNotebookCodeRequest),
+      executeControl: (request) =>
+        this.service.executeControl(
+          request as unknown as Parameters<NotebookRuntimeService['executeControl']>[0]
+        ),
+      executeShell: (request) =>
+        this.service.executeShell(
+          request as unknown as Parameters<NotebookRuntimeService['executeShell']>[0]
+        ),
       state: (request) =>
         this.service.state(request as Parameters<NotebookRuntimeService['state']>[0]),
       restart: (request) =>
         this.service.restart(request as Parameters<NotebookRuntimeService['restart']>[0]),
       shutdown: (request) =>
-        this.service.shutdown(request as Parameters<NotebookRuntimeService['shutdown']>[0])
+        this.service.shutdown(request as Parameters<NotebookRuntimeService['shutdown']>[0]),
+      managePackages: (request) =>
+        this.service.managePackages(
+          request as unknown as Parameters<NotebookRuntimeService['managePackages']>[0]
+        ),
+      manageEnvironments: (request) =>
+        this.service.manageEnvironments(
+          request as unknown as Parameters<NotebookRuntimeService['manageEnvironments']>[0]
+        )
     }
 
     const handler = handlers[method]

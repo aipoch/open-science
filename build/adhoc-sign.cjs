@@ -35,6 +35,28 @@ exports.default = async function adhocSign(context) {
 
   const entitlements = path.join(__dirname, 'entitlements.mac.plist')
 
+  // Sign the bundled micromamba mach-O first (nested code must be signed before the outer bundle).
+  // It ships at Contents/Resources/micromamba via electron-builder extraResources; --deep below
+  // does not reach into loose files under Resources, so it needs its own explicit signing pass.
+  const micromambaPath = path.join(appPath, 'Contents', 'Resources', 'micromamba')
+  if (fs.existsSync(micromambaPath)) {
+    execFileSync(
+      'codesign',
+      [
+        '--force',
+        '--options',
+        'runtime',
+        '--sign',
+        '-',
+        '--entitlements',
+        entitlements,
+        micromambaPath
+      ],
+      { stdio: 'inherit' }
+    )
+    console.log('[adhoc-sign] signed bundled micromamba')
+  }
+
   // --deep signs nested frameworks, helpers and the bundled native `claude` binary.
   execFileSync(
     'codesign',

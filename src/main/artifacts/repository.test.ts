@@ -294,6 +294,50 @@ describe('artifact repository', () => {
     expect(preview.content).toContain('img-bytes')
   })
 
+  it('recovers a finalized file across sessions when finalize used an aliased source session', async () => {
+    // The runtime stages artifacts under an internal artifact-session id, then finalizeRunArtifacts
+    // moves them into the *real* session's message directory. A preview holding the old
+    // `<artifact-session>/.pending/<run>/` path must still recover the file that now lives under a
+    // different session dir — the exact "sine_curve.png ENOENT" case.
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+
+    await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'artifact-session-1',
+      runId: 'run-1',
+      filename: 'sine_curve.png',
+      mimeType: 'image/png',
+      source: createInlineSource('png-bytes')
+    })
+    const pendingPath = join(
+      root,
+      'artifacts',
+      'default-project',
+      'artifact-session-1',
+      '.pending',
+      'run-1',
+      'sine_curve.png'
+    )
+
+    await repository.finalizeRunArtifacts({
+      projectName: 'default-project',
+      sourceSessionId: 'artifact-session-1',
+      sessionId: 'real-session-1',
+      runId: 'run-1',
+      messageId: 'message-7'
+    })
+
+    const resolved = await repository.resolveManagedFilePath({ path: pendingPath })
+    const expected = await realpath(
+      join(root, 'artifacts', 'default-project', 'real-session-1', 'message-7', 'sine_curve.png')
+    )
+    expect(resolved).toBe(expected)
+
+    const preview = await repository.readManagedFilePreview({ path: pendingPath })
+    expect(preview.content).toContain('png-bytes')
+  })
+
   it('still throws for a missing artifact path that was never finalized', async () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)

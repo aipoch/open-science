@@ -2,6 +2,8 @@ import { create } from 'zustand'
 
 import type { OfficialVendorId } from '../../../shared/provider-registry'
 import { providerValidationFailed } from '../../../shared/settings'
+import type { PackageMirror } from '../../../shared/mirror'
+import { isMirrorConfigured } from '../pages/settings/mirror-view'
 import type {
   ClaudeDetectResult,
   ClaudeInfo,
@@ -82,6 +84,8 @@ type SettingsStoreData = {
   isSettingsOpen: boolean
   // Skill to land on when the dialog opens from a skill mention; consumed once its detail is seeded.
   pendingSkillId?: string
+  // Configured package mirror (conda/pip); undefined means public hosts (unconfigured).
+  packageMirror?: PackageMirror
 }
 
 type SettingsStore = SettingsStoreData & {
@@ -164,6 +168,8 @@ type SettingsStore = SettingsStoreData & {
   respondApproval: (id: string, decision: ApprovalDecision) => Promise<void>
   // Persists the first-run completion marker and caches it so the startup gate falls through to Home.
   completeOnboarding: () => Promise<void>
+  // Persists the package mirror config; caches it as undefined when cleared back to unconfigured.
+  setPackageMirror: (mirror: PackageMirror) => Promise<void>
 }
 
 const createInitialPreflight = (): Preflight => ({
@@ -196,7 +202,8 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   installError: undefined,
   isEnvironmentRepairOpen: false,
   isSettingsOpen: false,
-  pendingSkillId: undefined
+  pendingSkillId: undefined,
+  packageMirror: undefined
 })
 
 // Applies a fresh main-process snapshot to the renderer cache.
@@ -205,7 +212,8 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   activeProviderId: snapshot.activeProviderId,
   activeModel: snapshot.activeModel,
   providers: snapshot.providers,
-  onboardingCompletedAt: snapshot.onboardingCompletedAt
+  onboardingCompletedAt: snapshot.onboardingCompletedAt,
+  packageMirror: isMirrorConfigured(snapshot.packageMirror) ? snapshot.packageMirror : undefined
 })
 
 // A single selectable (provider, model) entry for the composer picker. `model` is '' for a provider
@@ -625,6 +633,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const snapshot = await window.api.settings.markOnboardingComplete()
 
     set(applySnapshot(snapshot))
+  },
+
+  setPackageMirror: async (mirror) => {
+    const saved = await window.api.settings.setPackageMirror(mirror)
+    set({ packageMirror: isMirrorConfigured(saved) ? saved : undefined })
   }
 }))
 

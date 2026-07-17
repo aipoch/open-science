@@ -9,6 +9,7 @@ import type {
 } from '../../shared/settings'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import { isOfficialVendorId } from '../../shared/provider-registry'
+import type { PackageMirror } from '../../shared/mirror'
 import {
   createEmptySettings,
   type StoredConnectors,
@@ -215,6 +216,25 @@ export const sanitizeConnectors = (value: unknown): StoredConnectors | undefined
   return connectors
 }
 
+// Rebuilds a PackageMirror from untrusted JSON, keeping only string url/path fields. Returns
+// undefined when nothing valid remains (absent == public hosts default).
+export const sanitizePackageMirror = (value: unknown): PackageMirror | undefined => {
+  if (!isRecord(value)) return undefined
+
+  const condaChannel = asString(value.condaChannel)
+  const pypiIndex = asString(value.pypiIndex)
+  const cranMirror = asString(value.cranMirror)
+  const caBundle = asString(value.caBundle)
+  const result: PackageMirror = {}
+
+  if (condaChannel) result.condaChannel = condaChannel
+  if (pypiIndex) result.pypiIndex = pypiIndex
+  if (cranMirror) result.cranMirror = cranMirror
+  if (caBundle) result.caBundle = caBundle
+
+  return Object.keys(result).length > 0 ? result : undefined
+}
+
 // Rebuilds the whole settings document, keeping activeProviderId only when it points at a provider.
 const sanitizeSettings = (value: unknown): StoredSettings => {
   if (!isRecord(value)) return createEmptySettings()
@@ -266,6 +286,10 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   const connectors = sanitizeConnectors(value.connectors)
 
   if (connectors) settings.connectors = connectors
+
+  const packageMirror = sanitizePackageMirror(value.packageMirror)
+
+  if (packageMirror) settings.packageMirror = packageMirror
 
   const pathsNormalizedAt = asNumber(value.pathsNormalizedAt)
 
@@ -359,6 +383,13 @@ class SettingsRepository {
   // Records the detected claude executable metadata for later spawns.
   async setClaudeInfo(claude: ClaudeInfo): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, claude }))
+  }
+
+  // Sets (or clears back to public hosts when empty) the package-mirror configuration.
+  async setPackageMirror(mirror: PackageMirror): Promise<StoredSettings> {
+    const sanitized = sanitizePackageMirror(mirror)
+
+    return this.mutate((settings) => ({ ...settings, packageMirror: sanitized }))
   }
 
   // Stamps the onboarding-completed time exactly once; later calls leave the first value intact.

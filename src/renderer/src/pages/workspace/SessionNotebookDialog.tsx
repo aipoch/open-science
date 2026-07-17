@@ -1,16 +1,27 @@
 import { useEffect, useState } from 'react'
-import { ChevronDown, Download, X } from 'lucide-react'
+import { Download, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 import type { ChatSession } from '@/stores/session-store'
 
-import type { NotebookRunRecord } from '../../../../shared/notebook'
+import type { NotebookKernelKind, NotebookRunRecord } from '../../../../shared/notebook'
 import { NotebookCodeBlock } from './notebook-code'
-import { deriveErrorLine, detectCellLanguage, isProblemRunStatus } from './notebook-cell-utils'
+import { NotebookRunOutputs } from './NotebookRunOutputs'
+import {
+  isProblemRunStatus,
+  kernelKindLabel,
+  kernelOriginLabel,
+  resolveRunErrorLine,
+  resolveRunKernelKind
+} from './notebook-cell-utils'
 import { loadSessionNotebookRuns } from './session-notebook-data'
 
 type SessionNotebookStatus = 'loading' | 'error' | 'ready'
+
+// Fixed section order for the per-kernel grouping, mirroring NotebookPreview's tab order.
+const KERNEL_KIND_ORDER: NotebookKernelKind[] = ['python', 'r', 'repl', 'bash']
 
 // Turns an IPC rejection into displayable text without losing non-Error values.
 const getErrorMessage = (error: unknown): string =>
@@ -30,19 +41,16 @@ const NotebookDialogCell = ({
   index: number
 }): React.JSX.Element => {
   const isProblem = isProblemRunStatus(run.status)
-  const errorLine = isProblem ? deriveErrorLine(run.text.traceback) : undefined
-  const language = detectCellLanguage(run.script)
-  const stdout = run.text.stdout
-  const stderr = [run.text.stderr, run.text.traceback]
-    .filter((value) => value.trim().length > 0)
-    .join('\n')
+  const errorLine = isProblem ? resolveRunErrorLine(run) : undefined
+  const kind = resolveRunKernelKind(run)
+  const originLabel = kernelOriginLabel(kind)
 
   return (
     <div className="px-4 py-3" data-testid="session-notebook-cell">
       <div className="mb-2 flex items-center justify-between text-xs">
         <div className="flex items-center gap-2">
           <span className="font-mono text-text-300">[{index}]</span>
-          <span className="rounded bg-bg-300 px-1.5 py-0.5 text-text-200">{language}</span>
+          <span className="rounded bg-bg-300 px-1.5 py-0.5 text-text-200">{kind}</span>
           {isProblem ? (
             errorLine ? (
               <span className="rounded bg-danger-000 px-1.5 py-0.5 font-medium text-white">
@@ -53,26 +61,14 @@ const NotebookDialogCell = ({
             )
           ) : null}
         </div>
-        <span className="font-mono text-text-300">{language}</span>
+        {originLabel ? (
+          <span className="font-mono text-text-300" data-testid="session-notebook-cell-origin">
+            {originLabel}
+          </span>
+        ) : null}
       </div>
       <NotebookCodeBlock code={run.script} highlightLine={errorLine} />
-      {stdout.trim().length > 0 || stderr.trim().length > 0 ? (
-        <details className="mt-2">
-          <summary className="cursor-pointer text-xs text-text-300 hover:text-text-200">
-            output
-          </summary>
-          {stdout.trim().length > 0 ? (
-            <pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-bg-200 p-2 font-mono text-xs text-text-200">
-              {stdout}
-            </pre>
-          ) : null}
-          {stderr.trim().length > 0 ? (
-            <pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-bg-200 p-2 font-mono text-xs text-danger-000">
-              {stderr}
-            </pre>
-          ) : null}
-        </details>
-      ) : null}
+      <NotebookRunOutputs run={run} />
     </div>
   )
 }
@@ -95,9 +91,30 @@ const SessionNotebookContent = ({
   error,
   onClose
 }: SessionNotebookContentProps): React.JSX.Element => {
+  const [activeKind, setActiveKind] = useState<NotebookKernelKind>('python')
   const shortId = sessionId.slice(0, 8)
   const agents = runs.some((run) => run.source === 'agent') ? 1 : 0
-  const cells = runs.length
+  // Only python/r runs are "cells" in the notebook sense; repl/bash are control-plane/shell runs
+  // that share the run history but never became a notebook cell.
+  const cells = runs.filter((run) => {
+    const kind = resolveRunKernelKind(run)
+    return kind === 'python' || kind === 'r'
+  }).length
+  const replCount = runs.filter((run) => resolveRunKernelKind(run) === 'repl').length
+  const bashCount = runs.filter((run) => resolveRunKernelKind(run) === 'bash').length
+  const extraCounts = [
+    replCount > 0 ? `${replCount} repl` : null,
+    bashCount > 0 ? `${bashCount} shell` : null
+  ].filter((part): part is string => part !== null)
+
+  // Per-kernel tabs, in fixed order, keeping only kinds that actually have a run — same has-runs
+  // filtering as NotebookPreview, switchable rather than stacked so the dialog matches the preview.
+  const kindsWithRuns = new Set(runs.map((run) => resolveRunKernelKind(run)))
+  const visibleKinds = KERNEL_KIND_ORDER.filter((kind) => kindsWithRuns.has(kind))
+  const effectiveActiveKind = visibleKinds.includes(activeKind)
+    ? activeKind
+    : (KERNEL_KIND_ORDER.find((kind) => kindsWithRuns.has(kind)) ?? visibleKinds[0] ?? 'python')
+  const visibleRuns = runs.filter((run) => resolveRunKernelKind(run) === effectiveActiveKind)
 
   return (
     <>
@@ -109,6 +126,7 @@ const SessionNotebookContent = ({
           </span>
           <span className="truncate text-xs font-normal text-text-300">
             {pluralize(agents, 'agent')} · {pluralize(cells, 'cell')}
+            {extraCounts.length > 0 ? ` · ${extraCounts.join(' / ')}` : ''}
           </span>
         </h2>
         <button
@@ -133,23 +151,43 @@ const SessionNotebookContent = ({
             No execution records for this session.
           </p>
         ) : (
-          <details open className="group/agent">
-            <summary className="flex cursor-pointer list-none items-center gap-2 border-y border-border-100 bg-bg-200 px-4 py-2 text-xs hover:bg-bg-300">
-              <ChevronDown
-                className="size-3.5 -rotate-90 text-text-300 transition-transform group-open/agent:rotate-0"
-                aria-hidden="true"
-              />
-              <span className="font-semibold text-text-100">Open Science</span>
-              <span className="font-mono text-text-300">{shortId}</span>
-              <span className="text-text-300">·</span>
-              <span className="text-text-300">{pluralize(cells, 'cell')}</span>
-            </summary>
-            <div className="divide-y divide-border-100">
-              {runs.map((run, index) => (
+          <>
+            <div
+              role="tablist"
+              data-testid="session-kernel-switcher"
+              className="flex shrink-0 items-center gap-1 border-y border-border-100 bg-bg-200 px-3 py-1.5"
+            >
+              {visibleKinds.map((kind) => (
+                <button
+                  key={kind}
+                  type="button"
+                  role="tab"
+                  aria-selected={effectiveActiveKind === kind}
+                  data-testid={`session-notebook-tab-${kind}`}
+                  onClick={() => setActiveKind(kind)}
+                  className={cn(
+                    'flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors',
+                    effectiveActiveKind === kind
+                      ? 'bg-bg-300 text-text-000'
+                      : 'text-text-300 hover:bg-bg-300/60 hover:text-text-100'
+                  )}
+                >
+                  <span>{kernelKindLabel(kind)}</span>
+                  <span className="font-mono text-text-300">
+                    {runs.filter((run) => resolveRunKernelKind(run) === kind).length}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div
+              className="divide-y divide-border-100"
+              data-testid={`session-notebook-kernel-${effectiveActiveKind}`}
+            >
+              {visibleRuns.map((run, index) => (
                 <NotebookDialogCell key={run.runId} run={run} index={index} />
               ))}
             </div>
-          </details>
+          </>
         )}
       </div>
 

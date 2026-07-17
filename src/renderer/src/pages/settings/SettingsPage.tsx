@@ -2,6 +2,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Cloud,
+  Globe,
   Maximize2,
   Minimize2,
   Plus,
@@ -21,6 +22,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { ClaudeInstallCard } from './ClaudeInstallCard'
 import { ClaudeStatusCard } from './ClaudeStatusCard'
 import { GeneralPanel } from './GeneralPanel'
+import { NetworkPanel } from './NetworkPanel'
 import { StoragePanel } from './StoragePanel'
 import { SkillsPanel, type SkillsView } from './SkillsPanel'
 import { ConnectorsPanel, type ConnectorsView } from './ConnectorsPanel'
@@ -74,7 +76,7 @@ const toUpsertRequest = (
 
 // Left-nav panels, grouped in the sidebar. "Capabilities" holds agent extensions (Skills); "Workspace"
 // holds environment/config (Model manages Claude + providers, General holds app settings incl. logs).
-type SettingsPanelId = 'model' | 'skills' | 'connectors' | 'general' | 'storage'
+type SettingsPanelId = 'model' | 'skills' | 'connectors' | 'general' | 'storage' | 'network'
 
 type SettingsPanel = {
   id: SettingsPanelId
@@ -87,7 +89,8 @@ const SETTINGS_GROUPS: ReadonlyArray<{ label: string; panels: ReadonlyArray<Sett
     label: 'Capabilities',
     panels: [
       { id: 'skills', label: 'Skills', Icon: ScrollText },
-      { id: 'connectors', label: 'Connectors', Icon: ConnectorsNavIcon }
+      { id: 'connectors', label: 'Connectors', Icon: ConnectorsNavIcon },
+      { id: 'network', label: 'Network', Icon: Globe }
     ]
   },
   {
@@ -108,18 +111,23 @@ const SETTINGS_PANELS: ReadonlyArray<SettingsPanel> = SETTINGS_GROUPS.flatMap(
 // One entry in the settings back/forward history: the active panel plus each panel's current sub-view
 // (skills: list / detail / create / edit / import; model: list / create / edit; connectors: list /
 // detail / add / edit). `connectors` is optional so panel switches that don't touch it stay terse.
+// Network panel sub-view: the package-mirror list vs. the configure form (a breadcrumb drill-in).
+type NetworkView = { kind: 'list' | 'configure' }
+
 type NavLocation = {
   panel: SettingsPanelId
   skills: SkillsView
   model: ModelView
   connectors?: ConnectorsView
+  network?: NetworkView
 }
 
 const INITIAL_LOCATION: NavLocation = {
   panel: 'model',
   skills: { kind: 'list' },
   model: { kind: 'list' },
-  connectors: { kind: 'list' }
+  connectors: { kind: 'list' },
+  network: { kind: 'list' }
 }
 
 // App-level model settings surface. Reuses the onboarding cards/form; manages providers (CRUD +
@@ -200,12 +208,14 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const skillsView = currentLocation.skills
   const modelView = currentLocation.model
   const connectorsView: ConnectorsView = currentLocation.connectors ?? { kind: 'list' }
+  const networkView: NetworkView = currentLocation.network ?? { kind: 'list' }
   const canGoBack = historyIndex > 0
   const canGoForward = historyIndex < history.length - 1
 
   // Pushes a new location, dropping any forward entries.
   const navigate = (location: NavLocation): void => {
     const nextConnectors = location.connectors ?? { kind: 'list' }
+    const nextNetwork = location.network ?? { kind: 'list' }
     if (
       location.panel === activePanel &&
       location.skills.kind === skillsView.kind &&
@@ -216,7 +226,8 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
         ('providerId' in modelView ? modelView.providerId : undefined) &&
       nextConnectors.kind === connectorsView.kind &&
       ('id' in nextConnectors ? nextConnectors.id : undefined) ===
-        ('id' in connectorsView ? connectorsView.id : undefined)
+        ('id' in connectorsView ? connectorsView.id : undefined) &&
+      nextNetwork.kind === networkView.kind
     ) {
       return
     }
@@ -231,6 +242,17 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   // Navigates within the connectors panel (list/detail/add/edit) as a history entry.
   const navigateConnectors = (connectors: ConnectorsView): void =>
     navigate({ panel: 'connectors', skills: skillsView, model: modelView, connectors })
+
+  // Navigates within the network panel (package-mirror list vs. configure) as a history entry, so the
+  // configure form gets a proper "Network / Package mirror" breadcrumb + back/forward.
+  const navigateNetwork = (network: NetworkView): void =>
+    navigate({
+      panel: 'network',
+      skills: skillsView,
+      model: modelView,
+      connectors: connectorsView,
+      network
+    })
 
   // Shared header breadcrumb for a drilled-in sub-view (null when on a panel's list, so the plain
   // panel title shows). Covers both the skills and model panels.
@@ -266,6 +288,18 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
         rootLabel: 'Model',
         rootTo: { panel: 'model', skills: currentLocation.skills, model: { kind: 'list' } },
         leaf: modelView.kind === 'create' ? 'Add provider' : `Edit ${name}`.trim()
+      }
+    }
+    if (activePanel === 'network' && networkView.kind !== 'list') {
+      return {
+        rootLabel: 'Network',
+        rootTo: {
+          panel: 'network',
+          skills: currentLocation.skills,
+          model: currentLocation.model,
+          network: { kind: 'list' }
+        },
+        leaf: 'Package mirror'
       }
     }
     if (activePanel === 'connectors' && connectorsView.kind !== 'list') {
@@ -591,6 +625,8 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                   )
                 ) : activePanel === 'storage' ? (
                   <StoragePanel />
+                ) : activePanel === 'network' ? (
+                  <NetworkPanel view={networkView} onNavigate={navigateNetwork} />
                 ) : activePanel === 'general' ? (
                   <GeneralPanel />
                 ) : isProviderFormOpen ? (

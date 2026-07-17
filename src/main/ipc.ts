@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-import { BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 
 import { createDefaultNotebookRuntimeService, registerAcpIpcHandlers } from './acp/ipc'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
@@ -17,11 +17,16 @@ import { registerFileSaveHandlers } from './file-save'
 import { registerGithubIpcHandlers } from './github-ipc'
 import { registerLogsIpcHandlers } from './logs-ipc'
 import { createLogger } from './logger'
+import { registerNotebookEnvIpcHandlers, serializeProvisioner } from './notebook/env-ipc'
 import { registerManagedPreviewIpcHandlers } from './managed-preview-ipc'
 import { registerManagedPreviewProtocol } from './managed-preview-protocol'
 import { ManagedPreviewResources } from './managed-preview-resources'
 import { registerNotebookIpcHandlers } from './notebook/ipc'
 import { NotebookLocalRpcServer } from './notebook/local-rpc-server'
+import { effectiveMirrorAsync } from './notebook/mirror-probe'
+import { createProductionProvisioner } from './notebook/provisioner'
+import { runtimeRoot } from './notebook/runtime-paths'
+import type { NotebookEnvironmentManager } from './notebook/runtime-service'
 import {
   createDefaultPreviewStateRepository,
   createDefaultProjectRepository,
@@ -97,7 +102,10 @@ const refreshConnectorSkillDocs = async (
   }
 }
 
-// Registers every main-process IPC surface used by the renderer.
+// Registers every main-process IPC surface used by the renderer. Async because the notebook-env gate
+// (below) needs the configured package mirror, which is read from disk; callers must await this
+// before creating the main window so every notebook-env IPC channel is registered before the renderer
+// can call it.
 const registerIpcHandlers = async ({ mainEntryPath }: IpcRegistrationOptions): Promise<void> => {
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const settingsService = createDefaultSettingsService()
@@ -200,6 +208,9 @@ const registerIpcHandlers = async ({ mainEntryPath }: IpcRegistrationOptions): P
   // server's (lazily-started) connection for host.mcp() env injection — wire the second half here to
   // avoid a construction cycle.
   notebookService.setMcpRpcConnectionResolver(() => notebookRpcServer.ensureStarted())
+  // Same construction-order constraint as the RPC connection above: the runtime service is created
+  // before the settings service, so the package-mirror lookup is wired in after the fact.
+  notebookService.setPackageMirrorResolver(() => settingsService.getPackageMirror())
 
   // The renderer's approval card responds here; the broker resolves the held connector call.
   ipcMain.handle(
@@ -254,6 +265,41 @@ const registerIpcHandlers = async ({ mainEntryPath }: IpcRegistrationOptions): P
   registerNotebookIpcHandlers(notebookService)
   registerManagedPreviewIpcHandlers(previewResources)
   registerManagedPreviewProtocol(previewResources)
+
+  // Resolve the shared conda base under the app data root (relocatable, where the runtime install
+  // lives) and start the env readiness gate. The conda channel comes from the effective package mirror
+  // (configured override, else the region default from locale); the CDN base stays a locale-neutral
+  // placeholder read from env (never a hardcoded secret) until an equivalent CDN-mirror resolver exists.
+  const provisioningRoot = runtimeRoot(resolveDataRoot())
+  try {
+    const configuredMirror = await settingsService.getPackageMirror()
+    const mirror = await effectiveMirrorAsync(configuredMirror, app.getLocale())
+    const provisioner = createProductionProvisioner({
+      root: provisioningRoot,
+      channel: mirror.condaChannel ?? process.env.OPEN_SCIENCE_CONDA_CHANNEL ?? 'conda-forge',
+      cdnBase: process.env.OPEN_SCIENCE_ENV_CDN_BASE ?? '',
+      caBundle: mirror.caBundle,
+      micromamba: { resourcesPath: process.resourcesPath }
+    })
+    // One serialized wrapper shared by the startup gate and the notebook service's on-demand default
+    // provisioning, so a concurrent build of the same default env (UI R-tab + an agent R run) can't
+    // race the provisioner's shared in-flight flag; materialize is also idempotent as a backstop.
+    const serialized = serializeProvisioner(provisioner)
+    registerNotebookEnvIpcHandlers(serialized, provisioningRoot)
+    // Back the notebook service's manage_environments tool with the same provisioner that owns the env
+    // gate (it is a DefaultRuntimeProvisioner, which implements createNamedEnvironment/listEnvironments/
+    // removeEnvironment). Wired after construction like the mcp/mirror resolvers above.
+    notebookService.setEnvironmentManager(provisioner as unknown as NotebookEnvironmentManager)
+    // On first agent use of a not-yet-built default env, build it from the offline bundle (via the
+    // shared serialized provisioner) instead of erroring — keeps R lazy but avoids the agent creating
+    // a redundant named env.
+    notebookService.setDefaultEnvProvisioner(serialized)
+  } catch (error) {
+    // micromamba missing (e.g. dev without a staged binary): skip the gate; notebook env stays
+    // unprovisioned and the UI surfaces "environment not ready" rather than crashing startup.
+    console.error('Notebook environment provisioning unavailable:', error)
+  }
+
   // Registered after the acp/notebook handlers exist: migration needs to interrupt both runtimes.
   registerStorageIpcHandlers({
     runtime,

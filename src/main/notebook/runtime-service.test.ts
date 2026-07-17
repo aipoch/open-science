@@ -1,11 +1,27 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookExecutionRequest, NotebookExecutionResult } from './runtime-service'
-import { NotebookRuntimeService } from './runtime-service'
+import {
+  NotebookRuntimeService,
+  resolveDefaultExecutorOptions,
+  resolveLoopScriptPaths
+} from './runtime-service'
+import { NotebookKernelExecutor } from './kernel-executor'
+import { effectiveMirrorAsync, resetAutoMirrorCache } from './mirror-probe'
 import { NotebookRunRepository } from './repository'
+import type {
+  InstallDeps as InstallDepsForTest,
+  InstallRequest as InstallRequestForTest,
+  InstallResult as InstallResultForTest
+} from './package-manager'
+import type { EnvironmentInfo } from '../../shared/notebook-env'
+import type { NotebookEnvironmentStatus } from '../../shared/notebook'
 
 let storageRoot: string | undefined
 
@@ -19,6 +35,19 @@ afterEach(async () => {
     await rm(storageRoot, { recursive: true, force: true })
     storageRoot = undefined
   }
+})
+
+// Prime the process-wide fastest-mirror memo with a no-network probe so managePackages tests never
+// race real HTTP — the live probe adds nondeterministic latency (which flakes the timing-sensitive
+// concurrency tests) and geography-dependent results. Tests that assert a specific mirror reset +
+// inject their own probe on top of this.
+beforeAll(async () => {
+  resetAutoMirrorCache()
+  await effectiveMirrorAsync(undefined, 'en-US', {
+    probe: async () => {
+      throw new Error('no network in tests')
+    }
+  })
 })
 
 describe('notebook runtime service', () => {
@@ -304,7 +333,7 @@ describe('notebook runtime service', () => {
     expect(changedSessions.filter((sessionId) => sessionId === 'agent-session').length).toBe(5)
   })
 
-  it('threads the resolved mcp RPC connection into the execute request env', async () => {
+  it('does not thread the mcp RPC connection into the data-cell execute request', async () => {
     const root = await createStorageRoot()
     const executions: NotebookExecutionRequest[] = []
     const service = new NotebookRuntimeService({
@@ -340,9 +369,374 @@ describe('notebook runtime service', () => {
       code: "print('hi')"
     })
 
+    // Data kernels (python/r) have no host.mcp; the RPC connection stays with the control-plane repl.
+    expect(executions[0].mcpRpcEndpoint).toBeUndefined()
+    expect(executions[0].mcpRpcToken).toBeUndefined()
+  })
+
+  it('routes executeControl to the repl kernel kind, threads the RPC connection, and records a repl run', async () => {
+    const root = await createStorageRoot()
+    const executions: NotebookExecutionRequest[] = []
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => {
+          executions.push(request)
+          return {
+            status: 'completed',
+            stdout: 'from-repl\n',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: [{ type: 'stream', name: 'stdout', text: 'from-repl\n' }]
+          }
+        },
+        shutdown: async () => undefined
+      })
+    })
+
+    service.setMcpRpcConnectionResolver(async () => ({
+      endpoint: 'http://127.0.0.1:1/x',
+      token: 'tok'
+    }))
+
+    const state0 = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+
+    const result = await service.executeControl({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: 'return 1'
+    })
+
+    // The control path targets the repl kernel, not a language-derived data kernel.
+    expect(executions).toHaveLength(1)
+    expect(executions[0].kind).toBe('repl')
+    expect(executions[0].language).toBeUndefined()
     expect(executions[0]).toMatchObject({
+      code: 'return 1',
       mcpRpcEndpoint: 'http://127.0.0.1:1/x',
       mcpRpcToken: 'tok'
+    })
+
+    // Mapped outputs are still returned inline for the agent (recording is a side effect; the
+    // repl_execute contract to the agent is unchanged).
+    expect(result).toMatchObject({
+      status: 'completed',
+      stdout: 'from-repl\n',
+      outputs: [{ type: 'stream', name: 'stdout', text: 'from-repl\n' }]
+    })
+
+    // A control-plane run now creates a run-history record tagged with kernelKind 'repl'.
+    const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+    expect(state.runs).toHaveLength(state0.runs.length + 1)
+    expect(state.runs[state.runs.length - 1]).toMatchObject({
+      kernelKind: 'repl',
+      script: 'return 1',
+      status: 'completed',
+      source: 'agent'
+    })
+  })
+
+  it('records a failed repl run when the executor throws', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (): Promise<NotebookExecutionResult> => {
+          throw new Error('repl kernel exploded')
+        },
+        shutdown: async () => undefined
+      })
+    })
+
+    const result = await service.executeControl({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: 'throw new Error("boom")'
+    })
+
+    expect(result.status).toBe('failed')
+
+    const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+    expect(state.runs).toHaveLength(1)
+    expect(state.runs[0]).toMatchObject({
+      kernelKind: 'repl',
+      status: 'failed'
+    })
+  })
+
+  it('forwards repl workingFiles into the recorded run and the returned result', async () => {
+    const root = await createStorageRoot()
+    const writtenFile = {
+      path: join(root, 'notebooks', 'default-project', 'session-1', 'handoff', 'data.json'),
+      relativePath: 'handoff/data.json',
+      kind: 'raw-data' as const
+    }
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: [],
+          workingFiles: [writtenFile]
+        }),
+        shutdown: async () => undefined
+      })
+    })
+
+    const result = await service.executeControl({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: 'writeHandoffFile()'
+    })
+
+    expect(result.workingFiles).toMatchObject([{ relativePath: 'handoff/data.json' }])
+
+    const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+    expect(state.runs[0].workingFiles).toMatchObject([{ relativePath: 'handoff/data.json' }])
+  })
+
+  describe('executeShell', () => {
+    it('runs a command in a fresh sh process and captures stdout/exitCode', async () => {
+      const root = await createStorageRoot()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root)
+      })
+
+      const result = await service.executeShell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        command: 'echo hi'
+      })
+
+      expect(result.stdout).toContain('hi')
+      expect(result.exitCode).toBe(0)
+
+      const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      expect(state.runs).toHaveLength(1)
+      expect(state.runs[0]).toMatchObject({
+        kernelKind: 'bash',
+        script: 'echo hi',
+        status: 'completed',
+        source: 'agent'
+      })
+      expect(state.runs[0].text.stdout).toContain('hi')
+    })
+
+    // POSIX-only: reads env via the shell. bash must NOT inherit arbitrary host env (secrets), only an
+    // allowlist + the handoff channel — so a leaked connector token / API key can't reach the shell.
+    it.skipIf(process.platform === 'win32')(
+      'scrubs host secrets from the bash environment, keeping only the allowlist + handoff dir',
+      async () => {
+        const root = await createStorageRoot()
+        process.env.OPEN_SCIENCE_TEST_SECRET = 'super-secret-token'
+        try {
+          const service = new NotebookRuntimeService({
+            configRoot: root,
+            dataRoot: root,
+            projectName: 'default-project',
+            repository: new NotebookRunRepository(root)
+          })
+
+          const result = await service.executeShell({
+            sessionId: 'session-1',
+            workspaceCwd: root,
+            command:
+              'echo "secret=[${OPEN_SCIENCE_TEST_SECRET}]"; echo "handoff=[${OPEN_SCIENCE_HANDOFF_DIR:+set}]"'
+          })
+
+          // The host secret is dropped; the workspace channel var is preserved.
+          expect(result.stdout).toContain('secret=[]')
+          expect(result.stdout).toContain('handoff=[set]')
+        } finally {
+          delete process.env.OPEN_SCIENCE_TEST_SECRET
+        }
+      }
+    )
+
+    it('returns the process non-zero exit code instead of throwing', async () => {
+      const root = await createStorageRoot()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root)
+      })
+
+      const result = await service.executeShell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        command: 'exit 3'
+      })
+
+      expect(result.exitCode).toBe(3)
+
+      const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      expect(state.runs[0]).toMatchObject({
+        kernelKind: 'bash',
+        script: 'exit 3',
+        status: 'failed'
+      })
+    })
+
+    it('kills a command that outlasts the timeout and returns a non-normal result', async () => {
+      const root = await createStorageRoot()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root)
+      })
+
+      const startedAt = Date.now()
+      const result = await service.executeShell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        command: 'sleep 5',
+        timeoutMs: 100
+      })
+      const elapsedMs = Date.now() - startedAt
+
+      // The promise settles on the timeout, not after the full sleep duration.
+      expect(elapsedMs).toBeLessThan(4000)
+      expect(result.exitCode).not.toBe(0)
+
+      const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      expect(state.runs[0]).toMatchObject({
+        kernelKind: 'bash',
+        script: 'sleep 5',
+        status: 'timeout'
+      })
+    })
+
+    it('spawns a fresh process per call instead of reusing a persistent shell', async () => {
+      const root = await createStorageRoot()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root)
+      })
+
+      await service.executeShell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        command: 'FOO=bar'
+      })
+      // A persistent shell would remember FOO from the previous call; a fresh process never does.
+      const result = await service.executeShell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        command: 'echo "[$FOO]"'
+      })
+
+      expect(result.stdout).toContain('[]')
+
+      const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      // Each executeShell call produces its own record: two calls, two distinct runIds.
+      expect(state.runs).toHaveLength(2)
+      expect(state.runs.every((run) => run.kernelKind === 'bash')).toBe(true)
+      expect(new Set(state.runs.map((run) => run.runId)).size).toBe(2)
+    })
+
+    // POSIX-only: relies on `trap '' TERM` (a SIGTERM-ignoring shell) and pgrep to inspect the real
+    // process table — neither exists on Windows, where signal semantics differ entirely.
+    it.skipIf(process.platform === 'win32')(
+      'SIGKILLs a timed-out command that ignores SIGTERM instead of leaving it running',
+      async () => {
+        const root = await createStorageRoot()
+        const service = new NotebookRuntimeService({
+          configRoot: root,
+          dataRoot: root,
+          projectName: 'default-project',
+          repository: new NotebookRunRepository(root)
+        })
+        // A marker unique to this test run, embedded as a harmless shell comment so it shows up in the
+        // spawned process's command line (visible to pgrep -f) without affecting what the shell runs.
+        const marker = `os-notebook-shell-test-${randomUUID()}`
+
+        const result = await service.executeShell({
+          sessionId: 'session-1',
+          workspaceCwd: root,
+          // Ignores SIGTERM; only SIGKILL can end it before its own 30s sleep completes.
+          command: `trap '' TERM; sleep 30 # ${marker}`,
+          timeoutMs: 100
+        })
+
+        // The RPC promise settles at the timeout, well before either the grace period or the sleep.
+        expect(result.exitCode).toBeNull()
+
+        // Poll the real process table until the marked process is gone -- not child.killed, which Node
+        // sets as soon as SIGTERM is delivered regardless of whether the (SIGTERM-ignoring) process
+        // actually died. Polling (rather than a single fixed sleep) absorbs SIGKILL-escalation +
+        // process-teardown latency on a loaded CI runner, so the test isn't timing-flaky; if SIGKILL
+        // never worked, it stays non-empty until the deadline and the assertion fails.
+        const pgrepMarker = async (): Promise<string> =>
+          new Promise<string>((resolve) => {
+            const check = spawn('sh', ['-c', `pgrep -f '${marker}' || true`])
+            let out = ''
+            check.stdout.on('data', (chunk: Buffer) => {
+              out += chunk.toString('utf8')
+            })
+            check.once('exit', () => resolve(out.trim()))
+          })
+
+        let stillRunning = await pgrepMarker()
+        const deadline = Date.now() + 10_000
+        while (stillRunning !== '' && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 500))
+          stillRunning = await pgrepMarker()
+        }
+
+        expect(stillRunning).toBe('')
+      },
+      15_000
+    )
+
+    it('records two distinct runs for overlapping calls instead of colliding (no serialization queue)', async () => {
+      const root = await createStorageRoot()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root)
+      })
+
+      // Two calls fired without awaiting between them: executeShell has no per-session serialization
+      // queue, so both spawn immediately, relying on the repository's own write-serialization to keep
+      // their running/completed records from clobbering each other.
+      const [okResult, failResult] = await Promise.all([
+        service.executeShell({ sessionId: 'session-1', workspaceCwd: root, command: 'echo one' }),
+        service.executeShell({ sessionId: 'session-1', workspaceCwd: root, command: 'exit 5' })
+      ])
+
+      expect(okResult.exitCode).toBe(0)
+      expect(failResult.exitCode).toBe(5)
+
+      const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      expect(state.runs).toHaveLength(2)
+      expect(new Set(state.runs.map((run) => run.runId)).size).toBe(2)
+      expect(new Set(state.runs.map((run) => run.cellId)).size).toBe(2)
+
+      const statuses = state.runs.map((run) => run.status).sort()
+      expect(statuses).toEqual(['completed', 'failed'])
+      expect(state.runs.every((run) => run.kernelKind === 'bash')).toBe(true)
     })
   })
 
@@ -556,5 +950,1462 @@ describe('notebook runtime service', () => {
     releases.get('session-a')?.()
     releases.get('session-b')?.()
     await Promise.all([runA, runB])
+  })
+
+  it('threads the cell language to the executor (default python)', async () => {
+    const root = await createStorageRoot()
+    const executions: NotebookExecutionRequest[] = []
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => {
+          executions.push(request)
+          return {
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }
+        },
+        shutdown: async () => undefined
+      })
+    })
+
+    await service.execute({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: '1 + 1'
+    })
+
+    expect(executions).toHaveLength(1)
+    expect(executions[0].language).toBe('python')
+
+    const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+    expect(state.runs[0].kernelKind).toBe('python')
+  })
+
+  it('threads an explicit r language from the execute request to the executor', async () => {
+    const root = await createStorageRoot()
+    const executions: NotebookExecutionRequest[] = []
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => {
+          executions.push(request)
+          return {
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }
+        },
+        shutdown: async () => undefined
+      })
+    })
+
+    await service.execute({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: '1 + 1',
+      language: 'r'
+    })
+
+    expect(executions).toHaveLength(1)
+    expect(executions[0].language).toBe('r')
+
+    // Guards the I1 mislabel: an R cell run must record kernelKind 'r', not the python default.
+    const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+    expect(state.runs[0].kernelKind).toBe('r')
+  })
+
+  it('restart calls executor.restart when the executor supports it', async () => {
+    const root = await createStorageRoot()
+    let restarts = 0
+    let shutdowns = 0
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => {
+          shutdowns += 1
+        },
+        restart: async () => {
+          restarts += 1
+        }
+      })
+    })
+
+    await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
+    await service.restart({ sessionId: 'session-1', workspaceCwd: root })
+
+    expect(restarts).toBe(1)
+    // In-place restart keeps the same executor instance, so no shutdown+recreate is needed.
+    expect(shutdowns).toBe(0)
+  })
+
+  it('reports a restarting kernel status while restart() is in flight, then settles to idle', async () => {
+    const root = await createStorageRoot()
+    let releaseRestart: (() => void) | undefined
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => undefined,
+        restart: () =>
+          new Promise<void>((resolve) => {
+            releaseRestart = resolve
+          })
+      })
+    })
+
+    await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
+
+    const restarting = service.restart({ sessionId: 'session-1', workspaceCwd: root })
+    // Wait for restart() to reach and await executor.restart() (the in-flight window).
+    await vi.waitFor(() => expect(releaseRestart).toBeDefined())
+
+    const midFlight = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+    expect(midFlight.kernelStatus).toBe('restarting')
+
+    releaseRestart?.()
+    const settled = await restarting
+
+    expect(settled.kernelStatus).toBe('idle')
+  })
+
+  it('idle-shutdown reports a terminated kernel status and notifies listeners', async () => {
+    const root = await createStorageRoot()
+    const changedSessions: string[] = []
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      callbacks: {
+        onNotebookChanged: (event) => changedSessions.push(event.sessionId)
+      },
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => undefined
+      })
+    })
+
+    // Establishes the runtime session (and its persisted run.json) the idle-shutdown hook targets.
+    await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
+
+    // Simulates NotebookKernelExecutor's onIdleShutdown firing after its idle window elapses. The
+    // executorFactory branch above never wires this callback (only the default real-executor branch
+    // does, see createExecutor); this exercises the persistence+notify logic it calls directly.
+    await (
+      service as unknown as {
+        handleKernelIdleShutdown: (sessionId: string, projectName: string) => Promise<void>
+      }
+    ).handleKernelIdleShutdown('session-1', 'default-project')
+
+    const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+    expect(state.kernelStatus).toBe('terminated')
+    expect(changedSessions).toContain('session-1')
+  })
+
+  it('clears a stale terminated status once a run completes on the transparently respawned kernel', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => undefined
+      })
+    })
+
+    // Establishes the runtime session and persisted run.json the idle-shutdown hook targets.
+    await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
+
+    // Simulates the executor's own idle timer dropping the proc between runs (see the
+    // 'idle-shutdown reports a terminated kernel status' test above for the same mechanism).
+    await (
+      service as unknown as {
+        handleKernelIdleShutdown: (sessionId: string, projectName: string) => Promise<void>
+      }
+    ).handleKernelIdleShutdown('session-1', 'default-project')
+
+    const afterShutdown = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+    expect(afterShutdown.kernelStatus).toBe('terminated')
+
+    // The next execute() transparently respawns a fresh kernel (executorFactory above never actually
+    // dies), so the run completes normally — the persisted status must no longer read 'terminated'.
+    await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '2' })
+
+    const afterRespawn = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+    expect(afterRespawn.kernelStatus).toBe('idle')
+  })
+
+  it('clears a stale terminated status once a control-plane run completes on the respawned kernel', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => undefined
+      })
+    })
+
+    // Establishes the runtime session and persisted run.json the idle-shutdown hook targets.
+    await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
+
+    await (
+      service as unknown as {
+        handleKernelIdleShutdown: (sessionId: string, projectName: string) => Promise<void>
+      }
+    ).handleKernelIdleShutdown('session-1', 'default-project')
+
+    const afterShutdown = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+    expect(afterShutdown.kernelStatus).toBe('terminated')
+
+    await service.executeControl({ sessionId: 'session-1', workspaceCwd: root, code: '2' })
+
+    const afterRespawn = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+    expect(afterRespawn.kernelStatus).toBe('idle')
+  })
+
+  describe('lifecycle & concurrency (G2/G3/G4/G5)', () => {
+    // Executor double that holds each run open until released, recording every start so a test can
+    // observe how many runs are concurrently in flight and in what order.
+    const holdingService = (
+      root: string,
+      onStart: (request: NotebookExecutionRequest, release: () => void) => void
+    ): NotebookRuntimeService =>
+      new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async (request): Promise<NotebookExecutionResult> => {
+            await new Promise<void>((resolve) => onStart(request, resolve))
+            return {
+              status: 'completed',
+              stdout: '',
+              stderr: '',
+              traceback: '',
+              cwdAfter: request.cwd,
+              outputs: []
+            }
+          },
+          shutdown: async () => undefined
+        })
+      })
+
+    it('writes a running kernel status during a live run, then settles to idle (G4)', async () => {
+      const root = await createStorageRoot()
+      let release: (() => void) | undefined
+      const service = holdingService(root, (_request, resolve) => {
+        release = resolve
+      })
+
+      const run = service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
+      await vi.waitFor(() => expect(release).toBeDefined())
+
+      // The kernel reads 'running' while the run is in flight (G4: the union member is now written).
+      const midFlight = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      expect(midFlight.kernelStatus).toBe('running')
+
+      release?.()
+      await run
+      const settled = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      expect(settled.kernelStatus).toBe('idle')
+    })
+
+    it('runs python and r concurrently while serializing same-language runs (G5)', async () => {
+      const root = await createStorageRoot()
+      let active = 0
+      let maxConcurrent = 0
+      const releases: Array<{ language?: string; release: () => void }> = []
+      const service = holdingService(root, (request, resolve) => {
+        active += 1
+        maxConcurrent = Math.max(maxConcurrent, active)
+        releases.push({ language: request.language, release: resolve })
+      })
+      // Undo the shared active counter as each held run is released.
+      const drain = (entry: { release: () => void }): void => {
+        active -= 1
+        entry.release()
+      }
+
+      // Pre-create the cells sequentially (the write-lock dance can't run concurrently), then fire the
+      // runs at once so the per-kind execution queues — not the write lock — govern concurrency.
+      const makeCell = async (cellId: string, language: 'python' | 'r'): Promise<void> => {
+        const begin = await service.beginCodeCell({
+          sessionId: 's',
+          workspaceCwd: root,
+          cellId,
+          language
+        })
+        await service.appendCodeCell({
+          sessionId: 's',
+          workspaceCwd: root,
+          writeId: begin.writeId,
+          cellId,
+          delta: '1'
+        })
+        await service.finishCodeCell({
+          sessionId: 's',
+          workspaceCwd: root,
+          writeId: begin.writeId,
+          cellId
+        })
+      }
+      await makeCell('py1', 'python')
+      await makeCell('r1', 'r')
+      await makeCell('py2', 'python')
+
+      const py1 = service.runCell({ sessionId: 's', workspaceCwd: root, cellId: 'py1' })
+      const r1 = service.runCell({ sessionId: 's', workspaceCwd: root, cellId: 'r1' })
+      const py2 = service.runCell({ sessionId: 's', workspaceCwd: root, cellId: 'py2' })
+
+      // python and r are independent processes → both enter the executor at once; the second python
+      // queues behind the first, so exactly two runs (one python, one r) are in flight.
+      await vi.waitFor(() => expect(releases).toHaveLength(2))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(releases).toHaveLength(2)
+      expect(maxConcurrent).toBe(2)
+      expect(releases.map((entry) => entry.language).sort()).toEqual(['python', 'r'])
+
+      // Drain the first python; the queued second python now takes the freed python slot (still only
+      // two concurrent, never three).
+      drain(releases.find((entry) => entry.language === 'python')!)
+      await vi.waitFor(() => expect(releases).toHaveLength(3))
+      expect(maxConcurrent).toBe(2)
+
+      releases.forEach((entry) => entry.release())
+      await Promise.all([py1, r1, py2])
+    })
+
+    it('blocks a package install on the same language until an in-flight run finishes (G2)', async () => {
+      const root = await createStorageRoot()
+      const events: string[] = []
+      let releaseRun: (() => void) | undefined
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async (request): Promise<NotebookExecutionResult> => {
+            events.push('run:start')
+            await new Promise<void>((resolve) => {
+              releaseRun = resolve
+            })
+            events.push('run:end')
+            return {
+              status: 'completed',
+              stdout: '',
+              stderr: '',
+              traceback: '',
+              cwdAfter: request.cwd,
+              outputs: []
+            }
+          },
+          shutdown: async () => undefined
+        }),
+        installPackagesImpl: async () => {
+          events.push('install:run')
+          return { ok: true, needsRestart: false, log: '' }
+        }
+      })
+
+      const run = service.execute({
+        sessionId: 's',
+        workspaceCwd: root,
+        code: '1',
+        language: 'python'
+      })
+      await vi.waitFor(() => expect(releaseRun).toBeDefined())
+
+      const install = service.managePackages({ language: 'python', packages: ['numpy'] })
+      // The install (exclusive writer) must not start while the run holds the python env read lock.
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(events).toEqual(['run:start'])
+
+      releaseRun?.()
+      await Promise.all([run, install])
+      expect(events).toEqual(['run:start', 'run:end', 'install:run'])
+    })
+
+    it('blocks a run on the same language until an in-flight install finishes (G2)', async () => {
+      const root = await createStorageRoot()
+      const events: string[] = []
+      let releaseInstall: (() => void) | undefined
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async (request): Promise<NotebookExecutionResult> => {
+            events.push('run:run')
+            return {
+              status: 'completed',
+              stdout: '',
+              stderr: '',
+              traceback: '',
+              cwdAfter: request.cwd,
+              outputs: []
+            }
+          },
+          shutdown: async () => undefined
+        }),
+        installPackagesImpl: async () => {
+          events.push('install:start')
+          await new Promise<void>((resolve) => {
+            releaseInstall = resolve
+          })
+          events.push('install:end')
+          return { ok: true, needsRestart: false, log: '' }
+        }
+      })
+
+      const install = service.managePackages({ language: 'python', packages: ['numpy'] })
+      await vi.waitFor(() => expect(releaseInstall).toBeDefined())
+
+      const run = service.execute({
+        sessionId: 's',
+        workspaceCwd: root,
+        code: '1',
+        language: 'python'
+      })
+      // The run (reader) must wait out the install (exclusive writer) on the same env.
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(events).toEqual(['install:start'])
+
+      releaseInstall?.()
+      await Promise.all([install, run])
+      expect(events).toEqual(['install:start', 'install:end', 'run:run'])
+    })
+
+    it('does not block a different-language run behind an install (G2)', async () => {
+      const root = await createStorageRoot()
+      const events: string[] = []
+      let releaseInstall: (() => void) | undefined
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async (request): Promise<NotebookExecutionResult> => {
+            events.push(`run:${request.language}`)
+            return {
+              status: 'completed',
+              stdout: '',
+              stderr: '',
+              traceback: '',
+              cwdAfter: request.cwd,
+              outputs: []
+            }
+          },
+          shutdown: async () => undefined
+        }),
+        installPackagesImpl: async () => {
+          events.push('install:python:start')
+          await new Promise<void>((resolve) => {
+            releaseInstall = resolve
+          })
+          return { ok: true, needsRestart: false, log: '' }
+        }
+      })
+
+      const install = service.managePackages({ language: 'python', packages: ['numpy'] })
+      await vi.waitFor(() => expect(releaseInstall).toBeDefined())
+
+      // An r run proceeds to completion even while a python install holds the python env lock — the
+      // lock is keyed per language, so it only blocks the target env's queue.
+      const rRun = await service.execute({
+        sessionId: 's',
+        workspaceCwd: root,
+        code: '1',
+        language: 'r'
+      })
+      expect(rRun.status).toBe('completed')
+      expect(events).toContain('run:r')
+
+      releaseInstall?.()
+      await install
+    })
+
+    it('leaves a terminated kernel status after a run whose kernel rejected (G3)', async () => {
+      const root = await createStorageRoot()
+      // eslint-disable-next-line prefer-const -- forward ref: the executor closure captures svc before `service` exists
+      let svc: NotebookRuntimeService | undefined
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async (): Promise<NotebookExecutionResult> => {
+            // Simulate the executor's onTerminated firing mid-run (crash), then the run rejecting so
+            // the runtime service's executor-rejection path sets executedOnLiveKernel false.
+            await (
+              svc as unknown as {
+                handleKernelTerminated: (s: string, p: string, k: string) => Promise<void>
+              }
+            ).handleKernelTerminated('session-1', 'default-project', 'python')
+            throw new Error('Notebook kernel process exited.')
+          },
+          shutdown: async () => undefined
+        })
+      })
+      svc = service
+
+      const summary = await service.execute({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        code: '1',
+        language: 'python'
+      })
+      expect(summary.status).toBe('failed')
+
+      const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      expect(state.kernelStatus).toBe('terminated')
+    })
+
+    it('does not overwrite a mid-run termination with idle when the executor resolves (G3)', async () => {
+      const root = await createStorageRoot()
+      // eslint-disable-next-line prefer-const -- forward ref: the executor closure captures svc before `service` exists
+      let svc: NotebookRuntimeService | undefined
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async (request): Promise<NotebookExecutionResult> => {
+            // The real executor catches a crash internally and RESOLVES a failed result while its
+            // onTerminated callback fires — the terminatedKernels guard must still keep 'terminated'.
+            await (
+              svc as unknown as {
+                handleKernelTerminated: (s: string, p: string, k: string) => Promise<void>
+              }
+            ).handleKernelTerminated('session-1', 'default-project', 'python')
+            return {
+              status: 'failed',
+              stdout: '',
+              stderr: 'boom',
+              traceback: 'boom',
+              cwdAfter: request.cwd,
+              outputs: []
+            }
+          },
+          shutdown: async () => undefined
+        })
+      })
+      svc = service
+
+      await service.execute({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        code: '1',
+        language: 'python'
+      })
+
+      const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      expect(state.kernelStatus).toBe('terminated')
+    })
+
+    it('clears a crash terminated status once a clean run of that kind completes (G3)', async () => {
+      const root = await createStorageRoot()
+      let mode: 'crash' | 'ok' = 'crash'
+      // eslint-disable-next-line prefer-const -- forward ref: the executor closure captures svc before `service` exists
+      let svc: NotebookRuntimeService | undefined
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async (request): Promise<NotebookExecutionResult> => {
+            if (mode === 'crash') {
+              await (
+                svc as unknown as {
+                  handleKernelTerminated: (s: string, p: string, k: string) => Promise<void>
+                }
+              ).handleKernelTerminated('session-1', 'default-project', 'python')
+              return {
+                status: 'failed',
+                stdout: '',
+                stderr: 'boom',
+                traceback: 'boom',
+                cwdAfter: request.cwd,
+                outputs: []
+              }
+            }
+            return {
+              status: 'completed',
+              stdout: '',
+              stderr: '',
+              traceback: '',
+              cwdAfter: request.cwd,
+              outputs: []
+            }
+          },
+          shutdown: async () => undefined
+        })
+      })
+      svc = service
+
+      await service.execute({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        code: '1',
+        language: 'python'
+      })
+      expect(
+        (await service.state({ sessionId: 'session-1', workspaceCwd: root })).kernelStatus
+      ).toBe('terminated')
+
+      // The next clean run of the same kind clears the flag at run start and settles back to 'idle'.
+      mode = 'ok'
+      await service.execute({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        code: '2',
+        language: 'python'
+      })
+      expect(
+        (await service.state({ sessionId: 'session-1', workspaceCwd: root })).kernelStatus
+      ).toBe('idle')
+    })
+  })
+
+  it('restart falls back to shutdown+recreate when the executor has no restart()', async () => {
+    const root = await createStorageRoot()
+    let shutdowns = 0
+    let factoryCalls = 0
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => {
+        factoryCalls += 1
+        return {
+          execute: async (request): Promise<NotebookExecutionResult> => ({
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }),
+          shutdown: async () => {
+            shutdowns += 1
+          }
+        }
+      }
+    })
+
+    await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
+    expect(factoryCalls).toBe(1)
+
+    await service.restart({ sessionId: 'session-1', workspaceCwd: root })
+
+    expect(shutdowns).toBe(1)
+    expect(factoryCalls).toBe(2)
+  })
+
+  it('surfaces (without throwing) when the session cwd has disappeared before a run', async () => {
+    const root = await createStorageRoot()
+    // A cell can os.chdir() to a directory outside the repository-managed session tree (whose
+    // sub-directories are recreated on every write); simulate that, then delete it.
+    const changedCwd = await mkdtemp(join(tmpdir(), 'open-science-notebook-chdir-'))
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: changedCwd,
+          outputs: []
+        }),
+        shutdown: async () => undefined
+      })
+    })
+
+    // First run establishes the session and leaves it chdir'd into a real (temp) directory.
+    const first = await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
+    expect(first.status).toBe('completed')
+
+    // The directory the interpreter last chdir'd into is now gone.
+    await rm(changedCwd, { recursive: true, force: true })
+
+    const second = await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '2' })
+
+    expect(second.status).toBe('completed')
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Session cwd is missing'))
+
+    errorSpy.mockRestore()
+  })
+
+  describe('managePackages', () => {
+    it('resolves the effective mirror from the injected getPackageMirror + locale and forwards it as installPackages deps', async () => {
+      const root = await createStorageRoot()
+      const calls: Array<[InstallRequestForTest, Partial<InstallDepsForTest> | undefined]> = []
+      const scriptedResult: InstallResultForTest = { ok: true, needsRestart: false, log: 'done' }
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async () => {
+            throw new Error('not used')
+          },
+          shutdown: async () => undefined
+        }),
+        getPackageMirror: () => ({ pypiIndex: 'https://corp.example/simple' }),
+        locale: 'zh-CN',
+        installPackagesImpl: async (request, deps) => {
+          calls.push([request, deps])
+          return scriptedResult
+        }
+      })
+
+      const request: InstallRequestForTest = {
+        language: 'python',
+        packages: ['numpy'],
+        usePip: true
+      }
+      const result = await service.managePackages(request)
+
+      expect(result).toBe(scriptedResult)
+      expect(calls).toHaveLength(1)
+      expect(calls[0][0]).toBe(request)
+      // The configured pypiIndex overrides the CN region default entirely (effectiveMirror semantics):
+      // a configured field wins outright, so condaChannel/cranMirror stay unset rather than CN defaults.
+      expect(calls[0][1]).toMatchObject({
+        storageRoot: root,
+        pypiIndex: 'https://corp.example/simple'
+      })
+      expect(calls[0][1]?.condaChannel).toBeUndefined()
+      expect(calls[0][1]?.cranMirror).toBeUndefined()
+    })
+
+    it('falls back to the region default mirror when nothing is configured', async () => {
+      const root = await createStorageRoot()
+      const calls: Array<Partial<InstallDepsForTest> | undefined> = []
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async () => {
+            throw new Error('not used')
+          },
+          shutdown: async () => undefined
+        }),
+        getPackageMirror: () => undefined,
+        locale: 'zh-CN',
+        // Force the latency probe to find nothing reachable so the resolver takes the deterministic
+        // locale fallback (zh-CN -> CN mirror) instead of racing real network from the CI runner,
+        // where the public mirror wins and leaves condaChannel unset.
+        mirrorProbe: {
+          probe: async () => {
+            throw new Error('probe unreachable (test)')
+          }
+        },
+        installPackagesImpl: async (_request, deps) => {
+          calls.push(deps)
+          return { ok: true, needsRestart: false, log: '' }
+        }
+      })
+
+      // Clear any mirror cached by an earlier test so the injected probe actually runs.
+      resetAutoMirrorCache()
+      await service.managePackages({ language: 'r', packages: ['ggplot2'] })
+
+      expect(calls[0]?.condaChannel).toMatch(/tuna|ustc|aliyun/i)
+      expect(calls[0]?.cranMirror).toMatch(/tuna|ustc/i)
+    })
+
+    it('never spawns real installs when installPackagesImpl is injected (no getPackageMirror wired)', async () => {
+      const root = await createStorageRoot()
+      let called = false
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async () => {
+            throw new Error('not used')
+          },
+          shutdown: async () => undefined
+        }),
+        installPackagesImpl: async () => {
+          called = true
+          return { ok: false, needsRestart: false, log: '', error: 'boom' }
+        }
+      })
+
+      const result = await service.managePackages({ language: 'python', packages: ['seaborn'] })
+
+      expect(called).toBe(true)
+      expect(result.error).toBe('boom')
+    })
+  })
+
+  describe('default executor factory (D-B4)', () => {
+    afterEach(() => {
+      delete process.env.OPEN_SCIENCE_PYTHON_LOOP
+      delete process.env.OPEN_SCIENCE_R_LOOP
+      delete process.env.OPEN_SCIENCE_REPL_LOOP
+    })
+
+    it('returns only the three exec-loop script paths (de-pinned: no single pythonBin/rEnvPrefix)', async () => {
+      await createStorageRoot()
+      const options = resolveDefaultExecutorOptions()
+
+      // The executor now derives each interpreter prefix per request (from request.runtimeRoot + the
+      // resolved env name), so the default options no longer pin a single env's bin/prefix.
+      expect(options.pythonBin).toBeUndefined()
+      expect(options.rEnvPrefix).toBeUndefined()
+      // Resolved against the real repo tree (not the temp storage root), so these should exist.
+      expect(options.pythonLoopPath).toMatch(/python_loop\.py$/)
+      expect(options.rLoopPath).toMatch(/r_loop\.R$/)
+      expect(options.replLoopPath).toMatch(/repl_loop\.js$/)
+      expect(existsSync(options.pythonLoopPath as string)).toBe(true)
+      expect(existsSync(options.rLoopPath as string)).toBe(true)
+      expect(existsSync(options.replLoopPath as string)).toBe(true)
+    })
+
+    it('honors OPEN_SCIENCE_PYTHON_LOOP / OPEN_SCIENCE_R_LOOP / OPEN_SCIENCE_REPL_LOOP overrides', () => {
+      process.env.OPEN_SCIENCE_PYTHON_LOOP = '/tmp/custom-python-loop.py'
+      process.env.OPEN_SCIENCE_R_LOOP = '/tmp/custom-r-loop.R'
+      process.env.OPEN_SCIENCE_REPL_LOOP = '/tmp/custom-repl-loop.js'
+
+      expect(resolveLoopScriptPaths()).toEqual({
+        pythonLoopPath: '/tmp/custom-python-loop.py',
+        rLoopPath: '/tmp/custom-r-loop.R',
+        replLoopPath: '/tmp/custom-repl-loop.js'
+      })
+    })
+
+    it('builds a NotebookKernelExecutor by default (no executorFactory injected)', async () => {
+      const root = await createStorageRoot()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root)
+      })
+
+      // beginCodeCell creates the runtime session (and thus the default executor) without ever
+      // spawning a loop -- spawning is deferred to the first execute(). Reach into the private
+      // session map to prove the default backend is the exec-loop executor, python and r as two
+      // independent persistent processes rather than a single restart-on-language-switch kernel.
+      await service.beginCodeCell({ sessionId: 'session-1', workspaceCwd: root })
+      const executor = (
+        service as unknown as { sessions: Map<string, { executor: unknown }> }
+      ).sessions.get('session-1')?.executor
+
+      expect(executor).toBeInstanceOf(NotebookKernelExecutor)
+    })
+  })
+
+  describe('named environments (D1/D4/D5/D2)', () => {
+    const recordingService = (
+      root: string,
+      executions: NotebookExecutionRequest[]
+    ): NotebookRuntimeService =>
+      new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async (request): Promise<NotebookExecutionResult> => {
+            executions.push(request)
+            return {
+              status: 'completed',
+              stdout: '',
+              stderr: '',
+              traceback: '',
+              cwdAfter: request.cwd,
+              outputs: []
+            }
+          },
+          shutdown: async () => undefined
+        })
+      })
+
+    it('auto-provisions a missing default env on demand, but not a named env or an existing default', async () => {
+      const root = await createStorageRoot()
+      const service = recordingService(root, [])
+      const provisionR = vi.fn(async () => undefined)
+      const provisionPython = vi.fn(async () => undefined)
+      service.setDefaultEnvProvisioner({ provisionPython, provisionR })
+
+      // default-r missing → an R run triggers provisionR (build from bundle on demand).
+      await service.execute({ sessionId: 's', workspaceCwd: root, code: '1', language: 'r' })
+      expect(provisionR).toHaveBeenCalledTimes(1)
+      expect(provisionPython).not.toHaveBeenCalled()
+
+      // A NAMED env is never auto-provisioned — the agent must create it explicitly.
+      await service.execute({
+        sessionId: 's',
+        workspaceCwd: root,
+        code: '1',
+        language: 'r',
+        environment: 'my-r'
+      })
+      expect(provisionR).toHaveBeenCalledTimes(1)
+
+      // An already-materialized default env is not re-provisioned.
+      const rBinPath = join(root, 'runtime', 'envs', 'default-r', 'bin', 'R')
+      await mkdir(join(rBinPath, '..'), { recursive: true })
+      await writeFile(rBinPath, '')
+      await service.execute({ sessionId: 's', workspaceCwd: root, code: '2', language: 'r' })
+      expect(provisionR).toHaveBeenCalledTimes(1)
+    })
+
+    it('threads the environment to the executor and records the resolved name on the run', async () => {
+      const root = await createStorageRoot()
+      const executions: NotebookExecutionRequest[] = []
+      const service = recordingService(root, executions)
+
+      await service.execute({
+        sessionId: 's',
+        workspaceCwd: root,
+        code: '1',
+        language: 'python',
+        environment: 'my-analysis'
+      })
+
+      expect(executions[0].environment).toBe('my-analysis')
+      const state = await service.state({ sessionId: 's', workspaceCwd: root })
+      expect(state.runs[0].environment).toBe('my-analysis')
+    })
+
+    it('defaults run.environment to the default env when environment is omitted', async () => {
+      const root = await createStorageRoot()
+      const executions: NotebookExecutionRequest[] = []
+      const service = recordingService(root, executions)
+
+      await service.execute({ sessionId: 's', workspaceCwd: root, code: '1', language: 'python' })
+
+      expect(executions[0].environment).toBeUndefined()
+      const state = await service.state({ sessionId: 's', workspaceCwd: root })
+      // Omitted -> the resolved default env, so history/replay knows which env produced it.
+      expect(state.runs[0].environment).toBe('default-python')
+    })
+
+    it('runs default and named python envs on independent queues while serializing same-env runs', async () => {
+      const root = await createStorageRoot()
+      let active = 0
+      let maxConcurrent = 0
+      const releases: Array<{ environment?: string; release: () => void }> = []
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async (request): Promise<NotebookExecutionResult> => {
+            active += 1
+            maxConcurrent = Math.max(maxConcurrent, active)
+            await new Promise<void>((resolve) =>
+              releases.push({ environment: request.environment, release: resolve })
+            )
+            active -= 1
+            return {
+              status: 'completed',
+              stdout: '',
+              stderr: '',
+              traceback: '',
+              cwdAfter: request.cwd,
+              outputs: []
+            }
+          },
+          shutdown: async () => undefined
+        })
+      })
+
+      const makeCell = async (cellId: string): Promise<void> => {
+        const begin = await service.beginCodeCell({
+          sessionId: 's',
+          workspaceCwd: root,
+          cellId,
+          language: 'python'
+        })
+        await service.appendCodeCell({
+          sessionId: 's',
+          workspaceCwd: root,
+          writeId: begin.writeId,
+          cellId,
+          delta: '1'
+        })
+        await service.finishCodeCell({
+          sessionId: 's',
+          workspaceCwd: root,
+          writeId: begin.writeId,
+          cellId
+        })
+      }
+      await makeCell('d1')
+      await makeCell('a1')
+      await makeCell('d2')
+
+      // d1 + d2 target python:default-python (omitted env); a1 targets python:my-analysis — a distinct
+      // process/queue, so d1 and a1 run at once while d2 queues behind d1 on the default env.
+      const d1 = service.runCell({ sessionId: 's', workspaceCwd: root, cellId: 'd1' })
+      const a1 = service.runCell({
+        sessionId: 's',
+        workspaceCwd: root,
+        cellId: 'a1',
+        environment: 'my-analysis'
+      })
+      const d2 = service.runCell({ sessionId: 's', workspaceCwd: root, cellId: 'd2' })
+
+      await vi.waitFor(() => expect(releases).toHaveLength(2))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(releases).toHaveLength(2)
+      expect(maxConcurrent).toBe(2)
+      expect(releases.some((entry) => entry.environment === undefined)).toBe(true)
+      expect(releases.some((entry) => entry.environment === 'my-analysis')).toBe(true)
+
+      // Drain the default-env run; the queued d2 now takes the freed default slot (never three at once).
+      releases.find((entry) => entry.environment === undefined)!.release()
+      await vi.waitFor(() => expect(releases).toHaveLength(3))
+      expect(maxConcurrent).toBe(2)
+
+      releases.forEach((entry) => entry.release())
+      await Promise.all([d1, a1, d2])
+    })
+
+    it('blocks a run on the same named env until an in-flight install into that env finishes (D5)', async () => {
+      const root = await createStorageRoot()
+      const events: string[] = []
+      let releaseInstall: (() => void) | undefined
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async (request): Promise<NotebookExecutionResult> => {
+            events.push('run:run')
+            return {
+              status: 'completed',
+              stdout: '',
+              stderr: '',
+              traceback: '',
+              cwdAfter: request.cwd,
+              outputs: []
+            }
+          },
+          shutdown: async () => undefined
+        }),
+        installPackagesImpl: async () => {
+          events.push('install:start')
+          await new Promise<void>((resolve) => {
+            releaseInstall = resolve
+          })
+          events.push('install:end')
+          return { ok: true, needsRestart: false, log: '' }
+        }
+      })
+
+      const install = service.managePackages({
+        language: 'python',
+        packages: ['numpy'],
+        environment: 'my-analysis'
+      })
+      await vi.waitFor(() => expect(releaseInstall).toBeDefined())
+
+      const run = service.execute({
+        sessionId: 's',
+        workspaceCwd: root,
+        code: '1',
+        language: 'python',
+        environment: 'my-analysis'
+      })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      // The run (reader) waits out the install (writer) on the SAME env.
+      expect(events).toEqual(['install:start'])
+
+      releaseInstall?.()
+      await Promise.all([install, run])
+      expect(events).toEqual(['install:start', 'install:end', 'run:run'])
+    })
+
+    it('does not block a run in a different env behind an install (D5)', async () => {
+      const root = await createStorageRoot()
+      const events: string[] = []
+      let releaseInstall: (() => void) | undefined
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async (request): Promise<NotebookExecutionResult> => {
+            events.push(`run:${request.environment ?? 'default'}`)
+            return {
+              status: 'completed',
+              stdout: '',
+              stderr: '',
+              traceback: '',
+              cwdAfter: request.cwd,
+              outputs: []
+            }
+          },
+          shutdown: async () => undefined
+        }),
+        installPackagesImpl: async () => {
+          events.push('install:my-analysis:start')
+          await new Promise<void>((resolve) => {
+            releaseInstall = resolve
+          })
+          return { ok: true, needsRestart: false, log: '' }
+        }
+      })
+
+      const install = service.managePackages({
+        language: 'python',
+        packages: ['numpy'],
+        environment: 'my-analysis'
+      })
+      await vi.waitFor(() => expect(releaseInstall).toBeDefined())
+
+      // A run in the DEFAULT python env proceeds while the my-analysis install holds only its own env
+      // lock — the lock is keyed by resolved env name, not language.
+      const run = await service.execute({
+        sessionId: 's',
+        workspaceCwd: root,
+        code: '1',
+        language: 'python'
+      })
+      expect(run.status).toBe('completed')
+      expect(events).toContain('run:default')
+
+      releaseInstall?.()
+      await install
+    })
+
+    it('manageEnvironments create/list/remove delegates to the injected environment manager', async () => {
+      const root = await createStorageRoot()
+      const envs: EnvironmentInfo[] = [
+        { name: 'default-python', language: 'python', ready: true, isDefault: true }
+      ]
+      const created: Array<{ name: string; language: string; packages?: string[] }> = []
+      const removed: string[] = []
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        environmentManager: {
+          createNamedEnvironment: async (name, language, packages) => {
+            created.push({ name, language, packages })
+            const info: EnvironmentInfo = { name, language, ready: true, isDefault: false }
+            envs.push(info)
+            return info
+          },
+          listEnvironments: () => [...envs],
+          removeEnvironment: (name) => {
+            removed.push(name)
+            return envs.filter((env) => env.name !== name)
+          }
+        }
+      })
+
+      const createResult = await service.manageEnvironments({
+        action: 'create',
+        language: 'python',
+        name: 'my-analysis',
+        packages: ['numpy']
+      })
+      expect(created).toEqual([{ name: 'my-analysis', language: 'python', packages: ['numpy'] }])
+      expect(createResult.environments.map((env) => env.name)).toEqual([
+        'default-python',
+        'my-analysis'
+      ])
+
+      const listResult = await service.manageEnvironments({ action: 'list' })
+      expect(listResult.environments.map((env) => env.name)).toEqual([
+        'default-python',
+        'my-analysis'
+      ])
+
+      const removeResult = await service.manageEnvironments({
+        action: 'remove',
+        name: 'my-analysis'
+      })
+      expect(removed).toEqual(['my-analysis'])
+      expect(removeResult.environments.map((env) => env.name)).toEqual(['default-python'])
+    })
+
+    it('refuses to remove an environment that is in use by a live kernel', async () => {
+      const root = await createStorageRoot()
+      const removed: string[] = []
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async (request): Promise<NotebookExecutionResult> => ({
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }),
+          shutdown: async () => undefined
+        }),
+        environmentManager: {
+          createNamedEnvironment: async (name, language) => ({
+            name,
+            language,
+            ready: true,
+            isDefault: false
+          }),
+          listEnvironments: () => [],
+          removeEnvironment: (name) => {
+            removed.push(name)
+            return []
+          }
+        }
+      })
+
+      // A completed run leaves the my-analysis python proc live (status 'idle', not terminated).
+      await service.execute({
+        sessionId: 's',
+        workspaceCwd: root,
+        code: '1',
+        language: 'python',
+        environment: 'my-analysis'
+      })
+
+      await expect(
+        service.manageEnvironments({ action: 'remove', name: 'my-analysis' })
+      ).rejects.toThrow(/in use by a running kernel/)
+      expect(removed).toEqual([])
+
+      // A different env with no live proc is removable.
+      await service.manageEnvironments({ action: 'remove', name: 'other-env' })
+      expect(removed).toEqual(['other-env'])
+    })
+
+    it('rejects hostile / reserved environment names before touching the manager (security)', async () => {
+      const root = await createStorageRoot()
+      const created: string[] = []
+      const removed: string[] = []
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async () => {
+            throw new Error('not used')
+          },
+          shutdown: async () => undefined
+        }),
+        environmentManager: {
+          createNamedEnvironment: async (name, language) => {
+            created.push(name)
+            return { name, language, ready: true, isDefault: false }
+          },
+          listEnvironments: () => [],
+          removeEnvironment: (name) => {
+            removed.push(name)
+            return []
+          }
+        }
+      })
+
+      // Path traversal must never reach removeEnvironment's rm -rf (the ship-blocking finding).
+      await expect(
+        service.manageEnvironments({ action: 'remove', name: '../../../../tmp/victim' })
+      ).rejects.toThrow(/Invalid environment name/)
+      // Reserved/default/alias names are refused on create so a created env is always reachable.
+      for (const reserved of ['python', 'r', 'default-python', 'default-r']) {
+        await expect(
+          service.manageEnvironments({ action: 'create', language: 'python', name: reserved })
+        ).rejects.toThrow(/reserved environment name/)
+      }
+      // create without a language is a clean domain error, not a raw crash.
+      await expect(
+        service.manageEnvironments({
+          action: 'create',
+          name: 'x'
+        } as unknown as Parameters<typeof service.manageEnvironments>[0])
+      ).rejects.toThrow(/requires a language/)
+
+      expect(created).toEqual([])
+      expect(removed).toEqual([])
+    })
+
+    it('surfaces the resolved per-env kernel status in state().environments', async () => {
+      const root = await createStorageRoot()
+      const executions: NotebookExecutionRequest[] = []
+      const service = recordingService(root, executions)
+
+      await service.execute({
+        sessionId: 's',
+        workspaceCwd: root,
+        code: '1',
+        language: 'python',
+        environment: 'my-analysis'
+      })
+
+      const state = await service.state({ sessionId: 's', workspaceCwd: root })
+      expect(state.environments).toContainEqual({
+        processKey: 'python:my-analysis',
+        kind: 'python',
+        environment: 'my-analysis',
+        status: 'idle',
+        restartRecommended: false
+      })
+    })
+
+    it('flags restartRecommended on the R env after an R install and clears it on restart', async () => {
+      const root = await createStorageRoot()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async (request): Promise<NotebookExecutionResult> => ({
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }),
+          shutdown: async () => undefined
+        }),
+        // An R install reports needsRestart; a Python install would not (asserted below).
+        installPackagesImpl: async (request) => ({
+          ok: true,
+          needsRestart: request.language === 'r',
+          log: 'done'
+        })
+      })
+
+      // Spawn the R kernel status entry so the env view has something to flag.
+      await service.execute({ sessionId: 's', workspaceCwd: root, code: '1', language: 'r' })
+
+      const rEntry = (
+        s: Awaited<ReturnType<typeof service.state>>
+      ): NotebookEnvironmentStatus | undefined =>
+        s.environments.find((entry) => entry.processKey === 'r:default-r')
+
+      await service.managePackages({ language: 'r', packages: ['ggplot2'] })
+      const afterInstall = await service.state({ sessionId: 's', workspaceCwd: root })
+      expect(rEntry(afterInstall)?.restartRecommended).toBe(true)
+
+      await service.restart({ sessionId: 's', workspaceCwd: root })
+      const afterRestart = await service.state({ sessionId: 's', workspaceCwd: root })
+      expect(rEntry(afterRestart)?.restartRecommended).toBe(false)
+    })
+
+    it('does not flag restartRecommended for a Python install', async () => {
+      const root = await createStorageRoot()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async (request): Promise<NotebookExecutionResult> => ({
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }),
+          shutdown: async () => undefined
+        }),
+        installPackagesImpl: async () => ({ ok: true, needsRestart: false, log: 'done' })
+      })
+
+      await service.execute({ sessionId: 's', workspaceCwd: root, code: '1', language: 'python' })
+      await service.managePackages({ language: 'python', packages: ['numpy'], usePip: true })
+      const state = await service.state({ sessionId: 's', workspaceCwd: root })
+      expect(
+        state.environments.find((entry) => entry.processKey === 'python:default-python')
+          ?.restartRecommended
+      ).toBe(false)
+    })
   })
 })

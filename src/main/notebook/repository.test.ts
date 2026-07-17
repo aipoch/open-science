@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -69,6 +69,7 @@ describe('notebook run repository', () => {
         runId: 'run-1',
         cellId: 'cell-1',
         source: 'agent',
+        kernelKind: 'python',
         script: "print('hello')",
         status: 'completed',
         startedAt: 100,
@@ -137,6 +138,7 @@ describe('notebook run repository', () => {
         runId: 'run-1',
         cellId: 'cell-1',
         source: 'agent',
+        kernelKind: 'python',
         script: "print('hello')",
         status: 'running',
         startedAt: 100,
@@ -158,6 +160,7 @@ describe('notebook run repository', () => {
         runId: 'run-1',
         cellId: 'cell-1',
         source: 'agent',
+        kernelKind: 'python',
         script: "print('hello')",
         status: 'completed',
         startedAt: 100,
@@ -183,6 +186,136 @@ describe('notebook run repository', () => {
         stdout: 'hello\n'
       }
     })
+  })
+
+  it('creates the handoff and outputs cross-kernel workspace dirs alongside the other session dirs', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const sessionRoot = join(root, 'notebooks', 'default-project', 'session-1')
+
+    await repository.loadOrCreate({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    })
+
+    expect((await stat(join(sessionRoot, 'handoff'))).isDirectory()).toBe(true)
+    expect((await stat(join(sessionRoot, 'outputs'))).isDirectory()).toBe(true)
+  })
+
+  it('persists an updated kernel lifecycle status without touching run history', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+
+    await repository.loadOrCreate({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    })
+    await repository.appendRun({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      run: {
+        runId: 'run-1',
+        cellId: 'cell-1',
+        source: 'agent',
+        kernelKind: 'python',
+        script: '1',
+        status: 'completed',
+        startedAt: 100,
+        endedAt: 200,
+        text: { stdout: '', stderr: '', traceback: '', plain: [] },
+        outputs: [],
+        artifacts: [],
+        workingFiles: []
+      }
+    })
+
+    const restarting = await repository.updateKernelStatus({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      status: 'restarting'
+    })
+    expect(restarting.kernel.lastKnownStatus).toBe('restarting')
+    expect(restarting.runs).toHaveLength(1) // run history untouched
+
+    const terminated = await repository.updateKernelStatus({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      status: 'terminated'
+    })
+    expect(terminated.kernel.lastKnownStatus).toBe('terminated')
+  })
+
+  it('defaults a legacy run record missing kernelKind to python when loaded from disk', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const runJsonPath = join(root, 'notebooks', 'default-project', 'session-1', 'run.json')
+
+    await repository.loadOrCreate({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    })
+
+    // Simulate a pre-kernelKind run.json written before this field existed.
+    const legacyDocument = JSON.parse(await readFile(runJsonPath, 'utf8'))
+    legacyDocument.runs = [
+      {
+        runId: 'legacy-run-1',
+        cellId: 'cell-1',
+        source: 'agent',
+        script: "print('hi')",
+        status: 'completed',
+        startedAt: 100,
+        endedAt: 200,
+        text: { stdout: 'hi\n', stderr: '', traceback: '', plain: ['hi'] },
+        outputs: [],
+        artifacts: [],
+        workingFiles: []
+      }
+    ]
+    await writeFile(runJsonPath, JSON.stringify(legacyDocument, null, 2), 'utf8')
+
+    const reloaded = await repository.findExisting('default-project', 'session-1')
+
+    expect(reloaded?.runs[0]).toMatchObject({ runId: 'legacy-run-1', kernelKind: 'python' })
+  })
+
+  it('keeps an explicit kernelKind when loading a run record from disk', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const runJsonPath = join(root, 'notebooks', 'default-project', 'session-1', 'run.json')
+
+    await repository.loadOrCreate({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    })
+
+    const document = JSON.parse(await readFile(runJsonPath, 'utf8'))
+    document.runs = [
+      {
+        runId: 'repl-run-1',
+        cellId: 'cell-1',
+        source: 'user',
+        inputKind: 'terminal',
+        kernelKind: 'repl',
+        script: 'ls',
+        status: 'completed',
+        startedAt: 100,
+        endedAt: 200,
+        text: { stdout: '', stderr: '', traceback: '', plain: [] },
+        outputs: [],
+        artifacts: [],
+        workingFiles: []
+      }
+    ]
+    await writeFile(runJsonPath, JSON.stringify(document, null, 2), 'utf8')
+
+    const reloaded = await repository.findExisting('default-project', 'session-1')
+
+    expect(reloaded?.runs[0]).toMatchObject({ runId: 'repl-run-1', kernelKind: 'repl' })
   })
 
   it('rejects unsafe project and session path segments', async () => {

@@ -24,7 +24,17 @@ type ToolDiffSection = {
   removedLines: number
 }
 
-type ToolDetailSection = ToolCodeSection | ToolDiffSection
+// An artifact-save tool result that echoes an image file; rendered as an inline preview.
+type ToolImageSection = {
+  kind: 'image'
+  label: string
+  path: string
+  mimeType: string
+  name?: string
+  sizeLabel?: string
+}
+
+type ToolDetailSection = ToolCodeSection | ToolDiffSection | ToolImageSection
 
 type ToolActivityDetails = {
   displayName: string
@@ -428,6 +438,25 @@ const buildArtifactDetails = (activity: ToolActivity): ToolActivityDetails | und
 
   if (!filename && !path) return undefined
 
+  // Image artifacts render an inline preview instead of a raw JSON metadata dump.
+  if (path && mimeType?.startsWith('image/')) {
+    const imageSection: ToolImageSection = {
+      kind: 'image',
+      label: 'Output',
+      path,
+      mimeType,
+      name: filename,
+      sizeLabel
+    }
+
+    return {
+      displayName: 'Write file',
+      subtitle: filename ?? path,
+      metaLabel: sizeLabel,
+      sections: [imageSection]
+    }
+  }
+
   const summary: Record<string, string> = {}
 
   if (filename) summary.file = filename
@@ -452,6 +481,60 @@ const isNotebookExecuteActivity = (activity: ToolActivity): boolean => {
   return providerName.includes('open-science-notebook') && providerName.endsWith('notebook_execute')
 }
 
+// The kernel kinds a notebook run tool can produce; drives language, label, and display name.
+type NotebookKernelKindLike = 'python' | 'r' | 'repl' | 'bash'
+
+const NOTEBOOK_KERNEL_KINDS = new Set<NotebookKernelKindLike>(['python', 'r', 'repl', 'bash'])
+
+// Provider tool suffixes (under the notebook MCP server) whose result is one kernel run.
+const NOTEBOOK_RUN_TOOL_SUFFIXES = ['notebook_execute', 'repl_execute', 'bash_execute'] as const
+
+// Shiki language id for each kernel's code block: repl is JavaScript, bash is a shell command.
+const NOTEBOOK_KERNEL_LANGUAGE: Record<NotebookKernelKindLike, string> = {
+  python: 'python',
+  r: 'r',
+  repl: 'javascript',
+  bash: 'bash'
+}
+
+// Row heading per kernel: python/r are notebook cells, repl is the Agent SDK, bash is the shell.
+const NOTEBOOK_KERNEL_DISPLAY: Record<NotebookKernelKindLike, string> = {
+  python: 'Notebook cell',
+  r: 'Notebook cell',
+  repl: 'Agent SDK',
+  bash: 'Shell'
+}
+
+// Detects any notebook kernel run (python/r cell, repl control-plane, or bash) so all three render
+// as code plus output rather than the raw run-summary JSON envelope.
+const isNotebookKernelRunActivity = (activity: ToolActivity): boolean => {
+  const providerName = trimDetail(activity.providerToolName)?.toLowerCase() ?? ''
+
+  if (!providerName.includes('open-science-notebook')) return false
+
+  return NOTEBOOK_RUN_TOOL_SUFFIXES.some((suffix) => providerName.endsWith(suffix))
+}
+
+// Resolves the kernel from the run summary, falling back to the tool name (repl_execute/bash_execute).
+const getNotebookKernelKind = (
+  activity: ToolActivity,
+  summary: Record<string, unknown> | undefined
+): NotebookKernelKindLike => {
+  const fromSummary =
+    summary && typeof summary.kernelKind === 'string' ? summary.kernelKind : undefined
+
+  if (fromSummary && NOTEBOOK_KERNEL_KINDS.has(fromSummary as NotebookKernelKindLike)) {
+    return fromSummary as NotebookKernelKindLike
+  }
+
+  const providerName = trimDetail(activity.providerToolName)?.toLowerCase() ?? ''
+
+  if (providerName.endsWith('repl_execute')) return 'repl'
+  if (providerName.endsWith('bash_execute')) return 'bash'
+
+  return 'python'
+}
+
 // Reads the notebook run summary the execute tool returns as JSON content (or raw output).
 const parseNotebookRunSummary = (activity: ToolActivity): Record<string, unknown> | undefined => {
   for (const text of collectToolTexts(activity)) {
@@ -468,40 +551,97 @@ const parseNotebookRunSummary = (activity: ToolActivity): Record<string, unknown
 }
 
 // Prefers the executed code from tool input, falling back to the script echoed in the run summary.
+// Reads code (python/r/repl) or command (bash) from input, whichever the kernel's tool sends.
 const getNotebookCode = (
   activity: ToolActivity,
   summary: Record<string, unknown> | undefined
 ): string | undefined => {
-  if (isRecord(activity.rawInput) && typeof activity.rawInput.code === 'string') {
-    const code = trimDetail(activity.rawInput.code)
+  if (isRecord(activity.rawInput)) {
+    for (const key of ['code', 'command', 'script'] as const) {
+      const value = activity.rawInput[key]
 
-    if (code) return code
+      if (typeof value === 'string') {
+        const trimmed = trimDetail(value)
+
+        if (trimmed) return trimmed
+      }
+    }
   }
 
   return summary && typeof summary.script === 'string' ? trimDetail(summary.script) : undefined
 }
 
-// Joins the run summary's textual streams into one readable output block.
+// Reads a stream field from either the nested `text` block (notebook_execute) or the top-level
+// record (repl_execute/bash_execute control-plane results carry stdout/stderr/traceback directly).
+const readStreamField = (
+  summary: Record<string, unknown>,
+  text: Record<string, unknown> | undefined,
+  field: 'stdout' | 'stderr' | 'traceback'
+): string => {
+  const nested = text && typeof text[field] === 'string' ? (text[field] as string) : ''
+
+  if (nested.trim().length > 0) return nested.trimEnd()
+
+  const top = typeof summary[field] === 'string' ? (summary[field] as string) : ''
+
+  return top.trimEnd()
+}
+
+// Collects human-readable results from structured outputs: echoed values (display text mimes), plain
+// text, and json. Images are skipped (shown in the notebook panel) as are streams (already in stdout).
+const collectDisplayResultText = (summary: Record<string, unknown>): string[] => {
+  const outputs = Array.isArray(summary.outputs) ? summary.outputs : []
+  const parts: string[] = []
+
+  for (const output of outputs) {
+    if (!isRecord(output)) continue
+
+    if (output.type === 'text' && typeof output.text === 'string') {
+      parts.push(output.text.trimEnd())
+    } else if (output.type === 'json') {
+      const serialized = stringifyRaw(output.data)
+
+      if (serialized) parts.push(serialized)
+    } else if (output.type === 'display' && isRecord(output.data)) {
+      for (const [mime, payload] of Object.entries(output.data)) {
+        if (mime.startsWith('image/')) continue
+        if (typeof payload === 'string') parts.push(payload.trimEnd())
+      }
+    }
+  }
+
+  return parts.filter((part) => part.trim().length > 0)
+}
+
+// Joins the run's textual streams and echoed results into one readable output block.
 const getNotebookOutput = (summary: Record<string, unknown> | undefined): string | undefined => {
-  const text = summary && isRecord(summary.text) ? summary.text : undefined
+  if (!summary) return undefined
 
-  if (!text) return undefined
-
-  const stdout = typeof text.stdout === 'string' ? text.stdout.trimEnd() : ''
-  const stderr = typeof text.stderr === 'string' ? text.stderr.trimEnd() : ''
-  const traceback = typeof text.traceback === 'string' ? text.traceback.trimEnd() : ''
+  const text = isRecord(summary.text) ? summary.text : undefined
+  const stdout = readStreamField(summary, text, 'stdout')
+  const stderr = readStreamField(summary, text, 'stderr')
+  const traceback = readStreamField(summary, text, 'traceback')
   // Traceback usually duplicates stderr, so only append it when it adds new information.
-  const parts = [stdout, stderr, stderr.includes(traceback) ? '' : traceback].filter(Boolean)
+  const streamText = [stdout, stderr, stderr.includes(traceback) ? '' : traceback].filter(Boolean)
+  const streamJoined = streamText.join('\n')
+  // Drop echoed results already printed verbatim to a stream (e.g. console.log then a trailing echo).
+  const displays = collectDisplayResultText(summary).filter((part) => !streamJoined.includes(part))
+  const parts = [...streamText, ...displays]
 
   return parts.length > 0 ? parts.join('\n') : undefined
 }
 
-// Renders a notebook cell as its Python code plus execution output, not the raw summary JSON.
+// Renders a notebook run as its code plus execution output, not the raw summary JSON. Handles every
+// kernel: python/r cells, the repl control-plane (Agent SDK), and bash shell runs.
 const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
   const summary = parseNotebookRunSummary(activity)
+  const kernelKind = getNotebookKernelKind(activity, summary)
   const code = getNotebookCode(activity, summary)
   const sections: ToolDetailSection[] = []
-  const codeSection = code ? createCodeSection('Code', code, 'python') : undefined
+  const codeLabel = kernelKind === 'bash' ? 'Command' : 'Code'
+  const codeSection = code
+    ? createCodeSection(codeLabel, code, NOTEBOOK_KERNEL_LANGUAGE[kernelKind])
+    : undefined
 
   if (codeSection) sections.push(codeSection)
 
@@ -517,8 +657,120 @@ const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | und
   const status = summary && typeof summary.status === 'string' ? summary.status : undefined
 
   return {
-    displayName: 'Notebook cell',
+    displayName: NOTEBOOK_KERNEL_DISPLAY[kernelKind],
     metaLabel: status,
+    sections
+  }
+}
+
+// Detects the manage_packages MCP tool so an install renders a friendly summary, not raw JSON.
+const isManagePackagesActivity = (activity: ToolActivity): boolean => {
+  const providerName = trimDetail(activity.providerToolName)?.toLowerCase() ?? ''
+
+  return providerName.endsWith('manage_packages')
+}
+
+// Reads the install result the manage_packages tool returns as JSON content (or raw output).
+const parseManagePackagesResult = (activity: ToolActivity): Record<string, unknown> | undefined => {
+  for (const text of collectToolTexts(activity)) {
+    try {
+      const parsed: unknown = JSON.parse(text)
+
+      if (isRecord(parsed)) return parsed
+    } catch {
+      // Not a JSON payload; keep scanning the remaining content blocks.
+    }
+  }
+
+  return isRecord(activity.rawOutput) ? activity.rawOutput : undefined
+}
+
+// Trims the install log for display: drops libmamba trace/debug verbosity and backtrace decoration
+// (a failed conda attempt dumps hundreds of these), collapses blank-line runs. The R startup banner
+// is already suppressed at the backend.
+const cleanInstallLog = (log: string): string =>
+  log
+    .split('\n')
+    .filter(
+      (line) =>
+        !/^\s*(trace|debug)\s+libmamba\b/u.test(line) &&
+        !/libmamba.*Backtrace (Start|End)/u.test(line)
+    )
+    .join('\n')
+    .replace(/\n{3,}/gu, '\n\n')
+    .trim()
+
+// Reads the requested package list from tool input for the row subtitle.
+const getManagedPackageList = (activity: ToolActivity): string | undefined => {
+  const rawInput = isRecord(activity.rawInput) ? activity.rawInput : undefined
+  const packages = rawInput && Array.isArray(rawInput.packages) ? rawInput.packages : []
+  const names = packages.filter((entry): entry is string => typeof entry === 'string')
+
+  return names.length > 0 ? names.join(', ') : undefined
+}
+
+// Summarizes a package install: which packages, the installer used, and a cleaned collapsible log —
+// instead of dumping the raw { ok, needsRestart, log, method } JSON envelope into the transcript.
+const buildManagePackagesDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
+  const result = parseManagePackagesResult(activity)
+
+  // Nothing parseable to summarize; let the generic input/output view handle it.
+  if (!result) return undefined
+
+  const rawInput = isRecord(activity.rawInput) ? activity.rawInput : undefined
+  const language = getRecordString(rawInput, 'language')
+  const environment = getRecordString(rawInput, 'environment')
+  const packages =
+    rawInput && Array.isArray(rawInput.packages)
+      ? rawInput.packages.filter((entry): entry is string => typeof entry === 'string')
+      : []
+  const subtitle = packages.length > 0 ? packages.join(', ') : getManagedPackageList(activity)
+  const ok = typeof result.ok === 'boolean' ? result.ok : undefined
+  const method = typeof result.method === 'string' ? trimDetail(result.method) : undefined
+  const needsRestart = result.needsRestart === true
+  const prefix = typeof result.prefix === 'string' ? trimDetail(result.prefix) : undefined
+  const log = typeof result.log === 'string' ? cleanInstallLog(result.log) : ''
+  const error = typeof result.error === 'string' ? trimDetail(result.error) : undefined
+  const metaLabel = [ok === false ? 'failed' : method, needsRestart ? 'restart needed' : undefined]
+    .filter(Boolean)
+    .join(' · ')
+  const sections: ToolDetailSection[] = []
+
+  // Command section: show WHAT was requested (the invocation) and WHERE it installs (the resolved
+  // env prefix), not just the output log — so the install command + location are always visible.
+  const callArgs = [
+    language ? `language="${language}"` : undefined,
+    packages.length > 0 ? `packages=[${packages.map((pkg) => `"${pkg}"`).join(', ')}]` : undefined,
+    environment ? `environment="${environment}"` : undefined
+  ]
+    .filter(Boolean)
+    .join(', ')
+  const commandText = [
+    `manage_packages(${callArgs})`,
+    prefix ? `installs into  ${prefix}${method ? `  (${method})` : ''}` : undefined
+  ]
+    .filter(Boolean)
+    .join('\n')
+  const commandSection = createCodeSection('Command', commandText)
+
+  if (commandSection) sections.push(commandSection)
+
+  if (error) {
+    const errorSection = createCodeSection('Error', error)
+
+    if (errorSection) sections.push(errorSection)
+  }
+
+  if (log) {
+    const logSection = createCodeSection('Log', log)
+
+    if (logSection) sections.push({ ...logSection, collapsible: true })
+  }
+
+  return {
+    displayName: 'Manage packages',
+    subtitle,
+    metaLabel: metaLabel.length > 0 ? metaLabel : undefined,
     sections
   }
 }
@@ -629,8 +881,12 @@ const buildToolActivityDetails = (activity: ToolActivity): ToolActivityDetails |
   if (isArtifactWriteActivity(activity)) return buildArtifactDetails(activity)
   // File edits prefer a diff view, falling back to raw input/output when no diff is provided.
   if (isEditActivity(activity)) return buildDiffDetails(activity) ?? buildGenericDetails(activity)
-  // Notebook cells show their Python code and output rather than the raw run-summary JSON.
-  if (isNotebookExecuteActivity(activity)) {
+  // Package installs show which packages / installer and a cleaned log, not the raw result JSON.
+  if (isManagePackagesActivity(activity)) {
+    return buildManagePackagesDetails(activity) ?? buildGenericDetails(activity)
+  }
+  // Notebook runs (python/r cells, repl, bash) show their code and output, not the run-summary JSON.
+  if (isNotebookKernelRunActivity(activity)) {
     return buildNotebookDetails(activity) ?? buildGenericDetails(activity)
   }
   if (activity.toolKind === 'execute') return buildExecuteDetails(activity)
@@ -643,4 +899,10 @@ const buildToolActivityDetails = (activity: ToolActivity): ToolActivityDetails |
 }
 
 export { buildToolActivityDetails, getToolDisplayName, isEditActivity, isNotebookExecuteActivity }
-export type { ToolActivityDetails, ToolCodeSection, ToolDetailSection, ToolDiffSection }
+export type {
+  ToolActivityDetails,
+  ToolCodeSection,
+  ToolDetailSection,
+  ToolDiffSection,
+  ToolImageSection
+}

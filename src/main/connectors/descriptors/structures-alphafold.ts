@@ -159,7 +159,7 @@ export const STRUCTURES_ALPHAFOLD_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ uniprot_accession, has_model, n_models, models:[{ model_entity_id, entry_id, provider_id, tool_used, uniprot_accession, uniprot_id, uniprot_description, gene, organism_scientific_name, tax_id, is_uniprot_reviewed, is_reference_proteome, is_complex, sequence_length, uniprot_start, uniprot_end, global_plddt, fraction_plddt:{very_low, low, confident, very_high}, latest_version, all_versions, model_created_date, urls:{cif, bcif, pdb, pae_image, pae_json, plddt_json, msa, alphamissense_csv}, sequence? }] }`. No prediction -> `{ uniprot_accession, has_model:false, n_models:0, models:[] }`; malformed accession -> same shape plus an `error` field. `urls` only carries the keys the API supplied.',
     example:
-      'result = host.mcp("structures", "alphafold_get_prediction", {"uniprot_accession": "P04637"})',
+      'const result = await host.mcp("structures", "alphafold_get_prediction", {"uniprot_accession": "P04637"})',
     run: async (ctx, a) => {
       const accession = String(a.uniprot_accession).trim()
       const includeSequence = a.include_sequence === true
@@ -201,7 +201,7 @@ export const STRUCTURES_ALPHAFOLD_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ n_requested, n_unique, n_blank_skipped, n_duplicate_skipped, not_processed:[...], records:[{ uniprot_accession, has_model, n_models?, model_entity_id?, latest_version?, global_plddt?, sequence_length? }] }`. n_requested == n_unique + n_blank_skipped + n_duplicate_skipped. No-prediction records carry `has_model:false`; malformed ones add an `error` field. `not_processed` holds accessions dropped for the per-call time budget.',
     example:
-      'result = host.mcp("structures", "alphafold_check_coverage", {"uniprot_accessions": ["P04637", "P38398", "Q9Y6K9"]})',
+      'const result = await host.mcp("structures", "alphafold_check_coverage", {"uniprot_accessions": ["P04637", "P38398", "Q9Y6K9"]})',
     run: async (ctx, a) => {
       const requested = Array.isArray(a.uniprot_accessions)
         ? (a.uniprot_accessions as unknown[])

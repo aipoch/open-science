@@ -356,7 +356,7 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ total (API meta count), n_returned, truncated, last_updated, records: [ { application_number, sponsor_name, products: [...], submissions: [...], openfda_generic_name, openfda_pharm_class_epc, openfda_pharm_class_moa, openfda_pharm_class_cs, openfda_pharm_class_pe, openfda_substance_name, openfda_route, openfda_manufacturer_name, openfda_product_type } ] }`. `truncated` is true when fewer than `total` records were returned.',
     example:
-      'result = host.mcp("drug_regulatory", "search_drug_applications", {"generic": "ATORVASTATIN CALCIUM", "marketing_status": "Prescription", "max_records": 25})',
+      'const result = await host.mcp("drug_regulatory", "search_drug_applications", {"generic": "ATORVASTATIN CALCIUM", "marketing_status": "Prescription", "max_records": 25})',
     run: async (ctx, a) => {
       const expr = appSearchExpr(a)
       const maxRecords = Math.max(1, Number(a.max_records ?? 50))
@@ -390,7 +390,7 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ application_number, found (bool), record }`. `record` is the full Drugs@FDA application object (sponsor_name, products, submissions, openfda); it is null and `found` false when the number does not exist.',
     example:
-      'result = host.mcp("drug_regulatory", "get_drug_application", {"application_number": "NDA020702"})',
+      'const result = await host.mcp("drug_regulatory", "get_drug_application", {"application_number": "NDA020702"})',
     run: async (ctx, a) => {
       const num = String(a.application_number)
       const url = `${APPLICATIONS}?search=${enc(`application_number:${phrase(num)}`)}&limit=1`
@@ -459,7 +459,7 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ count_field, api_field (resolved openFDA path), n_buckets, bucket_sum, buckets: [ { term, count } ] }` — buckets are descending by count.',
     example:
-      'result = host.mcp("drug_regulatory", "count_drug_applications", {"count_field": "marketing_status"})',
+      'const result = await host.mcp("drug_regulatory", "count_drug_applications", {"count_field": "marketing_status"})',
     run: async (ctx, a) => {
       const countField = String(a.count_field)
       const apiField = COUNT_FIELDS[countField] ?? countField
@@ -482,7 +482,7 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
     input: { type: 'object', properties: {} },
     returns:
       '`{ total_applications, last_updated, marketing_status: [ { term, count } ], dosage_form_top (top 25), dosage_form_distinct, route_top (top 25), route_distinct, sponsor_top (top 25 by application count) }`.',
-    example: 'result = host.mcp("drug_regulatory", "get_drug_statistics", {})',
+    example: 'const result = await host.mcp("drug_regulatory", "get_drug_statistics", {})',
     run: async (ctx) => {
       // Base query only for the total count and last-updated stamp (count queries omit results.total).
       const base = (await ctx.fetchJson(`${APPLICATIONS}?limit=1`)) as OpenFdaResults<Application>
@@ -523,7 +523,7 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ class_type, n_classes, classes: [ { term, count } ] }` — classes descending by count.',
     example:
-      'result = host.mcp("drug_regulatory", "list_pharmacologic_classes", {"class_type": "epc", "max_buckets": 50})',
+      'const result = await host.mcp("drug_regulatory", "list_pharmacologic_classes", {"class_type": "epc", "max_buckets": 50})',
     url: (a) => {
       const max = Math.min(Math.max(1, Number(a.max_buckets ?? 100)), MAX_BUCKETS)
       return `${APPLICATIONS}?count=${enc(`openfda.pharm_class_${classType(a.class_type)}.exact`)}&limit=${max}`
@@ -550,7 +550,7 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ brand, reference_applications: [appnums], active_ingredient_sets: [[names]], equivalents: [ full application records ] }`.',
     example:
-      'result = host.mcp("drug_regulatory", "get_generic_equivalents", {"brand": "Lipitor"})',
+      'const result = await host.mcp("drug_regulatory", "get_generic_equivalents", {"brand": "Lipitor"})',
     run: async (ctx, a) => {
       const brand = String(a.brand)
       // Step 1: resolve the brand to its applications and their distinct active-ingredient sets.
@@ -648,7 +648,7 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
     returns:
       'Default: `{ search, total (API count), n_returned, truncated, records: [ { identification: { set_id, spl_version, effective_time, brand_name, generic_name, substance_name, manufacturer, route, product_type, application_number }, has_boxed_warning, warning_sections: [str], indications_and_usage } ] }`. When `sections` is given, each record is `{ set_id, brand_name, generic_name, sections: { <name>: text } }`.',
     example:
-      'result = host.mcp("drug_regulatory", "search_drug_labels", {"brand_name": "Tylenol", "max_records": 5})',
+      'const result = await host.mcp("drug_regulatory", "search_drug_labels", {"brand_name": "Tylenol", "max_records": 5})',
     run: async (ctx, a) => {
       const expr = labelSearchExpr(a)
       const maxRecords = Math.max(1, Number(a.max_records ?? 25))

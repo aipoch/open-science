@@ -246,7 +246,7 @@ export const GENES_ONTOLOGY_TOOLS: ToolDescriptor[] = [
     returns:
       'ID list -> {records:[{ontology_id, title, version, status, num_terms, num_properties, num_individuals, preferred_prefix, description, namespace}], not_found:[...]}; full catalogue -> {records:[...], total_elements, complete}.',
     example:
-      'result = host.mcp("genes", "list_ontologies", {"ontology_ids": ["efo", "go", "mondo"]})',
+      'const result = await host.mcp("genes", "list_ontologies", {"ontology_ids": ["efo", "go", "mondo"]})',
     run: async (ctx, a) => {
       const ids = Array.isArray(a.ontology_ids) ? (a.ontology_ids as unknown[]) : null
       if (ids && ids.length > 0) {
@@ -295,7 +295,7 @@ export const GENES_ONTOLOGY_TOOLS: ToolDescriptor[] = [
     returns:
       '{query, total_found (numFound), n_returned, truncated (total_found > n_returned), terms:[{curie, iri, label, short_form, ontology, description, type, is_defining_ontology}]}.',
     example:
-      'result = host.mcp("genes", "search_ontology_terms", {"query": "asthma", "ontologies": ["efo"], "max_results": 20})',
+      'const result = await host.mcp("genes", "search_ontology_terms", {"query": "asthma", "ontologies": ["efo"], "max_results": 20})',
     run: async (ctx, a) => {
       const query = String(a.query)
       const rows = clampInt(a.max_results, 20, 1, 500)
@@ -348,7 +348,7 @@ export const GENES_ONTOLOGY_TOOLS: ToolDescriptor[] = [
     returns:
       'relation=None -> {curie, iri, label, ontology, short_form, synonyms, description, is_obsolete, has_children, parents?}; with a relation -> {root, relation, total_elements, term_count, terms:[{curie, iri, label, short_form, ontology, has_children}]}.',
     example:
-      'result = host.mcp("genes", "get_ontology_term", {"ontology": "go", "term_id": "GO:0006281", "relation": "children"})',
+      'const result = await host.mcp("genes", "get_ontology_term", {"ontology": "go", "term_id": "GO:0006281", "relation": "children"})',
     run: async (ctx, a) => {
       const ontology = String(a.ontology).trim().toLowerCase()
       const termId = String(a.term_id)
@@ -425,7 +425,7 @@ export const GENES_ONTOLOGY_TOOLS: ToolDescriptor[] = [
     returns:
       '{gene_product, total_annotations (numberOfHits), n_records, complete (full set retrieved), truncated (records capped), distinct_go_ids:[...], records:[{go_id, go_aspect, qualifier, go_evidence, eco_id, reference, assigned_by, date, taxon_id, symbol, with_from, go_name?, go_obsolete?}]}.',
     example:
-      'result = host.mcp("genes", "get_go_annotations", {"uniprot_accession": "P04637", "aspect": "molecular_function", "evidence": "experimental_manual"})',
+      'const result = await host.mcp("genes", "get_go_annotations", {"uniprot_accession": "P04637", "aspect": "molecular_function", "evidence": "experimental_manual"})',
     run: async (ctx, a) => {
       const acc = String(a.uniprot_accession)
         .trim()

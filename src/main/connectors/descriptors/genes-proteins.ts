@@ -136,7 +136,7 @@ export const GENES_PROTEINS_TOOLS: ToolDescriptor[] = [
     returns:
       '{n_input, n_records, not_found:[terms with no match], records:[mygene hit objects, each with `query`, `_id` and the requested fields]} — records ordered by input position of `query`, then `_id`.',
     example:
-      'result = host.mcp("genes", "query_genes", {"terms": ["TP53", "BRCA1"], "scopes": "symbol,alias", "fields": "symbol,name,entrezgene,ensembl.gene", "species": "human"})',
+      'const result = await host.mcp("genes", "query_genes", {"terms": ["TP53", "BRCA1"], "scopes": "symbol,alias", "fields": "symbol,name,entrezgene,ensembl.gene", "species": "human"})',
     run: async (ctx, a) => {
       const terms = Array.isArray(a.terms) ? (a.terms as unknown[]).map(String) : []
       // Commas would be misread as a multi-value delimiter by mygene — reject them explicitly.
@@ -201,7 +201,7 @@ export const GENES_PROTEINS_TOOLS: ToolDescriptor[] = [
     returns:
       'fields mode {accessions, fields, n_records, records:[{<column>:value}]} (columns are the UniProt TSV headers); fasta/txt mode {accessions, format, n_found, missing:[...], records:{accession:text}}.',
     example:
-      'result = host.mcp("genes", "get_uniprot_entries", {"accessions": ["P04637", "P38398"], "fields": ["accession", "id", "protein_name", "gene_names", "organism_name", "length"]})',
+      'const result = await host.mcp("genes", "get_uniprot_entries", {"accessions": ["P04637", "P38398"], "fields": ["accession", "id", "protein_name", "gene_names", "organism_name", "length"]})',
     run: async (ctx, a) => {
       const accessions = Array.isArray(a.accessions) ? (a.accessions as unknown[]).map(String) : []
       const fields = Array.isArray(a.fields) ? (a.fields as unknown[]).map(String) : []

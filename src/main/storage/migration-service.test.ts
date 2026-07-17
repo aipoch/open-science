@@ -501,3 +501,107 @@ describe('commitDataRootSwitch (commit phase)', () => {
     expect(result).toEqual({ ok: true })
   })
 })
+
+describe('runtime preservation + old-runtime cleanup', () => {
+  it('exports env locks and copies the pkgs cache when envs are preserved', async () => {
+    const deps = fakeDeps()
+    const exportRuntimeLocks = vi.fn(async () => ['default-python'])
+    const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({ ok: true }))
+
+    const target = dataRootFor(emptyParent)
+    await runDataRootMigration(
+      {
+        currentDataRoot,
+        runtime: deps.runtime,
+        notebook: deps.notebook,
+        exportRuntimeLocks,
+        copyAndVerify
+      },
+      emptyParent,
+      runOpts()
+    )
+
+    expect(exportRuntimeLocks).toHaveBeenCalledWith(currentDataRoot, target)
+    // The (relocatable) pkgs cache is copied alongside the user data so envs rebuild offline there.
+    expect(copyAndVerify).toHaveBeenCalledWith(
+      expect.objectContaining({ dirs: [...MIGRATED_DIRS, join('runtime', 'pkgs')] })
+    )
+  })
+
+  it('omits the pkgs cache when nothing was preserved', async () => {
+    const deps = fakeDeps()
+    const exportRuntimeLocks = vi.fn(async () => [] as string[])
+    const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({ ok: true }))
+
+    await runDataRootMigration(
+      {
+        currentDataRoot,
+        runtime: deps.runtime,
+        notebook: deps.notebook,
+        exportRuntimeLocks,
+        copyAndVerify
+      },
+      emptyParent,
+      runOpts()
+    )
+
+    expect(copyAndVerify).toHaveBeenCalledWith(
+      expect.objectContaining({ dirs: [...MIGRATED_DIRS] })
+    )
+  })
+
+  it('still copies user data when exportRuntimeLocks throws (best-effort)', async () => {
+    const deps = fakeDeps()
+    const exportRuntimeLocks = vi.fn(async () => {
+      throw new Error('micromamba boom')
+    })
+    const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({ ok: true }))
+
+    const result = await runDataRootMigration(
+      {
+        currentDataRoot,
+        runtime: deps.runtime,
+        notebook: deps.notebook,
+        exportRuntimeLocks,
+        copyAndVerify
+      },
+      emptyParent,
+      runOpts()
+    )
+
+    expect(result).toEqual({ ok: true })
+    expect(copyAndVerify).toHaveBeenCalledWith(
+      expect.objectContaining({ dirs: [...MIGRATED_DIRS] })
+    )
+  })
+
+  it('deletes the old runtime too when the new root has a reconstructable bundle', async () => {
+    const deps = fakeDeps()
+    const target = dataRootFor(emptyParent)
+    // Simulate the phase-1 preservation output on disk at the new root.
+    await mkdir(join(target, 'runtime', 'envs.lock'), { recursive: true })
+    await mkdir(join(target, 'runtime', 'pkgs'), { recursive: true })
+    const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({ deleted: [], failed: [] }))
+
+    await commitDataRootSwitch(
+      { currentDataRoot, setDataRoot: deps.setDataRoot, deleteSources },
+      emptyParent
+    )
+
+    expect(deleteSources).toHaveBeenCalledWith(currentDataRoot, [...MIGRATED_DIRS, 'runtime'])
+  })
+
+  it('leaves the old runtime intact when the new root lacks the bundle', async () => {
+    const deps = fakeDeps()
+    // Only the pkgs cache, no envs.lock → not reconstructable → do not delete the old runtime.
+    await mkdir(join(dataRootFor(emptyParent), 'runtime', 'pkgs'), { recursive: true })
+    const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({ deleted: [], failed: [] }))
+
+    await commitDataRootSwitch(
+      { currentDataRoot, setDataRoot: deps.setDataRoot, deleteSources },
+      emptyParent
+    )
+
+    expect(deleteSources).toHaveBeenCalledWith(currentDataRoot, [...MIGRATED_DIRS])
+  })
+})

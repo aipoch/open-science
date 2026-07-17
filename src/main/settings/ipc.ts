@@ -19,6 +19,7 @@ import type {
   SetConnectorAutoAllowRequest,
   SetConnectorEnabledRequest,
   SetNcbiCredentialsRequest,
+  SetPackageMirrorRequest,
   SetSkillEnabledRequest,
   SetToolPermissionRequest,
   UpdateSkillRequest,
@@ -103,6 +104,11 @@ const registerSettingsIpcHandlers = ({
     (_event, request: RefreshProviderModelsRequest) => service.refreshProviderModels(request)
   )
   ipcMain.handle('settings:mark-onboarding-complete', () => service.markOnboardingComplete())
+
+  ipcMain.handle('settings:get-package-mirror', () => service.getPackageMirror())
+  ipcMain.handle('settings:set-package-mirror', (_event, request: SetPackageMirrorRequest) =>
+    service.setPackageMirror(request)
+  )
 
   ipcMain.handle('settings:list-skills', () => service.listSkills())
   ipcMain.handle('settings:get-skill-detail', (_event, id: string) => service.getSkillDetail(id))

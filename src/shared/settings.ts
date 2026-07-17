@@ -5,6 +5,7 @@
 // only while the user is actively typing one in.
 
 import type { OfficialVendorId } from './provider-registry'
+import type { PackageMirror } from './mirror'
 
 // Settings file schema version; bumped when the on-disk shape changes. v2 adds official-vendor
 // providers (vendorId/region) and a per-selection activeModel alongside activeProviderId.
@@ -82,7 +83,12 @@ export type SettingsSnapshot = {
   providers: ProviderView[]
   // Timestamp of first-run onboarding completion; undefined until it finishes at least once.
   onboardingCompletedAt?: number
+  // Non-secret package-mirror overrides (conda/pypi/cran). Absent means public hosts.
+  packageMirror?: PackageMirror
 }
+
+// Request to set (or clear, via omitted fields) the package-mirror configuration.
+export type SetPackageMirrorRequest = PackageMirror
 
 // The two hard startup gates. Kept as plain booleans so the wizard can target the first unmet step.
 export type Preflight = {

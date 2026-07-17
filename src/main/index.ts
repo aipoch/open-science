@@ -97,6 +97,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   })
 
   // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
+  // Awaited so every notebook-env IPC channel is registered before the renderer can call it (the gate
+  // needs the configured package mirror, read from disk).
   await registerIpcHandlers({ mainEntryPath })
 
   // Warn (rather than silently tear down) if the user tries to quit mid data-root migration.

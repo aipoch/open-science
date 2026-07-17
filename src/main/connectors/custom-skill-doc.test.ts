@@ -58,7 +58,9 @@ describe('renderCustomSkillDoc', () => {
         }
       }
     ])
-    expect(md).toContain('result = host.mcp("myserver", "lookup", {"id": "...", "limit": 10})')
+    expect(md).toContain(
+      'const result = await host.mcp("myserver", "lookup", {"id": "...", "limit": 10})'
+    )
   })
 })
 

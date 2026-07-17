@@ -23,6 +23,7 @@
     "build:mac": "electron-vite build && electron-builder --mac",
     "build:linux": "electron-vite build && electron-builder --linux",
     "build:win": "electron-vite build && electron-builder --win",
+    "stage-default-envs": "node scripts/stage-default-envs.mjs",
     "predev": "node scripts/dev-app-branding.cjs"
   },
   "dependencies": {

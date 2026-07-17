@@ -66,6 +66,31 @@ describe('copyAndVerify', () => {
     expect(await exists(join(from, 'uploads'))).toBe(false)
   })
 
+  // Windows has no POSIX mode bits, so the executable-bit assertion is unix-only.
+  it.skipIf(process.platform === 'win32')(
+    'preserves the source file mode (executable bit survives the copy)',
+    async () => {
+      // A runtime/pkgs binary that micromamba hard-links into a relocated env: if the copy drops +x,
+      // the rebuilt env's Rscript/.dylib fails with EACCES. Mirror that with an executable fixture.
+      await mkdir(join(from, 'runtime', 'pkgs'), { recursive: true })
+      const exe = join(from, 'runtime', 'pkgs', 'Rscript')
+      await writeFile(exe, '#!/bin/sh\necho hi\n')
+      await chmod(exe, 0o755)
+
+      const result = await copyAndVerify({
+        from,
+        to,
+        dirs: [join('runtime', 'pkgs')],
+        signal: new AbortController().signal,
+        onProgress: () => {}
+      })
+
+      expect(result).toEqual({ ok: true })
+      const copiedMode = (await stat(join(to, 'runtime', 'pkgs', 'Rscript'))).mode & 0o777
+      expect(copiedMode).toBe(0o755)
+    }
+  )
+
   it('forces the byte-copy branch (simulated cross-device) and produces the same result', async () => {
     await seedFixture()
     const progress: MigrationProgress[] = []

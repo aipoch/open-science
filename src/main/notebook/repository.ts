@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type {
+  NotebookKernelMetadata,
   NotebookRunDocument,
   NotebookRunRecord,
   NotebookWorkingFile
@@ -27,6 +28,12 @@ type AppendNotebookRunRequest = {
 }
 
 type UpdateNotebookRunRequest = AppendNotebookRunRequest
+
+type UpdateKernelStatusRequest = {
+  projectName: string
+  sessionId: string
+  status: NotebookKernelMetadata['lastKnownStatus']
+}
 
 type NormalizeNotebookRunDocumentRequest = Omit<LoadNotebookRunDocumentRequest, 'workspaceCwd'> & {
   workspaceCwd?: string
@@ -109,9 +116,11 @@ const normalizeWorkingFiles = (
     }
   })
 
-// Fills optional run fields so old or partial records always have the current shape.
+// Fills optional run fields so old or partial records always have the current shape. Legacy
+// records predate kernelKind and were always python/r, so default (never overwrite) to 'python'.
 const normalizeRun = (sessionRoot: string, run: NotebookRunRecord): NotebookRunRecord => ({
   ...run,
+  kernelKind: run.kernelKind ?? 'python',
   text: run.text ?? emptyText(),
   outputs: run.outputs ?? [],
   artifacts: run.artifacts ?? [],
@@ -126,6 +135,7 @@ const normalizeDocument = (
 ): NotebookRunDocument => {
   const projectName = assertSafeNotebookPathSegment(request.projectName)
   const sessionId = assertSafeNotebookPathSegment(request.sessionId)
+  const notebookSessionRoot = getNotebookSessionRoot(storageRoot, projectName, sessionId)
 
   return {
     ...document,
@@ -134,7 +144,7 @@ const normalizeDocument = (
     sessionId,
     artifactSessionId: request.artifactSessionId ?? document.artifactSessionId,
     workspaceCwd: request.workspaceCwd ?? document.workspaceCwd,
-    notebookSessionRoot: getNotebookSessionRoot(storageRoot, projectName, sessionId),
+    notebookSessionRoot,
     dataRoot: getNotebookDataRoot(storageRoot, projectName, sessionId),
     kernel: {
       ...document.kernel,
@@ -144,7 +154,7 @@ const normalizeDocument = (
       runtimeRoot: getRuntimeRoot(storageRoot),
       lastKnownStatus: document.kernel?.lastKnownStatus ?? 'idle'
     },
-    runs: document.runs ?? [],
+    runs: (document.runs ?? []).map((run) => normalizeRun(notebookSessionRoot, run)),
     updatedAt: document.updatedAt ?? Date.now()
   }
 }
@@ -201,40 +211,38 @@ class NotebookRunRepository {
 
   // Appends a new execution record, including "running" records created before execution starts.
   async appendRun(request: AppendNotebookRunRequest): Promise<NotebookRunDocument> {
-    const document = await this.loadExisting(request.projectName, request.sessionId)
-    const nextDocument = {
+    return this.mutate(request.projectName, request.sessionId, (document) => ({
       ...document,
       runs: [...document.runs, normalizeRun(document.notebookSessionRoot, request.run)],
       updatedAt: Date.now()
-    }
-
-    await this.writeDocument(nextDocument)
-
-    return nextDocument
+    }))
   }
 
   // Replaces an existing execution record, used to turn the initial "running" entry final.
   async updateRun(request: UpdateNotebookRunRequest): Promise<NotebookRunDocument> {
-    const document = await this.loadExisting(request.projectName, request.sessionId)
-    const runIndex = document.runs.findIndex((run) => run.runId === request.run.runId)
+    return this.mutate(request.projectName, request.sessionId, (document) => {
+      const runIndex = document.runs.findIndex((run) => run.runId === request.run.runId)
 
-    if (runIndex === -1) {
-      throw new Error(`Notebook run not found: ${request.run.runId}`)
-    }
+      if (runIndex === -1) {
+        throw new Error(`Notebook run not found: ${request.run.runId}`)
+      }
 
-    const runs = [...document.runs]
+      const runs = [...document.runs]
 
-    runs[runIndex] = normalizeRun(document.notebookSessionRoot, request.run)
+      runs[runIndex] = normalizeRun(document.notebookSessionRoot, request.run)
 
-    const nextDocument = {
+      return { ...document, runs, updatedAt: Date.now() }
+    })
+  }
+
+  // Persists the kernel's last-known lifecycle status (e.g. 'restarting' while restart() is in
+  // flight, 'terminated' once an idle proc is dropped), read back by state()/getSessionReference().
+  async updateKernelStatus(request: UpdateKernelStatusRequest): Promise<NotebookRunDocument> {
+    return this.mutate(request.projectName, request.sessionId, (document) => ({
       ...document,
-      runs,
+      kernel: { ...document.kernel, lastKnownStatus: request.status },
       updatedAt: Date.now()
-    }
-
-    await this.writeDocument(nextDocument)
-
-    return nextDocument
+    }))
   }
 
   // Reads an existing history document without creating one, returning null when none exists yet.
@@ -271,37 +279,80 @@ class NotebookRunRepository {
     )
   }
 
-  // Serializes writes and atomically renames a temporary file into run.json.
-  private async writeDocument(document: NotebookRunDocument): Promise<void> {
-    const writeOperation = this.saveQueue.then(async () => {
-      const directory = document.notebookSessionRoot
-      const filePath = join(directory, NOTEBOOK_RUN_FILE)
+  // Reads the current document, applies `transform`, and writes back the result -- the read and write
+  // happen inside the same queued turn (not just the write, as writeDocument alone would give), so
+  // overlapping callers touching the same session's run.json (e.g. two overlapping bash_execute calls,
+  // which have no session-level lock of their own) can never race a stale read against another
+  // writer's in-flight update.
+  private async mutate(
+    projectName: string,
+    sessionId: string,
+    transform: (document: NotebookRunDocument) => NotebookRunDocument
+  ): Promise<NotebookRunDocument> {
+    const operation = this.saveQueue.then(async () => {
+      const document = await this.loadExisting(projectName, sessionId)
+      const nextDocument = transform(document)
 
-      this.saveSequence += 1
-      // Ensure the full notebook workspace exists before exposing run.json to readers.
-      await mkdir(join(directory, 'data', 'raw'), { recursive: true })
-      await mkdir(join(directory, 'data', 'processed'), { recursive: true })
-      await mkdir(join(directory, 'work'), { recursive: true })
-      await mkdir(join(directory, 'cache'), { recursive: true })
-      await mkdir(join(directory, 'scripts'), { recursive: true })
+      await this.persist(nextDocument)
 
-      const temporaryPath = `${filePath}.${Date.now()}-${this.saveSequence}.tmp`
-
-      // Encode only the serialized copy: `directory` above must stay derived from the absolute
-      // in-memory `document.notebookSessionRoot`, never from the $DATA-sentinel-encoded copy.
-      const encoded = encodeRunDocumentDataPaths(document, this.storageRoot)
-      await writeFile(temporaryPath, `${JSON.stringify(encoded, null, 2)}\n`, 'utf8')
-      await rename(temporaryPath, filePath)
+      return nextDocument
     })
 
-    // Keep later saves moving even if the previous write failed and surfaced to its caller.
-    this.saveQueue = writeOperation.then(
+    // Keep later saves moving even if this turn failed (bad transform or a write failure) and
+    // surfaced to its caller.
+    this.saveQueue = operation.then(
       () => undefined,
       () => undefined
     )
-    await writeOperation
+
+    return operation
+  }
+
+  // Queues an unconditional write, used by loadOrCreate's ENOENT branch where there is nothing to
+  // read-modify (the file doesn't exist yet, so there is no stale-read race to guard against).
+  private async writeDocument(document: NotebookRunDocument): Promise<void> {
+    const operation = this.saveQueue.then(() => this.persist(document))
+
+    this.saveQueue = operation.then(
+      () => undefined,
+      () => undefined
+    )
+    await operation
+  }
+
+  // Writes one document to disk via a temp file + atomic rename. Always invoked from inside the
+  // saveQueue chain (mutate() or writeDocument() above), never called directly.
+  private async persist(document: NotebookRunDocument): Promise<void> {
+    const directory = document.notebookSessionRoot
+    const filePath = join(directory, NOTEBOOK_RUN_FILE)
+
+    this.saveSequence += 1
+    // Ensure the full notebook workspace exists before exposing run.json to readers.
+    await mkdir(join(directory, 'data', 'raw'), { recursive: true })
+    await mkdir(join(directory, 'data', 'processed'), { recursive: true })
+    await mkdir(join(directory, 'work'), { recursive: true })
+    await mkdir(join(directory, 'cache'), { recursive: true })
+    await mkdir(join(directory, 'scripts'), { recursive: true })
+    // Cross-kernel handoff channel: the REPL fetches external data here and hands files to
+    // python/r via disk; 'outputs' collects results kernels want to surface back out.
+    await mkdir(join(directory, 'handoff'), { recursive: true })
+    await mkdir(join(directory, 'outputs'), { recursive: true })
+
+    const temporaryPath = `${filePath}.${Date.now()}-${this.saveSequence}.tmp`
+
+    // Encode only the serialized copy: `directory` above must stay derived from the absolute in-memory
+    // `document.notebookSessionRoot`, never from the $DATA-sentinel-encoded copy, so run.json stores
+    // portable "$DATA/..." paths that survive a data-root relocation.
+    const encoded = encodeRunDocumentDataPaths(document, this.storageRoot)
+    await writeFile(temporaryPath, `${JSON.stringify(encoded, null, 2)}\n`, 'utf8')
+    await rename(temporaryPath, filePath)
   }
 }
 
 export { NotebookRunRepository, getNotebookRunJsonPath, getNotebookSessionRoot, getRuntimeRoot }
-export type { AppendNotebookRunRequest, LoadNotebookRunDocumentRequest, UpdateNotebookRunRequest }
+export type {
+  AppendNotebookRunRequest,
+  LoadNotebookRunDocumentRequest,
+  UpdateKernelStatusRequest,
+  UpdateNotebookRunRequest
+}

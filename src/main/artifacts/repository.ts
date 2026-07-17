@@ -359,25 +359,44 @@ class ArtifactRepository {
   }
 
   // Given a now-missing `.pending/<run>/<file>` artifact path, finds the same file after finalize moved
-  // it into a sibling message directory (`<session>/<messageId>/<file>`). Returns the newest match, or
-  // undefined when the path is not a pending path or no finalized copy exists. Path safety is still
-  // enforced by resolveManagedFilePath's root check on the returned path.
+  // it into a message directory (`<session>/<messageId>/<file>`). finalizeRunArtifacts can move a
+  // pending file into a *different* session than it was staged under (the runtime session alias, where
+  // sourceSessionId ≠ sessionId), so the search spans every session directory under the project root,
+  // not just the pending file's own session. Returns the newest match, or undefined when the path is
+  // not a pending path or no finalized copy exists. Path safety is still enforced by
+  // resolveManagedFilePath's root check on the returned path.
   private async recoverFinalizedPendingPath(requestedPath: string): Promise<string | undefined> {
     const pendingDir = dirname(dirname(requestedPath)) // <session>/.pending
     if (basename(pendingDir) !== PENDING_DIR) return undefined
-    const sessionDir = dirname(pendingDir)
+    const projectRoot = dirname(dirname(pendingDir)) // <artifacts>/<projectName>
     const filename = basename(requestedPath)
 
-    const entries = await readdir(sessionDir, { withFileTypes: true }).catch(() => null)
-    if (!entries) return undefined
+    const sessionEntries = await readdir(projectRoot, { withFileTypes: true }).catch(() => null)
+    if (!sessionEntries) return undefined
 
     const matches: Array<{ path: string; mtimeMs: number }> = []
-    for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name === PENDING_DIR || entry.name === METADATA_DIR)
-        continue
-      const candidate = join(sessionDir, entry.name, filename)
-      const candidateStat = await stat(candidate).catch(() => undefined)
-      if (candidateStat?.isFile()) matches.push({ path: candidate, mtimeMs: candidateStat.mtimeMs })
+    for (const sessionEntry of sessionEntries) {
+      if (!sessionEntry.isDirectory()) continue
+      const candidateSessionDir = join(projectRoot, sessionEntry.name)
+      const messageEntries = await readdir(candidateSessionDir, { withFileTypes: true }).catch(
+        () => null
+      )
+      if (!messageEntries) continue
+
+      for (const messageEntry of messageEntries) {
+        if (
+          !messageEntry.isDirectory() ||
+          messageEntry.name === PENDING_DIR ||
+          messageEntry.name === METADATA_DIR
+        ) {
+          continue
+        }
+        const candidate = join(candidateSessionDir, messageEntry.name, filename)
+        const candidateStat = await stat(candidate).catch(() => undefined)
+        if (candidateStat?.isFile()) {
+          matches.push({ path: candidate, mtimeMs: candidateStat.mtimeMs })
+        }
+      }
     }
     matches.sort((left, right) => right.mtimeMs - left.mtimeMs)
     return matches[0]?.path

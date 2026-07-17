@@ -30,6 +30,7 @@ import type {
   SetConnectorAutoAllowRequest,
   SetConnectorEnabledRequest,
   SetNcbiCredentialsRequest,
+  SetPackageMirrorRequest,
   SetSkillEnabledRequest,
   SetToolPermissionRequest,
   SettingsSnapshot,
@@ -48,6 +49,7 @@ import type {
   ValidateProviderRequest,
   ValidateProviderResult
 } from '../../shared/settings'
+import type { PackageMirror } from '../../shared/mirror'
 import {
   defaultVendorModel,
   getOfficialVendor,
@@ -193,8 +195,22 @@ class SettingsService {
       activeProviderId: settings.activeProviderId,
       activeModel: settings.activeModel,
       providers: settings.providers.map((provider) => this.toProviderView(provider)),
-      onboardingCompletedAt: settings.onboardingCompletedAt
+      onboardingCompletedAt: settings.onboardingCompletedAt,
+      packageMirror: settings.packageMirror
     }
+  }
+
+  // Reads the package-mirror configuration, read fresh so callers see the latest saved state.
+  // Empty object means public hosts (no override configured).
+  async getPackageMirror(): Promise<PackageMirror> {
+    return (await this.repository.getSettings()).packageMirror ?? {}
+  }
+
+  // Sets (or clears) the package-mirror configuration and returns the sanitized, persisted value.
+  async setPackageMirror(request: SetPackageMirrorRequest): Promise<PackageMirror> {
+    const settings = await this.repository.setPackageMirror(request)
+
+    return settings.packageMirror ?? {}
   }
 
   // The full skill catalog across every source: bundled (featured) + imported + personal.
