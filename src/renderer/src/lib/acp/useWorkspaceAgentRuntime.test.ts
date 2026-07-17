@@ -611,11 +611,48 @@ describe('workspace agent message sending', () => {
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
-  it('fails the run with a generic message when resume fails for another reason', async () => {
+  it('keeps the underlying cause visible when resume fails for an unexpected reason', async () => {
     const runtime = {
       state: createSnapshot(),
       createSession: vi.fn(),
-      resumeSession: vi.fn().mockRejectedValue(new Error('agent process crashed')),
+      resumeSession: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            "Error invoking remote method 'acp:resume-session': Error: agent process crashed"
+          )
+        ),
+      sendPrompt: vi.fn()
+    }
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Previous prompt',
+      cwd: '/workspace/project'
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'Continue restored conversation',
+      cwd: '/workspace/project'
+    })
+
+    // The IPC wrapper is stripped and the real cause is appended rather than swallowed.
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      error: 'Agent session resume failed: agent process crashed'
+    })
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('reports a distinct message when the agent build cannot resume sessions', async () => {
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn(),
+      resumeSession: vi
+        .fn()
+        .mockRejectedValue(new Error('ACP agent does not support session resume.')),
       sendPrompt: vi.fn()
     }
 
@@ -634,7 +671,35 @@ describe('workspace agent message sending', () => {
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'error',
-      error: 'Agent session resume failed'
+      error: 'This agent build cannot resume sessions; start a new conversation.'
+    })
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('reports a distinct message when the agent connection cannot be re-established', async () => {
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn(),
+      resumeSession: vi.fn().mockRejectedValue(new Error('ACP connection failed')),
+      sendPrompt: vi.fn()
+    }
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Previous prompt',
+      cwd: '/workspace/project'
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'Continue restored conversation',
+      cwd: '/workspace/project'
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      error: 'Could not reconnect to the agent; check it is installed, then click Resume to retry.'
     })
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
@@ -692,7 +757,7 @@ describe('resuming an interrupted session on demand', () => {
     const runtime = {
       state: createSnapshot(),
       createSession: vi.fn(),
-      resumeSession: vi.fn().mockRejectedValue(new Error('Internal error')),
+      resumeSession: vi.fn().mockRejectedValue(new Error('unexpected agent state')),
       sendPrompt: vi.fn()
     }
     seedDetachedSession()
@@ -701,7 +766,7 @@ describe('resuming an interrupted session on demand', () => {
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'error',
-      error: 'Agent session resume failed'
+      error: 'Agent session resume failed: unexpected agent state'
     })
   })
 

@@ -53,8 +53,20 @@ type WorkspaceRuntimeEventProcessor = {
   process: (events: AcpRuntimeEvent[]) => Promise<void>
 }
 
-// The agent process reports a deleted/moved workspace folder as "cwd does not exist"; surface
-// that as the same actionable message already used when a session has no cwd to resume into.
+// Strips the Electron IPC wrapper ("Error invoking remote method '…': Error: <cause>") and any
+// leading "Error:" so the underlying agent message can be shown to the user on its own.
+const unwrapResumeErrorDetail = (message: string): string =>
+  message
+    .replace(/^Error invoking remote method '[^']*':\s*/i, '')
+    .replace(/^Error:\s*/i, '')
+    .trim()
+
+// Turns a resume failure into an actionable message. Each branch matches one distinct cause thrown
+// along the runtime resume path (runtime.ts): a deleted/moved workspace folder ("cwd does not exist"),
+// the bounded handshake timeout, an agent build without the resume capability, or a failure to spawn/
+// reconnect the agent process. Anything else is genuinely unexpected, so the underlying cause is kept
+// visible instead of collapsing to an opaque "resume failed". (The common session-replaced/not-found
+// case never reaches here — the runtime silently adopts a fresh agent session for it.)
 const getResumeFailureMessage = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String(error)
 
@@ -66,7 +78,17 @@ const getResumeFailureMessage = (error: unknown): string => {
     return 'Agent session resume timed out; click Resume to try again.'
   }
 
-  return 'Agent session resume failed'
+  if (/does not support session resume/i.test(message)) {
+    return 'This agent build cannot resume sessions; start a new conversation.'
+  }
+
+  if (/connection (failed|was superseded)|ACP connection/i.test(message)) {
+    return 'Could not reconnect to the agent; check it is installed, then click Resume to retry.'
+  }
+
+  const detail = unwrapResumeErrorDetail(message)
+
+  return detail ? `Agent session resume failed: ${detail}` : 'Agent session resume failed'
 }
 
 // Keeps attachment-finalization failures displayable without assuming Error instances.
