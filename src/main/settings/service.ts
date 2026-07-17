@@ -321,14 +321,16 @@ class SettingsService {
   // Imports a skill from an uploaded .zip / .skill bundle, returning the outcome + refreshed list.
   async importSkillZip(request: ImportSkillZipRequest): Promise<ImportSkillResult> {
     const outcome = await this.userSkills.importFromZip(Buffer.from(request.dataBase64, 'base64'), {
+      subPath: request.subPath,
       replaceId: request.replaceId
     })
 
     return { status: outcome.status, id: outcome.id, skills: await this.listSkills() }
   }
 
-  // Parses an uploaded bundle for a confirm-before-import preview, without writing anything.
-  async previewSkillZip(request: PreviewSkillZipRequest): Promise<SkillBundlePreview> {
+  // Parses an uploaded bundle for a confirm-before-import preview, without writing anything. Returns
+  // one preview per skill root the bundle contains.
+  async previewSkillZip(request: PreviewSkillZipRequest): Promise<SkillBundlePreview[]> {
     return this.userSkills.previewZip(Buffer.from(request.dataBase64, 'base64'))
   }
 

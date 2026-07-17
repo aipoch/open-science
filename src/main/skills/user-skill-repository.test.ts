@@ -275,6 +275,110 @@ describe('UserSkillRepository', () => {
     const repo = new UserSkillRepository(await makeStorage())
     const zip = buildZip([{ path: 'readme.md', content: Buffer.from('nope') }])
     await expect(repo.importFromZip(zip)).rejects.toThrow(/SKILL\.md/)
+    await expect(repo.previewZip(zip)).rejects.toThrow(/SKILL\.md/)
+  })
+
+  it('discovers one root for a root-level SKILL.md (subPath "")', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const zip = buildZip([
+      { path: 'SKILL.md', content: Buffer.from('---\nname: Root\ndescription: d\n---\nbody') },
+      { path: 'run.py', content: Buffer.from('print(1)') }
+    ])
+
+    const previews = await repo.previewZip(zip)
+    expect(previews).toHaveLength(1)
+    expect(previews[0]).toMatchObject({ name: 'Root', subPath: '' })
+    // Root files stay as-is (SKILL.md already at the root).
+    expect(previews[0].files).toEqual(['SKILL.md', 'run.py'].sort())
+  })
+
+  it('discovers two roots for sibling one-level skill dirs', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const zip = buildZip([
+      { path: 'skill-a/SKILL.md', content: Buffer.from('---\nname: A\ndescription: d\n---\nx') },
+      { path: 'skill-a/run.py', content: Buffer.from('a') },
+      { path: 'skill-b/SKILL.md', content: Buffer.from('---\nname: B\ndescription: d\n---\ny') }
+    ])
+
+    const previews = await repo.previewZip(zip)
+    expect(previews.map((p) => p.subPath)).toEqual(['skill-a', 'skill-b'])
+    // Each root's files are re-based so SKILL.md sits at its root.
+    expect(previews[0].files).toEqual(['SKILL.md', 'run.py'].sort())
+    expect(previews[1].files).toEqual(['SKILL.md'])
+  })
+
+  it('discovers a two-level wrapped skill root (subPath "wrapper/skill-a")', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const zip = buildZip([
+      {
+        path: 'wrapper/skill-a/SKILL.md',
+        content: Buffer.from('---\nname: Wrapped\ndescription: d\n---\nx')
+      },
+      { path: 'wrapper/skill-a/scripts/run.py', content: Buffer.from('a') }
+    ])
+
+    const previews = await repo.previewZip(zip)
+    expect(previews).toHaveLength(1)
+    expect(previews[0]).toMatchObject({ name: 'Wrapped', subPath: 'wrapper/skill-a' })
+    expect(previews[0].files).toEqual(['SKILL.md', 'scripts/run.py'].sort())
+  })
+
+  it('drops a SKILL.md nested under a shallower skill root (counts it once)', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const zip = buildZip([
+      { path: 'a/SKILL.md', content: Buffer.from('---\nname: A\ndescription: d\n---\nx') },
+      { path: 'a/b/SKILL.md', content: Buffer.from('---\nname: B\ndescription: d\n---\ny') }
+    ])
+
+    const previews = await repo.previewZip(zip)
+    expect(previews.map((p) => p.subPath)).toEqual(['a'])
+    // The nested SKILL.md is just a file of skill "a", re-based under it.
+    expect(previews[0].files).toEqual(['SKILL.md', 'b/SKILL.md'].sort())
+  })
+
+  it('imports only the selected sub-skill from a multi-root bundle via subPath', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+    const zip = buildZip([
+      {
+        path: 'skill-a/SKILL.md',
+        content: Buffer.from('---\nname: Alpha\ndescription: d\n---\nx')
+      },
+      { path: 'skill-a/run.py', content: Buffer.from('alpha') },
+      { path: 'skill-b/SKILL.md', content: Buffer.from('---\nname: Beta\ndescription: d\n---\ny') }
+    ])
+
+    const outcome = await repo.importFromZip(zip, { subPath: 'skill-b' })
+    expect(outcome).toEqual({ status: 'imported', id: 'imported-beta' })
+    // Only Beta was written; Alpha's file must not exist under the imported skill.
+    expect((await repo.list()).map((s) => s.id)).toEqual(['imported-beta'])
+    const body = await readFile(join(storage, 'skills', 'imported', 'beta', 'SKILL.md'), 'utf8')
+    expect(body).toContain('name: Beta')
+  })
+
+  it('throws on a multi-root bundle when no subPath is given', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const zip = buildZip([
+      { path: 'skill-a/SKILL.md', content: Buffer.from('---\nname: A\ndescription: d\n---\nx') },
+      { path: 'skill-b/SKILL.md', content: Buffer.from('---\nname: B\ndescription: d\n---\ny') }
+    ])
+    await expect(repo.importFromZip(zip)).rejects.toThrow(/multiple skills/)
+  })
+
+  it('throws when the requested subPath matches no root', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const zip = buildZip([
+      { path: 'skill-a/SKILL.md', content: Buffer.from('---\nname: A\ndescription: d\n---\nx') }
+    ])
+    await expect(repo.importFromZip(zip, { subPath: 'nope' })).rejects.toThrow(/no skill at/)
+  })
+
+  it('still imports a single-root bundle with no subPath (backward compat)', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const zip = buildZip([
+      { path: 'only/SKILL.md', content: Buffer.from('---\nname: Only\ndescription: d\n---\nx') }
+    ])
+    expect(await repo.importFromZip(zip)).toEqual({ status: 'imported', id: 'imported-only' })
   })
 
   it('previews a bundle without writing it, and flags an identical already-imported bundle', async () => {
@@ -288,18 +392,22 @@ describe('UserSkillRepository', () => {
     ])
 
     const preview = await repo.previewZip(zip)
-    expect(preview).toEqual({
-      name: 'Bundled',
-      description: 'A test bundle.',
-      files: ['SKILL.md', 'scripts/run.py'],
-      alreadyImported: false
-    })
+    expect(preview).toEqual([
+      {
+        name: 'Bundled',
+        description: 'A test bundle.',
+        files: ['SKILL.md', 'scripts/run.py'],
+        alreadyImported: false,
+        replaceableId: undefined,
+        subPath: 'my-bundle'
+      }
+    ])
     // Preview writes nothing.
     expect(await repo.list()).toHaveLength(0)
 
     // After importing, the same bundle previews as already imported.
     await repo.importFromZip(zip)
-    expect((await repo.previewZip(zip)).alreadyImported).toBe(true)
+    expect((await repo.previewZip(zip))[0].alreadyImported).toBe(true)
   })
 
   it('rejects a preview whose SKILL.md has no name', async () => {
@@ -324,12 +432,12 @@ describe('UserSkillRepository', () => {
     await repo.importFromZip(sharedBundle('v1'))
 
     // Same name, different content -> replaceable in place.
-    const preview = await repo.previewZip(sharedBundle('v2'))
+    const [preview] = await repo.previewZip(sharedBundle('v2'))
     expect(preview.alreadyImported).toBe(false)
     expect(preview.replaceableId).toBe('imported-shared')
 
     // The exact same bundle -> a no-op, so no replace is offered.
-    const exact = await repo.previewZip(sharedBundle('v1'))
+    const [exact] = await repo.previewZip(sharedBundle('v1'))
     expect(exact.alreadyImported).toBe(true)
     expect(exact.replaceableId).toBeUndefined()
   })
@@ -339,7 +447,7 @@ describe('UserSkillRepository', () => {
     await repo.importFromZip(sharedBundle('v1'))
     await repo.importFromZip(sharedBundle('v2')) // second "Shared" -> imported-shared-2
 
-    const preview = await repo.previewZip(sharedBundle('v3'))
+    const [preview] = await repo.previewZip(sharedBundle('v3'))
     expect(preview.replaceableId).toBeUndefined()
   })
 

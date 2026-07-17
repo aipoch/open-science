@@ -93,23 +93,40 @@ const signatureOf = (files: FetchedSkillFile[]): string => {
   return hash.digest('hex')
 }
 
-// Normalizes an extracted zip into skill files with SKILL.md at the root: if the bundle is wrapped in a
-// single top-level directory, that prefix is stripped so `wrapper/SKILL.md` becomes `SKILL.md`.
-const normalizeBundle = (entries: { path: string; content: Buffer }[]): FetchedSkillFile[] => {
-  const hasRootSkill = entries.some((entry) => entry.path.toLowerCase() === 'skill.md')
-  if (hasRootSkill) {
-    return entries.map((entry) => ({ relativePath: entry.path, content: entry.content }))
+// One skill root inside an archive: the directory prefix holding a SKILL.md, plus that skill's files
+// re-based so SKILL.md sits at their root.
+type SkillRoot = { subPath: string; files: FetchedSkillFile[] }
+
+// Discovers every skill root in an extracted archive so a multi-skill bundle can be imported piecewise.
+// A root is any directory directly holding a SKILL.md (case-insensitive) at 1-3 path segments (root,
+// `*/SKILL.md`, or `*/*/SKILL.md`); deeper SKILL.md files are ignored. A root nested under a shallower
+// one is dropped so a single skill is never counted twice. Archive paths always use forward slashes.
+const findSkillRoots = (entries: { path: string; content: Buffer }[]): SkillRoot[] => {
+  const candidates = new Set<string>()
+  for (const entry of entries) {
+    const segments = entry.path.split('/')
+    if (segments[segments.length - 1].toLowerCase() !== 'skill.md') continue
+    if (segments.length > 3) continue
+    candidates.add(segments.slice(0, -1).join('/'))
   }
 
-  const topLevels = new Set(entries.map((entry) => entry.path.split('/')[0]))
-  if (topLevels.size === 1) {
-    const prefix = `${[...topLevels][0]}/`
-    return entries
-      .filter((entry) => entry.path.startsWith(prefix))
-      .map((entry) => ({ relativePath: entry.path.slice(prefix.length), content: entry.content }))
-  }
+  // Keep only the shallowest root on each branch: a candidate under another (or under the archive
+  // root '') is that skill's own file, not a separate skill.
+  const all = [...candidates]
+  const roots = all.filter(
+    (subPath) =>
+      !all.some((other) => other !== subPath && (other === '' || subPath.startsWith(`${other}/`)))
+  )
 
-  return entries.map((entry) => ({ relativePath: entry.path, content: entry.content }))
+  return roots
+    .map((subPath) => {
+      const prefix = subPath === '' ? '' : `${subPath}/`
+      const files = entries
+        .filter((entry) => entry.path.startsWith(prefix))
+        .map((entry) => ({ relativePath: entry.path.slice(prefix.length), content: entry.content }))
+      return { subPath, files }
+    })
+    .sort((a, b) => a.subPath.localeCompare(b.subPath))
 }
 
 // Reads the `name:` value from a SKILL.md frontmatter block, if present.
@@ -269,25 +286,33 @@ class UserSkillRepository {
   // lists the files, flags whether the identical bundle was already imported, and — when its name
   // collides with exactly one existing imported skill of different content — offers that skill's id as
   // a replace target. Writes nothing.
-  async previewZip(zip: Buffer): Promise<SkillBundlePreview> {
-    const files = normalizeBundle(extractZip(zip))
-    const skillMd = files.find((file) => file.relativePath.toLowerCase() === 'skill.md')
-    if (!skillMd) throw new Error('The bundle must contain a SKILL.md.')
+  async previewZip(zip: Buffer): Promise<SkillBundlePreview[]> {
+    const roots = findSkillRoots(extractZip(zip))
+    if (roots.length === 0) throw new Error('The bundle must contain a SKILL.md.')
 
-    const { fields } = parseFrontmatter(skillMd.content.toString('utf8'))
-    const name = fields.name?.trim()
-    if (!name) throw new Error("The bundle's SKILL.md needs a name in its frontmatter.")
+    const previews: SkillBundlePreview[] = []
+    for (const root of roots) {
+      const skillMd = root.files.find((file) => file.relativePath.toLowerCase() === 'skill.md')!
+      const { fields } = parseFrontmatter(skillMd.content.toString('utf8'))
+      const name = fields.name?.trim()
+      if (!name) throw new Error("The bundle's SKILL.md needs a name in its frontmatter.")
 
-    const alreadyImported = Boolean(await this.findImportedSlugBySignature(signatureOf(files)))
-    const replaceableId = alreadyImported ? undefined : await this.replaceableImportedId(name)
+      const alreadyImported = Boolean(
+        await this.findImportedSlugBySignature(signatureOf(root.files))
+      )
+      const replaceableId = alreadyImported ? undefined : await this.replaceableImportedId(name)
 
-    return {
-      name,
-      description: fields.description ?? '',
-      files: files.map((file) => file.relativePath).sort(),
-      alreadyImported,
-      replaceableId
+      previews.push({
+        name,
+        description: fields.description ?? '',
+        files: root.files.map((file) => file.relativePath).sort(),
+        alreadyImported,
+        replaceableId,
+        subPath: root.subPath
+      })
     }
+
+    return previews
   }
 
   // The id of the single imported skill sharing this display name, or undefined when there is none or
@@ -301,14 +326,34 @@ class UserSkillRepository {
     return matches.length === 1 ? matches[0].id : undefined
   }
 
-  // Imports a .zip / .skill bundle that contains a SKILL.md. With `replaceId`, the bundle overwrites
-  // that already-imported skill in place. Otherwise it dedups by content signature (re-importing the
-  // same bundle is a no-op) and a bundle whose name is already taken gets a suffixed slug.
-  async importFromZip(zip: Buffer, options: { replaceId?: string } = {}): Promise<ImportOutcome> {
-    const files = normalizeBundle(extractZip(zip))
-    const skillMd = files.find((file) => file.relativePath.toLowerCase() === 'skill.md')
-    if (!skillMd) throw new Error('The bundle must contain a SKILL.md.')
+  // Picks the skill root to import from a multi-root bundle: by explicit subPath when given, else the
+  // sole root — a bundle with several roots requires the caller to disambiguate with a subPath.
+  private selectRoot(roots: SkillRoot[], subPath?: string): SkillRoot {
+    if (subPath !== undefined) {
+      const match = roots.find((root) => root.subPath === subPath)
+      if (!match) throw new Error(`The bundle has no skill at "${subPath}".`)
+      return match
+    }
+    if (roots.length > 1) {
+      throw new Error('The bundle contains multiple skills; specify which one to import.')
+    }
+    return roots[0]
+  }
 
+  // Imports a .zip / .skill bundle that contains a SKILL.md. `subPath` selects one skill from a bundle
+  // holding several. With `replaceId`, the selected skill overwrites that already-imported skill in
+  // place. Otherwise it dedups by content signature (re-importing the same bundle is a no-op) and a
+  // bundle whose name is already taken gets a suffixed slug.
+  async importFromZip(
+    zip: Buffer,
+    options: { subPath?: string; replaceId?: string } = {}
+  ): Promise<ImportOutcome> {
+    const roots = findSkillRoots(extractZip(zip))
+    if (roots.length === 0) throw new Error('The bundle must contain a SKILL.md.')
+
+    const root = this.selectRoot(roots, options.subPath)
+    const files = root.files
+    const skillMd = files.find((file) => file.relativePath.toLowerCase() === 'skill.md')!
     const signature = signatureOf(files)
 
     if (options.replaceId !== undefined) {

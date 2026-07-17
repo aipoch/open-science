@@ -386,6 +386,7 @@ export type ImportSkillZipRequest = {
   dataBase64: string
   filename?: string
   replaceId?: string
+  subPath?: string
 }
 
 // Parse an uploaded .zip / .skill bundle without importing it, for a confirm-before-import preview.
@@ -398,6 +399,7 @@ export type PreviewSkillZipRequest = {
 // exactly one existing imported skill of different content — the id of that skill, offered as a
 // replace target.
 export type SkillBundlePreview = {
+  subPath: string
   name: string
   description: string
   files: string[]

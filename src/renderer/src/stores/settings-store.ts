@@ -131,9 +131,12 @@ type SettingsStore = SettingsStoreData & {
   // Imports a skill from an uploaded .zip / .skill bundle (base64), returning the outcome.
   // Imports a skill from an uploaded .zip / .skill bundle (base64). With `replaceId`, the bundle
   // overwrites that already-imported skill in place instead of creating a new one.
-  importSkillZip: (dataBase64: string, replaceId?: string) => Promise<ImportSkillResult>
+  importSkillZip: (
+    dataBase64: string,
+    opts?: { subPath?: string; replaceId?: string }
+  ) => Promise<ImportSkillResult>
   // Parses an uploaded bundle without importing it, for a confirm-before-import preview.
-  previewSkillZip: (dataBase64: string) => Promise<SkillBundlePreview>
+  previewSkillZip: (dataBase64: string) => Promise<SkillBundlePreview[]>
   // Scans a GitHub repo for importable skill directories (does not mutate state).
   scanRepoSkills: (repo: string) => Promise<ScanRepoResult>
   // Loads the bundled-connector list (enabled/auto-allow + NCBI credential state) from main.
@@ -518,8 +521,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     return result
   },
 
-  importSkillZip: async (dataBase64, replaceId) => {
-    const result = await window.api.settings.importSkillZip({ dataBase64, replaceId })
+  importSkillZip: async (dataBase64, opts) => {
+    const result = await window.api.settings.importSkillZip({
+      dataBase64,
+      subPath: opts?.subPath,
+      replaceId: opts?.replaceId
+    })
     set({ skills: result.skills })
     return result
   },

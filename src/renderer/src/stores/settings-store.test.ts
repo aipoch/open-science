@@ -28,6 +28,8 @@ type SettingsApi = {
   markOnboardingComplete: ReturnType<typeof vi.fn>
   listSkills: ReturnType<typeof vi.fn>
   setSkillEnabled: ReturnType<typeof vi.fn>
+  importSkillZip: ReturnType<typeof vi.fn>
+  previewSkillZip: ReturnType<typeof vi.fn>
   listConnectors: ReturnType<typeof vi.fn>
   getConnectorDetail: ReturnType<typeof vi.fn>
   setConnectorEnabled: ReturnType<typeof vi.fn>
@@ -98,6 +100,8 @@ beforeEach(() => {
       .mockResolvedValue({ ...snapshot([]), onboardingCompletedAt: 4242 }),
     listSkills: vi.fn().mockResolvedValue([]),
     setSkillEnabled: vi.fn().mockResolvedValue([]),
+    importSkillZip: vi.fn().mockResolvedValue({ status: 'imported', id: 'z', skills: [] }),
+    previewSkillZip: vi.fn().mockResolvedValue([]),
     listConnectors: vi
       .fn()
       .mockResolvedValue({ connectors: [], customServers: [], ncbi: { hasApiKey: false } }),
@@ -521,6 +525,62 @@ describe('settings store: openSettingsToSkill', () => {
     useSettingsStore.getState().closeSettings()
     expect(useSettingsStore.getState().isSettingsOpen).toBe(false)
     expect(useSettingsStore.getState().pendingSkillId).toBeUndefined()
+  })
+})
+
+describe('settings store: skill bundle upload', () => {
+  it('previewSkillZip returns one preview per skill root the bundle contains', async () => {
+    api.previewSkillZip.mockResolvedValue([
+      {
+        subPath: 'skills/alpha',
+        name: 'Alpha',
+        description: '',
+        files: ['SKILL.md'],
+        alreadyImported: false
+      },
+      {
+        subPath: 'skills/beta',
+        name: 'Beta',
+        description: '',
+        files: ['SKILL.md'],
+        alreadyImported: true
+      }
+    ])
+
+    const previews = await useSettingsStore.getState().previewSkillZip('YmFzZTY0')
+
+    expect(api.previewSkillZip).toHaveBeenCalledWith({ dataBase64: 'YmFzZTY0' })
+    expect(previews).toHaveLength(2)
+    expect(previews.map((preview) => preview.name)).toEqual(['Alpha', 'Beta'])
+  })
+
+  it('importSkillZip forwards the subPath/replaceId opts and reconciles the skill list', async () => {
+    api.importSkillZip.mockResolvedValue({
+      status: 'imported',
+      id: 'imported-alpha',
+      skills: [
+        {
+          id: 'imported-alpha',
+          name: 'Alpha',
+          description: '',
+          source: 'imported',
+          updatedAt: '',
+          enabled: true
+        }
+      ]
+    })
+
+    const result = await useSettingsStore
+      .getState()
+      .importSkillZip('YmFzZTY0', { subPath: 'skills/alpha', replaceId: 'old-alpha' })
+
+    expect(api.importSkillZip).toHaveBeenCalledWith({
+      dataBase64: 'YmFzZTY0',
+      subPath: 'skills/alpha',
+      replaceId: 'old-alpha'
+    })
+    expect(result.status).toBe('imported')
+    expect(useSettingsStore.getState().skills.map((skill) => skill.id)).toEqual(['imported-alpha'])
   })
 })
 

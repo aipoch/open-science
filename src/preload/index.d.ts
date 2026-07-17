@@ -184,7 +184,7 @@ interface OpenScienceAPI {
     deleteSkill(request: DeleteSkillRequest): Promise<SkillView[]>
     importSkill(request: ImportSkillRequest): Promise<ImportSkillResult>
     importSkillZip(request: ImportSkillZipRequest): Promise<ImportSkillResult>
-    previewSkillZip(request: PreviewSkillZipRequest): Promise<SkillBundlePreview>
+    previewSkillZip(request: PreviewSkillZipRequest): Promise<SkillBundlePreview[]>
     scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult>
     listConnectors(): Promise<ConnectorsSnapshot>
     getConnectorDetail(id: string): Promise<ConnectorDetailView>

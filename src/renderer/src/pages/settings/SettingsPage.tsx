@@ -244,7 +244,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
         skillsView.kind === 'create'
           ? 'New skill'
           : skillsView.kind === 'upload'
-            ? 'Upload a skill'
+            ? 'Upload skills'
             : skillsView.kind === 'import'
               ? 'Import from GitHub'
               : (() => {
