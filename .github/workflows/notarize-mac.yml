@@ -176,17 +176,20 @@ jobs:
             ditto -c -k --keepParent "$app" "$zip"   # repackage the stapled .app over the zip
           done
 
-      # Stapling repackaged the zip (new bytes), so electron-builder's ${arch}-mac.yml — written at
-      # build time over the PRE-staple zip — now carries a stale sha512/size that would fail the
-      # updater's signature check. Regenerate the feed from the stapled zip: recompute sha512 (base64)
-      # + size and emit a minimal, zip-only feed (no blockmap -> full-zip mac updates for v1). Derived
-      # purely from the stapled zip, so it is correct on both the call and standalone paths.
+      # Stapling repackaged the zip (new bytes), so the build-time feed — written over the PRE-staple
+      # zip — now carries a stale sha512/size that would fail the updater's signature check. The build
+      # runs the default `latest` channel, so it emits `latest-mac.yml` per arch; drop that stale copy
+      # and regenerate a per-arch intermediate `${arch}-mac.yml` from the stapled zip (recompute sha512
+      # base64 + size, minimal zip-only feed, no blockmap -> full-zip mac updates for v1). The publish
+      # job merges the two arch intermediates into the single `latest-mac.yml` the updater polls.
+      # Derived purely from the stapled zip, so it is correct on both the call and standalone paths.
       - name: Regenerate mac update feed
         if: steps.gate.outputs.enabled == 'true'
         env:
           ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
+          rm -f mac/latest-mac.yml
           node -e '
             const fs = require("fs"), crypto = require("crypto"), path = require("path");
             const arch = process.env.ARCH;
@@ -241,13 +244,18 @@ jobs:
             --repo "$GITHUB_REPOSITORY" --clobber
 
   # Standalone path only: after both archs are stapled + clobbered, rebuild SHA256SUMS.txt so it
-  # matches the re-stapled bytes. (In the release.yml path, the publish job regenerates it over the
+  # matches the re-stapled bytes, and merge the per-arch mac feeds into latest-mac.yml (the two
+  # notarize jobs clobbered arm64/x64-mac.yml independently; the combined feed the app polls has to be
+  # rebuilt where both are visible). (In the release.yml path, the publish job does both over the
   # already-stapled artifacts, so no refresh is needed there.)
   refresh-checksums:
     if: ${{ !inputs.from_run }}
     needs: notarize
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout (for the mac-feed merge script)
+        uses: actions/checkout@v4
+
       - name: Recompute + upload SHA256SUMS.txt
         env:
           GH_TOKEN: ${{ github.token }}
@@ -266,3 +274,19 @@ jobs:
           )
           gh release upload "${{ inputs.tag }}" "$dir/SHA256SUMS.txt" \
             --repo "$GITHUB_REPOSITORY" --clobber
+
+      # Rebuild the combined latest-mac.yml from the re-stapled per-arch feeds and clobber it onto the
+      # release. No-ops (script exits 0) if the per-arch mac feeds aren't present (non-mac backfill).
+      - name: Merge + upload latest-mac.yml
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          dir=$(mktemp -d)
+          gh release download "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --dir "$dir" \
+            --pattern 'arm64-mac.yml' --pattern 'x64-mac.yml' || true
+          node scripts/merge-mac-feed.mjs "$dir"
+          if [ -f "$dir/latest-mac.yml" ]; then
+            gh release upload "${{ inputs.tag }}" "$dir/latest-mac.yml" \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          fi

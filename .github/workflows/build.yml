@@ -168,14 +168,15 @@ jobs:
             # Stable build with a Developer ID cert -> SIGN ONLY (notarize:false). Notarization +
             # stapling happens later in notarize-mac.yml, so this job never waits on Apple.
             #
-            # Per-arch update channel: arm64 and x64 build on separate runners and would both emit
-            # `latest-mac.yml`, colliding at the feed root. Setting the electron-updater channel to the
-            # arch makes each build emit its own `${arch}-mac.yml` and bake `channel: ${arch}` into its
-            # app-update.yml, so each installed arch polls only its own feed. (win/linux keep the
-            # default `latest` channel.)
-            mac_channel="${{ matrix.name }}"; mac_channel="${mac_channel#macos-}"
+            # Update channel stays the default `latest`, so `channel: latest` is baked into
+            # app-update.yml and the mac updater polls the standard `latest-mac.yml`. arm64 and x64
+            # build on separate runners; each emits its own `latest-mac.yml` listing only its arch,
+            # which the publish job merges into a single `latest-mac.yml` carrying both arch zips
+            # (electron-updater's MacUpdater picks the right one by arch at download time). This avoids
+            # the per-arch `${arch}-mac.yml` scheme, which shipped an app-update.yml the mac updater
+            # never matched against the published feed names.
             npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" --publish never \
-              -c.mac.notarize=false -c.publish.channel="$mac_channel"
+              -c.mac.notarize=false
           else
             # No cert, or a nightly build (ad-hoc on purpose): skip electron-builder's own signing.
             # GitHub injects unset secrets as EMPTY strings, and electron-builder mis-reads an empty
