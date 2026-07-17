@@ -67,6 +67,8 @@ import {
 } from '../agent-framework'
 import { createDefaultDetectDeps, detectClaude, type ClaudeDetectDeps } from './claude-detect'
 import { detectOpencode } from './opencode-detect'
+import { opencodeConfigDir } from '../agent-framework/opencode'
+import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import { provisionAppClaudeConfigDir } from './claude-config-provision'
 import { detectNpmAvailable, runInstallWithFallback } from './claude-install'
 import { runEnvironmentCheck } from './environment-check'
@@ -737,6 +739,18 @@ class SettingsService {
     return settings.connectors
   }
 
+  // Materializes the enabled skill set into opencode's isolated config dir (same skills/<name>/SKILL.md
+  // layout Claude uses), so opencode's native skill tool discovers them. A turn-forced skill overrides
+  // its disabled state, mirroring the Claude provisioning path.
+  private async materializeOpencodeSkills(settings: StoredSettings): Promise<void> {
+    const disabled = new Set(
+      (settings.disabledSkillIds ?? []).filter((id) => !this.turnForcedSkillIds.has(id))
+    )
+    const enabled = (await this.skillCatalog()).filter((skill) => !disabled.has(skill.id))
+
+    await new ClaudeCodeSkillMaterializer().sync(opencodeConfigDir(this.storageRoot), enabled)
+  }
+
   // Bundled connectors the user hasn't turned off (default-on), for opencode instruction delivery.
   private enabledConnectorIds(connectors: StoredConnectors | undefined): string[] {
     const disabled = new Set(connectors?.disabledConnectorIds ?? [])
@@ -1019,8 +1033,9 @@ class SettingsService {
       return { framework, executablePath, env: envOverrides }
     }
 
-    // opencode: no CLAUDE_CONFIG_DIR / skills provisioning; the adapter maps the provider onto its own
-    // config file, which is written before the agent spawns.
+    // opencode maps the provider onto its own isolated config; the adapter writes it before spawn, and
+    // the enabled skill set is materialized into opencode's config dir (its native skill tool discovers
+    // them on-demand, same SKILL.md layout as Claude).
     const activeProvider = settings.activeProviderId
       ? settings.providers.find((provider) => provider.id === settings.activeProviderId)
       : undefined
@@ -1029,6 +1044,7 @@ class SettingsService {
       throw new Error('No active model provider is configured. Configure one in settings.')
     }
 
+    await this.materializeOpencodeSkills(settings)
     const executablePath = await this.resolveOpencodeExecutable(settings.opencodePath)
     const provider = this.resolveProvider(activeProvider, settings.activeModel)
     const modelConfig = framework.prepareModelConfig(provider, {

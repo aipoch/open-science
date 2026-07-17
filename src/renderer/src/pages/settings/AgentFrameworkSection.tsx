@@ -20,7 +20,7 @@ const KNOWN_FRAMEWORKS: AgentFrameworkView[] = [
   {
     id: 'opencode',
     displayName: 'OpenCode',
-    supportsSkills: false,
+    supportsSkills: true,
     supportedApiTypes: ['anthropic', 'openai']
   }
 ]

@@ -31,6 +31,12 @@ import type {
 const opencodeConfigHome = (storageRoot: string): string => join(storageRoot, 'opencode', 'config')
 const opencodeDataHome = (storageRoot: string): string => join(storageRoot, 'opencode', 'data')
 
+// The opencode config directory ($XDG_CONFIG_HOME/opencode) where opencode.json and skills/ live.
+// opencode discovers skills at <configDir>/skills/<name>/SKILL.md — the same layout Claude uses under
+// its config dir — so the app materializes the enabled skill set here for opencode too.
+export const opencodeConfigDir = (storageRoot: string): string =>
+  join(opencodeConfigHome(storageRoot), 'opencode')
+
 // The app's providers are Anthropic `/v1/messages`-compatible (custom gateways and official vendors),
 // so they map onto opencode's built-in `anthropic` provider with a `baseURL`/`apiKey` override. An
 // OpenAI-format gateway would instead need a custom provider with `npm: "@ai-sdk/openai-compatible"`;
@@ -91,8 +97,9 @@ export { buildOpencodeConfig }
 export const opencodeFramework: AgentFramework = {
   id: 'opencode',
   displayName: 'OpenCode',
-  // opencode has agents/commands, not config-dir skills; hide the skills UI + force-load path.
-  supportsSkills: false,
+  // opencode discovers skills natively at <configDir>/skills/<name>/SKILL.md (same layout as Claude),
+  // loaded on-demand via its skill tool; the app materializes the enabled set into the isolated config.
+  supportsSkills: true,
   // Handshake shows opencode advertises mcpCapabilities http+sse only (no stdio). Until the app exposes
   // its artifact/notebook MCP over http, they're gated off for opencode and only basic turns run.
   acceptsStdioMcp: false,
