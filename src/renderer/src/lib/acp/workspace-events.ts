@@ -221,6 +221,14 @@ const applyWorkspaceRuntimeEvent = async (
     return true
   }
 
+  // Agent stderr/process warnings arrive as session-scoped system warnings. Surface the latest one in
+  // the waiting indicator so a long silent turn (e.g. the agent retrying a slow request) shows a hint
+  // rather than a blank spinner. setAgentStatus no-ops unless the session is still running.
+  if (event.kind === 'system' && event.level === 'warning' && event.sessionId && event.text) {
+    store.setAgentStatus(event.sessionId, event.text)
+    return true
+  }
+
   if (event.kind === 'tool') {
     // Tool calls do not create preview items; file preview is opened by file-specific actions.
     return false

@@ -2033,7 +2033,10 @@ class AcpRuntime {
         this.pushEvent({
           kind: 'system',
           level: 'warning',
-          title: 'claude-agent-acp',
+          // Attribute stderr to the in-flight turn so the renderer can show it in that session's
+          // waiting indicator (best-effort: currentSessionId is the active turn's session).
+          sessionId: this.currentSessionId,
+          title: 'agent',
           text
         })
       }

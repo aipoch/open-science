@@ -67,6 +67,9 @@ export type ChatSession = Omit<
   // Transient: true while a Phase 3 fix loop is active for this session. Disables the send button
   // for the duration of the loop (across reviewer-review and agent-fix sub-phases). Never persisted.
   fixLoopActive?: boolean
+  // Transient: latest agent status/stderr line for the in-flight turn, shown in the waiting indicator
+  // so a long silent wait (e.g. the agent retrying a slow request) isn't a blank spinner. Not persisted.
+  agentStatus?: string
 }
 
 type SessionStoreData = {
@@ -164,6 +167,8 @@ type SessionStore = SessionStoreData & {
   hydrateSessions: (sessions: PersistedChatSession[], manifest?: PersistedSessionManifest) => void
   finishRun: (sessionId: string) => void
   failRun: (sessionId: string, error: string) => void
+  // Sets the transient agent status line shown in the waiting indicator; only applies while running.
+  setAgentStatus: (sessionId: string, text: string) => void
   markResumed: (sessionId: string) => void
   markDisconnected: (sessionId: string) => void
   removeMessage: (sessionId: string, messageId: string) => void
@@ -202,12 +207,20 @@ const stripTransientMessageState = (message: ChatMessage): PersistedChatMessage 
 }
 
 const stripTransientSessionState = (session: ChatSession): PersistedChatSession => {
-  const { activities, isPending, interrupted, fixLoopActive, messages, ...persistedSession } =
-    session
+  const {
+    activities,
+    isPending,
+    interrupted,
+    fixLoopActive,
+    agentStatus,
+    messages,
+    ...persistedSession
+  } = session
 
   void isPending
   void interrupted
   void fixLoopActive
+  void agentStatus
 
   // Persist a bounded projection of tool activities so the transcript survives restarts.
   const persistedActivities = activities
@@ -512,6 +525,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
                 ...session,
                 status: 'running',
                 activeRun,
+                agentStatus: undefined,
                 error: undefined,
                 messages: [...session.messages, userMessage],
                 updatedAt: now
@@ -982,6 +996,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           ...session,
           status: keepArtifactError ? 'error' : 'idle',
           activeRun: undefined,
+          agentStatus: undefined,
           error: keepArtifactError ? session.error : undefined,
           messages: completeStreamingMessages(session.messages),
           activities: completeOpenActivities(session.activities),
@@ -1004,11 +1019,28 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               ...session,
               status: 'error',
               activeRun: undefined,
+              agentStatus: undefined,
               error: message,
               messages: failStreamingMessages(session.messages),
               activities: failOpenActivities(session.activities),
               updatedAt: Date.now()
             }
+          : session
+      )
+    }))
+  },
+
+  // Records the latest agent status/stderr line for the waiting indicator. Ignored unless the session
+  // is running (a stale line must not linger after output starts or the turn ends).
+  setAgentStatus: (sessionId, text) => {
+    const trimmed = text.trim()
+
+    if (!trimmed) return
+
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId && session.status === 'running'
+          ? { ...session, agentStatus: trimmed }
           : session
       )
     }))

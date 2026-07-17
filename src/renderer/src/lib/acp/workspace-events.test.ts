@@ -125,6 +125,28 @@ describe('workspace runtime events', () => {
     })
   })
 
+  it('surfaces a session-scoped agent warning as the waiting-indicator status, cleared on stop', async () => {
+    const applied = await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'event-1', kind: 'system', level: 'warning', text: 'retrying request…' })
+    )
+
+    expect(applied).toBe(true)
+    expect(useSessionStore.getState().sessions[0].agentStatus).toBe('retrying request…')
+
+    // The run finishing clears the transient status so it never lingers into the next turn.
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'event-2', kind: 'stop', text: 'end_turn' }))
+    expect(useSessionStore.getState().sessions[0].agentStatus).toBeUndefined()
+  })
+
+  it('ignores an info-level system event (only warnings become status)', async () => {
+    const applied = await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'event-1', kind: 'system', level: 'info', text: 'Session created' })
+    )
+
+    expect(applied).toBe(false)
+    expect(useSessionStore.getState().sessions[0].agentStatus).toBeUndefined()
+  })
+
   it('syncs permission waiting state from current pending requests', () => {
     syncWorkspacePermissionState([createPermissionRequest()])
 
