@@ -852,14 +852,16 @@ describe('checkEnvironment', () => {
   })
 
   it('does not overwrite a healthy recorded executable with a freshly detected PATH entry', async () => {
-    const other = join(storageRoot, 'other-bin', 'claude')
+    // Pinned platform is 'linux', so use posix literals; a host join() would splice a win32 drive
+    // letter into PATH and be mis-split on ':' by the posix delimiter.
+    const other = '/other-bin/claude'
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
     const service = new SettingsService({
       repository,
       storageRoot,
       userClaudeDir: join(storageRoot, 'no-user-claude'),
       detectDeps: {
-        env: { PATH: join(storageRoot, 'other-bin') },
+        env: { PATH: '/other-bin' },
         homePath: '/home',
         platform: 'linux',
         // A different claude is discoverable on PATH, but the cached one is still healthy.
@@ -878,15 +880,16 @@ describe('checkEnvironment', () => {
   })
 
   it('re-detects when the recorded executable no longer reports a version', async () => {
-    const stale = join(storageRoot, 'stale', 'claude')
-    const found = join(storageRoot, 'found-bin', 'claude')
+    // Pinned platform is 'linux', so use posix literals (see the note above about PATH splitting).
+    const stale = '/stale/claude'
+    const found = '/found-bin/claude'
     await repository.setClaudeInfo({ resolvedPath: stale, version: '2.1.0' })
     const service = new SettingsService({
       repository,
       storageRoot,
       userClaudeDir: join(storageRoot, 'no-user-claude'),
       detectDeps: {
-        env: { PATH: join(storageRoot, 'found-bin') },
+        env: { PATH: '/found-bin' },
         homePath: '/home',
         platform: 'linux',
         isExecutable: (path) => Promise.resolve(path === found),
