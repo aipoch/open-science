@@ -181,4 +181,28 @@ describe('upload repository', () => {
       repository.readManagedUploadBytes({ path: join(root, 'outside.pdf') })
     ).rejects.toThrow(/outside upload storage/)
   })
+
+  it('rejects an upload above the caller byte limit before returning its contents', async () => {
+    const root = await createStorageRoot()
+    const repository = new UploadRepository(root)
+    const [attachment] = await repository.stageFiles({
+      files: [{ name: 'report.xlsx', content: Buffer.from('1234').toString('base64') }]
+    })
+
+    await expect(
+      repository.readManagedUploadBytes({ path: attachment.path, maxBytes: 3 })
+    ).rejects.toThrow(/too large/i)
+  })
+
+  it('rejects invalid caller byte limits', async () => {
+    const root = await createStorageRoot()
+    const repository = new UploadRepository(root)
+    const [attachment] = await repository.stageFiles({
+      files: [{ name: 'report.xlsx', content: Buffer.from('1234').toString('base64') }]
+    })
+
+    await expect(
+      repository.readManagedUploadBytes({ path: attachment.path, maxBytes: Number.NaN })
+    ).rejects.toThrow(/invalid.*limit/i)
+  })
 })

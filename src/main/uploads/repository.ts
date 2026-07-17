@@ -15,6 +15,7 @@ import {
   type UploadedAttachment
 } from '../../shared/uploads'
 import { readBoundedManagedFilePreview } from '../managed-file-preview'
+import { resolveManagedFileByteLimit } from '../managed-file-bytes'
 
 const UPLOADS_DIR = 'uploads'
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
@@ -193,12 +194,14 @@ class UploadRepository {
   }
 
   // Reads a whole managed upload as base64 bytes for viewers (e.g. PDF preview) that need the full
-  // file rather than a bounded text/image preview. Path safety is enforced before any read.
+  // file rather than a bounded text/image preview. Path and caller-specific size limits are
+  // enforced before readFile allocates the complete payload.
   async readManagedUploadBytes(request: ReadUploadBytesRequest): Promise<UploadBytesResult> {
     const filePath = await this.resolveManagedUploadPath(request)
     const fileStat = await stat(filePath)
+    const maxBytes = resolveManagedFileByteLimit(request.maxBytes, MAX_UPLOAD_BYTES_READ)
 
-    if (fileStat.size > MAX_UPLOAD_BYTES_READ) {
+    if (fileStat.size > maxBytes) {
       throw new Error('Upload is too large to read into memory.')
     }
 

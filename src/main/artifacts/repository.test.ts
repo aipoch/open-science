@@ -89,6 +89,38 @@ describe('artifact repository', () => {
     ).rejects.toThrow()
   })
 
+  it('rejects an artifact above the caller byte limit before returning its contents', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+    const artifact = await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      filename: 'report.docx',
+      source: createInlineSource('1234')
+    })
+
+    await expect(
+      repository.readManagedFileBytes({ path: artifact.path, maxBytes: 3 })
+    ).rejects.toThrow(/too large/i)
+  })
+
+  it('rejects invalid caller byte limits', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+    const artifact = await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      filename: 'report.docx',
+      source: createInlineSource('1234')
+    })
+
+    await expect(
+      repository.readManagedFileBytes({ path: artifact.path, maxBytes: 0 })
+    ).rejects.toThrow(/invalid.*limit/i)
+  })
+
   it('writes large inline base64 artifacts without repository size limits', async () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)

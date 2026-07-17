@@ -36,6 +36,7 @@ export type DeleteUploadRequest = {
 
 export type ReadUploadBytesRequest = {
   path: string
+  maxBytes?: number
 }
 
 // Full-file bytes for a managed upload, base64-encoded so it survives IPC structured cloning.

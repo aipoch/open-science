@@ -30,6 +30,10 @@ const PREVIEW_SUPPORTED_EXTENSIONS: Record<string, PreviewFileFormat> = {
   smiles: 'molecule',
   rxn: 'molecule',
   pdf: 'pdf',
+  docx: 'word',
+  xls: 'spreadsheet',
+  xlsx: 'spreadsheet',
+  pptx: 'presentation',
   bash: 'text',
   conf: 'text',
   config: 'text',
@@ -85,6 +89,24 @@ const getPreviewFormatForMimeType = (mimeType: string): PreviewFileFormat => {
     return 'molecule'
   }
   if (normalizedMimeType === 'application/pdf') return 'pdf'
+  // Office MIME fallback covers extensionless uploads while preserving explicit format routing.
+  if (
+    normalizedMimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  ) {
+    return 'word'
+  }
+  if (
+    normalizedMimeType === 'application/vnd.ms-excel' ||
+    normalizedMimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  ) {
+    return 'spreadsheet'
+  }
+  if (
+    normalizedMimeType ===
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+  ) {
+    return 'presentation'
+  }
   if (normalizedMimeType.startsWith('text/')) return 'text'
 
   return 'unknown'
@@ -120,9 +142,21 @@ export const getPreviewThumbnailReadEncoding = (
   format: PreviewFileFormat
 ): 'utf8' | 'base64' | undefined => {
   if (format === 'image') return 'base64'
-  if (format === 'pdf' || format === 'unknown') return undefined
+  // Binary document formats use dedicated full-byte readers and must not use truncated thumbnails.
+  if (
+    format === 'markdown' ||
+    format === 'text' ||
+    format === 'json' ||
+    format === 'csv' ||
+    format === 'fasta' ||
+    format === 'html' ||
+    format === 'pdb' ||
+    format === 'molecule'
+  ) {
+    return 'utf8'
+  }
 
-  return 'utf8'
+  return undefined
 }
 
 // Shared with artifact-preview.tsx thumbnails so both surfaces infer the same mime type from a name.

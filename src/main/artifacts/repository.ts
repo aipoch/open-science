@@ -26,6 +26,7 @@ import type {
   WritePendingArtifactFileRequest
 } from '../../shared/artifacts'
 import { readBoundedManagedFilePreview } from '../managed-file-preview'
+import { resolveManagedFileByteLimit } from '../managed-file-bytes'
 
 const ARTIFACTS_DIR = 'artifacts'
 const PENDING_DIR = '.pending'
@@ -396,12 +397,14 @@ class ArtifactRepository {
   }
 
   // Reads a whole managed artifact as base64 bytes for viewers (e.g. PDF thumbnails) that need the
-  // full file rather than a bounded text/image preview. Path safety is enforced before any read.
+  // full file rather than a bounded text/image preview. Path and caller-specific size limits are
+  // enforced before readFile allocates the complete payload.
   async readManagedFileBytes(request: ReadArtifactBytesRequest): Promise<ManagedFileBytesResult> {
     const filePath = await this.resolveManagedFilePath(request)
     const fileStat = await stat(filePath)
+    const maxBytes = resolveManagedFileByteLimit(request.maxBytes, MAX_ARTIFACT_BYTES_READ)
 
-    if (fileStat.size > MAX_ARTIFACT_BYTES_READ) {
+    if (fileStat.size > maxBytes) {
       throw new Error('Artifact is too large to read into memory.')
     }
 

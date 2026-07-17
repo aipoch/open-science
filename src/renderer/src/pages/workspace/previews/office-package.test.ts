@@ -1,0 +1,343 @@
+import { deflateRawSync } from 'node:zlib'
+
+import { describe, expect, it } from 'vitest'
+
+import {
+  DOCX_PREVIEW_MAX_COMPRESSED_BYTES,
+  OFFICE_PREVIEW_MAX_COMPRESSED_BYTES,
+  validateOfficePackage
+} from './office-package'
+
+type ZipEntry = {
+  name: string
+  localName?: string
+  extra?: Uint8Array
+  compressedSize?: number
+  uncompressedSize?: number
+  flags?: number
+  compressionMethod?: 0 | 8
+  data?: Uint8Array
+}
+
+const encoder = new TextEncoder()
+
+const getEntryData = (entry: ZipEntry): Uint8Array =>
+  entry.data ?? (entry.name.endsWith('.xml') ? encoder.encode('<root/>') : new Uint8Array([0]))
+
+const relationshipsXml = (relationship: string): Uint8Array =>
+  encoder.encode(
+    `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${relationship}</Relationships>`
+  )
+
+const createZip = (
+  entries: ZipEntry[],
+  options: { reportedEntryCount?: number; zip64?: boolean } = {}
+): Uint8Array => {
+  const localRecords: Array<{ bytes: Uint8Array; offset: number }> = []
+  let localOffset = 0
+
+  for (const entry of entries) {
+    const name = encoder.encode(entry.localName ?? entry.name)
+    const data = getEntryData(entry)
+    const extra = entry.extra ?? new Uint8Array()
+    const record = new Uint8Array(30 + name.length + extra.length + data.length)
+    const view = new DataView(record.buffer)
+    const compressedSize = entry.compressedSize ?? data.length
+    const uncompressedSize = entry.uncompressedSize ?? data.length
+
+    view.setUint32(0, 0x04034b50, true)
+    view.setUint16(6, entry.flags ?? 0, true)
+    view.setUint16(8, entry.compressionMethod ?? 0, true)
+    view.setUint32(18, compressedSize, true)
+    view.setUint32(22, uncompressedSize, true)
+    view.setUint16(26, name.length, true)
+    view.setUint16(28, extra.length, true)
+    record.set(name, 30)
+    record.set(extra, 30 + name.length)
+    record.set(data, 30 + name.length + extra.length)
+    localRecords.push({ bytes: record, offset: localOffset })
+    localOffset += record.length
+  }
+
+  const centralSize = entries.reduce(
+    (size, entry) => size + 46 + encoder.encode(entry.name).length + (entry.extra?.length ?? 0),
+    0
+  )
+  const result = new Uint8Array(localOffset + centralSize + 22)
+  let offset = 0
+
+  for (const record of localRecords) {
+    result.set(record.bytes, offset)
+    offset += record.bytes.length
+  }
+
+  entries.forEach((entry, index) => {
+    const name = encoder.encode(entry.name)
+    const extra = entry.extra ?? new Uint8Array()
+    const view = new DataView(result.buffer, offset)
+
+    view.setUint32(0, 0x02014b50, true)
+    view.setUint16(8, entry.flags ?? 0, true)
+    view.setUint16(10, entry.compressionMethod ?? 0, true)
+    view.setUint32(20, entry.compressedSize ?? getEntryData(entry).length, true)
+    view.setUint32(24, entry.uncompressedSize ?? getEntryData(entry).length, true)
+    view.setUint16(28, name.length, true)
+    view.setUint16(30, extra.length, true)
+    view.setUint32(42, localRecords[index].offset, true)
+    result.set(name, offset + 46)
+    result.set(extra, offset + 46 + name.length)
+    offset += 46 + name.length + extra.length
+  })
+
+  const eocd = new DataView(result.buffer, offset)
+  const reportedEntryCount = options.zip64 ? 0xffff : (options.reportedEntryCount ?? entries.length)
+  eocd.setUint32(0, 0x06054b50, true)
+  eocd.setUint16(8, reportedEntryCount, true)
+  eocd.setUint16(10, reportedEntryCount, true)
+  eocd.setUint32(12, centralSize, true)
+  eocd.setUint32(16, localOffset, true)
+
+  return result
+}
+
+const validEntries = {
+  docx: ['[Content_Types].xml', 'word/document.xml'],
+  xlsx: ['[Content_Types].xml', 'xl/workbook.xml'],
+  pptx: ['[Content_Types].xml', 'ppt/presentation.xml']
+} as const
+
+describe('validateOfficePackage', () => {
+  it.each(Object.entries(validEntries))(
+    'accepts a valid %s package index',
+    async (extension, names) => {
+      await expect(
+        validateOfficePackage(
+          createZip(
+            names.map((name) => ({
+              name,
+              data:
+                name === 'word/document.xml'
+                  ? encoder.encode('<document><body/></document>')
+                  : undefined
+            }))
+          ),
+          extension as keyof typeof validEntries
+        )
+      ).resolves.toBeUndefined()
+    }
+  )
+
+  it('accepts a legacy XLS compound file', async () => {
+    const bytes = new Uint8Array(512)
+    bytes.set([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])
+
+    await expect(validateOfficePackage(bytes, 'xls')).resolves.toBeUndefined()
+  })
+
+  it('rejects a legacy XLS file with the wrong signature', async () => {
+    await expect(validateOfficePackage(new Uint8Array(512), 'xls')).rejects.toThrow(/legacy Excel/i)
+  })
+
+  it('rejects an OOXML file whose package markers do not match its extension', async () => {
+    await expect(
+      validateOfficePackage(createZip(validEntries.xlsx.map((name) => ({ name }))), 'docx')
+    ).rejects.toThrow(/valid DOCX/i)
+  })
+
+  it('rejects encrypted ZIP entries', async () => {
+    await expect(
+      validateOfficePackage(
+        createZip(validEntries.docx.map((name) => ({ name, flags: 0x0001 }))),
+        'docx'
+      )
+    ).rejects.toThrow(/encrypted/i)
+  })
+
+  it('rejects ZIP64 packages', async () => {
+    await expect(
+      validateOfficePackage(
+        createZip(
+          validEntries.pptx.map((name) => ({ name })),
+          { zip64: true }
+        ),
+        'pptx'
+      )
+    ).rejects.toThrow(/ZIP64/i)
+  })
+
+  it('rejects packages with more than 4000 entries', async () => {
+    await expect(
+      validateOfficePackage(
+        createZip(
+          validEntries.xlsx.map((name) => ({ name })),
+          { reportedEntryCount: 4001 }
+        ),
+        'xlsx'
+      )
+    ).rejects.toThrow(/too many/i)
+  })
+
+  it('rejects a single entry larger than 32 MiB', async () => {
+    const entries: ZipEntry[] = [
+      ...validEntries.docx.map((name) => ({ name })),
+      { name: 'word/media/large.bin', uncompressedSize: 32 * 1024 * 1024 + 1 }
+    ]
+
+    await expect(validateOfficePackage(createZip(entries), 'docx')).rejects.toThrow(
+      /entry is too large/i
+    )
+  })
+
+  it('rejects a package expanding beyond 256 MiB in total', async () => {
+    const entries: ZipEntry[] = [
+      ...validEntries.pptx.map((name) => ({ name })),
+      ...Array.from({ length: 9 }, (_, index) => ({
+        name: `ppt/media/${index}.bin`,
+        uncompressedSize: 32 * 1024 * 1024
+      }))
+    ]
+
+    await expect(validateOfficePackage(createZip(entries), 'pptx')).rejects.toThrow(
+      /expands too large/i
+    )
+  })
+
+  it('rejects actual inflated output when ZIP metadata understates its size', async () => {
+    const compressed = deflateRawSync(new Uint8Array(32 * 1024 * 1024 + 1))
+    const entries: ZipEntry[] = [
+      { name: '[Content_Types].xml' },
+      { name: 'word/document.xml', data: encoder.encode('<document><body/></document>') },
+      {
+        name: 'word/media/hidden-bomb.bin',
+        compressionMethod: 8,
+        data: compressed,
+        uncompressedSize: 1
+      }
+    ]
+
+    await expect(validateOfficePackage(createZip(entries), 'docx')).rejects.toThrow(
+      /entry is too large|expands too large/i
+    )
+  })
+
+  it('rejects external OOXML media relationships before rendering', async () => {
+    const pptx = createZip([
+      { name: '[Content_Types].xml' },
+      { name: 'ppt/presentation.xml' },
+      {
+        name: 'ppt/slides/_rels/slide1.xml.rels',
+        data: relationshipsXml(
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="https://tracker.example/image.png" TargetMode="External"/>'
+        )
+      }
+    ])
+
+    await expect(validateOfficePackage(pptx, 'pptx')).rejects.toThrow(/external resources/i)
+  })
+
+  it('rejects ZIP entries whose local and central names differ', async () => {
+    const pptx = createZip([
+      { name: '[Content_Types].xml' },
+      { name: 'ppt/presentation.xml' },
+      {
+        name: 'ppt/slides/safe-package-entry.bin',
+        localName: 'ppt/slides/_rels/slide1.xml.rels',
+        data: relationshipsXml(
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="https://tracker.example/image.png" TargetMode="External"/>'
+        )
+      }
+    ])
+
+    await expect(validateOfficePackage(pptx, 'pptx')).rejects.toThrow(/damaged or unsupported/i)
+  })
+
+  it('rejects Unicode Path extra fields that can override the validated entry name', async () => {
+    const unicodePathExtraField = new Uint8Array([0x75, 0x70, 0x01, 0x00, 0x00])
+    const docx = createZip([
+      { name: '[Content_Types].xml' },
+      {
+        name: 'word/document.xml',
+        extra: unicodePathExtraField,
+        data: encoder.encode('<document><body/></document>')
+      }
+    ])
+
+    await expect(validateOfficePackage(docx, 'docx')).rejects.toThrow(/damaged or unsupported/i)
+  })
+
+  it('rejects external relationships even when their type claims to be a hyperlink', async () => {
+    const pptx = createZip([
+      { name: '[Content_Types].xml' },
+      { name: 'ppt/presentation.xml' },
+      {
+        name: 'ppt/slides/_rels/slide1.xml.rels',
+        data: relationshipsXml(
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://tracker.example/disguised-image.png" TargetMode="External"/>'
+        )
+      }
+    ])
+
+    await expect(validateOfficePackage(pptx, 'pptx')).rejects.toThrow(/external resources/i)
+  })
+
+  it('rejects relationship XML larger than 4 MiB', async () => {
+    const pptx = createZip([
+      { name: '[Content_Types].xml' },
+      { name: 'ppt/presentation.xml' },
+      {
+        name: 'ppt/slides/_rels/slide1.xml.rels',
+        data: new Uint8Array(4 * 1024 * 1024 + 1)
+      }
+    ])
+
+    await expect(validateOfficePackage(pptx, 'pptx')).rejects.toThrow(
+      /relationship file is too large/i
+    )
+  })
+
+  it('rejects a DOCX document tree that is too deeply nested', async () => {
+    const depth = 130
+    const documentXml = encoder.encode(
+      `<document>${'<node>'.repeat(depth)}text${'</node>'.repeat(depth)}</document>`
+    )
+    const docx = createZip([
+      { name: '[Content_Types].xml' },
+      { name: 'word/document.xml', data: documentXml }
+    ])
+
+    await expect(validateOfficePackage(docx, 'docx')).rejects.toThrow(/too complex/i)
+  })
+
+  it('rejects a DOCX document with more than 100000 elements', async () => {
+    const documentXml = encoder.encode(`<document>${'<node/>'.repeat(100_000)}</document>`)
+    const docx = createZip([
+      { name: '[Content_Types].xml' },
+      { name: 'word/document.xml', data: documentXml }
+    ])
+
+    await expect(validateOfficePackage(docx, 'docx')).rejects.toThrow(/too complex/i)
+  })
+
+  it('rejects excessive XML complexity in DOCX parts with uppercase extensions', async () => {
+    const stylesXml = encoder.encode(`<styles>${'<style/>'.repeat(100_000)}</styles>`)
+    const docx = createZip([
+      { name: '[Content_Types].xml' },
+      { name: 'word/document.xml', data: encoder.encode('<document><body/></document>') },
+      { name: 'word/styles.XML', data: stylesXml }
+    ])
+
+    await expect(validateOfficePackage(docx, 'docx')).rejects.toThrow(/too complex/i)
+  })
+
+  it('rejects an Office file larger than the compressed-size limit', async () => {
+    await expect(
+      validateOfficePackage(new Uint8Array(OFFICE_PREVIEW_MAX_COMPRESSED_BYTES + 1), 'xlsx')
+    ).rejects.toThrow(/too large to preview/i)
+  })
+
+  it('uses a lower compressed-size limit for main-thread DOCX parsing', async () => {
+    await expect(
+      validateOfficePackage(new Uint8Array(DOCX_PREVIEW_MAX_COMPRESSED_BYTES + 1), 'docx')
+    ).rejects.toThrow(/Word file is too large/i)
+  })
+})

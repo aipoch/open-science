@@ -15,6 +15,9 @@ export type PreviewFileFormat =
   | 'pdb'
   | 'molecule'
   | 'pdf'
+  | 'word'
+  | 'spreadsheet'
+  | 'presentation'
   | 'unknown'
 // Distinguishes generated artifacts from user uploads when preview readers and actions differ.
 export type PreviewFileSource = 'artifact' | 'upload'

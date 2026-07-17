@@ -56,7 +56,7 @@ export const PdfPreviewContent = ({
           canvas.className = 'mx-auto mb-3 h-auto w-full max-w-3xl rounded-sm shadow-sm'
           container.appendChild(canvas)
 
-          await page.render({ canvasContext: context, viewport }).promise
+          await page.render({ canvas, canvasContext: context, viewport }).promise
           page.cleanup()
         }
 

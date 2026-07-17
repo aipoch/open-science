@@ -2,6 +2,7 @@ import { app, BrowserWindow, shell, type BrowserWindowConstructorOptions } from 
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import { isAllowedExternalUrl } from './external-navigation'
 
 const rendererEntry = join(__dirname, '../renderer/index.html')
 const preloadEntry = join(__dirname, '../preload/index.js')
@@ -34,8 +35,9 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
     window.show()
   })
 
+  // Never let document-generated links ask the OS to open local files or privileged URL schemes.
   window.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    if (isAllowedExternalUrl(details.url)) void shell.openExternal(details.url)
     return { action: 'deny' }
   })
 

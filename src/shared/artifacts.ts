@@ -79,6 +79,7 @@ export type ArtifactPreviewResult = {
 // Renderer request for the full bytes of one managed artifact (e.g. to render a PDF thumbnail).
 export type ReadArtifactBytesRequest = {
   path: string
+  maxBytes?: number
 }
 
 // Full-file bytes for a managed artifact, base64-encoded so it survives IPC structured cloning.
