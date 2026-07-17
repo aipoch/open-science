@@ -228,10 +228,10 @@
         }
 
         &.sd-link-safety-primary {
-          @apply border-sd-link-strong bg-sd-link-strong text-white;
+          @apply border-primary bg-primary text-primary-foreground;
 
           &:hover {
-            @apply bg-sd-link;
+            @apply bg-primary/90;
           }
         }
       }
