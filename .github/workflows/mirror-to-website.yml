@@ -133,6 +133,27 @@ jobs:
             ' "$yml"
           done
 
+      # electron-builder never writes releaseNotes into the feeds, so already-installed clients (which
+      # read update notes only from the feed) show an empty "What's new" and only a GitHub link. Inject
+      # the same condensed notes version.json carries into each feed's releaseNotes. inject-feed-notes
+      # parses + re-serializes with js-yaml (never hand-writes YAML) and re-parses its own output, so a
+      # malformed feed fails the job here — before any upload — rather than reaching the installed base.
+      # js-yaml is installed on its own (this job never runs npm ci) with scripts off so no electron
+      # postinstall fires.
+      - name: Inject release notes into update feeds
+        run: |
+          npm install js-yaml@^4 --no-save --no-package-lock --no-audit --no-fund --ignore-scripts
+          shopt -s nullglob
+          feeds=()
+          for yml in dist-assets/latest.yml dist-assets/latest-linux.yml dist-assets/*-mac.yml; do
+            [ -f "$yml" ] && feeds+=("$yml")
+          done
+          if [ ${#feeds[@]} -eq 0 ]; then
+            echo "no update feeds present, skipping notes injection"
+            exit 0
+          fi
+          node scripts/inject-feed-notes.mjs version.json "${feeds[@]}"
+
       # Publish the rewritten feeds to the channel root as mutable, no-cache objects (same policy as
       # version.json), so the updater always sees the latest version immediately.
       - name: Upload update feed to channel root
