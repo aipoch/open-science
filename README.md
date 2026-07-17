@@ -3,7 +3,7 @@
 [![Download](https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=for-the-badge&logo=github)](https://github.com/aipoch/open-science/releases/latest)
 [![Latest release](https://img.shields.io/github/v/release/aipoch/open-science?style=for-the-badge&color=4dabf7)](https://github.com/aipoch/open-science/releases/latest)
 [![License](https://img.shields.io/badge/License-Apache--2.0-4dabf7?style=for-the-badge)](LICENSE)
-![Status](https://img.shields.io/badge/Status-Public%20Alpha-ff9f43?style=for-the-badge)
+![Status](https://img.shields.io/badge/Status-Actively%20Developed-ff9f43?style=for-the-badge)
 [![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/85dKfuGM9)
 [![YouTube](https://img.shields.io/badge/YouTube-AIPOCH_AI-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://www.youtube.com/@AIPOCH_AI)
 [![Follow on X](https://img.shields.io/badge/Follow%20on%20X-%40aipoch__ai-212529?style=for-the-badge&logo=x&logoColor=white)](https://x.com/aipoch_ai)
@@ -13,7 +13,7 @@
 
 > ⭐ **Star the repo:** If this project has been helpful, we'd greatly appreciate a star on GitHub. Starring the repository encourages continued development. It only takes a second, but it has a meaningful impact on the project.
 
-> 💡**The application is available now.** The current stable release is [v0.2.2](https://github.com/aipoch/open-science/releases/tag/v0.2.2), with installers for macOS, Windows, and Linux. The complete `plan → execute → produce → preview` workflow runs end to end today; the [Current Status](#current-status) section separates shipped functionality from the deeper reproducibility and multi-agent work still ahead.
+> 💡 **The application is available now.** Installers for macOS, Windows, and Linux are published on the [latest release](https://github.com/aipoch/open-science/releases/latest) page. Open Science supports the complete `plan → execute → produce → preview` workflow; use the release notes and the installed app for version-specific details.
 
 <p align="center">
   <img src="docs/images/readme/workspace.jpg" alt="Open Science project workspace showing an agent response, generated artifacts, and an in-app Markdown report preview" width="900">
@@ -27,10 +27,10 @@
 - [Why Open Science](#why-open-science)
 - [Vision](#vision)
 - [Design Principles](#design-principles)
-- [Current Features](#current-features)
+- [Core Capabilities](#core-capabilities)
 - [Model Providers](#model-providers)
 - [Data, Permissions, and Trust](#data-permissions-and-trust)
-- [Current Status](#current-status)
+- [Project Status](#project-status)
 - [Development & Packaging](#development--packaging)
 - [Building From Source](#building-from-source)
 - [Roadmap](#roadmap)
@@ -46,16 +46,16 @@
 
 Open the [latest release](https://github.com/aipoch/open-science/releases/latest), expand **Assets**, and choose the installer for your computer:
 
-| Your computer                       | Download                                                                             |
-| ----------------------------------- | ------------------------------------------------------------------------------------ |
-| macOS — Apple Silicon (M1 or newer) | `open-science-{version}-mac-arm64.dmg`                                               |
-| macOS — Intel                       | `open-science-{version}-mac-x64.dmg`                                                 |
-| Windows x64                         | `open-science-{version}-win-x64-setup.exe`                                           |
-| Linux x64                           | `open-science-{version}-linux-x86_64.AppImage` or `open-science_{version}_amd64.deb` |
+| Your computer                       | Choose                                   |
+| ----------------------------------- | ---------------------------------------- |
+| macOS — Apple Silicon (M1 or newer) | The macOS DMG for Apple Silicon / ARM64  |
+| macOS — Intel                       | The macOS DMG for Intel / x64            |
+| Windows x64                         | The Windows x64 installer                |
+| Linux x64                           | The Linux x64 AppImage or Debian package |
 
-Each release includes `SHA256SUMS.txt` and build provenance. See [Verifying your download](SECURITY.md#verifying-your-download) before installation if you need to validate the package.
+Review the assets and verification information published on the release page. See [Verifying your download](SECURITY.md#verifying-your-download) before installation if you need to validate a package.
 
-> macOS and Windows may show an unidentified-developer or unknown-publisher warning for current community builds. This does not mean the download is corrupted. See [Building From Source](#building-from-source) for the macOS Gatekeeper steps.
+> If macOS or Windows shows an unidentified-developer or unknown-publisher warning, verify that the package came from the official Releases page before continuing. See [Building From Source](#building-from-source) for platform-specific guidance.
 
 ### 2. Complete first-time setup
 
@@ -87,6 +87,8 @@ Python is optional unless you want the built-in Notebook kernel. Every required 
 
 Want to develop the app instead? Skip to [Building From Source](#building-from-source).
 
+> Screenshots in this README illustrate the workflow. Labels, catalogs, and other interface details may differ from the version you install.
+
 ## Product Tour
 
 ### One workspace from task to artifacts
@@ -108,9 +110,9 @@ Open Science previews CSV/TSV, FASTA, HTML, images, JSON, Markdown, PDB structur
 
 ### Scientific skills and data connectors
 
-The current release includes 16 featured, file-based research skills. You can create personal skills, upload `SKILL.md`/ZIP/`.skill` packages, or preview and import compatible skills from GitHub. Enabled skills can be selected directly in the composer with `/`.
+Open Science includes a growing catalog of featured, file-based research skills. You can create personal skills, upload `SKILL.md`/ZIP/`.skill` packages, or preview and import compatible skills from GitHub. Enabled skills can be selected directly in the composer with `/`.
 
-It also ships 23 life-science connectors exposing more than 200 callable tools across literature, genes and proteins, genomics, variants, structures, clinical research, expression, chemistry, drug regulation, and related resources. Built-in and custom connectors remain behind the permission system, with per-tool `Always allow`, `Ask each time`, and `Block` controls.
+It also includes life-science connectors across literature, genes and proteins, genomics, variants, structures, clinical research, expression, chemistry, drug regulation, and related resources. Built-in and custom connectors remain behind the permission system, with per-tool `Always allow`, `Ask each time`, and `Block` controls. The installed app shows the current skill, connector, and tool catalogs.
 
 <table>
   <tr>
@@ -122,14 +124,6 @@ It also ships 23 life-science connectors exposing more than 200 callable tools a
     <td align="center"><sub>Scientific databases exposed as permissioned agent tools</sub></td>
   </tr>
 </table>
-
-### Updates and diagnostics
-
-Open Science checks for new releases, shows a concise version summary, links to the full GitHub release notes, and guides the user through download and installation. `Settings → General` also provides the installed version, a manual update check, local log location, and `Reveal`/`Open` diagnostics actions.
-
-<p align="center">
-  <img src="docs/images/readme/update-dialog.png" alt="Open Science update dialog showing version information and release highlights" width="900">
-</p>
 
 ## Frequently Asked Questions
 
@@ -145,6 +139,10 @@ A: An API Key is a secret credential issued by a model provider. Create or copy 
 
 A: Not if you choose `Local Claude` and already have a working Claude Code login on this computer. Built-in cloud providers and custom gateways require their own keys.
 
+### **Q: Which model providers can I use?**
+
+A: Open the provider picker during setup or under `Settings → Model` for the choices supported by your installed app. You can use a built-in cloud provider, an Anthropic-compatible Custom Gateway, or `Local Claude`.
+
 ### **Q: Why does the model connection test fail?**
 
 A: Check the API Key for missing characters or spaces, verify the Base URL and region, use the provider's exact model ID, and confirm network access and account balance. For `Local Claude`, run `claude` in a terminal and complete login before testing again.
@@ -152,6 +150,10 @@ A: Check the API Key for missing characters or spaces, verify the Base URL and r
 ### **Q: Why is `Continue` disabled during setup?**
 
 A: At least one required environment check has not passed. Fix the row marked `Action needed`, return to automatic detection, and click `Check again`. Python is optional and only affects Notebook execution.
+
+### **Q: Setup is complete. How do I start a research task?**
+
+A: Create or open a project, start a session, attach any source files, and describe the goal, constraints, expected output, and validation criteria. Use `@` to reference a project file and `/` to select an enabled skill.
 
 ### **Q: Does my research data stay on my computer?**
 
@@ -165,7 +167,7 @@ Open Science brings those pieces into one inspectable desktop workspace:
 
 - **Work that persists.** Projects, sessions, drafts, files, previews, and run history survive application restarts.
 - **Execution, not just suggestions.** The agent can run commands and Python, edit files, search, call connectors, and generate artifacts with the user's approval.
-- **Multiple model choices.** Use Claude, DeepSeek, GLM, MiniMax, an Anthropic-compatible gateway, or a local Claude login.
+- **Multiple model choices.** Use a built-in cloud provider, a compatible custom gateway, or a local Claude login.
 - **Local-first ownership.** The application and project state run on your computer; external calls happen through services you explicitly configure or approve.
 - **Inspectability.** The source code, skills, connector definitions, tool activity, and generated files are available for review.
 - **Extensibility.** Add skills and MCP connectors instead of waiting for a closed plugin roadmap.
@@ -182,42 +184,39 @@ The long-term destination is a traceable loop connecting literature, data, compu
 ## Design Principles
 
 - **Open by default.** Source code, formats, connectors, and skills should remain inspectable and forkable.
-- **Multi-provider without pretending every protocol is supported.** Several providers work today through Anthropic-compatible endpoints; native protocols are added only when implemented and tested.
+- **Multi-provider with explicit compatibility.** The app validates provider configuration and makes endpoint requirements visible instead of treating every API protocol as interchangeable.
 - **Local-first and data-aware.** Keep project state local, surface external data flows, and make autonomy opt-in.
 - **Human-in-the-loop.** File edits, commands, network access, and connector calls are governed by explicit approval profiles.
 - **Durable research records.** Sessions, tool activity, files, and Notebook history should remain reviewable after the run ends.
 - **Composable capabilities.** Skills, connectors, models, previews, and future compute backends should be replaceable parts rather than one black box.
 - **Honest scientific boundaries.** Generated output does not replace expert judgment, statistical review, or validation against primary evidence.
 
-## Current Features
+## Core Capabilities
 
-The following capabilities are available in the current stable release unless noted otherwise:
+This section describes durable product capabilities rather than a version-specific inventory. The installed app and [latest release notes](https://github.com/aipoch/open-science/releases/latest) are the source of truth for changing catalogs, packaging details, and newly added options.
 
-| Area                         | What is available today                                                                                                                                                |
+| Area                         | Core capability                                                                                                                                                        |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Projects and sessions**    | Create, rename, and delete projects; maintain multiple sessions; restore recent work, drafts, conversation history, and preview state.                                 |
 | **Agent workflow**           | Natural-language tasks, streamed responses, typed tool-activity cards, stop controls, approval pauses, and recovery of sessions interrupted by an application restart. |
-| **Models**                   | Built-in Claude, DeepSeek, GLM, and MiniMax providers; custom Anthropic-compatible gateways; Local Claude; validated models selectable per session.                    |
+| **Models**                   | Built-in cloud providers, custom compatible gateways, Local Claude, connection validation, and model selection per session.                                            |
 | **Execution**                | A persistent Python Notebook kernel with durable code/output history and a user terminal shared with the agent.                                                        |
 | **Inputs and artifacts**     | File attachments, project-level file library, generated artifact cards, `@` references to existing uploads/outputs, and read-only multi-tab previews.                  |
 | **Preview formats**          | CSV/TSV, FASTA, HTML, common images, JSON, Markdown, PDB, PDF, source code, text, logs, configuration files, and Notebook history.                                     |
-| **Skills**                   | 16 featured skills plus personal creation, package upload, GitHub preview/import, enable/disable controls, and explicit `/` selection in a session.                    |
-| **Connectors**               | 23 built-in life-science connectors with 200+ tools, custom local/remote MCP connectors, contact metadata, and connector/tool-level permissions.                       |
+| **Skills**                   | Featured and personal skills, package upload, GitHub preview/import, enable/disable controls, and explicit `/` selection in a session.                                 |
+| **Connectors**               | Built-in life-science connectors, custom local/remote MCP connectors, contact metadata, and connector/tool-level permissions.                                          |
 | **Safety controls**          | `Ask for approval`, `Auto-approve edits`, and `Full access` conversation profiles, plus per-connector and per-tool policies.                                           |
-| **Distribution and support** | Installers for macOS, Windows, and Linux; stable and nightly releases; guided update checks; local diagnostics and community links.                                    |
+| **Distribution and support** | Installers for macOS, Windows, and Linux, plus update guidance, local diagnostics, and community links.                                                                |
 
 ## Model Providers
 
-| Provider type             | Authentication and endpoint                                              |
-| ------------------------- | ------------------------------------------------------------------------ |
-| **Claude**                | Anthropic API Key and official endpoint                                  |
-| **DeepSeek**              | DeepSeek API Key and official Anthropic-compatible endpoint              |
-| **GLM (Z.AI / BigModel)** | API Key with Global or China endpoint selection                          |
-| **MiniMax**               | API Key with Global or China endpoint selection                          |
-| **Custom Gateway**        | User-supplied Anthropic-compatible Base URL, API Key, and exact model ID |
-| **Local Claude**          | Reuses the computer's Claude Code login; no API Key field                |
+| Provider mode                | How it works                                                                                      |
+| ---------------------------- | ------------------------------------------------------------------------------------------------- |
+| **Built-in cloud providers** | Choose from the provider list shown by the installed app and authenticate with the requested key. |
+| **Custom Gateway**           | Supply a compatible Base URL, API Key, and exact model ID.                                        |
+| **Local Claude**             | Reuse the computer's Claude Code login without entering an API Key in Open Science.               |
 
-The released runtime is multi-provider, but all cloud providers currently need an Anthropic-compatible messages endpoint. A service that exposes only an OpenAI-compatible endpoint cannot be used directly yet. See the [Roadmap](ROADMAP.md) for native protocol work.
+Provider vendors, available models, and regional endpoints can evolve independently of this README. Treat the provider picker and connection test in the installed app as the source of truth. Unless the app states otherwise, a Custom Gateway must expose an Anthropic-compatible messages endpoint.
 
 ## Data, Permissions, and Trust
 
@@ -240,21 +239,13 @@ Choose the narrowest permission profile that fits the task:
 
 Review connector parameters and tool activity before approving them. Never include API Keys, access tokens, patient identifiers, unpublished data, or sensitive local paths in screenshots or public issue logs.
 
-## Current Status
+## Project Status
 
-**Current stable release: [v0.2.2](https://github.com/aipoch/open-science/releases/tag/v0.2.2), published July 15, 2026.**
+Open Science is available as a released desktop application and is actively developed. This README focuses on durable workflows so that it does not need to change with every release.
 
-Open Science is a released **public-alpha product**. The desktop application, onboarding, multi-provider configuration, projects and sessions, agent runtime, Python Notebook, artifact storage, file previews, skills, connectors, permissions, diagnostics, updates, and cross-platform installers are available now.
+For version-specific features, provider and catalog changes, platform packaging, and recent fixes, use the [latest release notes](https://github.com/aipoch/open-science/releases/latest) and the installed app. For a maintained shipped/partial/planned breakdown, see the [Capability Map](ROADMAP.md#capability-map).
 
-Public alpha also means important boundaries remain:
-
-- Artifact files are durable, but a complete provenance chain covering code, dependencies, environment, data versions, and conversation context is not finished.
-- Python is the only built-in execution kernel; R and managed environments are planned.
-- Remote HPC/cloud execution, specialist sub-agents, and a reviewer/verifier agent are not yet available.
-- Native OpenAI and other non-Anthropic protocols are not yet wired into the model layer.
-- The application assists execution and record-keeping; researchers remain responsible for methods, interpretation, privacy, and scientific validity.
-
-See the [Capability Map](ROADMAP.md#capability-map) for a maintained shipped/partial/planned breakdown.
+Open Science assists execution and record-keeping; researchers remain responsible for methods, interpretation, privacy, and scientific validity.
 
 ## Development & Packaging
 
@@ -294,7 +285,7 @@ Packaged output is written under `dist/`.
 
 ### macOS Gatekeeper
 
-Current community-distributed or self-built copies may not carry an Apple Developer ID trusted by your Mac. If macOS blocks the app:
+If the copy you downloaded or built does not carry an Apple Developer ID trusted by your Mac, macOS may block it. In that case:
 
 1. In Finder, right-click **Open Science.app** and choose **Open**.
 2. If it remains blocked, go to **System Settings → Privacy & Security** and choose **Open Anyway**.
@@ -312,16 +303,7 @@ If Windows shows an unknown-publisher warning, verify the downloaded asset and c
 
 ## Roadmap
 
-The product roadmap is maintained in [ROADMAP.md](ROADMAP.md). Near-term priorities include:
-
-1. Complete artifact provenance and versioning.
-2. Add native model protocols beyond Anthropic-compatible endpoints.
-3. Expand execution kernels and reproducible environment management.
-4. Add remote compute, asynchronous jobs, and specialist sub-agents.
-5. Build reviewer/verifier workflows and stronger security boundaries.
-6. Grow local skills into a versioned, shareable public skills commons.
-
-Roadmap items are directions, not claims about the current release. Shipped status is updated as implementation lands.
+The product roadmap and capability status are maintained in [ROADMAP.md](ROADMAP.md). This README intentionally does not duplicate the moving list of priorities or release targets.
 
 ## Relationship to the aipoch Ecosystem
 
@@ -337,8 +319,6 @@ Skills and connectors can execute code or send data externally. Review their sou
 - **Not just a chat UI.** The product is organized around persistent projects, execution, files, artifacts, and reviewable tool activity.
 - **Not an unofficial client for another product.** It is an independent implementation with its own codebase, data model, interface, and roadmap.
 - **Not a replacement for scientific judgment.** Outputs still require domain review, statistical validation, and verification against primary sources.
-- **Not a real-time multi-user editor.** The current application is designed around one researcher's local workspace.
-- **Not yet a complete reproducibility platform.** Full provenance, environment snapshots, remote compute, and automated verification remain roadmap work.
 
 ## Get Involved
 
