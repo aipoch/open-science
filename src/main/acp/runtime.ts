@@ -247,6 +247,10 @@ class AcpRuntime {
   private readonly agentToAppSessionId = new Map<string, string>()
   // Per-session artifact/notebook storage project; keeps run activation and claims in the same subtree.
   private readonly sessionProjectNames = new Map<string, string>()
+  // The framework each session last ran under. Deliberately NOT cleared on disconnect so a framework
+  // switch (which disconnects) can still tell that an existing session belongs to the other framework
+  // and skip a doomed resume. Cleaned per-session on delete.
+  private readonly sessionFrameworks = new Map<string, string>()
   private readonly promptInFlightSessionIds = new Set<string>()
   private readonly permissionProfiles = new Map<string, SessionPermissionProfileState>()
   // A provider change requested while a prompt was running, applied when the session next goes idle.
@@ -570,6 +574,7 @@ class AcpRuntime {
     this.sessions.set(session.sessionId, session)
     this.sessionCwds.set(session.sessionId, sessionCwd)
     this.sessionProjectNames.set(session.sessionId, projectName)
+    this.sessionFrameworks.set(session.sessionId, this.framework.id)
     this.rememberArtifactSession(session.sessionId, artifactSessionId)
     this.rememberNotebookSession(session.sessionId, notebookSessionId)
     this.currentSessionId = session.sessionId
@@ -603,6 +608,7 @@ class AcpRuntime {
 
     this.sessionCwds.set(appSessionId, cwd)
     this.sessionProjectNames.set(appSessionId, projectName)
+    this.sessionFrameworks.set(appSessionId, this.framework.id)
     this.rememberArtifactSession(appSessionId, appSessionId)
     this.rememberNotebookSession(appSessionId, appSessionId)
     this.currentSessionId = appSessionId
@@ -687,6 +693,22 @@ class AcpRuntime {
       throw new Error('ACP agent does not support session resume.')
     }
 
+    // A session created under a different framework can never be resumed by the current agent — each
+    // framework keeps its own session store, so the request is guaranteed to fail and only makes the
+    // agent log a scary internal error. Skip straight to adopting a fresh session (context still
+    // resets, so the caller replays the transcript) when we know it last ran under another framework.
+    const priorFramework = this.sessionFrameworks.get(request.sessionId)
+
+    if (priorFramework && priorFramework !== this.framework.id) {
+      log.info('skipping cross-framework resume; adopting a fresh session', {
+        sessionId: request.sessionId,
+        from: priorFramework,
+        to: this.framework.id
+      })
+
+      return this.adoptFreshSession(connection, request, sessionCwd, projectName)
+    }
+
     // Resumed sessions already have stable ids, so the artifact session mirrors the runtime session id.
     let resumeResponse
     try {
@@ -704,47 +726,15 @@ class AcpRuntime {
     } catch (error) {
       if (!isUnresumableSessionError(error)) throw error
 
-      // The agent could not resume this session (it was replaced by a provider switch, or an app
-      // restart spawned a fresh agent process that no longer holds it — surfacing as -32002 not-found
-      // or a generic -32603 Internal error). Rather than dead-end the thread, adopt a brand-new agent
-      // session under the SAME app id so the user can keep chatting — earlier turns stay visible; only
-      // agent-side context resets, which is expected after a restart or model switch.
+      // The agent could not resume this session (an app restart spawned a fresh agent process that no
+      // longer holds it — surfacing as -32002 not-found or a generic -32603 Internal error). Rather
+      // than dead-end the thread, adopt a brand-new agent session under the SAME app id.
       log.info('resumed session adopted after unrecoverable resume error', {
         sessionId: request.sessionId,
         reason: error instanceof Error ? error.message : String(error)
       })
 
-      const adopted = await connection.agent
-        .buildSession({
-          cwd: sessionCwd,
-          mcpServers: await this.createMcpServers({
-            artifactSessionId: request.sessionId,
-            notebookSessionId: request.sessionId,
-            sessionCwd,
-            projectName
-          }),
-          ...this.buildSessionMetaArg()
-        })
-        .start()
-
-      try {
-        await this.configurePermissionProfile(
-          request.sessionId,
-          adopted,
-          normalizePermissionProfile(request.permissionProfile)
-        )
-      } catch (error) {
-        adopted.dispose()
-        throw error
-      }
-
-      await this.applySessionModel(adopted)
-      this.adoptSession(request.sessionId, adopted, sessionCwd, projectName)
-      this.emitState()
-
-      // Agent-side context did not survive (the session was replaced by a framework/provider switch or
-      // an unresumable restart); tell the caller so it can replay a transcript into the next prompt.
-      return { sessionId: request.sessionId, cwd: sessionCwd, contextReset: true }
+      return this.adoptFreshSession(connection, request, sessionCwd, projectName)
     }
     // The SDK exposes public helpers for new sessions only. The runtime keeps this adapter
     // narrow so resume can reuse the same update routing surface as newly-created sessions.
@@ -769,6 +759,7 @@ class AcpRuntime {
     this.sessions.set(request.sessionId, session)
     this.sessionCwds.set(request.sessionId, sessionCwd)
     this.sessionProjectNames.set(request.sessionId, projectName)
+    this.sessionFrameworks.set(request.sessionId, this.framework.id)
     this.rememberArtifactSession(request.sessionId, request.sessionId)
     this.currentSessionId = request.sessionId
     this.cwd = sessionCwd
@@ -782,6 +773,47 @@ class AcpRuntime {
     this.emitState()
 
     return { sessionId: request.sessionId, cwd: sessionCwd }
+  }
+
+  // Builds a brand-new agent session under the SAME app id when a resume cannot reattach the original
+  // (a cross-framework switch, or an unresumable restart). Earlier turns stay visible; only agent-side
+  // context is gone, so contextReset is returned to let the caller replay a transcript into the next
+  // prompt. Shared by the cross-framework skip and the unrecoverable-error fallback.
+  private async adoptFreshSession(
+    connection: ClientConnection,
+    request: AcpResumeSessionRequest,
+    sessionCwd: string,
+    projectName: string
+  ): Promise<AcpCreateSessionResponse> {
+    const adopted = await connection.agent
+      .buildSession({
+        cwd: sessionCwd,
+        mcpServers: await this.createMcpServers({
+          artifactSessionId: request.sessionId,
+          notebookSessionId: request.sessionId,
+          sessionCwd,
+          projectName
+        }),
+        ...this.buildSessionMetaArg()
+      })
+      .start()
+
+    try {
+      await this.configurePermissionProfile(
+        request.sessionId,
+        adopted,
+        normalizePermissionProfile(request.permissionProfile)
+      )
+    } catch (error) {
+      adopted.dispose()
+      throw error
+    }
+
+    await this.applySessionModel(adopted)
+    this.adoptSession(request.sessionId, adopted, sessionCwd, projectName)
+    this.emitState()
+
+    return { sessionId: request.sessionId, cwd: sessionCwd, contextReset: true }
   }
 
   // Changes approval behavior only while the conversation is idle. Applying the ACP mode before the
@@ -1183,6 +1215,7 @@ class AcpRuntime {
       this.sessions.delete(request.sessionId)
       this.sessionCwds.delete(request.sessionId)
       this.sessionProjectNames.delete(request.sessionId)
+      this.sessionFrameworks.delete(request.sessionId)
       this.permissionProfiles.delete(request.sessionId)
       this.artifactSessionIds.delete(request.sessionId)
       this.notebookRoutingIds.delete(request.sessionId)

@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpRuntime } from './runtime'
 import { AgentMcpHttpHost } from './mcp-http-host'
-import { opencodeFramework } from '../agent-framework'
+import { claudeCodeFramework, opencodeFramework } from '../agent-framework'
 import { ArtifactRepository } from '../artifacts/repository'
 import { UploadRepository } from '../uploads/repository'
 import {
@@ -1307,6 +1307,60 @@ describe('ACP runtime session management', () => {
         { sessionId: 'restarted-session', text: 'reply for adopted-session-1' }
       ])
     )
+  })
+
+  it('skips resume entirely for a session that last ran under a different framework', async () => {
+    // A session created under Claude, then continued after switching to opencode: resume can never
+    // succeed (each framework has its own session store), so the runtime must NOT send session/resume
+    // (which would make the agent log a scary internal error) and adopt a fresh session directly.
+    const claudeProcess = new FakeAgentProcess()
+    const claudeAgent = startFakeAgent(claudeProcess, ['claude-session-1'])
+    const opencodeProcess = new FakeAgentProcess()
+    const opencodeAgent = startFakeAgent(opencodeProcess, ['opencode-session-1'])
+
+    let connects = 0
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      // First connect resolves Claude, the second (after the switch) resolves opencode; each framework
+      // spawns its own fake process so their session stores stay distinct.
+      resolveBackend: async () => {
+        connects += 1
+
+        return {
+          framework:
+            connects === 1
+              ? { ...claudeCodeFramework, spawn: () => asAgentProcess(claudeProcess) }
+              : { ...opencodeFramework, spawn: () => asAgentProcess(opencodeProcess) },
+          executablePath: '/bin/agent',
+          env: {},
+          args: []
+        }
+      }
+    })
+
+    const created = await runtime.createSession({ cwd: '/workspace' })
+    expect(created.sessionId).toBe('claude-session-1')
+
+    // Switching frameworks disconnects; the next connect resolves opencode.
+    await runtime.disconnect(false)
+
+    const resumed = await runtime.resumeSession({
+      sessionId: 'claude-session-1',
+      cwd: '/workspace'
+    })
+
+    // Adopted onto opencode under the same app id, with context reset so soft-replay can run.
+    expect(resumed).toEqual({
+      sessionId: 'claude-session-1',
+      cwd: '/workspace',
+      contextReset: true
+    })
+    // The doomed resume was never sent to opencode; it built a fresh session instead.
+    expect(opencodeAgent.resumedSessions).toEqual([])
+    expect(opencodeAgent.newSessions).toHaveLength(1)
+    // And the original Claude agent was never asked to resume either.
+    expect(claudeAgent.resumedSessions).toEqual([])
   })
 
   it('defers a provider reconnect until an in-flight prompt finishes', async () => {
