@@ -104,6 +104,8 @@ type SettingsStore = SettingsStoreData & {
     source: ClaudeInstallSource,
     managedRegistry?: ManagedClaudeRegistry
   ) => Promise<ClaudeInstallResult>
+  // App-managed OpenCode install; shares the install progress/log state with installClaude.
+  installOpencode: () => Promise<ClaudeInstallResult>
   clearInstallLogs: () => void
   openEnvironmentRepair: () => void
   closeEnvironmentRepair: () => void
@@ -388,6 +390,36 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       set(applySnapshot(snapshot))
       await get().refreshPreflight()
 
+      set({ installError: result.ok ? undefined : (result.error ?? 'Install failed.') })
+
+      return result
+    } catch (error) {
+      set({ installError: error instanceof Error ? error.message : 'Install failed.' })
+      throw error
+    } finally {
+      unsubscribe()
+      set({ isInstalling: false, installProgress: null })
+    }
+  },
+
+  // App-managed OpenCode install, mirroring installClaude's shared progress/log handling.
+  installOpencode: async () => {
+    set({ isInstalling: true, installLogs: [], installProgress: null, installError: undefined })
+
+    const unsubscribe = window.api.settings.onInstallLog((event) => {
+      if (event.kind === 'progress') {
+        set({ installProgress: event })
+      } else {
+        set((state) => ({ installLogs: [...state.installLogs, event.chunk] }))
+      }
+    })
+
+    try {
+      const result = await window.api.settings.installOpencode()
+
+      // A successful install persisted opencode's path/version in main; reload so the card reflects it.
+      set(applySnapshot(await window.api.settings.getSettings()))
+      await get().refreshPreflight()
       set({ installError: result.ok ? undefined : (result.error ?? 'Install failed.') })
 
       return result

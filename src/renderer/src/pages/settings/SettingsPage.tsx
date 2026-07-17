@@ -136,6 +136,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const opencode = useSettingsStore((state) => state.opencode)
   const isDetectingOpencode = useSettingsStore((state) => state.isDetectingOpencode)
   const detectOpencode = useSettingsStore((state) => state.detectOpencode)
+  const installOpencode = useSettingsStore((state) => state.installOpencode)
   const isInstalling = useSettingsStore((state) => state.isInstalling)
   const installLogs = useSettingsStore((state) => state.installLogs)
   const installProgress = useSettingsStore((state) => state.installProgress)
@@ -670,6 +671,10 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                           opencode={opencode}
                           isDetecting={isDetectingOpencode}
                           onDetect={() => void detectOpencode()}
+                          isInstalling={isInstalling}
+                          installProgress={installProgress}
+                          installError={installError}
+                          onInstall={() => void installOpencode()}
                         />
                       </SettingsSection>
                     ) : (

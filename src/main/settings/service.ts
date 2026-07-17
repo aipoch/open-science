@@ -67,6 +67,7 @@ import {
 } from '../agent-framework'
 import { createDefaultDetectDeps, detectClaude, type ClaudeDetectDeps } from './claude-detect'
 import { detectOpencode } from './opencode-detect'
+import { installManagedOpencode } from './managed-opencode'
 import { opencodeConfigDir } from '../agent-framework/opencode'
 import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import { provisionAppClaudeConfigDir } from './claude-config-provision'
@@ -506,6 +507,22 @@ class SettingsService {
     }
 
     return result
+  }
+
+  // App-managed OpenCode install (first recommendation, like Claude): downloads the native binary and
+  // persists its path + version. Streams progress on the shared install-log channel.
+  async installOpencode(
+    onEvent: (event: ClaudeInstallEvent) => void
+  ): Promise<ClaudeInstallResult> {
+    this.providerSequence += 1
+    const installId = `install-opencode-${Date.now()}-${this.providerSequence}`
+    const outcome = await installManagedOpencode({ installId, onEvent, dataRoot: this.storageRoot })
+
+    if (outcome.result.ok && outcome.resolvedPath) {
+      await this.repository.setOpencodeInfo(outcome.resolvedPath, outcome.version)
+    }
+
+    return outcome.result
   }
 
   // Records that first-run onboarding finished so later launches skip the wizard.
