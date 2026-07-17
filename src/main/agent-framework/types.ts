@@ -36,6 +36,10 @@ export type ModelConfigContext = {
   // The framework's existing user config (e.g. opencode's global opencode.json), read by the settings
   // layer so the adapter can merge onto it instead of replacing the user's own providers/mcp.
   baseConfig?: Record<string, unknown>
+  // Combined instructions markdown (connector conventions + tools) for frameworks that lack on-demand
+  // skill loading; the adapter writes it and wires it into the agent's instruction mechanism so the
+  // agent learns host.mcp instead of reimplementing connector calls with raw HTTP. Empty ⇒ omitted.
+  instructions?: string
 }
 
 // System-prompt guidance the runtime wants appended for a session (artifact routing, notebook, skill

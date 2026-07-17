@@ -84,6 +84,7 @@ import { SettingsRepository } from './repository'
 import { sanitizeCustomMcpServer } from './repository'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import { getConnectorTools } from '../connectors/registry'
+import { renderConnectorInstructions } from '../connectors/skill-doc'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
 import { UserSkillRepository } from '../skills/user-skill-repository'
 import { decodeBoundedBase64 } from '../skills/import-limits'
@@ -731,6 +732,13 @@ class SettingsService {
     return settings.connectors
   }
 
+  // Bundled connectors the user hasn't turned off (default-on), for opencode instruction delivery.
+  private enabledConnectorIds(connectors: StoredConnectors | undefined): string[] {
+    const disabled = new Set(connectors?.disabledConnectorIds ?? [])
+
+    return CONNECTOR_CATALOG.map((meta) => meta.id).filter((id) => !disabled.has(id))
+  }
+
   // Projects the bundled catalog into renderer views, applying the stored opt-out / auto-allow sets.
   private toConnectorViews(connectors: StoredConnectors | undefined): ConnectorView[] {
     const disabled = new Set(connectors?.disabledConnectorIds ?? [])
@@ -1023,7 +1031,10 @@ class SettingsService {
       executablePath,
       // Merge onto the user's own opencode config so their providers/mcp survive; auth.json is loaded
       // by opencode separately and is never touched.
-      baseConfig: await readOpencodeUserConfig()
+      baseConfig: await readOpencodeUserConfig(),
+      // Connector conventions + tools, so opencode uses host.mcp instead of raw HTTP (it has no skill
+      // docs like Claude). Enabled bundled connectors only.
+      instructions: renderConnectorInstructions(this.enabledConnectorIds(settings.connectors))
     })
     await this.writeAgentConfigFiles(modelConfig.configFiles)
 

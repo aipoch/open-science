@@ -1,5 +1,24 @@
 import { describe, it, expect } from 'vitest'
-import { renderSkillDoc, renderCustomSkillDoc } from './skill-doc'
+import { renderConnectorInstructions, renderSkillDoc, renderCustomSkillDoc } from './skill-doc'
+
+describe('renderConnectorInstructions', () => {
+  it('emits the host.mcp conventions once and each enabled connector, for opencode', () => {
+    const md = renderConnectorInstructions(['chemistry'])
+
+    expect(md).toContain('host.mcp(')
+    // The "do not reimplement with raw HTTP" rule is what steers opencode away from raw requests.
+    expect(md).toMatch(/urllib|requests|httpx|fetch/)
+    expect(md).toContain('## chemistry')
+    expect(md).toContain('chemistry / pubchem_get_compounds')
+    // Conventions appear once, not per connector.
+    expect(md.match(/Reach this service ONLY via/g)?.length ?? 0).toBe(1)
+  })
+
+  it('returns empty string when no connectors are enabled', () => {
+    expect(renderConnectorInstructions([])).toBe('')
+    expect(renderConnectorInstructions(['nope'])).toBe('')
+  })
+})
 
 describe('renderSkillDoc', () => {
   it('renders frontmatter, conventions, and each tool', () => {

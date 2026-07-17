@@ -1,6 +1,39 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildOpencodeConfig } from './opencode'
+import { buildOpencodeConfig, opencodeFramework } from './opencode'
+
+describe('opencodeFramework.prepareModelConfig', () => {
+  it('writes the connector instructions file and wires it into opencode.json instructions', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
+      {
+        storageRoot: '/data',
+        executablePath: '/bin/opencode',
+        instructions: '# connectors\nhost.mcp(...)'
+      }
+    )
+
+    const instructionsFile = config.configFiles?.find((file) => file.path.endsWith('connectors.md'))
+    expect(instructionsFile?.content).toContain('host.mcp(')
+
+    const opencodeJson = config.configFiles?.find((file) => file.path.endsWith('opencode.json'))
+    const parsed = JSON.parse(opencodeJson?.content ?? '{}')
+    expect(parsed.instructions).toContain(instructionsFile?.path)
+  })
+
+  it('omits instructions when none are provided', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
+      { storageRoot: '/data', executablePath: '/bin/opencode' }
+    )
+
+    expect(config.configFiles?.some((file) => file.path.endsWith('connectors.md'))).toBe(false)
+    const parsed = JSON.parse(
+      config.configFiles?.find((file) => file.path.endsWith('opencode.json'))?.content ?? '{}'
+    )
+    expect(parsed.instructions).toBeUndefined()
+  })
+})
 
 describe('buildOpencodeConfig', () => {
   it('registers the model under provider.models and selects it', () => {

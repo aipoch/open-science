@@ -44,18 +44,25 @@ const asRecord = (value: unknown): Record<string, unknown> =>
 // back to its own default. Verified against opencode 1.17.13.
 const buildOpencodeConfig = (
   provider: ResolvedProvider,
-  baseConfig: Record<string, unknown> = {}
+  baseConfig: Record<string, unknown> = {},
+  instructionPaths: string[] = []
 ): string => {
   const bareModel = provider.model
   const baseProviders = asRecord(baseConfig.provider)
   const baseProvider = asRecord(baseProviders[OPENCODE_PROVIDER_ID])
   const baseOptions = asRecord(baseProvider.options)
   const baseModels = asRecord(baseProvider.models)
+  // Preserve any instructions the base config already declared, then append ours (de-duplicated).
+  const baseInstructions = Array.isArray(baseConfig.instructions)
+    ? baseConfig.instructions.filter((entry): entry is string => typeof entry === 'string')
+    : []
+  const instructions = [...new Set([...baseInstructions, ...instructionPaths])]
 
   const merged: Record<string, unknown> = {
     $schema: 'https://opencode.ai/config.json',
     ...baseConfig,
     ...(bareModel ? { model: `${OPENCODE_PROVIDER_ID}/${bareModel}` } : {}),
+    ...(instructions.length > 0 ? { instructions } : {}),
     provider: {
       ...baseProviders,
       [OPENCODE_PROVIDER_ID]: {
@@ -97,11 +104,24 @@ export const opencodeFramework: AgentFramework = {
   prepareModelConfig(provider: ResolvedProvider, ctx: ModelConfigContext): AgentModelConfig {
     // opencode reads a config file, not ANTHROPIC_* env; point OPENCODE_CONFIG at an app-owned file
     // that merges the app's provider/model onto the user's existing opencode config.
-    const configPath = join(ctx.storageRoot, 'opencode', 'opencode.json')
+    const configDir = join(ctx.storageRoot, 'opencode')
+    const configPath = join(configDir, 'opencode.json')
+    const configFiles = [{ path: configPath, content: '' }]
+
+    // Connector conventions + tools, wired via opencode's `instructions` config so the agent uses
+    // host.mcp instead of raw HTTP. Absolute path keeps it independent of the session cwd.
+    const instructionPaths: string[] = []
+    if (ctx.instructions) {
+      const instructionsPath = join(configDir, 'instructions', 'connectors.md')
+      instructionPaths.push(instructionsPath)
+      configFiles.push({ path: instructionsPath, content: ctx.instructions })
+    }
+
+    configFiles[0].content = buildOpencodeConfig(provider, ctx.baseConfig, instructionPaths)
 
     return {
       env: { [OPENCODE_CONFIG_ENV]: configPath },
-      configFiles: [{ path: configPath, content: buildOpencodeConfig(provider, ctx.baseConfig) }]
+      configFiles
     }
   },
 
