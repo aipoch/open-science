@@ -8,6 +8,7 @@ import {
 } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { preferredEndpoint } from '../../shared/settings'
+import { normalizeOpenAiBaseUrl } from '../settings/base-url'
 import { augmentedPathEnv } from '../settings/shell-path'
 import type { ResolvedProvider } from '../settings/provider-env'
 import type {
@@ -74,9 +75,12 @@ const buildOpencodeConfig = (
     preferredEndpoint(provider.apiType ?? 'anthropic', ['anthropic', 'openai']) ?? 'anthropic'
   const { id: providerId, npm } = OPENCODE_ENDPOINT_PROVIDER[endpoint]
   // Dual-endpoint vendors (e.g. DeepSeek) serve OpenAI at a different base than Anthropic, so pick the
-  // OpenAI base for the openai endpoint; a single-base provider falls back to baseUrl for both.
+  // OpenAI base for the openai endpoint; a single-base provider falls back to baseUrl for both. The
+  // @ai-sdk/openai-compatible client appends `/chat/completions` to baseURL, so normalize it to end at
+  // `/v1` (matching the validator) — a bare root like https://api.deepseek.com would 404 otherwise.
+  const rawBase = endpoint === 'openai' ? (provider.openaiBaseUrl ?? provider.baseUrl) : provider.baseUrl
   const baseURL =
-    endpoint === 'openai' ? (provider.openaiBaseUrl ?? provider.baseUrl) : provider.baseUrl
+    endpoint === 'openai' && rawBase ? `${normalizeOpenAiBaseUrl(rawBase)}/v1` : rawBase
 
   const baseProviders = asRecord(baseConfig.provider)
   const baseProvider = asRecord(baseProviders[providerId])
@@ -130,12 +134,22 @@ export const opencodeFramework: AgentFramework = {
   supportedApiTypes: ['anthropic', 'openai'],
 
   spawn(input: AgentSpawnInput): ChildProcessWithoutNullStreams {
-    // `opencode acp` starts the ACP subprocess over stdio, matching the app's existing transport.
-    return spawn(input.executablePath, ['acp', ...input.args], {
-      env: { ...augmentedPathEnv(process.env), ...input.env },
-      stdio: 'pipe',
-      windowsHide: true
-    })
+    // `opencode acp` starts the ACP subprocess over stdio, matching the app's existing transport. On
+    // Windows an npm-installed opencode is a `opencode.cmd`/`.bat` shim that Node cannot launch without
+    // a shell (spawn EINVAL, same as Claude's cli.js shim), so those go through the shell with the
+    // path quoted; a native `.exe`/Unix binary spawns directly.
+    const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(input.executablePath)
+
+    return spawn(
+      needsShell ? `"${input.executablePath}"` : input.executablePath,
+      ['acp', ...input.args],
+      {
+        env: { ...augmentedPathEnv(process.env), ...input.env },
+        stdio: 'pipe',
+        windowsHide: true,
+        shell: needsShell
+      }
+    )
   },
 
   prepareModelConfig(provider: ResolvedProvider, ctx: ModelConfigContext): AgentModelConfig {

@@ -647,13 +647,19 @@ const runScopedReview = async (options: {
     const systemPromptAppend = REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND
     const cwd = session.cwd || homedir()
 
-    reviewerSession = await acpRuntime.buildReviewerSession({
+    const built = await acpRuntime.buildReviewerSession({
       cwd,
       mcpServers: [mcpServer.toAcpMcpServerConfig()],
       systemPromptAppend
     })
+    reviewerSession = built.session
 
-    reviewerSession.prompt([{ type: 'text', text: reviewerPrompt }])
+    // opencode has no system-prompt preset, so the rubric rides back as a prompt prefix; Claude gets
+    // it via _meta and returns no prefix. Prepend it so the reviewer rubric reaches either framework.
+    const reviewerPromptText = built.promptPrefix
+      ? `${built.promptPrefix}\n\n${reviewerPrompt}`
+      : reviewerPrompt
+    reviewerSession.prompt([{ type: 'text', text: reviewerPromptText }])
 
     await driveReviewerToStop(
       reviewerSession,
@@ -824,18 +830,23 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
     // Spawn the reviewer ACP session (clean context, reviewer-only tools).
     const cwd = session.cwd || homedir()
 
-    reviewerSession = await acpRuntime.buildReviewerSession({
+    const built = await acpRuntime.buildReviewerSession({
       cwd,
       mcpServers: [mcpServer.toAcpMcpServerConfig()],
       systemPromptAppend
     })
+    reviewerSession = built.session
 
     log.info('reviewer session started', { sessionId: reviewerSession.sessionId })
 
     // Send the prompt and drive the session to completion. A timeout / update cap guards against a
     // hung or fast-looping reviewer that never stops: on expiry this throws, the catch below sets
     // lifecycle='error', and the finally disposes the session + host/MCP servers.
-    reviewerSession.prompt([{ type: 'text', text: reviewerPrompt }])
+    // opencode gets the rubric via a prompt prefix (Claude via _meta, prefix empty).
+    const reviewerPromptText = built.promptPrefix
+      ? `${built.promptPrefix}\n\n${reviewerPrompt}`
+      : reviewerPrompt
+    reviewerSession.prompt([{ type: 'text', text: reviewerPromptText }])
 
     const stopReason = await driveReviewerToStop(
       reviewerSession,

@@ -2155,26 +2155,23 @@ class AcpRuntime {
     cwd: string
     mcpServers: McpServer[]
     systemPromptAppend?: string
-  }): Promise<import('@agentclientprotocol/sdk').ActiveSession> {
+  }): Promise<{
+    session: import('@agentclientprotocol/sdk').ActiveSession
+    // Framework-neutral rubric delivery: Claude carries the append in session _meta (empty prefix),
+    // opencode has no preset so the rubric rides back as a prompt prefix the caller must prepend.
+    promptPrefix?: string
+  }> {
     const connection = await this.ensureConnected(request.cwd)
 
-    const meta: Record<string, unknown> = {
-      claudeCode: { options: { settingSources: ['user'] } }
-    }
-
-    if (request.systemPromptAppend) {
-      meta.systemPrompt = {
-        type: 'preset',
-        preset: 'claude_code',
-        append: request.systemPromptAppend
-      }
-    }
+    const setup = this.framework.buildSessionSetup({
+      systemPromptAppends: request.systemPromptAppend ? [request.systemPromptAppend] : []
+    })
 
     const session = await connection.agent
       .buildSession({
         cwd: request.cwd,
         mcpServers: request.mcpServers,
-        _meta: meta
+        ...(setup.meta ? { _meta: setup.meta } : {})
       })
       .start()
 
@@ -2182,7 +2179,7 @@ class AcpRuntime {
     // The orchestrator must call disposeReviewerSession() to unregister and tear it down.
     this.reviewerSessionIds.add(session.sessionId)
 
-    return session
+    return { session, promptPrefix: setup.promptPrefix }
   }
 
   // Disposes an ephemeral reviewer session and unregisters it from the auto-approve set. Safe to call

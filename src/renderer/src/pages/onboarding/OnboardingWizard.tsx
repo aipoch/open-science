@@ -21,7 +21,8 @@ import type {
   ClaudeInstallSource,
   UpsertProviderRequest
 } from '../../../../shared/settings'
-import { useSettingsStore } from '@/stores/settings-store'
+import { isProviderUsableByFramework } from '../../../../shared/settings'
+import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import { DataRootWarning } from '@/components/DataRootWarning'
 import { ClaudeInstallCard } from '../settings/ClaudeInstallCard'
 import { ClaudeStatusCard } from '../settings/ClaudeStatusCard'
@@ -116,6 +117,7 @@ const OnboardingWizard = (): React.JSX.Element => {
   const setAgentFramework = useSettingsStore((state) => state.setAgentFramework)
   const isDetectingOpencode = useSettingsStore((state) => state.isDetectingOpencode)
   const installOpencode = useSettingsStore((state) => state.installOpencode)
+  const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
   const preflight = useSettingsStore((state) => state.preflight)
   const isDetectingClaude = useSettingsStore((state) => state.isDetectingClaude)
   const isInstalling = useSettingsStore((state) => state.isInstalling)
@@ -282,6 +284,25 @@ const OnboardingWizard = (): React.JSX.Element => {
       return
     }
 
+    // A provider that validates can still be unusable by the selected framework (e.g. Claude + an
+    // OpenAI-only gateway, or OpenCode + a Local Claude login). Block that before it becomes the active
+    // provider, so onboarding can't finish with a pair the agent can't actually spawn.
+    if (
+      !isProviderUsableByFramework(
+        { apiType: formValue.apiType, type: formValue.type },
+        { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
+      )
+    ) {
+      const label =
+        agentFrameworks.find((framework) => framework.id === agentFrameworkId)?.displayName ??
+        'the selected agent'
+      setValidationOk(false)
+      setValidationMessage(
+        `This provider isn't compatible with ${label}. Pick a provider whose API format ${label} supports, or change the agent framework.`
+      )
+      return
+    }
+
     setIsSaving(true)
     setValidationMessage(undefined)
 
@@ -348,7 +369,13 @@ const OnboardingWizard = (): React.JSX.Element => {
     }
   }
 
-  const environmentReady = environmentCheck?.ready ?? false
+  // Ready only when the latest check is for the CURRENTLY selected framework and no re-check is in
+  // flight — otherwise switching a ready Claude to an uninstalled OpenCode would let Continue fire on
+  // the stale (Claude) result before the re-detect lands.
+  const environmentReady =
+    !isCheckingEnvironment &&
+    environmentCheck?.ready === true &&
+    environmentCheck.agentFrameworkId === agentFrameworkId
 
   if (isRelaunching) {
     return (

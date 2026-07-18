@@ -128,9 +128,22 @@ describe('buildOpencodeConfig', () => {
       })
     )
 
-    // 'both' → OpenAI on opencode, pointed at the OpenAI base (not the /anthropic route).
+    // 'both' → OpenAI on opencode, pointed at the OpenAI base with /v1 (the @ai-sdk/openai-compatible
+    // client appends /chat/completions), not the /anthropic route.
     expect(config.model).toBe('openai-compatible/deepseek-v4-pro')
-    expect(config.provider['openai-compatible'].options.baseURL).toBe('https://api.deepseek.com')
+    expect(config.provider['openai-compatible'].options.baseURL).toBe('https://api.deepseek.com/v1')
+  })
+
+  it('normalizes a custom OpenAI base to end at /v1 (no doubling)', () => {
+    const rooted = JSON.parse(
+      buildOpencodeConfig({ type: 'custom', baseUrl: 'https://gw.example', model: 'm', apiType: 'openai' })
+    )
+    expect(rooted.provider['openai-compatible'].options.baseURL).toBe('https://gw.example/v1')
+
+    const withV1 = JSON.parse(
+      buildOpencodeConfig({ type: 'custom', baseUrl: 'https://gw.example/v1', model: 'm', apiType: 'openai' })
+    )
+    expect(withV1.provider['openai-compatible'].options.baseURL).toBe('https://gw.example/v1')
   })
 
   it('omits model + models registration when the provider has no model', () => {
