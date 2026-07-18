@@ -564,6 +564,44 @@ describe('ACP runtime session management', () => {
     await connecting
   })
 
+  it('shutdownForUpdateGate reaps a mid-spawn child, then stays non-latching so the app can reconnect', async () => {
+    const midSpawn = new FakeAgentProcess()
+    let gatePromise: Promise<{ reaped: boolean }> | undefined
+    let spawnCount = 0
+    const reconnectSpawns: FakeAgentProcess[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => {
+        spawnCount += 1
+        if (spawnCount === 1) {
+          // Model the update gate landing while a connect is inside spawnAgentProcess: start the gate
+          // teardown, then hand back the freshly-spawned child. The gate must latch shutting-down for
+          // its duration so connectFresh's check reaps this child; otherwise it is assigned after the
+          // generation bump and outlives a clean-reported gate, holding the very files the NSIS
+          // installer must delete open.
+          gatePromise = runtime.shutdownForUpdateGate()
+          return asAgentProcess(midSpawn)
+        }
+        const process = new FakeAgentProcess()
+        startFakeAgent(process, [`gate-reconnect-${reconnectSpawns.length}`])
+        reconnectSpawns.push(process)
+        return asAgentProcess(process)
+      }
+    })
+
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(/shutting down/)
+    expect(gatePromise).toBeDefined()
+    const outcome = await gatePromise
+    expect(outcome).toHaveProperty('reaped')
+    // The mid-spawn child was reaped, not left orphaned holding the install dir open.
+    expect(midSpawn.killed).toBe(true)
+
+    // Non-latching: once the gate resolves, a fresh connect succeeds (no lasting shutting-down latch).
+    await expect(runtime.createSession({ cwd: '/workspace' })).resolves.toBeDefined()
+    expect(reconnectSpawns).toHaveLength(1)
+  })
+
   it('reports conservative Auto when the Agent has no native auto mode', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['auto-session'], {

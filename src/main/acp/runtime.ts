@@ -915,14 +915,29 @@ class AcpRuntime {
     return { reaped: this.lastTreeKillReaped }
   }
 
-  // Non-latching teardown for the pre-update-install gate. Reaps the current agent tree (so the NSIS
-  // installer can delete files the agent held) WITHOUT latching shuttingDown — so if the caller then
-  // refuses the install (degraded teardown), the runtime stays usable and the next prompt lazily
-  // reconnects. A connect racing mid-spawn is still cleaned up by its own generation-mismatch catch path
-  // (disconnect bumps the generation), just not reflected in the returned reaped signal (best-effort).
+  // Teardown for the pre-update-install gate. Reaps the current agent tree (so the NSIS installer can
+  // delete files the agent held) but, unlike shutdownForQuit, does NOT leave shuttingDown latched — if
+  // the caller then refuses the install (degraded teardown), the runtime stays usable and the next
+  // prompt lazily reconnects. It DOES latch shuttingDown for the duration of the teardown and awaits the
+  // in-flight connect (like shutdownForQuit), so a connect racing inside spawnAgentProcess self-aborts
+  // and reaps its freshly-spawned child, reflected in the returned reaped signal. Without that window
+  // the mid-spawn child would be assigned after disconnect bumped the generation and outlive a
+  // clean-reported gate, holding open the very files the installer must delete. The latch is released in
+  // finally so a refused install leaves no lasting no-spawn state.
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
     this.lastTreeKillReaped = true
-    await this.disconnect(false)
+    this.shuttingDown = true
+    // Capture the in-flight connect before disconnect() clears it, matching shutdownForQuit.
+    const inFlight = this.connectInFlight
+    try {
+      await this.disconnect(false)
+      // A connect still mid-spawn hits the shutting-down check and tree-kills its child; await it
+      // (swallowing its rejection) so that kill settles before we report the reaped signal.
+      if (inFlight) await inFlight.catch(() => undefined)
+    } finally {
+      // Non-latching: clear the flag so a refused install leaves the runtime able to reconnect.
+      this.shuttingDown = false
+    }
     return { reaped: this.lastTreeKillReaped }
   }
 
