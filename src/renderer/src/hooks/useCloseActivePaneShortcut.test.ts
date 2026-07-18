@@ -4,7 +4,11 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useNavigationStore } from '@/stores/navigation-store'
-import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import {
+  createInitialPreviewWorkbenchState,
+  usePreviewWorkbenchStore,
+  type PreviewItem
+} from '@/stores/preview-workbench-store'
 
 import {
   decideCloseActivePaneAction,
@@ -36,24 +40,47 @@ const renderHook = (hook: () => void): { unmount: () => void } => {
   }
 }
 
+// Minimal previewable file tab; only identity fields matter for the close ladder.
+const fileTab = (id: string): PreviewItem => ({
+  id,
+  sessionId: 'session',
+  type: 'file',
+  path: `/tmp/${id}`,
+  format: 'text',
+  name: id,
+  title: id
+})
+
 describe('decideCloseActivePaneAction', () => {
-  it('collapses the pane only when it is open in the workspace', () => {
-    expect(decideCloseActivePaneAction({ view: 'workspace', panelState: 'open' })).toBe(
-      'collapse-pane'
-    )
+  it('closes the active tab when the pane is open in the workspace with a tab', () => {
+    expect(
+      decideCloseActivePaneAction({ view: 'workspace', panelState: 'open', hasActiveTab: true })
+    ).toBe('close-active-tab')
+  })
+
+  it('collapses the pane when it is open in the workspace but has no tab', () => {
+    expect(
+      decideCloseActivePaneAction({ view: 'workspace', panelState: 'open', hasActiveTab: false })
+    ).toBe('collapse-pane')
   })
 
   it('closes the window when the pane is collapsed', () => {
-    expect(decideCloseActivePaneAction({ view: 'workspace', panelState: 'collapsed' })).toBe(
-      'close-window'
-    )
+    expect(
+      decideCloseActivePaneAction({
+        view: 'workspace',
+        panelState: 'collapsed',
+        hasActiveTab: true
+      })
+    ).toBe('close-window')
   })
 
   it('closes the window on the Home screen even if a stale panel state is open', () => {
-    expect(decideCloseActivePaneAction({ view: 'home', panelState: 'open' })).toBe('close-window')
-    expect(decideCloseActivePaneAction({ view: 'home', panelState: 'collapsed' })).toBe(
-      'close-window'
-    )
+    expect(
+      decideCloseActivePaneAction({ view: 'home', panelState: 'open', hasActiveTab: true })
+    ).toBe('close-window')
+    expect(
+      decideCloseActivePaneAction({ view: 'home', panelState: 'collapsed', hasActiveTab: false })
+    ).toBe('close-window')
   })
 })
 
@@ -64,6 +91,7 @@ describe('useCloseActivePaneShortcut', () => {
   beforeEach(() => {
     closeActivePane = undefined
     close.mockClear()
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     ;(window as unknown as { api: unknown }).api = {
       window: {
         close,
@@ -79,10 +107,40 @@ describe('useCloseActivePaneShortcut', () => {
 
   afterEach(() => {
     useNavigationStore.setState({ view: 'home' })
-    usePreviewWorkbenchStore.getState().collapsePanel()
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   })
 
-  it('collapses the panel when it is open in the workspace', () => {
+  it('closes the active tab and keeps the panel open when other tabs remain', () => {
+    useNavigationStore.setState({ view: 'workspace' })
+    const preview = usePreviewWorkbenchStore.getState()
+    preview.upsertAndActivateItem(fileTab('a'))
+    preview.upsertItem(fileTab('b'))
+
+    const { unmount } = renderHook(() => useCloseActivePaneShortcut())
+    act(() => closeActivePane?.())
+
+    const state = usePreviewWorkbenchStore.getState()
+    expect(state.items.map((item) => item.id)).toEqual(['b'])
+    expect(state.panelState).toBe('open')
+    expect(close).not.toHaveBeenCalled()
+    unmount()
+  })
+
+  it('collapses the panel in the same keypress when the last tab is closed', () => {
+    useNavigationStore.setState({ view: 'workspace' })
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(fileTab('only'))
+
+    const { unmount } = renderHook(() => useCloseActivePaneShortcut())
+    act(() => closeActivePane?.())
+
+    const state = usePreviewWorkbenchStore.getState()
+    expect(state.items).toHaveLength(0)
+    expect(state.panelState).toBe('collapsed')
+    expect(close).not.toHaveBeenCalled()
+    unmount()
+  })
+
+  it('collapses the panel when it is open in the workspace but empty', () => {
     useNavigationStore.setState({ view: 'workspace' })
     usePreviewWorkbenchStore.getState().openPanel()
 
