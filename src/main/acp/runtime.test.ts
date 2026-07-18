@@ -1530,6 +1530,35 @@ describe('ACP runtime session management', () => {
     ).rejects.toThrow(/not found/)
   })
 
+  it('closes an adopted session on the agent by its own id, not the app-facing id', async () => {
+    const process = new FakeAgentProcess()
+    // Resume rejects (Resource not found), so the runtime adopts a fresh agent session
+    // (adopted-session-1) under the app-facing id (switched-session). The agent only knows the
+    // underlying id, so delete must close/cancel using it, not the app-facing request id.
+    const fakeAgent = startFakeAgent(process, ['adopted-session-1'], { resumeNotFound: true })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const resumed = await runtime.resumeSession({
+      sessionId: 'switched-session',
+      cwd: '/workspace'
+    })
+    expect(resumed.sessionId).toBe('switched-session')
+
+    await runtime.deleteSession({ sessionId: 'switched-session' })
+
+    // The agent received session/close for its own id, not the app-facing one it never knew.
+    expect(fakeAgent.closedSessions).toEqual(['adopted-session-1'])
+    // Local routing state is keyed by the app-facing id and is fully removed.
+    expect(runtime.getSnapshot().sessionIds).toEqual([])
+    await expect(
+      runtime.sendPrompt({ sessionId: 'switched-session', text: 'hello' })
+    ).rejects.toThrow(/not found/)
+  })
+
   it('resumes an existing protocol session so restored conversations can continue', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, [])

@@ -1255,13 +1255,15 @@ class AcpRuntime {
     const session = this.sessions.get(request.sessionId)
 
     if (session) {
+      // Talk to the agent using its own session id: for an adopted session the underlying
+      // agent id (session.sessionId) differs from the app-facing request.sessionId.
       if (this.connection && this.supportsSessionClose) {
         await this.connection.agent.request(acp.methods.agent.session.close, {
-          sessionId: request.sessionId
+          sessionId: session.sessionId
         })
       } else {
         await this.connection?.agent.notify(acp.methods.agent.session.cancel, {
-          sessionId: request.sessionId
+          sessionId: session.sessionId
         })
       }
 
