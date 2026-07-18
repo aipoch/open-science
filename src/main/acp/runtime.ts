@@ -1908,10 +1908,16 @@ class AcpRuntime {
     params: RequestPermissionRequest
   ): Promise<RequestPermissionResponse> {
     // Fork point: a WebFetch/server-side tool that never reaches this line means the "Internal error"
-    // originated elsewhere. Debug level keeps it out of normal runs. Log the tool identity (name/kind),
-    // never the title — a WebFetch title is the full URL with query params (user data).
-    log.debug('permission request received', {
-      tool: extractProviderToolName(params.toolCall) ?? params.toolCall?.kind,
+    // originated elsewhere. Info level so it's a visible audit line (one per prompt): if an MCP call
+    // runs without this appearing, the agent never asked (e.g. an un-gated permission config). Log the
+    // tool identity (name/kind) and whether it looks like MCP — never the title (a WebFetch title is the
+    // full URL with query params, i.e. user data).
+    const toolName = extractProviderToolName(params.toolCall)
+    const isMcp =
+      params.toolCall?.title?.startsWith('mcp__') === true || toolName?.startsWith('mcp__') === true
+    log.info('permission request received', {
+      tool: toolName ?? params.toolCall?.kind,
+      isMcp,
       toolCallId: params.toolCall?.toolCallId,
       sessionId: params.sessionId,
       optionCount: params.options?.length
