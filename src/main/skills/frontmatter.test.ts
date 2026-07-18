@@ -67,6 +67,40 @@ describe('parseFrontmatter', () => {
     expect(fields.name).toBe('demo')
   })
 
+  it('parses a bundle authored with CRLF line endings', () => {
+    const raw = [
+      '---',
+      'name: crlf-skill',
+      'description: Does a thing.',
+      'license: MIT',
+      '---',
+      '',
+      '# CRLF Skill'
+    ].join('\r\n')
+    const { fields, body } = parseFrontmatter(raw)
+    expect(fields).toMatchObject({
+      name: 'crlf-skill',
+      description: 'Does a thing.',
+      license: 'MIT'
+    })
+    expect(body.startsWith('# CRLF Skill')).toBe(true)
+  })
+
+  it('joins a CRLF folded block scalar (>) into a single spaced line', () => {
+    const raw = [
+      '---',
+      'name: demo',
+      'description: >',
+      '  first line',
+      '  second line',
+      '---',
+      '',
+      '# Demo'
+    ].join('\r\n')
+    const { fields } = parseFrontmatter(raw)
+    expect(fields.description).toBe('first line second line')
+  })
+
   it('ignores nested (indented) keys after a block scalar, as a flat reader', () => {
     const raw = [
       '---',

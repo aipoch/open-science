@@ -9,14 +9,16 @@ import { load as loadYaml, FAILSAFE_SCHEMA } from 'js-yaml'
 // a comma-separated string and nested maps are dropped. A malformed block is tolerated (empty fields +
 // full body) rather than throwing, so one bad skill can't break the catalog.
 const parseFrontmatter = (raw: string): { fields: Record<string, string>; body: string } => {
-  const match = /^---\n([\s\S]*?)\n---\n?/.exec(raw)
+  // Normalize CRLF/CR to LF so bundles authored on Windows parse the same as Unix ones.
+  const normalized = raw.replace(/\r\n?/g, '\n')
+  const match = /^---\n([\s\S]*?)\n---\n?/.exec(normalized)
 
   if (!match) {
     return { fields: {}, body: raw }
   }
 
   // Drop blank lines left between the closing `---` and the first body line so the body renders clean.
-  const body = raw.slice(match[0].length).replace(/^\n+/, '')
+  const body = normalized.slice(match[0].length).replace(/^\n+/, '')
 
   let parsed: unknown
   try {
