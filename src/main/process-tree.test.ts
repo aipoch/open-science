@@ -62,7 +62,7 @@ describe('terminateProcessTree (win32)', () => {
     )
 
     killer.emit('exit', 0, null)
-    await expect(pending).resolves.toBeUndefined()
+    await expect(pending).resolves.toEqual({ reaped: true })
     // A clean taskkill reaps the tree; no direct fallback kill is needed.
     expect(child.kill).not.toHaveBeenCalled()
   })
@@ -102,7 +102,8 @@ describe('terminateProcessTree (win32)', () => {
     await Promise.resolve()
     child.emit('exit', 0, null)
 
-    await expect(pending).resolves.toBeUndefined()
+    // Fallback direct kill can't reach grandchildren taskkill would have reaped, so reaped is false.
+    await expect(pending).resolves.toEqual({ reaped: false })
     expect(child.kill).toHaveBeenCalledTimes(1)
     expect(log.error).toHaveBeenCalled()
   })
@@ -120,7 +121,7 @@ describe('terminateProcessTree (win32)', () => {
     await Promise.resolve()
     child.emit('exit', 0, null)
 
-    await expect(pending).resolves.toBeUndefined()
+    await expect(pending).resolves.toEqual({ reaped: false })
     expect(child.kill).toHaveBeenCalledTimes(1)
     expect(log.error).toHaveBeenCalled()
   })
@@ -140,7 +141,7 @@ describe('terminateProcessTree (win32)', () => {
     expect(child.kill).toHaveBeenCalledTimes(1)
     expect(log.error).toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(3_000)
-    await expect(pending).resolves.toBeUndefined()
+    await expect(pending).resolves.toEqual({ reaped: false })
   })
 
   it('falls back to a direct kill when spawn itself throws synchronously', async () => {
@@ -154,16 +155,17 @@ describe('terminateProcessTree (win32)', () => {
     const pending = terminateProcessTree(child as never, undefined, log)
     child.emit('exit', 0, null)
 
-    await expect(pending).resolves.toBeUndefined()
+    await expect(pending).resolves.toEqual({ reaped: false })
     expect(child.kill).toHaveBeenCalledTimes(1)
     expect(log.error).toHaveBeenCalled()
   })
 
-  it('with an undefined pid does not spawn taskkill and does not kill', async () => {
+  it('with an undefined pid does not spawn taskkill and reports the tree reaped', async () => {
     setPlatform('win32')
     const child = new FakeChild(undefined)
 
-    await expect(terminateProcessTree(child as never)).resolves.toBeUndefined()
+    // No pid means nothing spawned/already gone — nothing left to reap.
+    await expect(terminateProcessTree(child as never)).resolves.toEqual({ reaped: true })
     expect(spawnMock).not.toHaveBeenCalled()
     expect(child.kill).not.toHaveBeenCalled()
   })
@@ -189,7 +191,7 @@ describe('terminateProcessTree (posix)', () => {
     await Promise.resolve()
 
     child.emit('exit', 0, null)
-    await expect(pending).resolves.toBeUndefined()
+    await expect(pending).resolves.toEqual({ reaped: true })
 
     expect(killSpy).toHaveBeenCalledWith(1001, 'SIGTERM')
     expect(killSpy).toHaveBeenCalledWith(1002, 'SIGTERM')
@@ -216,7 +218,8 @@ describe('terminateProcessTree (posix)', () => {
     // Graceful grace elapses with the child still alive -> escalate.
     await vi.advanceTimersByTimeAsync(3_000)
     await vi.advanceTimersByTimeAsync(1_000)
-    await expect(pending).resolves.toBeUndefined()
+    // Survivors stay alive and the child never exits, so the tree was not cleanly reaped.
+    await expect(pending).resolves.toEqual({ reaped: false })
 
     expect(killSpy).toHaveBeenCalledWith(1001, 'SIGTERM')
     expect(killSpy).toHaveBeenCalledWith(1001, 'SIGKILL')
@@ -239,7 +242,8 @@ describe('terminateProcessTree (posix)', () => {
     await Promise.resolve()
 
     child.emit('exit', 0, null)
-    await expect(pending).resolves.toBeUndefined()
+    // No descendants discovered and the child exited, so the (degenerate) tree counts as reaped.
+    await expect(pending).resolves.toEqual({ reaped: true })
     expect(killSpy).not.toHaveBeenCalledWith(expect.any(Number), 'SIGTERM')
     expect(child.kill).toHaveBeenCalledWith('SIGTERM')
   })
@@ -259,7 +263,8 @@ describe('terminateProcessTree (posix)', () => {
     expect(ps.kill).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(3_000)
     await vi.advanceTimersByTimeAsync(1_000)
-    await expect(pending).resolves.toBeUndefined()
+    // The child never exits within its grace, so reaped is false.
+    await expect(pending).resolves.toEqual({ reaped: false })
   })
 
   it('resolves immediately when the child has already exited', async () => {
@@ -275,6 +280,6 @@ describe('terminateProcessTree (posix)', () => {
     const pending = terminateProcessTree(child as never)
     ps.emit('close', 0)
 
-    await expect(pending).resolves.toBeUndefined()
+    await expect(pending).resolves.toEqual({ reaped: true })
   })
 })

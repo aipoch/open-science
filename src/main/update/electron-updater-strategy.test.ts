@@ -116,6 +116,54 @@ describe('ElectronUpdaterStrategy', () => {
     expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true)
   })
 
+  it('apply runs the install gate before quitAndInstall when the teardown is clean', async () => {
+    const updater = new FakeUpdater()
+    const gate = vi.fn(async () => ({ completed: true, reaped: true }))
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn()
+    })
+    strategy.setInstallGate(gate)
+
+    await strategy.apply()
+
+    expect(gate).toHaveBeenCalledTimes(1)
+    expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
+  })
+
+  it('apply refuses to install and reports an error when the teardown times out', async () => {
+    const updater = new FakeUpdater()
+    const gate = vi.fn(async () => ({ completed: false, reaped: false }))
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      installGate: gate
+    })
+
+    const status = await strategy.apply()
+
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+    expect(status.state).toBe('error')
+  })
+
+  it('apply refuses to install when the teardown completed but a tree was not cleanly reaped', async () => {
+    const updater = new FakeUpdater()
+    const gate = vi.fn(async () => ({ completed: true, reaped: false }))
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      installGate: gate
+    })
+
+    const status = await strategy.apply()
+
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+    expect(status.state).toBe('error')
+  })
+
   it('hydrates notes from the CDN manifest when the version matches', async () => {
     const updater = new FakeUpdater()
     const strategy = new ElectronUpdaterStrategy({

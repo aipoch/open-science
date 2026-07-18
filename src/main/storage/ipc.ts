@@ -30,8 +30,14 @@ type SessionSource = { projectName: string; sessionId: string }
 type StorageIpcDeps = {
   // disconnect drives the migration session-interrupt; shutdownForQuit is the awaited quit/relaunch
   // teardown used by cleanRelaunch (via shutdownBackends).
-  runtime: { disconnect: () => Promise<unknown>; shutdownForQuit: () => Promise<void> }
-  notebook: { shutdownAll: () => Promise<void>; getActiveNotebookSessions: () => SessionSource[] }
+  runtime: {
+    disconnect: () => Promise<unknown>
+    shutdownForQuit: () => Promise<{ reaped: boolean }>
+  }
+  notebook: {
+    shutdownAll: () => Promise<{ reaped: boolean }>
+    getActiveNotebookSessions: () => SessionSource[]
+  }
   getActivePromptSessions: () => SessionSource[]
   settingsService: {
     setDataRoot: (path: string) => Promise<void>

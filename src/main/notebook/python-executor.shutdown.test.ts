@@ -5,14 +5,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 // A terminateProcessTree double whose promise we resolve by hand, so the test can prove shutdown()
 // actually awaits an in-flight tree-kill that a hard timeout started (rather than racing app.exit).
 const { terminateMock, resolveTermination } = vi.hoisted(() => {
-  let resolveFn: () => void = () => {}
+  let resolveFn: (result: { reaped: boolean }) => void = () => {}
   const terminateMock = vi.fn(
     () =>
-      new Promise<void>((resolve) => {
+      new Promise<{ reaped: boolean }>((resolve) => {
         resolveFn = resolve
       })
   )
-  return { terminateMock, resolveTermination: (): void => resolveFn() }
+  return { terminateMock, resolveTermination: (): void => resolveFn({ reaped: true }) }
 })
 vi.mock('../process-tree', () => ({ terminateProcessTree: terminateMock }))
 

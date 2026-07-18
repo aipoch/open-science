@@ -4,7 +4,10 @@ import { autoUpdater } from 'electron-updater'
 import { APP } from '../../shared/app-config'
 import type { UpdateStatus } from '../../shared/update'
 import { fetchManifest } from './manifest'
-import type { UpdateStrategy } from './strategy'
+import type { InstallGate, UpdateStrategy } from './strategy'
+
+// Minimal logger surface so tests inject a spy without pulling electron-log.
+type UpdaterLogger = { info: (msg: string) => void; error: (msg: string, err?: unknown) => void }
 
 // Structural subset of electron-updater's autoUpdater we depend on, so tests can inject a fake without
 // pulling a real Electron runtime.
@@ -25,6 +28,10 @@ export type ElectronUpdaterDeps = {
   // Injectable for tests; defaults to the public stable manifest.
   fetchImpl?: typeof fetch
   manifestUrl?: string
+  // Pre-install backend-shutdown gate; usually injected later via setInstallGate once the runtime exists.
+  installGate?: InstallGate
+  // Diagnostics sink for the apply path; defaults to a no-op so unit tests stay quiet.
+  log?: UpdaterLogger
 }
 
 // Default broadcast pushes to every live window (mirrors service.ts). Never runs in unit tests, which
@@ -58,10 +65,13 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private readonly broadcast: (channel: string, payload: unknown) => void
   private readonly fetchImpl?: typeof fetch
   private readonly manifestUrl: string
+  private readonly log: UpdaterLogger
   private status: UpdateStatus
   // In-flight manifest notes fetch for the current update, awaited by check() so the returned
   // status reflects the hydrated notes.
   private notesHydration?: Promise<void>
+  // Pre-install backend-shutdown gate, injected once the runtime exists (see ipc.ts).
+  private installGate?: InstallGate
 
   constructor(deps: ElectronUpdaterDeps = {}) {
     this.updater = deps.updater ?? (autoUpdater as unknown as MinimalAutoUpdater)
@@ -69,11 +79,17 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.broadcast = deps.broadcast ?? defaultBroadcast
     this.fetchImpl = deps.fetchImpl
     this.manifestUrl = deps.manifestUrl ?? APP.update.manifestUrl
+    this.log = deps.log ?? { info: () => {}, error: () => {} }
+    this.installGate = deps.installGate
     this.status = { state: 'idle', current: this.currentVersion, applyKind: 'restart' }
 
     this.updater.autoDownload = false
     this.updater.autoInstallOnAppQuit = false
     this.subscribe()
+  }
+
+  setInstallGate(gate: InstallGate): void {
+    this.installGate = gate
   }
 
   private subscribe(): void {
@@ -169,6 +185,25 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   // relaunches into the new version (per-user install = no UAC prompt). On macOS Squirrel.Mac swaps
   // the .app and relaunches; it ignores isSilent, so the same call is correct there too.
   async apply(): Promise<UpdateStatus> {
+    // Stop the agent + notebook process trees BEFORE handing off to the installer. Its uninstall step
+    // deletes the running app's files, and on Windows an executable/DLL still mapped by a background
+    // child (agent CLI, python kernel, conda) is locked — the classic "Failed to uninstall old
+    // application files" error. If the teardown is degraded (budget elapsed, or taskkill fell back and
+    // may have left grandchildren), refuse the install rather than fail mid-uninstall: the gate is
+    // non-latching, so the app stays usable and the user can retry (fewer live processes next time).
+    if (this.installGate) {
+      const readiness = await this.installGate()
+      if (!readiness.completed || !readiness.reaped) {
+        this.log.error('update install gate refused: backend teardown degraded', readiness)
+        this.setStatus({
+          state: 'error',
+          error: 'Could not fully stop background processes before updating. Please try again.'
+        })
+        return this.status
+      }
+      this.log.info('update install gate cleared; proceeding to quitAndInstall')
+    }
+
     this.updater.quitAndInstall(true, true)
     return this.status
   }

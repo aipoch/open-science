@@ -233,6 +233,10 @@ class AcpRuntime {
   // Latched by shutdown() on app quit. A connect can be mid-spawn (resolveSpawnConfig is async) when
   // quit fires, so this lets the post-spawn path kill a child that was created after killAgentProcess ran.
   private shuttingDown = false
+  // AND-accumulated reaped result of the tree kills performed during the current teardown. Reset to true
+  // at the start of shutdownForQuit/shutdownForUpdateGate, then narrowed by each terminateProcessTree so
+  // those methods can report whether the agent tree was cleanly reaped (vs a degraded taskkill fallback).
+  private lastTreeKillReaped = true
   private connection: ClientConnection | undefined
   private connectInFlight: Promise<AcpStateSnapshot> | undefined
   private connectionGeneration = 0
@@ -465,7 +469,8 @@ class AcpRuntime {
       // an orphan. Awaited (not a bare kill) so the quit path, which awaits this in-flight connect, does
       // not exit before the child's whole tree is reaped on Windows.
       if (this.shuttingDown) {
-        await terminateProcessTree(agentProcess, undefined, log)
+        const result = await terminateProcessTree(agentProcess, undefined, log)
+        this.lastTreeKillReaped = this.lastTreeKillReaped && result.reaped
         throw new Error('ACP runtime is shutting down.')
       }
 
@@ -891,8 +896,10 @@ class AcpRuntime {
   // Awaitable quit/relaunch teardown. Latches shuttingDown FIRST so a connect that is mid-spawn when
   // quit lands self-aborts and kills its freshly-spawned child (see connectFresh). Unlike shutdown(),
   // this can be awaited, so a caller that follows it with app.exit(0) is guaranteed no orphaned agent
-  // remains — assigned, connecting, or mid-spawn.
-  async shutdownForQuit(): Promise<void> {
+  // remains — assigned, connecting, or mid-spawn. Returns { reaped } so the caller can tell a clean
+  // teardown from a degraded one (taskkill fallback left grandchildren) before committing to app.exit.
+  async shutdownForQuit(): Promise<{ reaped: boolean }> {
+    this.lastTreeKillReaped = true
     this.shuttingDown = true
     // Capture the in-flight connect before disconnect() clears it.
     const inFlight = this.connectInFlight
@@ -905,6 +912,18 @@ class AcpRuntime {
     // the shutting-down check and tree-kills its freshly-spawned child. Await it (swallowing its
     // rejection, bounded by shutdownBackends' timeout) so that kill completes before we resolve.
     if (inFlight) await inFlight.catch(() => undefined)
+    return { reaped: this.lastTreeKillReaped }
+  }
+
+  // Non-latching teardown for the pre-update-install gate. Reaps the current agent tree (so the NSIS
+  // installer can delete files the agent held) WITHOUT latching shuttingDown — so if the caller then
+  // refuses the install (degraded teardown), the runtime stays usable and the next prompt lazily
+  // reconnects. A connect racing mid-spawn is still cleaned up by its own generation-mismatch catch path
+  // (disconnect bumps the generation), just not reflected in the returned reaped signal (best-effort).
+  async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
+    this.lastTreeKillReaped = true
+    await this.disconnect(false)
+    return { reaped: this.lastTreeKillReaped }
   }
 
   // Applies an active-provider change without interrupting the user. The agent bakes its provider env in
@@ -1007,7 +1026,9 @@ class AcpRuntime {
     this.agentProcess = undefined
     if (!child) return
     this.expectedProcessExits.add(child)
-    await terminateProcessTree(child, undefined, log)
+    const result = await terminateProcessTree(child, undefined, log)
+    // Narrow the current teardown's reaped accumulator (reset by shutdownForQuit/shutdownForUpdateGate).
+    this.lastTreeKillReaped = this.lastTreeKillReaped && result.reaped
   }
 
   private nextConnectionGeneration(): number {

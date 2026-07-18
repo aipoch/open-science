@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { delimiter } from 'node:path'
 import { createInterface, type Interface } from 'node:readline'
 
-import { terminateProcessTree } from '../process-tree'
+import { terminateProcessTree, type ProcessTreeKillResult } from '../process-tree'
 import { resolvePythonCommand } from './python-command'
 import type {
   NotebookExecutionRequest,
@@ -269,7 +269,7 @@ class NotebookPythonExecutor implements NotebookExecutor {
   // In-flight tree-kills started by a hard timeout, which drops the interpreter from reuse BEFORE
   // reaping it. shutdown() awaits these so a quit landing right after a timeout cannot app.exit before
   // the kill (notably Windows taskkill /T) has finished tearing the tree down.
-  private terminations = new Set<Promise<void>>()
+  private terminations = new Set<Promise<ProcessTreeKillResult>>()
 
   // Leading args (e.g. the Windows `py` launcher's `-3`) prepended before the bridge invocation.
   private baseArgs: string[] = []
@@ -344,8 +344,10 @@ class NotebookPythonExecutor implements NotebookExecutor {
     this.terminations.add(termination)
   }
 
-  // Stops the interpreter and rejects any caller waiting for an execution result.
-  async shutdown(): Promise<void> {
+  // Stops the interpreter and rejects any caller waiting for an execution result. Returns { reaped }:
+  // true only when the interpreter tree was cleanly reaped (and any in-flight timeout kill settled),
+  // so the update-install gate can tell a released-handles teardown from a degraded one.
+  async shutdown(): Promise<ProcessTreeKillResult> {
     if (this.pending) {
       const pending = this.pending
 
@@ -360,6 +362,8 @@ class NotebookPythonExecutor implements NotebookExecutor {
     const child = this.child
     this.child = undefined
 
+    let reaped = true
+
     if (child && !child.killed) {
       // Wait for the OS to actually reap the process before returning. On Windows the file handles
       // the interpreter holds under the cwd/runtime/data dirs are released only once it has fully
@@ -372,22 +376,37 @@ class NotebookPythonExecutor implements NotebookExecutor {
 
       // Tree-kill (Windows taskkill /T reaps grandchildren) then wait for the real exit so the cwd/
       // runtime/data file handles are released before a caller deletes those dirs.
-      await terminateProcessTree(child)
+      const result = await terminateProcessTree(child)
+      reaped = reaped && result.reaped
       await Promise.race([exited, delay(SHUTDOWN_EXIT_GRACE_MS)])
     }
 
     // A hard timeout may have already dropped an interpreter and started tree-killing it before this
-    // shutdown ran; await that kill too so quit never exits ahead of an in-flight taskkill /T.
+    // shutdown ran; await that kill too so quit never exits ahead of an in-flight taskkill /T. A kill
+    // that has not settled within the grace leaves reaped unconfirmed (false).
     if (this.terminations.size > 0) {
-      await Promise.race([
-        Promise.allSettled([...this.terminations]),
-        delay(SHUTDOWN_EXIT_GRACE_MS)
+      const settled = await Promise.race([
+        Promise.allSettled([...this.terminations]).then((results) => ({
+          timedOut: false,
+          results
+        })),
+        delay(SHUTDOWN_EXIT_GRACE_MS).then(() => ({ timedOut: true, results: [] }))
       ])
+
+      if (settled.timedOut) {
+        reaped = false
+      } else {
+        for (const outcome of settled.results) {
+          reaped = reaped && outcome.status === 'fulfilled' && outcome.value.reaped
+        }
+      }
     }
 
     this.currentCwd = undefined
     this.passthroughStdout = []
     this.passthroughStderr = []
+
+    return { reaped }
   }
 
   // Starts the bridge lazily and reuses it until the child exits or is killed.

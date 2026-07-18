@@ -49,7 +49,8 @@ type NotebookExecutionResult = {
 
 type NotebookExecutor = {
   execute: (request: NotebookExecutionRequest) => Promise<NotebookExecutionResult>
-  shutdown: () => Promise<void>
+  // Returns { reaped } so shutdownAll can report whether every kernel tree was cleanly reaped.
+  shutdown: () => Promise<{ reaped: boolean }>
 }
 
 type NotebookRuntimeServiceCallbacks = {
@@ -510,11 +511,16 @@ class NotebookRuntimeService {
   }
 
   // Shuts down every live interpreter, used by app-level cleanup paths.
-  async shutdownAll(): Promise<void> {
-    await Promise.all(
+  // Shuts down every kernel. Returns { reaped }: true only when every interpreter tree was cleanly
+  // reaped, so the update-install gate can refuse to trigger the NSIS uninstall while a kernel may
+  // still hold file handles under the install dir.
+  async shutdownAll(): Promise<{ reaped: boolean }> {
+    const results = await Promise.all(
       Array.from(this.sessions.values()).map((session) => session.executor.shutdown())
     )
     this.sessions.clear()
+
+    return { reaped: results.every((result) => result.reaped) }
   }
 
   // Lists sessions with a cell mid-execution, for the pre-migration active-session warning.

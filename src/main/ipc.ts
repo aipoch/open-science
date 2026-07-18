@@ -15,6 +15,7 @@ import { ConnectorService } from './connectors/service'
 import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './connectors/provision'
 import { registerFileSaveHandlers } from './file-save'
 import { registerGithubIpcHandlers } from './github-ipc'
+import { BackendShutdownCoordinator, UPDATE_SHUTDOWN_BUDGET_MS } from './lifecycle-shutdown'
 import { registerLogsIpcHandlers } from './logs-ipc'
 import { registerWindowIpcHandlers } from './window-ipc'
 import { createLogger } from './logger'
@@ -104,6 +105,7 @@ const registerIpcHandlers = async ({
 }: IpcRegistrationOptions): Promise<{
   runtime: ReturnType<typeof registerAcpIpcHandlers>
   notebook: ReturnType<typeof createDefaultNotebookRuntimeService>
+  shutdownCoordinator: BackendShutdownCoordinator
 }> => {
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const settingsService = createDefaultSettingsService()
@@ -239,6 +241,20 @@ const registerIpcHandlers = async ({
     settingsService
   })
   runtimeRef.current = runtime
+  // Single shared teardown owner for both the before-quit handler (index.ts) and the pre-update-install
+  // gate. Built here because it needs the runtime, which does not exist when update IPC is registered
+  // above — so the gate is injected via a late-bound closure rather than at strategy construction.
+  const shutdownCoordinator = new BackendShutdownCoordinator({
+    runtime,
+    notebook: notebookService,
+    log: createLogger('shutdown')
+  })
+  // Reap the agent + kernel trees before an in-place install so the NSIS uninstall step never hits files
+  // still locked by a background child. Non-latching, so a refused (degraded) install leaves the app
+  // usable. No-op on the manifest fallback strategy, which does not implement setInstallGate.
+  updateService.setInstallGate?.(() =>
+    shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS)
+  )
   // Switching the active provider takes effect on the next reconnect. Defer that reconnect until any
   // in-flight prompt finishes so switching never interrupts a running turn; the shared config dir keeps
   // the conversation's context across the switch.
@@ -280,7 +296,7 @@ const registerIpcHandlers = async ({
 
   // Return the long-lived backend handles so the app lifecycle (before-quit) can shut them down
   // cleanly on quit — the agent process tree and every notebook kernel.
-  return { runtime, notebook: notebookService }
+  return { runtime, notebook: notebookService, shutdownCoordinator }
 }
 
 export { registerIpcHandlers }

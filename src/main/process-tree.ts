@@ -5,6 +5,12 @@ import type { ChildProcess } from 'node:child_process'
 // omit it. Kept minimal so process-tree stays free of the Electron logger's import graph.
 export type ProcessTreeLogger = { error: (message: string, error?: unknown) => void }
 
+// Outcome of a tree teardown. `reaped` is true only when we are confident the WHOLE tree is gone:
+// Windows taskkill /T exited 0, or POSIX left no surviving descendant and the direct child exited.
+// A fallback path (taskkill failed → only the parent was direct-killed) reports reaped:false so a
+// caller that must guarantee released file handles (the update-install gate) can refuse to proceed.
+export type ProcessTreeKillResult = { reaped: boolean }
+
 // Upper bound for awaiting a direct child's real exit (POSIX) or taskkill's own completion (Windows).
 // Bounded so a wedged process can never hang app teardown; the caller (before-quit) also time-bounds
 // the whole shutdown, this is a second, tighter guard scoped to a single tree.
@@ -165,8 +171,9 @@ const terminateWindowsTree = async (
   child: ChildProcess,
   signal: NodeJS.Signals | undefined,
   log: ProcessTreeLogger | undefined
-): Promise<void> => {
-  if (child.pid === undefined) return
+): Promise<ProcessTreeKillResult> => {
+  // No pid means the process never spawned or is already gone — nothing left to reap.
+  if (child.pid === undefined) return { reaped: true }
 
   let killer: ChildProcess
   try {
@@ -175,7 +182,8 @@ const terminateWindowsTree = async (
     log?.error('taskkill failed to launch; falling back to direct kill', error)
     killDirectChild(child, signal)
     await waitForExit(child, TERMINATE_GRACE_MS)
-    return
+    // Direct kill reaches only the parent; grandchildren may survive, so the tree is not cleanly reaped.
+    return { reaped: false }
   }
 
   const reaped = await new Promise<boolean>((resolve) => {
@@ -211,7 +219,11 @@ const terminateWindowsTree = async (
     }
     killDirectChild(child, signal)
     await waitForExit(child, TERMINATE_GRACE_MS)
+    // The fallback direct kill cannot reach grandchildren taskkill would have reaped.
+    return { reaped: false }
   }
+
+  return { reaped: true }
 }
 
 // POSIX tree teardown. child.kill() reaches only the immediate child, so descendants are discovered via
@@ -222,7 +234,7 @@ const terminatePosixTree = async (
   child: ChildProcess,
   signal: NodeJS.Signals | undefined,
   log: ProcessTreeLogger | undefined
-): Promise<void> => {
+): Promise<ProcessTreeKillResult> => {
   const gracefulSignal = signal ?? 'SIGTERM'
   const descendants = child.pid === undefined ? [] : await collectDescendantPids(child.pid)
 
@@ -232,8 +244,9 @@ const terminatePosixTree = async (
   const exited = await waitForExit(child, TERMINATE_GRACE_MS)
   const survivors = descendants.filter(isProcessAlive)
 
-  if (exited && survivors.length === 0) return
+  if (exited && survivors.length === 0) return { reaped: true }
 
+  let childExited = exited
   if (survivors.length > 0) {
     log?.error(
       `process tree left ${survivors.length} descendant(s) alive after ${gracefulSignal}; escalating to SIGKILL`
@@ -245,23 +258,26 @@ const terminatePosixTree = async (
       `process ${child.pid ?? '(no pid)'} did not exit after ${gracefulSignal}; escalating to SIGKILL`
     )
     forceKillChild(child)
-    await waitForExit(child, SIGKILL_GRACE_MS)
+    childExited = await waitForExit(child, SIGKILL_GRACE_MS)
   }
+
+  // Re-check after SIGKILL: reaped only if the direct child exited and no descendant is still alive.
+  return { reaped: childExited && descendants.filter(isProcessAlive).length === 0 }
 }
 
 // Terminates a child process and every descendant it spawned, then waits for the direct child to actually
 // exit — escalating to SIGKILL anything still alive. On Windows the tree is reaped with taskkill /T /F
 // (with a direct-kill fallback); on POSIX descendants are found via `ps`, signaled, and SIGKILL-escalated.
-// This never rejects: any failure resolves to void so a kill can never surface into the caller
-// (before-quit -> app.exit).
+// Returns { reaped } so a caller that must guarantee released handles can tell a clean tree teardown
+// from a degraded fallback. This never rejects: any failure resolves (reaped:false) so a kill can never
+// surface into the caller (before-quit -> app.exit).
 export const terminateProcessTree = async (
   child: ChildProcess,
   signal?: NodeJS.Signals,
   log?: ProcessTreeLogger
-): Promise<void> => {
+): Promise<ProcessTreeKillResult> => {
   if (process.platform === 'win32') {
-    await terminateWindowsTree(child, signal, log)
-    return
+    return terminateWindowsTree(child, signal, log)
   }
-  await terminatePosixTree(child, signal, log)
+  return terminatePosixTree(child, signal, log)
 }

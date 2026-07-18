@@ -76,7 +76,7 @@ describe('notebook runtime service', () => {
             ]
           }
         },
-        shutdown: async () => undefined
+        shutdown: async () => ({ reaped: true })
       })
     })
 
@@ -174,7 +174,7 @@ describe('notebook runtime service', () => {
           cwdAfter: request.cwd,
           outputs: []
         }),
-        shutdown: async () => undefined
+        shutdown: async () => ({ reaped: true })
       })
     })
 
@@ -211,7 +211,7 @@ describe('notebook runtime service', () => {
           cwdAfter: request.cwd,
           outputs: []
         }),
-        shutdown: async () => undefined
+        shutdown: async () => ({ reaped: true })
       })
     })
 
@@ -264,7 +264,7 @@ describe('notebook runtime service', () => {
           cwdAfter: request.cwd,
           outputs: []
         }),
-        shutdown: async () => undefined
+        shutdown: async () => ({ reaped: true })
       })
     })
 
@@ -329,7 +329,7 @@ describe('notebook runtime service', () => {
             outputs: []
           }
         },
-        shutdown: async () => undefined
+        shutdown: async () => ({ reaped: true })
       })
     })
 
@@ -387,7 +387,7 @@ describe('notebook runtime service', () => {
           cwdAfter: request.cwd,
           outputs: []
         }),
-        shutdown: async () => undefined
+        shutdown: async () => ({ reaped: true })
       })
     })
 
@@ -457,7 +457,7 @@ describe('notebook runtime service', () => {
             workingFiles: []
           }
         },
-        shutdown: async () => undefined
+        shutdown: async () => ({ reaped: true })
       })
     })
 
@@ -536,7 +536,7 @@ describe('notebook runtime service', () => {
             workingFiles: []
           }
         },
-        shutdown: async () => undefined
+        shutdown: async () => ({ reaped: true })
       })
     })
 
@@ -581,7 +581,7 @@ describe('notebook runtime service migration write-gate', () => {
         execute: async (): Promise<NotebookExecutionResult> => {
           throw new Error('executor should never run while the gate is up')
         },
-        shutdown: async () => undefined
+        shutdown: async () => ({ reaped: true })
       })
     })
 
@@ -619,7 +619,7 @@ describe('notebook runtime service migration write-gate', () => {
         execute: async (): Promise<NotebookExecutionResult> => {
           throw new Error('executor should not run')
         },
-        shutdown: async () => undefined
+        shutdown: async () => ({ reaped: true })
       })
     })
 
@@ -658,7 +658,7 @@ describe('notebook runtime service migration write-gate', () => {
                 workingFiles: []
               })
           }),
-        shutdown: async () => undefined
+        shutdown: async () => ({ reaped: true })
       })
     })
     const begin = await service.beginCodeCell({
@@ -730,7 +730,7 @@ describe('notebook runtime service migration write-gate', () => {
           outputs: [],
           workingFiles: []
         }),
-        shutdown: async () => undefined
+        shutdown: async () => ({ reaped: true })
       })
     })
 

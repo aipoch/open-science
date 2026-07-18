@@ -65,7 +65,6 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { MANAGED_PREVIEW_SCHEME },
         { installMigrationQuitGuard, isMigrationInProgress },
         { createAppTray },
-        { shutdownBackends },
         { installAppLifecycle }
       ] = await Promise.all([
         import('./ipc'),
@@ -73,7 +72,6 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./managed-preview-resources'),
         import('./storage/migration-state'),
         import('./tray'),
-        import('./lifecycle-shutdown'),
         import('./app-lifecycle')
       ])
 
@@ -124,17 +122,15 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       })
 
       // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
-      const { runtime, notebook } = await registerIpcHandlers({ mainEntryPath })
+      const { shutdownCoordinator } = await registerIpcHandlers({ mainEntryPath })
 
       return {
         installMigrationQuitGuard,
         isMigrationInProgress,
         createMainWindow,
         createAppTray,
-        shutdownBackends,
+        shutdownCoordinator,
         installAppLifecycle,
-        runtime,
-        notebook,
         log
       }
     },
@@ -150,8 +146,12 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         app,
         createMainWindow: ctx.createMainWindow,
         createTray: (handlers) => ctx.createAppTray({ iconPath: icon, ...handlers }),
-        shutdownBackends: () =>
-          ctx.shutdownBackends({ runtime: ctx.runtime, notebook: ctx.notebook, log: ctx.log }),
+        // Latching quit teardown via the shared coordinator (the same one the update gate uses). The
+        // coordinator awaits the agent + kernel process trees so a Windows taskkill /T completes before
+        // app.exit; runForQuit bounds it so a stuck backend can't hang quit.
+        shutdownBackends: async () => {
+          await ctx.shutdownCoordinator.runForQuit()
+        },
         isMigrationInProgress: ctx.isMigrationInProgress,
         quit: () => app.quit(),
         countWindows: () => BrowserWindow.getAllWindows().length

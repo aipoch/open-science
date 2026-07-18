@@ -65,10 +65,10 @@ type FakeDeps = Parameters<typeof registerStorageIpcHandlers>[0]
 const fakeDeps = (overrides: Partial<FakeDeps> = {}): FakeDeps => ({
   runtime: {
     disconnect: vi.fn().mockResolvedValue(undefined),
-    shutdownForQuit: vi.fn().mockResolvedValue(undefined)
+    shutdownForQuit: vi.fn().mockResolvedValue({ reaped: true })
   },
   notebook: {
-    shutdownAll: vi.fn().mockResolvedValue(undefined),
+    shutdownAll: vi.fn().mockResolvedValue({ reaped: true }),
     getActiveNotebookSessions: vi.fn().mockReturnValue([])
   },
   getActivePromptSessions: vi.fn().mockReturnValue([]),

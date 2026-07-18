@@ -236,7 +236,9 @@ const sameInventory = (left: MigrationInventory, right: MigrationInventory): boo
 type MigrationCopyDeps = {
   currentDataRoot: string
   runtime: { disconnect: () => Promise<unknown> }
-  notebook: { shutdownAll: () => Promise<void> }
+  // Return ignored (awaited only), so kept as Promise<unknown> — mirrors runtime.disconnect above and
+  // stays compatible with both the real service (now returns { reaped }) and void test fakes.
+  notebook: { shutdownAll: () => Promise<unknown> }
   // Injectable for tests; defaults to the real ./data-migration engine function.
   copyAndVerify?: (opts: {
     from: string

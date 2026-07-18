@@ -470,14 +470,57 @@ describe('ACP runtime session management', () => {
     expect(process.killed).toBe(false)
 
     // The awaited quit path must have terminated the agent by the time it resolves.
-    await runtime.shutdownForQuit()
+    const outcome = await runtime.shutdownForQuit()
+    expect(outcome).toHaveProperty('reaped')
     expect(process.killed).toBe(true)
     expect(runtime.getSnapshot().sessionId).toBeUndefined()
   })
 
+  it('shutdownForQuit latches shutting-down so a later connect is refused', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['quit-latch-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.shutdownForQuit()
+
+    // The latch makes a subsequent connect self-abort rather than spawn a fresh, orphanable agent.
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(/shutting down/)
+  })
+
+  it('shutdownForUpdateGate reaps the agent without latching, so the app can reconnect', async () => {
+    const spawns: FakeAgentProcess[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      // A fresh agent per connect, mirroring a real reconnect after the gate tore the previous one down.
+      spawnAgent: () => {
+        const process = new FakeAgentProcess()
+        startFakeAgent(process, [`gate-session-${spawns.length}`])
+        spawns.push(process)
+        return asAgentProcess(process)
+      }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    const outcome = await runtime.shutdownForUpdateGate()
+
+    expect(outcome).toHaveProperty('reaped')
+    expect(spawns[0]?.killed).toBe(true)
+    expect(runtime.getSnapshot().sessionId).toBeUndefined()
+
+    // Non-latching: a fresh session connects instead of throwing "shutting down".
+    await expect(runtime.createSession({ cwd: '/workspace' })).resolves.toBeDefined()
+    expect(spawns).toHaveLength(2)
+  })
+
   it('shutdownForQuit waits out an in-flight connect and reaps the mid-spawn child before resolving', async () => {
     const process = new FakeAgentProcess()
-    let quitPromise: Promise<void> | undefined
+    let quitPromise: Promise<{ reaped: boolean }> | undefined
     const runtime = new AcpRuntime({
       appVersion: '0.2.0',
       defaultCwd: '/workspace',
