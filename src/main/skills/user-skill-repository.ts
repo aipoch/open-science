@@ -53,6 +53,26 @@ const toSlug = (name: string): string =>
     .replace(/^-+|-+$/g, '')
     .slice(0, 64)
 
+// Serializes one frontmatter field so arbitrary user text can never corrupt SKILL.md. A plain,
+// single-line value is emitted inline; anything with a newline, a surrounding space, or a leading
+// YAML indicator (which includes `---`, a bare `-`, quotes, `|`/`>`, etc.) is emitted as a literal
+// (`|`) block scalar. Because every block line is indented, a value containing `---` or a `key:`-like
+// line can't be mistaken for the closing fence or another field by a real YAML parser or by our own
+// parseFrontmatter reader.
+const frontmatterField = (key: string, value: string): string => {
+  const normalized = value.replace(/\r\n?/g, '\n')
+  const isPlain =
+    normalized.length > 0 &&
+    !normalized.includes('\n') &&
+    normalized === normalized.trim() &&
+    !/^[-?:,[\]{}#&*!|>'"%@`]/.test(normalized) &&
+    !/:(\s|$)/.test(normalized) &&
+    !/\s#/.test(normalized)
+  if (isPlain) return `${key}: ${normalized}`
+  const indented = normalized.split('\n').map((line) => (line ? `  ${line}` : ''))
+  return [`${key}: |`, ...indented].join('\n')
+}
+
 // A skill id is `<source>-<slug>`; parse it back to its source + slug (null for bundled/unknown ids).
 const parseUserSkillId = (
   id: string
@@ -510,8 +530,8 @@ class UserSkillRepository {
 
     const frontmatter = [
       '---',
-      `name: ${input.name}`,
-      `description: ${input.description}`,
+      frontmatterField('name', input.name),
+      frontmatterField('description', input.description),
       '---'
     ].join('\n')
     const contents = `${frontmatter}\n\n${input.body.trimStart()}`

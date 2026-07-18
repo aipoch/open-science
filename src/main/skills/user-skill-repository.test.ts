@@ -135,6 +135,29 @@ describe('UserSkillRepository', () => {
     expect(await repo.list()).toEqual([])
   })
 
+  it('round-trips a description with newlines and YAML fences without corrupting the body', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+
+    // A description that, interpolated raw, would prematurely close the frontmatter (`---`) and inject
+    // a bogus field (`not: a-key`). It must survive intact and leave the body untouched.
+    const description = 'First line\n---\nnot: a-key\nSecond line'
+    const id = await repo.createPersonal({
+      name: 'Tricky',
+      description,
+      body: '# Real body\nkeep me'
+    })
+
+    const listed = await repo.list()
+    expect(listed).toHaveLength(1)
+    expect(listed[0].description).toBe(description)
+
+    const body = await repo.body(id)
+    expect(body).toContain('# Real body')
+    expect(body).toContain('keep me')
+    // The injected fence/field must not have leaked into the body.
+    expect(body).not.toContain('not: a-key')
+  })
+
   it('gives colliding names a numeric suffix', async () => {
     const repo = new UserSkillRepository(await makeStorage())
 
