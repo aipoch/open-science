@@ -125,6 +125,13 @@ const createMainWindow = (): BrowserWindow => {
   // Intercept Cmd+W / Ctrl+W before the default menu "Close" role fires. preventDefault here also
   // suppresses the menu accelerator (electron/electron#19279), so the chord never closes the window
   // behind the renderer's back. Forward to the renderer only when it can act on it, otherwise close.
+  //
+  // Accepted residual: send() is fire-and-forget, so a renderer that crashes or hangs in the gap
+  // between this send and its handler running drops this one chord. It is self-correcting — that same
+  // crash/hang revokes readiness, so the next press falls back to the direct close below. A per-chord
+  // ack + timeout would close that gap but risks a worse bug: if a slow-but-healthy renderer collapses
+  // the pane and its ack lands after the timeout, main would then also close the window. We accept one
+  // lost keystroke during a renderer crash over that regression.
   window.webContents.on('before-input-event', (event, input) => {
     if (!isCloseWindowChord(input, process.platform)) return
 
