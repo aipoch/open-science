@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { deflateRawSync } from 'node:zlib'
@@ -761,6 +761,38 @@ describe('UserSkillRepository', () => {
       /[Cc]ollision|Conflicting/
     )
     expect(await repo.list()).toEqual([])
+  })
+
+  it('recovers the previous skill after a crash between the two swap renames', async () => {
+    const root = await makeStorage()
+    const repo = new UserSkillRepository(root)
+    const first = await repo.importFromGitHub(SKILL_URL, fakeFetch('---\nname: Foo\n---\nold body'))
+    expect(first.id).toBe('imported-foo')
+
+    // Reproduce the durable on-disk state if the process died after `rename(live, backup)` and before
+    // `rename(staging, live)`: the live dir is gone and only a hidden backup remains.
+    const importedDir = join(root, 'skills', 'imported')
+    await rename(join(importedDir, 'foo'), join(importedDir, '.foo.backup-simulated-crash'))
+
+    // A fresh instance (simulating a restart) must restore the previous skill on its first use.
+    const restarted = new UserSkillRepository(root)
+    expect(await restarted.body(first.id)).toContain('old body')
+    expect((await restarted.list()).map((skill) => skill.id)).toEqual(['imported-foo'])
+  })
+
+  it('ignores a leftover backup dir when the live skill is present (no bogus ids)', async () => {
+    const root = await makeStorage()
+    const repo = new UserSkillRepository(root)
+    await repo.importFromGitHub(SKILL_URL, fakeFetch('---\nname: Foo\n---\nbody'))
+
+    // A stray backup left next to a healthy live dir (e.g. a crash after the swap, before cleanup).
+    const importedDir = join(root, 'skills', 'imported')
+    await mkdir(join(importedDir, '.foo.backup-stale'), { recursive: true })
+    await writeFile(join(importedDir, '.foo.backup-stale', 'SKILL.md'), '---\nname: Foo\n---\nx')
+
+    // list() recovers (removes) the leftover and never surfaces it as a skill id.
+    const listed = await new UserSkillRepository(root).list()
+    expect(listed.map((skill) => skill.id)).toEqual(['imported-foo'])
   })
 
   it('marks scanned candidates already imported by URL or by same name', async () => {
