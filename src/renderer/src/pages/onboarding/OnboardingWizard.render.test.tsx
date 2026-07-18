@@ -19,10 +19,11 @@ const environment = (ready: boolean): EnvironmentCheckResult => ({
   ready,
   canAutoInstall: !ready,
   recommendedRegistry: ready ? undefined : 'npmmirror',
-  claude: ready ? { found: true, path: '/bin/claude', version: '2.1.0' } : { found: false },
+  agentFrameworkId: 'claude-code',
+  runtime: ready ? { found: true, path: '/bin/claude', version: '2.1.0' } : { found: false },
   checks: [
     {
-      id: 'claude',
+      id: 'agent',
       label: 'Claude runtime',
       status: ready ? 'passed' : 'failed',
       summary: ready ? 'Claude is ready.' : 'Claude is not installed yet.'

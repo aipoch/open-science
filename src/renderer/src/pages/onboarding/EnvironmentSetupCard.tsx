@@ -38,7 +38,7 @@ const CHECK_LABELS: Array<{ id: EnvironmentCheckId; label: string }> = [
   { id: 'secure-storage', label: 'Secure credential storage' },
   { id: 'install-network', label: 'Installation network' },
   { id: 'python', label: 'Python for Notebook (optional)' },
-  { id: 'claude', label: 'Claude runtime' }
+  { id: 'agent', label: 'Agent runtime' }
 ]
 
 const CHECK_ICONS = {
@@ -47,7 +47,7 @@ const CHECK_ICONS = {
   'secure-storage': KeyRound,
   'install-network': Wifi,
   python: TerminalSquare,
-  claude: TerminalSquare
+  agent: TerminalSquare
 } satisfies Record<EnvironmentCheckId, typeof MonitorCog>
 
 const STATUS_COPY = {

@@ -22,7 +22,8 @@ const environment = (checks: EnvironmentCheckResult['checks']): EnvironmentCheck
   checks,
   ready: checks.every((check) => check.status !== 'failed'),
   canAutoInstall: false,
-  claude: { found: true, path: '/bin/claude', version: '2.1.0' }
+  agentFrameworkId: 'claude-code',
+  runtime: { found: true, path: '/bin/claude', version: '2.1.0' }
 })
 
 beforeEach(() => {
@@ -69,7 +70,7 @@ describe('HomePage environment repair notice', () => {
     useSettingsStore.setState({
       environmentCheck: environment([
         {
-          id: 'claude',
+          id: 'agent',
           label: 'Claude runtime',
           status: 'failed',
           summary: 'Claude is missing.'

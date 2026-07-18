@@ -468,41 +468,74 @@ class SettingsService {
     })
   }
 
-  // Re-runs the complete host inspection on every app launch. Claude detection is part of the same
-  // pass so a runtime installed outside Open Science between launches is picked up immediately.
+  // Re-runs the complete host inspection on every app launch, for the SELECTED framework's runtime, so
+  // a runtime installed outside Open Science between launches is picked up and onboarding can be
+  // completed with Claude or OpenCode alone.
   async checkEnvironment(): Promise<EnvironmentCheckResult> {
-    // Prefer a previously recorded runtime that still runs over this launch's re-detection. This keeps
-    // a healthy app-managed (or manually chosen) executable from being silently replaced by a PATH
-    // entry discovered later — e.g. an npm `claude.cmd` that only works via a shell — and uses the
-    // `--version` probe (not mere file existence) as the real usability signal, so a stale-but-present
-    // path is never reported as healthy.
-    const cached = (await this.repository.getSettings()).claude
-    let claude: ClaudeDetectResult | undefined
+    const settings = await this.repository.getSettings()
+    const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+    const framework = getAgentFramework(agentFrameworkId)
+    const runtime =
+      agentFrameworkId === 'opencode'
+        ? await this.resolveOpencodeRuntime(settings)
+        : await this.resolveClaudeRuntime(settings)
+
+    return runEnvironmentCheck({
+      storageRoot: this.storageRoot,
+      runtime,
+      agentFrameworkId,
+      frameworkLabel: framework.displayName,
+      encryptionAvailable: this.isEncryptionAvailable()
+    })
+  }
+
+  // Resolves the Claude runtime for the environment check. Prefers a previously recorded runtime that
+  // still runs over this launch's re-detection, keeping a healthy app-managed/manual executable from
+  // being replaced by a PATH entry discovered later; the `--version` probe (not mere file existence)
+  // is the usability signal, so a stale-but-present path is never reported healthy.
+  private async resolveClaudeRuntime(settings: StoredSettings): Promise<ClaudeDetectResult> {
+    const cached = settings.claude
 
     if (cached?.resolvedPath) {
       const version = await this.detectDeps.getVersion(cached.resolvedPath)
 
       if (version) {
-        claude = { found: true, path: cached.resolvedPath, version }
-
         // Keep the stored version in sync when an in-place update changed it under the same path.
         if (version !== cached.version) {
           await this.repository.setClaudeInfo({ resolvedPath: cached.resolvedPath, version })
         }
+
+        return { found: true, path: cached.resolvedPath, version }
       }
     }
 
-    // No healthy recorded runtime: fall back to a full detection pass, which persists what it finds so
-    // a runtime installed outside Open Science between launches is picked up.
-    if (!claude) {
-      claude = await this.detectClaude()
+    // No healthy recorded runtime: full detection, which persists what it finds.
+    return this.detectClaude()
+  }
+
+  // Same recorded-runtime-first logic for OpenCode, mapped into the shared detect-result shape.
+  private async resolveOpencodeRuntime(settings: StoredSettings): Promise<ClaudeDetectResult> {
+    const cachedPath = settings.opencodePath
+
+    if (cachedPath) {
+      const version = await this.opencodeDetectDeps.getVersion(cachedPath)
+
+      if (version) {
+        if (version !== settings.opencodeVersion) {
+          await this.repository.setOpencodeInfo(cachedPath, version)
+        }
+
+        return { found: true, path: cachedPath, version }
+      }
     }
 
-    return runEnvironmentCheck({
-      storageRoot: this.storageRoot,
-      claude,
-      encryptionAvailable: this.isEncryptionAvailable()
-    })
+    // detectOpencode persists a hit and clears a stale record, so the card/gates stay accurate.
+    await this.detectOpencode()
+    const detected = await detectOpencode(this.opencodeDetectDeps)
+
+    return detected
+      ? { found: true, path: detected.resolvedPath, version: detected.version }
+      : { found: false }
   }
 
   // Detects claude and persists the resolved path/version for later spawns.

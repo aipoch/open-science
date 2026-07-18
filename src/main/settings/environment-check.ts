@@ -4,6 +4,7 @@ import { request as httpsRequest } from 'node:https'
 import { join } from 'node:path'
 
 import type {
+  AgentFrameworkId,
   ClaudeDetectResult,
   EnvironmentCheckItem,
   EnvironmentCheckResult,
@@ -116,12 +117,18 @@ const inspectRegistry = async (
 
 const runEnvironmentCheck = async ({
   storageRoot,
-  claude,
+  runtime,
+  agentFrameworkId,
+  frameworkLabel,
   encryptionAvailable,
   deps = {}
 }: {
   storageRoot: string
-  claude: ClaudeDetectResult
+  // Detection result for the SELECTED framework's runtime (Claude or OpenCode), in the shared shape.
+  runtime: ClaudeDetectResult
+  agentFrameworkId: AgentFrameworkId
+  // Display name for the runtime check's copy ('Claude' / 'OpenCode').
+  frameworkLabel: string
   encryptionAvailable: boolean
   deps?: EnvironmentCheckDeps
 }): Promise<EnvironmentCheckResult> => {
@@ -146,14 +153,14 @@ const runEnvironmentCheck = async ({
             'Automatic setup uses an app-managed runtime and does not require administrator access.'
         }
       } catch (error) {
-        // An already-runnable Claude can still be used even if this architecture has no managed
-        // package. Only a machine that also lacks Claude is blocked from automatic setup.
+        // An already-runnable runtime can still be used even if this architecture has no managed
+        // package. Only a machine that also lacks the runtime is blocked from automatic setup.
         return {
           id: 'system',
           label: 'System compatibility',
-          status: claude.found ? 'warning' : 'failed',
-          summary: claude.found
-            ? `${platformLabel(platform)} ${architecture} can use the detected Claude runtime.`
+          status: runtime.found ? 'warning' : 'failed',
+          summary: runtime.found
+            ? `${platformLabel(platform)} ${architecture} can use the detected ${frameworkLabel} runtime.`
             : `${platformLabel(platform)} ${architecture} has no automatic installer package.`,
           detail:
             error instanceof Error
@@ -186,12 +193,12 @@ const runEnvironmentCheck = async ({
   let recommendedRegistry: ManagedClaudeRegistry | undefined
   let networkCheck: EnvironmentCheckItem
 
-  if (claude.found) {
+  if (runtime.found) {
     networkCheck = {
       id: 'install-network',
       label: 'Installation network',
       status: 'passed',
-      summary: 'No download is needed because Claude is already installed.'
+      summary: `No download is needed because ${frameworkLabel} is already installed.`
     }
   } else {
     const registryResults = await Promise.all([
@@ -255,19 +262,21 @@ const runEnvironmentCheck = async ({
         detail: 'Notebook execution will be unavailable until Python 3 is installed.'
       }
 
-  const claudeCheck: EnvironmentCheckItem = claude.found
+  const runtimeCheck: EnvironmentCheckItem = runtime.found
     ? {
-        id: 'claude',
-        label: 'Claude runtime',
+        id: 'agent',
+        label: `${frameworkLabel} runtime`,
         status: 'passed',
-        summary: claude.version ? `Claude ${claude.version} is ready.` : 'Claude is ready.',
-        detail: claude.path
+        summary: runtime.version
+          ? `${frameworkLabel} ${runtime.version} is ready.`
+          : `${frameworkLabel} is ready.`,
+        detail: runtime.path
       }
     : {
-        id: 'claude',
-        label: 'Claude runtime',
+        id: 'agent',
+        label: `${frameworkLabel} runtime`,
         status: 'failed',
-        summary: 'Claude is not installed yet.',
+        summary: `${frameworkLabel} is not installed yet.`,
         detail:
           'Automatic setup installs a self-contained runtime without Node.js, npm, or admin access.'
       }
@@ -278,7 +287,7 @@ const runEnvironmentCheck = async ({
     secureStorageCheck,
     networkCheck,
     pythonCheck,
-    claudeCheck
+    runtimeCheck
   ]
   const passedIds = new Set(
     checks.filter((check) => check.status === 'passed').map((check) => check.id)
@@ -291,12 +300,13 @@ const runEnvironmentCheck = async ({
     checks,
     ready: checks.every((check) => check.status !== 'failed'),
     canAutoInstall:
-      !claude.found &&
+      !runtime.found &&
       passedIds.has('system') &&
       passedIds.has('storage') &&
       passedIds.has('install-network'),
     recommendedRegistry,
-    claude
+    agentFrameworkId,
+    runtime
   }
 }
 

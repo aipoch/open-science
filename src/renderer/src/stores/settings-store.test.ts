@@ -89,7 +89,8 @@ beforeEach(() => {
       checks: [],
       ready: true,
       canAutoInstall: false,
-      claude: { found: true, path: '/bin/claude' }
+      agentFrameworkId: 'claude-code',
+      runtime: { found: true, path: '/bin/claude' }
     }),
     detectClaude: vi.fn().mockResolvedValue({ found: false }),
     detectOpencode: vi.fn().mockImplementation(() => {
@@ -323,7 +324,8 @@ describe('settings store: environment check', () => {
       checks: [],
       ready: true,
       canAutoInstall: false,
-      claude: { found: true, path: '/bin/claude' }
+      agentFrameworkId: 'claude-code',
+      runtime: { found: true, path: '/bin/claude' }
     })
     await first
   })

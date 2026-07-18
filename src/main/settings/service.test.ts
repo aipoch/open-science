@@ -987,8 +987,8 @@ describe('checkEnvironment', () => {
 
     const result = await service.checkEnvironment()
 
-    expect(result.claude).toEqual({ found: true, path: execPath, version: '2.1.0' })
-    expect(result.checks.find((check) => check.id === 'claude')?.status).toBe('passed')
+    expect(result.runtime).toEqual({ found: true, path: execPath, version: '2.1.0' })
+    expect(result.checks.find((check) => check.id === 'agent')?.status).toBe('passed')
   })
 
   it('does not overwrite a healthy recorded executable with a freshly detected PATH entry', async () => {
@@ -1015,7 +1015,7 @@ describe('checkEnvironment', () => {
     const result = await service.checkEnvironment()
 
     // The recorded runtime is retained rather than being replaced by the PATH discovery.
-    expect(result.claude).toEqual({ found: true, path: execPath, version: '2.1.0' })
+    expect(result.runtime).toEqual({ found: true, path: execPath, version: '2.1.0' })
     expect((await repository.getSettings()).claude?.resolvedPath).toBe(execPath)
   })
 
@@ -1041,7 +1041,7 @@ describe('checkEnvironment', () => {
 
     const result = await service.checkEnvironment()
 
-    expect(result.claude).toEqual({ found: true, path: found, version: '2.2.0' })
+    expect(result.runtime).toEqual({ found: true, path: found, version: '2.2.0' })
     expect((await repository.getSettings()).claude?.resolvedPath).toBe(found)
   })
 })

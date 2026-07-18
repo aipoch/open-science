@@ -25,7 +25,9 @@ describe('runEnvironmentCheck', () => {
   it('selects the fastest reachable trusted registry for a missing runtime', async () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
-      claude: { found: false },
+      agentFrameworkId: 'claude-code' as const,
+      frameworkLabel: 'Claude',
+      runtime:{ found: false },
       encryptionAvailable: true,
       deps: baseDeps()
     })
@@ -42,7 +44,9 @@ describe('runEnvironmentCheck', () => {
   it('blocks automatic installation when both trusted registries are unreachable', async () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
-      claude: { found: false },
+      agentFrameworkId: 'claude-code' as const,
+      frameworkLabel: 'Claude',
+      runtime:{ found: false },
       encryptionAvailable: true,
       deps: { ...baseDeps(), probeRegistry: vi.fn().mockRejectedValue(new Error('offline')) }
     })
@@ -58,7 +62,9 @@ describe('runEnvironmentCheck', () => {
   it('blocks automatic setup when the app data directory is not writable', async () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/locked',
-      claude: { found: false },
+      agentFrameworkId: 'claude-code' as const,
+      frameworkLabel: 'Claude',
+      runtime:{ found: false },
       encryptionAvailable: true,
       deps: {
         ...baseDeps(),
@@ -77,7 +83,9 @@ describe('runEnvironmentCheck', () => {
     const probeRegistry = vi.fn()
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
-      claude: { found: true, path: '/bin/claude', version: '2.1.0' },
+      agentFrameworkId: 'claude-code' as const,
+      frameworkLabel: 'Claude',
+      runtime:{ found: true, path: '/bin/claude', version: '2.1.0' },
       encryptionAvailable: true,
       deps: { ...baseDeps(), probeRegistry }
     })
@@ -95,7 +103,9 @@ describe('runEnvironmentCheck', () => {
   it('keeps missing Python non-blocking while explaining the Notebook limitation', async () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
-      claude: { found: true, path: '/bin/claude', version: '2.1.0' },
+      agentFrameworkId: 'claude-code' as const,
+      frameworkLabel: 'Claude',
+      runtime:{ found: true, path: '/bin/claude', version: '2.1.0' },
       encryptionAvailable: true,
       deps: { ...baseDeps(), findPython: vi.fn().mockResolvedValue(undefined) }
     })
@@ -111,7 +121,9 @@ describe('runEnvironmentCheck', () => {
   it('treats unavailable OS key encryption as a non-blocking warning', async () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
-      claude: { found: true, path: '/bin/claude' },
+      agentFrameworkId: 'claude-code' as const,
+      frameworkLabel: 'Claude',
+      runtime:{ found: true, path: '/bin/claude' },
       encryptionAvailable: false,
       deps: baseDeps()
     })
@@ -123,7 +135,9 @@ describe('runEnvironmentCheck', () => {
   it('blocks automatic installation on an unsupported platform when no runtime exists', async () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
-      claude: { found: false },
+      agentFrameworkId: 'claude-code' as const,
+      frameworkLabel: 'Claude',
+      runtime:{ found: false },
       encryptionAvailable: true,
       deps: {
         ...baseDeps(),
@@ -145,7 +159,9 @@ describe('runEnvironmentCheck', () => {
   it('keeps an existing runtime usable when only the managed installer is unsupported', async () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
-      claude: { found: true, path: '/opt/claude', version: '2.1.0' },
+      agentFrameworkId: 'claude-code' as const,
+      frameworkLabel: 'Claude',
+      runtime:{ found: true, path: '/opt/claude', version: '2.1.0' },
       encryptionAvailable: true,
       deps: {
         ...baseDeps(),

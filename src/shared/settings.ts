@@ -413,7 +413,13 @@ export type NpmAvailability = {
 // Automatic first-run environment inspection. Warnings are intentionally non-blocking (for example,
 // OS keychain encryption may be unavailable while the app can still operate with reduced protection).
 export type EnvironmentCheckId =
-  'system' | 'storage' | 'secure-storage' | 'install-network' | 'python' | 'claude'
+  | 'system'
+  | 'storage'
+  | 'secure-storage'
+  | 'install-network'
+  | 'python'
+  // The selected agent runtime (Claude or OpenCode); label/summary are framework-specific.
+  | 'agent'
 
 export type EnvironmentCheckStatus = 'passed' | 'warning' | 'failed'
 
@@ -436,7 +442,9 @@ export type EnvironmentCheckResult = {
   // data directory. More detailed operational errors are reported by the install log.
   canAutoInstall: boolean
   recommendedRegistry?: ManagedClaudeRegistry
-  claude: ClaudeDetectResult
+  // The framework this check inspected, and its runtime detection result.
+  agentFrameworkId: AgentFrameworkId
+  runtime: ClaudeDetectResult
 }
 
 // A bundled skill's source category: app-bundled, imported from GitHub, or user-authored.
