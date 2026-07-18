@@ -15,17 +15,25 @@ export type PromptErrorContext = {
 // The innermost provider detail pulled from a wrapped error message.
 type UpstreamDetail = { text: string; type?: string }
 
-// Matches the "resource not found" family across the shapes providers actually return: the resource
-// not-found error type, the HTTP status label the wrapper emits (`Not Found:`), the "no such model"
-// phrasing, and the Chinese messages some gateways emit (e.g. Moonshot's 没找到对象). Deliberately does
-// NOT match a bare "not found" substring, so a benign message like "rate limit config not found" isn't
-// mistaken for a model/endpoint problem.
+// The "resource not found" family. The agent renders the provider's HTTP error with an English status
+// label (`Not Found:`) and the provider's structured error type is an ASCII slug (`resource_not_found`),
+// so matching stays language-agnostic without pattern-matching localized message text — the provider's
+// own (possibly non-English) message is still surfaced verbatim as data. Deliberately does NOT match a
+// bare "not found" substring, so a benign message like "rate limit config not found" isn't reworded.
 const NOT_FOUND_PATTERN =
-  /resource[\s_-]?not[\s_-]?found|no such (?:model|resource)|not[\s_-]?found\s*:|没找到|不存在/i
+  /resource[\s_-]?not[\s_-]?found|no such (?:model|resource)|not[\s_-]?found\s*:/i
 
 // Converts an unknown thrown value into its base message string.
 const rawErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
+
+// The JSON-RPC code the agent attached, when present. -32002 is the ACP "resource not found" protocol
+// code (a missing session), which must not be confused with an upstream provider not-found.
+const errorCode = (error: unknown): number | undefined => {
+  const code = (error as { code?: unknown } | null)?.code
+
+  return typeof code === 'number' ? code : undefined
+}
 
 // True when the agent tagged the failure as an upstream provider API error (vs. an ACP protocol
 // error such as a missing session, which the resume path handles separately).
@@ -103,19 +111,26 @@ const extractUpstreamDetail = (message: string): UpstreamDetail | undefined => {
   }
 }
 
-// Whether the failure is an upstream "resource not found" (wrong model id / endpoint), which we reword.
+// Whether the failure is an upstream provider "resource not found" (wrong model id / endpoint), which
+// we reword. Requires a genuine provider signal so an ACP-level protocol not-found (e.g. a -32002
+// missing-session error, even one that carries a JSON body) is never mistaken for a model problem.
 const isProviderNotFound = (
   error: unknown,
   raw: string,
   detail: UpstreamDetail | undefined
 ): boolean => {
-  const matchesNotFound =
-    NOT_FOUND_PATTERN.test(raw) || (detail?.type ? NOT_FOUND_PATTERN.test(detail.type) : false)
+  const hasNotFoundType = detail?.type ? NOT_FOUND_PATTERN.test(detail.type) : false
+  const matchesNotFound = NOT_FOUND_PATTERN.test(raw) || hasNotFoundType
 
   if (!matchesNotFound) return false
 
-  // Require an upstream signal so an ACP-level not-found isn't mistaken for a model problem.
-  return isApiError(error) || /resource_not_found/i.test(raw) || detail !== undefined
+  // The ACP resume path owns protocol not-founds; never reword one unless the agent explicitly tagged
+  // it as an upstream API error.
+  if (errorCode(error) === -32002 && !isApiError(error)) return false
+
+  // Require an upstream signal: the API-error tag, the provider's resource_not_found slug, or a
+  // structured provider error type in the not-found family. A parseable JSON body alone is not enough.
+  return isApiError(error) || /resource_not_found/i.test(raw) || hasNotFoundType
 }
 
 // Produces the session-visible error text for a failed prompt: an actionable message for a provider
