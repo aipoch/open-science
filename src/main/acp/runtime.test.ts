@@ -246,6 +246,26 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.actions).toEqual(['mode:bypassPermissions', 'prompt:continue'])
   })
 
+  it('kills the agent process synchronously on shutdown so it cannot outlive the app', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['shutdown-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    expect(process.killed).toBe(false)
+
+    // shutdown() is synchronous (will-quit cannot await): the child must be signalled before it returns.
+    runtime.shutdown()
+    expect(process.killed).toBe(true)
+
+    // Calling it again after the process is gone is a no-op, not a crash.
+    expect(() => runtime.shutdown()).not.toThrow()
+  })
+
   it('reports conservative Auto when the Agent has no native auto mode', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['auto-session'], {
