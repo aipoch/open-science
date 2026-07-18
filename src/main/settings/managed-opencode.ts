@@ -148,6 +148,25 @@ const resolveNative = async (
   return { version: resolvedVersion, tarball, integrity }
 }
 
+// Post-install smoke check. A native package can download+extract cleanly yet still be unrunnable on
+// this host (e.g. a non-AVX2 x64 CPU dies with SIGILL at first spawn), so we execute `--version` before
+// treating the install as successful. `ok:false` carries a human reason plus the raw signal so the
+// caller can add an actionable hint.
+export type VerifyBinaryResult =
+  { ok: true } | { ok: false; reason: string; signal?: string | null }
+export type VerifyBinary = (binPath: string) => VerifyBinaryResult
+
+// Default verifier: run the installed binary with `--version` and classify failures. A spawn error, a
+// terminating signal (SIGILL etc.), or a non-zero exit all mean the binary is not usable here.
+const defaultVerifyBinary: VerifyBinary = (binPath) => {
+  const probe = spawnSync(binPath, ['--version'], { encoding: 'utf8', timeout: 15_000 })
+  if (probe.error) return { ok: false, reason: `spawn error: ${probe.error.message}` }
+  if (probe.signal) return { ok: false, reason: `killed by ${probe.signal}`, signal: probe.signal }
+  if (probe.status !== 0)
+    return { ok: false, reason: `\`--version\` exited with code ${probe.status}` }
+  return { ok: true }
+}
+
 export type InstallManagedOpencodeOptions = {
   installId: string
   onEvent: (event: ClaudeInstallEvent) => void
@@ -157,6 +176,7 @@ export type InstallManagedOpencodeOptions = {
   platform?: OpencodePlatform
   fetchJson?: FetchJson
   fetchTarball?: FetchTarball
+  verifyBinary?: VerifyBinary
   tmpDir?: string
 }
 
@@ -171,6 +191,7 @@ export const installManagedOpencode = async ({
   platform = resolveOpencodePlatform(),
   fetchJson = defaultFetchJson,
   fetchTarball = defaultFetchTarball,
+  verifyBinary = defaultVerifyBinary,
   tmpDir
 }: InstallManagedOpencodeOptions): Promise<ManagedInstallOutcome> => {
   const destPath = join(managedOpencodeDir(dataRoot), platform.binName)
@@ -208,6 +229,18 @@ export const installManagedOpencode = async ({
 
       if (!found) throw new Error(`Native package did not contain bin/${platform.binName}`)
       if (process.platform !== 'win32') await chmod(destPath, 0o755)
+
+      // Smoke-check the binary before reporting success — a clean download does not guarantee it runs
+      // on this CPU. Remove the unusable binary and fail loudly so no broken path gets persisted.
+      const verification = verifyBinary(destPath)
+      if (!verification.ok) {
+        await rm(destPath, { force: true }).catch(() => undefined)
+        const hint =
+          verification.signal === 'SIGILL'
+            ? ' Your CPU may not support the required instruction set (AVX2).'
+            : ''
+        throw new Error(`OpenCode installed but failed to run (${verification.reason}).${hint}`)
+      }
 
       onEvent({
         kind: 'log',

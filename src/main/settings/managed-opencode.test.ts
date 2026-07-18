@@ -81,6 +81,8 @@ describe('installManagedOpencode', () => {
       platform: { key: 'darwin-arm64', binName: 'opencode' },
       fetchJson,
       fetchTarball,
+      // Injected pass keeps the test offline and host-independent (no real spawn of the extracted file).
+      verifyBinary: () => ({ ok: true }),
       tmpDir: root
     })
 
@@ -118,6 +120,84 @@ describe('installManagedOpencode', () => {
 
     expect(outcome.result.ok).toBe(false)
     expect(outcome.resolvedPath).toBeUndefined()
+  })
+
+  // A downloaded package that extracts cleanly but cannot run on this CPU (e.g. SIGILL on a non-AVX2
+  // x64 host) must fail the install, not persist a broken path.
+  it('fails cleanly and removes the binary when the smoke check reports it cannot run', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+    const tgz = buildTgz([
+      { name: 'package/bin/opencode', content: Buffer.from('#!/bin/sh\necho opencode\n') }
+    ])
+    const integrity = sha512(tgz)
+
+    const fetchJson = async (url: string): Promise<unknown> =>
+      url.endsWith('/opencode-ai')
+        ? { 'dist-tags': { latest: '1.18.3' } }
+        : { dist: { tarball: 'https://reg/opencode-darwin-arm64.tgz', integrity } }
+    const fetchTarball = async (): Promise<{
+      stream: NodeJS.ReadableStream
+      totalBytes?: number
+    }> => ({ stream: Readable.from(tgz), totalBytes: tgz.length })
+
+    const outcome = await installManagedOpencode({
+      installId: 'i3',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform: { key: 'darwin-arm64', binName: 'opencode' },
+      fetchJson,
+      fetchTarball,
+      // Simulate a non-AVX2 host: the binary dies with SIGILL when probed.
+      verifyBinary: () => ({ ok: false, reason: 'killed by SIGILL', signal: 'SIGILL' }),
+      tmpDir: root
+    })
+
+    expect(outcome.result.ok).toBe(false)
+    expect(outcome.resolvedPath).toBeUndefined()
+    // Actionable error mentioning the failed probe and the likely AVX2 cause.
+    expect(outcome.result.error).toMatch(/failed to run/)
+    expect(outcome.result.error).toMatch(/AVX2/)
+    // The unusable binary is not left on disk.
+    await expect(readFile(join(managedOpencodeDir(root), 'opencode'))).rejects.toThrow()
+  })
+
+  it('succeeds when the smoke check confirms the binary runs', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+    const tgz = buildTgz([
+      { name: 'package/bin/opencode', content: Buffer.from('#!/bin/sh\necho opencode\n') }
+    ])
+    const integrity = sha512(tgz)
+
+    const fetchJson = async (url: string): Promise<unknown> =>
+      url.endsWith('/opencode-ai')
+        ? { 'dist-tags': { latest: '1.18.3' } }
+        : { dist: { tarball: 'https://reg/opencode-darwin-arm64.tgz', integrity } }
+    const fetchTarball = async (): Promise<{
+      stream: NodeJS.ReadableStream
+      totalBytes?: number
+    }> => ({ stream: Readable.from(tgz), totalBytes: tgz.length })
+
+    let verifiedPath: string | undefined
+    const outcome = await installManagedOpencode({
+      installId: 'i4',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform: { key: 'darwin-arm64', binName: 'opencode' },
+      fetchJson,
+      fetchTarball,
+      verifyBinary: (binPath) => {
+        verifiedPath = binPath
+        return { ok: true }
+      },
+      tmpDir: root
+    })
+
+    expect(outcome.result.ok).toBe(true)
+    expect(outcome.resolvedPath).toBe(join(managedOpencodeDir(root), 'opencode'))
+    // The verifier is handed the installed binary path.
+    expect(verifiedPath).toBe(join(managedOpencodeDir(root), 'opencode'))
   })
 })
 
