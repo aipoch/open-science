@@ -1,6 +1,6 @@
 import { Check } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -178,6 +178,10 @@ const OnboardingWizard = (): React.JSX.Element => {
   // Once the user manually picks an agent, stop auto-selecting; and only auto-select once per mount.
   const userPickedFramework = useRef(false)
   const autoSelectAttempted = useRef(false)
+  // Serializes framework switches: detection + preflight run async in the store, so a second switch
+  // started before the first settles could interleave and leave the selection, preflight, and
+  // environment result out of sync. This synchronous guard drops any switch while one is in flight.
+  const switchInFlight = useRef(false)
   // Guards against handleKeepDefault's completeOnboarding firing spuriously after Restart:
   // AlertDialog.Action fires onOpenChange(false) on click (same as Cancel), and closures inside
   // that handler can't see isRelaunching's update from the same synchronous batch, so a ref is
@@ -251,35 +255,40 @@ const OnboardingWizard = (): React.JSX.Element => {
   }
 
   // Switching the framework re-detects it and re-runs the host inspection so the environment card
-  // reflects the chosen runtime immediately.
-  const handleSelectFramework = async (id: AgentFrameworkId): Promise<void> => {
-    if (id === agentFrameworkId) return
+  // reflects the chosen runtime immediately. Serialized by switchInFlight so overlapping switches can't
+  // interleave the store's async detection/preflight; refs (not setState) keep it usable from effects.
+  const runFrameworkSwitch = useCallback(
+    async (id: AgentFrameworkId): Promise<void> => {
+      if (switchInFlight.current || id === agentFrameworkId) return
 
-    setAutomaticInstallError(undefined)
-    await setAgentFramework(id)
-    await checkEnvironment()
-  }
+      switchInFlight.current = true
+      try {
+        await setAgentFramework(id)
+        await checkEnvironment()
+      } finally {
+        switchInFlight.current = false
+      }
+    },
+    [agentFrameworkId, setAgentFramework, checkEnvironment]
+  )
 
   // Records an explicit user choice so the prefer-installed auto-selection below never overrides it.
   const handlePickFramework = (id: AgentFrameworkId): void => {
     userPickedFramework.current = true
-    void handleSelectFramework(id)
+    setAutomaticInstallError(undefined)
+    void runFrameworkSwitch(id)
   }
 
   // Prefer whatever's installed during first-time onboarding: Claude Code is the default probe, but if
   // Claude isn't installed while OpenCode is, switch the selection to OpenCode automatically. Runs once
-  // and never overrides an explicit user choice or a returning user's saved framework. Calls the store
-  // actions directly (not handleSelectFramework) so the effect stays free of local setState.
+  // and never overrides an explicit user choice or a returning user's saved framework.
   useEffect(() => {
     if (isRecovery || userPickedFramework.current || autoSelectAttempted.current) return
     if (agentFrameworks.length < 2) return
 
     if (agentFrameworkId === 'claude-code' && !preflight.claudeReady && preflight.opencodeReady) {
       autoSelectAttempted.current = true
-      void (async () => {
-        await setAgentFramework('opencode')
-        await checkEnvironment()
-      })()
+      void runFrameworkSwitch('opencode')
     }
   }, [
     isRecovery,
@@ -287,8 +296,7 @@ const OnboardingWizard = (): React.JSX.Element => {
     agentFrameworkId,
     preflight.claudeReady,
     preflight.opencodeReady,
-    setAgentFramework,
-    checkEnvironment
+    runFrameworkSwitch
   ])
 
   const handleBrowseLocation = async (): Promise<void> => {
@@ -560,26 +568,30 @@ const OnboardingWizard = (): React.JSX.Element => {
                             onInstall={(source) => void handleInstall(source, 'opencode')}
                           />
                         ) : (
-                          <>
-                            <ClaudeStatusCard
-                              claude={claude}
-                              claudeReady={preflight.claudeReady}
-                              isDetecting={isDetectingClaude || isCheckingEnvironment}
-                              onDetect={() => void handleEnvironmentCheck()}
-                              embedded
-                            />
-                            {!preflight.claudeReady ? (
-                              <ClaudeInstallCard
-                                isInstalling={isInstalling}
-                                installLogs={installLogs}
-                                installProgress={installProgress}
-                                installError={storeInstallError}
-                                npmAvailable={npmAvailable}
-                                onInstall={(source) => void handleInstall(source, 'claude-code')}
+                          // Same boxed shell as OpencodeStatusCard so both frameworks read identically:
+                          // one card holding the runtime status and, when missing, the install picker.
+                          <Card className="gap-0 rounded-lg py-0">
+                            <CardContent className="space-y-3 p-4">
+                              <ClaudeStatusCard
+                                claude={claude}
+                                claudeReady={preflight.claudeReady}
+                                isDetecting={isDetectingClaude || isCheckingEnvironment}
+                                onDetect={() => void handleEnvironmentCheck()}
                                 embedded
                               />
-                            ) : null}
-                          </>
+                              {!preflight.claudeReady ? (
+                                <ClaudeInstallCard
+                                  isInstalling={isInstalling}
+                                  installLogs={installLogs}
+                                  installProgress={installProgress}
+                                  installError={storeInstallError}
+                                  npmAvailable={npmAvailable}
+                                  onInstall={(source) => void handleInstall(source, 'claude-code')}
+                                  embedded
+                                />
+                              ) : null}
+                            </CardContent>
+                          </Card>
                         )}
                       </div>
                     )}
@@ -625,7 +637,12 @@ const OnboardingWizard = (): React.JSX.Element => {
                                   role="radio"
                                   aria-checked={agentFrameworkId === framework.id}
                                   onClick={() => handlePickFramework(framework.id)}
-                                  disabled={isCheckingEnvironment || isInstalling}
+                                  disabled={
+                                    isCheckingEnvironment ||
+                                    isInstalling ||
+                                    isDetectingClaude ||
+                                    isDetectingOpencode
+                                  }
                                   className={cn(
                                     'rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-60',
                                     agentFrameworkId === framework.id

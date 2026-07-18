@@ -446,6 +446,67 @@ describe('OnboardingWizard', () => {
     ).not.toBeNull()
   })
 
+  it('drops a second framework switch while the first is still in flight', async () => {
+    let releaseSwitch: (() => void) | undefined
+    const setAgentFramework = vi
+      .fn()
+      .mockImplementation(() => new Promise<void>((resolve) => (releaseSwitch = resolve)))
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: twoFrameworks,
+      setAgentFramework,
+      checkEnvironment: vi.fn().mockResolvedValue(undefined),
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(false)
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+
+    const opencodeRadio = (): HTMLButtonElement | undefined =>
+      Array.from(container.querySelectorAll<HTMLButtonElement>('[role="radio"]')).find((button) =>
+        /opencode/i.test(button.textContent ?? '')
+      )
+    // Two rapid clicks before the first switch resolves: the in-flight guard collapses them into one.
+    await act(async () => opencodeRadio()?.click())
+    await act(async () => opencodeRadio()?.click())
+
+    expect(setAgentFramework).toHaveBeenCalledTimes(1)
+
+    await act(async () => releaseSwitch?.())
+  })
+
+  it('disables the framework toggle while a runtime probe is in flight', async () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: twoFrameworks,
+      isDetectingOpencode: true,
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(false)
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+
+    const radios = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+    expect(radios).toHaveLength(2)
+    expect(radios.every((radio) => radio.disabled)).toBe(true)
+  })
+
   it('uses the recommended mirror and surfaces the actual automatic install error', async () => {
     const installClaude = vi
       .fn()
