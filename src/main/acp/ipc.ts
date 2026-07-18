@@ -18,6 +18,7 @@ import type {
 } from '../../shared/acp'
 import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../../shared/artifacts'
 import { AcpRuntime } from './runtime'
+import { installAgentShutdownGuard } from './shutdown-guard'
 import type { ArtifactRepository } from '../artifacts/repository'
 import type { ArtifactRunRegistry } from '../artifacts/run-registry'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
@@ -141,6 +142,9 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntime => {
     'acp:revoke-permission-grant',
     (_event, request: AcpRevokePermissionGrantRequest) => runtime.revokePermissionGrant(request)
   )
+
+  // Kill the agent child on quit so it never outlives the app as an orphaned process.
+  installAgentShutdownGuard(app, runtime)
 
   return runtime
 }

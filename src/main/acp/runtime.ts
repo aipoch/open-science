@@ -208,6 +208,9 @@ class AcpRuntime {
   private events: AcpRuntimeEvent[] = []
   private eventSequence = 0
   private agentProcess: ChildProcessWithoutNullStreams | undefined
+  // Latched by shutdown() on app quit. A connect can be mid-spawn (resolveSpawnConfig is async) when
+  // quit fires, so this lets the post-spawn path kill a child that was created after killAgentProcess ran.
+  private shuttingDown = false
   private connection: ClientConnection | undefined
   private connectInFlight: Promise<AcpStateSnapshot> | undefined
   private connectionGeneration = 0
@@ -380,7 +383,17 @@ class AcpRuntime {
     log.info('connecting agent', { cwd: this.cwd, generation })
 
     try {
-      this.agentProcess = await this.spawnAgentProcess()
+      const agentProcess = await this.spawnAgentProcess()
+
+      // spawnAgentProcess resolves the provider config asynchronously, so the app may have begun
+      // quitting during the spawn. If shutdown() already ran, its killAgentProcess() saw no process
+      // yet — kill this freshly-spawned child now and abort, or it would outlive the app as an orphan.
+      if (this.shuttingDown) {
+        agentProcess.kill()
+        throw new Error('ACP runtime is shutting down.')
+      }
+
+      this.agentProcess = agentProcess
       this.attachAgentProcessEvents(this.agentProcess)
 
       const stream = acp.ndJsonStream(
@@ -738,6 +751,19 @@ class AcpRuntime {
     return this.disconnectCurrent(emitClosedStatus)
   }
 
+  // Synchronously terminates the agent child for app shutdown. Electron's `will-quit` cannot await, so
+  // this does only the synchronous work of signalling the child to exit — an agent left running after
+  // the app is gone would be an orphaned process still holding its network connection open. The OS
+  // reclaims the remaining connection/session state as the process exits.
+  shutdown(): void {
+    this.shuttingDown = true
+    this.nextConnectionGeneration()
+    this.connectInFlight = undefined
+    this.connection?.close()
+    this.connection = undefined
+    this.killAgentProcess()
+  }
+
   // Applies an active-provider change without interrupting the user. The agent bakes its provider env in
   // at spawn, so a new provider needs a reconnect — but if a prompt is running we defer the reconnect
   // until the session goes idle. Because every provider shares one config dir, the reconnect resumes the
@@ -802,6 +828,18 @@ class AcpRuntime {
     this.connection?.close()
     this.connection = undefined
 
+    this.killAgentProcess()
+
+    if (emitClosedStatus) {
+      this.setStatus('closed')
+    }
+
+    return this.getSnapshot()
+  }
+
+  // Signals the current agent child to exit and marks the exit expected so the stderr/error/exit
+  // handlers stay quiet. Shared by the async disconnect teardown and the synchronous quit shutdown.
+  private killAgentProcess(): void {
     if (this.agentProcess) {
       this.expectedProcessExits.add(this.agentProcess)
 
@@ -811,12 +849,6 @@ class AcpRuntime {
     }
 
     this.agentProcess = undefined
-
-    if (emitClosedStatus) {
-      this.setStatus('closed')
-    }
-
-    return this.getSnapshot()
   }
 
   private nextConnectionGeneration(): number {
