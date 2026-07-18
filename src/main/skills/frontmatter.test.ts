@@ -100,6 +100,25 @@ describe('parseFrontmatter', () => {
     expect(fields.beta).toBe('true')
   })
 
+  it('flattens a YAML list to a comma-separated string and drops nested maps', () => {
+    const raw = [
+      '---',
+      'name: demo',
+      'requirements: [gpu, compute]', // flow sequence
+      'tags:', // block sequence
+      '  - alpha',
+      '  - beta',
+      'meta:', // nested map is dropped by the flat reader
+      '  key: value',
+      '---',
+      'body'
+    ].join('\n')
+    const { fields } = parseFrontmatter(raw)
+    expect(fields.requirements).toBe('gpu, compute')
+    expect(fields.tags).toBe('alpha, beta')
+    expect(fields.meta).toBeUndefined()
+  })
+
   it('tolerates malformed frontmatter, returning empty fields and the body', () => {
     // Unbalanced flow map is invalid YAML; the reader must not throw.
     const raw = ['---', 'name: [oops', 'description: broken', '---', '# Body'].join('\n')
