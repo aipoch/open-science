@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -31,6 +31,27 @@ vi.mock('electron', () => ({
 
 const { initDataRoot } = await import('../storage-root')
 const { registerStorageIpcHandlers } = await import('./ipc')
+const { clearMigrationPending, isMigrationPending } = await import('./migration-state')
+const { writeMigrationMarker } = await import('./migration-marker')
+
+// Writes the verified staging marker a completed copy phase would leave, so commit/discard gates pass.
+const seedVerifiedMarker = async (targetDir: string, source: string): Promise<void> => {
+  await mkdir(targetDir, { recursive: true })
+  await writeMigrationMarker(targetDir, {
+    version: 1,
+    token: 'tok-ipc',
+    source,
+    target: targetDir,
+    createdAt: Date.now(),
+    status: 'verified',
+    inventory: {
+      dirs: [],
+      fileCount: 0,
+      totalBytes: 0,
+      digest: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+    }
+  })
+}
 
 const invoke = (channel: string, payload?: unknown): Promise<unknown> =>
   Promise.resolve(handlers.get(channel)!(undefined, payload))
@@ -79,6 +100,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   initDataRoot(undefined)
+  // migration-state is a module singleton; reset it so a pending write-gate can't leak between tests.
+  clearMigrationPending()
   await rm(currentParent, { recursive: true, force: true })
   await rm(targetParent, { recursive: true, force: true })
 })
@@ -332,16 +355,32 @@ describe('storage IPC handlers', () => {
     expect(deps.relaunch).not.toHaveBeenCalled()
   })
 
-  it('commit-and-relaunch persists the derived target then relaunches', async () => {
+  it('commit-and-relaunch refuses a verified marker not staged by this process', async () => {
     initDataRoot(dataRoot)
+    await seedVerifiedMarker(target, dataRoot)
     const deps = fakeDeps()
     registerStorageIpcHandlers(deps)
 
-    await expect(invoke('storage:commit-and-relaunch', { parent: targetParent })).resolves.toEqual({
-      ok: true
-    })
-    expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target)
-    expect(deps.relaunch).toHaveBeenCalledTimes(1)
+    await expect(
+      invoke('storage:commit-and-relaunch', { parent: targetParent })
+    ).resolves.toMatchObject({ ok: false })
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
+  it('commit-and-relaunch returns {ok:false} and does NOT relaunch when no verified copy exists', async () => {
+    initDataRoot(dataRoot)
+    // No marker seeded: the commit gate refuses, nothing is persisted, and the app must not restart.
+    const deps = fakeDeps()
+    registerStorageIpcHandlers(deps)
+
+    const outcome = (await invoke('storage:commit-and-relaunch', { parent: targetParent })) as {
+      ok: boolean
+    }
+
+    expect(outcome.ok).toBe(false)
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(deps.relaunch).not.toHaveBeenCalled()
   })
 
   it('commit-and-relaunch returns switchoverFailed and does NOT relaunch when setDataRoot throws', async () => {
@@ -355,6 +394,7 @@ describe('storage IPC handlers', () => {
       }
     })
     registerStorageIpcHandlers(deps)
+    await invoke('storage:migrate', { parent: targetParent })
 
     const outcome = (await invoke('storage:commit-and-relaunch', { parent: targetParent })) as {
       ok: boolean
@@ -384,6 +424,7 @@ describe('storage IPC handlers', () => {
     }
     const deps = fakeDeps({ settingsService: new FakeSettingsService() })
     registerStorageIpcHandlers(deps)
+    await invoke('storage:migrate', { parent: targetParent })
 
     await expect(invoke('storage:commit-and-relaunch', { parent: targetParent })).resolves.toEqual({
       ok: true
@@ -392,18 +433,143 @@ describe('storage IPC handlers', () => {
     expect(deps.relaunch).toHaveBeenCalledTimes(1)
   })
 
-  it('discard-migrated-copy removes the derived target and leaves settings untouched', async () => {
+  it('discard-migrated-copy removes a marker-confirmed staged copy and leaves settings untouched', async () => {
     initDataRoot(dataRoot)
-    await mkdir(target, { recursive: true })
-    await mkdir(join(target, 'artifacts'), { recursive: true })
+    await mkdir(join(dataRoot, 'artifacts'), { recursive: true })
     const deps = fakeDeps()
     registerStorageIpcHandlers(deps)
+    await invoke('storage:migrate', { parent: targetParent })
 
     await invoke('storage:discard-migrated-copy', { parent: targetParent })
 
     expect(existsSync(target)).toBe(false)
     expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
     expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
+  it('discard-migrated-copy refuses (leaves the folder) when there is no staging marker', async () => {
+    initDataRoot(dataRoot)
+    // A folder that merely shares the name but was never staged by us must not be deleted.
+    await mkdir(join(target, 'artifacts'), { recursive: true })
+    const deps = fakeDeps()
+    registerStorageIpcHandlers(deps)
+
+    await invoke('storage:discard-migrated-copy', { parent: targetParent })
+
+    expect(existsSync(target)).toBe(true)
+  })
+
+  it('serializes commit and discard so one resolved migration cannot delete both copies', async () => {
+    initDataRoot(dataRoot)
+    await mkdir(join(dataRoot, 'artifacts'), { recursive: true })
+    await writeFile(join(dataRoot, 'artifacts', 'keep.txt'), 'must survive')
+
+    let releaseSetDataRoot: (() => void) | undefined
+    const deps = fakeDeps({
+      settingsService: {
+        setDataRoot: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              releaseSetDataRoot = resolve
+            })
+        ),
+        markOnboardingComplete: vi.fn().mockResolvedValue(undefined),
+        dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
+        getStoredSettings: vi.fn().mockResolvedValue({})
+      }
+    })
+    registerStorageIpcHandlers(deps)
+    await invoke('storage:migrate', { parent: targetParent })
+
+    const commitPromise = invoke('storage:commit-and-relaunch', { parent: targetParent })
+    await tick()
+    await invoke('storage:discard-migrated-copy', { parent: targetParent })
+    releaseSetDataRoot?.()
+    await commitPromise
+
+    expect(existsSync(join(target, 'artifacts', 'keep.txt'))).toBe(true)
+  })
+
+  it('serializes discard and commit when discard wins the resolution race', async () => {
+    initDataRoot(dataRoot)
+    await mkdir(join(dataRoot, 'artifacts'), { recursive: true })
+    await writeFile(join(dataRoot, 'artifacts', 'keep.txt'), 'must survive')
+    const deps = fakeDeps()
+    registerStorageIpcHandlers(deps)
+    await invoke('storage:migrate', { parent: targetParent })
+
+    const discardPromise = invoke('storage:discard-migrated-copy', { parent: targetParent })
+    const commitOutcome = await invoke('storage:commit-and-relaunch', { parent: targetParent })
+    await discardPromise
+
+    expect(commitOutcome).toEqual({ ok: false, error: 'A migration is already being resolved.' })
+    expect(existsSync(join(dataRoot, 'artifacts', 'keep.txt'))).toBe(true)
+    expect(existsSync(target)).toBe(false)
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+  })
+
+  it('leaves the write-gate pending after a successful copy (blocks writes until commit/discard)', async () => {
+    initDataRoot(dataRoot)
+    registerStorageIpcHandlers(fakeDeps())
+
+    expect(isMigrationPending()).toBe(false)
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({ ok: true })
+    // The copy succeeded but nothing is committed yet, so the gate stays up.
+    expect(isMigrationPending()).toBe(true)
+  })
+
+  it('rejects a second migrate while a verified copy is waiting for commit or discard', async () => {
+    initDataRoot(dataRoot)
+    registerStorageIpcHandlers(fakeDeps())
+
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({ ok: true })
+    const secondOutcome = await invoke('storage:migrate', { parent: currentParent })
+
+    expect(secondOutcome).toEqual({
+      ok: false,
+      error: 'A completed migration is waiting to be committed or discarded.'
+    })
+    expect(isMigrationPending()).toBe(true)
+
+    await invoke('storage:discard-migrated-copy', { parent: targetParent })
+    expect(existsSync(target)).toBe(false)
+  })
+
+  it('discard lifts the write-gate after a staged copy is thrown away', async () => {
+    initDataRoot(dataRoot)
+    registerStorageIpcHandlers(fakeDeps())
+
+    await invoke('storage:migrate', { parent: targetParent }) // stages a verified copy, gate up
+    expect(isMigrationPending()).toBe(true)
+
+    await invoke('storage:discard-migrated-copy', { parent: targetParent })
+
+    expect(isMigrationPending()).toBe(false)
+  })
+
+  it('commit discards the orphan staged copy and lifts the write-gate when the switchover fails', async () => {
+    initDataRoot(dataRoot)
+    const deps = fakeDeps({
+      settingsService: {
+        setDataRoot: vi.fn().mockRejectedValue(new Error('disk full')),
+        markOnboardingComplete: vi.fn().mockResolvedValue(undefined),
+        dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
+        getStoredSettings: vi.fn().mockResolvedValue({})
+      }
+    })
+    registerStorageIpcHandlers(deps)
+
+    await invoke('storage:migrate', { parent: targetParent }) // stages a verified copy, gate up
+    expect(isMigrationPending()).toBe(true)
+
+    const outcome = (await invoke('storage:commit-and-relaunch', { parent: targetParent })) as {
+      switchoverFailed?: boolean
+    }
+
+    expect(outcome.switchoverFailed).toBe(true)
+    // The UI can't retry, so the app must not soft-lock: the staged copy is discarded and the gate lifts.
+    expect(isMigrationPending()).toBe(false)
+    expect(existsSync(target)).toBe(false)
   })
 
   it('rejects a concurrent migrate call while one is already in flight', async () => {
@@ -433,6 +599,33 @@ describe('storage IPC handlers', () => {
     await expect(first).resolves.toEqual({ ok: true })
   })
 
+  it('rejects commit during copying without clearing the write gate', async () => {
+    initDataRoot(dataRoot)
+    let releaseDisconnect: (() => void) | undefined
+    const deps = fakeDeps({
+      runtime: {
+        disconnect: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              releaseDisconnect = resolve
+            })
+        )
+      }
+    })
+    registerStorageIpcHandlers(deps)
+
+    const migratePromise = invoke('storage:migrate', { parent: targetParent })
+    await tick()
+    const commitOutcome = await invoke('storage:commit-and-relaunch', { parent: targetParent })
+    const pendingAfterCommit = isMigrationPending()
+
+    releaseDisconnect?.()
+    await migratePromise
+
+    expect(commitOutcome).toEqual({ ok: false, error: 'A migration copy is still in progress.' })
+    expect(pendingAfterCommit).toBe(true)
+  })
+
   it('cancel-migrate aborts the in-flight migration, surfacing a cancelled result', async () => {
     initDataRoot(dataRoot)
     let releaseDisconnect: (() => void) | undefined
@@ -455,6 +648,44 @@ describe('storage IPC handlers', () => {
 
     await expect(migratePromise).resolves.toMatchObject({ ok: false, cancelled: true })
     expect(deps.relaunch).not.toHaveBeenCalled()
+    // A cancelled copy leaves the app on the old root, so the write-gate is lifted.
+    expect(isMigrationPending()).toBe(false)
+  })
+
+  it('treats cancel during the verify-to-staged transition as a cancelled migration', async () => {
+    initDataRoot(dataRoot)
+    await mkdir(join(dataRoot, 'artifacts'), { recursive: true })
+    await writeFile(join(dataRoot, 'artifacts', 'keep.txt'), 'content')
+    let cancelled = false
+    const deps = fakeDeps({
+      broadcastProgress: (progress) => {
+        if (!cancelled && progress.phase === 'verify') {
+          cancelled = true
+          void invoke('storage:cancel-migrate')
+        }
+      }
+    })
+    registerStorageIpcHandlers(deps)
+
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toMatchObject({
+      ok: false,
+      cancelled: true
+    })
+    expect(existsSync(target)).toBe(false)
+    expect(isMigrationPending()).toBe(false)
+  })
+
+  it('cancel-migrate is a no-op once a copy has completed (only commit/discard may resolve it)', async () => {
+    initDataRoot(dataRoot)
+    registerStorageIpcHandlers(fakeDeps())
+
+    await invoke('storage:migrate', { parent: targetParent }) // copy completes; gate up, staged
+    expect(isMigrationPending()).toBe(true)
+
+    await invoke('storage:cancel-migrate') // late cancel must NOT clear the gate or drop the copy
+
+    expect(isMigrationPending()).toBe(true)
+    expect(existsSync(target)).toBe(true)
   })
 
   it("validate-data-root returns validateNewDataRoot's ok result for a parent with no OpenScience subdir", async () => {

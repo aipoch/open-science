@@ -1,6 +1,6 @@
 import { createReadStream, createWriteStream } from 'node:fs'
-import { mkdir, readdir, rm, rmdir, stat } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { lstat, mkdir, readdir, rm, rmdir, stat } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
 export type MigrationPhase = 'scan' | 'copy' | 'verify' | 'delete'
@@ -27,6 +27,15 @@ type MigrateOpts = {
 // Thrown internally to unwind to the single catch site; never escapes copyAndVerify.
 class AbortedError extends Error {}
 
+// Thrown by listEntries when it meets an entry that is neither a regular file nor a directory
+// (symlink, fifo, socket, device). Copying can't represent these safely and a later deleteSources
+// would destroy them, so the migration refuses rather than lose data.
+class NonRegularEntryError extends Error {
+  constructor(public readonly relPath: string) {
+    super(`unsupported entry (symlink or special file): ${relPath}`)
+  }
+}
+
 const exists = async (path: string): Promise<boolean> => {
   try {
     await stat(path)
@@ -36,19 +45,39 @@ const exists = async (path: string): Promise<boolean> => {
   }
 }
 
-// Recursively lists files (relative paths) under `root`, or [] if `root` doesn't exist.
-const listFiles = async (root: string): Promise<string[]> => {
-  const out: string[] = []
+// Recursively lists regular files and nested directories under `root`, or empty lists if `root`
+// doesn't exist. Directories are tracked separately so empty nested folders survive the move.
+const listEntries = async (
+  root: string
+): Promise<{ files: string[]; directories: string[]; present: boolean }> => {
+  const files: string[] = []
+  const directories: string[] = []
   const walk = async (dir: string): Promise<void> => {
     const entries = await readdir(join(root, dir), { withFileTypes: true })
     for (const entry of entries) {
       const rel = join(dir, entry.name)
-      if (entry.isDirectory()) await walk(rel)
-      else if (entry.isFile()) out.push(rel)
+      if (entry.isDirectory()) {
+        directories.push(rel)
+        await walk(rel)
+      } else if (entry.isFile()) files.push(rel)
+      else throw new NonRegularEntryError(rel)
     }
   }
-  if (await exists(root)) await walk('.')
-  return out
+  // A top-level source dir that is itself a symlink/special node must be rejected up front: exists()
+  // (stat) and readdir would silently follow it, then deleteSources would remove the link and orphan
+  // its target. Inner symlinks/special files are caught inside walk().
+  let info
+  try {
+    info = await lstat(root)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { files, directories, present: false }
+    }
+    throw err
+  }
+  if (!info.isDirectory()) throw new NonRegularEntryError(basename(root))
+  await walk('.')
+  return { files, directories, present: true }
 }
 
 // Copies a single file, streaming, creating parent dirs as needed.
@@ -74,12 +103,15 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
 
   try {
     checkAbort()
-    const filesByDir = new Map<string, string[]>()
+    const entriesByDir = new Map<
+      string,
+      { files: string[]; directories: string[]; present: boolean }
+    >()
     for (const dir of dirs) {
       const srcDir = join(from, dir)
-      const files = await listFiles(srcDir)
-      filesByDir.set(dir, files)
-      for (const rel of files) {
+      const entries = await listEntries(srcDir)
+      entriesByDir.set(dir, entries)
+      for (const rel of entries.files) {
         totalBytes += (await stat(join(srcDir, rel))).size
       }
     }
@@ -90,14 +122,13 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
     // dir must be mirrored at `to`, not silently dropped.
     for (const dir of dirs) {
       const srcDir = join(from, dir)
-      if (!(await exists(srcDir))) continue
-      const files = filesByDir.get(dir) ?? []
+      const entries = entriesByDir.get(dir) ?? { files: [], directories: [], present: false }
+      if (!entries.present) continue
       const destDir = join(to, dir)
       copiedInto.push(destDir)
-      if (files.length === 0) {
-        await mkdir(destDir, { recursive: true })
-      }
-      for (const rel of files) {
+      await mkdir(destDir, { recursive: true })
+      for (const rel of entries.directories) await mkdir(join(destDir, rel), { recursive: true })
+      for (const rel of entries.files) {
         checkAbort()
         await copyFile(join(srcDir, rel), join(destDir, rel))
         copiedBytes += (await stat(join(destDir, rel))).size
@@ -108,8 +139,13 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
 
     // Verify every copied file exists at `to` with matching size.
     for (const dir of dirs) {
-      const files = filesByDir.get(dir) ?? []
-      for (const rel of files) {
+      const entries = entriesByDir.get(dir) ?? { files: [], directories: [], present: false }
+      for (const rel of entries.directories) {
+        checkAbort()
+        const destStat = await stat(join(to, dir, rel)).catch(() => undefined)
+        if (!destStat?.isDirectory()) throw new Error(`verification failed for ${join(dir, rel)}`)
+      }
+      for (const rel of entries.files) {
         checkAbort()
         const srcSize = (await stat(join(from, dir, rel))).size
         const destStat = await stat(join(to, dir, rel)).catch(() => undefined)
@@ -119,6 +155,7 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
         onProgress({ phase: 'verify', copiedBytes, totalBytes, currentPath: join(dir, rel) })
       }
     }
+    checkAbort()
   } catch (err) {
     // Rollback: remove whatever was written under `to`; `from` was never touched.
     for (const destDir of copiedInto) {
@@ -130,9 +167,15 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
     // trace. rmdir only removes it if empty, so any unrelated pre-existing content is left intact.
     await rmdir(to).catch(() => undefined)
     const cancelled = err instanceof AbortedError || signal.aborted
+    const error =
+      err instanceof NonRegularEntryError
+        ? `Can't move your data: "${err.relPath}" is a symbolic link or special file. Remove or replace it with a regular copy, then try again.`
+        : err instanceof Error
+          ? err.message
+          : String(err)
     return {
       ok: false,
-      error: err instanceof Error ? err.message : String(err),
+      error,
       ...(cancelled ? { cancelled: true } : {})
     }
   }

@@ -60,6 +60,7 @@ import {
 } from '../notebook/mcp-server'
 import { getNotebookSessionRoot } from '../notebook/repository'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
+import { withDataRootWrite } from '../storage/migration-state'
 import type { UploadRepository } from '../uploads/repository'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, ArtifactReference } from '../../shared/artifacts'
@@ -882,6 +883,10 @@ class AcpRuntime {
 
   // Sends one prompt turn to the targeted session and streams updates until stop.
   async sendPrompt(request: AcpPromptRequest): Promise<PromptResponse> {
+    return withDataRootWrite(() => this.sendPromptTurn(request))
+  }
+
+  private async sendPromptTurn(request: AcpPromptRequest): Promise<PromptResponse> {
     let activeSession = this.sessions.get(request.sessionId)
 
     if (!activeSession) {

@@ -1,5 +1,4 @@
 import { existsSync } from 'node:fs'
-import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
@@ -14,10 +13,11 @@ import {
   samePath
 } from '../storage-root'
 import { detectActiveSessions } from './detect-active'
-import { beginMigration, endMigration } from './migration-state'
+import { beginMigration, clearMigrationPending, endMigrationCopy } from './migration-state'
 import {
   classifyDataRoot,
   commitDataRootSwitch,
+  discardStagedCopy,
   runDataRootMigration,
   validateNewDataRoot,
   type ValidateResult
@@ -63,6 +63,10 @@ const defaultBroadcast = (progress: MigrationProgress): void => {
 // in-flight AbortController is held in this closure so cancel can reach it.
 const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
   let activeMigration: AbortController | undefined
+  // The token + target of the copy THIS session staged (set when a copy verifies, cleared when the
+  // migration resolves). commit/discard require it so a stale renderer call can't act on a foreign copy.
+  let activeStaged: { token: string; target: string } | undefined
+  let resolutionInProgress = false
 
   ipcMain.handle('storage:get-info', async () => {
     const dataRoot = resolveDataRoot()
@@ -146,19 +150,26 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
   ipcMain.handle(
     'storage:migrate',
     async (_event, request: { parent: string }): Promise<MigrationOutcome> => {
+      if (activeStaged || resolutionInProgress) {
+        return {
+          ok: false,
+          error: 'A completed migration is waiting to be committed or discarded.'
+        }
+      }
       if (activeMigration) {
         return { ok: false, error: 'A migration is already in progress.' }
       }
 
       const controller = new AbortController()
       activeMigration = controller
-      // Flag the copy so the before-quit guard (app lifecycle) can warn on Cmd+Q mid-copy.
+      // Flag the copy: sets both the quit guard (Cmd+Q warning) and the write-gate (blocks ACP/notebook
+      // writes to the old root for the whole copy→commit window).
       beginMigration()
       try {
         // Phase 1 only: copy+verify into the new root. Nothing is committed (no setDataRoot, no
         // delete) — the old root and settings.dataRoot stay intact, so this is fully reversible.
         // Commit happens later, on the user's "Restart now" (storage:commit-and-relaunch).
-        return await runDataRootMigration(
+        const result = await runDataRootMigration(
           {
             currentDataRoot: resolveDataRoot(),
             runtime: deps.runtime,
@@ -167,36 +178,75 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
           request.parent,
           {
             signal: controller.signal,
-            onProgress: (progress) => (deps.broadcastProgress ?? defaultBroadcast)(progress)
+            onProgress: (progress) => (deps.broadcastProgress ?? defaultBroadcast)(progress),
+            onVerified: (staged) => {
+              activeStaged = staged
+            }
           }
         )
+        if (!result.ok) {
+          // A failed/cancelled copy leaves the app on the old root, so clear the write-gate now.
+          clearMigrationPending()
+          activeStaged = undefined
+        }
+        return result
       } catch (err) {
         // runDataRootMigration never rejects; guard the IPC boundary anyway so a renderer call
-        // never sees a raw thrown error.
+        // never sees a raw thrown error. Nothing was committed, so lift the write-gate.
         console.error('[storage-ipc] migrate failed unexpectedly', err)
+        clearMigrationPending()
+        activeStaged = undefined
         return { ok: false, error: err instanceof Error ? err.message : String(err) }
       } finally {
         activeMigration = undefined
-        endMigration()
+        // Relax the quit guard now the copy is done; `pending` (write-gate) persists on success.
+        endMigrationCopy()
       }
     }
   )
 
   ipcMain.handle('storage:cancel-migrate', () => {
+    // Once a copy has completed (activeStaged set), only commit/discard may resolve it: a late cancel
+    // (renderer still showing Cancel during the copy→done transition) must NOT clear the gate/token and
+    // leave a committable-but-unfrozen copy behind.
+    if (activeStaged) return
     activeMigration?.abort()
   })
 
   // Discards a completed-but-uncommitted copy at `<parent>/OpenScience` when the user picks "Keep
   // current location" on the done stage. Since the copy phase never touched settings.dataRoot or the
-  // old root, this just removes the new copy and leaves the app on its current root. Never throws.
+  // old root, this just removes the new copy and leaves the app on its current root. discardStagedCopy
+  // refuses anything that isn't a marker-confirmed staging copy for the current root, so a misrouted
+  // parent can't delete live data. On a successful discard the write-gate is lifted. Never throws.
   ipcMain.handle(
     'storage:discard-migrated-copy',
     async (_event, request: { parent: string }): Promise<void> => {
-      const target = dataRootForPicked(request.parent)
+      if (activeMigration || resolutionInProgress) {
+        // A copy is still running; discarding would race the writer. Ignore the (stale) request.
+        console.error('[storage-ipc] discard-migrated-copy ignored: a copy is in progress')
+        return
+      }
+      if (!activeStaged || !samePath(activeStaged.target, dataRootForPicked(request.parent))) {
+        console.error('[storage-ipc] discard-migrated-copy ignored: no matching staged copy')
+        return
+      }
+      const staged = activeStaged
+      resolutionInProgress = true
       try {
-        await rm(target, { recursive: true, force: true })
+        const result = await discardStagedCopy(
+          { currentDataRoot: resolveDataRoot(), expectedToken: staged.token },
+          request.parent
+        )
+        if (result.ok) {
+          clearMigrationPending()
+          activeStaged = undefined
+        } else {
+          console.error('[storage-ipc] discard-migrated-copy refused', { error: result.error })
+        }
       } catch (err) {
         console.error('[storage-ipc] discard-migrated-copy failed', err)
+      } finally {
+        resolutionInProgress = false
       }
     }
   )
@@ -209,28 +259,62 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
   ipcMain.handle(
     'storage:commit-and-relaunch',
     async (_event, request: { parent: string }): Promise<MigrationOutcome> => {
+      if (activeMigration) {
+        return { ok: false, error: 'A migration copy is still in progress.' }
+      }
+      if (!activeStaged || !samePath(activeStaged.target, dataRootForPicked(request.parent))) {
+        return { ok: false, error: 'No completed migration from this app session was found.' }
+      }
+      if (resolutionInProgress) {
+        return { ok: false, error: 'A migration is already being resolved.' }
+      }
+      const staged = activeStaged
+      resolutionInProgress = true
       let outcome: MigrationOutcome
       try {
         outcome = await commitDataRootSwitch(
           {
             currentDataRoot: resolveDataRoot(),
             // Arrow-wrapped so setDataRoot is called as a method (it reads `this.repository`).
-            setDataRoot: (path) => deps.settingsService.setDataRoot(path)
+            setDataRoot: (path) => deps.settingsService.setDataRoot(path),
+            // Prove the on-disk copy is the one this session staged (guards against a stale marker).
+            expectedToken: staged.token
           },
           request.parent
         )
       } catch (err) {
         console.error('[storage-ipc] commit-and-relaunch failed unexpectedly', err)
+        // The commit didn't complete; keep the app usable on the old root by lifting the write-gate.
+        clearMigrationPending()
+        activeStaged = undefined
+        resolutionInProgress = false
         return { ok: false, error: err instanceof Error ? err.message : String(err) }
       }
 
       if (outcome.ok) {
+        // On success the write-gate stays set through relaunch: the fresh process starts with
+        // pending=false, so writes naturally resume against the now-live new root.
+        activeStaged = undefined
         if (deps.relaunch) {
           deps.relaunch()
         } else {
           app.relaunch()
           app.exit(0)
         }
+      } else {
+        // The commit did not switch over (switchoverFailed, or a no-op refusal: no verified copy /
+        // mismatch). The UI's error stage offers no retry, so never leave the app soft-locked: on a
+        // switchover failure discard the now-orphan staged copy (best-effort), then lift the write-gate
+        // in every case. The old root is untouched and immediately usable.
+        if ('switchoverFailed' in outcome) {
+          await discardStagedCopy(
+            { currentDataRoot: resolveDataRoot(), expectedToken: staged.token },
+            request.parent
+          ).catch(() => undefined)
+        }
+        clearMigrationPending()
+        activeStaged = undefined
+        resolutionInProgress = false
       }
       return outcome
     }

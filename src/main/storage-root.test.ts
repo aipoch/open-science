@@ -1,7 +1,9 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, normalize, resolve, sep } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { MIGRATION_MARKER_FILENAME } from './storage/migration-marker'
 
 // Unified electron mock: getPath is a vi.fn so main's override tests can assert it isn't called,
 // while our data-root tests point it at a per-test temp home via mockReturnValue.
@@ -144,6 +146,7 @@ describe('computeDefaultDataRoot', () => {
     appMock.isPackaged = true
     homeDir = await mkdtemp(join(tmpdir(), 'ds-storage-root-home-'))
     appMock.getPath.mockReturnValue(homeDir)
+    initDataRoot(undefined)
   })
 
   afterEach(async () => {
@@ -196,6 +199,43 @@ describe('computeDefaultDataRoot', () => {
 
     await rm(configRoot, { recursive: true, force: true })
   })
+
+  it('stays at the legacy config root when <home>/OpenScience exists but carries a migration marker', async () => {
+    // A crashed/in-flight migration left a marker-bearing staging dir at homeDefault. It is NOT the
+    // committed default yet, so a legacy config root with real data must still win — otherwise the
+    // half-copied staging dir would split a legacy user's data across two locations.
+    const configRoot = resolveConfigRoot()
+    await mkdir(join(configRoot, 'artifacts'), { recursive: true })
+    const homeDefault = join(homeDir, 'OpenScience')
+    await mkdir(homeDefault, { recursive: true })
+    await writeFile(join(homeDefault, MIGRATION_MARKER_FILENAME), '{}')
+
+    expect(computeDefaultDataRoot()).toBe(configRoot)
+
+    await rm(configRoot, { recursive: true, force: true })
+  })
+
+  it('does not treat a markerless partial <home>/OpenScience copy as committed', async () => {
+    const configRoot = resolveConfigRoot()
+    await mkdir(join(configRoot, 'artifacts'), { recursive: true })
+    await mkdir(join(homeDir, 'OpenScience', 'artifacts'), { recursive: true })
+
+    expect(computeDefaultDataRoot()).toBe(configRoot)
+
+    await rm(configRoot, { recursive: true, force: true })
+  })
+
+  it('treats an explicitly configured <home>/OpenScience as the committed default', async () => {
+    const configRoot = resolveConfigRoot()
+    const homeDefault = join(homeDir, 'OpenScience')
+    await mkdir(join(configRoot, 'artifacts'), { recursive: true })
+    await mkdir(join(homeDefault, 'artifacts'), { recursive: true })
+    initDataRoot(homeDefault)
+
+    expect(computeDefaultDataRoot()).toBe(homeDefault)
+
+    await rm(configRoot, { recursive: true, force: true })
+  })
 })
 
 describe('computeDefaultDataRoot (dev mode)', () => {
@@ -203,6 +243,7 @@ describe('computeDefaultDataRoot (dev mode)', () => {
     appMock.isPackaged = false
     homeDir = await mkdtemp(join(tmpdir(), 'ds-storage-root-devhome-'))
     appMock.getPath.mockReturnValue(homeDir)
+    initDataRoot(undefined)
   })
 
   afterEach(async () => {
@@ -224,15 +265,17 @@ describe('computeDefaultDataRoot (dev mode)', () => {
     expect(computeDefaultDataRoot()).toBe(join(homeDir, 'OpenScience-DEV'))
   })
 
-  it('prefers <home>/OpenScience-DEV once it exists, even if the config root still has legacy data', async () => {
+  it('prefers an explicitly configured <home>/OpenScience-DEV over legacy data', async () => {
     // A relocated legacy install: leftover markers linger in the config root, but the modern data
     // folder already exists (and is in use). It must win, or isDefault/return-to-default would keep
     // pointing at the stale legacy path.
     const configRoot = resolveConfigRoot()
     await mkdir(join(configRoot, 'artifacts'), { recursive: true })
-    await mkdir(join(homeDir, 'OpenScience-DEV'), { recursive: true })
+    const homeDefault = join(homeDir, 'OpenScience-DEV')
+    await mkdir(join(homeDefault, 'artifacts'), { recursive: true })
+    initDataRoot(homeDefault)
 
-    expect(computeDefaultDataRoot()).toBe(join(homeDir, 'OpenScience-DEV'))
+    expect(computeDefaultDataRoot()).toBe(homeDefault)
 
     await rm(configRoot, { recursive: true, force: true })
   })

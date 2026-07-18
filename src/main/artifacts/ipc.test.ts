@@ -7,6 +7,11 @@ import type { ArtifactFile, ArtifactWriteSource } from '../../shared/artifacts'
 import { ArtifactRepository } from './repository'
 import { createArtifactHandlers } from './ipc'
 import { ArtifactRunRegistry } from './run-registry'
+import {
+  beginMigration,
+  clearMigrationPending,
+  waitForDataRootWriters
+} from '../storage/migration-state'
 
 let storageRoot: string | undefined
 
@@ -25,6 +30,7 @@ const createInlineSource = (
 })
 
 afterEach(async () => {
+  clearMigrationPending()
   if (storageRoot) {
     await rm(storageRoot, { recursive: true, force: true })
     storageRoot = undefined
@@ -114,6 +120,40 @@ describe('artifact IPC handlers', () => {
       [finalizedArtifact]
     ])
     expect(repository.listMessageFiles).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps migration drain pending until an artifact finalization already in progress finishes', async () => {
+    let releaseFinalize: (() => void) | undefined
+    const repository = {
+      finalizeRunArtifacts: vi.fn(
+        () =>
+          new Promise<ArtifactFile[]>((resolve) => {
+            releaseFinalize = () => resolve([createFinalizedArtifact()])
+          })
+      )
+    } as unknown as ArtifactRepository
+    const registry = new ArtifactRunRegistry()
+    const claimId = registry.register({
+      projectName: 'default-project',
+      artifactSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      runId: 'run-1'
+    })
+    const handlers = createArtifactHandlers(repository, registry)
+
+    const finalizePromise = handlers.finalizeRunArtifacts({ claimId, messageId: 'message-1' })
+    beginMigration()
+    let drained = false
+    const drainPromise = waitForDataRootWriters().then(() => {
+      drained = true
+    })
+    await Promise.resolve()
+    expect(drained).toBe(false)
+
+    releaseFinalize?.()
+    await finalizePromise
+    await drainPromise
+    expect(drained).toBe(true)
   })
 
   it('opens only files inside the managed artifact root', async () => {

@@ -6,6 +6,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NotebookExecutionRequest, NotebookExecutionResult } from './runtime-service'
 import { NotebookRuntimeService } from './runtime-service'
 import { NotebookRunRepository } from './repository'
+import {
+  beginMigration,
+  clearMigrationPending,
+  waitForDataRootWriters
+} from '../storage/migration-state'
 
 let storageRoot: string | undefined
 
@@ -556,5 +561,197 @@ describe('notebook runtime service', () => {
     releases.get('session-a')?.()
     releases.get('session-b')?.()
     await Promise.all([runA, runB])
+  })
+})
+
+describe('notebook runtime service migration write-gate', () => {
+  afterEach(() => {
+    // migration-state is a module singleton; clear it so a pending gate can't leak between tests.
+    clearMigrationPending()
+  })
+
+  it('rejects runCell while a data-root migration is pending, then resumes once cleared', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (): Promise<NotebookExecutionResult> => {
+          throw new Error('executor should never run while the gate is up')
+        },
+        shutdown: async () => undefined
+      })
+    })
+
+    beginMigration()
+    await expect(
+      service.runCell({
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace',
+        cellId: 'cell-1'
+      })
+    ).rejects.toThrow(/moving your data/i)
+
+    // Once the gate is lifted the guard no longer fires: the call proceeds far enough to hit an
+    // ordinary domain error (the cell was never created) instead of the migration message.
+    clearMigrationPending()
+    await expect(
+      service.runCell({
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace',
+        cellId: 'cell-1'
+      })
+    ).rejects.toThrow(/Notebook cell not found/i)
+  })
+
+  it('rejects a streamed cell write before creating notebook storage while migration is pending', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (): Promise<NotebookExecutionResult> => {
+          throw new Error('executor should not run')
+        },
+        shutdown: async () => undefined
+      })
+    })
+
+    beginMigration()
+    await expect(
+      service.beginCodeCell({
+        projectName: 'default-project',
+        sessionId: 'session-stream',
+        workspaceCwd: '/workspace'
+      })
+    ).rejects.toThrow(/moving your data/i)
+    await expect(
+      new NotebookRunRepository(root).findExisting('default-project', 'session-stream')
+    ).resolves.toBeNull()
+  })
+
+  it('keeps migration drain pending until a notebook run already in progress finishes', async () => {
+    const root = await createStorageRoot()
+    let releaseExecution: (() => void) | undefined
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: (request) =>
+          new Promise<NotebookExecutionResult>((resolve) => {
+            releaseExecution = () =>
+              resolve({
+                status: 'completed',
+                stdout: '',
+                stderr: '',
+                traceback: '',
+                cwdAfter: request.cwd,
+                outputs: [],
+                workingFiles: []
+              })
+          }),
+        shutdown: async () => undefined
+      })
+    })
+    const begin = await service.beginCodeCell({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    })
+    await service.appendCodeCell({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      cellId: begin.cellId,
+      writeId: begin.writeId,
+      delta: '1 + 1'
+    })
+    await service.finishCodeCell({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      cellId: begin.cellId,
+      writeId: begin.writeId
+    })
+
+    const runPromise = service.runCell({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      cellId: begin.cellId
+    })
+    await vi.waitFor(() => expect(releaseExecution).toBeDefined())
+    beginMigration()
+    let drained = false
+    const drainPromise = waitForDataRootWriters().then(() => {
+      drained = true
+    })
+    await Promise.resolve()
+    expect(drained).toBe(false)
+
+    releaseExecution?.()
+    await runPromise
+    await drainPromise
+    expect(drained).toBe(true)
+  })
+
+  it('holds one write lease across execute setup and execution', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const loadOrCreate = repository.loadOrCreate.bind(repository)
+    let releaseLoad: (() => void) | undefined
+    const loadGate = new Promise<void>((resolve) => {
+      releaseLoad = resolve
+    })
+    vi.spyOn(repository, 'loadOrCreate').mockImplementation(async (request) => {
+      await loadGate
+      return loadOrCreate(request)
+    })
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository,
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: [],
+          workingFiles: []
+        }),
+        shutdown: async () => undefined
+      })
+    })
+
+    const executePromise = service.execute({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      code: '1 + 1'
+    })
+    await vi.waitFor(() => expect(repository.loadOrCreate).toHaveBeenCalled())
+    beginMigration()
+    let drained = false
+    const drainPromise = waitForDataRootWriters().then(() => {
+      drained = true
+    })
+    await Promise.resolve()
+    expect(drained).toBe(false)
+
+    releaseLoad?.()
+    await expect(executePromise).resolves.toMatchObject({ status: 'completed' })
+    await drainPromise
+    expect(drained).toBe(true)
   })
 })
