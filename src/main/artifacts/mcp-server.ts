@@ -9,9 +9,9 @@ import type {
   ArtifactWriteEncoding,
   ArtifactWriteSource
 } from '../../shared/artifacts'
+import { ARTIFACT_MCP_SERVER_ARG } from '../mcp-server-args'
 import { ArtifactRepository } from './repository'
 
-const ARTIFACT_MCP_SERVER_ARG = '--open-science-artifact-mcp'
 const ARTIFACT_MCP_SERVER_NAME = 'open-science-artifacts'
 
 type ArtifactMcpEnvironment = {

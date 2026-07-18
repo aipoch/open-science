@@ -1,7 +1,9 @@
 import { fileURLToPath } from 'node:url'
 
-import { ARTIFACT_MCP_SERVER_ARG, runArtifactMcpServer } from './artifacts/mcp-server'
-import { NOTEBOOK_MCP_SERVER_ARG, runNotebookMcpServer } from './notebook/mcp-server'
+// Only the lightweight argv flags are imported statically here. The MCP server modules (and their heavy
+// SDK graph) are imported lazily inside the matching branch, and the Electron backend is imported only
+// after the single-instance lock is held — so no backend module loads before the lock in UI mode.
+import { ARTIFACT_MCP_SERVER_ARG, NOTEBOOK_MCP_SERVER_ARG } from './mcp-server-args'
 
 const APP_NAME = 'Open Science'
 const APP_USER_MODEL_ID = 'com.aipoch.open-science'
@@ -9,17 +11,21 @@ const shouldRunArtifactMcpServer = process.argv.includes(ARTIFACT_MCP_SERVER_ARG
 const shouldRunNotebookMcpServer = process.argv.includes(NOTEBOOK_MCP_SERVER_ARG)
 
 if (shouldRunArtifactMcpServer) {
-  // Reuse the packaged entry point as a Node stdio MCP server before Electron modules are imported.
-  runArtifactMcpServer().catch((error: unknown) => {
-    console.error(error)
-    process.exitCode = 1
-  })
+  // Reuse the packaged entry point as a Node stdio MCP server; import it only in this mode.
+  void import('./artifacts/mcp-server')
+    .then(({ runArtifactMcpServer }) => runArtifactMcpServer())
+    .catch((error: unknown) => {
+      console.error(error)
+      process.exitCode = 1
+    })
 } else if (shouldRunNotebookMcpServer) {
   // Keep notebook MCP mode as a Node stdio process that proxies to the app-owned runtime.
-  runNotebookMcpServer().catch((error: unknown) => {
-    console.error(error)
-    process.exitCode = 1
-  })
+  void import('./notebook/mcp-server')
+    .then(({ runNotebookMcpServer }) => runNotebookMcpServer())
+    .catch((error: unknown) => {
+      console.error(error)
+      process.exitCode = 1
+    })
 } else {
   void startElectronApp(fileURLToPath(import.meta.url)).catch((error: unknown) => {
     console.error(error)
