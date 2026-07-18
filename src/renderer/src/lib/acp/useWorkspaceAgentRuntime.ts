@@ -88,8 +88,11 @@ const getResumeFailureMessage = (error: unknown): string => {
   }
 
   // Model↔framework mismatch is now flagged proactively in Settings → Model, so keep this soft and
-  // actionable rather than an alarming "resume failed" — the fix lives in settings, not here.
-  if (/not compatible with|compatible model/i.test(message)) {
+  // actionable rather than an alarming "resume failed" — the fix lives in settings, not here. Anchor
+  // to the specific marker from the thrown error (settings/service.ts: "The active model isn't
+  // compatible with <framework>…") so unrelated "not compatible with" errors — notably an ACP
+  // protocol-version mismatch — fall through to the default message instead of being mislabeled.
+  if (/active model isn'?t compatible with/i.test(message)) {
     return "The active model isn't compatible with this agent framework. Open Settings → Model to pick a compatible model or switch frameworks."
   }
 
@@ -719,6 +722,7 @@ const useWorkspaceAgentRuntime = (): {
 
 export {
   createWorkspaceRuntimeEventProcessor,
+  getResumeFailureMessage,
   markRunningSessionsDisconnectedOnDrop,
   processVisibleWorkspaceRuntimeEvents,
   resumeInterruptedWorkspaceSession,

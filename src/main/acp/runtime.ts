@@ -52,6 +52,7 @@ import {
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 import { matchSessionModelOption } from './session-config'
 import { AcpPermissionBroker } from './permission-broker'
+import { isMcpToolName } from './permission-policy'
 import { applyCurrentModeUpdate } from './permission-profile-controller'
 import {
   ARTIFACT_MCP_SERVER_NAME,
@@ -238,6 +239,11 @@ class AcpRuntime {
   private supportsSessionResume = false
   private readonly sessions = new Map<string, ActiveSession>()
   private readonly sessionCwds = new Map<string, string>()
+  // Per-session names of the MCP servers the agent was actually given (from createMcpServers), so
+  // MCP-originated tool calls can be recognized across frameworks (Claude's mcp__<server>__<tool> vs
+  // opencode's <server>_<tool>) and never conservatively auto-approved. Derived per session rather
+  // than hardcoded so it can't drift from what createMcpServers wires up.
+  private readonly sessionMcpServerNames = new Map<string, string[]>()
   // Ephemeral background reviewer sessions (built via buildReviewerSession). They are deliberately kept
   // out of `this.sessions` — not tracked in the snapshot, not user-facing — but their tool calls still
   // trigger permission requests over the shared agent connection. This set lets the permission handler
@@ -546,15 +552,16 @@ class AcpRuntime {
     const artifactSessionId = this.createArtifactSessionId()
     const notebookSessionId = this.createNotebookSessionId()
 
+    const mcpServers = await this.createMcpServers({
+      artifactSessionId,
+      notebookSessionId,
+      sessionCwd,
+      projectName
+    })
     const session = await connection.agent
       .buildSession({
         cwd: sessionCwd,
-        mcpServers: await this.createMcpServers({
-          artifactSessionId,
-          notebookSessionId,
-          sessionCwd,
-          projectName
-        }),
+        mcpServers,
         ...this.buildSessionMetaArg()
       })
       .start()
@@ -574,6 +581,7 @@ class AcpRuntime {
 
     this.sessions.set(session.sessionId, session)
     this.sessionCwds.set(session.sessionId, sessionCwd)
+    this.sessionMcpServerNames.set(session.sessionId, this.mcpServerNamesOf(mcpServers))
     this.sessionProjectNames.set(session.sessionId, projectName)
     this.sessionFrameworks.set(session.sessionId, this.framework.id)
     this.rememberArtifactSession(session.sessionId, artifactSessionId)
@@ -599,7 +607,8 @@ class AcpRuntime {
     appSessionId: string,
     session: ActiveSession,
     cwd: string,
-    projectName: string
+    projectName: string,
+    mcpServerNames: string[]
   ): void {
     this.sessions.set(appSessionId, session)
 
@@ -608,6 +617,7 @@ class AcpRuntime {
     }
 
     this.sessionCwds.set(appSessionId, cwd)
+    this.sessionMcpServerNames.set(appSessionId, mcpServerNames)
     this.sessionProjectNames.set(appSessionId, projectName)
     this.sessionFrameworks.set(appSessionId, this.framework.id)
     this.rememberArtifactSession(appSessionId, appSessionId)
@@ -711,17 +721,18 @@ class AcpRuntime {
     }
 
     // Resumed sessions already have stable ids, so the artifact session mirrors the runtime session id.
+    const mcpServers = await this.createMcpServers({
+      artifactSessionId: request.sessionId,
+      notebookSessionId: request.sessionId,
+      sessionCwd,
+      projectName
+    })
     let resumeResponse
     try {
       resumeResponse = await connection.agent.request(acp.methods.agent.session.resume, {
         sessionId: request.sessionId,
         cwd: sessionCwd,
-        mcpServers: await this.createMcpServers({
-          artifactSessionId: request.sessionId,
-          notebookSessionId: request.sessionId,
-          sessionCwd,
-          projectName
-        }),
+        mcpServers,
         ...this.buildSessionMetaArg()
       })
     } catch (error) {
@@ -759,6 +770,7 @@ class AcpRuntime {
 
     this.sessions.set(request.sessionId, session)
     this.sessionCwds.set(request.sessionId, sessionCwd)
+    this.sessionMcpServerNames.set(request.sessionId, this.mcpServerNamesOf(mcpServers))
     this.sessionProjectNames.set(request.sessionId, projectName)
     this.sessionFrameworks.set(request.sessionId, this.framework.id)
     this.rememberArtifactSession(request.sessionId, request.sessionId)
@@ -786,15 +798,16 @@ class AcpRuntime {
     sessionCwd: string,
     projectName: string
   ): Promise<AcpCreateSessionResponse> {
+    const mcpServers = await this.createMcpServers({
+      artifactSessionId: request.sessionId,
+      notebookSessionId: request.sessionId,
+      sessionCwd,
+      projectName
+    })
     const adopted = await connection.agent
       .buildSession({
         cwd: sessionCwd,
-        mcpServers: await this.createMcpServers({
-          artifactSessionId: request.sessionId,
-          notebookSessionId: request.sessionId,
-          sessionCwd,
-          projectName
-        }),
+        mcpServers,
         ...this.buildSessionMetaArg()
       })
       .start()
@@ -811,7 +824,13 @@ class AcpRuntime {
     }
 
     await this.applySessionModel(adopted)
-    this.adoptSession(request.sessionId, adopted, sessionCwd, projectName)
+    this.adoptSession(
+      request.sessionId,
+      adopted,
+      sessionCwd,
+      projectName,
+      this.mcpServerNamesOf(mcpServers)
+    )
     this.emitState()
 
     return { sessionId: request.sessionId, cwd: sessionCwd, contextReset: true }
@@ -919,6 +938,7 @@ class AcpRuntime {
 
     this.sessions.clear()
     this.sessionCwds.clear()
+    this.sessionMcpServerNames.clear()
     this.sessionProjectNames.clear()
     this.permissionProfiles.clear()
     this.artifactSessionIds.clear()
@@ -1216,6 +1236,7 @@ class AcpRuntime {
       this.unregisterHttpMcpSession(request.sessionId)
       this.sessions.delete(request.sessionId)
       this.sessionCwds.delete(request.sessionId)
+      this.sessionMcpServerNames.delete(request.sessionId)
       this.sessionProjectNames.delete(request.sessionId)
       this.sessionFrameworks.delete(request.sessionId)
       this.permissionProfiles.delete(request.sessionId)
@@ -1685,6 +1706,14 @@ class AcpRuntime {
     return servers
   }
 
+  // Extracts the names of the MCP servers handed to a session so MCP-origin tool calls can be
+  // recognized later (see sessionMcpServerNames). Both stdio and http McpServer configs carry a name.
+  private mcpServerNamesOf(servers: McpServer[]): string[] {
+    return servers
+      .map((server) => (server as { name?: unknown }).name)
+      .filter((name): name is string => typeof name === 'string')
+  }
+
   // Drops one session's artifact/notebook registrations from the http MCP host (no-op without a host).
   private unregisterHttpMcpSession(appSessionId: string): void {
     if (!this.mcpHttpHost) return
@@ -1912,9 +1941,12 @@ class AcpRuntime {
     // runs without this appearing, the agent never asked (e.g. an un-gated permission config). Log the
     // tool identity (name/kind) and whether it looks like MCP — never the title (a WebFetch title is the
     // full URL with query params, i.e. user data).
+    const appSessionId = this.agentToAppSessionId.get(params.sessionId) ?? params.sessionId
+    const mcpServerNames = this.sessionMcpServerNames.get(appSessionId) ?? []
     const toolName = extractProviderToolName(params.toolCall)
     const isMcp =
-      params.toolCall?.title?.startsWith('mcp__') === true || toolName?.startsWith('mcp__') === true
+      isMcpToolName(params.toolCall?.title, mcpServerNames) ||
+      isMcpToolName(toolName, mcpServerNames)
     log.info('permission request received', {
       tool: toolName ?? params.toolCall?.kind,
       isMcp,
@@ -1931,8 +1963,6 @@ class AcpRuntime {
         return this.autoApproveReviewerPermission(params)
       }
 
-      const appSessionId = this.agentToAppSessionId.get(params.sessionId) ?? params.sessionId
-
       if (!this.sessions.has(appSessionId)) {
         throw new Error(`Unknown ACP session: ${appSessionId}`)
       }
@@ -1944,7 +1974,8 @@ class AcpRuntime {
         {
           profile: profileState?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
           autoReviewStrategy: profileState?.autoReviewStrategy,
-          cwd: this.sessionCwds.get(appSessionId)
+          cwd: this.sessionCwds.get(appSessionId),
+          mcpServerNames
         }
       )
     } catch (error) {
@@ -2093,6 +2124,7 @@ class AcpRuntime {
     this.permissionBroker.cancelAll()
     this.sessions.clear()
     this.sessionCwds.clear()
+    this.sessionMcpServerNames.clear()
     this.sessionProjectNames.clear()
     this.artifactSessionIds.clear()
     this.notebookRoutingIds.clear()
@@ -2186,6 +2218,9 @@ class AcpRuntime {
     // Register so the permission handler recognises this session and auto-approves its tool calls.
     // The orchestrator must call disposeReviewerSession() to unregister and tear it down.
     this.reviewerSessionIds.add(session.sessionId)
+    // Record the reviewer's MCP server names too, so its MCP tool calls are audited as MCP (they are
+    // still auto-approved via reviewerSessionIds, but the isMcp classification must stay accurate).
+    this.sessionMcpServerNames.set(session.sessionId, this.mcpServerNamesOf(request.mcpServers))
 
     return { session, promptPrefix: setup.promptPrefix }
   }
@@ -2194,6 +2229,7 @@ class AcpRuntime {
   // even if the session was never registered (e.g. it failed before start).
   disposeReviewerSession(session: import('@agentclientprotocol/sdk').ActiveSession): void {
     this.reviewerSessionIds.delete(session.sessionId)
+    this.sessionMcpServerNames.delete(session.sessionId)
     session.dispose()
   }
 }

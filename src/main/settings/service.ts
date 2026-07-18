@@ -437,11 +437,14 @@ class SettingsService {
   // Computes the two startup gates, re-checking the claude path each call as the design requires.
   async getPreflight(): Promise<Preflight> {
     const settings = await this.repository.getSettings()
+    // Validate each recorded runtime exactly as the authoritative env check does — by invoking
+    // `--version`, not mere X_OK — so a corrupt-but-executable binary cannot pass preflight and get
+    // auto-selected as "ready" only to be rejected later by the env gate that actually runs it.
     const claudePathExists = settings.claude?.resolvedPath
-      ? await this.pathExists(settings.claude.resolvedPath)
+      ? (await this.detectDeps.getVersion(settings.claude.resolvedPath)) !== undefined
       : false
     const opencodePathExists = settings.opencodePath
-      ? await this.pathExists(settings.opencodePath)
+      ? (await this.opencodeDetectDeps.getVersion(settings.opencodePath)) !== undefined
       : false
 
     const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID

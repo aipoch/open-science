@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   canConservativelyAutoApprove,
+  isMcpToolName,
   isWithinWorkspace,
   resolveAllowOptionId,
   resolveAutomaticPermission
@@ -86,6 +87,58 @@ describe('permission policy', () => {
         '/workspace/project'
       )
     ).toBe(false)
+  })
+
+  it('recognizes MCP tool names across frameworks', () => {
+    const servers = ['open-science-artifacts', 'open-science-notebook']
+
+    // Claude namespaces MCP tools mcp__<server>__<tool> — matched by prefix regardless of server list.
+    expect(isMcpToolName('mcp__pencil__batch_get', [])).toBe(true)
+    // opencode joins them <server>_<tool> — matched only against the session's known server names.
+    expect(isMcpToolName('open-science-artifacts_write_artifact_file', servers)).toBe(true)
+    expect(isMcpToolName('open-science-notebook', servers)).toBe(true)
+    // Built-in framework tools never collide with a server name.
+    expect(isMcpToolName('edit', servers)).toBe(false)
+    expect(isMcpToolName('write_artifact_file', servers)).toBe(false)
+  })
+
+  it('never auto-approves opencode-named MCP tools (<server>_<tool>) reporting a low-risk kind', () => {
+    // The write_artifact_file MCP tool renamed by opencode still performs arbitrary side effects, so a
+    // reported edit/read kind with a workspace location must not slip through the conservative fallback.
+    expect(
+      canConservativelyAutoApprove(
+        createPermissionRequest('edit', [{ path: 'results/output.csv' }], {
+          title: 'open-science-artifacts_write_artifact_file'
+        }),
+        '/workspace/project',
+        ['open-science-artifacts', 'open-science-notebook']
+      )
+    ).toBe(false)
+  })
+
+  it('still auto-approves a genuine built-in edit when MCP server names are provided', () => {
+    expect(
+      canConservativelyAutoApprove(
+        createPermissionRequest('edit', [{ path: 'results/output.csv' }], { title: 'Edit' }),
+        '/workspace/project',
+        ['open-science-artifacts', 'open-science-notebook']
+      )
+    ).toBe(true)
+  })
+
+  it('routes opencode MCP tools to the UI under conservative Auto instead of auto-approving', () => {
+    const request = createPermissionRequest('read', [{ path: 'data/input.csv' }], {
+      title: 'open-science-notebook_notebook_state'
+    })
+
+    expect(
+      resolveAutomaticPermission(request, {
+        profile: 'auto',
+        autoReviewStrategy: 'conservative',
+        cwd: '/workspace/project',
+        mcpServerNames: ['open-science-artifacts', 'open-science-notebook']
+      })
+    ).toBeUndefined()
   })
 
   it('grants a single-use approval only, never escalating to allow_always', () => {

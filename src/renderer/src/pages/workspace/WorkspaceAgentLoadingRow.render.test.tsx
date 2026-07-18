@@ -61,6 +61,38 @@ describe('WorkspaceAgentLoadingRow', () => {
     expect(container.textContent).toContain('taking longer than usual')
   })
 
+  it('updates the elapsed time live while the turn runs', () => {
+    seedRunningSession(5000)
+    act(() => root.render(<AgentLoadingIndicator sessionId="s1" />))
+
+    expect(container.textContent).toContain('0:05')
+
+    // The row ticks once a second; advancing the clock should move the label forward.
+    act(() => {
+      vi.advanceTimersByTime(3000)
+    })
+
+    expect(container.textContent).toContain('0:08')
+    expect(container.textContent).not.toContain('0:05')
+  })
+
+  it('crosses into the "taking longer than usual" hint as time passes the threshold', () => {
+    // Start just under the 20s slow-hint threshold: no hint yet.
+    seedRunningSession(18_000)
+    act(() => root.render(<AgentLoadingIndicator sessionId="s1" />))
+
+    expect(container.textContent).toContain('0:18')
+    expect(container.textContent).not.toContain('taking longer than usual')
+
+    // Advance past 20s: the label keeps ticking and the slow hint appears.
+    act(() => {
+      vi.advanceTimersByTime(3000)
+    })
+
+    expect(container.textContent).toContain('0:21')
+    expect(container.textContent).toContain('taking longer than usual')
+  })
+
   it('surfaces the latest agent status line when present', () => {
     seedRunningSession(3000, 'retrying request…')
     act(() => root.render(<AgentLoadingIndicator sessionId="s1" />))

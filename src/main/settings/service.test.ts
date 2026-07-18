@@ -323,6 +323,29 @@ describe('SettingsService: preflight & spawn config', () => {
     })
   })
 
+  it('does not report claude ready when the recorded binary exists but fails --version', async () => {
+    // Executable-but-corrupt runtime: execPath is a real file (X_OK passes) yet `--version` fails.
+    // Preflight must validate via --version like the env check, so this must NOT pass as ready.
+    const service = createService({ found: false })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+
+    const preflight = await service.getPreflight()
+
+    expect(preflight.claudeReady).toBe(false)
+    expect(preflight.agentReady).toBe(false)
+  })
+
+  it('does not report opencode ready when the recorded binary exists but fails --version', async () => {
+    // Same for OpenCode: the recorded path is a real executable, but its --version probe fails
+    // (no opencodeDetected declared, so the injected getVersion returns undefined for it).
+    const service = createService({ found: true, path: '/bin/claude', version: '2.1.0' })
+    await repository.setOpencodeInfo(execPath, '1.18.3')
+
+    const preflight = await service.getPreflight()
+
+    expect(preflight.opencodeReady).toBe(false)
+  })
+
   it('builds spawn env from the active provider with the decrypted key', async () => {
     const service = createService()
 

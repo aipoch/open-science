@@ -76,6 +76,15 @@ type SettingsStoreData = {
   environmentCheckError: string | undefined
   // Transient UI state for the wizard/settings page.
   isCheckingEnvironment: boolean
+  // Framework the in-flight environment check was issued for. Used ONLY for the React Strict Mode
+  // de-dup: a same-framework duplicate mount reuses the running pass instead of double-probing.
+  // Staleness/ownership is decided by envCheckGeneration, never by this field.
+  checkingFramework: AgentFrameworkId | undefined
+  // Monotonic token stamped by each checkEnvironment call. The success/catch/finally branches only
+  // mutate shared state when their captured generation is still current, so an older pass (even one
+  // for the same framework, as in a Claude -> OpenCode -> Claude ABA sequence) can never overwrite,
+  // fail, or clear the loading flags of a newer pass.
+  envCheckGeneration: number
   isDetectingClaude: boolean
   isDetectingOpencode: boolean
   isInstalling: boolean
@@ -211,6 +220,8 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   environmentCheck: undefined,
   environmentCheckError: undefined,
   isCheckingEnvironment: false,
+  checkingFramework: undefined,
+  envCheckGeneration: 0,
   isDetectingClaude: false,
   isDetectingOpencode: false,
   isInstalling: false,
@@ -322,11 +333,28 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   // their structured, non-secret result. Refresh settings/preflight afterwards because detection may
   // have discovered and persisted a Claude installation that appeared since the previous launch.
   checkEnvironment: async () => {
-    // React Strict Mode intentionally re-runs mount effects in development. The first invocation sets
-    // this flag synchronously, so later callers reuse the in-flight pass instead of probing twice.
-    if (get().isCheckingEnvironment) return get().environmentCheck
+    // React Strict Mode intentionally re-runs mount effects in development. Reuse the in-flight pass
+    // only when it targets the currently-selected framework: an auto-switch (e.g. Claude -> a detected
+    // OpenCode) changes the target mid-flight, and that call must issue its own probe rather than reuse
+    // the previous framework's, or Continue stays disabled on a result that no longer matches.
+    const framework = get().agentFrameworkId
+    if (get().isCheckingEnvironment && get().checkingFramework === framework) {
+      return get().environmentCheck
+    }
 
-    set({ isCheckingEnvironment: true, isDetectingClaude: true, environmentCheckError: undefined })
+    // Stamp a fresh generation; only the branch whose captured token is still current may mutate
+    // shared state. This defeats an ABA sequence (Claude -> OpenCode -> Claude) where an older pass
+    // shares the framework id of the newest one and would otherwise pass a framework-only staleness
+    // check.
+    const generation = get().envCheckGeneration + 1
+
+    set({
+      envCheckGeneration: generation,
+      isCheckingEnvironment: true,
+      checkingFramework: framework,
+      isDetectingClaude: true,
+      environmentCheckError: undefined
+    })
 
     try {
       const environmentCheck = await window.api.settings.checkEnvironment()
@@ -335,6 +363,16 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         window.api.settings.getPreflight(),
         window.api.settings.isNpmAvailable()
       ])
+
+      // Discard a stale result: a newer pass has stamped a later generation and now owns the visible
+      // state, so this older probe must not overwrite it (defensively also require the result to
+      // still match the selected framework).
+      if (
+        get().envCheckGeneration !== generation ||
+        environmentCheck.agentFrameworkId !== get().agentFrameworkId
+      ) {
+        return environmentCheck
+      }
 
       set({
         ...applySnapshot(snapshot),
@@ -345,13 +383,22 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
       return environmentCheck
     } catch (error) {
-      set({
-        environmentCheckError:
-          error instanceof Error ? error.message : 'Environment detection could not be completed.'
-      })
+      // A late failure from a superseded pass must not clobber a newer pass's successful result.
+      if (get().envCheckGeneration === generation) {
+        set({
+          environmentCheckError:
+            error instanceof Error ? error.message : 'Environment detection could not be completed.'
+        })
+      }
       return undefined
     } finally {
-      set({ isCheckingEnvironment: false, isDetectingClaude: false })
+      // Only clear the loading flags when this pass is still the current one; a newer pass may
+      // already be running and now owns them.
+      set((state) =>
+        state.envCheckGeneration === generation
+          ? { isCheckingEnvironment: false, checkingFramework: undefined, isDetectingClaude: false }
+          : {}
+      )
     }
   },
 

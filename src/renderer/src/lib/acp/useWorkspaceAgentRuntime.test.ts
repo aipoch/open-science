@@ -9,6 +9,7 @@ import {
 } from '../../stores/preview-workbench-store'
 import {
   createWorkspaceRuntimeEventProcessor,
+  getResumeFailureMessage,
   markRunningSessionsDisconnectedOnDrop,
   processVisibleWorkspaceRuntimeEvents,
   resumeInterruptedWorkspaceSession,
@@ -195,6 +196,32 @@ describe('workspace agent runtime event processing', () => {
       'artifact-event-1',
       'stop-event-1'
     ])
+  })
+})
+
+describe('resume failure classification', () => {
+  it('rewrites a genuine model↔framework incompatibility into the actionable settings message', () => {
+    // Verbatim error thrown by settings/service.ts when the active provider cannot drive the framework.
+    const message = getResumeFailureMessage(
+      new Error(
+        "The active model isn't compatible with Claude Code. Open Settings → Model to pick a compatible model or switch the agent framework."
+      )
+    )
+
+    expect(message).toBe(
+      "The active model isn't compatible with this agent framework. Open Settings → Model to pick a compatible model or switch frameworks."
+    )
+  })
+
+  it('does not mislabel an ACP protocol-version mismatch as a model incompatibility', () => {
+    // Different "not compatible with" phrase from the ACP handshake; must pass through unchanged.
+    const message = getResumeFailureMessage(
+      new Error('ACP protocol version is not compatible with this client')
+    )
+
+    expect(message).toBe(
+      'Agent session resume failed: ACP protocol version is not compatible with this client'
+    )
   })
 })
 

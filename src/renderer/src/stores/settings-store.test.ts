@@ -330,6 +330,190 @@ describe('settings store: environment check', () => {
     await first
   })
 
+  it('re-issues the check when the framework auto-switches mid-flight and does not stick on the stale result', async () => {
+    const claudeResult: EnvironmentCheckResult = {
+      checkedAt: 1,
+      platform: 'darwin',
+      architecture: 'arm64',
+      checks: [],
+      ready: true,
+      canAutoInstall: false,
+      agentFrameworkId: 'claude-code',
+      runtime: { found: false }
+    }
+    const opencodeResult: EnvironmentCheckResult = {
+      ...claudeResult,
+      agentFrameworkId: 'opencode',
+      runtime: { found: true, path: '/bin/opencode' }
+    }
+
+    // Each launch check gets its own controllable promise, resolved in the order the store issued them.
+    const resolvers: Array<(value: EnvironmentCheckResult) => void> = []
+    api.checkEnvironment.mockImplementation(
+      () => new Promise<EnvironmentCheckResult>((resolve) => resolvers.push(resolve))
+    )
+    // After the auto-switch, main reports OpenCode as the persisted framework.
+    api.getSettings.mockResolvedValue({ ...snapshot([]), agentFrameworkId: 'opencode' })
+    api.getPreflight.mockResolvedValue({
+      claudeReady: false,
+      opencodeReady: true,
+      activeProviderReady: true
+    })
+
+    // A: the initial launch check, issued for the default framework (claude-code).
+    const first = useSettingsStore.getState().checkEnvironment()
+    expect(api.checkEnvironment).toHaveBeenCalledTimes(1)
+
+    // The prefer-installed auto-switch selects OpenCode and re-checks while A is still in flight.
+    useSettingsStore.setState({ agentFrameworkId: 'opencode' })
+    const second = useSettingsStore.getState().checkEnvironment()
+    // The second call is NOT swallowed by the in-flight guard: a different framework re-probes.
+    expect(api.checkEnvironment).toHaveBeenCalledTimes(2)
+
+    // A (Claude) resolves first; its result belongs to the previous selection and must be discarded.
+    resolvers[0]?.(claudeResult)
+    await first
+    expect(useSettingsStore.getState().environmentCheck?.agentFrameworkId).not.toBe('claude-code')
+
+    // B (OpenCode) resolves and becomes the visible result.
+    resolvers[1]?.(opencodeResult)
+    await second
+
+    const state = useSettingsStore.getState()
+    expect(state.environmentCheck?.agentFrameworkId).toBe('opencode')
+    expect(state.environmentCheck?.ready).toBe(true)
+    expect(state.isCheckingEnvironment).toBe(false)
+
+    // The wizard's Continue predicate ends up enabled (ready, matching framework, no re-check pending),
+    // instead of being stuck disabled on a Claude result while OpenCode is selected.
+    const environmentReady =
+      !state.isCheckingEnvironment &&
+      state.environmentCheck?.ready === true &&
+      state.environmentCheck.agentFrameworkId === state.agentFrameworkId
+    expect(environmentReady).toBe(true)
+  })
+
+  it('ABA: a late stale same-framework success does not overwrite the newer result', async () => {
+    // A and C are both claude-code (B is the opencode detour), so a framework-only staleness check
+    // would wrongly treat A's late result as current. checkedAt distinguishes the two claude passes.
+    const claudeA: EnvironmentCheckResult = {
+      checkedAt: 10,
+      platform: 'darwin',
+      architecture: 'arm64',
+      checks: [],
+      ready: true,
+      canAutoInstall: false,
+      agentFrameworkId: 'claude-code',
+      runtime: { found: true, path: '/bin/claude' }
+    }
+    const claudeC: EnvironmentCheckResult = { ...claudeA, checkedAt: 30 }
+
+    // Each check gets its own deferred, resolved in the order the test chooses.
+    const deferred: Array<{
+      resolve: (value: EnvironmentCheckResult) => void
+      reject: (error: unknown) => void
+    }> = []
+    api.checkEnvironment.mockImplementation(
+      () =>
+        new Promise<EnvironmentCheckResult>((resolve, reject) => {
+          deferred.push({ resolve, reject })
+        })
+    )
+
+    // A (claude-code), auto-switch to opencode + B, auto-switch back to claude-code + C.
+    const first = useSettingsStore.getState().checkEnvironment()
+    useSettingsStore.setState({ agentFrameworkId: 'opencode' })
+    const second = useSettingsStore.getState().checkEnvironment()
+    useSettingsStore.setState({ agentFrameworkId: 'claude-code' })
+    const third = useSettingsStore.getState().checkEnvironment()
+    expect(api.checkEnvironment).toHaveBeenCalledTimes(3)
+
+    // C resolves and becomes the visible result.
+    deferred[2].resolve(claudeC)
+    await third
+    expect(useSettingsStore.getState().environmentCheck?.checkedAt).toBe(30)
+
+    // A resolves LAST with a success that shares C's framework id; the generation guard discards it.
+    deferred[0].resolve(claudeA)
+    await first
+    // B resolves too; also stale, also discarded.
+    deferred[1].resolve({ ...claudeC, agentFrameworkId: 'opencode' })
+    await second
+
+    const state = useSettingsStore.getState()
+    // C's result stands; A did not overwrite it despite sharing the framework id.
+    expect(state.environmentCheck?.checkedAt).toBe(30)
+    expect(state.environmentCheck?.agentFrameworkId).toBe('claude-code')
+    expect(state.environmentCheckError).toBeUndefined()
+    expect(state.isCheckingEnvironment).toBe(false)
+
+    const environmentReady =
+      !state.isCheckingEnvironment &&
+      state.environmentCheck?.ready === true &&
+      state.environmentCheck.agentFrameworkId === state.agentFrameworkId
+    expect(environmentReady).toBe(true)
+  })
+
+  it('ABA: a stale same-framework failure neither clears the newer loading nor overwrites its success with an error', async () => {
+    const claudeC: EnvironmentCheckResult = {
+      checkedAt: 30,
+      platform: 'darwin',
+      architecture: 'arm64',
+      checks: [],
+      ready: true,
+      canAutoInstall: false,
+      agentFrameworkId: 'claude-code',
+      runtime: { found: true, path: '/bin/claude' }
+    }
+
+    const deferred: Array<{
+      resolve: (value: EnvironmentCheckResult) => void
+      reject: (error: unknown) => void
+    }> = []
+    api.checkEnvironment.mockImplementation(
+      () =>
+        new Promise<EnvironmentCheckResult>((resolve, reject) => {
+          deferred.push({ resolve, reject })
+        })
+    )
+
+    // A (claude-code), opencode + B, back to claude-code + C — all in flight.
+    const first = useSettingsStore.getState().checkEnvironment()
+    useSettingsStore.setState({ agentFrameworkId: 'opencode' })
+    const second = useSettingsStore.getState().checkEnvironment()
+    useSettingsStore.setState({ agentFrameworkId: 'claude-code' })
+    const third = useSettingsStore.getState().checkEnvironment()
+
+    // A (the oldest pass) rejects while C is still running. Its finally must NOT clear C's loading,
+    // and its catch must NOT write environmentCheckError, because a newer generation now owns state.
+    deferred[0].reject(new Error('stale claude A failed'))
+    await first
+
+    let state = useSettingsStore.getState()
+    expect(state.isCheckingEnvironment).toBe(true)
+    expect(state.environmentCheckError).toBeUndefined()
+
+    // C then completes successfully and owns the visible state.
+    deferred[2].resolve(claudeC)
+    await third
+    // B resolves late and is discarded.
+    deferred[1].resolve({ ...claudeC, agentFrameworkId: 'opencode' })
+    await second
+
+    state = useSettingsStore.getState()
+    expect(state.environmentCheck?.checkedAt).toBe(30)
+    expect(state.environmentCheck?.agentFrameworkId).toBe('claude-code')
+    // A's rejection never polluted C's success.
+    expect(state.environmentCheckError).toBeUndefined()
+    expect(state.isCheckingEnvironment).toBe(false)
+
+    const environmentReady =
+      !state.isCheckingEnvironment &&
+      state.environmentCheck?.ready === true &&
+      state.environmentCheck.agentFrameworkId === state.agentFrameworkId
+    expect(environmentReady).toBe(true)
+  })
+
   it('surfaces a failed main-process inspection and always clears loading state', async () => {
     api.checkEnvironment.mockRejectedValue(new Error('environment IPC unavailable'))
 
