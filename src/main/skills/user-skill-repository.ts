@@ -140,13 +140,6 @@ const findSkillRoots = (entries: { path: string; content: Buffer }[]): SkillRoot
     .sort((a, b) => a.subPath.localeCompare(b.subPath))
 }
 
-// Reads the `name:` value from a SKILL.md frontmatter block, if present.
-const frontmatterName = (text: string): string | undefined => {
-  const match = /^---\n([\s\S]*?)\n---/.exec(text)
-  if (!match) return undefined
-  return /^name:\s*(.*)$/m.exec(match[1])?.[1].trim() || undefined
-}
-
 // Reads and writes user-authored (personal) and imported skills under `<storageRoot>/skills/`.
 class UserSkillRepository {
   constructor(private readonly storageRoot: string) {}
@@ -385,7 +378,7 @@ class UserSkillRepository {
       return { status: 'unchanged', id: `imported-${existingSlug}` }
     }
 
-    const name = frontmatterName(skillMd.content.toString('utf8'))
+    const name = parseFrontmatter(skillMd.content.toString('utf8')).fields.name?.trim()
     const base = toSlug(name ?? 'skill') || 'skill'
     const slug = await this.uniqueSlug('imported', base)
     await this.writeImported(slug, files, '', signature)
