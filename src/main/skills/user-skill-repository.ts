@@ -53,24 +53,32 @@ const toSlug = (name: string): string =>
     .replace(/^-+|-+$/g, '')
     .slice(0, 64)
 
-// Serializes one frontmatter field so arbitrary user text can never corrupt SKILL.md. A plain,
-// single-line value is emitted inline; anything with a newline, a surrounding space, or a leading
-// YAML indicator (which includes `---`, a bare `-`, quotes, `|`/`>`, etc.) is emitted as a literal
-// (`|`) block scalar. Because every block line is indented, a value containing `---` or a `key:`-like
-// line can't be mistaken for the closing fence or another field by a real YAML parser or by our own
-// parseFrontmatter reader.
+// A single-line value that a YAML parser would read back as a non-string: a boolean/null keyword or
+// anything that starts like a number. Such a value MUST NOT be emitted as a plain scalar, or `name:
+// true` / `description: 123` would round-trip as a boolean/number instead of the user's string.
+const YAML_KEYWORD = /^(?:true|false|null|none|yes|no|on|off|~)$/i
+
+// Serializes one frontmatter field so arbitrary user text always round-trips as a STRING and can
+// never corrupt SKILL.md. A plain, single-line value is emitted inline; anything with a newline, a
+// surrounding space, a leading YAML indicator (`---`, a bare `-`, quotes, `|`/`>`, a digit/`+`/`.`
+// that could read as a number, ...), or a boolean/null keyword is emitted as a literal block scalar.
+// `|-` (strip chomping) is used so no trailing newline is appended, and every block line is indented
+// so a value containing `---` or a `key:`-like line can't be mistaken for the closing fence or
+// another field — by a real YAML parser or by our own parseFrontmatter reader.
 const frontmatterField = (key: string, value: string): string => {
   const normalized = value.replace(/\r\n?/g, '\n')
   const isPlain =
     normalized.length > 0 &&
     !normalized.includes('\n') &&
     normalized === normalized.trim() &&
-    !/^[-?:,[\]{}#&*!|>'"%@`]/.test(normalized) &&
+    !/^[-?:,[\]{}#&*!|>'"%@`+.\d]/.test(normalized) &&
     !/:(\s|$)/.test(normalized) &&
-    !/\s#/.test(normalized)
+    !/\s#/.test(normalized) &&
+    !YAML_KEYWORD.test(normalized)
   if (isPlain) return `${key}: ${normalized}`
+  if (normalized === '') return `${key}: |-`
   const indented = normalized.split('\n').map((line) => (line ? `  ${line}` : ''))
-  return [`${key}: |`, ...indented].join('\n')
+  return [`${key}: |-`, ...indented].join('\n')
 }
 
 // A skill id is `<source>-<slug>`; parse it back to its source + slug (null for bundled/unknown ids).
@@ -571,4 +579,4 @@ class UserSkillRepository {
   }
 }
 
-export { UserSkillRepository, parseUserSkillId, toSlug }
+export { UserSkillRepository, parseUserSkillId, toSlug, frontmatterField }

@@ -82,6 +82,48 @@ describe('SkillDetailView', () => {
     expect(document.body.textContent).toContain('Weights — Example (CC-BY-4.0)')
   })
 
+  it('labels the badge by the skill source, not always "Featured"', async () => {
+    for (const [source, label] of [
+      ['featured', 'Featured'],
+      ['imported', 'Imported'],
+      ['personal', 'Personal']
+    ] as const) {
+      ;(window as unknown as { api: unknown }).api = {
+        settings: { getSkillDetail: vi.fn().mockResolvedValue({ ...detail, source }) }
+      }
+      useSettingsStore.setState({
+        ...createInitialSettingsState(),
+        skills: [
+          {
+            id: 'a',
+            name: 'Alpha',
+            description: 'First skill description.',
+            source,
+            updatedAt: detail.updatedAt,
+            enabled: true
+          }
+        ],
+        setSkillEnabled: vi.fn().mockResolvedValue(undefined)
+      })
+
+      const localContainer = document.createElement('div')
+      document.body.appendChild(localContainer)
+      const localRoot = createRoot(localContainer)
+      await act(async () => {
+        localRoot.render(<SkillDetailView skillId="a" />)
+      })
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      const badge = localContainer.querySelector('span.rounded-full')
+      expect(badge?.textContent).toBe(label)
+
+      act(() => localRoot.unmount())
+      localContainer.remove()
+    }
+  })
+
   it('toggles the skill from the detail header switch', async () => {
     await act(async () => {
       root.render(<SkillDetailView skillId="a" />)

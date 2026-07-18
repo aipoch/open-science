@@ -5,7 +5,12 @@ import { deflateRawSync } from 'node:zlib'
 
 import { describe, expect, it } from 'vitest'
 
-import { UserSkillRepository, parseUserSkillId, toSlug } from './user-skill-repository'
+import {
+  UserSkillRepository,
+  parseUserSkillId,
+  toSlug,
+  frontmatterField
+} from './user-skill-repository'
 import type { FetchLike } from './github-import'
 
 const makeStorage = async (): Promise<string> => mkdtemp(join(tmpdir(), 'user-skills-'))
@@ -98,6 +103,39 @@ describe('toSlug / parseUserSkillId', () => {
     expect(parseUserSkillId('personal-my-skill')).toEqual({ source: 'personal', slug: 'my-skill' })
     expect(parseUserSkillId('imported-foo')).toEqual({ source: 'imported', slug: 'foo' })
     expect(parseUserSkillId('citation-formatter')).toBeNull()
+  })
+})
+
+describe('frontmatterField', () => {
+  it('emits an ordinary single-line value inline with no trailing newline', () => {
+    expect(frontmatterField('name', 'My Skill')).toBe('name: My Skill')
+    expect(frontmatterField('description', 'Does a thing.')).toBe('description: Does a thing.')
+  })
+
+  it('serializes YAML-typed tokens as strings so they never read back as bool/null/number', () => {
+    // A plain `description: true` would parse as a boolean; force these to a block scalar.
+    for (const value of ['true', 'false', 'null', 'yes', 'no', '~', '123', '3.14', '+1', '0x1f']) {
+      const out = frontmatterField('description', value)
+      expect(out.startsWith('description: |-')).toBe(true)
+      expect(out).toContain(`  ${value}`)
+    }
+  })
+
+  it('uses a strip-chomped (|-) block scalar for multiline values, indenting every line', () => {
+    const out = frontmatterField('description', 'line one\n\nline three')
+    expect(out).toBe('description: |-\n  line one\n\n  line three')
+    // No trailing newline is appended by the block scalar itself.
+    expect(out.endsWith('line three')).toBe(true)
+  })
+
+  it('blocks values that would otherwise break the frontmatter (--- fence, key: line)', () => {
+    expect(frontmatterField('description', 'a\n---\nb').startsWith('description: |-')).toBe(true)
+    expect(frontmatterField('description', 'not: a-key').startsWith('description: |-')).toBe(true)
+  })
+
+  it('serializes an empty value as an empty block scalar (not null)', () => {
+    // A bare `description:` would parse as null; `description: |-` yields an empty string.
+    expect(frontmatterField('description', '')).toBe('description: |-')
   })
 })
 
