@@ -30,6 +30,7 @@ const render = (
     root.render(
       <OpencodeStatusCard
         opencode={{}}
+        opencodeReady={false}
         isDetecting={false}
         onDetect={vi.fn()}
         isInstalling={false}
@@ -87,5 +88,17 @@ describe('OpencodeStatusCard', () => {
 
     act(() => button?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(onUninstall).toHaveBeenCalledTimes(1)
+  })
+
+  it('is selectable only when opencodeReady, not merely when a path is cached', () => {
+    const installed = { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' }
+
+    // A cached but not-ready binary (preflight failed --version) offers no radio.
+    render({ opencode: installed, opencodeReady: false, onSelect: vi.fn() })
+    expect(container.querySelector('[role="radio"]')).toBeNull()
+
+    // Once ready, the radio appears.
+    render({ opencode: installed, opencodeReady: true, onSelect: vi.fn() })
+    expect(container.querySelector('[role="radio"]')).not.toBeNull()
   })
 })

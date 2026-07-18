@@ -558,6 +558,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                         {agentFrameworkId === 'opencode' ? (
                           <OpencodeStatusCard
                             opencode={opencode}
+                            opencodeReady={preflight.opencodeReady}
                             isDetecting={isDetectingOpencode || isCheckingEnvironment}
                             onDetect={() => void handleEnvironmentCheck()}
                             isInstalling={isInstalling}

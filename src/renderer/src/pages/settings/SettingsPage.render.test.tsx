@@ -505,7 +505,10 @@ describe('SettingsPage uninstall confirmation', () => {
 
   it('gates a framework switch behind the confirmation dialog', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
-    // OpenCode must be installed to be selectable as the framework.
+    // OpenCode must be ready (preflight passed) to be selectable as the framework.
+    api.settings.getPreflight = vi
+      .fn()
+      .mockResolvedValue({ claudeReady: true, opencodeReady: true, activeProviderReady: true })
     api.settings.getSettings = vi.fn().mockResolvedValue({
       claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
       opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },

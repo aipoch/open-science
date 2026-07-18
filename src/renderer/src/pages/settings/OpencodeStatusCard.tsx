@@ -16,6 +16,9 @@ import { ClaudeInstallCard } from './ClaudeInstallCard'
 
 type OpencodeStatusCardProps = {
   opencode: OpencodeInfo
+  // Whether the detected opencode is actually runnable (preflight ran `--version`). Selection gates on
+  // this, not on a mere cached path, so a stale/corrupt binary can't be chosen as the active backend.
+  opencodeReady: boolean
   isDetecting: boolean
   onDetect: () => void
   // Install picker (managed / npm / script, managed first) shown when opencode isn't detected.
@@ -44,6 +47,7 @@ type OpencodeStatusCardProps = {
 // binary, first recommendation) with a link to opencode's docs for a manual install.
 const OpencodeStatusCard = ({
   opencode,
+  opencodeReady,
   isDetecting,
   onDetect,
   isInstalling,
@@ -61,9 +65,10 @@ const OpencodeStatusCard = ({
 }: OpencodeStatusCardProps): React.JSX.Element => {
   const found = Boolean(opencode.resolvedPath)
   const installSources = useMemo(() => getOpencodeInstallSources(window.api?.platform), [])
-  // Only an installed runtime can be chosen as the active framework — switching to an uninstalled one
-  // would leave sessions with no agent. An uninstalled card shows no radio and isn't clickable.
-  const selectable = Boolean(onSelect) && found
+  // Only a ready runtime can be chosen as the active framework — switching to a missing or unrunnable
+  // agent would strand sessions. Gate on preflight readiness (matches Claude's claudeReady), not a mere
+  // cached path, so a stale/corrupt binary shows no radio and isn't clickable.
+  const selectable = Boolean(onSelect) && opencodeReady
 
   const heading = (
     <>

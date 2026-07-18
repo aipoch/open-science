@@ -764,6 +764,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                         ) : null}
                         <OpencodeStatusCard
                           opencode={opencode}
+                          opencodeReady={preflight.opencodeReady}
                           isDetecting={isDetectingOpencode}
                           onDetect={() => void detectOpencode()}
                           isInstalling={isInstalling}
