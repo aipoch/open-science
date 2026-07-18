@@ -289,6 +289,8 @@ describe('OnboardingWizard', () => {
     await act(async () => manualTab?.click())
 
     expect(container.querySelector('[role="combobox"][aria-label="Install source"]')).not.toBeNull()
+    // The manual tab shows BOTH runtimes together (Claude status + OpenCode status/install card).
+    expect(container.textContent).toContain('OpenCode not detected')
   })
 
   it('uses the recommended mirror and surfaces the actual automatic install error', async () => {
