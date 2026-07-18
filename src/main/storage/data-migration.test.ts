@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -155,6 +155,33 @@ describe('copyAndVerify', () => {
     expect(await exists(join(to, 'runtime'))).toBe(false)
     expect(await readFile(join(to, 'artifacts', 'a.txt'), 'utf8')).toBe('hello artifacts')
   })
+
+  // Symlink creation needs privilege on Windows, so skip there.
+  it.skipIf(process.platform === 'win32')(
+    'refuses to migrate when a source dir holds a symlink, leaving sources and dest untouched',
+    async () => {
+      await mkdir(join(from, 'artifacts'), { recursive: true })
+      await writeFile(join(from, 'artifacts', 'a.txt'), 'hello artifacts')
+      const linkPath = join(from, 'artifacts', 'link')
+      await symlink(join(from, 'artifacts', 'a.txt'), linkPath)
+
+      const result = await copyAndVerify({
+        from,
+        to,
+        dirs: ['artifacts'],
+        signal: new AbortController().signal,
+        onProgress: () => {}
+      })
+
+      expect(result.ok).toBe(false)
+      if (!result.ok) expect(result.error).toMatch(/symbolic link|special file/i)
+      // Source file and the link itself are untouched (caller only deletes on ok).
+      expect(await readFile(join(from, 'artifacts', 'a.txt'), 'utf8')).toBe('hello artifacts')
+      expect(await exists(linkPath)).toBe(true)
+      // No partial dest tree remains.
+      expect(await exists(join(to, 'artifacts'))).toBe(false)
+    }
+  )
 
   it('copies an existing-but-empty source dir instead of dropping it', async () => {
     await seedFixture()

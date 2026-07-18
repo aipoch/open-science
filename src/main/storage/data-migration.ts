@@ -27,6 +27,15 @@ type MigrateOpts = {
 // Thrown internally to unwind to the single catch site; never escapes copyAndVerify.
 class AbortedError extends Error {}
 
+// Thrown by listFiles when it meets an entry that is neither a regular file nor a directory
+// (symlink, fifo, socket, device). Copying can't represent these safely and a later deleteSources
+// would destroy them, so the migration refuses rather than lose data.
+class NonRegularEntryError extends Error {
+  constructor(public readonly relPath: string) {
+    super(`unsupported entry (symlink or special file): ${relPath}`)
+  }
+}
+
 const exists = async (path: string): Promise<boolean> => {
   try {
     await stat(path)
@@ -45,6 +54,7 @@ const listFiles = async (root: string): Promise<string[]> => {
       const rel = join(dir, entry.name)
       if (entry.isDirectory()) await walk(rel)
       else if (entry.isFile()) out.push(rel)
+      else throw new NonRegularEntryError(rel)
     }
   }
   if (await exists(root)) await walk('.')
@@ -130,9 +140,15 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
     // trace. rmdir only removes it if empty, so any unrelated pre-existing content is left intact.
     await rmdir(to).catch(() => undefined)
     const cancelled = err instanceof AbortedError || signal.aborted
+    const error =
+      err instanceof NonRegularEntryError
+        ? `Can't move your data: "${err.relPath}" is a symbolic link or special file. Remove or replace it with a regular copy, then try again.`
+        : err instanceof Error
+          ? err.message
+          : String(err)
     return {
       ok: false,
-      error: err instanceof Error ? err.message : String(err),
+      error,
       ...(cancelled ? { cancelled: true } : {})
     }
   }
