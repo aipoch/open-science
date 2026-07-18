@@ -70,20 +70,20 @@ describe('parseFrontmatter', () => {
   it('parses a bundle authored with CRLF line endings', () => {
     const raw = [
       '---',
-      'name: crlf-skill',
+      'name: demo',
       'description: Does a thing.',
       'license: MIT',
       '---',
       '',
-      '# CRLF Skill'
+      '# Demo'
     ].join('\r\n')
     const { fields, body } = parseFrontmatter(raw)
     expect(fields).toMatchObject({
-      name: 'crlf-skill',
+      name: 'demo',
       description: 'Does a thing.',
       license: 'MIT'
     })
-    expect(body.startsWith('# CRLF Skill')).toBe(true)
+    expect(body.startsWith('# Demo')).toBe(true)
   })
 
   it('joins a CRLF folded block scalar (>) into a single spaced line', () => {
