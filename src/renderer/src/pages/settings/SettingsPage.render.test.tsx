@@ -156,8 +156,8 @@ describe('SettingsPage layout', () => {
     expect(document.body.textContent).toContain('Claude')
     expect(document.body.textContent).toContain('Providers')
     expect(document.body.textContent).toContain('Agent framework')
-    // Agent framework + Claude + Providers.
-    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(3)
+    // Agent framework + Claude + OpenCode (both runtimes always shown) + Providers.
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(4)
     expect(document.body.querySelector('[data-slot="settings-row"]')).not.toBeNull()
   })
 

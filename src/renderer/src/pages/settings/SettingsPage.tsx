@@ -700,48 +700,49 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
 
                     <ModelFrameworkCompatibilityAlert />
 
-                    {agentFrameworkId === 'opencode' ? (
-                      <SettingsSection title="OpenCode" aria-label="OpenCode">
-                        <OpencodeStatusCard
-                          opencode={opencode}
-                          isDetecting={isDetectingOpencode}
-                          onDetect={() => void detectOpencode()}
-                          isInstalling={isInstalling}
-                          installLogs={installLogs}
-                          installProgress={installProgress}
-                          installError={installError}
-                          npmAvailable={npmAvailable}
-                          onInstall={(source) => void installOpencode(source)}
-                          managed={opencodeManaged}
-                          isUninstalling={isUninstalling && pendingUninstall === 'opencode'}
-                          onUninstall={() => setPendingUninstall('opencode')}
+                    {/* Both runtimes are shown regardless of the selected framework, so an app-managed
+                        Claude or OpenCode can be detected, installed, or uninstalled without first
+                        switching the active backend (which would churn the agent connection). */}
+                    <SettingsSection title="Claude" aria-label="Claude">
+                      <div className="space-y-3">
+                        <ClaudeStatusCard
+                          claude={claude}
+                          claudeReady={preflight.claudeReady}
+                          isDetecting={isDetectingClaude}
+                          onDetect={() => void detectClaude()}
+                          managed={claudeManaged}
+                          isUninstalling={isUninstalling && pendingUninstall === 'claude'}
+                          onUninstall={() => setPendingUninstall('claude')}
                         />
-                      </SettingsSection>
-                    ) : (
-                      <SettingsSection title="Claude" aria-label="Claude">
-                        <div className="space-y-3">
-                          <ClaudeStatusCard
-                            claude={claude}
-                            claudeReady={preflight.claudeReady}
-                            isDetecting={isDetectingClaude}
-                            onDetect={() => void detectClaude()}
-                            managed={claudeManaged}
-                            isUninstalling={isUninstalling && pendingUninstall === 'claude'}
-                            onUninstall={() => setPendingUninstall('claude')}
+                        {!preflight.claudeReady ? (
+                          <ClaudeInstallCard
+                            isInstalling={isInstalling}
+                            installLogs={installLogs}
+                            installProgress={installProgress}
+                            installError={installError}
+                            npmAvailable={npmAvailable}
+                            onInstall={(source) => void installClaude(source)}
                           />
-                          {!preflight.claudeReady ? (
-                            <ClaudeInstallCard
-                              isInstalling={isInstalling}
-                              installLogs={installLogs}
-                              installProgress={installProgress}
-                              installError={installError}
-                              npmAvailable={npmAvailable}
-                              onInstall={(source) => void installClaude(source)}
-                            />
-                          ) : null}
-                        </div>
-                      </SettingsSection>
-                    )}
+                        ) : null}
+                      </div>
+                    </SettingsSection>
+
+                    <SettingsSection title="OpenCode" aria-label="OpenCode">
+                      <OpencodeStatusCard
+                        opencode={opencode}
+                        isDetecting={isDetectingOpencode}
+                        onDetect={() => void detectOpencode()}
+                        isInstalling={isInstalling}
+                        installLogs={installLogs}
+                        installProgress={installProgress}
+                        installError={installError}
+                        npmAvailable={npmAvailable}
+                        onInstall={(source) => void installOpencode(source)}
+                        managed={opencodeManaged}
+                        isUninstalling={isUninstalling && pendingUninstall === 'opencode'}
+                        onUninstall={() => setPendingUninstall('opencode')}
+                      />
+                    </SettingsSection>
 
                     <SettingsSection
                       title="Providers"
