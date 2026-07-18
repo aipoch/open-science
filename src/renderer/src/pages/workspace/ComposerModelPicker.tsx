@@ -18,7 +18,7 @@ import {
   useSettingsStore,
   type ProviderModelOption
 } from '@/stores/settings-store'
-import { isProviderCompatibleWith } from '../../../../shared/settings'
+import { isProviderUsableByFramework } from '../../../../shared/settings'
 
 const triggerClassName =
   'flex h-8 max-w-[220px] items-center gap-1 rounded-md px-2.5 text-sm text-text-300 hover:bg-bg-200 hover:text-text-100 disabled:cursor-not-allowed disabled:opacity-50 transition-colors'
@@ -37,32 +37,44 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
   const activeModel = useSettingsStore((state) => state.activeModel)
   const setActiveProvider = useSettingsStore((state) => state.setActiveProvider)
   const openSettings = useSettingsStore((state) => state.openSettings)
+  const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
 
-  // A provider is selectable only when its API format is one the current framework can drive.
+  // A provider is selectable only when it can actually drive the current framework (endpoint + type;
+  // a Local Claude provider is Claude-only).
   const isCompatible = (provider: (typeof providers)[number]): boolean =>
-    isProviderCompatibleWith(provider.apiType ?? 'anthropic', frameworkEndpoints)
+    isProviderUsableByFramework(
+      { apiType: provider.apiType ?? 'anthropic', type: provider.type },
+      { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
+    )
 
   const options = selectProviderModelOptions(providers)
+  const compatibleProviderIds = new Set(
+    providers.filter((provider) => isCompatible(provider)).map((provider) => provider.id)
+  )
+  const usableOptions = options.filter((option) => compatibleProviderIds.has(option.providerId))
 
-  // No selectable (provider, model): the user has nothing to send with — either nothing is configured
-  // or every provider failed its last test. Warn instead of hiding so the empty toolbar isn't a
-  // silent dead end; clicking opens Settings to add or fix a provider.
-  if (options.length === 0) {
+  // No option the current framework can actually use: warn instead of hiding so the toolbar isn't a
+  // silent dead end (this also catches the case where the only configured provider is incompatible
+  // with the selected framework). Clicking opens Settings to add/fix a provider or switch frameworks.
+  if (usableOptions.length === 0) {
+    const label = options.length === 0 ? 'No model available' : 'No compatible model'
+
     return (
       <button
         type="button"
         onClick={() => openSettings()}
         className="flex h-8 items-center gap-1.5 rounded-md px-2.5 text-sm text-amber-700 hover:bg-amber-50 transition-colors"
-        aria-label="No model available — open settings"
+        aria-label={`${label} — open settings`}
       >
         <AlertTriangle className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
-        <span className="truncate">No model available</span>
+        <span className="truncate">{label}</span>
       </button>
     )
   }
 
-  // A single option leaves nothing to switch between, so the picker stays hidden.
+  // A single option (the sole provider, which is usable since usableOptions is non-empty) leaves
+  // nothing to switch between, so the picker stays hidden.
   if (options.length === 1) return null
 
   // The active option matches by provider and model; an undefined activeModel maps to the empty-model

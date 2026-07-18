@@ -46,6 +46,20 @@ describe('ComposerModelPicker', () => {
     expect(container.querySelector('[aria-label="No model available — open settings"]')).toBeNull()
   })
 
+  it('warns (does not hide) when the only provider is incompatible with the framework', () => {
+    // Claude Code (anthropic-only) + a lone OpenAI-only provider: the picker must not silently vanish.
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      providers: [provider({ id: 'p1', apiType: 'openai', models: ['gpt-x'] })]
+    })
+    render()
+
+    expect(container.querySelector('[aria-label="Select model"]')).toBeNull()
+    const warning = container.querySelector('[aria-label="No compatible model — open settings"]')
+    expect(warning).not.toBeNull()
+    expect(warning?.textContent).toContain('No compatible model')
+  })
+
   it('warns and opens settings when no model is configured', () => {
     const openSettings = vi.fn()
     useSettingsStore.setState({ providers: [], openSettings })

@@ -11,7 +11,7 @@ import {
   selectProviderModelOptions,
   useSettingsStore
 } from '@/stores/settings-store'
-import { isProviderCompatibleWith } from '../../../../shared/settings'
+import { isProviderUsableByFramework } from '../../../../shared/settings'
 import { ProviderKindIcon } from './provider-icons'
 import { providerKindKey } from './provider-form-value'
 
@@ -27,15 +27,20 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
   const activeModel = useSettingsStore((state) => state.activeModel)
   const setActiveProvider = useSettingsStore((state) => state.setActiveProvider)
+  const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
 
   const options = selectProviderModelOptions(providers)
 
   if (options.length === 0) return null
 
-  // A provider is selectable only when its API format is one the current framework can drive.
+  // A provider is selectable only when it can actually drive the current framework (endpoint + type;
+  // a Local Claude provider is Claude-only).
   const isCompatible = (provider: (typeof providers)[number]): boolean =>
-    isProviderCompatibleWith(provider.apiType ?? 'anthropic', frameworkEndpoints)
+    isProviderUsableByFramework(
+      { apiType: provider.apiType ?? 'anthropic', type: provider.type },
+      { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
+    )
 
   const activeKeyModel = activeModel ?? ''
   const current = options.find(
