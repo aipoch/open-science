@@ -1,5 +1,5 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { isAbsolute, join, normalize } from 'node:path'
+import { isAbsolute, join, normalize, parse } from 'node:path'
 
 import type {
   ClaudeInfo,
@@ -287,9 +287,12 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   if (dataRoot && isAbsolute(dataRoot)) {
     // normalize collapses redundant separators; strip any trailing separator so the stored form
     // matches dataRootForPicked's canonical (no-trailing-slash) output — samePath() compares exact
-    // strings, so a stray trailing slash would wrongly fail the "is default" check.
-    const canonical = normalize(dataRoot).replace(/[\\/]+$/, '')
-    settings.dataRoot = canonical || dataRoot
+    // strings, so a stray trailing slash would wrongly fail the "is default" check. Never strip past a
+    // filesystem root, though: turning "C:\" into "C:" would make an absolute path drive-relative.
+    const normalized = normalize(dataRoot)
+    const { root } = parse(normalized)
+    settings.dataRoot =
+      normalized.length > root.length ? normalized.replace(/[\\/]+$/, '') : normalized
   }
 
   return settings

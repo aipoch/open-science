@@ -264,6 +264,13 @@ describe('settings repository', () => {
     expect(sanitizeSettings({ dataRoot: messy }).dataRoot).toBe(normalize(`${absolute}${sep}x`))
   })
 
+  it('never strips a trailing separator past a filesystem root', () => {
+    // A drive/filesystem root ("C:\" on Windows, "/" on POSIX) must survive intact: stripping its
+    // trailing separator would turn an absolute path into a drive-relative one.
+    const rootPath = isAbsolute('C:\\') ? 'C:\\' : '/'
+    expect(sanitizeSettings({ dataRoot: rootPath }).dataRoot).toBe(normalize(rootPath))
+  })
+
   it('stamps legacyDataMovePromptDismissedAt once, is idempotent, and survives a reload', async () => {
     const root = await createStorageRoot()
     const repository = new SettingsRepository(root)
