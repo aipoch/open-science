@@ -1,6 +1,6 @@
 // Per-session Auto-review toggle for the composer toolbar.
 // Mirrors the shape of ComposerPermissionProfilePicker: a single button that calls onChange
-// with the new boolean value. Default state is on (true); absent (older sessions) also means on.
+// with the new boolean value. Default state is off (false); absent (older sessions) also means off.
 // On/off is made legible by color, not just opacity: on = teal shield (--primary) + near-black
 // label; off = greyed shield + muted label. (The earlier off style used text-text-400, an
 // undefined theme token, so off looked almost identical to on.)

@@ -90,7 +90,7 @@ type ConversationPanelProps = {
   permissionProfileState: SessionPermissionProfileState | undefined
   permissionGrants: AcpPermissionGrant[]
   canChangePermissionProfile: boolean
-  // Auto-review toggle: whether the current session has auto-review enabled (default true).
+  // Auto-review toggle: whether the current session has auto-review enabled (default false).
   autoReviewEnabled: boolean
   onDraftDocChange: (doc: ComposerDoc) => void
   onSendMessage: (forcedSkillIds: string[]) => void

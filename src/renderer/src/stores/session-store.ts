@@ -171,7 +171,7 @@ type SessionStore = SessionStoreData & {
   setPermissionPending: (sessionId: string) => void
   clearPermissionPending: (sessionId: string) => void
   setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => void
-  // Persists the per-session auto-review toggle. true = on (default); false = off.
+  // Persists the per-session auto-review toggle. true = on; false = off (default).
   setAutoReviewEnabled: (sessionId: string, enabled: boolean) => void
   // Sets or clears the per-session fix loop active flag. When true, the composer send button is
   // disabled for this session; when false (loop ended or cancelled), send is re-enabled.

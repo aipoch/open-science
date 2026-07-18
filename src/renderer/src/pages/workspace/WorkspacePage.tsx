@@ -160,10 +160,10 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const [draftDoc, setDraftDoc] = useState<ComposerDoc>(emptyDoc)
   const [newConversationPermissionProfile, setNewConversationPermissionProfile] =
     useState<PermissionProfileId>(DEFAULT_PERMISSION_PROFILE)
-  // Draft auto-review state for a not-yet-created conversation. Auto-review defaults on, so a new
-  // conversation starts enabled; the user can toggle it off before sending. On send it is stamped
+  // Draft auto-review state for a not-yet-created conversation. Auto-review defaults off, so a new
+  // conversation starts disabled; the user can toggle it on before sending. On send it is stamped
   // onto the created session (see sendCurrentMessage).
-  const [newConversationAutoReviewEnabled, setNewConversationAutoReviewEnabled] = useState(true)
+  const [newConversationAutoReviewEnabled, setNewConversationAutoReviewEnabled] = useState(false)
   // Unsent composer state (rich doc + staged attachments) is kept per session (and per new conversation)
   // so switching away and back restores it. The active key's state is live; this map holds inactive keys.
   const composerDraftsRef = useRef<
@@ -199,10 +199,10 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     : undefined
   // Always-allow grants only exist for a bound session; new conversations have none yet.
   const activePermissionGrants = activeSession ? (permissionGrants?.[activeSession.id] ?? []) : []
-  // Auto-review defaults on: an existing session is enabled unless explicitly turned off; a new
-  // conversation uses the draft toggle (which also starts on).
+  // Auto-review defaults off: an existing session is enabled only when explicitly turned on; a new
+  // conversation uses the draft toggle (which also starts off).
   const activeAutoReviewEnabled = activeSession
-    ? activeSession.autoReviewEnabled !== false
+    ? activeSession.autoReviewEnabled === true
     : newConversationAutoReviewEnabled
   // True while any review for the active session is in the 'running' lifecycle.
   // Using a shallow comparison via reviewsBySession to avoid new array reference on every render.
@@ -497,7 +497,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     // The draft effect saves the outgoing doc/attachments and restores the new-conversation state.
     setAttachmentError(null)
     setNewConversationPermissionProfile(DEFAULT_PERMISSION_PROFILE)
-    setNewConversationAutoReviewEnabled(true)
+    setNewConversationAutoReviewEnabled(false)
     clearSelection()
   }
 
@@ -559,8 +559,8 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
 
     const doc = draftDoc
     const attachmentsForSend = attachments
-    // Capture new-conversation intent before send: auto-review defaults on, so only an explicit
-    // "off" needs to be stamped onto the created session (absent = on downstream).
+    // Capture new-conversation intent before send: auto-review defaults off, so only an explicit
+    // "on" needs to be stamped onto the created session (absent = off downstream).
     const wasNewConversation = !activeSession
     const draftAutoReviewEnabled = newConversationAutoReviewEnabled
 
@@ -596,10 +596,10 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
 
       // Carry the composer's auto-review choice onto the freshly created session. bindPendingSession
       // preserves the field, so stamping the (pending) session id here survives the durable-id swap.
-      if (wasNewConversation && !draftAutoReviewEnabled) {
-        setAutoReviewEnabled(result.sessionId, false)
+      if (wasNewConversation && draftAutoReviewEnabled) {
+        setAutoReviewEnabled(result.sessionId, true)
       }
-      setNewConversationAutoReviewEnabled(true)
+      setNewConversationAutoReviewEnabled(false)
     })
   }
 

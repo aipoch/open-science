@@ -352,10 +352,13 @@ describe('workspace runtime events', () => {
   })
 
   describe('auto-review gate on stop event', () => {
-    it('triggers a review via window.api.reviewer.run when autoReviewEnabled is true (default)', async () => {
+    it('triggers a review via window.api.reviewer.run when autoReviewEnabled is true', async () => {
       const reviewerRun = vi.fn().mockResolvedValue(undefined)
 
       vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+
+      // Auto-review defaults off, so it must be explicitly enabled for this session.
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
 
       // Add an agent message so triggerAutoReview finds a turnMessageId.
       useSessionStore.getState().appendAgentMessageChunk({
@@ -386,6 +389,29 @@ describe('workspace runtime events', () => {
       // Disable auto-review on this session.
       useSessionStore.getState().setAutoReviewEnabled('transport-session-1', false)
 
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'Analysis complete'
+      })
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
+
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(reviewerRun).not.toHaveBeenCalled()
+
+      vi.unstubAllGlobals()
+    })
+
+    it('does not trigger a review by default when autoReviewEnabled was never set', async () => {
+      const reviewerRun = vi.fn().mockResolvedValue(undefined)
+
+      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+
+      // No setAutoReviewEnabled call: the session keeps its default (off).
       useSessionStore.getState().appendAgentMessageChunk({
         sessionId: 'transport-session-1',
         streamId: 'stream-1',
@@ -490,6 +516,9 @@ describe('loop guard: suppressNextAutoReview', () => {
       eventId: 'event-agent-1',
       content: 'Analysis complete'
     })
+    // These tests exercise the suppression guard, not the default; auto-review defaults off, so
+    // enable it up front to isolate the loop-guard behavior.
+    useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
   })
 
   it('suppresses triggerAutoReview for exactly one stop, then resumes normal behavior', async () => {
