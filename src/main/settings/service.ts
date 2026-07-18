@@ -1297,7 +1297,9 @@ class SettingsService {
         type: 'custom',
         baseUrl: resolveVendorBaseUrl(draft.vendorId, draft.region),
         model: draft.model ?? defaultVendorModel(draft.vendorId),
-        key: draft.key
+        key: draft.key,
+        // Official vendors declare their own endpoint; a custom draft carries the user's choice.
+        apiType: resolveVendorApiType(draft.vendorId)
       }
     }
 
@@ -1305,7 +1307,8 @@ class SettingsService {
       type: draft.type,
       baseUrl: draft.baseUrl,
       model: draft.model,
-      key: draft.key
+      key: draft.key,
+      apiType: draft.apiType ?? 'anthropic'
     }
   }
 

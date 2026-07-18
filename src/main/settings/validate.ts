@@ -1,5 +1,6 @@
 import type { ValidateProviderResult, ValidationCategory } from '../../shared/settings'
-import { normalizeAnthropicBaseUrl } from './base-url'
+import { preferredEndpoint } from '../../shared/settings'
+import { normalizeAnthropicBaseUrl, normalizeOpenAiBaseUrl } from './base-url'
 import type { ResolvedProvider } from './provider-env'
 
 // Runs a real connectivity/auth probe for a provider and classifies the outcome into an actionable
@@ -17,21 +18,29 @@ type ValidationHttpRequest = {
   body: string
 }
 
-// Builds the /v1/messages probe request for a custom provider. Throws on an unusable base URL so the
-// caller can classify it as bad-url instead of firing a doomed fetch.
+// Builds the probe request for a custom provider against the endpoint it actually speaks: an
+// OpenAI-compatible gateway gets a `/v1/chat/completions` request, an Anthropic one `/v1/messages`.
+// The endpoint is chosen from the provider's apiType (OpenAI wins when it offers both), matching how
+// the model is driven. Throws on an unusable base URL so the caller can classify it as bad-url.
 const buildValidationRequest = (provider: ResolvedProvider): ValidationHttpRequest => {
   if (!provider.baseUrl) {
     throw new Error('Missing base URL.')
   }
 
+  const endpoint = preferredEndpoint(provider.apiType ?? 'anthropic', ['anthropic', 'openai'])
+
+  return endpoint === 'openai'
+    ? buildOpenAiValidationRequest(provider)
+    : buildAnthropicValidationRequest(provider)
+}
+
+// A minimal /v1/messages probe (Anthropic). The base URL is normalized first so a trailing `/v1`
+// isn't doubled into `.../v1/v1/messages` (a 404).
+const buildAnthropicValidationRequest = (provider: ResolvedProvider): ValidationHttpRequest => {
   let url: string
 
   try {
-    // Mirror how the claude client builds requests: ANTHROPIC_BASE_URL + "/v1/messages". The base URL
-    // is normalized first so a user-supplied trailing `/v1` isn't doubled into `.../v1/v1/messages`
-    // (a 404). Validate it parses as a URL so an unusable base is classified as bad-url instead of
-    // firing a doomed fetch.
-    url = new URL(`${normalizeAnthropicBaseUrl(provider.baseUrl)}/v1/messages`).toString()
+    url = new URL(`${normalizeAnthropicBaseUrl(provider.baseUrl ?? '')}/v1/messages`).toString()
   } catch {
     throw new Error('Invalid base URL.')
   }
@@ -41,7 +50,36 @@ const buildValidationRequest = (provider: ResolvedProvider): ValidationHttpReque
     'anthropic-version': ANTHROPIC_VERSION
   }
 
-  // Custom gateways authenticate with a bearer token.
+  if (provider.key) {
+    headers.authorization = `Bearer ${provider.key}`
+  }
+
+  const body = JSON.stringify({
+    model: provider.model ?? '',
+    max_tokens: 1,
+    messages: [{ role: 'user', content: 'ping' }]
+  })
+
+  return { url, headers, body }
+}
+
+// A minimal /v1/chat/completions probe (OpenAI-compatible). No anthropic-version header; the OpenAI
+// chat body shape is used so a real gateway accepts it.
+const buildOpenAiValidationRequest = (provider: ResolvedProvider): ValidationHttpRequest => {
+  let url: string
+
+  try {
+    url = new URL(
+      `${normalizeOpenAiBaseUrl(provider.baseUrl ?? '')}/v1/chat/completions`
+    ).toString()
+  } catch {
+    throw new Error('Invalid base URL.')
+  }
+
+  const headers: Record<string, string> = {
+    'content-type': 'application/json'
+  }
+
   if (provider.key) {
     headers.authorization = `Bearer ${provider.key}`
   }
