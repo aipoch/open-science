@@ -199,6 +199,131 @@ describe('installManagedOpencode', () => {
     // The verifier is handed the installed binary path.
     expect(verifiedPath).toBe(join(managedOpencodeDir(root), 'opencode'))
   })
+
+  // A non-AVX2 x64 host: the standard build dies with SIGILL, so the installer retries the -baseline
+  // variant, which runs cleanly. This is what makes the onboarding "auto-installable" claim hold.
+  it('retries the -baseline variant when the standard x64 build reports SIGILL, then succeeds', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+    const standardTgz = buildTgz([
+      { name: 'package/bin/opencode', content: Buffer.from('#!/bin/sh\necho standard\n') }
+    ])
+    const baselineTgz = buildTgz([
+      { name: 'package/bin/opencode', content: Buffer.from('#!/bin/sh\necho baseline\n') }
+    ])
+
+    const requestedKeys: string[] = []
+    const fetchJson = async (url: string): Promise<unknown> => {
+      if (url.endsWith('/opencode-ai')) return { 'dist-tags': { latest: '1.18.3' } }
+      if (url.includes('/opencode-linux-x64-baseline/')) {
+        requestedKeys.push('baseline')
+        return { dist: { tarball: 'https://reg/baseline.tgz', integrity: sha512(baselineTgz) } }
+      }
+      requestedKeys.push('standard')
+      return { dist: { tarball: 'https://reg/standard.tgz', integrity: sha512(standardTgz) } }
+    }
+    const fetchTarball = async (
+      url: string
+    ): Promise<{ stream: NodeJS.ReadableStream; totalBytes?: number }> => {
+      const tgz = url.includes('baseline') ? baselineTgz : standardTgz
+      return { stream: Readable.from(tgz), totalBytes: tgz.length }
+    }
+
+    // First probe (standard) dies with SIGILL; second probe (baseline) runs.
+    let probes = 0
+    const outcome = await installManagedOpencode({
+      installId: 'i5',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform: { key: 'linux-x64', binName: 'opencode' },
+      fetchJson,
+      fetchTarball,
+      verifyBinary: () => {
+        probes += 1
+        return probes === 1
+          ? { ok: false, reason: 'killed by SIGILL', signal: 'SIGILL' }
+          : { ok: true }
+      },
+      tmpDir: root
+    })
+
+    expect(requestedKeys).toEqual(['standard', 'baseline'])
+    expect(outcome.result.ok).toBe(true)
+    expect(outcome.version).toBe('1.18.3')
+    expect(await readFile(outcome.resolvedPath!, 'utf8')).toContain('echo baseline')
+  })
+
+  // arm64 has no baseline package, so a SIGILL there must NOT trigger a retry — it fails directly.
+  it('does not retry baseline on arm64 (no baseline package exists)', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+    const tgz = buildTgz([
+      { name: 'package/bin/opencode', content: Buffer.from('#!/bin/sh\necho arm\n') }
+    ])
+    const requestedKeys: string[] = []
+    const fetchJson = async (url: string): Promise<unknown> => {
+      if (url.endsWith('/opencode-ai')) return { 'dist-tags': { latest: '1.18.3' } }
+      requestedKeys.push(url)
+      return { dist: { tarball: 'https://reg/arm.tgz', integrity: sha512(tgz) } }
+    }
+    const fetchTarball = async (): Promise<{
+      stream: NodeJS.ReadableStream
+      totalBytes?: number
+    }> => ({ stream: Readable.from(tgz), totalBytes: tgz.length })
+
+    const outcome = await installManagedOpencode({
+      installId: 'i6',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform: { key: 'darwin-arm64', binName: 'opencode' },
+      fetchJson,
+      fetchTarball,
+      verifyBinary: () => ({ ok: false, reason: 'killed by SIGILL', signal: 'SIGILL' }),
+      tmpDir: root
+    })
+
+    // Never requested a -baseline package for arm64.
+    expect(requestedKeys.some((url) => url.includes('baseline'))).toBe(false)
+    expect(outcome.result.ok).toBe(false)
+    expect(outcome.result.error).toMatch(/AVX2/)
+  })
+
+  // If the -baseline package does not exist (404 at resolve), the SIGILL/AVX2 error is surfaced rather
+  // than crashing on the unverifiable package name.
+  it('surfaces the SIGILL/AVX2 error when no baseline package is available', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+    const tgz = buildTgz([
+      { name: 'package/bin/opencode', content: Buffer.from('#!/bin/sh\necho standard\n') }
+    ])
+    const fetchJson = async (url: string): Promise<unknown> => {
+      if (url.endsWith('/opencode-ai')) return { 'dist-tags': { latest: '1.18.3' } }
+      // The baseline package 404s at the registry.
+      if (url.includes('-baseline/')) throw new Error('404 Not Found')
+      return { dist: { tarball: 'https://reg/standard.tgz', integrity: sha512(tgz) } }
+    }
+    const fetchTarball = async (): Promise<{
+      stream: NodeJS.ReadableStream
+      totalBytes?: number
+    }> => ({ stream: Readable.from(tgz), totalBytes: tgz.length })
+
+    const outcome = await installManagedOpencode({
+      installId: 'i7',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform: { key: 'linux-x64', binName: 'opencode' },
+      fetchJson,
+      fetchTarball,
+      verifyBinary: () => ({ ok: false, reason: 'killed by SIGILL', signal: 'SIGILL' }),
+      tmpDir: root
+    })
+
+    expect(outcome.result.ok).toBe(false)
+    expect(outcome.result.error).toMatch(/failed to run/)
+    expect(outcome.result.error).toMatch(/AVX2/)
+    // No broken binary left on disk.
+    await expect(readFile(join(managedOpencodeDir(root), 'opencode'))).rejects.toThrow()
+  })
 })
 
 describe('resolveOpencodePlatform', () => {

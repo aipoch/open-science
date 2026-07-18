@@ -18,8 +18,9 @@ import {
 // App-managed OpenCode installer. opencode ships per-platform native packages
 // (`opencode-<os>-<arch>[-musl]`) as optionalDependencies of the `opencode-ai` wrapper, with the binary
 // at `package/bin/opencode` — the same native-package model as Claude, so the shared download/verify/
-// extract helpers are reused. Non-AVX2 `-baseline` variants are not selected; modern CPUs get the
-// standard build. Every side-effecting dependency is injectable so the flow is unit-testable offline.
+// extract helpers are reused. Modern CPUs get the standard build; a non-AVX2 x64 host whose post-install
+// smoke check dies with SIGILL falls back once to the `-baseline` variant opencode publishes for x64 (no
+// fragile pre-detection). Every side-effecting dependency is injectable so the flow is unit-testable offline.
 
 // Wrapper package (its dist-tags.latest gives the version) and the native-package name prefix. Note the
 // native packages are `opencode-<key>`, NOT `opencode-ai-<key>`, so the prefix differs from the wrapper.
@@ -180,6 +181,13 @@ export type InstallManagedOpencodeOptions = {
   tmpDir?: string
 }
 
+// Outcome of one package-key install attempt: a runnable binary, or a soft "extracted but won't run"
+// failure (smoke check) the caller may recover from via the baseline retry. Resolve/download/extract
+// errors are thrown instead (registry-level, handled by moving to the next registry).
+type PackageAttempt =
+  | { ok: true; version: string }
+  | { ok: false; error: string; sigill: boolean; resolvedVersion: string }
+
 // Downloads + installs the managed opencode binary, trying each registry in order. Resolves (never
 // rejects) with a structured outcome the service can persist.
 export const installManagedOpencode = async ({
@@ -198,7 +206,14 @@ export const installManagedOpencode = async ({
   const scratch = tmpDir ?? managedOpencodeDir(dataRoot)
   let lastError = 'no registries configured'
 
-  for (const registry of registries) {
+  // Downloads, extracts, and smoke-checks one package key. Throws on registry-level errors (so the
+  // caller can advance to the next registry); returns a soft failure only when the binary extracted
+  // cleanly but does not run on this CPU.
+  const installFromPackage = async (
+    registry: string,
+    packageKey: string,
+    pinnedVersion: string | undefined
+  ): Promise<PackageAttempt> => {
     const tgzPath = join(scratch, `opencode-download-${Date.now()}.tgz`)
 
     try {
@@ -207,9 +222,9 @@ export const installManagedOpencode = async ({
         kind: 'log',
         installId,
         stream: 'system',
-        chunk: `Resolving OpenCode from ${registry} …\n`
+        chunk: `Resolving ${OPENCODE_PLATFORM_PREFIX}-${packageKey} from ${registry} …\n`
       })
-      const resolution = await resolveNative(registry, platform.key, version, fetchJson)
+      const resolution = await resolveNative(registry, packageKey, pinnedVersion, fetchJson)
 
       await downloadAndVerify({
         url: resolution.tarball,
@@ -231,29 +246,79 @@ export const installManagedOpencode = async ({
       if (process.platform !== 'win32') await chmod(destPath, 0o755)
 
       // Smoke-check the binary before reporting success — a clean download does not guarantee it runs
-      // on this CPU. Remove the unusable binary and fail loudly so no broken path gets persisted.
+      // on this CPU. Remove the unusable binary and report a soft failure so no broken path is persisted.
       const verification = verifyBinary(destPath)
       if (!verification.ok) {
         await rm(destPath, { force: true }).catch(() => undefined)
-        const hint =
-          verification.signal === 'SIGILL'
-            ? ' Your CPU may not support the required instruction set (AVX2).'
-            : ''
-        throw new Error(`OpenCode installed but failed to run (${verification.reason}).${hint}`)
+        const sigill = verification.signal === 'SIGILL'
+        const hint = sigill ? ' Your CPU may not support the required instruction set (AVX2).' : ''
+        return {
+          ok: false,
+          sigill,
+          resolvedVersion: resolution.version,
+          error: `OpenCode installed but failed to run (${verification.reason}).${hint}`
+        }
       }
 
-      onEvent({
-        kind: 'log',
-        installId,
-        stream: 'system',
-        chunk: `Installed OpenCode ${resolution.version}.\n`
-      })
+      return { ok: true, version: resolution.version }
+    } finally {
+      await rm(tgzPath, { force: true }).catch(() => undefined)
+    }
+  }
 
-      return {
-        result: { installId, ok: true },
-        resolvedPath: destPath,
-        version: resolution.version
+  // x64 hosts have a `-baseline` native package variant that drops AVX2; a musl or plain x64 key still
+  // contains "x64". arm64 has no baseline, so it is never retried.
+  const isX64 = platform.key.includes('x64')
+
+  for (const registry of registries) {
+    try {
+      const standard = await installFromPackage(registry, platform.key, version)
+      if (standard.ok) {
+        onEvent({
+          kind: 'log',
+          installId,
+          stream: 'system',
+          chunk: `Installed OpenCode ${standard.version}.\n`
+        })
+        return { result: { installId, ok: true }, resolvedPath: destPath, version: standard.version }
       }
+
+      // The standard build extracted but died on this CPU. On a non-AVX2 x64 host (SIGILL) retry once
+      // with the `-baseline` variant so the onboarding "auto-installable" claim actually holds. If the
+      // baseline package is missing (404 at resolve) or also fails to run, surface the SIGILL/AVX2
+      // diagnosis rather than crashing on an unverifiable package name.
+      if (standard.sigill && isX64) {
+        onEvent({
+          kind: 'log',
+          installId,
+          stream: 'system',
+          chunk: 'Standard build is not runnable on this CPU; retrying the -baseline variant …\n'
+        })
+        try {
+          const baseline = await installFromPackage(
+            registry,
+            `${platform.key}-baseline`,
+            standard.resolvedVersion
+          )
+          if (baseline.ok) {
+            onEvent({
+              kind: 'log',
+              installId,
+              stream: 'system',
+              chunk: `Installed OpenCode ${baseline.version} (baseline).\n`
+            })
+            return {
+              result: { installId, ok: true },
+              resolvedPath: destPath,
+              version: baseline.version
+            }
+          }
+        } catch {
+          // Baseline unavailable (e.g. 404): fall through to the SIGILL/AVX2 error below.
+        }
+      }
+
+      throw new Error(standard.error)
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error)
       onEvent({
@@ -262,8 +327,6 @@ export const installManagedOpencode = async ({
         stream: 'system',
         chunk: `${registry} failed: ${lastError}\n`
       })
-    } finally {
-      await rm(tgzPath, { force: true }).catch(() => undefined)
     }
   }
 
