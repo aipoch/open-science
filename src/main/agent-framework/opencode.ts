@@ -39,6 +39,11 @@ const opencodeDataHome = (storageRoot: string): string => join(storageRoot, 'ope
 // it, so the runtime adds this to its protected-read roots.
 export const opencodeStorageDir = (storageRoot: string): string => join(storageRoot, 'opencode')
 
+// An app-owned stand-in for opencode's notion of `$HOME`, passed via OPENCODE_TEST_HOME. It is a stable,
+// empty-by-design directory so opencode's home `.opencode` config walk finds nothing to load.
+const opencodeHomeDir = (storageRoot: string): string =>
+  join(opencodeStorageDir(storageRoot), 'home')
+
 // The opencode config directory ($XDG_CONFIG_HOME/opencode) where opencode.json and skills/ live.
 // opencode discovers skills at <configDir>/skills/<name>/SKILL.md — the same layout Claude uses under
 // its config dir — so the app materializes the enabled skill set here for opencode too.
@@ -62,9 +67,10 @@ const OPENCODE_API_KEY_ENV = 'OPENCODE_APP_API_KEY'
 // The app's permission policy for opencode: every side-effecting/MCP tool must ASK the ACP client (the
 // app's broker then enforces the selected profile); only safe read-only tools run silently (parity with
 // Claude's Ask mode). The `*` catch-all covers unlisted tools (MCP artifact/notebook/connectors, etc.),
-// and the sensitive built-ins are pinned to `ask` explicitly so a workspace config that sets one of
-// those keys to `allow` is overridden rather than winning. Enforced above any project config via the
-// OPENCODE_CONFIG_CONTENT layer (see prepareModelConfig) — the config-file block is only a baseline.
+// and the sensitive built-ins are pinned to `ask` explicitly so a lower-precedence config that sets one
+// of those keys to `allow` is overridden rather than winning. Enforced via the OPENCODE_CONFIG_CONTENT
+// layer (see prepareModelConfig), which also disables project config entirely — the config-file block is
+// only a baseline.
 const OPENCODE_PERMISSION_RULES: Record<string, 'ask' | 'allow' | 'deny'> = {
   '*': 'ask',
   read: 'allow',
@@ -86,16 +92,12 @@ const asRecord = (value: unknown): Record<string, unknown> =>
     ? (value as Record<string, unknown>)
     : {}
 
-// Builds opencode's config by MERGING the app's active provider/model onto the user's existing config
-// so their own providers, mcp servers, and auth are preserved. The model is both selected (top-level
-// `model`) and registered under the provider's `models` map — without the registration opencode does
-// not recognize a non-catalog model id (e.g. a custom gateway's `deepseek-v4-pro`) and silently falls
-// back to its own default. Verified against opencode 1.17.13.
-const buildOpencodeConfig = (
-  provider: ResolvedProvider,
-  baseConfig: Record<string, unknown> = {},
-  instructionPaths: string[] = []
-): string => {
+// Resolves the app provider's opencode endpoint primitives (provider id, npm package, base URL, model).
+// Shared by both the written config file and the OPENCODE_CONFIG_CONTENT layer so the authoritative
+// provider/model they pin can never diverge.
+const resolveOpencodeEndpoint = (
+  provider: ResolvedProvider
+): { bareModel: string | undefined; providerId: string; npm?: string; baseURL?: string } => {
   const bareModel = provider.model
   // opencode drives both endpoints; pick the one for this provider (openai wins when it offers both).
   const endpoint =
@@ -109,6 +111,46 @@ const buildOpencodeConfig = (
     endpoint === 'openai' ? (provider.openaiBaseUrl ?? provider.baseUrl) : provider.baseUrl
   const baseURL =
     endpoint === 'openai' && rawBase ? `${normalizeOpenAiBaseUrl(rawBase)}/v1` : rawBase
+
+  return { bareModel, providerId, npm, baseURL }
+}
+
+// The app-authoritative config layer (model + provider block + permission policy) passed verbatim to
+// opencode via OPENCODE_CONFIG_CONTENT, which opencode deep-merges ABOVE both the app-owned global config
+// and any project config. Pinning the provider/model/baseURL here (not just permission) means a
+// lower-precedence config — e.g. the user's own ~/.opencode — cannot repoint the active provider's
+// baseURL or switch the model to an attacker-defined provider while inheriting the app's key ref, so the
+// real key can only ever go to the app's own endpoint. The key stays an env reference, never plaintext.
+const buildAppConfigContent = (provider: ResolvedProvider): Record<string, unknown> => {
+  const { bareModel, providerId, npm, baseURL } = resolveOpencodeEndpoint(provider)
+
+  return {
+    ...(bareModel ? { model: `${providerId}/${bareModel}` } : {}),
+    permission: { ...OPENCODE_PERMISSION_RULES },
+    provider: {
+      [providerId]: {
+        ...(npm ? { npm } : {}),
+        options: {
+          ...(baseURL ? { baseURL } : {}),
+          ...(provider.key ? { apiKey: `{env:${OPENCODE_API_KEY_ENV}}` } : {})
+        },
+        ...(bareModel ? { models: { [bareModel]: {} } } : {})
+      }
+    }
+  }
+}
+
+// Builds opencode's config by MERGING the app's active provider/model onto the user's existing config
+// so their own providers, mcp servers, and auth are preserved. The model is both selected (top-level
+// `model`) and registered under the provider's `models` map — without the registration opencode does
+// not recognize a non-catalog model id (e.g. a custom gateway's `deepseek-v4-pro`) and silently falls
+// back to its own default. Verified against opencode 1.17.13.
+const buildOpencodeConfig = (
+  provider: ResolvedProvider,
+  baseConfig: Record<string, unknown> = {},
+  instructionPaths: string[] = []
+): string => {
+  const { bareModel, providerId, npm, baseURL } = resolveOpencodeEndpoint(provider)
 
   const baseProviders = asRecord(baseConfig.provider)
   const baseProvider = asRecord(baseProviders[providerId])
@@ -126,12 +168,10 @@ const buildOpencodeConfig = (
     ...baseConfig,
     ...(bareModel ? { model: `${providerId}/${bareModel}` } : {}),
     ...(instructions.length > 0 ? { instructions } : {}),
-    // Baseline permission policy written into the config file. This alone is NOT sufficient: opencode
-    // loads a project-level opencode.json / .opencode config from the session cwd at HIGHER precedence
-    // than this app-owned (global) config, so a workspace could set `permission["*"]="allow"` here and
-    // disable delegation. The authoritative copy of these rules is passed via the OPENCODE_CONFIG_CONTENT
-    // layer in prepareModelConfig, which opencode merges above project config. See
-    // OPENCODE_PERMISSION_RULES for the policy rationale.
+    // Baseline permission policy written into the app-owned (global) config file. The authoritative
+    // copy of these rules — plus the provider/model pin — is passed via the OPENCODE_CONFIG_CONTENT layer
+    // in prepareModelConfig, which opencode merges at highest precedence AND which disables project
+    // config loading, so a repo can no longer override this. See OPENCODE_PERMISSION_RULES for rationale.
     permission: {
       ...basePermission,
       ...OPENCODE_PERMISSION_RULES
@@ -218,13 +258,26 @@ export const opencodeFramework: AgentFramework = {
       env: {
         XDG_CONFIG_HOME: configHome,
         XDG_DATA_HOME: dataHome,
-        // Enforce the permission policy from the OPENCODE_CONFIG_CONTENT layer, which opencode merges
-        // ABOVE the global XDG config AND above any project-level opencode.json / .opencode config the
-        // repo ships. So a malicious workspace can no longer flip permission["*"] to "allow" and bypass
-        // the app broker; the config-file block above is only a baseline. Residual: a workspace config
-        // that names a specific NON-pinned tool (e.g. an exact MCP tool id) with "allow" still wins for
-        // that one tool, since opencode deep-merges permission keys with no "replace-all" layer here.
-        OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: OPENCODE_PERMISSION_RULES }),
+        // Redirect opencode's Global.Path.home (= `OPENCODE_TEST_HOME ?? os.homedir()`) to an app-owned,
+        // empty dir so the user's `~/.opencode` cannot inject config/providers/permissions — the last
+        // non-repo override surface left after OPENCODE_DISABLE_PROJECT_CONFIG closes project config. This
+        // changes ONLY opencode's notion of home; the child's real HOME is untouched, so shell/git tools
+        // behave normally. Tradeoff: opencode also won't read `~/.claude/CLAUDE.md` or home-level skills —
+        // acceptable since the app owns the whole opencode config.
+        OPENCODE_TEST_HOME: opencodeHomeDir(ctx.storageRoot),
+        // Refuse to load ANY project config: this stops the session cwd's opencode.json / opencode.jsonc
+        // (walked up to the worktree root) and its .opencode/ directory from injecting config at all. A
+        // repo therefore cannot flip permission["*"] to "allow", add an exact-id "allow" rule for an MCP
+        // tool that would beat "*":"ask", or repoint the provider's baseURL to exfiltrate the app key —
+        // the whole project-config surface is closed at the source, not patched rule-by-rule.
+        OPENCODE_DISABLE_PROJECT_CONFIG: 'true',
+        // Pin the app's authoritative provider/model/baseURL + permission policy as the high-priority
+        // layer opencode merges above the global XDG config (and, since project config is disabled above,
+        // this is the top layer). Pinning provider/model here — not just permission — is defense-in-depth
+        // against the only remaining non-repo surface, the user's own ~/.opencode: it cannot repoint the
+        // active provider's baseURL or swap the model to an attacker provider while inheriting the app's
+        // `{env:...}` key ref. The key itself never rides this layer, only its env reference.
+        OPENCODE_CONFIG_CONTENT: JSON.stringify(buildAppConfigContent(provider)),
         // Pass the decrypted key ONLY via the environment; the config references it as `{env:...}`.
         ...(provider.key ? { [OPENCODE_API_KEY_ENV]: provider.key } : {})
       },

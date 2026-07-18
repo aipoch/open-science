@@ -52,6 +52,7 @@ import {
 } from './runtime-events'
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 import { matchSessionModelOption } from './session-config'
+import { describePromptError } from './prompt-error'
 import { AcpPermissionBroker } from './permission-broker'
 import { isMcpToolName } from './permission-policy'
 import { applyCurrentModeUpdate } from './permission-profile-controller'
@@ -1187,7 +1188,7 @@ class AcpRuntime {
         level: 'error',
         sessionId: request.sessionId,
         title: 'Prompt failed',
-        text: errorMessage(error)
+        text: describePromptError(error, { model: this.pendingSessionModel })
       })
       throw error
     } finally {
@@ -1268,18 +1269,31 @@ class AcpRuntime {
       }
 
       session.dispose()
-      this.permissionBroker.cancelForSession(request.sessionId)
-      // Drop this session's http MCP host registrations (no-op when no host / stdio framework).
-      this.unregisterHttpMcpSession(request.sessionId)
-      this.sessions.delete(request.sessionId)
-      this.sessionCwds.delete(request.sessionId)
-      this.sessionMcpServerNames.delete(request.sessionId)
-      this.sessionProjectNames.delete(request.sessionId)
-      this.sessionFrameworks.delete(request.sessionId)
-      this.permissionProfiles.delete(request.sessionId)
-      this.artifactSessionIds.delete(request.sessionId)
-      this.notebookRoutingIds.delete(request.sessionId)
-      this.promptInFlightSessionIds.delete(request.sessionId)
+      // Drop the reverse (underlying agent id -> app id) mapping an adopted session registered, so a
+      // reused agent id or a late agent event can no longer route to this deleted app session.
+      this.agentToAppSessionId.delete(session.sessionId)
+    }
+
+    // App-session-keyed cleanup runs whether or not a live session is attached. A framework switch
+    // disconnects (clearing this.sessions and most maps) but deliberately KEEPS sessionFrameworks, so
+    // deleting a session that was never re-adopted under the new framework would leak that entry —
+    // later misleading the cross-framework-resume check. These deletes are no-ops when the id is absent.
+    this.permissionBroker.cancelForSession(request.sessionId)
+    // Drop this session's http MCP host registrations (no-op when no host / stdio framework).
+    this.unregisterHttpMcpSession(request.sessionId)
+    this.sessions.delete(request.sessionId)
+    this.sessionCwds.delete(request.sessionId)
+    this.sessionMcpServerNames.delete(request.sessionId)
+    this.sessionProjectNames.delete(request.sessionId)
+    this.sessionFrameworks.delete(request.sessionId)
+    this.permissionProfiles.delete(request.sessionId)
+    this.artifactSessionIds.delete(request.sessionId)
+    this.notebookRoutingIds.delete(request.sessionId)
+    this.promptInFlightSessionIds.delete(request.sessionId)
+
+    // Only announce a deletion and shift the current session when something was actually attached; a
+    // detached cleanup (post-switch) must not emit a spurious event or move currentSessionId.
+    if (session) {
       this.currentSessionId =
         this.currentSessionId === request.sessionId
           ? Array.from(this.sessions.keys())[0]

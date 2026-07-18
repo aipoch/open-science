@@ -78,6 +78,9 @@ const startFakeAgent = (
     // When true, the resume handler rejects with a generic "Internal error" (-32603) — what some
     // agents return instead of a clean not-found after their process was replaced by an app restart.
     resumeInternalError?: boolean
+    // When true, the agent does NOT advertise session/close capability, so the runtime must fall back to
+    // the session/cancel notification on delete instead of a close request.
+    supportsClose?: boolean
     onPrompt?: (context: {
       sessionId: string
       text: string
@@ -89,6 +92,7 @@ const startFakeAgent = (
   newSessions: Array<{ cwd: string; mcpServers: unknown[]; _meta?: unknown }>
   resumedSessions: Array<{ sessionId: string; cwd: string; mcpServers: unknown[]; _meta?: unknown }>
   closedSessions: string[]
+  cancelledSessions: string[]
   modeChanges: Array<{ sessionId: string; modeId: string }>
   actions: string[]
 } => {
@@ -101,6 +105,7 @@ const startFakeAgent = (
     _meta?: unknown
   }> = []
   const closedSessions: string[] = []
+  const cancelledSessions: string[] = []
   const modeChanges: Array<{ sessionId: string; modeId: string }> = []
   const actions: string[] = []
   let sessionIndex = 0
@@ -112,7 +117,7 @@ const startFakeAgent = (
       agentCapabilities: {
         loadSession: false,
         sessionCapabilities: {
-          close: {},
+          ...(options.supportsClose === false ? {} : { close: {} }),
           ...(options.supportsResume === false ? {} : { resume: {} })
         }
       },
@@ -177,7 +182,10 @@ const startFakeAgent = (
 
       return { stopReason: 'end_turn' }
     })
-    .onNotification(acp.methods.agent.session.cancel, () => undefined)
+    .onNotification(acp.methods.agent.session.cancel, (ctx) => {
+      cancelledSessions.push(ctx.params.sessionId)
+      return undefined
+    })
     .onRequest(acp.methods.agent.session.close, (ctx) => {
       closedSessions.push(ctx.params.sessionId)
       return {}
@@ -189,7 +197,15 @@ const startFakeAgent = (
       )
     )
 
-  return { prompts, newSessions, resumedSessions, closedSessions, modeChanges, actions }
+  return {
+    prompts,
+    newSessions,
+    resumedSessions,
+    closedSessions,
+    cancelledSessions,
+    modeChanges,
+    actions
+  }
 }
 
 const createModes = (
@@ -289,6 +305,12 @@ const startPermissionProbeAgent = (
 // asserted directly.
 const mcpServerNamesMap = (runtime: AcpRuntime): Map<string, string[]> =>
   (runtime as unknown as { sessionMcpServerNames: Map<string, string[]> }).sessionMcpServerNames
+
+const agentToAppSessionMap = (runtime: AcpRuntime): Map<string, string> =>
+  (runtime as unknown as { agentToAppSessionId: Map<string, string> }).agentToAppSessionId
+
+const sessionFrameworksMap = (runtime: AcpRuntime): Map<string, string> =>
+  (runtime as unknown as { sessionFrameworks: Map<string, string> }).sessionFrameworks
 
 // Finds the isMcp flag the runtime logged for a given permission request (identified by toolCallId).
 const auditedIsMcp = (toolCallId: string): boolean | undefined => {
@@ -1557,6 +1579,79 @@ describe('ACP runtime session management', () => {
     await expect(
       runtime.sendPrompt({ sessionId: 'switched-session', text: 'hello' })
     ).rejects.toThrow(/not found/)
+  })
+
+  it('clears the reverse (agent id -> app id) mapping when an adopted session is deleted', async () => {
+    const process = new FakeAgentProcess()
+    // Resume rejects, so the runtime adopts a fresh agent session (adopted-session-1) under the
+    // app-facing id (switched-session), registering the reverse mapping used to relabel agent events.
+    startFakeAgent(process, ['adopted-session-1'], { resumeNotFound: true })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.resumeSession({ sessionId: 'switched-session', cwd: '/workspace' })
+    // The adoption recorded the underlying id -> app id mapping.
+    expect(agentToAppSessionMap(runtime).get('adopted-session-1')).toBe('switched-session')
+
+    await runtime.deleteSession({ sessionId: 'switched-session' })
+
+    // Delete removes the reverse entry, so a reused agent id or a late agent event carrying the
+    // underlying id no longer resolves to the deleted app session.
+    expect(agentToAppSessionMap(runtime).has('adopted-session-1')).toBe(false)
+  })
+
+  it('cancels an adopted session by its own id when the agent lacks session/close', async () => {
+    const process = new FakeAgentProcess()
+    // No close capability, so delete must fall back to the session/cancel notification; resume rejects
+    // so the fresh agent session (adopted-session-1) is adopted under the app-facing id.
+    const fakeAgent = startFakeAgent(process, ['adopted-session-1'], {
+      resumeNotFound: true,
+      supportsClose: false
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.resumeSession({ sessionId: 'switched-session', cwd: '/workspace' })
+    await runtime.deleteSession({ sessionId: 'switched-session' })
+
+    // The cancel fallback targets the underlying agent id, not the app-facing one (cancel is a
+    // fire-and-forget notification, so wait for the agent to receive it).
+    await vi.waitFor(() => expect(fakeAgent.cancelledSessions).toEqual(['adopted-session-1']))
+    expect(fakeAgent.closedSessions).toEqual([])
+    expect(runtime.getSnapshot().sessionIds).toEqual([])
+  })
+
+  it('cleans up sessionFrameworks when deleting a detached session (post framework-switch)', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    // createSession records the session's framework; a framework switch disconnects (clearing
+    // this.sessions) but deliberately KEEPS sessionFrameworks so a later resume can detect the switch.
+    expect(sessionFrameworksMap(runtime).has(session.sessionId)).toBe(true)
+    await runtime.disconnect()
+    expect(runtime.getSnapshot().sessionIds).toEqual([])
+    // The framework entry survives the disconnect (by design).
+    expect(sessionFrameworksMap(runtime).has(session.sessionId)).toBe(true)
+
+    // Deleting the now-detached session must not throw or talk to a torn-down agent, but must still
+    // drop the leaked framework entry so it cannot later mislead the cross-framework-resume check.
+    await runtime.deleteSession({ sessionId: session.sessionId })
+
+    expect(sessionFrameworksMap(runtime).has(session.sessionId)).toBe(false)
+    expect(fakeAgent.closedSessions).toEqual([])
+    expect(fakeAgent.cancelledSessions).toEqual([])
   })
 
   it('resumes an existing protocol session so restored conversations can continue', async () => {
