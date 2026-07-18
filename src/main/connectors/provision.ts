@@ -1,4 +1,4 @@
-import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ALL_CONNECTOR_IDS } from './registry'
 import { renderSkillDoc, renderCustomSkillDoc } from './skill-doc'
@@ -34,10 +34,27 @@ export async function syncConnectorSkillDocs(
   const existing = await readdir(skillsDir).catch(() => [] as string[])
   for (const entry of existing) {
     const m = /^mcp-(.+)$/.exec(entry)
-    // Own (and so may remove) only bundled-connector dirs, matched case-insensitively; remove the
-    // ones whose connector is not currently enabled.
-    if (m && namesBundledConnector(m[1]) && !enabled.has(m[1].toLowerCase())) {
+    if (!m || !namesBundledConnector(m[1])) continue // not a bundled-connector dir; leave it alone
+    const canonicalId = m[1].toLowerCase()
+
+    if (!enabled.has(canonicalId)) {
+      // Disabled connector — remove its dir in whatever case it appears.
       await rm(join(skillsDir, entry), { recursive: true, force: true })
+      continue
+    }
+
+    // Enabled connector: keep exactly one directory, the canonical lowercase `mcp-<id>`. A remaining
+    // case-variant (e.g. mcp-Chemistry left by an old version) is stale and removed — but only when it
+    // is a DISTINCT directory from the canonical one. On a case-insensitive filesystem the variant IS
+    // the canonical dir (same dev+ino, holding the freshly-written built-in doc), so it is kept.
+    if (entry !== `mcp-${canonicalId}`) {
+      const [canonical, variant] = await Promise.all([
+        stat(join(skillsDir, `mcp-${canonicalId}`)).catch(() => null),
+        stat(join(skillsDir, entry)).catch(() => null)
+      ])
+      const distinct =
+        canonical && variant && (canonical.dev !== variant.dev || canonical.ino !== variant.ino)
+      if (distinct) await rm(join(skillsDir, entry), { recursive: true, force: true })
     }
   }
 }

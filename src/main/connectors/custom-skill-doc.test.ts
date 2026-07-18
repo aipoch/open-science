@@ -148,6 +148,13 @@ describe('syncCustomServerSkillDocs', () => {
     const doc = await readFile(join(dir, 'mcp-chemistry', 'SKILL.md'), 'utf8')
     expect(doc).toContain('source: connector')
     expect(doc).toContain('name: mcp-chemistry')
+
+    // Exactly one case-fold-equivalent directory remains: on a case-sensitive filesystem the stale
+    // mcp-Chemistry variant is removed, on a case-insensitive one it never duplicated.
+    const entries = await readdir(dir)
+    const folded = entries.map((entry) => entry.toLowerCase())
+    expect(new Set(folded).size).toBe(entries.length)
+    expect(folded).toEqual(['mcp-chemistry'])
   })
 })
 
