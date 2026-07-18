@@ -823,6 +823,29 @@ describe('UserSkillRepository', () => {
     expect(await readdir(importedDir)).toEqual([])
   })
 
+  it('serializes concurrent fresh imports so they get distinct slugs (no clobber)', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    // Two different source URLs whose folder name slugifies to the same base ("foo"). Run at once:
+    // slug allocation + swap share one critical section, so the second is suffixed rather than
+    // overwriting the first (which would leave both reporting imported-foo).
+    const [a, b] = await Promise.all([
+      repo.importFromGitHub(
+        'https://github.com/acme/one/tree/main/pack/foo',
+        fakeFetch('---\nname: Foo\n---\nfrom one')
+      ),
+      repo.importFromGitHub(
+        'https://github.com/acme/two/tree/main/pack/foo',
+        fakeFetch('---\nname: Foo\n---\nfrom two')
+      )
+    ])
+
+    expect([a.id, b.id].sort()).toEqual(['imported-foo', 'imported-foo-2'])
+    expect((await repo.list()).map((skill) => skill.id).sort()).toEqual([
+      'imported-foo',
+      'imported-foo-2'
+    ])
+  })
+
   it('recovers within the same instance after a rollback leaves a backup (not memoized once)', async () => {
     const root = await makeStorage()
     const repo = new UserSkillRepository(root)

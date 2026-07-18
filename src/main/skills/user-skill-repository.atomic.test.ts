@@ -114,4 +114,26 @@ describe('writeImported swap atomicity', () => {
     const restarted = new UserSkillRepository(root)
     expect(await restarted.body(first.id)).toContain('old body')
   })
+
+  it('rejects the operation when a required backup restore fails (no silent proceed)', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'atomic-restore-fail-'))
+    const repo = new UserSkillRepository(root)
+    const first = await repo.importFromGitHub(
+      SKILL_URL,
+      fetchSkill('---\nname: Foo\n---\nold body')
+    )
+
+    // Crash state: the live dir survives only as a backup (set up with the real rename).
+    const importedDir = join(root, 'skills', 'imported')
+    await realRename(join(importedDir, 'foo'), join(importedDir, '.foo.backup-crash'))
+
+    // Now make the restore rename fail. Recovery must reject the operation rather than log-and-proceed
+    // (which would let a delete() remove a non-existent live dir and "succeed").
+    vi.mocked(fsp.rename).mockImplementation(async (from, to) => {
+      if (String(from).includes('.backup-')) throw new Error('restore failure')
+      return realRename(from, to)
+    })
+
+    await expect(repo.body(first.id)).rejects.toThrow(/Failed to recover/)
+  })
 })
