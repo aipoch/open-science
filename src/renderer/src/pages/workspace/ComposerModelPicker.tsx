@@ -9,6 +9,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { ProviderKindIcon } from '../settings/provider-icons'
 import { providerKindKey } from '../settings/provider-form-value'
@@ -124,61 +125,78 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="max-h-[320px] min-w-[15rem] overflow-y-auto">
-        {groups.map((group) => {
-          const compatible = isCompatible(group.provider)
+        <TooltipProvider delayDuration={150}>
+          {groups.map((group) => {
+            const compatible = isCompatible(group.provider)
 
-          return (
-            <DropdownMenuGroup key={group.provider.id}>
-              <DropdownMenuLabel>
-                {group.provider.name}
-                {compatible ? null : (
-                  <span
-                    className="ml-1 cursor-help font-normal text-text-300 underline decoration-dotted underline-offset-2"
-                    title={incompatibilityReason(
-                      {
-                        apiType: group.provider.apiType ?? 'anthropic',
-                        type: group.provider.type,
-                        name: group.provider.name
-                      },
-                      frameworkName,
-                      frameworkEndpoints
-                    )}
-                  >
-                    · unavailable
-                  </span>
-                )}
-              </DropdownMenuLabel>
-              {group.options.map((option) => {
-                const isActive =
-                  option.providerId === activeProviderId && option.model === activeKeyModel
+            return (
+              <DropdownMenuGroup key={group.provider.id}>
+                <DropdownMenuLabel>
+                  {group.provider.name}
+                  {compatible ? null : (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          className="ml-1 cursor-help font-normal text-text-300 underline decoration-dotted underline-offset-2"
+                          aria-label={incompatibilityReason(
+                            {
+                              apiType: group.provider.apiType ?? 'anthropic',
+                              type: group.provider.type,
+                              name: group.provider.name
+                            },
+                            frameworkName,
+                            frameworkEndpoints
+                          )}
+                        >
+                          · unavailable
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent side="right" className="max-w-xs">
+                        {incompatibilityReason(
+                          {
+                            apiType: group.provider.apiType ?? 'anthropic',
+                            type: group.provider.type,
+                            name: group.provider.name
+                          },
+                          frameworkName,
+                          frameworkEndpoints
+                        )}
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                </DropdownMenuLabel>
+                {group.options.map((option) => {
+                  const isActive =
+                    option.providerId === activeProviderId && option.model === activeKeyModel
 
-                return (
-                  <DropdownMenuItem
-                    key={`${option.providerId}:${option.model}`}
-                    role="menuitemradio"
-                    aria-checked={isActive}
-                    disabled={!compatible}
-                    onSelect={() => void setActiveProvider(option.providerId, option.model)}
-                    className={cn('gap-2', isActive && 'font-medium')}
-                  >
-                    <ProviderKindIcon
-                      kindKey={providerKindKey(option.providerType, option.vendorId)}
-                      className="size-4 shrink-0"
-                    />
-                    <span className="min-w-0 flex-1 truncate">{optionLabel(option)}</span>
-                    {isActive ? (
-                      <Check
-                        className="size-4 shrink-0 text-primary"
-                        strokeWidth={2}
-                        aria-hidden="true"
+                  return (
+                    <DropdownMenuItem
+                      key={`${option.providerId}:${option.model}`}
+                      role="menuitemradio"
+                      aria-checked={isActive}
+                      disabled={!compatible}
+                      onSelect={() => void setActiveProvider(option.providerId, option.model)}
+                      className={cn('gap-2', isActive && 'font-medium')}
+                    >
+                      <ProviderKindIcon
+                        kindKey={providerKindKey(option.providerType, option.vendorId)}
+                        className="size-4 shrink-0"
                       />
-                    ) : null}
-                  </DropdownMenuItem>
-                )
-              })}
-            </DropdownMenuGroup>
-          )
-        })}
+                      <span className="min-w-0 flex-1 truncate">{optionLabel(option)}</span>
+                      {isActive ? (
+                        <Check
+                          className="size-4 shrink-0 text-primary"
+                          strokeWidth={2}
+                          aria-hidden="true"
+                        />
+                      ) : null}
+                    </DropdownMenuItem>
+                  )
+                })}
+              </DropdownMenuGroup>
+            )
+          })}
+        </TooltipProvider>
       </DropdownMenuContent>
     </DropdownMenu>
   )
