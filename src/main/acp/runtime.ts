@@ -1271,6 +1271,9 @@ class AcpRuntime {
       this.permissionBroker.cancelForSession(request.sessionId)
       // Drop this session's http MCP host registrations (no-op when no host / stdio framework).
       this.unregisterHttpMcpSession(request.sessionId)
+      // Drop the reverse (underlying agent id -> app id) mapping an adopted session registered, so a
+      // reused agent id or a late agent event can no longer route to this deleted app session.
+      this.agentToAppSessionId.delete(session.sessionId)
       this.sessions.delete(request.sessionId)
       this.sessionCwds.delete(request.sessionId)
       this.sessionMcpServerNames.delete(request.sessionId)
