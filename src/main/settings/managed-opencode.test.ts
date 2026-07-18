@@ -222,7 +222,9 @@ describe('installManagedOpencode', () => {
       requestedKeys.push('standard')
       return { dist: { tarball: 'https://reg/standard.tgz', integrity: sha512(standardTgz) } }
     }
-    const fetchTarball = async (url: string): Promise<{
+    const fetchTarball = async (
+      url: string
+    ): Promise<{
       stream: NodeJS.ReadableStream
       totalBytes?: number
     }> => {

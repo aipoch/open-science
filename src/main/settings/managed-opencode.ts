@@ -281,7 +281,11 @@ export const installManagedOpencode = async ({
           stream: 'system',
           chunk: `Installed OpenCode ${standard.version}.\n`
         })
-        return { result: { installId, ok: true }, resolvedPath: destPath, version: standard.version }
+        return {
+          result: { installId, ok: true },
+          resolvedPath: destPath,
+          version: standard.version
+        }
       }
 
       // The standard build extracted but died on this CPU. On a non-AVX2 x64 host (SIGILL) retry once
