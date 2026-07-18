@@ -20,7 +20,8 @@ export type GitHubSkillLocation = {
 type ByteStream = {
   getReader: () => {
     read: () => Promise<{ done: boolean; value?: Uint8Array }>
-    cancel?: () => void
+    // The real ReadableStreamDefaultReader.cancel() returns a Promise; keep both shapes for tests.
+    cancel?: () => void | Promise<void>
   }
 }
 
@@ -42,9 +43,11 @@ export type FetchLike = (
 
 const GITHUB_HEADERS = { 'User-Agent': 'open-science', Accept: 'application/vnd.github+json' }
 
-// Reads a download body into a Buffer without ever holding more than `limit` bytes. Prefers the
-// streaming reader (aborting as soon as the running total exceeds the limit); falls back to
-// arrayBuffer() when no stream is exposed, still enforcing the cap on the buffered result.
+// Reads a download body into a Buffer, stopping as soon as the running total crosses `limit` (so an
+// oversized/endless body is never drained). Prefers the streaming reader; falls back to arrayBuffer()
+// when no stream is exposed, still enforcing the cap on the buffered result. Peak memory is bounded by
+// the accumulated chunks (at most `limit` plus one chunk) plus the final Buffer.concat copy — i.e. a
+// small multiple of `limit`, never the whole oversized body.
 const readBounded = async (
   response: { arrayBuffer: () => Promise<ArrayBuffer>; body?: ByteStream | null },
   limit: number,
@@ -60,7 +63,9 @@ const readBounded = async (
       if (value) {
         read += value.byteLength
         if (read > limit) {
-          reader.cancel?.()
+          // Await cancellation so a rejected cancel() surfaces here instead of as an unhandled
+          // rejection; the read is aborted regardless (works whether cancel is sync or async).
+          await Promise.resolve(reader.cancel?.()).catch(() => {})
           onExceeded()
         }
         chunks.push(Buffer.from(value))

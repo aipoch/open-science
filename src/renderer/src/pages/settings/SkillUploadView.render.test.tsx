@@ -173,6 +173,22 @@ describe('SkillUploadView (batch upload)', () => {
     expect(document.body.textContent).toMatch(/too large/)
   })
 
+  it('rejects a single oversized bundle on file.size, without previewing it', async () => {
+    act(() => {
+      root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />)
+    })
+
+    // An 11 MiB bundle exceeds the 10 MiB cap; it must be rejected before previewSkillZip reads it.
+    const big = new File([new Uint8Array([1])], 'huge.zip', { type: 'application/zip' })
+    Object.defineProperty(big, 'size', { value: 11 * 1024 * 1024 })
+
+    await dropFiles([big])
+
+    expect(useSettingsStore.getState().previewSkillZip).not.toHaveBeenCalled()
+    expect(document.body.textContent).toMatch(/too large/)
+    expect(document.body.textContent).not.toContain('Found')
+  })
+
   it('parses a markdown file into a candidate that routes to createSkill', async () => {
     act(() => {
       root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />)

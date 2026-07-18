@@ -35,4 +35,20 @@ describe('decodeBoundedBase64', () => {
     const wrapped = `${bytes.toString('base64').slice(0, 2)}\n${bytes.toString('base64').slice(2)}`
     expect(decodeBoundedBase64(wrapped, 3).equals(bytes)).toBe(true)
   })
+
+  it('does not let an unpadded payload under-count past the limit', () => {
+    // 11 bytes with the base64 padding stripped is 15 chars; a floor(len/4)*3 estimate would call it
+    // 9 bytes and wrongly pass a 10-byte cap. The exact size (11) must be rejected.
+    const eleven = Buffer.alloc(11, 0x61)
+    const unpadded = eleven.toString('base64').replace(/=+$/, '')
+    expect(unpadded.length % 4).not.toBe(0) // genuinely unpadded
+    expect(() => decodeBoundedBase64(unpadded, 10)).toThrow(/exceeds the .* limit/)
+    // The same payload is fine under a cap that actually fits it.
+    expect(decodeBoundedBase64(unpadded, 11).length).toBe(11)
+  })
+
+  it('rejects a structurally invalid base64 length', () => {
+    // A trailing group of a single base64 char encodes no bytes and is malformed.
+    expect(() => decodeBoundedBase64('YWJjZ')).toThrow(/not valid base64/)
+  })
 })
