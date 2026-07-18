@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -12,7 +12,10 @@ import {
   extractFileFromTgz,
   getManagedPlatform,
   installManagedClaude,
-  resolveNativePackage
+  isManagedClaudePath,
+  managedClaudeDir,
+  resolveNativePackage,
+  uninstallManagedClaude
 } from './managed-claude'
 
 // Builds one 512-byte ustar header + content padded to a 512 boundary — enough to synthesize the npm
@@ -371,5 +374,40 @@ describe('managed-claude: install orchestration', () => {
     expect(
       events.some((event) => event.kind === 'log' && event.chunk.includes('Free some space'))
     ).toBe(true)
+  })
+})
+
+describe('isManagedClaudePath / uninstallManagedClaude', () => {
+  let root: string
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-claude-uninstall-'))
+  })
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('recognizes only a binary that lives directly in the managed bin dir', () => {
+    expect(isManagedClaudePath(join(managedClaudeDir(root), 'claude'), root)).toBe(true)
+    // A PATH/npm install we merely detected must never be treated as managed.
+    expect(isManagedClaudePath('/usr/local/bin/claude', root)).toBe(false)
+    // A copy one level deeper is not the managed layout either.
+    expect(isManagedClaudePath(join(managedClaudeDir(root), 'nested', 'claude'), root)).toBe(false)
+  })
+
+  it('removes the whole managed install tree', async () => {
+    const bin = join(managedClaudeDir(root), 'claude')
+    await mkdir(managedClaudeDir(root), { recursive: true })
+    await writeFile(bin, '', 'utf8')
+
+    await uninstallManagedClaude(root)
+
+    await expect(readFile(bin)).rejects.toThrow()
+    // The `claude-code` parent (one level above bin) is gone, not just the file.
+    await expect(readFile(join(root, 'claude-code', 'bin', 'claude'))).rejects.toThrow()
+  })
+
+  it('is a no-op (never rejects) when nothing is installed', async () => {
+    await expect(uninstallManagedClaude(root)).resolves.toBeUndefined()
   })
 })

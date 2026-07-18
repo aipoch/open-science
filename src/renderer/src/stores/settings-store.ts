@@ -58,6 +58,10 @@ type SettingsStoreData = {
   agentFrameworks: AgentFrameworkView[]
   // Detected opencode executable, for the framework-aware detection card.
   opencode: OpencodeInfo
+  // Whether each framework's detected runtime is the app-managed install (only these can be uninstalled
+  // in-app). Mirrored from the main-process snapshot; a PATH/npm binary reads false.
+  claudeManaged: boolean
+  opencodeManaged: boolean
   onboardingCompletedAt: number | undefined
   // Bundled skills with their enabled state, loaded lazily when the Skills panel opens.
   skills: SkillView[]
@@ -116,6 +120,10 @@ type SettingsStore = SettingsStoreData & {
   ) => Promise<ClaudeInstallResult>
   // App-managed OpenCode install; shares the install progress/log state with installClaude.
   installOpencode: (source?: ClaudeInstallSource) => Promise<ClaudeInstallResult>
+  // Removes the app-managed runtime for a framework (guarded main-side to app-managed installs) and
+  // applies the refreshed snapshot; main reconnects the agent so the next prompt uses the new state.
+  uninstallClaude: () => Promise<void>
+  uninstallOpencode: () => Promise<void>
   clearInstallLogs: () => void
   openEnvironmentRepair: () => void
   closeEnvironmentRepair: () => void
@@ -208,6 +216,8 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   agentFrameworkId: 'claude-code',
   agentFrameworks: [],
   opencode: {},
+  claudeManaged: false,
+  opencodeManaged: false,
   onboardingCompletedAt: undefined,
   skills: [],
   connectors: [],
@@ -242,6 +252,8 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   agentFrameworkId: snapshot.agentFrameworkId,
   agentFrameworks: snapshot.agentFrameworks,
   opencode: snapshot.opencode,
+  claudeManaged: snapshot.claudeManaged,
+  opencodeManaged: snapshot.opencodeManaged,
   onboardingCompletedAt: snapshot.onboardingCompletedAt
 })
 
@@ -491,6 +503,19 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       unsubscribe()
       set({ isInstalling: false, installProgress: null })
     }
+  },
+
+  // Removes the app-managed Claude runtime; main deletes it, re-detects, and may auto-switch the active
+  // framework. Applies the refreshed snapshot and re-evaluates the readiness gate.
+  uninstallClaude: async () => {
+    set(applySnapshot(await window.api.settings.uninstallClaude()))
+    await get().refreshPreflight()
+  },
+
+  // Removes the app-managed OpenCode runtime, mirroring uninstallClaude.
+  uninstallOpencode: async () => {
+    set(applySnapshot(await window.api.settings.uninstallOpencode()))
+    await get().refreshPreflight()
   },
 
   clearInstallLogs: () => set({ installLogs: [], installProgress: null, installError: undefined }),

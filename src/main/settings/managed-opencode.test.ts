@@ -1,16 +1,18 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { gzipSync } from 'node:zlib'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
   installManagedOpencode,
+  isManagedOpencodePath,
   managedOpencodeDir,
-  resolveOpencodePlatform
+  resolveOpencodePlatform,
+  uninstallManagedOpencode
 } from './managed-opencode'
 
 // One 512-byte ustar header + padded content — synthesizes the npm tarball shape the extractor reads.
@@ -237,5 +239,40 @@ describe('resolveOpencodePlatform', () => {
     expect(() => resolveOpencodePlatform({ platform: 'aix', arch: 'x64' })).toThrow(
       /Unsupported platform/
     )
+  })
+})
+
+describe('isManagedOpencodePath / uninstallManagedOpencode', () => {
+  let root: string
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-opencode-uninstall-'))
+  })
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('recognizes only a binary that lives directly in the managed bin dir', () => {
+    expect(isManagedOpencodePath(join(managedOpencodeDir(root), 'opencode'), root)).toBe(true)
+    // A PATH/npm/homebrew opencode we merely detected must never be treated as managed.
+    expect(isManagedOpencodePath('/opt/homebrew/bin/opencode', root)).toBe(false)
+    expect(isManagedOpencodePath(join(managedOpencodeDir(root), 'nested', 'opencode'), root)).toBe(
+      false
+    )
+  })
+
+  it('removes the whole managed install tree', async () => {
+    const bin = join(managedOpencodeDir(root), 'opencode')
+    await mkdir(managedOpencodeDir(root), { recursive: true })
+    await writeFile(bin, '', 'utf8')
+
+    await uninstallManagedOpencode(root)
+
+    await expect(readFile(bin)).rejects.toThrow()
+    await expect(readFile(join(root, 'opencode-managed', 'bin', 'opencode'))).rejects.toThrow()
+  })
+
+  it('is a no-op (never rejects) when nothing is installed', async () => {
+    await expect(uninstallManagedOpencode(root)).resolves.toBeUndefined()
   })
 })

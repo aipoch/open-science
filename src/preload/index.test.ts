@@ -39,6 +39,8 @@ type PreloadApi = {
     detectOpencode: () => unknown
     installOpencode: (request: unknown) => unknown
     setAgentFramework: (request: unknown) => unknown
+    uninstallClaude: () => unknown
+    uninstallOpencode: () => unknown
   }
 }
 
@@ -126,6 +128,18 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.settings.setAgentFramework(sampleFramework),
     channel: 'settings:set-agent-framework',
     args: [sampleFramework]
+  },
+  {
+    name: 'settings.uninstallClaude → settings:uninstall-claude (no args)',
+    invoke: (a) => a.settings.uninstallClaude(),
+    channel: 'settings:uninstall-claude',
+    args: []
+  },
+  {
+    name: 'settings.uninstallOpencode → settings:uninstall-opencode (no args)',
+    invoke: (a) => a.settings.uninstallOpencode(),
+    channel: 'settings:uninstall-opencode',
+    args: []
   }
 ]
 

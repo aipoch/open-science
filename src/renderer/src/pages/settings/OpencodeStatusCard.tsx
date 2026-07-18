@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { CheckCircle2, RefreshCw, XCircle } from 'lucide-react'
+import { CheckCircle2, RefreshCw, Trash2, XCircle } from 'lucide-react'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
@@ -23,6 +23,10 @@ type OpencodeStatusCardProps = {
   installError: string | undefined
   npmAvailable: boolean
   onInstall: (source: ClaudeInstallSource) => void
+  // Uninstall is offered only for the app-managed install (a binary the app owns in its data dir).
+  managed?: boolean
+  isUninstalling?: boolean
+  onUninstall?: () => void
 }
 
 // Shows whether a runnable opencode executable was found (path + version) plus a re-detect action,
@@ -37,7 +41,10 @@ const OpencodeStatusCard = ({
   installProgress,
   installError,
   npmAvailable,
-  onInstall
+  onInstall,
+  managed = false,
+  isUninstalling = false,
+  onUninstall
 }: OpencodeStatusCardProps): React.JSX.Element => {
   const found = Boolean(opencode.resolvedPath)
   const installSources = useMemo(() => getOpencodeInstallSources(window.api?.platform), [])
@@ -56,16 +63,30 @@ const OpencodeStatusCard = ({
               {found ? 'OpenCode is installed' : 'OpenCode not detected'}
             </span>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={onDetect}
-            disabled={isDetecting}
-          >
-            <RefreshCw className={isDetecting ? 'animate-spin' : ''} aria-hidden="true" />
-            {isDetecting ? 'Detecting…' : 'Re-detect'}
-          </Button>
+          <div className="flex items-center gap-2">
+            {managed && onUninstall && found ? (
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                onClick={onUninstall}
+                disabled={isUninstalling || isDetecting}
+              >
+                <Trash2 aria-hidden="true" />
+                Uninstall
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onDetect}
+              disabled={isDetecting || isUninstalling}
+            >
+              <RefreshCw className={isDetecting ? 'animate-spin' : ''} aria-hidden="true" />
+              {isDetecting ? 'Detecting…' : 'Re-detect'}
+            </Button>
+          </div>
         </div>
         {found ? (
           <dl className="mt-3 space-y-1 text-xs text-muted-foreground">

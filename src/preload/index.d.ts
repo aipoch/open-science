@@ -172,6 +172,8 @@ interface OpenScienceAPI {
     detectOpencode(): Promise<SettingsSnapshot>
     installClaude(request: InstallClaudeRequest): Promise<ClaudeInstallResult>
     installOpencode(request: InstallOpencodeRequest): Promise<ClaudeInstallResult>
+    uninstallClaude(): Promise<SettingsSnapshot>
+    uninstallOpencode(): Promise<SettingsSnapshot>
     upsertProvider(request: UpsertProviderRequest): Promise<SettingsSnapshot>
     deleteProvider(request: DeleteProviderRequest): Promise<SettingsSnapshot>
     setActiveProvider(request: SetActiveProviderRequest): Promise<SettingsSnapshot>

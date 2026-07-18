@@ -57,7 +57,9 @@ const snapshot = (providers: SettingsSnapshot['providers']): SettingsSnapshot =>
   providers,
   agentFrameworkId: 'claude-code',
   agentFrameworks: [{ id: 'claude-code', displayName: 'Claude Code', supportsSkills: true }],
-  opencode: {}
+  opencode: {},
+  claudeManaged: false,
+  opencodeManaged: false
 })
 
 const providerView = (id: string): SettingsSnapshot['providers'][number] => ({

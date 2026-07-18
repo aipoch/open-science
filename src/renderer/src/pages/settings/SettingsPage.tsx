@@ -41,6 +41,7 @@ import {
 } from './provider-form-value'
 import { ProviderList } from './ProviderList'
 import { SettingsRow, SettingsSection } from './SettingsLayout'
+import { UninstallRuntimeDialog } from './UninstallRuntimeDialog'
 
 type SettingsPageProps = {
   open: boolean
@@ -146,6 +147,10 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const installError = useSettingsStore((state) => state.installError)
   const npmAvailable = useSettingsStore((state) => state.npmAvailable)
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
+  const claudeManaged = useSettingsStore((state) => state.claudeManaged)
+  const opencodeManaged = useSettingsStore((state) => state.opencodeManaged)
+  const uninstallClaude = useSettingsStore((state) => state.uninstallClaude)
+  const uninstallOpencode = useSettingsStore((state) => state.uninstallOpencode)
   const load = useSettingsStore((state) => state.load)
   const detectClaude = useSettingsStore((state) => state.detectClaude)
   const installClaude = useSettingsStore((state) => state.installClaude)
@@ -170,6 +175,10 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   )
   const [isSaving, setIsSaving] = useState(false)
   const [isRefreshingModels, setIsRefreshingModels] = useState(false)
+  // The app-managed runtime pending an uninstall confirmation (null = dialog closed), plus the in-flight
+  // flag so the dialog and status cards can show progress and stay locked during removal.
+  const [pendingUninstall, setPendingUninstall] = useState<'claude' | 'opencode' | null>(null)
+  const [isUninstalling, setIsUninstalling] = useState(false)
   const [statusMessage, setStatusMessage] = useState<string | undefined>(undefined)
   const [statusOk, setStatusOk] = useState(false)
   const [busyProviderId, setBusyProviderId] = useState<string | undefined>(undefined)
@@ -362,6 +371,27 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
 
   const closeForm = (): void =>
     navigate({ panel: 'model', skills: currentLocation.skills, model: { kind: 'list' } })
+
+  // Removes the app-managed runtime for the framework awaiting confirmation, then closes the dialog.
+  // The store applies the refreshed snapshot (which may auto-switch the active framework) and main
+  // reconnects the agent, so the cards and readiness gate update without a manual re-detect.
+  const handleConfirmUninstall = async (): Promise<void> => {
+    if (!pendingUninstall) return
+
+    setIsUninstalling(true)
+
+    try {
+      if (pendingUninstall === 'claude') {
+        await uninstallClaude()
+      } else {
+        await uninstallOpencode()
+      }
+
+      setPendingUninstall(null)
+    } finally {
+      setIsUninstalling(false)
+    }
+  }
 
   const handleSave = async (): Promise<void> => {
     setIsSaving(true)
@@ -682,6 +712,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                           installError={installError}
                           npmAvailable={npmAvailable}
                           onInstall={(source) => void installOpencode(source)}
+                          managed={opencodeManaged}
+                          isUninstalling={isUninstalling && pendingUninstall === 'opencode'}
+                          onUninstall={() => setPendingUninstall('opencode')}
                         />
                       </SettingsSection>
                     ) : (
@@ -692,6 +725,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                             claudeReady={preflight.claudeReady}
                             isDetecting={isDetectingClaude}
                             onDetect={() => void detectClaude()}
+                            managed={claudeManaged}
+                            isUninstalling={isUninstalling && pendingUninstall === 'claude'}
+                            onUninstall={() => setPendingUninstall('claude')}
                           />
                           {!preflight.claudeReady ? (
                             <ClaudeInstallCard
@@ -740,6 +776,12 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
           </div>
         </Dialog.Content>
       </Dialog.Portal>
+      <UninstallRuntimeDialog
+        framework={pendingUninstall}
+        isUninstalling={isUninstalling}
+        onCancel={() => setPendingUninstall(null)}
+        onConfirm={() => void handleConfirmUninstall()}
+      />
     </Dialog.Root>
   )
 }

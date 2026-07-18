@@ -76,7 +76,9 @@ import {
 } from './opencode-detect'
 import {
   installManagedOpencode,
+  isManagedOpencodePath,
   managedOpencodeDir,
+  uninstallManagedOpencode,
   type InstallManagedOpencodeOptions
 } from './managed-opencode'
 import { opencodeConfigDir } from '../agent-framework/opencode'
@@ -88,7 +90,9 @@ import { runEnvironmentCheck } from './environment-check'
 import {
   DEFAULT_REGISTRIES,
   installManagedClaude,
+  isManagedClaudePath,
   managedClaudeDir,
+  uninstallManagedClaude,
   type InstallManagedClaudeOptions,
   type ManagedInstallOutcome
 } from './managed-claude'
@@ -235,6 +239,12 @@ class SettingsService {
     return {
       claude: settings.claude ?? {},
       opencode: { resolvedPath: settings.opencodePath, version: settings.opencodeVersion },
+      claudeManaged: settings.claude?.resolvedPath
+        ? isManagedClaudePath(settings.claude.resolvedPath, this.storageRoot)
+        : false,
+      opencodeManaged: settings.opencodePath
+        ? isManagedOpencodePath(settings.opencodePath, this.storageRoot)
+        : false,
       activeProviderId: settings.activeProviderId,
       activeModel: settings.activeModel,
       providers: settings.providers.map((provider) => this.toProviderView(provider)),
@@ -668,6 +678,63 @@ class SettingsService {
     }
 
     return result
+  }
+
+  // Uninstalls the app-managed Claude runtime. Only an install we own (a binary inside the app's data
+  // dir) is removed; a PATH/npm Claude we merely detected is left untouched (a no-op that just returns
+  // the current snapshot). When Claude was the active framework, the active backend auto-switches to
+  // OpenCode if that is installed. Returns the refreshed snapshot; the IPC layer reconnects the agent
+  // so the change applies to the next prompt.
+  async uninstallClaude(): Promise<SettingsSnapshot> {
+    const resolvedPath = (await this.repository.getSettings()).claude?.resolvedPath
+
+    if (!resolvedPath || !isManagedClaudePath(resolvedPath, this.storageRoot)) {
+      return this.getSettingsView()
+    }
+
+    await uninstallManagedClaude(this.storageRoot)
+    // Re-detect resolves what remains: clears the stored path when nothing is left on disk, or adopts a
+    // still-present PATH install if one also exists.
+    await this.detectClaude()
+    await this.autoSwitchAwayFrom('claude-code')
+
+    return this.getSettingsView()
+  }
+
+  // Uninstalls the app-managed OpenCode runtime, mirroring uninstallClaude (guard, delete, re-detect,
+  // auto-switch to Claude when OpenCode was active). Only an install inside the app's data dir is
+  // removed; a PATH/npm opencode is left untouched.
+  async uninstallOpencode(): Promise<SettingsSnapshot> {
+    const resolvedPath = (await this.repository.getSettings()).opencodePath
+
+    if (!resolvedPath || !isManagedOpencodePath(resolvedPath, this.storageRoot)) {
+      return this.getSettingsView()
+    }
+
+    await uninstallManagedOpencode(this.storageRoot)
+    await this.detectOpencode()
+    await this.autoSwitchAwayFrom('opencode')
+
+    return this.getSettingsView()
+  }
+
+  // After a framework's runtime is uninstalled, if it was the active backend and the other framework
+  // still has a binary on disk, switch the active framework to it so sessions keep a working agent. If
+  // the other framework is not installed either, the selection is left as-is (the preflight gate then
+  // reports the active framework as not ready). No reconnect happens here; the caller refreshes it.
+  private async autoSwitchAwayFrom(uninstalled: AgentFrameworkId): Promise<void> {
+    const settings = await this.repository.getSettings()
+    const active = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+
+    if (active !== uninstalled) return
+
+    const other: AgentFrameworkId = uninstalled === 'claude-code' ? 'opencode' : 'claude-code'
+    const otherPath =
+      other === 'claude-code' ? settings.claude?.resolvedPath : settings.opencodePath
+
+    if (otherPath && (await this.pathExists(otherPath))) {
+      await this.repository.setAgentFramework(other)
+    }
   }
 
   // Records that first-run onboarding finished so later launches skip the wizard.

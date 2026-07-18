@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { chmod, rm } from 'node:fs/promises'
 import { arch as osArch } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 import type { ClaudeInstallEvent } from '../../shared/settings'
 import {
@@ -114,6 +114,20 @@ export const resolveOpencodePlatform = (
 // Stable on-disk location for the managed binary (overwritten on upgrade), parallel to Claude's dir.
 export const managedOpencodeDir = (dataRoot: string): string =>
   join(dataRoot, 'opencode-managed', 'bin')
+
+// True when `resolvedPath` is the app-managed OpenCode binary (lives directly in managedOpencodeDir).
+// Detection probes PATH before the managed dir, so a PATH copy shadows the managed one and this
+// returns false for it — only a genuinely app-owned install is treated as managed (and uninstallable).
+export const isManagedOpencodePath = (resolvedPath: string, dataRoot: string): boolean =>
+  resolve(dirname(resolvedPath)) === resolve(managedOpencodeDir(dataRoot))
+
+// Removes the app-managed OpenCode install tree (the `opencode-managed` dir holding `bin/<binName>`).
+// Resolves (never rejects); a missing dir is a no-op so callers can uninstall idempotently.
+export const uninstallManagedOpencode = async (dataRoot: string): Promise<void> => {
+  await rm(dirname(managedOpencodeDir(dataRoot)), { recursive: true, force: true }).catch(
+    () => undefined
+  )
+}
 
 // Resolves the native package tarball URL + sha512 for one registry: `opencode-ai` latest (unless a
 // version is pinned), then the platform package's dist metadata at that version.

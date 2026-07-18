@@ -189,6 +189,8 @@ type OpenScienceAPI = {
     detectOpencode: () => Promise<SettingsSnapshot>
     installClaude: (request: InstallClaudeRequest) => Promise<ClaudeInstallResult>
     installOpencode: (request: InstallOpencodeRequest) => Promise<ClaudeInstallResult>
+    uninstallClaude: () => Promise<SettingsSnapshot>
+    uninstallOpencode: () => Promise<SettingsSnapshot>
     upsertProvider: (request: UpsertProviderRequest) => Promise<SettingsSnapshot>
     deleteProvider: (request: DeleteProviderRequest) => Promise<SettingsSnapshot>
     setActiveProvider: (request: SetActiveProviderRequest) => Promise<SettingsSnapshot>
@@ -420,6 +422,10 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('settings:install-claude', request) as Promise<ClaudeInstallResult>,
     installOpencode: (request) =>
       ipcRenderer.invoke('settings:install-opencode', request) as Promise<ClaudeInstallResult>,
+    uninstallClaude: () =>
+      ipcRenderer.invoke('settings:uninstall-claude') as Promise<SettingsSnapshot>,
+    uninstallOpencode: () =>
+      ipcRenderer.invoke('settings:uninstall-opencode') as Promise<SettingsSnapshot>,
     upsertProvider: (request) =>
       ipcRenderer.invoke('settings:upsert-provider', request) as Promise<SettingsSnapshot>,
     deleteProvider: (request) =>

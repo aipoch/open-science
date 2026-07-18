@@ -78,6 +78,24 @@ const registerSettingsIpcHandlers = ({
     service.installClaude(request, broadcastInstallEvent)
   )
 
+  ipcMain.handle('settings:uninstall-claude', async () => {
+    const snapshot = await service.uninstallClaude()
+
+    // Removing the running backend (and possibly auto-switching the active framework) needs a fresh
+    // agent process, exactly like a framework switch — the live process points at a now-deleted binary.
+    onActiveProviderChanged?.()
+
+    return snapshot
+  })
+
+  ipcMain.handle('settings:uninstall-opencode', async () => {
+    const snapshot = await service.uninstallOpencode()
+
+    onActiveProviderChanged?.()
+
+    return snapshot
+  })
+
   ipcMain.handle('settings:upsert-provider', async (_event, request: UpsertProviderRequest) => {
     const snapshot = await service.upsertProvider(request)
 

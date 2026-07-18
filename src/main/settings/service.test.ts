@@ -26,6 +26,8 @@ const { SettingsService } = await import('./service')
 const { SettingsRepository } = await import('./repository')
 const { getAppClaudeConfigDir } = await import('./provider-env')
 const { SkillRegistry } = await import('../skills/registry')
+const { managedClaudeDir } = await import('./managed-claude')
+const { managedOpencodeDir } = await import('./managed-opencode')
 
 let storageRoot: string
 let repository: InstanceType<typeof SettingsRepository>
@@ -1119,5 +1121,60 @@ describe('checkEnvironment', () => {
     expect(result.agentFrameworkId).toBe('opencode')
     expect(result.ready).toBe(false)
     expect(result.runtime).toEqual({ found: false })
+  })
+})
+
+describe('SettingsService: managed-runtime flags', () => {
+  it('reports claudeManaged when the resolved path is the app-managed install, opencode as non-managed', async () => {
+    await repository.setClaudeInfo({
+      resolvedPath: join(managedClaudeDir(storageRoot), 'claude'),
+      version: '2.1.0'
+    })
+    // A user's own PATH opencode is never treated as managed.
+    await repository.setOpencodeInfo('/usr/local/bin/opencode', '1.18.3')
+    const service = createService()
+
+    const snapshot = await service.getSettingsView()
+
+    expect(snapshot.claudeManaged).toBe(true)
+    expect(snapshot.opencodeManaged).toBe(false)
+  })
+})
+
+describe('SettingsService: uninstall managed runtime', () => {
+  it('uninstallClaude is a no-op for a non-managed (PATH/npm) install', async () => {
+    await repository.setClaudeInfo({ resolvedPath: '/usr/local/bin/claude', version: '2.1.0' })
+    const service = createService()
+
+    const snapshot = await service.uninstallClaude()
+
+    // The install we did not own is left untouched.
+    expect(snapshot.claude).toEqual({ resolvedPath: '/usr/local/bin/claude', version: '2.1.0' })
+    expect(snapshot.claudeManaged).toBe(false)
+  })
+
+  it('uninstallOpencode removes the managed install, clears the record, and auto-switches to Claude when it was active', async () => {
+    // A real managed opencode binary on disk, recorded and selected as the active backend.
+    const opencodeBin = join(managedOpencodeDir(storageRoot), 'opencode')
+    await mkdir(managedOpencodeDir(storageRoot), { recursive: true })
+    await writeFile(opencodeBin, '', 'utf8')
+    await chmod(opencodeBin, 0o755)
+    await repository.setOpencodeInfo(opencodeBin, '1.18.3')
+    // A separate Claude still present on disk, so the active framework can fall back to it.
+    const claudeBin = join(storageRoot, 'fake-claude', 'claude')
+    await mkdir(dirname(claudeBin), { recursive: true })
+    await writeFile(claudeBin, '', 'utf8')
+    await chmod(claudeBin, 0o755)
+    await repository.setClaudeInfo({ resolvedPath: claudeBin, version: '2.1.0' })
+    await repository.setAgentFramework('opencode')
+    const service = createService()
+
+    const snapshot = await service.uninstallOpencode()
+
+    // The managed tree is gone, the record is cleared, and the active backend fell back to Claude.
+    await expect(readFile(opencodeBin)).rejects.toThrow()
+    expect(snapshot.opencode).toEqual({})
+    expect(snapshot.opencodeManaged).toBe(false)
+    expect(snapshot.agentFrameworkId).toBe('claude-code')
   })
 })

@@ -153,6 +153,11 @@ export type SettingsSnapshot = {
   // The selected agent backend, and the frameworks available to choose from.
   agentFrameworkId: AgentFrameworkId
   agentFrameworks: AgentFrameworkView[]
+  // Whether each framework's detected runtime is the app-managed install (binary in the app's data
+  // dir), which is the only case an in-app uninstall is offered — a PATH/npm binary we didn't install
+  // is never removed. Derived each read from the resolved path, never persisted.
+  claudeManaged: boolean
+  opencodeManaged: boolean
   // Timestamp of first-run onboarding completion; undefined until it finishes at least once.
   onboardingCompletedAt?: number
 }

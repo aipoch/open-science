@@ -64,4 +64,28 @@ describe('OpencodeStatusCard', () => {
     expect(trigger?.tagName).toBe('BUTTON')
     expect(trigger?.textContent).toContain('App-managed download (recommended)')
   })
+
+  it('offers an uninstall action only for a managed install and fires onUninstall on click', () => {
+    const onUninstall = vi.fn()
+    const findUninstall = (): HTMLButtonElement | undefined =>
+      Array.from(container.querySelectorAll('button')).find((button) =>
+        button.textContent?.includes('Uninstall')
+      )
+
+    // A detected but non-managed (PATH) opencode shows no uninstall action.
+    render({ opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' } })
+    expect(findUninstall()).toBeUndefined()
+
+    // The same install marked managed exposes the action.
+    render({
+      opencode: { resolvedPath: '/data/opencode-managed/bin/opencode', version: '1.18.3' },
+      managed: true,
+      onUninstall
+    })
+    const button = findUninstall()
+    expect(button).toBeDefined()
+
+    act(() => button?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(onUninstall).toHaveBeenCalledTimes(1)
+  })
 })
