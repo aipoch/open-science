@@ -208,6 +208,9 @@ class AcpRuntime {
   private events: AcpRuntimeEvent[] = []
   private eventSequence = 0
   private agentProcess: ChildProcessWithoutNullStreams | undefined
+  // Latched by shutdown() on app quit. A connect can be mid-spawn (resolveSpawnConfig is async) when
+  // quit fires, so this lets the post-spawn path kill a child that was created after killAgentProcess ran.
+  private shuttingDown = false
   private connection: ClientConnection | undefined
   private connectInFlight: Promise<AcpStateSnapshot> | undefined
   private connectionGeneration = 0
@@ -380,7 +383,17 @@ class AcpRuntime {
     log.info('connecting agent', { cwd: this.cwd, generation })
 
     try {
-      this.agentProcess = await this.spawnAgentProcess()
+      const agentProcess = await this.spawnAgentProcess()
+
+      // spawnAgentProcess resolves the provider config asynchronously, so the app may have begun
+      // quitting during the spawn. If shutdown() already ran, its killAgentProcess() saw no process
+      // yet — kill this freshly-spawned child now and abort, or it would outlive the app as an orphan.
+      if (this.shuttingDown) {
+        agentProcess.kill()
+        throw new Error('ACP runtime is shutting down.')
+      }
+
+      this.agentProcess = agentProcess
       this.attachAgentProcessEvents(this.agentProcess)
 
       const stream = acp.ndJsonStream(
@@ -743,6 +756,7 @@ class AcpRuntime {
   // the app is gone would be an orphaned process still holding its network connection open. The OS
   // reclaims the remaining connection/session state as the process exits.
   shutdown(): void {
+    this.shuttingDown = true
     this.nextConnectionGeneration()
     this.connectInFlight = undefined
     this.connection?.close()

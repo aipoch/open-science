@@ -266,6 +266,25 @@ describe('ACP runtime session management', () => {
     expect(() => runtime.shutdown()).not.toThrow()
   })
 
+  it('kills a child that finishes spawning after shutdown began, so quit-during-connect cannot orphan it', async () => {
+    const process = new FakeAgentProcess()
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      // Model the app quitting mid-spawn: shutdown() lands before this child is handed back to connect.
+      spawnAgent: () => {
+        runtime.shutdown()
+        return asAgentProcess(process)
+      }
+    })
+
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(/shutting down/)
+
+    // The child that spawned after killAgentProcess ran must still be terminated, not left as an orphan.
+    expect(process.killed).toBe(true)
+    expect(runtime.getSnapshot().sessionId).toBeUndefined()
+  })
+
   it('reports conservative Auto when the Agent has no native auto mode', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['auto-session'], {
