@@ -218,4 +218,30 @@ describe('ProviderList', () => {
 
     expect(container.textContent).toContain('No providers yet')
   })
+
+  it('badges the chat endpoint a provider speaks, defaulting to Anthropic when unset', () => {
+    renderList([provider({ apiType: undefined })])
+
+    const badge = container.querySelector(
+      '[aria-label="Speaks the Anthropic /v1/messages endpoint"]'
+    )
+    expect(badge).not.toBeNull()
+    expect(badge?.textContent).toContain('Anthropic')
+  })
+
+  it('badges an OpenAI-compatible provider distinctly', () => {
+    renderList([provider({ apiType: 'openai' })])
+
+    const badge = container.querySelector(
+      '[aria-label="Speaks the OpenAI-compatible /v1/chat/completions endpoint"]'
+    )
+    expect(badge).not.toBeNull()
+    expect(badge?.textContent).toContain('OpenAI')
+  })
+
+  it('badges a dual-endpoint provider with both APIs', () => {
+    renderList([provider({ apiType: 'both' })])
+
+    expect(container.textContent).toContain('Anthropic · OpenAI')
+  })
 })

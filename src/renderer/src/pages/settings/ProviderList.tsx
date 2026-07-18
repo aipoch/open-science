@@ -1,6 +1,10 @@
 import { CircleCheck, Pencil, PlugZap, TriangleAlert, Trash2 } from 'lucide-react'
 
-import type { ProviderValidationFailure, ProviderView } from '../../../../shared/settings'
+import type {
+  ProviderApiType,
+  ProviderValidationFailure,
+  ProviderView
+} from '../../../../shared/settings'
 import { providerValidationFailed } from '../../../../shared/settings'
 import { getOfficialVendor } from '../../../../shared/provider-registry'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -36,6 +40,18 @@ const describeValidationFailure = (failure: ProviderValidationFailure): string =
       return 'Test failed: the connection timed out.'
     default:
       return failure.message ? `Test failed: ${failure.message}` : 'Connection test failed.'
+  }
+}
+
+// Short label + full description for the chat endpoint a provider speaks. Surfaced as a badge so the
+// user can see at a glance which agent frameworks a provider can drive: Claude Code needs the Anthropic
+// /v1/messages shape, while OpenCode also accepts the OpenAI /v1/chat/completions shape.
+const ENDPOINT_LABELS: Record<ProviderApiType, { short: string; full: string }> = {
+  anthropic: { short: 'Anthropic', full: 'Anthropic /v1/messages endpoint' },
+  openai: { short: 'OpenAI', full: 'OpenAI-compatible /v1/chat/completions endpoint' },
+  both: {
+    short: 'Anthropic · OpenAI',
+    full: 'both the Anthropic /v1/messages and OpenAI /v1/chat/completions endpoints'
   }
 }
 
@@ -84,6 +100,8 @@ const ProviderList = ({
           // The provider sourcing the selected model (and the last remaining one) can't be deleted:
           // removing it would leave no model to run, so its delete action stays disabled.
           const canDelete = !isActiveSource && providers.length > 1
+          // The chat endpoint(s) this provider speaks; defaults to Anthropic when unset (older/custom).
+          const endpoint = ENDPOINT_LABELS[provider.apiType ?? 'anthropic']
 
           return (
             <li
@@ -104,6 +122,17 @@ const ProviderList = ({
                       />
                       {describeType(provider)}
                     </span>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          className="inline-flex shrink-0 items-center rounded border border-border px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                          aria-label={`Speaks the ${endpoint.full}`}
+                        >
+                          {endpoint.short}
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>Speaks the {endpoint.full}</TooltipContent>
+                    </Tooltip>
                     {isBusy ? (
                       <span className="shrink-0 text-[10px] text-muted-foreground">Testing…</span>
                     ) : failure ? (
