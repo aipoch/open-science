@@ -52,6 +52,7 @@ import {
 } from './runtime-events'
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 import { matchSessionModelOption } from './session-config'
+import { describePromptError } from './prompt-error'
 import { AcpPermissionBroker } from './permission-broker'
 import { isMcpToolName } from './permission-policy'
 import { applyCurrentModeUpdate } from './permission-profile-controller'
@@ -1187,7 +1188,7 @@ class AcpRuntime {
         level: 'error',
         sessionId: request.sessionId,
         title: 'Prompt failed',
-        text: errorMessage(error)
+        text: describePromptError(error, { model: this.pendingSessionModel })
       })
       throw error
     } finally {
