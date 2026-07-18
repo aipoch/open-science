@@ -26,8 +26,7 @@ describe('runEnvironmentCheck', () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
       agentFrameworkId: 'claude-code' as const,
-      frameworkLabel: 'Claude',
-      runtime:{ found: false },
+      frameworks: [{ id: 'claude-code' as const, label: 'Claude', runtime: { found: false } }],
       encryptionAvailable: true,
       deps: baseDeps()
     })
@@ -45,8 +44,7 @@ describe('runEnvironmentCheck', () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
       agentFrameworkId: 'claude-code' as const,
-      frameworkLabel: 'Claude',
-      runtime:{ found: false },
+      frameworks: [{ id: 'claude-code' as const, label: 'Claude', runtime: { found: false } }],
       encryptionAvailable: true,
       deps: { ...baseDeps(), probeRegistry: vi.fn().mockRejectedValue(new Error('offline')) }
     })
@@ -63,8 +61,7 @@ describe('runEnvironmentCheck', () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/locked',
       agentFrameworkId: 'claude-code' as const,
-      frameworkLabel: 'Claude',
-      runtime:{ found: false },
+      frameworks: [{ id: 'claude-code' as const, label: 'Claude', runtime: { found: false } }],
       encryptionAvailable: true,
       deps: {
         ...baseDeps(),
@@ -84,8 +81,13 @@ describe('runEnvironmentCheck', () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
       agentFrameworkId: 'claude-code' as const,
-      frameworkLabel: 'Claude',
-      runtime:{ found: true, path: '/bin/claude', version: '2.1.0' },
+      frameworks: [
+        {
+          id: 'claude-code' as const,
+          label: 'Claude',
+          runtime: { found: true, path: '/bin/claude', version: '2.1.0' }
+        }
+      ],
       encryptionAvailable: true,
       deps: { ...baseDeps(), probeRegistry }
     })
@@ -104,8 +106,13 @@ describe('runEnvironmentCheck', () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
       agentFrameworkId: 'claude-code' as const,
-      frameworkLabel: 'Claude',
-      runtime:{ found: true, path: '/bin/claude', version: '2.1.0' },
+      frameworks: [
+        {
+          id: 'claude-code' as const,
+          label: 'Claude',
+          runtime: { found: true, path: '/bin/claude', version: '2.1.0' }
+        }
+      ],
       encryptionAvailable: true,
       deps: { ...baseDeps(), findPython: vi.fn().mockResolvedValue(undefined) }
     })
@@ -122,8 +129,13 @@ describe('runEnvironmentCheck', () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
       agentFrameworkId: 'claude-code' as const,
-      frameworkLabel: 'Claude',
-      runtime:{ found: true, path: '/bin/claude' },
+      frameworks: [
+        {
+          id: 'claude-code' as const,
+          label: 'Claude',
+          runtime: { found: true, path: '/bin/claude' }
+        }
+      ],
       encryptionAvailable: false,
       deps: baseDeps()
     })
@@ -136,8 +148,7 @@ describe('runEnvironmentCheck', () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
       agentFrameworkId: 'claude-code' as const,
-      frameworkLabel: 'Claude',
-      runtime:{ found: false },
+      frameworks: [{ id: 'claude-code' as const, label: 'Claude', runtime: { found: false } }],
       encryptionAvailable: true,
       deps: {
         ...baseDeps(),
@@ -160,8 +171,13 @@ describe('runEnvironmentCheck', () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
       agentFrameworkId: 'claude-code' as const,
-      frameworkLabel: 'Claude',
-      runtime:{ found: true, path: '/opt/claude', version: '2.1.0' },
+      frameworks: [
+        {
+          id: 'claude-code' as const,
+          label: 'Claude',
+          runtime: { found: true, path: '/opt/claude', version: '2.1.0' }
+        }
+      ],
       encryptionAvailable: true,
       deps: {
         ...baseDeps(),

@@ -117,21 +117,24 @@ const inspectRegistry = async (
 
 const runEnvironmentCheck = async ({
   storageRoot,
-  runtime,
   agentFrameworkId,
-  frameworkLabel,
+  frameworks,
   encryptionAvailable,
   deps = {}
 }: {
   storageRoot: string
-  // Detection result for the SELECTED framework's runtime (Claude or OpenCode), in the shared shape.
-  runtime: ClaudeDetectResult
+  // The framework the user selected; only its runtime gates readiness/auto-install.
   agentFrameworkId: AgentFrameworkId
-  // Display name for the runtime check's copy ('Claude' / 'OpenCode').
-  frameworkLabel: string
+  // Every framework's runtime, checked and shown together (in display order). Each carries its label
+  // and detection result in the shared shape.
+  frameworks: { id: AgentFrameworkId; label: string; runtime: ClaudeDetectResult }[]
   encryptionAvailable: boolean
   deps?: EnvironmentCheckDeps
 }): Promise<EnvironmentCheckResult> => {
+  // The selected framework's runtime drives the required gate; the others are shown for context only.
+  const selected = frameworks.find((framework) => framework.id === agentFrameworkId)
+  const selectedRuntime = selected?.runtime ?? { found: false }
+  const selectedLabel = selected?.label ?? 'Agent'
   const platform = deps.platform ?? process.platform
   const architecture = deps.architecture ?? hostArchitecture()
   const verifyStorage = deps.verifyStorage ?? verifyStorageAccess
@@ -158,14 +161,14 @@ const runEnvironmentCheck = async ({
         return {
           id: 'system',
           label: 'System compatibility',
-          status: runtime.found ? 'warning' : 'failed',
-          summary: runtime.found
-            ? `${platformLabel(platform)} ${architecture} can use the detected ${frameworkLabel} runtime.`
+          status: selectedRuntime.found ? 'warning' : 'failed',
+          summary: selectedRuntime.found
+            ? `${platformLabel(platform)} ${architecture} can use the detected ${selectedLabel} runtime.`
             : `${platformLabel(platform)} ${architecture} has no automatic installer package.`,
           detail:
             error instanceof Error
               ? error.message
-              : 'Use the manual setup tab to install a compatible Claude runtime.'
+              : 'Use the manual setup tab to install a compatible agent runtime.'
         }
       }
     }),
@@ -193,12 +196,12 @@ const runEnvironmentCheck = async ({
   let recommendedRegistry: ManagedClaudeRegistry | undefined
   let networkCheck: EnvironmentCheckItem
 
-  if (runtime.found) {
+  if (selectedRuntime.found) {
     networkCheck = {
       id: 'install-network',
       label: 'Installation network',
       status: 'passed',
-      summary: `No download is needed because ${frameworkLabel} is already installed.`
+      summary: `No download is needed because ${selectedLabel} is already installed.`
     }
   } else {
     const registryResults = await Promise.all([
@@ -262,24 +265,34 @@ const runEnvironmentCheck = async ({
         detail: 'Notebook execution will be unavailable until Python 3 is installed.'
       }
 
-  const runtimeCheck: EnvironmentCheckItem = runtime.found
-    ? {
+  // One runtime row per framework, shown together. Only the SELECTED framework's absence is a failure
+  // (it blocks Continue); a non-selected framework that's missing is an informational warning, so the
+  // user isn't forced to install both.
+  const runtimeChecks: EnvironmentCheckItem[] = frameworks.map(({ id, label, runtime }) => {
+    if (runtime.found) {
+      return {
         id: 'agent',
-        label: `${frameworkLabel} runtime`,
+        label: `${label} runtime`,
         status: 'passed',
-        summary: runtime.version
-          ? `${frameworkLabel} ${runtime.version} is ready.`
-          : `${frameworkLabel} is ready.`,
+        summary: runtime.version ? `${label} ${runtime.version} is ready.` : `${label} is ready.`,
         detail: runtime.path
       }
-    : {
-        id: 'agent',
-        label: `${frameworkLabel} runtime`,
-        status: 'failed',
-        summary: `${frameworkLabel} is not installed yet.`,
-        detail:
-          'Automatic setup installs a self-contained runtime without Node.js, npm, or admin access.'
-      }
+    }
+
+    const isSelected = id === agentFrameworkId
+
+    return {
+      id: 'agent',
+      label: `${label} runtime`,
+      status: isSelected ? 'failed' : 'warning',
+      summary: isSelected
+        ? `${label} is not installed yet.`
+        : `${label} is not installed (optional — only needed if you switch to it).`,
+      detail: isSelected
+        ? 'Automatic setup installs a self-contained runtime without Node.js, npm, or admin access.'
+        : undefined
+    }
+  })
 
   const checks = [
     systemCheck,
@@ -287,7 +300,7 @@ const runEnvironmentCheck = async ({
     secureStorageCheck,
     networkCheck,
     pythonCheck,
-    runtimeCheck
+    ...runtimeChecks
   ]
   const passedIds = new Set(
     checks.filter((check) => check.status === 'passed').map((check) => check.id)
@@ -300,13 +313,13 @@ const runEnvironmentCheck = async ({
     checks,
     ready: checks.every((check) => check.status !== 'failed'),
     canAutoInstall:
-      !runtime.found &&
+      !selectedRuntime.found &&
       passedIds.has('system') &&
       passedIds.has('storage') &&
       passedIds.has('install-network'),
     recommendedRegistry,
     agentFrameworkId,
-    runtime
+    runtime: selectedRuntime
   }
 }
 

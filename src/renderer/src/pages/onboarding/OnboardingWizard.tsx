@@ -212,13 +212,17 @@ const OnboardingWizard = (): React.JSX.Element => {
     await checkEnvironment()
   }
 
-  const handleInstall = async (source: ClaudeInstallSource): Promise<void> => {
+  const handleInstall = async (
+    source: ClaudeInstallSource,
+    framework: AgentFrameworkId = agentFrameworkId
+  ): Promise<void> => {
     setAutomaticInstallError(undefined)
 
     try {
-      // Install the framework the user selected for onboarding, not always Claude.
+      // Install the requested framework: the per-card button names its own, the automatic one-click
+      // install targets the selected framework.
       const result =
-        agentFrameworkId === 'opencode'
+        framework === 'opencode'
           ? await installOpencode(source)
           : await installClaude(
               source,
@@ -407,40 +411,6 @@ const OnboardingWizard = (): React.JSX.Element => {
 
                 <CardContent className="flex-1 px-6 py-5">
                   <section aria-label="Prepare environment" className="space-y-5">
-                    {agentFrameworks.length > 1 ? (
-                      <div className="space-y-1.5">
-                        <span className="text-xs font-medium text-text-100">Agent framework</span>
-                        <div
-                          className="grid grid-cols-2 gap-1 rounded-lg bg-bg-10 p-1 ring-1 ring-border-200"
-                          role="radiogroup"
-                          aria-label="Agent framework"
-                        >
-                          {agentFrameworks.map((framework) => (
-                            <button
-                              key={framework.id}
-                              type="button"
-                              role="radio"
-                              aria-checked={agentFrameworkId === framework.id}
-                              onClick={() => void handleSelectFramework(framework.id)}
-                              disabled={isCheckingEnvironment || isInstalling}
-                              className={cn(
-                                'rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-60',
-                                agentFrameworkId === framework.id
-                                  ? 'bg-bg-000 text-text-000 shadow-sm ring-1 ring-border-200'
-                                  : 'text-text-100 hover:text-text-000'
-                              )}
-                            >
-                              {framework.displayName}
-                            </button>
-                          ))}
-                        </div>
-                        <p className="text-xs leading-5 text-text-300">
-                          Choose the coding agent Open Science drives. You can change it later in
-                          Settings.
-                        </p>
-                      </div>
-                    ) : null}
-
                     <div
                       className="grid grid-cols-2 gap-1 rounded-lg bg-bg-10 p-1 ring-1 ring-border-200"
                       role="tablist"
@@ -511,45 +481,76 @@ const OnboardingWizard = (): React.JSX.Element => {
                           scripts. Use Re-detect after completing any external permission or
                           installation step.
                         </p>
-                        {agentFrameworkId === 'opencode' ? (
-                          <OpencodeStatusCard
-                            opencode={opencode}
-                            isDetecting={isDetectingOpencode || isCheckingEnvironment}
-                            onDetect={() => void handleEnvironmentCheck()}
+                        {/* Both runtimes are shown together; install each independently. Only the
+                            selected framework (below) is required to continue. */}
+                        <ClaudeStatusCard
+                          claude={claude}
+                          claudeReady={preflight.claudeReady}
+                          isDetecting={isDetectingClaude || isCheckingEnvironment}
+                          onDetect={() => void handleEnvironmentCheck()}
+                          embedded
+                        />
+                        {!preflight.claudeReady ? (
+                          <ClaudeInstallCard
                             isInstalling={isInstalling}
                             installLogs={installLogs}
                             installProgress={installProgress}
                             installError={storeInstallError}
                             npmAvailable={npmAvailable}
-                            onInstall={(source) => void handleInstall(source)}
+                            onInstall={(source) => void handleInstall(source, 'claude-code')}
+                            embedded
                           />
-                        ) : (
-                          <>
-                            <ClaudeStatusCard
-                              claude={claude}
-                              claudeReady={preflight.claudeReady}
-                              isDetecting={isDetectingClaude || isCheckingEnvironment}
-                              onDetect={() => void handleEnvironmentCheck()}
-                              embedded
-                            />
-                            {!preflight.claudeReady ? (
-                              <>
-                                <Separator className="bg-border-200" />
-                                <ClaudeInstallCard
-                                  isInstalling={isInstalling}
-                                  installLogs={installLogs}
-                                  installProgress={installProgress}
-                                  installError={storeInstallError}
-                                  npmAvailable={npmAvailable}
-                                  onInstall={(source) => void handleInstall(source)}
-                                  embedded
-                                />
-                              </>
-                            ) : null}
-                          </>
-                        )}
+                        ) : null}
+                        <Separator className="bg-border-200" />
+                        <OpencodeStatusCard
+                          opencode={opencode}
+                          isDetecting={isDetectingOpencode || isCheckingEnvironment}
+                          onDetect={() => void handleEnvironmentCheck()}
+                          isInstalling={isInstalling}
+                          installLogs={installLogs}
+                          installProgress={installProgress}
+                          installError={storeInstallError}
+                          npmAvailable={npmAvailable}
+                          onInstall={(source) => void handleInstall(source, 'opencode')}
+                        />
                       </div>
                     )}
+
+                    {agentFrameworks.length > 1 ? (
+                      <div className="space-y-1.5 rounded-lg bg-bg-10 p-3 ring-1 ring-border-200">
+                        <span className="text-xs font-medium text-text-100">
+                          Which agent should Open Science use?
+                        </span>
+                        <div
+                          className="grid grid-cols-2 gap-1 rounded-md bg-bg-000 p-1 ring-1 ring-border-200"
+                          role="radiogroup"
+                          aria-label="Agent framework"
+                        >
+                          {agentFrameworks.map((framework) => (
+                            <button
+                              key={framework.id}
+                              type="button"
+                              role="radio"
+                              aria-checked={agentFrameworkId === framework.id}
+                              onClick={() => void handleSelectFramework(framework.id)}
+                              disabled={isCheckingEnvironment || isInstalling}
+                              className={cn(
+                                'rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-60',
+                                agentFrameworkId === framework.id
+                                  ? 'bg-bg-10 text-text-000 shadow-sm ring-1 ring-border-200'
+                                  : 'text-text-100 hover:text-text-000'
+                              )}
+                            >
+                              {framework.displayName}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-xs leading-5 text-text-300">
+                          Only this agent needs to be installed to continue; you can change it later
+                          in Settings.
+                        </p>
+                      </div>
+                    ) : null}
                   </section>
                 </CardContent>
                 <CardFooter className="mt-auto items-center justify-between gap-4 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">

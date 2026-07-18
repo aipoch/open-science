@@ -474,17 +474,29 @@ class SettingsService {
   async checkEnvironment(): Promise<EnvironmentCheckResult> {
     const settings = await this.repository.getSettings()
     const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
-    const framework = getAgentFramework(agentFrameworkId)
-    const runtime =
-      agentFrameworkId === 'opencode'
-        ? await this.resolveOpencodeRuntime(settings)
-        : await this.resolveClaudeRuntime(settings)
+
+    // Detect every framework's runtime so onboarding can show them side by side; only the selected
+    // one's readiness gates Continue (enforced inside runEnvironmentCheck).
+    const [claudeRuntime, opencodeRuntime] = await Promise.all([
+      this.resolveClaudeRuntime(settings),
+      this.resolveOpencodeRuntime(settings)
+    ])
 
     return runEnvironmentCheck({
       storageRoot: this.storageRoot,
-      runtime,
       agentFrameworkId,
-      frameworkLabel: framework.displayName,
+      frameworks: [
+        {
+          id: 'claude-code',
+          label: getAgentFramework('claude-code').displayName,
+          runtime: claudeRuntime
+        },
+        {
+          id: 'opencode',
+          label: getAgentFramework('opencode').displayName,
+          runtime: opencodeRuntime
+        }
+      ],
       encryptionAvailable: this.isEncryptionAvailable()
     })
   }
