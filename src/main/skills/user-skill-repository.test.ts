@@ -497,6 +497,22 @@ describe('UserSkillRepository', () => {
     await expect(repo.previewZip(zip)).rejects.toThrow(/needs a name/)
   })
 
+  it('parses a CRLF-authored SKILL.md the same on preview and import', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    // A bundle authored on Windows: every line ends with \r\n.
+    const skill = ['---', 'name: Winreader', 'description: A CRLF bundle.', '---', 'body'].join(
+      '\r\n'
+    )
+    const zip = buildZip([{ path: 'win/SKILL.md', content: Buffer.from(skill) }])
+
+    const [preview] = await repo.previewZip(zip)
+    expect(preview.name).toBe('Winreader')
+    expect(preview.description).toBe('A CRLF bundle.')
+
+    // Import must derive the slug from the name, not fall back to 'imported-skill'.
+    expect(await repo.importFromZip(zip)).toEqual({ status: 'imported', id: 'imported-winreader' })
+  })
+
   // Builds a one-file bundle named "Shared" with a controllable body (so signatures differ).
   const sharedBundle = (body: string): Buffer =>
     buildZip([
