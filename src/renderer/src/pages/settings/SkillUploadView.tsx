@@ -5,6 +5,10 @@ import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { Button } from '@/components/ui/button'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { useSettingsStore } from '@/stores/settings-store'
+import { SKILL_IMPORT_LIMITS } from '../../../../shared/skill-import-limits'
+
+// Rounds a byte count to whole MB for a user-facing size-limit message.
+const mb = (bytes: number): string => `${Math.round(bytes / (1024 * 1024))} MB`
 
 // A danger banner for a parse/validation failure (invalid bundle, missing SKILL.md, no name, ...).
 const ErrorBanner = ({ message }: { message: string }): React.JSX.Element => (
@@ -98,8 +102,18 @@ const SkillUploadView = ({
   // Parses one picked file into its candidates, capturing a per-file error instead of throwing.
   const parseFile = async (file: File): Promise<ParseResult> => {
     const name = file.name.toLowerCase()
+    const isBundle = name.endsWith('.zip') || name.endsWith('.skill')
 
-    if (name.endsWith('.zip') || name.endsWith('.skill')) {
+    // Reject on file.size BEFORE reading the file into memory / base64 / IPC. A bundle is bounded by
+    // the total-import cap (it may hold several files); a bare .md by the per-file cap.
+    const sizeLimit = isBundle
+      ? SKILL_IMPORT_LIMITS.maxTotalBytes
+      : SKILL_IMPORT_LIMITS.maxFileBytes
+    if (file.size > sizeLimit) {
+      return { candidates: [], error: `${file.name}: file is too large (limit ${mb(sizeLimit)}).` }
+    }
+
+    if (isBundle) {
       try {
         const base64 = await fileToBase64(file)
         const previews = await previewSkillZip(base64)
@@ -157,6 +171,17 @@ const SkillUploadView = ({
     setBusy(true)
     setSummary(null)
     try {
+      // Cap the whole selection before reading anything, so a batch drop can't allocate an unbounded
+      // amount of memory across all files at once.
+      const totalSize = files.reduce((sum, file) => sum + file.size, 0)
+      if (totalSize > SKILL_IMPORT_LIMITS.maxTotalBytes) {
+        setCandidates([])
+        setErrors([
+          `Selection is too large (${mb(totalSize)}); upload at most ${mb(SKILL_IMPORT_LIMITS.maxTotalBytes)} at a time.`
+        ])
+        setSelected(new Set())
+        return
+      }
       const results = await Promise.all(files.map(parseFile))
       setCandidates(results.flatMap((result) => result.candidates))
       setErrors(results.map((result) => result.error).filter((error): error is string => !!error))

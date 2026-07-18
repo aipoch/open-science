@@ -117,4 +117,53 @@ describe('extractZip', () => {
   it('throws when the buffer is not a zip', () => {
     expect(() => extractZip(Buffer.from('not a zip at all', 'utf8'))).toThrow()
   })
+
+  it('rejects a bundle with more files than the count limit', () => {
+    // 300 tiny STORE entries exceed SKILL_IMPORT_LIMITS.maxFiles (256).
+    const inputs: ZipInput[] = Array.from({ length: 300 }, (_, i) => ({
+      path: `f${i}.txt`,
+      content: Buffer.from('x', 'utf8'),
+      method: 0 as const
+    }))
+    expect(() => extractZip(buildZip(inputs))).toThrow(/too many files/)
+  })
+
+  it('rejects an oversized STORE entry from its known size', () => {
+    // A single STORE file over the 5 MiB per-file cap is rejected without copying it out.
+    const big = Buffer.alloc(5 * 1024 * 1024 + 1, 0x61)
+    expect(() => extractZip(buildZip([{ path: 'big.txt', content: big, method: 0 }]))).toThrow(
+      /exceeds the .* limit/
+    )
+  })
+
+  it('rejects a DEFLATE bomb via the inflate output bound', () => {
+    // 6 MiB of zeros compresses to almost nothing but would inflate past the 5 MiB per-file cap;
+    // inflateRawSync's maxOutputLength makes that throw instead of expanding into memory.
+    const bomb = Buffer.alloc(6 * 1024 * 1024, 0)
+    expect(() => extractZip(buildZip([{ path: 'bomb.bin', content: bomb, method: 8 }]))).toThrow()
+  })
+
+  it('rejects a bundle whose decompressed total exceeds the cap', () => {
+    // Three 4 MiB files are each under the per-file cap but sum to 12 MiB > the 10 MiB total cap.
+    const chunk = Buffer.alloc(4 * 1024 * 1024, 0x62)
+    const inputs: ZipInput[] = [0, 1, 2].map((i) => ({
+      path: `f${i}.txt`,
+      content: chunk,
+      method: 0 as const
+    }))
+    expect(() => extractZip(buildZip(inputs))).toThrow(/decompressed limit/)
+  })
+
+  it('counts directory levels for depth, not the filename (off-by-one boundary)', () => {
+    // Depth is the number of directories. A file under exactly 8 directories is at the limit and is
+    // accepted; a 9th directory level exceeds SKILL_IMPORT_LIMITS.maxDepth (8) and is rejected.
+    const atLimit = `${Array.from({ length: 8 }, (_, i) => `d${i}`).join('/')}/x.txt`
+    const files = extractZip(buildZip([{ path: atLimit, content: Buffer.from('x'), method: 0 }]))
+    expect(files.map((f) => f.path)).toEqual([atLimit])
+
+    const tooDeep = `${Array.from({ length: 9 }, (_, i) => `d${i}`).join('/')}/x.txt`
+    expect(() =>
+      extractZip(buildZip([{ path: tooDeep, content: Buffer.from('x'), method: 0 }]))
+    ).toThrow(/nested deeper/)
+  })
 })

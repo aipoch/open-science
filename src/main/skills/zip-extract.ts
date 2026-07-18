@@ -1,8 +1,12 @@
 import { inflateRawSync } from 'node:zlib'
 
+import { SKILL_IMPORT_LIMITS } from './import-limits'
+
 // A dependency-free ZIP reader: parses the central directory + each local file header and inflates the
 // entries with node:zlib. Supports the two methods a skill bundle ever uses — STORE (0) and DEFLATE
 // (8); directory entries, other methods, and unsafe paths are skipped rather than throwing.
+// Resource caps (SKILL_IMPORT_LIMITS) bound the file count and per-file/total decompressed size so a
+// zip bomb can't exhaust memory during import.
 
 const EOCD_SIGNATURE = 0x06054b50
 const CENTRAL_SIGNATURE = 0x02014b50
@@ -43,6 +47,7 @@ const extractZip = (buffer: Buffer): ExtractedZipFile[] => {
   const entryCount = buffer.readUInt16LE(eocd + 10)
   let pointer = buffer.readUInt32LE(eocd + 16)
   const files: ExtractedZipFile[] = []
+  let totalBytes = 0
 
   for (let index = 0; index < entryCount; index += 1) {
     if (pointer + 46 > buffer.length || buffer.readUInt32LE(pointer) !== CENTRAL_SIGNATURE) break
@@ -62,6 +67,18 @@ const extractZip = (buffer: Buffer): ExtractedZipFile[] => {
     if (isUnsafePath(name)) continue
     if (method !== 0 && method !== 8) continue
 
+    // Bound directory nesting the same way the GitHub walk does. Depth counts directory levels, not
+    // the file itself, so `a/b/.../file` with N leading directories matches GitHub's "N deep".
+    if (name.split('/').length - 1 > SKILL_IMPORT_LIMITS.maxDepth) {
+      throw new Error(
+        `ZIP entry ${name} is nested deeper than ${SKILL_IMPORT_LIMITS.maxDepth} levels.`
+      )
+    }
+
+    if (files.length >= SKILL_IMPORT_LIMITS.maxFiles) {
+      throw new Error(`ZIP bundle has too many files (limit ${SKILL_IMPORT_LIMITS.maxFiles}).`)
+    }
+
     // Read the local header to find where the data actually starts: its filename/extra-field lengths
     // can differ from the central directory's, so the offset must be recomputed from it.
     if (buffer.readUInt32LE(localOffset) !== LOCAL_SIGNATURE) continue
@@ -70,7 +87,24 @@ const extractZip = (buffer: Buffer): ExtractedZipFile[] => {
     const dataStart = localOffset + 30 + localNameLength + localExtraLength
     const data = buffer.subarray(dataStart, dataStart + compressedSize)
 
-    const content = method === 0 ? Buffer.from(data) : inflateRawSync(data)
+    // A STORE entry is verbatim, so its size is known up front; a DEFLATE entry is bounded by
+    // maxOutputLength, which makes inflateRawSync throw rather than expand a bomb into memory.
+    if (method === 0 && data.length > SKILL_IMPORT_LIMITS.maxFileBytes) {
+      throw new Error(
+        `ZIP entry ${name} exceeds the ${SKILL_IMPORT_LIMITS.maxFileBytes}-byte limit.`
+      )
+    }
+    const content =
+      method === 0
+        ? Buffer.from(data)
+        : inflateRawSync(data, { maxOutputLength: SKILL_IMPORT_LIMITS.maxFileBytes })
+
+    totalBytes += content.length
+    if (totalBytes > SKILL_IMPORT_LIMITS.maxTotalBytes) {
+      throw new Error(
+        `ZIP bundle exceeds the ${SKILL_IMPORT_LIMITS.maxTotalBytes}-byte decompressed limit.`
+      )
+    }
     files.push({ path: name, content })
   }
 

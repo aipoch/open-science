@@ -145,6 +145,56 @@ describe('SkillUploadView (batch upload)', () => {
     expect(onUploaded).toHaveBeenCalled()
   })
 
+  it('rejects an oversized markdown file on file.size, before reading its contents', async () => {
+    act(() => {
+      root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />)
+    })
+
+    // 6 MiB exceeds the 5 MiB per-file cap. file.size is checked before file.text() runs.
+    const big = new File(['x'], 'big.md', { type: 'text/markdown' })
+    Object.defineProperty(big, 'size', { value: 6 * 1024 * 1024 })
+    const textSpy = vi.spyOn(big, 'text')
+
+    await dropFiles([big])
+
+    expect(textSpy).not.toHaveBeenCalled()
+    expect(document.body.textContent).toMatch(/too large/)
+    expect(document.body.textContent).not.toContain('Found 1 skill')
+  })
+
+  it('rejects a batch whose total selected size exceeds the cap, before reading any file', async () => {
+    act(() => {
+      root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />)
+    })
+
+    // Two 6 MiB bundles: each is under the 10 MiB per-bundle cap, but together they exceed the total.
+    const a = new File([new Uint8Array([1])], 'a.zip', { type: 'application/zip' })
+    const b = new File([new Uint8Array([2])], 'b.zip', { type: 'application/zip' })
+    Object.defineProperty(a, 'size', { value: 6 * 1024 * 1024 })
+    Object.defineProperty(b, 'size', { value: 6 * 1024 * 1024 })
+
+    await dropFiles([a, b])
+
+    expect(useSettingsStore.getState().previewSkillZip).not.toHaveBeenCalled()
+    expect(document.body.textContent).toMatch(/too large/)
+  })
+
+  it('rejects a single oversized bundle on file.size, without previewing it', async () => {
+    act(() => {
+      root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />)
+    })
+
+    // An 11 MiB bundle exceeds the 10 MiB cap; it must be rejected before previewSkillZip reads it.
+    const big = new File([new Uint8Array([1])], 'huge.zip', { type: 'application/zip' })
+    Object.defineProperty(big, 'size', { value: 11 * 1024 * 1024 })
+
+    await dropFiles([big])
+
+    expect(useSettingsStore.getState().previewSkillZip).not.toHaveBeenCalled()
+    expect(document.body.textContent).toMatch(/too large/)
+    expect(document.body.textContent).not.toContain('Found')
+  })
+
   it('parses a markdown file into a candidate that routes to createSkill', async () => {
     act(() => {
       root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />)
