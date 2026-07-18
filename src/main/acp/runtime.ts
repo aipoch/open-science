@@ -1268,21 +1268,31 @@ class AcpRuntime {
       }
 
       session.dispose()
-      this.permissionBroker.cancelForSession(request.sessionId)
-      // Drop this session's http MCP host registrations (no-op when no host / stdio framework).
-      this.unregisterHttpMcpSession(request.sessionId)
       // Drop the reverse (underlying agent id -> app id) mapping an adopted session registered, so a
       // reused agent id or a late agent event can no longer route to this deleted app session.
       this.agentToAppSessionId.delete(session.sessionId)
-      this.sessions.delete(request.sessionId)
-      this.sessionCwds.delete(request.sessionId)
-      this.sessionMcpServerNames.delete(request.sessionId)
-      this.sessionProjectNames.delete(request.sessionId)
-      this.sessionFrameworks.delete(request.sessionId)
-      this.permissionProfiles.delete(request.sessionId)
-      this.artifactSessionIds.delete(request.sessionId)
-      this.notebookRoutingIds.delete(request.sessionId)
-      this.promptInFlightSessionIds.delete(request.sessionId)
+    }
+
+    // App-session-keyed cleanup runs whether or not a live session is attached. A framework switch
+    // disconnects (clearing this.sessions and most maps) but deliberately KEEPS sessionFrameworks, so
+    // deleting a session that was never re-adopted under the new framework would leak that entry —
+    // later misleading the cross-framework-resume check. These deletes are no-ops when the id is absent.
+    this.permissionBroker.cancelForSession(request.sessionId)
+    // Drop this session's http MCP host registrations (no-op when no host / stdio framework).
+    this.unregisterHttpMcpSession(request.sessionId)
+    this.sessions.delete(request.sessionId)
+    this.sessionCwds.delete(request.sessionId)
+    this.sessionMcpServerNames.delete(request.sessionId)
+    this.sessionProjectNames.delete(request.sessionId)
+    this.sessionFrameworks.delete(request.sessionId)
+    this.permissionProfiles.delete(request.sessionId)
+    this.artifactSessionIds.delete(request.sessionId)
+    this.notebookRoutingIds.delete(request.sessionId)
+    this.promptInFlightSessionIds.delete(request.sessionId)
+
+    // Only announce a deletion and shift the current session when something was actually attached; a
+    // detached cleanup (post-switch) must not emit a spurious event or move currentSessionId.
+    if (session) {
       this.currentSessionId =
         this.currentSessionId === request.sessionId
           ? Array.from(this.sessions.keys())[0]

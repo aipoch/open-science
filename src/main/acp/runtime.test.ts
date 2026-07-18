@@ -309,6 +309,9 @@ const mcpServerNamesMap = (runtime: AcpRuntime): Map<string, string[]> =>
 const agentToAppSessionMap = (runtime: AcpRuntime): Map<string, string> =>
   (runtime as unknown as { agentToAppSessionId: Map<string, string> }).agentToAppSessionId
 
+const sessionFrameworksMap = (runtime: AcpRuntime): Map<string, string> =>
+  (runtime as unknown as { sessionFrameworks: Map<string, string> }).sessionFrameworks
+
 // Finds the isMcp flag the runtime logged for a given permission request (identified by toolCallId).
 const auditedIsMcp = (toolCallId: string): boolean | undefined => {
   const call = infoLogSpy.mock.calls.find(
@@ -1622,6 +1625,33 @@ describe('ACP runtime session management', () => {
     await vi.waitFor(() => expect(fakeAgent.cancelledSessions).toEqual(['adopted-session-1']))
     expect(fakeAgent.closedSessions).toEqual([])
     expect(runtime.getSnapshot().sessionIds).toEqual([])
+  })
+
+  it('cleans up sessionFrameworks when deleting a detached session (post framework-switch)', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    // createSession records the session's framework; a framework switch disconnects (clearing
+    // this.sessions) but deliberately KEEPS sessionFrameworks so a later resume can detect the switch.
+    expect(sessionFrameworksMap(runtime).has(session.sessionId)).toBe(true)
+    await runtime.disconnect()
+    expect(runtime.getSnapshot().sessionIds).toEqual([])
+    // The framework entry survives the disconnect (by design).
+    expect(sessionFrameworksMap(runtime).has(session.sessionId)).toBe(true)
+
+    // Deleting the now-detached session must not throw or talk to a torn-down agent, but must still
+    // drop the leaked framework entry so it cannot later mislead the cross-framework-resume check.
+    await runtime.deleteSession({ sessionId: session.sessionId })
+
+    expect(sessionFrameworksMap(runtime).has(session.sessionId)).toBe(false)
+    expect(fakeAgent.closedSessions).toEqual([])
+    expect(fakeAgent.cancelledSessions).toEqual([])
   })
 
   it('resumes an existing protocol session so restored conversations can continue', async () => {
