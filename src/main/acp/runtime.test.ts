@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AcpRuntime } from './runtime'
 import { ArtifactRepository } from '../artifacts/repository'
 import { UploadRepository } from '../uploads/repository'
+import { beginMigration, clearMigrationPending } from '../storage/migration-state'
 
 // Minimal child-process stand-in that exposes the streams the runtime expects.
 class FakeAgentProcess extends EventEmitter {
@@ -215,6 +216,36 @@ afterEach(async () => {
     await rm(temporaryRoot, { recursive: true, force: true })
     temporaryRoot = undefined
   }
+})
+
+describe('ACP runtime migration write-gate', () => {
+  afterEach(() => {
+    // migration-state is a module singleton; clear it so a pending gate can't leak between tests.
+    clearMigrationPending()
+  })
+
+  it('rejects sendPrompt while a data-root migration is pending, then resumes once cleared', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['gated-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+
+    beginMigration()
+    await expect(
+      runtime.sendPrompt({ sessionId: session.sessionId, text: 'blocked' })
+    ).rejects.toThrow(/moving your data/i)
+    // The turn never reached the agent.
+    expect(fakeAgent.prompts).toEqual([])
+
+    clearMigrationPending()
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'allowed' })
+    expect(fakeAgent.prompts).toEqual([{ sessionId: 'gated-session', text: 'allowed' }])
+  })
 })
 
 describe('ACP runtime session management', () => {

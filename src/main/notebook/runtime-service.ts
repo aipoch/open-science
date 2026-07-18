@@ -21,6 +21,7 @@ import type {
 import { NotebookPythonExecutor } from './python-executor'
 import { NotebookRunRepository, getNotebookRunJsonPath, getRuntimeRoot } from './repository'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
+import { isMigrationPending } from '../storage/migration-state'
 
 type NotebookExecutionRequest = {
   code: string
@@ -238,6 +239,14 @@ class NotebookRuntimeService {
 
   // Persists a running run, executes the cell, then updates the same history entry with results.
   async runCell(request: RunNotebookCellRequest): Promise<NotebookRunSummary> {
+    // Write-gate: during the data-root copy→commit window, running a cell would write into the OLD
+    // root that the commit is about to delete. Refuse up front rather than lose the run's output.
+    if (isMigrationPending()) {
+      throw new Error(
+        'Open Science is moving your data. Wait for the move to finish before running this.'
+      )
+    }
+
     const session = await this.ensureSession(request)
     const cell = findCell(session, request.cellId)
 
