@@ -1,5 +1,5 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { isAbsolute, join, normalize } from 'node:path'
 
 import type {
   ClaudeInfo,
@@ -279,10 +279,17 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     settings.legacyDataMovePromptDismissedAt = legacyDataMovePromptDismissedAt
   }
 
-  const dataRoot = asString(value.dataRoot)
+  // Only accept an absolute, normalized dataRoot. A relative path (corrupt or hand-edited
+  // settings.json) would make the entire data tree resolve against process.cwd(); drop it so
+  // initDataRoot falls back to the default. Mirrors the OPEN_SCIENCE_STORAGE_ROOT absolute contract.
+  const dataRoot = asString(value.dataRoot)?.trim()
 
-  if (dataRoot) {
-    settings.dataRoot = dataRoot
+  if (dataRoot && isAbsolute(dataRoot)) {
+    // normalize collapses redundant separators; strip any trailing separator so the stored form
+    // matches dataRootForPicked's canonical (no-trailing-slash) output — samePath() compares exact
+    // strings, so a stray trailing slash would wrongly fail the "is default" check.
+    const canonical = normalize(dataRoot).replace(/[\\/]+$/, '')
+    settings.dataRoot = canonical || dataRoot
   }
 
   return settings
