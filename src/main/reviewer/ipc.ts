@@ -10,7 +10,7 @@ import { createLogger } from '../logger'
 import { runReview } from './orchestrator'
 import { ReviewRepository } from './repository'
 import type { AcpRuntime } from '../acp/runtime'
-import { resolveStorageRoot } from '../storage-root'
+import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { SessionRepository } from '../session-persistence/repository'
 
@@ -68,8 +68,10 @@ const createDefaultReviewRepository = (): ReviewRepository => {
 type ReviewerIpcOptions = {
   // The ACP runtime used to spawn reviewer sessions.
   acpRuntime: AcpRuntime
-  // Optional override for the storage root (for testing).
+  // Optional override for the config root (DB/sessions) (for testing).
   storageRoot?: string
+  // Optional override for the data root (artifacts) (for testing).
+  dataRoot?: string
 }
 
 // Registers the reviewer IPC handlers on the Electron main process. Returns a function that can
@@ -80,6 +82,7 @@ const registerReviewerIpcHandlers = (
   triggerReview: (request: ReviewRunRequest) => void
 } => {
   const storageRoot = options.storageRoot ?? resolveStorageRoot()
+  const dataRoot = options.dataRoot ?? resolveDataRoot()
   const reviewRepository = createDefaultReviewRepository()
   const sessionRepository = new SessionRepository(storageRoot)
 
@@ -135,7 +138,8 @@ const registerReviewerIpcHandlers = (
           getSession: () => session,
           reviewRepository,
           acpRuntime: options.acpRuntime,
-          artifactStorageRoot: storageRoot,
+          // Artifacts live under the relocatable data root; DB/sessions stay on the config root.
+          artifactStorageRoot: dataRoot,
           onReviewUpdate: (review: ReviewWithChecks) => {
             broadcastReviewUpdate({ review })
           },
