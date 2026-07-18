@@ -226,7 +226,9 @@ describe('ProviderList', () => {
       '[aria-label="Speaks the Anthropic /v1/messages endpoint"]'
     )
     expect(badge).not.toBeNull()
-    expect(badge?.textContent).toContain('Anthropic')
+    // Shows the raw route path (not a vendor name) plus a route icon, so it can't be read as a provider.
+    expect(badge?.textContent).toContain('/v1/messages')
+    expect(badge?.querySelector('svg')).not.toBeNull()
   })
 
   it('badges an OpenAI-compatible provider distinctly', () => {
@@ -236,12 +238,12 @@ describe('ProviderList', () => {
       '[aria-label="Speaks the OpenAI-compatible /v1/chat/completions endpoint"]'
     )
     expect(badge).not.toBeNull()
-    expect(badge?.textContent).toContain('OpenAI')
+    expect(badge?.textContent).toContain('/v1/chat/completions')
   })
 
-  it('badges a dual-endpoint provider with both APIs', () => {
+  it('badges a dual-endpoint provider with both routes', () => {
     renderList([provider({ apiType: 'both' })])
 
-    expect(container.textContent).toContain('Anthropic · OpenAI')
+    expect(container.textContent).toContain('/v1/messages · /v1/chat/completions')
   })
 })

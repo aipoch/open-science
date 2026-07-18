@@ -1,4 +1,4 @@
-import { CircleCheck, Pencil, PlugZap, TriangleAlert, Trash2 } from 'lucide-react'
+import { CircleCheck, Pencil, PlugZap, Route, TriangleAlert, Trash2 } from 'lucide-react'
 
 import type {
   ProviderApiType,
@@ -43,14 +43,15 @@ const describeValidationFailure = (failure: ProviderValidationFailure): string =
   }
 }
 
-// Short label + full description for the chat endpoint a provider speaks. Surfaced as a badge so the
-// user can see at a glance which agent frameworks a provider can drive: Claude Code needs the Anthropic
-// /v1/messages shape, while OpenCode also accepts the OpenAI /v1/chat/completions shape.
-const ENDPOINT_LABELS: Record<ProviderApiType, { short: string; full: string }> = {
-  anthropic: { short: 'Anthropic', full: 'Anthropic /v1/messages endpoint' },
-  openai: { short: 'OpenAI', full: 'OpenAI-compatible /v1/chat/completions endpoint' },
+// Endpoint route + full description for the chat API a provider speaks. Rendered as a route-icon badge
+// showing the raw /v1 path (not a vendor name) so the user reads it as "which API shape", distinct from
+// the provider's own name/brand: Claude Code needs the Anthropic /v1/messages route, while OpenCode also
+// accepts the OpenAI /v1/chat/completions route.
+const ENDPOINT_LABELS: Record<ProviderApiType, { path: string; full: string }> = {
+  anthropic: { path: '/v1/messages', full: 'Anthropic /v1/messages endpoint' },
+  openai: { path: '/v1/chat/completions', full: 'OpenAI-compatible /v1/chat/completions endpoint' },
   both: {
-    short: 'Anthropic · OpenAI',
+    path: '/v1/messages · /v1/chat/completions',
     full: 'both the Anthropic /v1/messages and OpenAI /v1/chat/completions endpoints'
   }
 }
@@ -125,10 +126,11 @@ const ProviderList = ({
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <span
-                          className="inline-flex shrink-0 items-center rounded border border-border px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                          className="inline-flex shrink-0 items-center gap-1 rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
                           aria-label={`Speaks the ${endpoint.full}`}
                         >
-                          {endpoint.short}
+                          <Route className="size-3" strokeWidth={2} aria-hidden="true" />
+                          {endpoint.path}
                         </span>
                       </TooltipTrigger>
                       <TooltipContent>Speaks the {endpoint.full}</TooltipContent>
