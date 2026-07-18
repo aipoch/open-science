@@ -9,12 +9,18 @@ import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-
 let container: HTMLDivElement
 let root: Root
 
-// Lets FileReader (base64 read) and the awaited store mocks settle before assertions.
-const flush = async (): Promise<void> => {
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    await Promise.resolve()
-  })
+// Lets the async drop pipeline settle before assertions: dispatch -> Promise.all(parseFile) ->
+// FileReader.readAsDataURL (a macrotask) -> previewSkillZip -> setState. That's several event-loop
+// turns, so pump multiple macrotask cycles rather than a single one — a single tick was enough locally
+// but flaked on loaded CI runners (the FileReader onload hadn't fired yet). Ten turns is ample and
+// still runs in a few ms.
+const flush = async (cycles = 10): Promise<void> => {
+  for (let i = 0; i < cycles; i += 1) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      await Promise.resolve()
+    })
+  }
 }
 
 // Drops files onto the upload label, matching how the real drag-and-drop hook receives them.
