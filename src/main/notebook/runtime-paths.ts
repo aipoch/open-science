@@ -7,15 +7,15 @@ import type { NotebookLanguage } from '../../shared/notebook'
 // additive upgrade of an older user's environments (spec §6.3).
 //
 // This number also keys the CDN offline bundle path (runtime-bundle/<version>/<subdir>/), which
-// stage-runtime-bundle.yml publishes and build.yml injects. Changing the default env spec is a
-// three-step change that MUST move together:
+// stage-runtime-bundle.yml publishes and build.yml injects. When you change the default env spec:
 //   1. edit DEFAULT_PYTHON_SPEC / DEFAULT_R_SPEC in provisioner.ts (and the mirrored PY_PKGS / R_PKGS
 //      in scripts/stage-default-envs.mjs — a guard test enforces they stay equal);
-//   2. bump this constant (the bundle path is immutable-cached, so reusing a version would serve a
-//      stale bundle from the CDN);
-//   3. re-run the stage-runtime-bundle workflow so the new version's bundle exists before the next
-//      packaged build (until it does, builds fall back to online provisioning on first run).
-export const DEFAULT_ENV_VERSION = 2
+//   2. re-run the stage-runtime-bundle workflow to (re)publish the bundle for this version. The bundle
+//      is uploaded with no-cache, so re-staging the SAME version overwrites it and the next build
+//      picks up the new content (no stale-CDN problem). Bump this constant only when you need an
+//      already-installed app to re-provision its default envs (additive upgrade, spec §6.3) — not
+//      merely to refresh the bundle.
+export const DEFAULT_ENV_VERSION = 1
 
 export const DEFAULT_PY_ENV = 'default-python'
 export const DEFAULT_R_ENV = 'default-r'

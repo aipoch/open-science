@@ -94,8 +94,10 @@ jobs:
           aws configure set aws_secret_access_key "$S3_SECRET_ACCESS_KEY"
           aws configure set default.region "$S3_REGION"
 
-      # Immutable per-(version, subdir) path — the bundle for a given version never changes, so it can be
-      # cached forever. Bucket stays masked (secret); --only-show-errors avoids leaking the s3:// path.
+      # Per-(version, subdir) path, uploaded no-cache so re-staging the same version overwrites it and
+      # the next build picks up the new bundle (versions are mutable — bump DEFAULT_ENV_VERSION only to
+      # force an installed app to re-provision). Bucket stays masked (secret); --only-show-errors avoids
+      # leaking the s3:// path.
       - name: Upload bundle to CDN
         shell: bash
         env:
@@ -109,5 +111,5 @@ jobs:
           ns="${S3_PREFIX%%/*}"
           key="s3://$S3_BUCKET${ns:+/$ns}/runtime-bundle/$VERSION/${{ matrix.subdir }}/default-envs.tar.gz"
           aws s3 cp "$RUNNER_TEMP/default-envs.tar.gz" "$key" \
-            --cache-control "public, max-age=31536000, immutable" --only-show-errors
+            --cache-control "no-cache" --only-show-errors
           echo "published ${ns:+$ns/}runtime-bundle/$VERSION/${{ matrix.subdir }}/default-envs.tar.gz"

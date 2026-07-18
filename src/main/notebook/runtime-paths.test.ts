@@ -72,7 +72,7 @@ describe('runtime-paths layout', () => {
       isWin ? join('/e', 'Lib', 'R', 'bin', 'Rscript.exe') : join('/e', 'bin', 'Rscript')
     )
     expect(readyMarkerPath('/r')).toBe(join('/r', '.env-ready'))
-    expect(DEFAULT_ENV_VERSION).toBe(2)
+    expect(DEFAULT_ENV_VERSION).toBe(1)
     expect(DEFAULT_R_ENV).toBe('default-r')
   })
 })
