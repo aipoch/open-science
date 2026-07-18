@@ -461,19 +461,24 @@ class UserSkillRepository {
     signature: string
   ): Promise<void> {
     const dir = this.skillDir('imported', slug)
-    await rm(dir, { recursive: true, force: true })
 
-    // Final containment gate for every import source (zip, GitHub, ...): resolve each target and
-    // confirm it stays inside the skill directory before writing, so a crafted relative path can
-    // never escape even if an upstream path check is bypassed on a given platform.
+    // Containment gate for every import source (zip, GitHub, ...): resolve every target and confirm it
+    // stays inside the skill directory BEFORE touching disk. Validating up front — rather than per
+    // file mid-write — means a crafted relative path can't leave the prior copy deleted or a new copy
+    // half-written; the whole import is rejected before the destructive rm.
     const root = resolve(dir)
-    for (const file of files) {
+    const targets = files.map((file) => {
       const target = resolve(dir, file.relativePath)
       if (target !== root && !target.startsWith(root + sep)) {
         throw new Error(`Refusing to write skill file outside its directory: ${file.relativePath}`)
       }
+      return { target, content: file.content }
+    })
+
+    await rm(dir, { recursive: true, force: true })
+    for (const { target, content } of targets) {
       await mkdir(dirname(target), { recursive: true })
-      await writeFile(target, file.content)
+      await writeFile(target, content)
     }
 
     await writeFile(join(dir, SOURCE_MANIFEST), JSON.stringify({ url, signature }, null, 2), 'utf8')

@@ -12,16 +12,13 @@ const EOCD_MIN_SIZE = 22
 // An extracted file: its posix-style path within the archive plus its decompressed bytes.
 export type ExtractedZipFile = { path: string; content: Buffer }
 
-// Normalizes an archive path to POSIX form. ZIP entries are meant to use forward slashes, but a
-// hostile archive can use backslashes: on Windows those are real path separators, so `..\..\x`
-// would sail past a slash-only `..` check and then escape when joined with path.join. Collapsing
-// `\` to `/` up front means the safety check and every downstream consumer see one separator.
-const toPosixPath = (path: string): string => path.replace(/\\/g, '/')
-
 // Rejects paths that would escape the extraction root (zip-slip) or aren't real bundle files.
-// Expects an already POSIX-normalized path (see toPosixPath).
 const isUnsafePath = (path: string): boolean => {
   if (path.length === 0) return true
+  // ZIP entry names are required to use forward slashes. A backslash is never legitimate and is a
+  // known zip-slip vector on Windows (where `\` is a real separator), so reject the raw name rather
+  // than normalizing it — normalizing would also silently collapse `a\b` and `a/b` onto one target.
+  if (path.includes('\\')) return true
   // Absolute paths (posix or a Windows drive letter) must never be trusted.
   if (path.startsWith('/') || /^[A-Za-z]:/.test(path)) return true
   // Any `..` segment could climb out of the target directory.
@@ -60,8 +57,7 @@ const extractZip = (buffer: Buffer): ExtractedZipFile[] => {
     const extraLength = buffer.readUInt16LE(pointer + 30)
     const commentLength = buffer.readUInt16LE(pointer + 32)
     const localOffset = buffer.readUInt32LE(pointer + 42)
-    const rawName = buffer.toString('utf8', pointer + 46, pointer + 46 + nameLength)
-    const name = toPosixPath(rawName)
+    const name = buffer.toString('utf8', pointer + 46, pointer + 46 + nameLength)
 
     // Advance to the next central-directory record before any skip.
     pointer += 46 + nameLength + extraLength + commentLength

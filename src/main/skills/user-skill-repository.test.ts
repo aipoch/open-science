@@ -501,6 +501,98 @@ describe('UserSkillRepository', () => {
     expect((await repo.list())[0].description).toBe('Now updated.')
   })
 
+  it('rejects an import whose file path escapes the skill dir before any file is written', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+
+    // A malicious GitHub response: a second file whose path climbs out of the skill directory once
+    // the root prefix is stripped (`pack/foo/../../../evil` -> `../../../evil`).
+    const escaping: FetchLike = async (url: string) => {
+      if (url.includes('/contents/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              type: 'file',
+              name: 'SKILL.md',
+              path: 'pack/foo/SKILL.md',
+              download_url: 'https://raw/s'
+            },
+            {
+              type: 'file',
+              name: 'evil',
+              path: 'pack/foo/../../../evil',
+              download_url: 'https://raw/e'
+            }
+          ],
+          arrayBuffer: async () => new ArrayBuffer(0)
+        }
+      }
+      const bytes = new TextEncoder().encode('---\nname: Foo\n---\nx')
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        arrayBuffer: async () =>
+          bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+      }
+    }
+
+    await expect(repo.importFromGitHub(SKILL_URL, escaping)).rejects.toThrow(
+      /outside its directory/
+    )
+    // The gate runs before any disk write, so no partial skill is left behind.
+    expect(await repo.list()).toEqual([])
+  })
+
+  it('leaves the existing skill intact when a replace import fails the containment gate', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+
+    const good = ['---', 'name: Foo', 'description: original.', '---', 'original body'].join('\n')
+    const first = await repo.importFromGitHub(SKILL_URL, fakeFetch(good))
+    expect(first.status).toBe('imported')
+
+    // Same URL, changed content (so it takes the in-place replace path that deletes first), but now
+    // carrying an escaping file. The destructive rm must not run.
+    const badReplace: FetchLike = async (url: string) => {
+      if (url.includes('/contents/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              type: 'file',
+              name: 'SKILL.md',
+              path: 'pack/foo/SKILL.md',
+              download_url: 'https://raw/s2'
+            },
+            {
+              type: 'file',
+              name: 'evil',
+              path: 'pack/foo/../../../evil',
+              download_url: 'https://raw/e2'
+            }
+          ],
+          arrayBuffer: async () => new ArrayBuffer(0)
+        }
+      }
+      const bytes = new TextEncoder().encode('changed')
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        arrayBuffer: async () =>
+          bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+      }
+    }
+
+    await expect(repo.importFromGitHub(SKILL_URL, badReplace)).rejects.toThrow(
+      /outside its directory/
+    )
+    // The original import survived the failed replace.
+    expect(await repo.body(first.id)).toContain('original body')
+  })
+
   it('marks scanned candidates already imported by URL or by same name', async () => {
     const repo = new UserSkillRepository(await makeStorage())
     const skillMd = ['---', 'name: Foo', 'description: An imported skill.', '---', 'body'].join(
