@@ -21,6 +21,20 @@ describe('packageFilesFromLock', () => {
 // provisions — the offline completeness gate then fails and the app silently falls back to online.
 // This test fails CI the moment the two lists disagree, so a spec edit in one place cannot ship alone.
 describe('default-env spec sync', () => {
+  it('uses the headless matplotlib build and avoids Intel MKL', () => {
+    expect(PY_PKGS).toEqual([
+      'python=3.12',
+      'numpy',
+      'pandas',
+      'scipy',
+      'matplotlib-base',
+      'nomkl',
+      'plotly',
+      'openpyxl'
+    ])
+    expect(PY_PKGS).not.toContain('matplotlib')
+  })
+
   it('stage-default-envs PY_PKGS matches DEFAULT_PYTHON_SPEC', () => {
     expect(PY_PKGS).toEqual(DEFAULT_PYTHON_SPEC.packages)
   })

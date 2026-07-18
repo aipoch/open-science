@@ -130,7 +130,16 @@ describe('default specs', () => {
     expect(DEFAULT_PYTHON_SPEC).toEqual({
       name: DEFAULT_PY_ENV,
       language: 'python',
-      packages: ['python=3.12', 'numpy', 'pandas', 'scipy', 'matplotlib', 'plotly', 'openpyxl']
+      packages: [
+        'python=3.12',
+        'numpy',
+        'pandas',
+        'scipy',
+        'matplotlib-base',
+        'nomkl',
+        'plotly',
+        'openpyxl'
+      ]
     })
     expect(DEFAULT_R_SPEC).toEqual({
       name: DEFAULT_R_ENV,
@@ -140,7 +149,7 @@ describe('default specs', () => {
   })
 
   it('base floor (named-env) sets are minimal and distinct from the default specs', () => {
-    expect(BASE_PYTHON_PACKAGES).toEqual(['python=3.12', 'matplotlib'])
+    expect(BASE_PYTHON_PACKAGES).toEqual(['python=3.12', 'matplotlib-base', 'nomkl'])
     expect(BASE_R_PACKAGES).toEqual(['r-base', 'r-jsonlite'])
   })
 })
@@ -181,16 +190,18 @@ describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
 
     const info = await provisioner.createNamedEnvironment('my-analysis', 'python', [
       'numpy',
-      'matplotlib' // duplicate of the base floor package -> must be deduped
+      'matplotlib-base' // duplicate of the base floor package -> must be deduped
     ])
 
     expect(argvs).toHaveLength(1)
     const argv = argvs[0]
     expect(argv).toContain('--prefix')
     expect(argv[argv.indexOf('--prefix') + 1]).toBe(envPrefix(root, 'my-analysis'))
-    // Base floor present, user packages appended, no duplicate 'matplotlib'.
-    expect(argv.filter((a) => a === 'matplotlib')).toHaveLength(1)
-    expect(argv).toEqual(expect.arrayContaining(['python=3.12', 'matplotlib', 'numpy']))
+    // Base floor present, user packages appended, no duplicate 'matplotlib-base'.
+    expect(argv.filter((a) => a === 'matplotlib-base')).toHaveLength(1)
+    expect(argv).toEqual(
+      expect.arrayContaining(['python=3.12', 'matplotlib-base', 'nomkl', 'numpy'])
+    )
 
     expect(info).toEqual({ name: 'my-analysis', language: 'python', ready: true, isDefault: false })
     // Named envs never touch the .env-ready marker.

@@ -54,7 +54,16 @@ export type EnvSpec = { name: string; language: NotebookLanguage; packages: stri
 export const DEFAULT_PYTHON_SPEC: EnvSpec = {
   name: DEFAULT_PY_ENV,
   language: 'python',
-  packages: ['python=3.12', 'numpy', 'pandas', 'scipy', 'matplotlib', 'plotly', 'openpyxl']
+  packages: [
+    'python=3.12',
+    'numpy',
+    'pandas',
+    'scipy',
+    'matplotlib-base',
+    'nomkl',
+    'plotly',
+    'openpyxl'
+  ]
 }
 export const DEFAULT_R_SPEC: EnvSpec = {
   name: DEFAULT_R_ENV,
@@ -66,7 +75,7 @@ export const DEFAULT_R_SPEC: EnvSpec = {
 // richer DEFAULT_*_SPEC used for the two default envs. matplotlib backs figure capture; r-jsonlite
 // implements the R loop's line-based JSON framing. Deliberately lean — convenience packages (numpy,
 // pandas, …) are left to a follow-up manage_packages call.
-export const BASE_PYTHON_PACKAGES: string[] = ['python=3.12', 'matplotlib']
+export const BASE_PYTHON_PACKAGES: string[] = ['python=3.12', 'matplotlib-base', 'nomkl']
 export const BASE_R_PACKAGES: string[] = ['r-base', 'r-jsonlite']
 
 // Injected dependencies so the orchestration unit-tests without network or real subprocesses

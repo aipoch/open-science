@@ -65,10 +65,8 @@ extraResources:
 win:
   executableName: open-science
   artifactName: ${name}-${version}-win-${arch}.${ext}
-  # nsis = the installer; zip = a portable, no-install build. Offer both, mirroring mac (dmg + zip).
   target:
     - nsis
-    - zip
   extraResources:
     # Staged per-arch micromamba binary, copied to the resources root (Task 2's resolveMicromamba
     # looks for it there via process.resourcesPath).

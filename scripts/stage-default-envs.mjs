@@ -13,7 +13,7 @@
 // so non-packaging builds still succeed. CDN upload of the produced bundle is out of scope here — the
 // website-distribution pipeline (2026-07-12 design) publishes resources/default-envs/** to the CDN.
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -31,7 +31,8 @@ export const PY_PKGS = [
   'numpy',
   'pandas',
   'scipy',
-  'matplotlib',
+  'matplotlib-base',
+  'nomkl',
   'plotly',
   'openpyxl'
 ]
@@ -135,7 +136,6 @@ const stageEnv = async (mm, stagingRoot, name, pkgs) => {
 
 const main = async () => {
   const mm = process.env.MICROMAMBA_BIN ?? ''
-  mkdirSync(PKGS, { recursive: true })
   if (!mm || !existsSync(mm)) {
     console.log(
       '[stage-default-envs] MICROMAMBA_BIN not set/found — skipping default-env staging. ' +
@@ -143,6 +143,9 @@ const main = async () => {
     )
     return
   }
+  // A rerun must not carry obsolete tarballs from an older package spec into the new bundle.
+  rmSync(OUT, { recursive: true, force: true })
+  mkdirSync(PKGS, { recursive: true })
   const stagingRoot = mkdtempSync(join(tmpdir(), 'os-stage-'))
   await stageEnv(mm, stagingRoot, 'default-python', PY_PKGS)
   await stageEnv(mm, stagingRoot, 'default-r', R_PKGS)

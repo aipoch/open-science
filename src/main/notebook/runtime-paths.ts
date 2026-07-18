@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path'
 import type { NotebookLanguage } from '../../shared/notebook'
 
 // Default environment version; bump when the default package set changes so a newer app triggers an
-// additive upgrade of an older user's environments (spec §6.3). Starts at 1 for this repo.
+// additive upgrade of an older user's environments (spec §6.3).
 //
 // This number also keys the CDN offline bundle path (runtime-bundle/<version>/<subdir>/), which
 // stage-runtime-bundle.yml publishes and build.yml injects. Changing the default env spec is a
@@ -15,7 +15,7 @@ import type { NotebookLanguage } from '../../shared/notebook'
 //      stale bundle from the CDN);
 //   3. re-run the stage-runtime-bundle workflow so the new version's bundle exists before the next
 //      packaged build (until it does, builds fall back to online provisioning on first run).
-export const DEFAULT_ENV_VERSION = 1
+export const DEFAULT_ENV_VERSION = 2
 
 export const DEFAULT_PY_ENV = 'default-python'
 export const DEFAULT_R_ENV = 'default-r'
