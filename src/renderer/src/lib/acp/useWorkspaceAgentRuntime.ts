@@ -36,6 +36,10 @@ type SendWorkspaceMessageInput = {
   referencedArtifacts?: ArtifactReference[]
   // Structured mention segments of the draft, persisted so the sent bubble renders styled pills.
   parts?: MessagePart[]
+  // Set by the interrupted-resume path when its own resume already reset the agent's context. The
+  // internal re-resume below runs against an already-attached session and can't report the reset
+  // again, so this forces the prior turns to be replayed as a history preamble on the re-sent turn.
+  forceHistoryReplay?: boolean
 }
 
 type SendWorkspaceMessageResult = {
@@ -312,7 +316,8 @@ const sendWorkspaceMessage = async (
     permissionProfile,
     forcedSkillIds,
     referencedArtifacts,
-    parts
+    parts,
+    forceHistoryReplay
   }: SendWorkspaceMessageInput
 ): Promise<SendWorkspaceMessageResult | undefined> => {
   const content = text.trim()
@@ -392,6 +397,7 @@ const sendWorkspaceMessage = async (
     // A resume that lands on a freshly-adopted session (framework switch, or an unresumable restart)
     // lost the agent's context, so replay the prior turns as a preamble on this first prompt.
     let historyPreamble: string | undefined
+    let contextResetFromResume = false
 
     if (resumeCwd) {
       try {
@@ -402,15 +408,19 @@ const sendWorkspaceMessage = async (
           currentSession?.permissionProfile ?? permissionProfile
         )
 
-        if (resumeResult?.contextReset && currentSession) {
-          // currentSession was captured before the new user message was appended, so this is the
-          // prior conversation only — the turn being sent is not duplicated into the preamble.
-          historyPreamble = buildHistoryPreamble(currentSession.messages)
-        }
+        contextResetFromResume = Boolean(resumeResult?.contextReset)
       } catch (error) {
         useSessionStore.getState().failRun(targetSessionId, getResumeFailureMessage(error))
         return appended
       }
+    }
+
+    // Replay prior turns when this resume reset the agent's context, or the caller already knows a reset
+    // happened (interrupted-resume path — its internal re-resume above hits an already-attached session
+    // and can't report the reset again). currentSession was captured before the new user message was
+    // appended, so this is the prior conversation only — the turn being sent is not duplicated in.
+    if ((contextResetFromResume || forceHistoryReplay) && currentSession) {
+      historyPreamble = buildHistoryPreamble(currentSession.messages)
     }
 
     let promptAttachments = attachments
@@ -525,13 +535,19 @@ const resumeInterruptedWorkspaceSession = async (
     return
   }
 
+  let contextReset = false
+
   try {
-    await runtime.resumeSession(
+    const resumeResult = await runtime.resumeSession(
       sessionId,
       resumeCwd,
       session.projectId,
       session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE
     )
+    // Adopting a fresh agent session (framework switch, or an unresumable restart) wipes the agent's
+    // context; capture that so the re-sent turn below replays the transcript. The shared send path's
+    // own re-resume can't observe this — by then the session is already attached.
+    contextReset = Boolean(resumeResult?.contextReset)
     useSessionStore.getState().markResumed(sessionId)
   } catch (error) {
     useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
@@ -553,7 +569,9 @@ const resumeInterruptedWorkspaceSession = async (
     parts: interruptedTurn.parts,
     cwd: resumeCwd,
     projectId: session.projectId,
-    permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE
+    permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+    // Replay the prior conversation when this resume adopted a fresh agent session.
+    forceHistoryReplay: contextReset
   })
 }
 

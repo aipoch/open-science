@@ -942,6 +942,99 @@ describe('resuming an interrupted session on demand', () => {
     expect(session.interrupted).toBeUndefined()
   })
 
+  it('replays a history preamble when an interrupted resume adopts a fresh agent session', async () => {
+    // A completed prior turn that must be replayed once the agent's context is gone.
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Plot the sales data',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: 'Done, saved chart.png'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    // The interrupted turn: a user message the drop left unanswered.
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'now add a trend line',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    useSessionStore.getState().markDisconnected('session-1')
+
+    const runtime = {
+      state: createSnapshot([]),
+      createSession: vi.fn(),
+      // Step-1 resume adopts a fresh session (contextReset); the shared send path's own re-resume then
+      // hits the already-attached session and reports no reset — mirroring runtime's "already attached"
+      // branch. The interrupted path must still honor its own step-1 signal.
+      resumeSession: vi
+        .fn()
+        .mockResolvedValueOnce({
+          sessionId: 'session-1',
+          cwd: '/workspace/project',
+          contextReset: true
+        })
+        .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+    await flushRuntimeTasks()
+
+    const preamble = runtime.sendPrompt.mock.calls[0]?.[5]
+    expect(preamble).toContain('Plot the sales data')
+    expect(preamble).toContain('Done, saved chart.png')
+    // The re-sent interrupted turn is prior-context only: it is not folded into its own preamble.
+    expect(preamble).not.toContain('now add a trend line')
+  })
+
+  it('does not replay a history preamble when the interrupted resume kept agent context', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Earlier prompt',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: 'Earlier answer'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'keep going',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    useSessionStore.getState().markDisconnected('session-1')
+
+    const runtime = {
+      state: createSnapshot([]),
+      createSession: vi.fn(),
+      // The agent resumed its own session both times, so there is nothing to replay.
+      resumeSession: vi
+        .fn()
+        .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+    await flushRuntimeTasks()
+
+    expect(runtime.sendPrompt.mock.calls[0]?.[5]).toBeUndefined()
+  })
+
   it('replays a history preamble when a resume resets agent context', async () => {
     // A completed prior turn that should be replayed to the freshly-adopted agent.
     useSessionStore.getState().appendUserMessage({
