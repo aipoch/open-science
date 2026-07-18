@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mkdtemp, readdir, readFile, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { renderCustomSkillDoc } from './skill-doc'
@@ -131,6 +131,23 @@ describe('syncCustomServerSkillDocs', () => {
     // The built-in doc is untouched, and no case-variant directory was created.
     expect(await readFile(builtinDoc, 'utf8')).toBe(before)
     expect((await readdir(dir)).sort()).toEqual(['mcp-chemistry'])
+  })
+
+  it('does not delete the built-in doc when an upgrade left a case-variant directory', async () => {
+    // Real upgrade state: an OLD version wrote mcp-Chemistry (from a custom server named "Chemistry").
+    // On a case-preserving filesystem the built-in sync then writes chemistry's doc into that same
+    // directory; the custom cleanup must recognize it as bundled-owned (case-insensitively) and keep it.
+    const dir = await mkdtemp(join(tmpdir(), 'connector-upgrade-'))
+    await mkdir(join(dir, 'mcp-Chemistry'), { recursive: true })
+    await writeFile(join(dir, 'mcp-Chemistry', 'SKILL.md'), 'stale pre-upgrade content')
+
+    await syncConnectorSkillDocs(dir, ['chemistry'])
+    await syncCustomServerSkillDocs(dir, [], async () => [])
+
+    // The built-in chemistry doc survived (readable case-insensitively) and holds the built-in content.
+    const doc = await readFile(join(dir, 'mcp-chemistry', 'SKILL.md'), 'utf8')
+    expect(doc).toContain('source: connector')
+    expect(doc).toContain('name: mcp-chemistry')
   })
 })
 

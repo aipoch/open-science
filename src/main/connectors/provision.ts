@@ -5,6 +5,15 @@ import { renderSkillDoc, renderCustomSkillDoc } from './skill-doc'
 import type { CustomSkillDocTool } from './skill-doc'
 import type { StoredCustomMcpServer } from '../settings/types'
 
+// Whether an `mcp-<x>` directory's suffix names a bundled connector — CASE-INSENSITIVELY. This
+// matters for cleanup ownership: an older version could have left a case-variant dir like
+// `mcp-Chemistry` (from a custom server literally named "Chemistry"), and on a case-preserving
+// filesystem (APFS/NTFS) the built-in sync then writes mcp-chemistry's doc INTO that same directory.
+// A case-sensitive check would treat `mcp-Chemistry` as a stray custom dir and delete the built-in
+// doc with it, so ownership must fold case.
+const namesBundledConnector = (dirId: string): boolean =>
+  ALL_CONNECTOR_IDS.includes(dirId.toLowerCase())
+
 // Writes skills/mcp-<connector>/SKILL.md for enabled connectors; removes the directory for
 // disabled ones. Claude Code discovers skills as `<name>/SKILL.md` directories, not flat files.
 // Custom-server directories (see syncCustomServerSkillDocs below) live in the same skills dir;
@@ -25,7 +34,9 @@ export async function syncConnectorSkillDocs(
   const existing = await readdir(skillsDir).catch(() => [] as string[])
   for (const entry of existing) {
     const m = /^mcp-(.+)$/.exec(entry)
-    if (m && ALL_CONNECTOR_IDS.includes(m[1]) && !enabled.has(m[1])) {
+    // Own (and so may remove) only bundled-connector dirs, matched case-insensitively; remove the
+    // ones whose connector is not currently enabled.
+    if (m && namesBundledConnector(m[1]) && !enabled.has(m[1].toLowerCase())) {
       await rm(join(skillsDir, entry), { recursive: true, force: true })
     }
   }
@@ -68,7 +79,9 @@ export async function syncCustomServerSkillDocs(
   const existing = await readdir(skillsDir).catch(() => [] as string[])
   for (const entry of existing) {
     const m = /^mcp-(.+)$/.exec(entry)
-    if (!m || ALL_CONNECTOR_IDS.includes(m[1])) continue // owned by syncConnectorSkillDocs
+    // A bundled-connector dir (case-insensitive) belongs to syncConnectorSkillDocs — never delete it
+    // here, even a case-variant like mcp-Chemistry that the built-in sync has written its doc into.
+    if (!m || namesBundledConnector(m[1])) continue
     if (!enabledIds.has(m[1])) {
       await rm(join(skillsDir, entry), { recursive: true, force: true })
     }
