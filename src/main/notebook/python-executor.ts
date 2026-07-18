@@ -377,7 +377,7 @@ class NotebookPythonExecutor implements NotebookExecutor {
       // Tree-kill (Windows taskkill /T reaps grandchildren) then wait for the real exit so the cwd/
       // runtime/data file handles are released before a caller deletes those dirs.
       const result = await terminateProcessTree(child)
-      reaped = reaped && result.reaped
+      reaped = result.reaped
       await Promise.race([exited, delay(SHUTDOWN_EXIT_GRACE_MS)])
     }
 
