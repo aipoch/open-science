@@ -27,6 +27,8 @@ type FakeSettingsService = Record<
   | 'detectOpencode'
   | 'installClaude'
   | 'installOpencode'
+  | 'uninstallClaude'
+  | 'uninstallOpencode'
   | 'setAgentFramework'
   | 'upsertProvider'
   | 'deleteProvider'
@@ -54,6 +56,12 @@ const createFakeService = (): FakeSettingsService => ({
     .mockResolvedValue({ claude: {}, providers: [], agentFrameworkId: 'opencode' }),
   installClaude: vi.fn().mockResolvedValue({ installId: 'i', ok: true }),
   installOpencode: vi.fn().mockResolvedValue({ installId: 'oc', ok: true }),
+  uninstallClaude: vi
+    .fn()
+    .mockResolvedValue({ snapshot: { claude: {}, providers: [] }, activeBackendAffected: true }),
+  uninstallOpencode: vi
+    .fn()
+    .mockResolvedValue({ snapshot: { claude: {}, providers: [] }, activeBackendAffected: true }),
   setAgentFramework: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], agentFrameworkId: 'opencode' }),
@@ -179,6 +187,39 @@ describe('settings IPC handlers', () => {
     // A create has no id, so it can't be the active provider yet — no respawn.
     await invoke('settings:upsert-provider', { type: 'custom', name: 'New' })
 
+    expect(onActiveProviderChanged).not.toHaveBeenCalled()
+  })
+
+  it('reconnects after uninstall only when the removed runtime was the active backend', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    service.uninstallClaude.mockResolvedValue({
+      snapshot: { claude: {}, providers: [] },
+      activeBackendAffected: true
+    })
+    const onActiveProviderChanged = vi.fn()
+    registerSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+
+    await invoke('settings:uninstall-claude')
+
+    expect(service.uninstallClaude).toHaveBeenCalledTimes(1)
+    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+  })
+
+  it('does not reconnect after uninstalling the inactive runtime', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    // OpenCode is uninstalled while Claude is active: the live agent is untouched.
+    service.uninstallOpencode.mockResolvedValue({
+      snapshot: { claude: {}, providers: [] },
+      activeBackendAffected: false
+    })
+    const onActiveProviderChanged = vi.fn()
+    registerSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+
+    await invoke('settings:uninstall-opencode')
+
+    expect(service.uninstallOpencode).toHaveBeenCalledTimes(1)
     expect(onActiveProviderChanged).not.toHaveBeenCalled()
   })
 

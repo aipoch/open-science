@@ -423,3 +423,53 @@ describe('SettingsPage layout', () => {
     expect(dialog?.className).not.toContain('w-[80vw]')
   })
 })
+
+describe('SettingsPage uninstall confirmation', () => {
+  const findButton = (root: ParentNode, text: string): HTMLButtonElement | undefined =>
+    Array.from(root.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === text
+    )
+
+  it('gates the uninstall call behind the confirmation dialog', async () => {
+    const managedSnapshot = {
+      claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
+      opencode: {},
+      providers: [],
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [{ id: 'claude-code', displayName: 'Claude Code', supportsSkills: true }],
+      claudeManaged: true,
+      opencodeManaged: false
+    }
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    api.settings.getSettings = vi.fn().mockResolvedValue(managedSnapshot)
+    const uninstallClaude = vi
+      .fn()
+      .mockResolvedValue({ ...managedSnapshot, claude: {}, claudeManaged: false })
+    api.settings.uninstallClaude = uninstallClaude
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+
+    // The managed Claude card exposes an Uninstall action, and no confirmation is open yet.
+    const cardUninstall = findButton(document.body, 'Uninstall')
+    expect(cardUninstall).toBeDefined()
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+
+    // Clicking it only opens the confirmation — the uninstall must not fire yet.
+    await act(async () => {
+      cardUninstall?.click()
+    })
+    const confirmDialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    expect(confirmDialog).not.toBeNull()
+    expect(uninstallClaude).not.toHaveBeenCalled()
+
+    // Only confirming in the dialog performs the uninstall.
+    const confirm = findButton(confirmDialog!, 'Uninstall')
+    expect(confirm).toBeDefined()
+    await act(async () => {
+      confirm?.click()
+    })
+    expect(uninstallClaude).toHaveBeenCalledTimes(1)
+  })
+})

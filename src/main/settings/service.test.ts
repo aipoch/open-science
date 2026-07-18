@@ -1146,11 +1146,12 @@ describe('SettingsService: uninstall managed runtime', () => {
     await repository.setClaudeInfo({ resolvedPath: '/usr/local/bin/claude', version: '2.1.0' })
     const service = createService()
 
-    const snapshot = await service.uninstallClaude()
+    const { snapshot, activeBackendAffected } = await service.uninstallClaude()
 
-    // The install we did not own is left untouched.
+    // The install we did not own is left untouched, and nothing about the active backend changed.
     expect(snapshot.claude).toEqual({ resolvedPath: '/usr/local/bin/claude', version: '2.1.0' })
     expect(snapshot.claudeManaged).toBe(false)
+    expect(activeBackendAffected).toBe(false)
   })
 
   it('uninstallOpencode removes the managed install, clears the record, and auto-switches to Claude when it was active', async () => {
@@ -1169,13 +1170,30 @@ describe('SettingsService: uninstall managed runtime', () => {
     await repository.setAgentFramework('opencode')
     const service = createService()
 
-    const snapshot = await service.uninstallOpencode()
+    const { snapshot, activeBackendAffected } = await service.uninstallOpencode()
 
     // The managed tree is gone, the record is cleared, and the active backend fell back to Claude.
     await expect(readFile(opencodeBin)).rejects.toThrow()
     expect(snapshot.opencode).toEqual({})
     expect(snapshot.opencodeManaged).toBe(false)
     expect(snapshot.agentFrameworkId).toBe('claude-code')
+    // OpenCode was the active backend, so the caller must reconnect.
+    expect(activeBackendAffected).toBe(true)
+  })
+
+  it('does not flag the active backend when the uninstalled runtime was not active', async () => {
+    // Managed OpenCode installed but Claude is the active framework.
+    const opencodeBin = join(managedOpencodeDir(storageRoot), 'opencode')
+    await mkdir(managedOpencodeDir(storageRoot), { recursive: true })
+    await writeFile(opencodeBin, '', 'utf8')
+    await repository.setOpencodeInfo(opencodeBin, '1.18.3')
+    await repository.setAgentFramework('claude-code')
+    const service = createService()
+
+    const { activeBackendAffected } = await service.uninstallOpencode()
+
+    // Removing the inactive runtime leaves the live (Claude) agent untouched — no reconnect.
+    expect(activeBackendAffected).toBe(false)
   })
 
   it('does not auto-switch to the other runtime when it exists but cannot report a version (not ready)', async () => {
@@ -1192,7 +1210,7 @@ describe('SettingsService: uninstall managed runtime', () => {
     // getVersion resolves undefined for every path, so Claude reads as not ready (like preflight).
     const service = createService({ found: false, path: undefined, version: undefined })
 
-    const snapshot = await service.uninstallOpencode()
+    const { snapshot } = await service.uninstallOpencode()
 
     // A broken runtime is never auto-selected: the selection stays put and the gate will flag it.
     expect(snapshot.agentFrameworkId).toBe('opencode')

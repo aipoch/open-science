@@ -79,19 +79,20 @@ const registerSettingsIpcHandlers = ({
   )
 
   ipcMain.handle('settings:uninstall-claude', async () => {
-    const snapshot = await service.uninstallClaude()
+    const { snapshot, activeBackendAffected } = await service.uninstallClaude()
 
-    // Removing the running backend (and possibly auto-switching the active framework) needs a fresh
-    // agent process, exactly like a framework switch — the live process points at a now-deleted binary.
-    onActiveProviderChanged?.()
+    // Reconnect only when the removed runtime backed the active framework (its live agent is now stale,
+    // possibly auto-switched to the other). Uninstalling the inactive runtime touches nothing the live
+    // agent depends on, so it must not churn the connection.
+    if (activeBackendAffected) onActiveProviderChanged?.()
 
     return snapshot
   })
 
   ipcMain.handle('settings:uninstall-opencode', async () => {
-    const snapshot = await service.uninstallOpencode()
+    const { snapshot, activeBackendAffected } = await service.uninstallOpencode()
 
-    onActiveProviderChanged?.()
+    if (activeBackendAffected) onActiveProviderChanged?.()
 
     return snapshot
   })

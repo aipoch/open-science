@@ -154,6 +154,14 @@ export type AgentSpawnConfig = {
   executablePath: string
 }
 
+// Outcome of uninstalling a managed runtime. `activeBackendAffected` is true only when the removed
+// runtime backed the active framework, so the IPC layer reconnects the agent for that case alone —
+// removing the inactive framework's runtime leaves the live agent untouched.
+export type UninstallResult = {
+  snapshot: SettingsSnapshot
+  activeBackendAffected: boolean
+}
+
 export type SettingsServiceOptions = {
   repository?: SettingsRepository
   storageRoot?: string
@@ -683,13 +691,16 @@ class SettingsService {
   // Uninstalls the app-managed Claude runtime. Only an install we own (a binary inside the app's data
   // dir) is removed; a PATH/npm Claude we merely detected is left untouched (a no-op that just returns
   // the current snapshot). When Claude was the active framework, the active backend auto-switches to
-  // OpenCode if that is installed. Returns the refreshed snapshot; the IPC layer reconnects the agent
-  // so the change applies to the next prompt.
-  async uninstallClaude(): Promise<SettingsSnapshot> {
-    const resolvedPath = (await this.repository.getSettings()).claude?.resolvedPath
+  // OpenCode if that is installed. `activeBackendAffected` is true only when Claude was the active
+  // framework, so the IPC layer can reconnect the agent for that case alone — uninstalling the inactive
+  // runtime leaves the live agent untouched and needs no reconnect.
+  async uninstallClaude(): Promise<UninstallResult> {
+    const settings = await this.repository.getSettings()
+    const resolvedPath = settings.claude?.resolvedPath
+    const wasActive = (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID) === 'claude-code'
 
     if (!resolvedPath || !isManagedClaudePath(resolvedPath, this.storageRoot)) {
-      return this.getSettingsView()
+      return { snapshot: await this.getSettingsView(), activeBackendAffected: false }
     }
 
     await uninstallManagedClaude(this.storageRoot)
@@ -698,24 +709,27 @@ class SettingsService {
     await this.detectClaude()
     await this.autoSwitchAwayFrom('claude-code')
 
-    return this.getSettingsView()
+    return { snapshot: await this.getSettingsView(), activeBackendAffected: wasActive }
   }
 
   // Uninstalls the app-managed OpenCode runtime, mirroring uninstallClaude (guard, delete, re-detect,
   // auto-switch to Claude when OpenCode was active). Only an install inside the app's data dir is
-  // removed; a PATH/npm opencode is left untouched.
-  async uninstallOpencode(): Promise<SettingsSnapshot> {
-    const resolvedPath = (await this.repository.getSettings()).opencodePath
+  // removed; a PATH/npm opencode is left untouched. `activeBackendAffected` is true only when OpenCode
+  // was active.
+  async uninstallOpencode(): Promise<UninstallResult> {
+    const settings = await this.repository.getSettings()
+    const resolvedPath = settings.opencodePath
+    const wasActive = (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID) === 'opencode'
 
     if (!resolvedPath || !isManagedOpencodePath(resolvedPath, this.storageRoot)) {
-      return this.getSettingsView()
+      return { snapshot: await this.getSettingsView(), activeBackendAffected: false }
     }
 
     await uninstallManagedOpencode(this.storageRoot)
     await this.detectOpencode()
     await this.autoSwitchAwayFrom('opencode')
 
-    return this.getSettingsView()
+    return { snapshot: await this.getSettingsView(), activeBackendAffected: wasActive }
   }
 
   // After a framework's runtime is uninstalled, if it was the active backend and the other framework
