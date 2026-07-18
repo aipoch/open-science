@@ -719,9 +719,12 @@ class SettingsService {
   }
 
   // After a framework's runtime is uninstalled, if it was the active backend and the other framework
-  // still has a binary on disk, switch the active framework to it so sessions keep a working agent. If
-  // the other framework is not installed either, the selection is left as-is (the preflight gate then
-  // reports the active framework as not ready). No reconnect happens here; the caller refreshes it.
+  // has a *ready* runtime, switch the active framework to it so sessions keep a working agent. Readiness
+  // means the binary reports `--version`, matching the preflight gate's rule — not merely that a file
+  // exists on disk. An existing-but-broken runtime (can't run, e.g. a corrupt binary) is treated as not
+  // ready, so the selection is left as-is and the preflight gate reports the active framework as not
+  // ready rather than silently parking the user on an unusable agent. No reconnect happens here; the
+  // caller refreshes it.
   private async autoSwitchAwayFrom(uninstalled: AgentFrameworkId): Promise<void> {
     const settings = await this.repository.getSettings()
     const active = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
@@ -732,7 +735,14 @@ class SettingsService {
     const otherPath =
       other === 'claude-code' ? settings.claude?.resolvedPath : settings.opencodePath
 
-    if (otherPath && (await this.pathExists(otherPath))) {
+    if (!otherPath) return
+
+    const version =
+      other === 'claude-code'
+        ? await this.detectDeps.getVersion(otherPath)
+        : await this.opencodeDetectDeps.getVersion(otherPath)
+
+    if (version) {
       await this.repository.setAgentFramework(other)
     }
   }

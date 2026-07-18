@@ -1177,4 +1177,24 @@ describe('SettingsService: uninstall managed runtime', () => {
     expect(snapshot.opencodeManaged).toBe(false)
     expect(snapshot.agentFrameworkId).toBe('claude-code')
   })
+
+  it('does not auto-switch to the other runtime when it exists but cannot report a version (not ready)', async () => {
+    const opencodeBin = join(managedOpencodeDir(storageRoot), 'opencode')
+    await mkdir(managedOpencodeDir(storageRoot), { recursive: true })
+    await writeFile(opencodeBin, '', 'utf8')
+    await repository.setOpencodeInfo(opencodeBin, '1.18.3')
+    // A Claude binary present on disk but broken — it exists yet reports no version.
+    const claudeBin = join(storageRoot, 'fake-claude', 'claude')
+    await mkdir(dirname(claudeBin), { recursive: true })
+    await writeFile(claudeBin, '', 'utf8')
+    await repository.setClaudeInfo({ resolvedPath: claudeBin, version: '2.1.0' })
+    await repository.setAgentFramework('opencode')
+    // getVersion resolves undefined for every path, so Claude reads as not ready (like preflight).
+    const service = createService({ found: false, path: undefined, version: undefined })
+
+    const snapshot = await service.uninstallOpencode()
+
+    // A broken runtime is never auto-selected: the selection stays put and the gate will flag it.
+    expect(snapshot.agentFrameworkId).toBe('opencode')
+  })
 })
