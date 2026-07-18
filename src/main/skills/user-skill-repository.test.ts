@@ -12,6 +12,7 @@ import {
   toSlug,
   frontmatterBlock
 } from './user-skill-repository'
+import { parseFrontmatter } from './frontmatter'
 import type { FetchLike } from './github-import'
 
 const makeStorage = async (): Promise<string> => mkdtemp(join(tmpdir(), 'user-skills-'))
@@ -144,6 +145,15 @@ describe('frontmatterBlock', () => {
 
   it('round-trips an empty value as an empty string (not null)', () => {
     expect(roundTrip('X', '').description).toBe('')
+  })
+
+  it('round-trips losslessly through the app frontmatter reader too', () => {
+    // Not just a standard parser — the app's own parseFrontmatter must recover the exact value,
+    // including a trailing newline and leading spaces (it no longer trims).
+    for (const value of ['line one\n', '  indented', 'plain text', 'true', '2026-07-17']) {
+      const doc = `---\n${frontmatterBlock({ name: 'X', description: value })}---\nbody`
+      expect(parseFrontmatter(doc).fields.description).toBe(value)
+    }
   })
 })
 
