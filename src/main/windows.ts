@@ -36,9 +36,7 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
   })
 
   window.webContents.setWindowOpenHandler((details) => {
-    if (
-      isAllowedExternalNavigation(details.url, details.referrer.url, window.webContents.getURL())
-    ) {
+    if (isAllowedExternalNavigation(details.url)) {
       void shell.openExternal(details.url)
     }
     return { action: 'deny' }
