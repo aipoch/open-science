@@ -50,14 +50,6 @@ const ClaudeStatusCard = ({
 
   const heading = (
     <>
-      {claudeReady ? (
-        <CheckCircle2 className="size-4 text-primary" aria-hidden="true" />
-      ) : (
-        <XCircle className="size-4 text-muted-foreground" aria-hidden="true" />
-      )}
-      <span className="text-sm font-medium text-foreground">
-        {claudeReady ? 'Claude is installed' : 'Claude not detected'}
-      </span>
       {selectable ? (
         <span
           aria-hidden="true"
@@ -69,6 +61,14 @@ const ClaudeStatusCard = ({
           {active ? <span className="size-2 rounded-full bg-primary" /> : null}
         </span>
       ) : null}
+      <span className="text-sm font-medium text-foreground">
+        {claudeReady ? 'Claude is installed' : 'Claude not detected'}
+      </span>
+      {claudeReady ? (
+        <CheckCircle2 className="size-4 text-primary" aria-hidden="true" />
+      ) : (
+        <XCircle className="size-4 text-muted-foreground" aria-hidden="true" />
+      )}
       {active ? <Badge variant="secondary">Active</Badge> : null}
     </>
   )
