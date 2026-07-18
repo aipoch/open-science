@@ -39,8 +39,13 @@ export type CustomServerListTools = (server: StoredCustomMcpServer) => Promise<C
 // built-in mcp-chemistry doc. The id is a randomUUID (safe token, never a bundled id); this guard
 // additionally rejects any id that isn't a safe path segment — defense against a tampered
 // settings.json — so a hand-crafted id can't reintroduce traversal or a bundled-id collision.
+//
+// The safe alphabet is LOWERCASE-only: a randomUUID is already lowercase, and this closes a
+// case-folding escape — on a case-insensitive filesystem (default macOS/Windows) an id like
+// `Chemistry` would otherwise pass a case-sensitive reserved-id check yet write to the same
+// `mcp-chemistry` directory as the built-in, and two ids differing only in case would collide.
 const isSafeCustomServerId = (id: string): boolean =>
-  /^[A-Za-z0-9_-]+$/.test(id) && !ALL_CONNECTOR_IDS.includes(id)
+  /^[a-z0-9_-]+$/.test(id) && !ALL_CONNECTOR_IDS.includes(id)
 
 // Writes skills/mcp-<id>/SKILL.md for enabled custom MCP servers, sourced from the server's
 // live listTools() schema rather than a bundled descriptor table (§3.4). Cleanup mirrors

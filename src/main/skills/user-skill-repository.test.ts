@@ -925,6 +925,40 @@ describe('UserSkillRepository', () => {
     ])
   })
 
+  it('restores the newest backup when several exist for one slug', async () => {
+    const root = await makeStorage()
+    const importedDir = join(root, 'skills', 'imported')
+    // Two backups for "foo" with different (sortable) generations; the live dir is gone.
+    await mkdir(join(importedDir, '.foo.backup-000000000000001-old'), { recursive: true })
+    await writeFile(
+      join(importedDir, '.foo.backup-000000000000001-old', 'SKILL.md'),
+      '---\nname: Foo\n---\nolder generation'
+    )
+    await mkdir(join(importedDir, '.foo.backup-000000000000002-new'), { recursive: true })
+    await writeFile(
+      join(importedDir, '.foo.backup-000000000000002-new', 'SKILL.md'),
+      '---\nname: Foo\n---\nnewer generation'
+    )
+
+    // Recovery restores the newest generation and discards the older; only the live dir remains.
+    const repo = new UserSkillRepository(root)
+    expect(await repo.body('imported-foo')).toContain('newer generation')
+    expect((await readdir(importedDir)).sort()).toEqual(['foo'])
+  })
+
+  it('recovers a legacy-format transaction dir (no generation timestamp)', async () => {
+    const root = await makeStorage()
+    const importedDir = join(root, 'skills', 'imported')
+    // A backup written before the sortable-generation change (name has no timestamp prefix).
+    await mkdir(join(importedDir, '.foo.backup-legacyuuid'), { recursive: true })
+    await writeFile(
+      join(importedDir, '.foo.backup-legacyuuid', 'SKILL.md'),
+      '---\nname: Foo\n---\nlegacy body'
+    )
+
+    expect(await new UserSkillRepository(root).body('imported-foo')).toContain('legacy body')
+  })
+
   it('recovers within the same instance after a rollback leaves a backup (not memoized once)', async () => {
     const root = await makeStorage()
     const repo = new UserSkillRepository(root)

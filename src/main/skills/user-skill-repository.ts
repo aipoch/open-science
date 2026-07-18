@@ -204,8 +204,11 @@ class UserSkillRepository {
     let entries: string[]
     try {
       entries = await readdir(dir)
-    } catch {
-      return
+    } catch (error) {
+      // A missing dir just means nothing to recover. Any other error (permission, I/O) must block the
+      // operation rather than be swallowed — proceeding could act on an un-recovered/inconsistent state.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+      throw error
     }
 
     const backupsBySlug = new Map<string, { entry: string; generation: string }[]>()

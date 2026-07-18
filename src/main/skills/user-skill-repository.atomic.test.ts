@@ -136,4 +136,23 @@ describe('writeImported swap atomicity', () => {
 
     await expect(repo.body(first.id)).rejects.toThrow(/Failed to recover/)
   })
+
+  it('leaves nothing behind when a fresh import fails its swap rename', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'atomic-fresh-fail-'))
+    const repo = new UserSkillRepository(root)
+
+    // No prior skill, so there is no backup; only the staging -> live rename runs and here it fails.
+    vi.mocked(fsp.rename).mockImplementation(async (from, to) => {
+      if (String(from).includes('.import-')) throw new Error('swap failure')
+      return realRename(from, to)
+    })
+
+    await expect(
+      repo.importFromGitHub(SKILL_URL, fetchSkill('---\nname: Foo\n---\nbody'))
+    ).rejects.toThrow(/swap failure/)
+
+    // Staging was discarded; nothing partial remains.
+    vi.mocked(fsp.rename).mockImplementation((from, to) => realRename(from, to))
+    expect(await repo.list()).toEqual([])
+  })
 })

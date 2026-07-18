@@ -116,6 +116,22 @@ describe('syncCustomServerSkillDocs', () => {
 
     expect((await readdir(dir)).sort()).toEqual([])
   })
+
+  it('does not overwrite a built-in connector with a case-variant id', async () => {
+    // On a case-insensitive filesystem `mcp-Chemistry` and `mcp-chemistry` are the same directory, so
+    // a tampered mixed-case id must be rejected (the safe id alphabet is lowercase-only).
+    const dir = await mkdtemp(join(tmpdir(), 'connector-case-'))
+    await syncConnectorSkillDocs(dir, ['chemistry'])
+    const builtinDoc = join(dir, 'mcp-chemistry', 'SKILL.md')
+    const before = await readFile(builtinDoc, 'utf8')
+
+    const tampered = makeServer({ id: 'Chemistry', name: 'tampered' })
+    await syncCustomServerSkillDocs(dir, [tampered], async () => [])
+
+    // The built-in doc is untouched, and no case-variant directory was created.
+    expect(await readFile(builtinDoc, 'utf8')).toBe(before)
+    expect((await readdir(dir)).sort()).toEqual(['mcp-chemistry'])
+  })
 })
 
 describe('bundled and custom skill-doc sync coexist', () => {
