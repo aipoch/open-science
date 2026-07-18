@@ -78,7 +78,8 @@ const buildOpencodeConfig = (
   // OpenAI base for the openai endpoint; a single-base provider falls back to baseUrl for both. The
   // @ai-sdk/openai-compatible client appends `/chat/completions` to baseURL, so normalize it to end at
   // `/v1` (matching the validator) — a bare root like https://api.deepseek.com would 404 otherwise.
-  const rawBase = endpoint === 'openai' ? (provider.openaiBaseUrl ?? provider.baseUrl) : provider.baseUrl
+  const rawBase =
+    endpoint === 'openai' ? (provider.openaiBaseUrl ?? provider.baseUrl) : provider.baseUrl
   const baseURL =
     endpoint === 'openai' && rawBase ? `${normalizeOpenAiBaseUrl(rawBase)}/v1` : rawBase
 

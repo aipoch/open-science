@@ -136,12 +136,22 @@ describe('buildOpencodeConfig', () => {
 
   it('normalizes a custom OpenAI base to end at /v1 (no doubling)', () => {
     const rooted = JSON.parse(
-      buildOpencodeConfig({ type: 'custom', baseUrl: 'https://gw.example', model: 'm', apiType: 'openai' })
+      buildOpencodeConfig({
+        type: 'custom',
+        baseUrl: 'https://gw.example',
+        model: 'm',
+        apiType: 'openai'
+      })
     )
     expect(rooted.provider['openai-compatible'].options.baseURL).toBe('https://gw.example/v1')
 
     const withV1 = JSON.parse(
-      buildOpencodeConfig({ type: 'custom', baseUrl: 'https://gw.example/v1', model: 'm', apiType: 'openai' })
+      buildOpencodeConfig({
+        type: 'custom',
+        baseUrl: 'https://gw.example/v1',
+        model: 'm',
+        apiType: 'openai'
+      })
     )
     expect(withV1.provider['openai-compatible'].options.baseURL).toBe('https://gw.example/v1')
   })
