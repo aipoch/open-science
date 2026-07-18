@@ -140,4 +140,32 @@ describe('permission policy', () => {
       })
     ).toBeUndefined()
   })
+
+  it('auto-approves everything under Full access, including shell and network', () => {
+    for (const kind of ['execute', 'fetch', 'read'] as const) {
+      expect(resolveAutomaticPermission(createPermissionRequest(kind), { profile: 'full' })).toBe(
+        'allow'
+      )
+    }
+  })
+
+  it('auto-approves MCP tools under Full access (the user opted in explicitly)', () => {
+    expect(
+      resolveAutomaticPermission(
+        createPermissionRequest('read', undefined, { title: 'mcp__pencil__batch_design' }),
+        { profile: 'full' }
+      )
+    ).toBe('allow')
+  })
+
+  it('falls back to allow_always for Full access only when no one-shot option is offered', () => {
+    const onlyAlways = createPermissionRequest('execute', undefined, {
+      options: [
+        { optionId: 'always', name: 'Allow always', kind: 'allow_always' },
+        { optionId: 'reject', name: 'Reject', kind: 'reject_once' }
+      ]
+    })
+
+    expect(resolveAutomaticPermission(onlyAlways, { profile: 'full' })).toBe('always')
+  })
 })

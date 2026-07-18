@@ -60,12 +60,24 @@ const canConservativelyAutoApprove = (
 const resolveAllowOptionId = (params: RequestPermissionRequest): string | undefined =>
   params.options.find((option) => option.kind.toLowerCase() === 'allow_once')?.optionId
 
-// Returns an option only when the application can make a provider-neutral, fail-closed decision.
-// Native auto mode reviews inside the Agent; any request it escalates still belongs in the UI.
+// Full access approves anything the agent asks. Prefer a one-shot allow so the app keeps deciding each
+// call; fall back to allow_always only when the agent offers no one-shot option, so a run never stalls.
+const resolveFullAccessAllowOptionId = (params: RequestPermissionRequest): string | undefined =>
+  resolveAllowOptionId(params) ??
+  params.options.find((option) => option.kind.toLowerCase() === 'allow_always')?.optionId
+
+// Returns an option only when the application can make a provider-neutral decision. Full access is the
+// user's explicit, dialog-confirmed choice, so it auto-approves everything (for frameworks that delegate
+// permissions rather than bypassing natively — a native-bypass agent sends no requests here at all).
+// Otherwise, only native-less 'auto' conservatively approves workspace-contained low-risk operations.
 const resolveAutomaticPermission = (
   params: RequestPermissionRequest,
   context: PermissionPolicyContext | undefined
 ): string | undefined => {
+  if (context?.profile === 'full') {
+    return resolveFullAccessAllowOptionId(params)
+  }
+
   if (
     context?.profile !== 'auto' ||
     context.autoReviewStrategy !== 'conservative' ||

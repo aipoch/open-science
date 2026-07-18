@@ -56,6 +56,29 @@ describe('buildOpencodeConfig', () => {
     })
   })
 
+  it('forces opencode to delegate edit/bash/webfetch prompts to the client', () => {
+    // Without this, opencode runs everything silently under its permissive default and the app's
+    // Ask/Auto profiles never see a permission request.
+    const config = JSON.parse(
+      buildOpencodeConfig({ type: 'custom', baseUrl: 'https://gw/v1', model: 'm' })
+    )
+
+    expect(config.permission).toEqual({ edit: 'ask', bash: 'ask', webfetch: 'ask' })
+  })
+
+  it('keeps delegation on even if the base config tried to disable it', () => {
+    const config = JSON.parse(
+      buildOpencodeConfig(
+        { type: 'custom', baseUrl: 'https://gw/v1', model: 'm' },
+        { permission: { edit: 'allow', extra: 'allow' } }
+      )
+    )
+
+    // Our ask values win over the base; unrelated base keys are preserved.
+    expect(config.permission).toMatchObject({ edit: 'ask', bash: 'ask', webfetch: 'ask' })
+    expect(config.permission.extra).toBe('allow')
+  })
+
   it('merges onto the user config, preserving their providers and mcp', () => {
     const base = {
       $schema: 'https://opencode.ai/config.json',

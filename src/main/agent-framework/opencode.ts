@@ -87,6 +87,7 @@ const buildOpencodeConfig = (
   const baseProvider = asRecord(baseProviders[providerId])
   const baseOptions = asRecord(baseProvider.options)
   const baseModels = asRecord(baseProvider.models)
+  const basePermission = asRecord(baseConfig.permission)
   // Preserve any instructions the base config already declared, then append ours (de-duplicated).
   const baseInstructions = Array.isArray(baseConfig.instructions)
     ? baseConfig.instructions.filter((entry): entry is string => typeof entry === 'string')
@@ -98,6 +99,11 @@ const buildOpencodeConfig = (
     ...baseConfig,
     ...(bareModel ? { model: `${providerId}/${bareModel}` } : {}),
     ...(instructions.length > 0 ? { instructions } : {}),
+    // Force opencode to ASK the ACP client for every edit/bash/webfetch instead of running silently
+    // under its permissive default. The app then enforces the selected permission profile in its broker
+    // (ask prompts, auto auto-approves workspace edits, full auto-approves all) — a single, mid-session-
+    // switchable decision point. Our keys win over any base config so delegation can't be turned off.
+    permission: { ...basePermission, edit: 'ask', bash: 'ask', webfetch: 'ask' },
     provider: {
       ...baseProviders,
       [providerId]: {
@@ -192,9 +198,10 @@ export const opencodeFramework: AgentFramework = {
     profile: PermissionProfileId,
     modes: SessionModeState | null | undefined
   ): PermissionProfileApplication {
-    // Framework-neutral: the shared resolver keys off the modes the agent advertises (opencode offers
-    // `build`/`plan`, Claude `default`/`acceptEdits`/`bypassPermissions`), degrading gracefully when a
-    // profile has no matching mode.
-    return resolvePermissionProfileApplication(profile, modes)
+    // opencode advertises `build`/`plan` modes, not Claude's `default`/`bypassPermissions`, so no mode
+    // is set here — the app owns permission decisions instead. prepareModelConfig configures opencode
+    // to delegate every edit/bash/webfetch prompt to the client (see buildOpencodeConfig), so the broker
+    // enforces ask/auto/full app-side. That's why Full access is offered even without a native bypass.
+    return resolvePermissionProfileApplication(profile, modes, { brokerEnforcesFullAccess: true })
   }
 }
