@@ -92,4 +92,6 @@ const WorkspaceAgentLoadingRow = ({
   </MessageScrollerItem>
 )
 
-export { WorkspaceAgentLoadingRow }
+// AgentLoadingIndicator is exported for unit tests (WorkspaceAgentLoadingRow needs a MessageScroller
+// context, whereas the elapsed/status logic under test lives entirely in the indicator).
+export { AgentLoadingIndicator, WorkspaceAgentLoadingRow }
