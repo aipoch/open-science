@@ -68,7 +68,10 @@ jobs:
       # One tarball per platform keeps the CDN upload + build-time download to a single object.
       - name: Pack bundle
         shell: bash
-        run: tar -czf "$RUNNER_TEMP/default-envs.tar.gz" -C resources/default-envs .
+        run: |
+          tar_args=()
+          [ "$RUNNER_OS" = "Windows" ] && tar_args+=(--force-local)
+          tar "${tar_args[@]}" -czf "$RUNNER_TEMP/default-envs.tar.gz" -C resources/default-envs .
 
       # Read DEFAULT_ENV_VERSION straight from its source of truth so the CDN path always matches what
       # the app fetches at runtime (bundle-fetch.ts uses the same version segment).

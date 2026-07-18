@@ -180,7 +180,9 @@ jobs:
           echo "fetching offline bundle: $url"
           if curl -fsSL "$url" -o "$RUNNER_TEMP/default-envs.tar.gz"; then
             mkdir -p resources/default-envs
-            tar -xzf "$RUNNER_TEMP/default-envs.tar.gz" -C resources/default-envs
+            tar_args=()
+            [ "$RUNNER_OS" = "Windows" ] && tar_args+=(--force-local)
+            tar "${tar_args[@]}" -xzf "$RUNNER_TEMP/default-envs.tar.gz" -C resources/default-envs
             echo "staged offline bundle ($(ls resources/default-envs/pkgs | wc -l) tarballs) for ${{ matrix.subdir }}"
           else
             echo "::warning::no offline bundle at $url (run stage-runtime-bundle.yml first) — app will provision on first run"
