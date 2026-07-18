@@ -1,0 +1,110 @@
+name: Stage runtime bundle
+
+# Build the per-platform offline default-environment bundles and publish them to the CDN, so the
+# packaging workflow (build.yml) can inject a ready-made bundle instead of solving envs on every build.
+# Run this by hand whenever DEFAULT_ENV_VERSION or the default env specs change; the packaged app and
+# this bundle are keyed by the same version (runtime-paths.ts DEFAULT_ENV_VERSION), so a bump here must
+# accompany a bump there. Each platform solves NATIVELY on its own runner (osx-64 on the Intel runner,
+# osx-arm64 on Apple Silicon, etc.) so there is no cross-arch solve — each installer ships tarballs for
+# exactly its own conda subdir.
+on:
+  workflow_dispatch:
+
+# Read-only on the repo; writes go to S3, not back to git.
+permissions:
+  contents: read
+
+jobs:
+  stage:
+    name: Stage ${{ matrix.subdir }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - subdir: osx-arm64
+            os: macos-14
+          - subdir: osx-64
+            os: macos-13
+          - subdir: linux-64
+            os: ubuntu-latest
+          - subdir: win-64
+            os: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      # micromamba comes from the public micro.mamba.pm API (see fetch-micromamba.mjs), not our CDN, so
+      # staging never depends on a chicken-and-egg CDN state. It runs natively to solve this subdir.
+      - name: Fetch micromamba
+        shell: bash
+        run: |
+          bin="$RUNNER_TEMP/micromamba"
+          [ "${{ matrix.subdir }}" = "win-64" ] && bin="$bin.exe"
+          node scripts/fetch-micromamba.mjs "${{ matrix.subdir }}" "$bin"
+          echo "MICROMAMBA_BIN=$bin" >> "$GITHUB_ENV"
+
+      # Solve default-python + default-r natively and collect their @EXPLICIT locks + tarballs into
+      # resources/default-envs (stage-default-envs.mjs reads MICROMAMBA_BIN).
+      - name: Stage default environments
+        run: npm run stage-default-envs
+
+      # Fail loudly if the solve produced nothing, rather than uploading an empty bundle.
+      - name: Verify bundle is non-empty
+        shell: bash
+        run: |
+          test -f resources/default-envs/default-python.lock
+          test -f resources/default-envs/default-r.lock
+          count=$(ls resources/default-envs/pkgs | wc -l)
+          echo "staged $count package tarballs for ${{ matrix.subdir }}"
+          [ "$count" -gt 0 ]
+
+      # One tarball per platform keeps the CDN upload + build-time download to a single object.
+      - name: Pack bundle
+        shell: bash
+        run: tar -czf "$RUNNER_TEMP/default-envs.tar.gz" -C resources/default-envs .
+
+      # Read DEFAULT_ENV_VERSION straight from its source of truth so the CDN path always matches what
+      # the app fetches at runtime (bundle-fetch.ts uses the same version segment).
+      - name: Resolve bundle version
+        id: ver
+        shell: bash
+        run: |
+          version=$(node -e "const s=require('fs').readFileSync('src/main/notebook/runtime-paths.ts','utf8');process.stdout.write(String(s.match(/DEFAULT_ENV_VERSION\s*=\s*(\d+)/)[1]))")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "bundle version = $version"
+
+      - name: Configure AWS credentials
+        env:
+          S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          S3_REGION: ${{ vars.S3_REGION }}
+        shell: bash
+        run: |
+          aws configure set aws_access_key_id "$S3_ACCESS_KEY_ID"
+          aws configure set aws_secret_access_key "$S3_SECRET_ACCESS_KEY"
+          aws configure set default.region "$S3_REGION"
+
+      # Immutable per-(version, subdir) path — the bundle for a given version never changes, so it can be
+      # cached forever. Bucket stays masked (secret); --only-show-errors avoids leaking the s3:// path.
+      - name: Upload bundle to CDN
+        shell: bash
+        env:
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
+          S3_PREFIX: ${{ vars.S3_PREFIX }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          # Channel-agnostic namespace = first segment of S3_PREFIX (e.g. "open-science/app/stable" ->
+          # "open-science"), so the env-version-keyed bundle is a sibling of the app release channel,
+          # not nested under it. Must stay in sync with the download path in build.yml.
+          ns="${S3_PREFIX%%/*}"
+          key="s3://$S3_BUCKET${ns:+/$ns}/runtime-bundle/$VERSION/${{ matrix.subdir }}/default-envs.tar.gz"
+          aws s3 cp "$RUNNER_TEMP/default-envs.tar.gz" "$key" \
+            --cache-control "public, max-age=31536000, immutable" --only-show-errors
+          echo "published ${ns:+$ns/}runtime-bundle/$VERSION/${{ matrix.subdir }}/default-envs.tar.gz"
