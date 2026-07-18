@@ -464,14 +464,18 @@ class UserSkillRepository {
     const root = resolve(dir)
 
     // Validate the whole file set against the FINAL directory before touching disk. Every target must
-    // stay inside the skill dir, none may BE the dir itself (an empty/`.` path), no two may collide,
-    // and none may be a path-prefix of another (a file `a` and a dir `a/b` can't both exist). A bundle
-    // that fails any of these is rejected outright.
+    // stay inside the skill dir, none may BE the dir itself (an empty/`.` path), none may collide with
+    // the internal source manifest, no two may be exact duplicates, and none may be a path-prefix of
+    // another (a file `a` and a dir `a/b` can't both exist). A bundle failing any of these is rejected.
+    const manifestTarget = resolve(dir, SOURCE_MANIFEST)
     const seen = new Set<string>()
     for (const file of files) {
       const target = resolve(dir, file.relativePath)
       if (target === root || !target.startsWith(root + sep)) {
         throw new Error(`Refusing to write skill file outside its directory: ${file.relativePath}`)
+      }
+      if (target === manifestTarget) {
+        throw new Error(`Skill import may not include the reserved file ${SOURCE_MANIFEST}.`)
       }
       if (seen.has(target)) {
         throw new Error(`Duplicate file path in skill import: ${file.relativePath}`)
@@ -486,30 +490,55 @@ class UserSkillRepository {
       }
     }
 
-    // Build the new copy in a sibling staging dir, then swap it in. Because nothing is written into the
-    // live skill dir until the whole set has been staged successfully, a mid-write failure (e.g. an
-    // ancestor/descendant path conflict surfacing as EISDIR/ENOTDIR) can never leave the existing skill
-    // deleted or partially overwritten. The staging dir is a sibling, so the rename stays on one
-    // filesystem; on any failure it is removed and the original is left untouched.
-    const staging = join(dirname(dir), `.${basename(dir)}.import-${randomUUID()}`)
+    // Stage the new copy in a sibling dir, then swap it in with a backup so the operation is atomic on
+    // failure. Files are written with the `wx` flag so a filesystem-equivalent collision (e.g. SKILL.md
+    // vs skill.md on a case-insensitive volume) fails loudly in staging rather than silently
+    // overwriting. Swap order: move the old dir to a backup, move staging into place, then drop the
+    // backup — so if the final rename throws (or the process dies) the previous skill is still on disk
+    // and is rolled back, never lost.
+    const parent = dirname(dir)
+    const stem = basename(dir)
+    const staging = join(parent, `.${stem}.import-${randomUUID()}`)
+    const backup = join(parent, `.${stem}.backup-${randomUUID()}`)
+    let hadExisting = false
     try {
       await mkdir(staging, { recursive: true })
       for (const file of files) {
         const target = join(staging, file.relativePath)
         await mkdir(dirname(target), { recursive: true })
-        await writeFile(target, file.content)
+        try {
+          await writeFile(target, file.content, { flag: 'wx' })
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+            throw new Error(
+              `Conflicting file paths in skill import (collision at ${file.relativePath}).`
+            )
+          }
+          throw error
+        }
       }
-      await writeFile(
-        join(staging, SOURCE_MANIFEST),
-        JSON.stringify({ url, signature }, null, 2),
-        'utf8'
+      await writeFile(join(staging, SOURCE_MANIFEST), JSON.stringify({ url, signature }, null, 2), {
+        flag: 'wx'
+      })
+
+      hadExisting = await stat(dir).then(
+        () => true,
+        () => false
       )
-      await rm(dir, { recursive: true, force: true })
-      await rename(staging, dir)
+      if (hadExisting) await rename(dir, backup)
+      try {
+        await rename(staging, dir)
+      } catch (swapError) {
+        // Roll the previous skill back so a failed swap never loses it.
+        if (hadExisting) await rename(backup, dir).catch(() => {})
+        throw swapError
+      }
     } catch (error) {
       await rm(staging, { recursive: true, force: true }).catch(() => {})
       throw error
     }
+    // New copy is in place; drop the backup last so nothing is deleted until the swap succeeded.
+    if (hadExisting) await rm(backup, { recursive: true, force: true }).catch(() => {})
   }
 
   // Finds a slug not yet taken under the source, appending -2, -3, ... on collision.

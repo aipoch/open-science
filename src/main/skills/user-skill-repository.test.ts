@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { deflateRawSync } from 'node:zlib'
@@ -668,6 +668,98 @@ describe('UserSkillRepository', () => {
     }
 
     await expect(repo.importFromGitHub(SKILL_URL, duplicate)).rejects.toThrow(/Duplicate file path/)
+    expect(await repo.list()).toEqual([])
+  })
+
+  it('rejects an import that includes the reserved .source.json manifest path', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+
+    const withManifest: FetchLike = async (url: string) => {
+      if (url.includes('/contents/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              type: 'file',
+              name: 'SKILL.md',
+              path: 'pack/foo/SKILL.md',
+              download_url: 'https://raw/s'
+            },
+            {
+              type: 'file',
+              name: '.source.json',
+              path: 'pack/foo/.source.json',
+              download_url: 'https://raw/m'
+            }
+          ],
+          arrayBuffer: async () => new ArrayBuffer(0)
+        }
+      }
+      const bytes = new TextEncoder().encode('{}')
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        arrayBuffer: async () =>
+          bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+      }
+    }
+
+    await expect(repo.importFromGitHub(SKILL_URL, withManifest)).rejects.toThrow(/reserved/)
+    expect(await repo.list()).toEqual([])
+  })
+
+  it('rejects a filesystem-equivalent path collision on case-insensitive volumes', async () => {
+    const storage = await makeStorage()
+
+    // Only meaningful where the filesystem folds case (macOS/Windows default). On a case-sensitive
+    // volume SKILL.md and skill.md are distinct files and coexist, so there is nothing to reject.
+    const probe = join(storage, 'CaseProbe')
+    await writeFile(probe, 'x')
+    const caseInsensitive = await stat(join(storage, 'caseprobe')).then(
+      () => true,
+      () => false
+    )
+    await rm(probe, { force: true })
+    if (!caseInsensitive) return
+
+    const repo = new UserSkillRepository(storage)
+    const collide: FetchLike = async (url: string) => {
+      if (url.includes('/contents/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              type: 'file',
+              name: 'SKILL.md',
+              path: 'pack/foo/SKILL.md',
+              download_url: 'https://raw/s'
+            },
+            {
+              type: 'file',
+              name: 'skill.md',
+              path: 'pack/foo/skill.md',
+              download_url: 'https://raw/s2'
+            }
+          ],
+          arrayBuffer: async () => new ArrayBuffer(0)
+        }
+      }
+      const bytes = new TextEncoder().encode('---\nname: Foo\n---\nbody')
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        arrayBuffer: async () =>
+          bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+      }
+    }
+
+    await expect(repo.importFromGitHub(SKILL_URL, collide)).rejects.toThrow(
+      /[Cc]ollision|Conflicting/
+    )
     expect(await repo.list()).toEqual([])
   })
 
