@@ -105,8 +105,12 @@ describe('writeImported swap atomicity', () => {
       repo.importFromGitHub(SKILL_URL, fetchSkill('---\nname: Foo\n---\nnew body'))
     ).rejects.toThrow(/preserved at .*backup-.*restored on the next operation/)
 
-    // Restart with a healthy filesystem: a fresh instance recovers the preserved backup on first use.
+    // With a healthy filesystem again, the SAME instance recovers the preserved backup on its next
+    // operation — recovery is not memoized after the first pass, so a backup left later is still fixed.
     vi.mocked(fsp.rename).mockImplementation((from, to) => realRename(from, to))
+    expect(await repo.body(first.id)).toContain('old body')
+
+    // And a fresh instance (a real restart) recovers it just the same.
     const restarted = new UserSkillRepository(root)
     expect(await restarted.body(first.id)).toContain('old body')
   })

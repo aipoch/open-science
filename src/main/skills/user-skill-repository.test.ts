@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { deflateRawSync } from 'node:zlib'
@@ -793,6 +793,66 @@ describe('UserSkillRepository', () => {
     // list() recovers (removes) the leftover and never surfaces it as a skill id.
     const listed = await new UserSkillRepository(root).list()
     expect(listed.map((skill) => skill.id)).toEqual(['imported-foo'])
+  })
+
+  it('does not resurrect a crashed imported skill after the user deletes it', async () => {
+    const root = await makeStorage()
+    const repo = new UserSkillRepository(root)
+    const first = await repo.importFromGitHub(SKILL_URL, fakeFetch('---\nname: Foo\n---\nold body'))
+
+    // Crash state: live dir gone, only a hidden backup remains.
+    const importedDir = join(root, 'skills', 'imported')
+    await rename(join(importedDir, 'foo'), join(importedDir, '.foo.backup-simulated-crash'))
+
+    // delete() must recover-then-remove, so a later list() can't resurrect the deleted skill.
+    const restarted = new UserSkillRepository(root)
+    await restarted.delete(first.id)
+    expect(await restarted.list()).toEqual([])
+    expect(await new UserSkillRepository(root).list()).toEqual([])
+  })
+
+  it('discards a stale staged (.import-) dir on the next operation', async () => {
+    const root = await makeStorage()
+    const importedDir = join(root, 'skills', 'imported')
+    await mkdir(join(importedDir, '.foo.import-stale'), { recursive: true })
+    await writeFile(join(importedDir, '.foo.import-stale', 'SKILL.md'), '---\nname: Foo\n---\nx')
+
+    const listed = await new UserSkillRepository(root).list()
+    expect(listed).toEqual([])
+    // The uncommitted staging dir was cleaned up, not left lingering.
+    expect(await readdir(importedDir)).toEqual([])
+  })
+
+  it('recovers within the same instance after a rollback leaves a backup (not memoized once)', async () => {
+    const root = await makeStorage()
+    const repo = new UserSkillRepository(root)
+    const first = await repo.importFromGitHub(SKILL_URL, fakeFetch('---\nname: Foo\n---\nold body'))
+    // First op already ran a recovery pass; prove a later crash state is still recovered by the SAME
+    // instance (recovery is not cached after the first call).
+    await repo.list()
+
+    const importedDir = join(root, 'skills', 'imported')
+    await rename(join(importedDir, 'foo'), join(importedDir, '.foo.backup-late-crash'))
+
+    expect(await repo.body(first.id)).toContain('old body')
+  })
+
+  it('runs recovery before previewZip so dedup state is not stale after a crash', async () => {
+    const root = await makeStorage()
+    const repo = new UserSkillRepository(root)
+    const zip = buildZip([
+      { path: 'foo/SKILL.md', content: Buffer.from('---\nname: Foo\n---\nbody') }
+    ])
+    const { id } = await repo.importFromZip(zip)
+    const slug = id.replace(/^imported-/, '')
+
+    // Crash: the imported skill survives only as a hidden backup.
+    const importedDir = join(root, 'skills', 'imported')
+    await rename(join(importedDir, slug), join(importedDir, `.${slug}.backup-crash`))
+
+    // previewZip must recover first, so the same bundle is correctly seen as already imported.
+    const restarted = new UserSkillRepository(root)
+    expect((await restarted.previewZip(zip))[0].alreadyImported).toBe(true)
   })
 
   it('marks scanned candidates already imported by URL or by same name', async () => {

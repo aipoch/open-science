@@ -34,7 +34,11 @@ const SAFE_SLUG = /^[a-z0-9-]+$/
 // holds the staged new copy, `.<slug>.backup-<id>` the previous copy moved aside during the swap.
 // Both are hidden (leading dot) so they can never be a valid slug, and recoverImportedTransactions()
 // finalizes or rolls them back if a crash left them behind.
-const TRANSACTION_DIR = /^\.([a-z0-9-]+)\.(import|backup)-/
+const TRANSACTION_DIR = /^\.([a-z0-9-]+)\.(import|backup)-(.+)$/
+
+// A sortable transaction generation: a fixed-width millisecond timestamp (lexical order == time order)
+// plus a uuid for uniqueness. Recovery restores the newest backup when more than one exists for a slug.
+const nextGeneration = (): string => `${Date.now().toString().padStart(15, '0')}-${randomUUID()}`
 
 // Reserved id namespaces a user-authored skill may not claim: `os-` is the app's own materialized
 // prefix and `mcp-` is reserved for MCP-provided skills.
@@ -164,14 +168,28 @@ class UserSkillRepository {
     }
   }
 
-  // Finalizes any imported-skill replace that a crash interrupted, so the swap is failure-atomic
-  // across process restarts (a plain two-step rename leaves a window with no live dir). Runs at most
-  // once per instance, before the first read/list/import. For each transaction dir: if a `.backup-`
-  // exists and its live dir is gone, the previous copy is restored (the interrupted replace is rolled
-  // back); a leftover backup whose live dir is present, and any staged `.import-` dir, are discarded.
-  private recovery?: Promise<void>
+  // Serializes transaction recovery and the writeImported swap so neither observes the other's
+  // intermediate on-disk state, and lets every public operation trigger a fresh recovery pass.
+  private lock: Promise<unknown> = Promise.resolve()
+  private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.lock.then(fn, fn)
+    // Chain the next waiter on completion regardless of outcome, so one failure can't wedge the lock.
+    this.lock = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
+  }
+
+  // Finalizes any imported-skill replace that a crash interrupted, so the swap is failure-atomic across
+  // process restarts (a plain two-step rename leaves a window with no live dir). Runs before EVERY
+  // read/list/import/delete — not memoized — so a backup left by a failed rollback, or a transient
+  // recovery error, is retried on the next operation. For each slug: if a `.backup-` exists and the
+  // live dir is gone, the newest backup is restored (the interrupted replace is rolled back) and any
+  // older backups discarded; a backup whose live dir is present, and every staged `.import-` dir, are
+  // discarded. Serialized via runExclusive so it can't race an in-flight swap.
   private recoverImportedTransactions(): Promise<void> {
-    return (this.recovery ??= this.doRecoverImportedTransactions())
+    return this.runExclusive(() => this.doRecoverImportedTransactions())
   }
 
   private async doRecoverImportedTransactions(): Promise<void> {
@@ -183,31 +201,48 @@ class UserSkillRepository {
       return
     }
 
-    // Restore first: move a backup back to its live slug if the live dir is missing.
+    const backupsBySlug = new Map<string, { entry: string; generation: string }[]>()
+    const stagings: string[] = []
     for (const entry of entries) {
       const match = TRANSACTION_DIR.exec(entry)
-      if (!match || match[2] !== 'backup') continue
-      const live = join(dir, match[1])
+      if (!match) continue
+      if (match[2] === 'backup') {
+        const list = backupsBySlug.get(match[1]) ?? []
+        list.push({ entry, generation: match[3] })
+        backupsBySlug.set(match[1], list)
+      } else {
+        stagings.push(entry)
+      }
+    }
+
+    for (const [slug, backups] of backupsBySlug) {
+      const live = join(dir, slug)
       const liveExists = await stat(live).then(
         () => true,
         () => false
       )
-      try {
-        if (liveExists) {
-          await rm(join(dir, entry), { recursive: true, force: true })
-        } else {
-          await rename(join(dir, entry), live)
-          log.warn('recovered interrupted skill import from backup', { slug: match[1] })
+      // Newest generation first, so if we must restore we pick the most recent previous copy.
+      backups.sort((a, b) => b.generation.localeCompare(a.generation))
+      for (let index = 0; index < backups.length; index += 1) {
+        const path = join(dir, backups[index].entry)
+        try {
+          if (index === 0 && !liveExists) {
+            await rename(path, live)
+            log.warn('recovered interrupted skill import from backup', { slug })
+          } else {
+            await rm(path, { recursive: true, force: true })
+          }
+        } catch (error) {
+          log.warn('failed to recover skill transaction backup', {
+            entry: backups[index].entry,
+            error
+          })
         }
-      } catch (error) {
-        log.warn('failed to recover skill transaction backup', { entry, error })
       }
     }
 
-    // Then discard any staged (uncommitted) copies left behind.
-    for (const entry of entries) {
-      const match = TRANSACTION_DIR.exec(entry)
-      if (!match || match[2] !== 'import') continue
+    // Discard any staged (uncommitted) copies left behind.
+    for (const entry of stagings) {
       await rm(join(dir, entry), { recursive: true, force: true }).catch(() => {})
     }
   }
@@ -288,6 +323,9 @@ class UserSkillRepository {
   async delete(id: string): Promise<void> {
     const parsed = parseUserSkillId(id)
     if (!parsed) throw new Error(`Not a user skill id: ${id}`)
+    // Recover first, so a skill left only in a crash backup is restored to its live dir and then
+    // actually removed here — otherwise a later recovery would "resurrect" the deleted skill.
+    await this.recoverImportedTransactions()
 
     await rm(this.skillDir(parsed.source, parsed.slug), { recursive: true, force: true })
   }
@@ -339,6 +377,7 @@ class UserSkillRepository {
   // collides with exactly one existing imported skill of different content — offers that skill's id as
   // a replace target. Writes nothing.
   async previewZip(zip: Buffer): Promise<SkillBundlePreview[]> {
+    await this.recoverImportedTransactions()
     const roots = findSkillRoots(extractZip(zip))
     if (roots.length === 0) throw new Error('The bundle must contain a SKILL.md.')
 
@@ -450,6 +489,7 @@ class UserSkillRepository {
   ): Promise<(ScannedSkill & { alreadyImported: boolean })[]> {
     const repo = parseGitHubRepo(repoInput)
     if (!repo) throw new Error('Not a recognizable GitHub repo (owner/repo or a github.com URL).')
+    await this.recoverImportedTransactions()
 
     const fetcher = fetchImpl ?? (globalThis.fetch as unknown as FetchLike | undefined)
     if (!fetcher) throw new Error('No fetch implementation available.')
@@ -544,8 +584,9 @@ class UserSkillRepository {
     // and is rolled back, never lost.
     const parent = dirname(dir)
     const stem = basename(dir)
-    const staging = join(parent, `.${stem}.import-${randomUUID()}`)
-    const backup = join(parent, `.${stem}.backup-${randomUUID()}`)
+    const generation = nextGeneration()
+    const staging = join(parent, `.${stem}.import-${generation}`)
+    const backup = join(parent, `.${stem}.backup-${generation}`)
     // Build the whole new copy in staging first; any failure here discards staging and never touches
     // the live skill.
     try {
@@ -572,41 +613,43 @@ class UserSkillRepository {
       throw buildError
     }
 
-    // Swap: move the old copy aside to the backup, move staging into place, then drop the backup. If a
-    // crash lands between the two renames, recoverImportedTransactions() restores the backup on the
-    // next operation, so the previous skill is never lost.
-    const hadExisting = await stat(dir).then(
-      () => true,
-      () => false
-    )
+    // Swap under the lock so it can't race a recovery pass: move the old copy aside to the backup,
+    // move staging into place, then drop the backup. If a crash lands between the two renames,
+    // recoverImportedTransactions() restores the backup on the next operation — the skill is never lost.
     try {
-      if (hadExisting) await rename(dir, backup)
-    } catch (error) {
-      await rm(staging, { recursive: true, force: true }).catch(() => {})
-      throw error // the live dir was never moved; the previous skill is untouched
-    }
+      await this.runExclusive(async () => {
+        const hadExisting = await stat(dir).then(
+          () => true,
+          () => false
+        )
+        if (hadExisting) await rename(dir, backup) // may throw; live dir untouched, staging cleaned below
 
-    try {
-      await rename(staging, dir)
-    } catch (swapError) {
-      await rm(staging, { recursive: true, force: true }).catch(() => {})
-      if (hadExisting) {
         try {
-          await rename(backup, dir)
-        } catch (rollbackError) {
-          // Rollback failed too: keep the backup on disk (recovery will restore it next run) and
-          // surface both errors rather than swallowing them.
-          throw new Error(
-            `Skill replace failed to swap and could not roll back; the previous copy is preserved at ${basename(backup)} and will be restored on the next operation. swap error: ${String(swapError)}; rollback error: ${String(rollbackError)}`
-          )
+          await rename(staging, dir)
+        } catch (swapError) {
+          if (hadExisting) {
+            try {
+              await rename(backup, dir)
+            } catch (rollbackError) {
+              // Rollback failed too: keep the backup on disk (recovery restores it next run) and
+              // surface both errors rather than swallowing them.
+              throw new Error(
+                `Skill replace failed to swap and could not roll back; the previous copy is preserved at ${basename(backup)} and will be restored on the next operation. swap error: ${String(swapError)}; rollback error: ${String(rollbackError)}`
+              )
+            }
+          }
+          throw swapError
         }
-      }
-      throw swapError
-    }
 
-    // New copy is in place; drop the backup last so nothing is deleted until the swap succeeded. A
-    // leftover backup (rm failure) is harmless — recovery removes it once the live dir is present.
-    if (hadExisting) await rm(backup, { recursive: true, force: true }).catch(() => {})
+        // New copy is in place; drop the backup last so nothing is deleted until the swap succeeded. A
+        // leftover backup (rm failure) is harmless — recovery removes it once the live dir is present.
+        if (hadExisting) await rm(backup, { recursive: true, force: true }).catch(() => {})
+      })
+    } catch (error) {
+      // Any swap failure leaves staging behind; discard it (the backup, if any, is intentionally kept).
+      await rm(staging, { recursive: true, force: true }).catch(() => {})
+      throw error
+    }
   }
 
   // Finds a slug not yet taken under the source, appending -2, -3, ... on collision.
