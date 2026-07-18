@@ -53,7 +53,9 @@ describe('SkillRegistry', () => {
       license: 'Test License',
       thirdParty: 'Weights — Example (CC-BY-4.0)',
       category: 'biomodels',
-      requirements: '[gpu]'
+      // `requirements: [gpu]` is a YAML list; the flat frontmatter reader joins it to a string. The
+      // materializer only substring-matches gpu/compute, so this stays equivalent.
+      requirements: 'gpu'
     })
   })
 

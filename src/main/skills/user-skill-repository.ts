@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
+import { dump as dumpYaml } from 'js-yaml'
+
 import type { SkillBundlePreview, SkillReference, SkillSource } from '../../shared/settings'
 import { createLogger } from '../logger'
 import {
@@ -53,33 +55,14 @@ const toSlug = (name: string): string =>
     .replace(/^-+|-+$/g, '')
     .slice(0, 64)
 
-// A single-line value that a YAML parser would read back as a non-string: a boolean/null keyword or
-// anything that starts like a number. Such a value MUST NOT be emitted as a plain scalar, or `name:
-// true` / `description: 123` would round-trip as a boolean/number instead of the user's string.
-const YAML_KEYWORD = /^(?:true|false|null|none|yes|no|on|off|~)$/i
-
-// Serializes one frontmatter field so arbitrary user text always round-trips as a STRING and can
-// never corrupt SKILL.md. A plain, single-line value is emitted inline; anything with a newline, a
-// surrounding space, a leading YAML indicator (`---`, a bare `-`, quotes, `|`/`>`, a digit/`+`/`.`
-// that could read as a number, ...), or a boolean/null keyword is emitted as a literal block scalar.
-// `|-` (strip chomping) is used so no trailing newline is appended, and every block line is indented
-// so a value containing `---` or a `key:`-like line can't be mistaken for the closing fence or
-// another field — by a real YAML parser or by our own parseFrontmatter reader.
-const frontmatterField = (key: string, value: string): string => {
-  const normalized = value.replace(/\r\n?/g, '\n')
-  const isPlain =
-    normalized.length > 0 &&
-    !normalized.includes('\n') &&
-    normalized === normalized.trim() &&
-    !/^[-?:,[\]{}#&*!|>'"%@`+.\d]/.test(normalized) &&
-    !/:(\s|$)/.test(normalized) &&
-    !/\s#/.test(normalized) &&
-    !YAML_KEYWORD.test(normalized)
-  if (isPlain) return `${key}: ${normalized}`
-  if (normalized === '') return `${key}: |-`
-  const indented = normalized.split('\n').map((line) => (line ? `  ${line}` : ''))
-  return [`${key}: |-`, ...indented].join('\n')
-}
+// Serializes the SKILL.md frontmatter block from arbitrary user values. A hand-rolled emitter kept
+// getting subtle YAML edge cases wrong (type coercion of `true`/`123`, trailing-newline handling,
+// leading spaces), so this delegates to js-yaml: it quotes or block-escapes each value as needed so
+// every field round-trips LOSSLESSLY and always as a string through any conformant YAML parser. The
+// leading `---`/trailing `---` document markers are added by the caller. `lineWidth: -1` disables line
+// folding so long descriptions aren't rewrapped (which would not be byte-lossless).
+const frontmatterBlock = (fields: { name: string; description: string }): string =>
+  dumpYaml(fields, { lineWidth: -1 })
 
 // A skill id is `<source>-<slug>`; parse it back to its source + slug (null for bundled/unknown ids).
 const parseUserSkillId = (
@@ -536,12 +519,8 @@ class UserSkillRepository {
     const dir = this.skillDir(source, slug)
     await mkdir(dir, { recursive: true })
 
-    const frontmatter = [
-      '---',
-      frontmatterField('name', input.name),
-      frontmatterField('description', input.description),
-      '---'
-    ].join('\n')
+    // js-yaml.dump already ends with a newline, so the closing fence follows directly.
+    const frontmatter = `---\n${frontmatterBlock({ name: input.name, description: input.description })}---`
     const contents = `${frontmatter}\n\n${input.body.trimStart()}`
 
     await writeFile(join(dir, 'SKILL.md'), contents, 'utf8')
@@ -579,4 +558,4 @@ class UserSkillRepository {
   }
 }
 
-export { UserSkillRepository, parseUserSkillId, toSlug, frontmatterField }
+export { UserSkillRepository, parseUserSkillId, toSlug, frontmatterBlock }

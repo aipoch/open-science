@@ -4,12 +4,13 @@ import { join } from 'node:path'
 import { deflateRawSync } from 'node:zlib'
 
 import { describe, expect, it } from 'vitest'
+import { load as loadYaml } from 'js-yaml'
 
 import {
   UserSkillRepository,
   parseUserSkillId,
   toSlug,
-  frontmatterField
+  frontmatterBlock
 } from './user-skill-repository'
 import type { FetchLike } from './github-import'
 
@@ -106,36 +107,43 @@ describe('toSlug / parseUserSkillId', () => {
   })
 })
 
-describe('frontmatterField', () => {
-  it('emits an ordinary single-line value inline with no trailing newline', () => {
-    expect(frontmatterField('name', 'My Skill')).toBe('name: My Skill')
-    expect(frontmatterField('description', 'Does a thing.')).toBe('description: Does a thing.')
+describe('frontmatterBlock', () => {
+  // Reads the block back with a conformant YAML parser and asserts each field is byte-identical to
+  // the input — the property that actually matters (Claude Code parses SKILL.md with real YAML).
+  const roundTrip = (name: string, description: string): { name: unknown; description: unknown } =>
+    loadYaml(frontmatterBlock({ name, description })) as { name: unknown; description: unknown }
+
+  it('round-trips ordinary values as strings', () => {
+    const out = roundTrip('My Skill', 'Does a thing.')
+    expect(out).toEqual({ name: 'My Skill', description: 'Does a thing.' })
   })
 
-  it('serializes YAML-typed tokens as strings so they never read back as bool/null/number', () => {
-    // A plain `description: true` would parse as a boolean; force these to a block scalar.
+  it('keeps YAML-typed tokens as strings (never bool/null/number)', () => {
     for (const value of ['true', 'false', 'null', 'yes', 'no', '~', '123', '3.14', '+1', '0x1f']) {
-      const out = frontmatterField('description', value)
-      expect(out.startsWith('description: |-')).toBe(true)
-      expect(out).toContain(`  ${value}`)
+      const out = roundTrip('X', value)
+      expect(out.description).toBe(value)
+      expect(typeof out.description).toBe('string')
     }
   })
 
-  it('uses a strip-chomped (|-) block scalar for multiline values, indenting every line', () => {
-    const out = frontmatterField('description', 'line one\n\nline three')
-    expect(out).toBe('description: |-\n  line one\n\n  line three')
-    // No trailing newline is appended by the block scalar itself.
-    expect(out.endsWith('line three')).toBe(true)
+  it('losslessly round-trips trailing newlines and leading spaces', () => {
+    for (const value of [
+      'line one\n', // trailing newline preserved
+      'a\n\nb\n\n', // multiple trailing newlines
+      '  indented', // leading spaces
+      '  keep\n    me  \n' // leading + trailing whitespace across lines
+    ]) {
+      expect(roundTrip('X', value).description).toBe(value)
+    }
   })
 
-  it('blocks values that would otherwise break the frontmatter (--- fence, key: line)', () => {
-    expect(frontmatterField('description', 'a\n---\nb').startsWith('description: |-')).toBe(true)
-    expect(frontmatterField('description', 'not: a-key').startsWith('description: |-')).toBe(true)
+  it('round-trips values that would otherwise break the frontmatter (--- fence, key: line)', () => {
+    expect(roundTrip('X', 'a\n---\nb').description).toBe('a\n---\nb')
+    expect(roundTrip('X', 'not: a-key').description).toBe('not: a-key')
   })
 
-  it('serializes an empty value as an empty block scalar (not null)', () => {
-    // A bare `description:` would parse as null; `description: |-` yields an empty string.
-    expect(frontmatterField('description', '')).toBe('description: |-')
+  it('round-trips an empty value as an empty string (not null)', () => {
+    expect(roundTrip('X', '').description).toBe('')
   })
 })
 

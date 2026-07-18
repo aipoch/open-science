@@ -1,7 +1,10 @@
-// Minimal SKILL.md frontmatter reader. `parseFrontmatter` returns every top-level `key: value` line as
-// a map plus the body with the leading `--- ... ---` block removed. Intentionally not a full YAML parser
-// — only the flat scalar fields the UI needs (description, author, license, ...) — but it does read YAML
-// block scalars (`>` folded, `|` literal) so a multi-line `description: >` yields its text, not ">".
+import { load as loadYaml } from 'js-yaml'
+
+// SKILL.md frontmatter reader. Parses the leading `--- ... ---` block with a real YAML parser (the
+// same one the writer serializes with, so values round-trip), then flattens it to the string scalar
+// fields the UI needs (name, description, author, license, ...). Intentionally a FLAT reader: nested
+// maps/sequences are dropped, and every scalar is coerced to a trimmed string. A malformed block is
+// tolerated (empty fields + full body) rather than throwing, so one bad skill can't break the catalog.
 const parseFrontmatter = (raw: string): { fields: Record<string, string>; body: string } => {
   const match = /^---\n([\s\S]*?)\n---\n?/.exec(raw)
 
@@ -9,40 +12,30 @@ const parseFrontmatter = (raw: string): { fields: Record<string, string>; body: 
     return { fields: {}, body: raw }
   }
 
-  const fields: Record<string, string> = {}
-  const lines = match[1].split('\n')
-  for (let i = 0; i < lines.length; i += 1) {
-    const field = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(lines[i])
-    if (!field) continue
-
-    const key = field[1].toLowerCase()
-    const value = field[2].trim()
-
-    // A bare `>`/`|` (optionally with chomping/indent indicators) opens a block scalar: consume the
-    // following more-indented lines. Folded (`>`) joins them with spaces; literal (`|`) with newlines.
-    if (/^[|>][0-9+-]*$/.test(value)) {
-      const folded = value[0] === '>'
-      const collected: string[] = []
-      let j = i + 1
-      for (; j < lines.length; j += 1) {
-        if (lines[j].trim() === '') {
-          collected.push('')
-          continue
-        }
-        if (!/^\s/.test(lines[j])) break // a non-indented line ends the block (next top-level key)
-        collected.push(lines[j].replace(/^\s+/, ''))
-      }
-      while (collected.length && collected[collected.length - 1] === '') collected.pop()
-      fields[key] = folded ? collected.join(' ').replace(/\s+/g, ' ').trim() : collected.join('\n')
-      i = j - 1
-      continue
-    }
-
-    fields[key] = value
-  }
-
   // Drop blank lines left between the closing `---` and the first body line so the body renders clean.
   const body = raw.slice(match[0].length).replace(/^\n+/, '')
+
+  let parsed: unknown
+  try {
+    parsed = loadYaml(match[1])
+  } catch {
+    return { fields: {}, body }
+  }
+
+  const fields: Record<string, string> = {}
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (value === null) continue
+      // Flat reader: a scalar is coerced to a trimmed string; a simple list (e.g. `requirements:
+      // [gpu]`) is joined to a comma-separated string; nested maps are dropped.
+      if (Array.isArray(value)) {
+        const flat = value.filter((item) => item !== null && typeof item !== 'object')
+        if (flat.length) fields[key.toLowerCase()] = flat.map(String).join(', ')
+      } else if (typeof value !== 'object') {
+        fields[key.toLowerCase()] = String(value).trim()
+      }
+    }
+  }
 
   return { fields, body }
 }
