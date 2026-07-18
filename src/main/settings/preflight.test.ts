@@ -29,6 +29,7 @@ const run = (overrides: Partial<PreflightInput> = {}): ReturnType<typeof compute
     opencodePathExists: false,
     agentFrameworkId: 'claude-code',
     isProviderKeyUsable: alwaysUsable,
+    activeProviderCompatible: true,
     ...overrides
   })
 
@@ -95,5 +96,11 @@ describe('computePreflight', () => {
 
   it('is not provider-ready when the active provider key is unusable', () => {
     expect(run({ isProviderKeyUsable: () => false }).activeProviderReady).toBe(false)
+  })
+
+  it('is not provider-ready when the active provider is incompatible with the framework', () => {
+    // e.g. OpenCode selected but the active provider is a Local Claude — validated + usable key, yet
+    // unusable by the framework, so the pair must not be marked ready.
+    expect(run({ activeProviderCompatible: false }).activeProviderReady).toBe(false)
   })
 })

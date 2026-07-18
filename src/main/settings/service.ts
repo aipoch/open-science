@@ -50,6 +50,7 @@ import type {
   ValidateProviderRequest,
   ValidateProviderResult
 } from '../../shared/settings'
+import { isProviderUsableByFramework } from '../../shared/settings'
 import {
   defaultVendorModel,
   getOfficialVendor,
@@ -442,12 +443,27 @@ class SettingsService {
       ? await this.pathExists(settings.opencodePath)
       : false
 
+    const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+    const framework = getAgentFramework(agentFrameworkId)
+    const activeProvider = settings.activeProviderId
+      ? settings.providers.find((provider) => provider.id === settings.activeProviderId)
+      : undefined
+    // Resolve compatibility here where the vendor registry is available (official apiType) and pass the
+    // boolean into the pure preflight computation.
+    const activeProviderCompatible = activeProvider
+      ? isProviderUsableByFramework(
+          { apiType: this.resolveProviderApiType(activeProvider), type: activeProvider.type },
+          framework
+        )
+      : false
+
     return computePreflight({
       settings,
       claudePathExists,
       opencodePathExists,
-      agentFrameworkId: settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
-      isProviderKeyUsable: (provider) => this.isProviderKeyUsable(provider)
+      agentFrameworkId,
+      isProviderKeyUsable: (provider) => this.isProviderKeyUsable(provider),
+      activeProviderCompatible
     })
   }
 
@@ -1123,6 +1139,28 @@ class SettingsService {
         : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
     const framework = getAgentFramework(frameworkId)
 
+    // Enforce provider↔framework compatibility up front so an incompatible pair fails with a clear
+    // message instead of spawning an agent that can't use the credentials — e.g. OpenCode + a Local
+    // Claude provider (Claude-only login), or Claude + an OpenAI-only gateway.
+    const activeProvider = settings.activeProviderId
+      ? settings.providers.find((provider) => provider.id === settings.activeProviderId)
+      : undefined
+
+    if (!activeProvider) {
+      throw new Error('No active model provider is configured. Configure one in settings.')
+    }
+
+    if (
+      !isProviderUsableByFramework(
+        { apiType: this.resolveProviderApiType(activeProvider), type: activeProvider.type },
+        framework
+      )
+    ) {
+      throw new Error(
+        `The active model provider is not compatible with ${framework.displayName}. Pick a compatible model or switch the agent framework in settings.`
+      )
+    }
+
     if (framework.id === 'claude-code') {
       // Unchanged Claude path: skills provisioning + Anthropic-shaped env + local-auth handling.
       const { envOverrides, executablePath } = await this.resolveActiveSpawnConfig()
@@ -1133,14 +1171,6 @@ class SettingsService {
     // opencode maps the provider onto its own isolated config; the adapter writes it before spawn, and
     // the enabled skill set is materialized into opencode's config dir (its native skill tool discovers
     // them on-demand, same SKILL.md layout as Claude).
-    const activeProvider = settings.activeProviderId
-      ? settings.providers.find((provider) => provider.id === settings.activeProviderId)
-      : undefined
-
-    if (!activeProvider) {
-      throw new Error('No active model provider is configured. Configure one in settings.')
-    }
-
     await this.materializeOpencodeSkills(settings)
     const executablePath = await this.resolveOpencodeExecutable(settings.opencodePath)
     const provider = this.resolveProvider(activeProvider, settings.activeModel)

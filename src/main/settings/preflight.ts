@@ -14,6 +14,9 @@ export type PreflightInput = {
   agentFrameworkId: AgentFrameworkId
   // Whether a provider's credentials are usable (claude-default is always true; custom must decrypt).
   isProviderKeyUsable: (provider: StoredProvider) => boolean
+  // Whether the active provider can actually drive the selected framework (endpoint + provider-type
+  // compatibility). Resolved by the caller, which has the vendor registry to derive official apiTypes.
+  activeProviderCompatible: boolean
 }
 
 // Applies the design's gating rules: the selected framework's binary must be present, and an active
@@ -24,7 +27,8 @@ const computePreflight = ({
   claudePathExists,
   opencodePathExists,
   agentFrameworkId,
-  isProviderKeyUsable
+  isProviderKeyUsable,
+  activeProviderCompatible
 }: PreflightInput): Preflight => {
   const claudeReady = Boolean(settings.claude?.resolvedPath) && claudePathExists
   const opencodeReady = Boolean(settings.opencodePath) && opencodePathExists
@@ -34,10 +38,13 @@ const computePreflight = ({
     ? settings.providers.find((provider) => provider.id === settings.activeProviderId)
     : undefined
 
+  // "Ready" also requires the active provider to be able to drive the selected framework, so an
+  // incompatible pair (e.g. OpenCode + a Local Claude provider) is never marked ready.
   const activeProviderReady = Boolean(
     activeProvider &&
     activeProvider.lastValidatedAt !== undefined &&
-    isProviderKeyUsable(activeProvider)
+    isProviderKeyUsable(activeProvider) &&
+    activeProviderCompatible
   )
 
   return { claudeReady, opencodeReady, agentFrameworkId, agentReady, activeProviderReady }

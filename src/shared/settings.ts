@@ -23,11 +23,24 @@ export type ProviderApiType = ChatApiEndpoint | 'both'
 export const providerEndpoints = (apiType: ProviderApiType): ChatApiEndpoint[] =>
   apiType === 'both' ? ['anthropic', 'openai'] : [apiType]
 
-// A provider is usable by a framework only when they share at least one endpoint.
+// A provider's endpoint is usable by a framework only when they share at least one endpoint.
 export const isProviderCompatibleWith = (
   apiType: ProviderApiType,
   frameworkEndpoints: readonly ChatApiEndpoint[]
 ): boolean => providerEndpoints(apiType).some((endpoint) => frameworkEndpoints.includes(endpoint))
+
+// Whether a provider can actually drive a given framework. Two axes: endpoint compatibility (above),
+// AND provider-type — a `claude-default` provider reuses the machine's own Claude login (Claude-specific
+// OAuth/config), which no other framework can consume, so it is only usable by Claude Code regardless
+// of endpoint. Enforced both in the renderer gates and main-side (preflight + spawn).
+export const isProviderUsableByFramework = (
+  provider: { apiType: ProviderApiType; type: ProviderType },
+  framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+): boolean => {
+  if (provider.type === 'claude-default' && framework.id !== 'claude-code') return false
+
+  return isProviderCompatibleWith(provider.apiType, framework.supportedApiTypes)
+}
 
 // The endpoint to actually use for a (provider, framework) pair. When both sides support OpenAI
 // /v1/chat/completions it wins (per product decision); otherwise the shared Anthropic endpoint; else
