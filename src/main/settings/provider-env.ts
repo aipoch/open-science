@@ -9,7 +9,11 @@ import { normalizeAnthropicBaseUrl } from './base-url'
 // A provider resolved for spawning: the plaintext key is already decrypted by the caller.
 export type ResolvedProvider = {
   type: ProviderType
+  // Anthropic /v1/messages base (also the sole base for a custom provider). Claude always uses this.
   baseUrl?: string
+  // Distinct OpenAI /v1/chat/completions base for a dual-endpoint vendor (e.g. DeepSeek). Used only
+  // when the chosen endpoint is openai; falls back to baseUrl when absent.
+  openaiBaseUrl?: string
   model?: string
   key?: string
   // Which chat API the endpoint speaks; opencode uses it to pick the anthropic vs openai-compatible

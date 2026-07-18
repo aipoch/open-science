@@ -57,7 +57,8 @@ import {
   isOfficialVendorId,
   resolveVendorApiType,
   resolveVendorBaseUrl,
-  resolveVendorModelsUrl
+  resolveVendorModelsUrl,
+  resolveVendorOpenAiBaseUrl
 } from '../../shared/provider-registry'
 import { resolveStorageRoot } from '../storage-root'
 import {
@@ -1304,6 +1305,7 @@ class SettingsService {
       return {
         type: 'custom',
         baseUrl: resolveVendorBaseUrl(provider.vendorId, provider.region),
+        openaiBaseUrl: resolveVendorOpenAiBaseUrl(provider.vendorId, provider.region),
         model: modelOverride ?? defaultVendorModel(provider.vendorId),
         key,
         apiType: this.resolveProviderApiType(provider)
@@ -1326,6 +1328,7 @@ class SettingsService {
       return {
         type: 'custom',
         baseUrl: resolveVendorBaseUrl(draft.vendorId, draft.region),
+        openaiBaseUrl: resolveVendorOpenAiBaseUrl(draft.vendorId, draft.region),
         model: draft.model ?? defaultVendorModel(draft.vendorId),
         key: draft.key,
         // Official vendors declare their own endpoint; a custom draft carries the user's choice.

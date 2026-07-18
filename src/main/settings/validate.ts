@@ -68,10 +68,11 @@ const buildAnthropicValidationRequest = (provider: ResolvedProvider): Validation
 const buildOpenAiValidationRequest = (provider: ResolvedProvider): ValidationHttpRequest => {
   let url: string
 
+  // Dual-endpoint vendors serve OpenAI at a different base than Anthropic; probe the OpenAI one.
+  const base = provider.openaiBaseUrl ?? provider.baseUrl ?? ''
+
   try {
-    url = new URL(
-      `${normalizeOpenAiBaseUrl(provider.baseUrl ?? '')}/v1/chat/completions`
-    ).toString()
+    url = new URL(`${normalizeOpenAiBaseUrl(base)}/v1/chat/completions`).toString()
   } catch {
     throw new Error('Invalid base URL.')
   }

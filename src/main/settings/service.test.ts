@@ -578,8 +578,22 @@ describe('SettingsService: official vendors', () => {
     })
 
     expect(result.ok).toBe(true)
-    // The probe hits the registry base URL (+ the client's /v1/messages suffix).
-    expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/anthropic/v1/messages')
+    // DeepSeek is a dual-endpoint vendor (apiType 'both'), so the probe prefers its OpenAI base +
+    // /v1/chat/completions rather than the Anthropic route.
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/v1/chat/completions')
+  })
+
+  it('validates an anthropic-only official draft against its /v1/messages route', async () => {
+    const service = createService()
+    const fetchMock = vi.fn().mockResolvedValue({ status: 200 })
+    vi.stubGlobal('fetch', fetchMock)
+
+    // Claude (anthropic-only) keeps the Anthropic Messages probe.
+    await service.validateProvider({
+      draft: { type: 'official', vendorId: 'anthropic', key: 'sk-a' }
+    })
+
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.anthropic.com/v1/messages')
   })
 })
 

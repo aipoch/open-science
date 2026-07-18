@@ -73,6 +73,10 @@ const buildOpencodeConfig = (
   const endpoint =
     preferredEndpoint(provider.apiType ?? 'anthropic', ['anthropic', 'openai']) ?? 'anthropic'
   const { id: providerId, npm } = OPENCODE_ENDPOINT_PROVIDER[endpoint]
+  // Dual-endpoint vendors (e.g. DeepSeek) serve OpenAI at a different base than Anthropic, so pick the
+  // OpenAI base for the openai endpoint; a single-base provider falls back to baseUrl for both.
+  const baseURL =
+    endpoint === 'openai' ? (provider.openaiBaseUrl ?? provider.baseUrl) : provider.baseUrl
 
   const baseProviders = asRecord(baseConfig.provider)
   const baseProvider = asRecord(baseProviders[providerId])
@@ -97,7 +101,7 @@ const buildOpencodeConfig = (
         ...(npm ? { npm } : {}),
         options: {
           ...baseOptions,
-          ...(provider.baseUrl ? { baseURL: provider.baseUrl } : {}),
+          ...(baseURL ? { baseURL } : {}),
           ...(provider.key ? { apiKey: provider.key } : {})
         },
         // Register the model so opencode treats a non-catalog id as a real, selectable model.

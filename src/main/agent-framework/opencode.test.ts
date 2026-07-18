@@ -116,6 +116,23 @@ describe('buildOpencodeConfig', () => {
     expect(both.model).toBe('openai-compatible/m')
   })
 
+  it('uses the OpenAI base for a dual-endpoint vendor, not its Anthropic base (DeepSeek)', () => {
+    const config = JSON.parse(
+      buildOpencodeConfig({
+        type: 'custom',
+        baseUrl: 'https://api.deepseek.com/anthropic',
+        openaiBaseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-pro',
+        key: 'sk-ds',
+        apiType: 'both'
+      })
+    )
+
+    // 'both' → OpenAI on opencode, pointed at the OpenAI base (not the /anthropic route).
+    expect(config.model).toBe('openai-compatible/deepseek-v4-pro')
+    expect(config.provider['openai-compatible'].options.baseURL).toBe('https://api.deepseek.com')
+  })
+
   it('omits model + models registration when the provider has no model', () => {
     const config = JSON.parse(buildOpencodeConfig({ type: 'claude-default' }))
 
