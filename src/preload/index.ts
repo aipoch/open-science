@@ -126,6 +126,11 @@ import type {
 } from '../shared/uploads'
 import type { ReviewWithChecks, ReviewRunRequest, ReviewUpdateEvent } from '../shared/reviewer'
 import { REVIEWER_IPC } from '../shared/reviewer'
+import {
+  CLOSE_ACTIVE_PANE_CHANNEL,
+  CLOSE_ACTIVE_PANE_READY_CHANNEL,
+  WINDOW_CLOSE_CHANNEL
+} from '../shared/window-controls'
 
 type RemoveListener = () => void
 type AcpListener<Payload> = (payload: Payload) => void
@@ -338,6 +343,12 @@ type OpenScienceAPI = {
     onFixLoopEnd: (listener: AcpListener<{ sessionId: string }>) => RemoveListener
     // Sends an abort request to stop the running fix loop for a session.
     abortFixLoop: (sessionId: string) => Promise<void>
+  }
+  window: {
+    // Closes the focused window (the Cmd+W / Ctrl+W fallback when no preview panel is open).
+    close: () => Promise<void>
+    // Fires when Cmd+W / Ctrl+W is pressed; the renderer decides pane-vs-window.
+    onCloseActivePane: (listener: () => void) => RemoveListener
   }
 }
 
@@ -616,6 +627,16 @@ const api: OpenScienceAPI = {
     // Sends an abort request to the main process to stop the running fix loop for a session.
     abortFixLoop: (sessionId: string) =>
       ipcRenderer.invoke(REVIEWER_IPC.ABORT_FIX_LOOP, sessionId) as Promise<void>
+  },
+  window: {
+    close: () => ipcRenderer.invoke(WINDOW_CLOSE_CHANNEL) as Promise<void>,
+    onCloseActivePane: (listener) => {
+      const removeListener = onIpcMessage(CLOSE_ACTIVE_PANE_CHANNEL, listener)
+      // Tell main a listener is now mounted so it forwards the chord here instead of closing the
+      // window directly. Sent on subscribe (and again after any reload, which remounts the hook).
+      ipcRenderer.send(CLOSE_ACTIVE_PANE_READY_CHANNEL)
+      return removeListener
+    }
   }
 }
 

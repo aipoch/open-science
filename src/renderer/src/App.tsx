@@ -10,6 +10,7 @@ import { resolveStartupView } from '@/pages/onboarding/startup-gate'
 import { ConnectorApprovalDialog } from '@/pages/settings/ConnectorApprovalDialog'
 import { SettingsPage } from '@/pages/settings/SettingsPage'
 import { WorkspacePage } from '@/pages/workspace/WorkspacePage'
+import { useCloseActivePaneShortcut } from '@/hooks/useCloseActivePaneShortcut'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -19,6 +20,8 @@ const App = (): React.JSX.Element | null => {
   // Persistence is started once at the top so sessions stay loaded for both Home and Workspace.
   const isSessionPersistenceReady = useSessionPersistence()
   const view = useNavigationStore((state) => state.view)
+  // Cmd+W / Ctrl+W closes the open preview panel before it closes the window.
+  useCloseActivePaneShortcut()
   const loadProjects = useProjectStore((state) => state.loadProjects)
   const isSettingsLoaded = useSettingsStore((state) => state.isLoaded)
   const onboardingCompletedAt = useSettingsStore((state) => state.onboardingCompletedAt)

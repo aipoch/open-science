@@ -1,8 +1,20 @@
-import { app, BrowserWindow, shell, type BrowserWindowConstructorOptions } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  shell,
+  type BrowserWindowConstructorOptions,
+  type IpcMainEvent
+} from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { isAllowedExternalNavigation, isAllowedFrameNavigation } from './navigation-policy'
+import {
+  CLOSE_ACTIVE_PANE_CHANNEL,
+  CLOSE_ACTIVE_PANE_READY_CHANNEL,
+  isCloseWindowChord
+} from '../shared/window-controls'
 
 const rendererEntry = join(__dirname, '../renderer/index.html')
 const preloadEntry = join(__dirname, '../preload/index.js')
@@ -60,6 +72,37 @@ const createMainWindow = (): BrowserWindow => {
     minWidth: 1100,
     minHeight: 720,
     title: 'Open Science'
+  })
+
+  // The renderer decides pane-vs-window, but only once it has mounted its listener. Track that via the
+  // ready signal so the chord is never forwarded into the void: before the renderer is ready (initial
+  // load, reload, in-flight navigation) the send() below would be dropped and Cmd/Ctrl+W would do
+  // nothing, so main closes the window itself instead. Reset on every top-level load, since a fresh
+  // document has to re-subscribe before it can own the chord again.
+  let rendererListenerReady = false
+  const onListenerReady = (event: IpcMainEvent): void => {
+    if (event.sender === window.webContents) rendererListenerReady = true
+  }
+  ipcMain.on(CLOSE_ACTIVE_PANE_READY_CHANNEL, onListenerReady)
+  window.webContents.on('did-start-loading', () => {
+    rendererListenerReady = false
+  })
+  window.on('closed', () => {
+    ipcMain.removeListener(CLOSE_ACTIVE_PANE_READY_CHANNEL, onListenerReady)
+  })
+
+  // Intercept Cmd+W / Ctrl+W before the default menu "Close" role fires. preventDefault here also
+  // suppresses the menu accelerator (electron/electron#19279), so the chord never closes the window
+  // behind the renderer's back. Forward to the renderer when it is ready, otherwise close directly.
+  window.webContents.on('before-input-event', (event, input) => {
+    if (!isCloseWindowChord(input, process.platform)) return
+
+    event.preventDefault()
+    if (rendererListenerReady) {
+      window.webContents.send(CLOSE_ACTIVE_PANE_CHANNEL)
+    } else {
+      window.close()
+    }
   })
 
   // In dev, mirror the "(DEV)" app suffix in the title bar. The renderer's <title> overwrites the

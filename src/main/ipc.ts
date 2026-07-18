@@ -16,6 +16,7 @@ import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './connectors/
 import { registerFileSaveHandlers } from './file-save'
 import { registerGithubIpcHandlers } from './github-ipc'
 import { registerLogsIpcHandlers } from './logs-ipc'
+import { registerWindowIpcHandlers } from './window-ipc'
 import { createLogger } from './logger'
 import { registerManagedPreviewIpcHandlers } from './managed-preview-ipc'
 import { registerManagedPreviewProtocol } from './managed-preview-protocol'
@@ -221,6 +222,7 @@ const registerIpcHandlers = async ({ mainEntryPath }: IpcRegistrationOptions): P
   registerFileSaveHandlers({ resolveManagedFilePath })
   registerLogsIpcHandlers()
   registerGithubIpcHandlers()
+  registerWindowIpcHandlers()
   const updateService = registerUpdateIpcHandlers()
   startUpdateScheduler(updateService)
   const runtime = registerAcpIpcHandlers({

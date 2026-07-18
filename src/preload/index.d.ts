@@ -321,6 +321,12 @@ interface OpenScienceAPI {
     // Sends an abort request to stop the running fix loop for a session.
     abortFixLoop(sessionId: string): Promise<void>
   }
+  window: {
+    // Closes the focused window (the Cmd+W / Ctrl+W fallback when no preview panel is open).
+    close(): Promise<void>
+    // Fires when Cmd+W / Ctrl+W is pressed; the renderer decides pane-vs-window.
+    onCloseActivePane(listener: () => void): RemoveListener
+  }
 }
 
 declare global {
