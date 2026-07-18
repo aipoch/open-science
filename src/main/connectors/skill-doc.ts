@@ -92,12 +92,16 @@ export function renderSkillDoc(connectorId: string): string {
   )
 }
 
-export type CustomSkillDocServer = { name: string; description?: string }
+export type CustomSkillDocServer = { id: string; name: string; description?: string }
 export type CustomSkillDocTool = { name: string; description?: string; inputSchema?: unknown }
 
 // Same shape as renderSkillDoc, but for a user-added custom MCP server: schema comes from
 // McpClientManager.listTools() at runtime rather than a bundled descriptor table, and the
 // trigger-style description falls back to a composed one when the server has no useWhen text.
+// The skill `name` is keyed on the server's immutable id, never its display name: the name is
+// user-controlled and can contain characters that are unsafe as a filesystem path or that collide
+// with a bundled connector's skill name. The runtime routing key (`host.mcp("<name>", ...)`) still
+// uses the display name, which is what McpClientManager registers the server under.
 export function renderCustomSkillDoc(
   server: CustomSkillDocServer,
   tools: CustomSkillDocTool[]
@@ -105,7 +109,7 @@ export function renderCustomSkillDoc(
   const useWhen =
     server.description ??
     `Use when you need tools from the ${server.name} MCP server — ${tools.map((t) => t.name).join(', ')}.`
-  const header = `---\nname: mcp-${server.name}\ndescription: ${JSON.stringify(useWhen)}\nsource: connector\n---\n`
+  const header = `---\nname: mcp-${server.id}\ndescription: ${JSON.stringify(useWhen)}\nsource: connector\n---\n`
   const methods = tools
     .map(
       (t) =>

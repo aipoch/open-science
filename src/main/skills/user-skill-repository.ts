@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 
 import type { SkillBundlePreview, SkillReference, SkillSource } from '../../shared/settings'
 import { createLogger } from '../logger'
@@ -463,8 +463,15 @@ class UserSkillRepository {
     const dir = this.skillDir('imported', slug)
     await rm(dir, { recursive: true, force: true })
 
+    // Final containment gate for every import source (zip, GitHub, ...): resolve each target and
+    // confirm it stays inside the skill directory before writing, so a crafted relative path can
+    // never escape even if an upstream path check is bypassed on a given platform.
+    const root = resolve(dir)
     for (const file of files) {
-      const target = join(dir, file.relativePath)
+      const target = resolve(dir, file.relativePath)
+      if (target !== root && !target.startsWith(root + sep)) {
+        throw new Error(`Refusing to write skill file outside its directory: ${file.relativePath}`)
+      }
       await mkdir(dirname(target), { recursive: true })
       await writeFile(target, file.content)
     }

@@ -33,9 +33,18 @@ export async function syncConnectorSkillDocs(
 
 export type CustomServerListTools = (server: StoredCustomMcpServer) => Promise<CustomSkillDocTool[]>
 
-// Writes skills/mcp-<name>/SKILL.md for enabled custom MCP servers, sourced from the server's
+// A custom server's skill dir is keyed on its immutable UUID id, NEVER its user-facing name. The
+// name is only validated non-empty upstream, so a name like `../evil` would let SKILL.md escape
+// skillsDir, and a name equal to a bundled connector id (e.g. `chemistry`) would clobber the
+// built-in mcp-chemistry doc. The id is a randomUUID (safe token, never a bundled id); this guard
+// additionally rejects any id that isn't a safe path segment — defense against a tampered
+// settings.json — so a hand-crafted id can't reintroduce traversal or a bundled-id collision.
+const isSafeCustomServerId = (id: string): boolean =>
+  /^[A-Za-z0-9_-]+$/.test(id) && !ALL_CONNECTOR_IDS.includes(id)
+
+// Writes skills/mcp-<id>/SKILL.md for enabled custom MCP servers, sourced from the server's
 // live listTools() schema rather than a bundled descriptor table (§3.4). Cleanup mirrors
-// syncConnectorSkillDocs: it only removes names that are NOT known bundled connector ids, so
+// syncConnectorSkillDocs: it only removes ids that are NOT known bundled connector ids, so
 // the two sync passes never delete each other's directories even when run against the same dir.
 export async function syncCustomServerSkillDocs(
   skillsDir: string,
@@ -43,10 +52,11 @@ export async function syncCustomServerSkillDocs(
   listTools: CustomServerListTools
 ): Promise<void> {
   await mkdir(skillsDir, { recursive: true })
-  const enabledNames = new Set(servers.map((s) => s.name))
-  for (const server of servers) {
+  const safeServers = servers.filter((s) => isSafeCustomServerId(s.id))
+  const enabledIds = new Set(safeServers.map((s) => s.id))
+  for (const server of safeServers) {
     const tools = await listTools(server)
-    const dir = join(skillsDir, `mcp-${server.name}`)
+    const dir = join(skillsDir, `mcp-${server.id}`)
     await mkdir(dir, { recursive: true })
     await writeFile(join(dir, 'SKILL.md'), renderCustomSkillDoc(server, tools), 'utf8')
   }
@@ -54,7 +64,7 @@ export async function syncCustomServerSkillDocs(
   for (const entry of existing) {
     const m = /^mcp-(.+)$/.exec(entry)
     if (!m || ALL_CONNECTOR_IDS.includes(m[1])) continue // owned by syncConnectorSkillDocs
-    if (!enabledNames.has(m[1])) {
+    if (!enabledIds.has(m[1])) {
       await rm(join(skillsDir, entry), { recursive: true, force: true })
     }
   }

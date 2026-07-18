@@ -114,6 +114,21 @@ describe('extractZip', () => {
     expect(files.map((file) => file.path)).toEqual(['skill/SKILL.md'])
   })
 
+  it('normalizes backslash paths so Windows-style zip-slip is caught and separators unify', () => {
+    const files = extractZip(
+      buildZip([
+        // Backslash traversal: harmless on posix split('/'), a real escape on Windows path.join.
+        { path: '..\\..\\evil.sh', content: Buffer.from('rm -rf', 'utf8'), method: 0 },
+        // A Windows drive-letter absolute path.
+        { path: 'C:\\Windows\\system32\\x', content: Buffer.from('x', 'utf8'), method: 0 },
+        // A legitimate nested file authored with backslashes normalizes to forward slashes.
+        { path: 'skill\\references\\helper.py', content: Buffer.from('ok', 'utf8'), method: 0 }
+      ])
+    )
+
+    expect(files.map((file) => file.path)).toEqual(['skill/references/helper.py'])
+  })
+
   it('throws when the buffer is not a zip', () => {
     expect(() => extractZip(Buffer.from('not a zip at all', 'utf8'))).toThrow()
   })
