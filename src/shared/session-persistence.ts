@@ -108,7 +108,8 @@ export type PersistedChatSession = {
   status: PersistedSessionStatus
   // Per-conversation approval posture. Older session files omit it and safely restore to Ask.
   permissionProfile?: PermissionProfileId
-  // Per-conversation auto-review toggle. Absent (older files) is treated as enabled.
+  // Per-conversation auto-review toggle. Absent (older files) or non-true is treated as disabled;
+  // only an explicit true enables it.
   autoReviewEnabled?: boolean
   messages: PersistedChatMessage[]
   activities?: PersistedToolActivity[]
