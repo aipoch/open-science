@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   classifyVerifyResult,
   defaultVerifyBinary,
+  detectAvx2,
   installManagedOpencode,
   managedOpencodeDir,
   resolveOpencodePlatform,
@@ -563,6 +564,64 @@ describe('installManagedOpencode', () => {
     // No baseline key was ever requested on arm64.
     expect(requestedKeys.some((url) => url.includes('baseline'))).toBe(false)
     expect(outcome.result.ok).toBe(true)
+  })
+})
+
+describe('detectAvx2', () => {
+  // darwin: sysctl fails via out.error / non-zero status (never throws), so failures must be treated as
+  // "assume present" BEFORE reading stdout — otherwise a capable Intel Mac is mis-flagged as baseline.
+  it('assumes AVX2 present when the darwin sysctl probe errors (ENOENT)', () => {
+    expect(
+      detectAvx2({ platform: 'darwin', runSysctl: () => ({ error: new Error('spawn ENOENT') }) })
+    ).toBe(true)
+  })
+
+  it('assumes AVX2 present when the darwin sysctl probe exits non-zero with empty stdout', () => {
+    expect(detectAvx2({ platform: 'darwin', runSysctl: () => ({ status: 1, stdout: '' }) })).toBe(
+      true
+    )
+  })
+
+  it('detects AVX2 present from the darwin sysctl feature list', () => {
+    expect(
+      detectAvx2({
+        platform: 'darwin',
+        runSysctl: () => ({ status: 0, stdout: 'RDSEED ADX SMAP AVX2 BMI2\n' })
+      })
+    ).toBe(true)
+  })
+
+  it('detects AVX2 absent when the darwin feature list omits it', () => {
+    expect(
+      detectAvx2({
+        platform: 'darwin',
+        runSysctl: () => ({ status: 0, stdout: 'SMEP ERMS INVPCID\n' })
+      })
+    ).toBe(false)
+  })
+
+  it('detects AVX2 present/absent from linux /proc/cpuinfo flags', () => {
+    expect(
+      detectAvx2({ platform: 'linux', readCpuinfo: () => 'flags\t: fpu sse2 avx avx2 bmi2\n' })
+    ).toBe(true)
+    expect(detectAvx2({ platform: 'linux', readCpuinfo: () => 'flags\t: fpu sse2 avx\n' })).toBe(
+      false
+    )
+  })
+
+  it('assumes AVX2 present when reading linux /proc/cpuinfo throws', () => {
+    expect(
+      detectAvx2({
+        platform: 'linux',
+        readCpuinfo: () => {
+          throw new Error('EACCES')
+        }
+      })
+    ).toBe(true)
+  })
+
+  it('assumes AVX2 present on platforms without a cheap probe (win32)', () => {
+    expect(detectAvx2({ platform: 'win32' })).toBe(true)
   })
 })
 

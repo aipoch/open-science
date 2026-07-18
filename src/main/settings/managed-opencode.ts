@@ -80,21 +80,39 @@ const isRosetta = (): boolean => {
   }
 }
 
+// Injectable probes for the AVX2 detector so both OS branches are unit-testable cross-platform (parallel
+// to ResolveOpencodePlatformDeps). Real defaults hit /proc/cpuinfo (linux) and sysctl (darwin).
+export type DetectAvx2Deps = {
+  platform?: NodeJS.Platform
+  readCpuinfo?: () => string
+  runSysctl?: () => { error?: Error; status?: number | null; stdout?: string }
+}
+
 // Up-front AVX2 probe so a non-AVX2 x64 host installs the `-baseline` build on the FIRST try instead of
 // downloading the standard build, dying on SIGILL, and retrying. Errs on the side of `true` (standard
 // build) whenever it cannot cheaply/reliably tell — the illegal-instruction→baseline retry is the safety
 // net for those cases. Only meaningful on x64; the caller gates on that.
-export const detectAvx2 = (): boolean => {
-  if (process.platform === 'linux') {
+export const detectAvx2 = (deps: DetectAvx2Deps = {}): boolean => {
+  const platform = deps.platform ?? process.platform
+
+  if (platform === 'linux') {
     try {
-      return /\bavx2\b/i.test(readFileSync('/proc/cpuinfo', 'utf8'))
+      const readCpuinfo = deps.readCpuinfo ?? (() => readFileSync('/proc/cpuinfo', 'utf8'))
+      return /\bavx2\b/i.test(readCpuinfo())
     } catch {
       return true
     }
   }
-  if (process.platform === 'darwin') {
+  if (platform === 'darwin') {
     try {
-      const out = spawnSync('sysctl', ['-n', 'machdep.cpu.leaf7_features'], { encoding: 'utf8' })
+      const runSysctl =
+        deps.runSysctl ??
+        (() => spawnSync('sysctl', ['-n', 'machdep.cpu.leaf7_features'], { encoding: 'utf8' }))
+      const out = runSysctl()
+      // spawnSync signals failure via out.error / a non-zero out.status rather than throwing, leaving
+      // stdout empty — treat any such failure as "assume present" BEFORE testing stdout so a capable
+      // Intel Mac is never mis-flagged as baseline when sysctl is missing or errors.
+      if (out.error || (out.status != null && out.status !== 0)) return true
       return /avx2/i.test(out.stdout ?? '')
     } catch {
       return true
