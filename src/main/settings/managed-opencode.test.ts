@@ -245,6 +245,8 @@ describe('installManagedOpencode', () => {
       platform: { key: 'linux-x64', binName: 'opencode' },
       fetchJson,
       fetchTarball,
+      // AVX2 present, so the standard build is tried first — the SIGILL retry is the safety net.
+      detectAvx2: () => true,
       verifyBinary: () => {
         probes += 1
         return probes === 1
@@ -297,6 +299,7 @@ describe('installManagedOpencode', () => {
       platform: { key: 'linux-x64-musl', binName: 'opencode' },
       fetchJson,
       fetchTarball,
+      detectAvx2: () => true,
       verifyBinary: () => {
         probes += 1
         return probes === 1
@@ -350,6 +353,7 @@ describe('installManagedOpencode', () => {
       platform: { key: 'windows-x64', binName: 'opencode.exe' },
       fetchJson,
       fetchTarball,
+      detectAvx2: () => true,
       verifyBinary: () => {
         probes += 1
         return probes === 1
@@ -429,6 +433,7 @@ describe('installManagedOpencode', () => {
       platform: { key: 'linux-x64', binName: 'opencode' },
       fetchJson,
       fetchTarball,
+      detectAvx2: () => true,
       verifyBinary: () => ({ ok: false, reason: 'killed by SIGILL', illegalInstruction: true }),
       tmpDir: root
     })
@@ -438,6 +443,126 @@ describe('installManagedOpencode', () => {
     expect(outcome.result.error).toMatch(/AVX2/)
     // No broken binary left on disk.
     await expect(readFile(join(managedOpencodeDir(root), 'opencode'))).rejects.toThrow()
+  })
+
+  // A non-AVX2 x64 host detected up front installs the -baseline build on the FIRST try: no wasted
+  // standard download + SIGILL. The baseline key is requested first and the standard key is never asked.
+  it('installs the baseline build first when AVX2 is absent on x64 (no standard download)', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+    const baselineTgz = buildTgz([
+      { name: 'package/bin/opencode', content: Buffer.from('#!/bin/sh\necho baseline\n') }
+    ])
+
+    const requestedKeys: string[] = []
+    const fetchJson = async (url: string): Promise<unknown> => {
+      if (url.endsWith('/opencode-ai')) return { 'dist-tags': { latest: '1.18.3' } }
+      if (url.includes('/opencode-linux-x64-baseline/')) {
+        requestedKeys.push('baseline')
+        return { dist: { tarball: 'https://reg/baseline.tgz', integrity: sha512(baselineTgz) } }
+      }
+      requestedKeys.push('standard')
+      return { dist: { tarball: 'https://reg/standard.tgz', integrity: 'sha512-unused' } }
+    }
+    const fetchTarball = async (): Promise<{
+      stream: NodeJS.ReadableStream
+      totalBytes?: number
+    }> => ({ stream: Readable.from(baselineTgz), totalBytes: baselineTgz.length })
+
+    const outcome = await installManagedOpencode({
+      installId: 'i8',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform: { key: 'linux-x64', binName: 'opencode' },
+      fetchJson,
+      fetchTarball,
+      // Positively no AVX2 → prefer the baseline build up front.
+      detectAvx2: () => false,
+      verifyBinary: () => ({ ok: true }),
+      tmpDir: root
+    })
+
+    // The baseline key is requested first, and the standard key is never requested at all.
+    expect(requestedKeys[0]).toBe('baseline')
+    expect(requestedKeys).not.toContain('standard')
+    expect(outcome.result.ok).toBe(true)
+    expect(await readFile(outcome.resolvedPath!, 'utf8')).toContain('echo baseline')
+  })
+
+  // The default path: AVX2 present ⇒ the standard build is requested first (baseline only via retry).
+  it('installs the standard build first when AVX2 is present on x64', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+    const standardTgz = buildTgz([
+      { name: 'package/bin/opencode', content: Buffer.from('#!/bin/sh\necho standard\n') }
+    ])
+
+    const requestedKeys: string[] = []
+    const fetchJson = async (url: string): Promise<unknown> => {
+      if (url.endsWith('/opencode-ai')) return { 'dist-tags': { latest: '1.18.3' } }
+      if (url.includes('-baseline/')) {
+        requestedKeys.push('baseline')
+        return { dist: { tarball: 'https://reg/baseline.tgz', integrity: 'sha512-unused' } }
+      }
+      requestedKeys.push('standard')
+      return { dist: { tarball: 'https://reg/standard.tgz', integrity: sha512(standardTgz) } }
+    }
+    const fetchTarball = async (): Promise<{
+      stream: NodeJS.ReadableStream
+      totalBytes?: number
+    }> => ({ stream: Readable.from(standardTgz), totalBytes: standardTgz.length })
+
+    const outcome = await installManagedOpencode({
+      installId: 'i9',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform: { key: 'linux-x64', binName: 'opencode' },
+      fetchJson,
+      fetchTarball,
+      detectAvx2: () => true,
+      verifyBinary: () => ({ ok: true }),
+      tmpDir: root
+    })
+
+    expect(requestedKeys).toEqual(['standard'])
+    expect(outcome.result.ok).toBe(true)
+    expect(await readFile(outcome.resolvedPath!, 'utf8')).toContain('echo standard')
+  })
+
+  // arm64 has no baseline package, so it must never prefer baseline even when AVX2 detection says absent.
+  it('never prefers baseline on arm64 regardless of AVX2 detection', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+    const tgz = buildTgz([
+      { name: 'package/bin/opencode', content: Buffer.from('#!/bin/sh\necho arm\n') }
+    ])
+
+    const requestedKeys: string[] = []
+    const fetchJson = async (url: string): Promise<unknown> => {
+      if (url.endsWith('/opencode-ai')) return { 'dist-tags': { latest: '1.18.3' } }
+      requestedKeys.push(url)
+      return { dist: { tarball: 'https://reg/arm.tgz', integrity: sha512(tgz) } }
+    }
+    const fetchTarball = async (): Promise<{
+      stream: NodeJS.ReadableStream
+      totalBytes?: number
+    }> => ({ stream: Readable.from(tgz), totalBytes: tgz.length })
+
+    const outcome = await installManagedOpencode({
+      installId: 'i10',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform: { key: 'darwin-arm64', binName: 'opencode' },
+      fetchJson,
+      fetchTarball,
+      detectAvx2: () => false,
+      verifyBinary: () => ({ ok: true }),
+      tmpDir: root
+    })
+
+    // No baseline key was ever requested on arm64.
+    expect(requestedKeys.some((url) => url.includes('baseline'))).toBe(false)
+    expect(outcome.result.ok).toBe(true)
   })
 })
 

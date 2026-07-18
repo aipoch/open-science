@@ -108,6 +108,30 @@ describe('runEnvironmentCheck', () => {
     expect(result.ready).toBe(true)
   })
 
+  it('notes the baseline build for a non-AVX2 x64 opencode host while staying auto-installable', async () => {
+    const result = await runEnvironmentCheck({
+      storageRoot: '/data',
+      agentFrameworkId: 'opencode' as const,
+      frameworks: [{ id: 'opencode' as const, label: 'OpenCode', runtime: { found: false } }],
+      encryptionAvailable: true,
+      deps: {
+        ...baseDeps(),
+        platform: 'linux' as const,
+        architecture: 'x64',
+        resolveManagedPlatform: vi.fn().mockReturnValue({ key: 'linux-x64' }),
+        detectAvx2: () => false
+      }
+    })
+
+    const system = result.checks.find((check) => check.id === 'system')
+    // Passed (not a warning) with an informational baseline note — the true capability.
+    expect(system?.status).toBe('passed')
+    expect(system?.summary).toContain('baseline build')
+    expect(system?.detail).toContain('AVX2')
+    // A non-AVX2 x64 host is still fully auto-installable via the baseline package.
+    expect(result.canAutoInstall).toBe(true)
+  })
+
   it('blocks automatic setup when the app data directory is not writable', async () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/locked',

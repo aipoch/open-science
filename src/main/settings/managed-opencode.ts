@@ -1,4 +1,5 @@
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { chmod, rm } from 'node:fs/promises'
 import { arch as osArch } from 'node:os'
 import { join } from 'node:path'
@@ -18,10 +19,11 @@ import {
 // App-managed OpenCode installer. opencode ships per-platform native packages
 // (`opencode-<os>-<arch>[-musl]`) as optionalDependencies of the `opencode-ai` wrapper, with the binary
 // at `package/bin/opencode` — the same native-package model as Claude, so the shared download/verify/
-// extract helpers are reused. Modern CPUs get the standard build; a non-AVX2 x64 host whose post-install
-// smoke check dies on an illegal instruction (SIGILL on POSIX, the NTSTATUS illegal-instruction exit
-// status on Windows) falls back once to the `-baseline` variant opencode publishes for x64 (no fragile
-// pre-detection). Every side-effecting dependency is injectable so the flow is unit-testable offline.
+// extract helpers are reused. Modern CPUs get the standard build; an x64 host detected up front to lack
+// AVX2 installs the `-baseline` variant on the first try, and any x64 host whose post-install smoke check
+// still dies on an illegal instruction (SIGILL on POSIX, the NTSTATUS illegal-instruction exit status on
+// Windows) falls back once to that `-baseline` variant as a safety net. Every side-effecting dependency
+// is injectable so the flow is unit-testable offline.
 
 // Wrapper package (its dist-tags.latest gives the version) and the native-package name prefix. Note the
 // native packages are `opencode-<key>`, NOT `opencode-ai-<key>`, so the prefix differs from the wrapper.
@@ -76,6 +78,30 @@ const isRosetta = (): boolean => {
   } catch {
     return false
   }
+}
+
+// Up-front AVX2 probe so a non-AVX2 x64 host installs the `-baseline` build on the FIRST try instead of
+// downloading the standard build, dying on SIGILL, and retrying. Errs on the side of `true` (standard
+// build) whenever it cannot cheaply/reliably tell — the illegal-instruction→baseline retry is the safety
+// net for those cases. Only meaningful on x64; the caller gates on that.
+export const detectAvx2 = (): boolean => {
+  if (process.platform === 'linux') {
+    try {
+      return /\bavx2\b/i.test(readFileSync('/proc/cpuinfo', 'utf8'))
+    } catch {
+      return true
+    }
+  }
+  if (process.platform === 'darwin') {
+    try {
+      const out = spawnSync('sysctl', ['-n', 'machdep.cpu.leaf7_features'], { encoding: 'utf8' })
+      return /avx2/i.test(out.stdout ?? '')
+    } catch {
+      return true
+    }
+  }
+  // win32 / anything else: no cheap reliable probe — assume standard and rely on the SIGILL retry.
+  return true
 }
 
 // Maps the host to opencode's native-package key. opencode uses `windows` (not Node's `win32`).
@@ -225,6 +251,7 @@ export type InstallManagedOpencodeOptions = {
   fetchJson?: FetchJson
   fetchTarball?: FetchTarball
   verifyBinary?: VerifyBinary
+  detectAvx2?: () => boolean
   tmpDir?: string
 }
 
@@ -247,6 +274,7 @@ export const installManagedOpencode = async ({
   fetchJson = defaultFetchJson,
   fetchTarball = defaultFetchTarball,
   verifyBinary = defaultVerifyBinary,
+  detectAvx2: detectAvx2Dep = detectAvx2,
   tmpDir
 }: InstallManagedOpencodeOptions): Promise<ManagedInstallOutcome> => {
   const destPath = join(managedOpencodeDir(dataRoot), platform.binName)
@@ -318,30 +346,36 @@ export const installManagedOpencode = async ({
   // x64 hosts have a `-baseline` native package variant that drops AVX2; a musl or plain x64 key still
   // contains "x64". arm64 has no baseline, so it is never retried.
   const isX64 = platform.key.includes('x64')
+  // On an x64 host that we can positively tell lacks AVX2, install the baseline build FIRST (no wasted
+  // standard download + SIGILL). When AVX2 is present or undetectable we try the standard build first and
+  // keep the illegal-instruction→baseline retry as the safety net.
+  const preferBaseline = isX64 && !detectAvx2Dep()
+  const firstKey = preferBaseline ? baselinePackageKey(platform.key) : platform.key
 
   for (const registry of registries) {
     try {
-      const standard = await installFromPackage(registry, platform.key, version)
-      if (standard.ok) {
+      const first = await installFromPackage(registry, firstKey, version)
+      if (first.ok) {
         onEvent({
           kind: 'log',
           installId,
           stream: 'system',
-          chunk: `Installed OpenCode ${standard.version}.\n`
+          chunk: `Installed OpenCode ${first.version}${preferBaseline ? ' (baseline)' : ''}.\n`
         })
         return {
           result: { installId, ok: true },
           resolvedPath: destPath,
-          version: standard.version
+          version: first.version
         }
       }
 
-      // The standard build extracted but died on this CPU. On a non-AVX2 x64 host (illegal instruction:
-      // SIGILL on POSIX, the NTSTATUS status on Windows) retry once with the `-baseline` variant so the
-      // onboarding "auto-installable" claim actually holds. If the baseline package is missing (404 at
-      // resolve) or also fails to run, surface the illegal-instruction/AVX2 diagnosis rather than
-      // crashing on an unverifiable package name.
-      if (standard.illegalInstruction && isX64) {
+      // The first build extracted but died on this CPU. If we did NOT already prefer baseline and this is
+      // an x64 host reporting an illegal instruction (SIGILL on POSIX, the NTSTATUS status on Windows),
+      // retry once with the `-baseline` variant so the onboarding "auto-installable" claim holds. Gating
+      // on `!preferBaseline` avoids building a double-`baseline` key when the first attempt already was
+      // baseline. If the baseline package is missing (404 at resolve) or also fails to run, surface the
+      // illegal-instruction/AVX2 diagnosis rather than crashing on an unverifiable package name.
+      if (!preferBaseline && first.illegalInstruction && isX64) {
         onEvent({
           kind: 'log',
           installId,
@@ -352,7 +386,7 @@ export const installManagedOpencode = async ({
           const baseline = await installFromPackage(
             registry,
             baselinePackageKey(platform.key),
-            standard.resolvedVersion
+            first.resolvedVersion
           )
           if (baseline.ok) {
             onEvent({
@@ -372,7 +406,7 @@ export const installManagedOpencode = async ({
         }
       }
 
-      throw new Error(standard.error)
+      throw new Error(first.error)
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error)
       onEvent({

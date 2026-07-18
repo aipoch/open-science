@@ -12,7 +12,7 @@ import type {
 } from '../../shared/settings'
 import { findPythonCommand, type PythonCommand } from '../notebook/python-command'
 import { getManagedPlatform } from './managed-claude'
-import { resolveOpencodePlatform } from './managed-opencode'
+import { detectAvx2, resolveOpencodePlatform } from './managed-opencode'
 
 const REGISTRY_URLS: Record<ManagedClaudeRegistry, string> = {
   npmjs: 'https://registry.npmjs.org',
@@ -40,6 +40,7 @@ export type EnvironmentCheckDeps = {
   resolveManagedPlatform?: () => unknown
   findPython?: () => Promise<PythonCommand | undefined>
   probeRegistry?: RegistryProbe
+  detectAvx2?: () => boolean
   now?: () => number
 }
 
@@ -151,7 +152,13 @@ const runEnvironmentCheck = async ({
     (() => (agentFrameworkId === 'opencode' ? resolveOpencodePlatform() : getManagedPlatform()))
   const findPython = deps.findPython ?? findPythonCommand
   const probeRegistry = deps.probeRegistry ?? probeRegistryReachability
+  const detectAvx2Cap = deps.detectAvx2 ?? detectAvx2
   const now = deps.now ?? Date.now
+
+  // opencode ships a `-baseline` build for a non-AVX2 x64 host, so such a machine is still fully
+  // auto-installable — reflect the true capability with an informational note rather than a warning.
+  const opencodeBaselineNote =
+    agentFrameworkId === 'opencode' && architecture === 'x64' && !detectAvx2Cap()
 
   const [systemCheck, storageCheck, python] = await Promise.all([
     Promise.resolve().then<EnvironmentCheckItem>(() => {
@@ -161,9 +168,12 @@ const runEnvironmentCheck = async ({
           id: 'system',
           label: 'System compatibility',
           status: 'passed',
-          summary: `${platformLabel(platform)} ${architecture} is supported.`,
-          detail:
-            'Automatic setup uses an app-managed runtime and does not require administrator access.'
+          summary: opencodeBaselineNote
+            ? `${platformLabel(platform)} ${architecture} is supported — the baseline build will be installed.`
+            : `${platformLabel(platform)} ${architecture} is supported.`,
+          detail: opencodeBaselineNote
+            ? 'This CPU lacks AVX2, so automatic setup installs the app-managed baseline runtime. No administrator access is required.'
+            : 'Automatic setup uses an app-managed runtime and does not require administrator access.'
         }
       } catch (error) {
         // An already-runnable runtime can still be used even if this architecture has no managed
