@@ -96,6 +96,68 @@ describe('fetchSkillFiles', () => {
     ).rejects.toThrow(/No SKILL\.md/)
   })
 
+  it('rejects a file larger than the per-file limit', async () => {
+    // A single 17 MiB file exceeds SKILL_IMPORT_LIMITS.maxFileBytes (16 MiB).
+    const oversized: FetchLike = async (url) => {
+      if (url.includes('/contents/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              type: 'file',
+              name: 'SKILL.md',
+              path: 'pack/foo/SKILL.md',
+              download_url: 'https://raw/big'
+            }
+          ],
+          arrayBuffer: async () => new ArrayBuffer(17 * 1024 * 1024)
+        }
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        arrayBuffer: async () => new ArrayBuffer(17 * 1024 * 1024)
+      }
+    }
+
+    await expect(
+      fetchSkillFiles({ owner: 'acme', repo: 'skills', ref: 'main', path: 'pack/foo' }, oversized)
+    ).rejects.toThrow(/exceeds the .* limit/)
+  })
+
+  it('rejects a repository nested deeper than the depth limit', async () => {
+    // Every contents request returns a single subdirectory, so the walk recurses without bound
+    // until the depth cap trips.
+    const bottomless: FetchLike = async (url) => {
+      const match = /\/contents\/(.*?)(\?|$)/.exec(url)
+      const path = match ? decodeURIComponent(match[1]) : ''
+      return {
+        ok: true,
+        status: 200,
+        json: async () => [{ type: 'dir', name: 'deeper', path: `${path}/deeper` }],
+        arrayBuffer: async () => new ArrayBuffer(0)
+      }
+    }
+
+    await expect(
+      fetchSkillFiles({ owner: 'acme', repo: 'skills', ref: 'main', path: 'pack/foo' }, bottomless)
+    ).rejects.toThrow(/nesting exceeds/)
+  })
+
+  it('rejects a directory with more files than the count limit', async () => {
+    const many = Object.fromEntries(
+      Array.from({ length: 2001 }, (_, i) => [`f${i}.txt`, 'x'])
+    ) as Record<string, string>
+    await expect(
+      fetchSkillFiles(
+        { owner: 'acme', repo: 'skills', ref: 'main', path: 'pack/foo' },
+        fakeFetch(many)
+      )
+    ).rejects.toThrow(/too many files/)
+  })
+
   it('percent-encodes path segments in the contents URL', async () => {
     const urls: string[] = []
     const capturingFetch: FetchLike = async (url) => {

@@ -1,4 +1,5 @@
 import { createLogger } from '../logger'
+import { SKILL_IMPORT_LIMITS } from './import-limits'
 
 const log = createLogger('skills')
 
@@ -62,7 +63,16 @@ const fetchSkillFiles = async (
 ): Promise<FetchedSkillFile[]> => {
   const rootPrefix = location.path ? `${location.path}/` : ''
 
-  const walk = async (path: string): Promise<FetchedSkillFile[]> => {
+  // Bound the recursive download so a huge (or maliciously deep) repository can't freeze or exhaust
+  // the app: cap directory depth, file count, per-file size, and total bytes across the whole skill.
+  let fileCount = 0
+  let totalBytes = 0
+
+  const walk = async (path: string, depth: number): Promise<FetchedSkillFile[]> => {
+    if (depth > SKILL_IMPORT_LIMITS.maxDepth) {
+      throw new Error(`Skill directory nesting exceeds ${SKILL_IMPORT_LIMITS.maxDepth} levels.`)
+    }
+
     const response = await fetchImpl(contentsUrl(location, path), { headers: GITHUB_HEADERS })
     if (!response.ok) {
       throw new Error(`GitHub API request failed (${response.status}) for ${path || 'repo root'}`)
@@ -74,8 +84,11 @@ const fetchSkillFiles = async (
 
     for (const entry of entries) {
       if (entry.type === 'dir') {
-        files.push(...(await walk(entry.path)))
+        files.push(...(await walk(entry.path, depth + 1)))
       } else if (entry.type === 'file' && entry.download_url) {
+        if (fileCount >= SKILL_IMPORT_LIMITS.maxFiles) {
+          throw new Error(`Skill has too many files (limit ${SKILL_IMPORT_LIMITS.maxFiles}).`)
+        }
         const raw = await fetchImpl(entry.download_url, {
           headers: { 'User-Agent': 'open-science' }
         })
@@ -83,6 +96,18 @@ const fetchSkillFiles = async (
           throw new Error(`Failed to download ${entry.path} (${raw.status})`)
         }
         const content = Buffer.from(await raw.arrayBuffer())
+        if (content.length > SKILL_IMPORT_LIMITS.maxFileBytes) {
+          throw new Error(
+            `File ${entry.path} exceeds the ${SKILL_IMPORT_LIMITS.maxFileBytes}-byte limit.`
+          )
+        }
+        totalBytes += content.length
+        if (totalBytes > SKILL_IMPORT_LIMITS.maxTotalBytes) {
+          throw new Error(
+            `Skill exceeds the ${SKILL_IMPORT_LIMITS.maxTotalBytes}-byte total limit.`
+          )
+        }
+        fileCount += 1
         const relativePath = entry.path.startsWith(rootPrefix)
           ? entry.path.slice(rootPrefix.length)
           : entry.name
@@ -93,7 +118,7 @@ const fetchSkillFiles = async (
     return files
   }
 
-  const files = await walk(location.path)
+  const files = await walk(location.path, 0)
 
   if (!files.some((file) => file.relativePath.toLowerCase() === 'skill.md')) {
     throw new Error('No SKILL.md found at the linked location.')

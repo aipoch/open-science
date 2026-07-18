@@ -117,4 +117,14 @@ describe('extractZip', () => {
   it('throws when the buffer is not a zip', () => {
     expect(() => extractZip(Buffer.from('not a zip at all', 'utf8'))).toThrow()
   })
+
+  it('rejects a bundle with more files than the count limit', () => {
+    // 2001 tiny STORE entries exceed SKILL_IMPORT_LIMITS.maxFiles (2000).
+    const inputs: ZipInput[] = Array.from({ length: 2001 }, (_, i) => ({
+      path: `f${i}.txt`,
+      content: Buffer.from('x', 'utf8'),
+      method: 0 as const
+    }))
+    expect(() => extractZip(buildZip(inputs))).toThrow(/too many files/)
+  })
 })
