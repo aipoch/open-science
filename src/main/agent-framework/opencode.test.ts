@@ -80,6 +80,57 @@ describe('opencodeFramework.prepareModelConfig', () => {
       expect(rules[tool]).toBe('ask')
     }
   })
+
+  it('disables project config loading so a repo cannot inject opencode.json / .opencode config', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
+      { storageRoot: '/data', executablePath: '/bin/opencode' }
+    )
+
+    // Truthy per opencode's truthy(): closes the whole project-config surface (both opencode.json/.jsonc
+    // walked up from cwd and the .opencode/ directory), so a repo cannot add an exact-id allow rule or
+    // repoint the provider at all.
+    expect(config.env?.OPENCODE_DISABLE_PROJECT_CONFIG).toBe('true')
+  })
+
+  it('pins the authoritative provider/model/baseURL (not just permission) in OPENCODE_CONFIG_CONTENT', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      { type: 'custom', baseUrl: 'https://gw.example/v1', model: 'deepseek-v4-pro', key: 'k' },
+      { storageRoot: '/data', executablePath: '/bin/opencode' }
+    )
+
+    const content = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+    // The high-priority layer pins model + provider + baseURL so a lower-precedence ~/.opencode cannot
+    // repoint the endpoint or swap the model while inheriting the key ref.
+    expect(content.model).toBe('anthropic/deepseek-v4-pro')
+    expect(content.provider.anthropic.options.baseURL).toBe('https://gw.example/v1')
+    expect(content.provider.anthropic.models).toEqual({ 'deepseek-v4-pro': {} })
+    // Permission policy is still pinned.
+    expect(content.permission['*']).toBe('ask')
+    // The key rides the env as a reference only — never a plaintext literal in the pinned layer.
+    expect(content.provider.anthropic.options.apiKey).toBe('{env:OPENCODE_APP_API_KEY}')
+    expect(config.env?.OPENCODE_CONFIG_CONTENT).not.toContain('"k"')
+  })
+
+  it('mirrors the config file provider/model in the OPENCODE_CONFIG_CONTENT layer (no divergence)', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      { type: 'custom', baseUrl: 'https://gw/v1', model: 'gpt-x', key: 'k', apiType: 'openai' },
+      { storageRoot: '/data', executablePath: '/bin/opencode' }
+    )
+
+    const fileConfig = JSON.parse(
+      config.configFiles?.find((file) => file.path.endsWith('opencode.json'))?.content ?? '{}'
+    )
+    const content = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+
+    // The pinned layer and the written file select the same model and provider block, so they cannot
+    // drift out of sync.
+    expect(content.model).toBe(fileConfig.model)
+    expect(content.provider['openai-compatible'].npm).toBe('@ai-sdk/openai-compatible')
+    expect(content.provider['openai-compatible'].options.baseURL).toBe(
+      fileConfig.provider['openai-compatible'].options.baseURL
+    )
+  })
 })
 
 describe('buildOpencodeConfig', () => {
