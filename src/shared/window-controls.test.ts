@@ -1,6 +1,13 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { isCloseWindowChord, type KeyChordInput } from './window-controls'
+import {
+  CLOSE_ACTIVE_PANE_CHANNEL,
+  CLOSE_ACTIVE_PANE_READY_CHANNEL,
+  CLOSE_ACTIVE_PANE_UNREADY_CHANNEL,
+  isCloseWindowChord,
+  subscribeCloseActivePane,
+  type KeyChordInput
+} from './window-controls'
 
 // Builds a keyDown Input with no modifiers, overridable per case.
 const chord = (overrides: Partial<KeyChordInput> = {}): KeyChordInput => ({
@@ -63,5 +70,37 @@ describe('isCloseWindowChord', () => {
 
   it('ignores auto-repeat so a held chord cannot close the window after the pane closes', () => {
     expect(isCloseWindowChord(chord({ meta: true, isAutoRepeat: true }), 'darwin')).toBe(false)
+  })
+})
+
+describe('subscribeCloseActivePane', () => {
+  // Verifies the renderer handshake wiring so a wrong channel or a missing signal can't slip through
+  // while main's tests fake the ready state. Main only forwards the chord when it has seen READY, so
+  // subscribing on the wrong channel would silently break the whole feature.
+  it('subscribes to the chord channel and announces readiness on subscribe', () => {
+    const removeListener = vi.fn()
+    const on = vi.fn(() => removeListener)
+    const send = vi.fn()
+    const listener = vi.fn()
+
+    subscribeCloseActivePane({ on, send }, listener)
+
+    expect(on).toHaveBeenCalledWith(CLOSE_ACTIVE_PANE_CHANNEL, listener)
+    expect(send).toHaveBeenCalledWith(CLOSE_ACTIVE_PANE_READY_CHANNEL)
+  })
+
+  it('removes the listener and announces teardown on unsubscribe', () => {
+    const removeListener = vi.fn()
+    const on = vi.fn(() => removeListener)
+    const send = vi.fn()
+
+    const unsubscribe = subscribeCloseActivePane({ on, send }, vi.fn())
+    send.mockClear()
+    unsubscribe()
+
+    expect(removeListener).toHaveBeenCalledTimes(1)
+    expect(send).toHaveBeenCalledWith(CLOSE_ACTIVE_PANE_UNREADY_CHANNEL)
+    // Teardown must not re-announce readiness, which would leave main forwarding into a gone listener.
+    expect(send).not.toHaveBeenCalledWith(CLOSE_ACTIVE_PANE_READY_CHANNEL)
   })
 })

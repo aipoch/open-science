@@ -126,11 +126,7 @@ import type {
 } from '../shared/uploads'
 import type { ReviewWithChecks, ReviewRunRequest, ReviewUpdateEvent } from '../shared/reviewer'
 import { REVIEWER_IPC } from '../shared/reviewer'
-import {
-  CLOSE_ACTIVE_PANE_CHANNEL,
-  CLOSE_ACTIVE_PANE_READY_CHANNEL,
-  WINDOW_CLOSE_CHANNEL
-} from '../shared/window-controls'
+import { subscribeCloseActivePane, WINDOW_CLOSE_CHANNEL } from '../shared/window-controls'
 
 type RemoveListener = () => void
 type AcpListener<Payload> = (payload: Payload) => void
@@ -630,13 +626,16 @@ const api: OpenScienceAPI = {
   },
   window: {
     close: () => ipcRenderer.invoke(WINDOW_CLOSE_CHANNEL) as Promise<void>,
-    onCloseActivePane: (listener) => {
-      const removeListener = onIpcMessage(CLOSE_ACTIVE_PANE_CHANNEL, listener)
-      // Tell main a listener is now mounted so it forwards the chord here instead of closing the
-      // window directly. Sent on subscribe (and again after any reload, which remounts the hook).
-      ipcRenderer.send(CLOSE_ACTIVE_PANE_READY_CHANNEL)
-      return removeListener
-    }
+    // The shared helper announces READY on subscribe (so main forwards the chord here) and UNREADY on
+    // teardown (so main re-arms its direct close). Reload remounts the hook, re-running the handshake.
+    onCloseActivePane: (listener) =>
+      subscribeCloseActivePane(
+        {
+          on: (channel, paneListener) => onIpcMessage(channel, paneListener),
+          send: (channel) => ipcRenderer.send(channel)
+        },
+        listener
+      )
   }
 }
 

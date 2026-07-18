@@ -13,6 +13,7 @@ import { isAllowedExternalNavigation, isAllowedFrameNavigation } from './navigat
 import {
   CLOSE_ACTIVE_PANE_CHANNEL,
   CLOSE_ACTIVE_PANE_READY_CHANNEL,
+  CLOSE_ACTIVE_PANE_UNREADY_CHANNEL,
   isCloseWindowChord
 } from '../shared/window-controls'
 
@@ -74,31 +75,53 @@ const createMainWindow = (): BrowserWindow => {
     title: 'Open Science'
   })
 
-  // The renderer decides pane-vs-window, but only once it has mounted its listener. Track that via the
-  // ready signal so the chord is never forwarded into the void: before the renderer is ready (initial
-  // load, reload, in-flight navigation) the send() below would be dropped and Cmd/Ctrl+W would do
-  // nothing, so main closes the window itself instead. Reset on every top-level load, since a fresh
-  // document has to re-subscribe before it can own the chord again.
+  // The renderer decides pane-vs-window, but only once it has a live, responsive listener. If main
+  // forwards the chord to a renderer that cannot handle it, preventDefault() has already suppressed the
+  // menu Close accelerator, so Cmd/Ctrl+W becomes a silent no-op. Two independent conditions gate the
+  // forward:
+  //   - listener readiness: the renderer mounted its listener (READY) and has not torn it down (UNREADY)
+  //     or been replaced by a fresh document (did-start-loading) or a dead process (render-process-gone).
+  //   - responsiveness: a hung renderer receives the send but never processes it, so treat unresponsive
+  //     as not-forwardable and restore on recovery — tracked separately so a recovered renderer keeps
+  //     its subscription instead of having to re-handshake.
+  // When either fails, main closes the window itself so the chord always does something.
   let rendererListenerReady = false
+  let rendererResponsive = true
   const onListenerReady = (event: IpcMainEvent): void => {
     if (event.sender === window.webContents) rendererListenerReady = true
   }
+  const onListenerGone = (event: IpcMainEvent): void => {
+    if (event.sender === window.webContents) rendererListenerReady = false
+  }
   ipcMain.on(CLOSE_ACTIVE_PANE_READY_CHANNEL, onListenerReady)
+  ipcMain.on(CLOSE_ACTIVE_PANE_UNREADY_CHANNEL, onListenerGone)
+  // A top-level load swaps in a fresh document that must re-subscribe; a dead render process took its
+  // listener with it. Both revoke readiness until the next READY handshake.
   window.webContents.on('did-start-loading', () => {
     rendererListenerReady = false
   })
+  window.webContents.on('render-process-gone', () => {
+    rendererListenerReady = false
+  })
+  window.webContents.on('unresponsive', () => {
+    rendererResponsive = false
+  })
+  window.webContents.on('responsive', () => {
+    rendererResponsive = true
+  })
   window.on('closed', () => {
     ipcMain.removeListener(CLOSE_ACTIVE_PANE_READY_CHANNEL, onListenerReady)
+    ipcMain.removeListener(CLOSE_ACTIVE_PANE_UNREADY_CHANNEL, onListenerGone)
   })
 
   // Intercept Cmd+W / Ctrl+W before the default menu "Close" role fires. preventDefault here also
   // suppresses the menu accelerator (electron/electron#19279), so the chord never closes the window
-  // behind the renderer's back. Forward to the renderer when it is ready, otherwise close directly.
+  // behind the renderer's back. Forward to the renderer only when it can act on it, otherwise close.
   window.webContents.on('before-input-event', (event, input) => {
     if (!isCloseWindowChord(input, process.platform)) return
 
     event.preventDefault()
-    if (rendererListenerReady) {
+    if (rendererListenerReady && rendererResponsive) {
       window.webContents.send(CLOSE_ACTIVE_PANE_CHANNEL)
     } else {
       window.close()

@@ -15,6 +15,33 @@ export const CLOSE_ACTIVE_PANE_CHANNEL = 'shortcut:close-active-pane'
 // swallow the chord (the forwarded message would be dropped), so it closes the window directly instead.
 export const CLOSE_ACTIVE_PANE_READY_CHANNEL = 'shortcut:close-active-pane-ready'
 
+// Renderer -> main: the close-chord listener has been torn down (hook unmount). Main re-arms its
+// direct-close fallback so a stale "ready" flag never makes it swallow the chord into a gone listener.
+export const CLOSE_ACTIVE_PANE_UNREADY_CHANNEL = 'shortcut:close-active-pane-unready'
+
+// The minimal IPC surface the renderer handshake needs, kept structural so the wiring can be unit-tested
+// without loading preload or importing electron.
+export type CloseActivePaneBridge = {
+  on: (channel: string, listener: () => void) => () => void
+  send: (channel: string) => void
+}
+
+// Wires a renderer close-chord subscription to the main handshake: announce READY on subscribe so main
+// forwards the chord here, and UNREADY on teardown so main re-arms its direct-close fallback. Lives here
+// (not inline in preload) so the exact channels and ordering are covered by shared unit tests.
+export const subscribeCloseActivePane = (
+  bridge: CloseActivePaneBridge,
+  listener: () => void
+): (() => void) => {
+  const removeListener = bridge.on(CLOSE_ACTIVE_PANE_CHANNEL, listener)
+  bridge.send(CLOSE_ACTIVE_PANE_READY_CHANNEL)
+
+  return () => {
+    removeListener()
+    bridge.send(CLOSE_ACTIVE_PANE_UNREADY_CHANNEL)
+  }
+}
+
 // The subset of Electron's before-input-event Input that the chord test needs. Kept structural so the
 // helper stays pure and unit-testable without importing electron.
 export type KeyChordInput = {

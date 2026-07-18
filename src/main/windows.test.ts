@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   CLOSE_ACTIVE_PANE_CHANNEL,
   CLOSE_ACTIVE_PANE_READY_CHANNEL,
+  CLOSE_ACTIVE_PANE_UNREADY_CHANNEL,
   type KeyChordInput
 } from '../shared/window-controls'
 
@@ -171,14 +172,26 @@ describe('close chord interception', () => {
     ipcMainRemoveListenerMock.mockReset()
   })
 
-  // Fires the renderer "listener mounted" signal that main registered via ipcMain.on, spoofing the
-  // sender as this window's webContents so the ready flag flips for it.
-  const signalRendererReady = (window: FakeBrowserWindow): void => {
-    const readyHandler = ipcMainOnMock.mock.calls.find(
-      ([channel]) => channel === CLOSE_ACTIVE_PANE_READY_CHANNEL
-    )?.[1] as ((event: { sender: unknown }) => void) | undefined
-    expect(readyHandler).toBeDefined()
-    readyHandler!({ sender: window.webContents })
+  // Fires an ipcMain handshake signal that main registered via ipcMain.on, spoofing the sender as this
+  // window's webContents so the readiness flag flips for it.
+  const fireHandshake = (window: FakeBrowserWindow, channel: string): void => {
+    const handler = ipcMainOnMock.mock.calls.find(([registered]) => registered === channel)?.[1] as
+      ((event: { sender: unknown }) => void) | undefined
+    expect(handler).toBeDefined()
+    handler!({ sender: window.webContents })
+  }
+
+  const signalRendererReady = (window: FakeBrowserWindow): void =>
+    fireHandshake(window, CLOSE_ACTIVE_PANE_READY_CHANNEL)
+
+  const signalRendererGone = (window: FakeBrowserWindow): void =>
+    fireHandshake(window, CLOSE_ACTIVE_PANE_UNREADY_CHANNEL)
+
+  // Drives one of the captured webContents lifecycle handlers (render-process-gone, unresponsive, ...).
+  const fireWebContentsEvent = (window: FakeBrowserWindow, event: string): void => {
+    const handler = window.webContentsHandlers.get(event)
+    expect(handler).toBeDefined()
+    handler!()
   }
 
   const fireInput = (window: FakeBrowserWindow, input: KeyChordInput): (() => void) => {
@@ -225,6 +238,53 @@ describe('close chord interception', () => {
 
     expect(window.closeMock).toHaveBeenCalledTimes(1)
     expect(window.sendMock).not.toHaveBeenCalled()
+  })
+
+  it('re-arms the direct-close fallback when the renderer tears its listener down', () => {
+    createMainWindow()
+    const window = currentWindow!
+
+    signalRendererReady(window)
+    // The hook unmounted, so its listener is gone even though the document did not reload.
+    signalRendererGone(window)
+
+    fireInput(window, closeChord())
+
+    expect(window.closeMock).toHaveBeenCalledTimes(1)
+    expect(window.sendMock).not.toHaveBeenCalled()
+  })
+
+  it('re-arms the direct-close fallback after the render process is gone', () => {
+    createMainWindow()
+    const window = currentWindow!
+
+    signalRendererReady(window)
+    // The renderer crashed; its listener died with the process until a fresh one re-handshakes.
+    fireWebContentsEvent(window, 'render-process-gone')
+
+    fireInput(window, closeChord())
+
+    expect(window.closeMock).toHaveBeenCalledTimes(1)
+    expect(window.sendMock).not.toHaveBeenCalled()
+  })
+
+  it('closes directly while the renderer is unresponsive, then forwards again once responsive', () => {
+    createMainWindow()
+    const window = currentWindow!
+
+    signalRendererReady(window)
+    fireWebContentsEvent(window, 'unresponsive')
+
+    // A hung renderer would never process the forwarded chord, so main closes directly instead.
+    fireInput(window, closeChord())
+    expect(window.closeMock).toHaveBeenCalledTimes(1)
+    expect(window.sendMock).not.toHaveBeenCalled()
+
+    // Recovery restores forwarding without requiring the renderer to re-handshake.
+    fireWebContentsEvent(window, 'responsive')
+    fireInput(window, closeChord())
+    expect(window.sendMock).toHaveBeenCalledWith(CLOSE_ACTIVE_PANE_CHANNEL)
+    expect(window.closeMock).toHaveBeenCalledTimes(1)
   })
 
   it('ignores keys that are not the close chord', () => {
