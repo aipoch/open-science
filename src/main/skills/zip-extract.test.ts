@@ -154,11 +154,16 @@ describe('extractZip', () => {
     expect(() => extractZip(buildZip(inputs))).toThrow(/decompressed limit/)
   })
 
-  it('rejects an entry nested deeper than the depth limit', () => {
-    // Nine path segments exceed SKILL_IMPORT_LIMITS.maxDepth (8).
-    const deep = `${Array.from({ length: 9 }, (_, i) => `d${i}`).join('/')}/x.txt`
+  it('counts directory levels for depth, not the filename (off-by-one boundary)', () => {
+    // Depth is the number of directories. A file under exactly 8 directories is at the limit and is
+    // accepted; a 9th directory level exceeds SKILL_IMPORT_LIMITS.maxDepth (8) and is rejected.
+    const atLimit = `${Array.from({ length: 8 }, (_, i) => `d${i}`).join('/')}/x.txt`
+    const files = extractZip(buildZip([{ path: atLimit, content: Buffer.from('x'), method: 0 }]))
+    expect(files.map((f) => f.path)).toEqual([atLimit])
+
+    const tooDeep = `${Array.from({ length: 9 }, (_, i) => `d${i}`).join('/')}/x.txt`
     expect(() =>
-      extractZip(buildZip([{ path: deep, content: Buffer.from('x'), method: 0 }]))
+      extractZip(buildZip([{ path: tooDeep, content: Buffer.from('x'), method: 0 }]))
     ).toThrow(/nested deeper/)
   })
 })

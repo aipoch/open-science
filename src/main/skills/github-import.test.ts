@@ -167,6 +167,134 @@ describe('fetchSkillFiles', () => {
     expect(bodyRead).toBe(false)
   })
 
+  it('rejects on the aggregate budget via Content-Length before reading the over-budget body', async () => {
+    // Three files each declaring 4 MiB. The total cap is 10 MiB, so the third pushes the aggregate to
+    // 12 MiB and must be rejected on its Content-Length — before its body is ever read.
+    const bodiesRead: string[] = []
+    const size = 4 * 1024 * 1024
+    const aggregate: FetchLike = async (url) => {
+      if (url.includes('/contents/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              type: 'file',
+              name: 'SKILL.md',
+              path: 'pack/foo/SKILL.md',
+              download_url: 'https://raw/a'
+            },
+            { type: 'file', name: 'b.bin', path: 'pack/foo/b.bin', download_url: 'https://raw/b' },
+            { type: 'file', name: 'c.bin', path: 'pack/foo/c.bin', download_url: 'https://raw/c' }
+          ],
+          arrayBuffer: async () => new ArrayBuffer(0)
+        }
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        headers: { get: (name) => (name.toLowerCase() === 'content-length' ? `${size}` : null) },
+        arrayBuffer: async () => {
+          bodiesRead.push(url)
+          return new ArrayBuffer(size)
+        }
+      }
+    }
+
+    await expect(
+      fetchSkillFiles({ owner: 'acme', repo: 'skills', ref: 'main', path: 'pack/foo' }, aggregate)
+    ).rejects.toThrow(/import size limit/)
+    // First two bodies read (8 MiB), the third rejected before its body was touched.
+    expect(bodiesRead).toEqual(['https://raw/a', 'https://raw/b'])
+  })
+
+  it('accepts files sitting exactly on the per-file and total limits', async () => {
+    // Two 5 MiB files == the 5 MiB per-file cap each and 10 MiB total exactly. Both must be accepted.
+    const size = 5 * 1024 * 1024
+    const exact: FetchLike = async (url) => {
+      if (url.includes('/contents/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              type: 'file',
+              name: 'SKILL.md',
+              path: 'pack/foo/SKILL.md',
+              download_url: 'https://raw/a'
+            },
+            { type: 'file', name: 'b.bin', path: 'pack/foo/b.bin', download_url: 'https://raw/b' }
+          ],
+          arrayBuffer: async () => new ArrayBuffer(0)
+        }
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        headers: { get: (name) => (name.toLowerCase() === 'content-length' ? `${size}` : null) },
+        arrayBuffer: async () => new ArrayBuffer(size)
+      }
+    }
+
+    const files = await fetchSkillFiles(
+      { owner: 'acme', repo: 'skills', ref: 'main', path: 'pack/foo' },
+      exact
+    )
+    expect(files.map((f) => f.relativePath).sort()).toEqual(['SKILL.md', 'b.bin'])
+    expect(files.every((f) => f.content.length === size)).toBe(true)
+  })
+
+  it('bounds a streamed body with no Content-Length, stopping once the cap is passed', async () => {
+    // A body that streams 1 MiB chunks with no Content-Length. Reading must abort once it crosses the
+    // 5 MiB per-file cap instead of draining the whole (here effectively endless) stream.
+    let chunksServed = 0
+    let cancelled = false
+    const chunk = new Uint8Array(1024 * 1024)
+    const streaming: FetchLike = async (url) => {
+      if (url.includes('/contents/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              type: 'file',
+              name: 'SKILL.md',
+              path: 'pack/foo/SKILL.md',
+              download_url: 'https://raw/s'
+            }
+          ],
+          arrayBuffer: async () => new ArrayBuffer(0)
+        }
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        body: {
+          getReader: () => ({
+            read: async () => {
+              chunksServed += 1
+              return { done: false, value: chunk }
+            },
+            cancel: () => {
+              cancelled = true
+            }
+          })
+        },
+        arrayBuffer: async () => new ArrayBuffer(0)
+      }
+    }
+
+    await expect(
+      fetchSkillFiles({ owner: 'acme', repo: 'skills', ref: 'main', path: 'pack/foo' }, streaming)
+    ).rejects.toThrow(/import size limit/)
+    // Stopped a hair past the 5 MiB cap (6 one-MiB reads), not the whole endless stream, and cancelled.
+    expect(chunksServed).toBeLessThanOrEqual(7)
+    expect(cancelled).toBe(true)
+  })
+
   it('rejects a wide directory tree that exceeds the request budget', async () => {
     // The root lists 600 empty subdirectories; walking them all would exceed the 512-request budget
     // long before any file or byte limit (empty dirs cost nothing against those).

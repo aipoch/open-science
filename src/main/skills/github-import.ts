@@ -14,9 +14,20 @@ export type GitHubSkillLocation = {
   path: string
 }
 
-// Injectable fetch so tests don't hit the network. `headers.get` is optional: the real fetch Response
-// exposes it (used to read Content-Length before buffering a download), and callers/tests that omit it
-// simply skip the pre-check and fall back to the post-download size guard.
+// A minimal view of a byte stream (matches the real fetch Response.body's getReader()). Reading a
+// download through this lets us stop the moment the running total crosses a limit, so a body with a
+// missing or lying Content-Length can never be buffered in full.
+type ByteStream = {
+  getReader: () => {
+    read: () => Promise<{ done: boolean; value?: Uint8Array }>
+    cancel?: () => void
+  }
+}
+
+// Injectable fetch so tests don't hit the network. `headers.get` and `body` are optional: the real
+// fetch Response exposes both. `headers` lets us reject on Content-Length before reading anything;
+// `body` lets us read with a hard byte cap. A response with neither falls back to a bounded
+// arrayBuffer() read plus the post-read size guard.
 export type FetchLike = (
   url: string,
   init?: { headers?: Record<string, string> }
@@ -26,9 +37,41 @@ export type FetchLike = (
   json: () => Promise<unknown>
   arrayBuffer: () => Promise<ArrayBuffer>
   headers?: { get: (name: string) => string | null }
+  body?: ByteStream | null
 }>
 
 const GITHUB_HEADERS = { 'User-Agent': 'open-science', Accept: 'application/vnd.github+json' }
+
+// Reads a download body into a Buffer without ever holding more than `limit` bytes. Prefers the
+// streaming reader (aborting as soon as the running total exceeds the limit); falls back to
+// arrayBuffer() when no stream is exposed, still enforcing the cap on the buffered result.
+const readBounded = async (
+  response: { arrayBuffer: () => Promise<ArrayBuffer>; body?: ByteStream | null },
+  limit: number,
+  onExceeded: () => never
+): Promise<Buffer> => {
+  if (response.body) {
+    const reader = response.body.getReader()
+    const chunks: Buffer[] = []
+    let read = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value) {
+        read += value.byteLength
+        if (read > limit) {
+          reader.cancel?.()
+          onExceeded()
+        }
+        chunks.push(Buffer.from(value))
+      }
+    }
+    return Buffer.concat(chunks)
+  }
+  const buffer = Buffer.from(await response.arrayBuffer())
+  if (buffer.length > limit) onExceeded()
+  return buffer
+}
 
 // Parses a GitHub URL into the repo + skill directory it points at. Accepts tree/blob URLs and trims a
 // trailing SKILL.md so a link to the file resolves to its directory. Returns null when unrecognizable.
@@ -108,27 +151,24 @@ const fetchSkillFiles = async (
         if (!raw.ok) {
           throw new Error(`Failed to download ${entry.path} (${raw.status})`)
         }
-        // Reject on the advertised Content-Length before buffering the body, so an oversized file is
-        // refused without first allocating it in memory. A missing/lying header falls through to the
-        // post-download guard below.
+
+        // The most this file may add: the smaller of the per-file cap and what remains of the total
+        // budget. Reading is bounded by this, so no single body is ever buffered beyond it — even with
+        // a missing or dishonest Content-Length.
+        const remainingTotal = SKILL_IMPORT_LIMITS.maxTotalBytes - totalBytes
+        const perFileLimit = Math.min(SKILL_IMPORT_LIMITS.maxFileBytes, remainingTotal)
+        const tooLarge = (): never => {
+          throw new Error(
+            `File ${entry.path} exceeds the import size limit (per-file ${SKILL_IMPORT_LIMITS.maxFileBytes} bytes, ${remainingTotal} left in budget).`
+          )
+        }
+
+        // Reject on the advertised Content-Length before reading a single byte when possible.
         const declared = Number(raw.headers?.get('content-length') ?? '')
-        if (Number.isFinite(declared) && declared > SKILL_IMPORT_LIMITS.maxFileBytes) {
-          throw new Error(
-            `File ${entry.path} exceeds the ${SKILL_IMPORT_LIMITS.maxFileBytes}-byte limit.`
-          )
-        }
-        const content = Buffer.from(await raw.arrayBuffer())
-        if (content.length > SKILL_IMPORT_LIMITS.maxFileBytes) {
-          throw new Error(
-            `File ${entry.path} exceeds the ${SKILL_IMPORT_LIMITS.maxFileBytes}-byte limit.`
-          )
-        }
+        if (Number.isFinite(declared) && declared > perFileLimit) tooLarge()
+
+        const content = await readBounded(raw, perFileLimit, tooLarge)
         totalBytes += content.length
-        if (totalBytes > SKILL_IMPORT_LIMITS.maxTotalBytes) {
-          throw new Error(
-            `Skill exceeds the ${SKILL_IMPORT_LIMITS.maxTotalBytes}-byte total limit.`
-          )
-        }
         fileCount += 1
         const relativePath = entry.path.startsWith(rootPrefix)
           ? entry.path.slice(rootPrefix.length)
