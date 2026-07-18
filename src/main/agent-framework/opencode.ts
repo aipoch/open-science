@@ -99,11 +99,23 @@ const buildOpencodeConfig = (
     ...baseConfig,
     ...(bareModel ? { model: `${providerId}/${bareModel}` } : {}),
     ...(instructions.length > 0 ? { instructions } : {}),
-    // Force opencode to ASK the ACP client for every edit/bash/webfetch instead of running silently
-    // under its permissive default. The app then enforces the selected permission profile in its broker
-    // (ask prompts, auto auto-approves workspace edits, full auto-approves all) — a single, mid-session-
-    // switchable decision point. Our keys win over any base config so delegation can't be turned off.
-    permission: { ...basePermission, edit: 'ask', bash: 'ask', webfetch: 'ask' },
+    // Force opencode to ASK the ACP client before every side-effecting tool instead of running
+    // silently under its permissive default. opencode keys permissions by TOOL NAME with a "*"
+    // catch-all, so the wildcard is essential: without it MCP tools (artifact/notebook/connectors),
+    // websearch, task, skill, etc. are unmatched and run without a prompt. Safe read-only tools stay
+    // "allow" so Ask mode doesn't prompt on every file read (parity with Claude). Everything else —
+    // edit, bash, webfetch, websearch, task, skill, and all MCP tools — hits "*" → ask → the ACP
+    // client, where the app enforces the selected profile in its broker (ask prompts, auto approves
+    // workspace edits, full approves all). Our rules win over any base config so it can't be disabled.
+    permission: {
+      ...basePermission,
+      '*': 'ask',
+      read: 'allow',
+      glob: 'allow',
+      grep: 'allow',
+      list: 'allow',
+      lsp: 'allow'
+    },
     provider: {
       ...baseProviders,
       [providerId]: {

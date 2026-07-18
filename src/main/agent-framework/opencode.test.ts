@@ -56,26 +56,34 @@ describe('buildOpencodeConfig', () => {
     })
   })
 
-  it('forces opencode to delegate edit/bash/webfetch prompts to the client', () => {
-    // Without this, opencode runs everything silently under its permissive default and the app's
-    // Ask/Auto profiles never see a permission request.
+  it('delegates every side-effecting tool (incl. MCP) via a "*" catch-all, allowing safe reads', () => {
+    // Without the "*" rule, opencode keys permissions by tool name and MCP/websearch/task tools are
+    // unmatched → run silently. The wildcard forces them to prompt; read-only tools stay allow.
     const config = JSON.parse(
       buildOpencodeConfig({ type: 'custom', baseUrl: 'https://gw/v1', model: 'm' })
     )
 
-    expect(config.permission).toEqual({ edit: 'ask', bash: 'ask', webfetch: 'ask' })
+    expect(config.permission['*']).toBe('ask')
+    // Safe read-only tools run without prompting (parity with Claude's Ask mode).
+    for (const tool of ['read', 'glob', 'grep', 'list', 'lsp']) {
+      expect(config.permission[tool]).toBe('allow')
+    }
+    // Mutating/external tools are NOT allowlisted, so they fall through to "*" → ask.
+    expect(config.permission.edit).toBeUndefined()
+    expect(config.permission.bash).toBeUndefined()
   })
 
   it('keeps delegation on even if the base config tried to disable it', () => {
     const config = JSON.parse(
       buildOpencodeConfig(
         { type: 'custom', baseUrl: 'https://gw/v1', model: 'm' },
-        { permission: { edit: 'allow', extra: 'allow' } }
+        { permission: { '*': 'allow', edit: 'allow', extra: 'allow' } }
       )
     )
 
-    // Our ask values win over the base; unrelated base keys are preserved.
-    expect(config.permission).toMatchObject({ edit: 'ask', bash: 'ask', webfetch: 'ask' })
+    // Our catch-all + read allowlist win over the base; unrelated base keys are preserved.
+    expect(config.permission['*']).toBe('ask')
+    expect(config.permission.read).toBe('allow')
     expect(config.permission.extra).toBe('allow')
   })
 
