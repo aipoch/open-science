@@ -13,7 +13,7 @@
 // so non-packaging builds still succeed. CDN upload of the produced bundle is out of scope here — the
 // website-distribution pipeline (2026-07-12 design) publishes resources/default-envs/** to the CDN.
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -72,17 +72,6 @@ export const packageEntriesFromLock = (lockText) =>
       return { url, file: url.slice(url.lastIndexOf('/') + 1) }
     })
 
-// Candidate micromamba package-cache dirs to source tarballs from (order = priority). micromamba
-// hard-links from a shared cache and often does NOT re-copy the .conda into the run's root pkgs, so
-// the real cache is usually one of the HOME dirs (~/.mamba/pkgs is micromamba's default) — the URL
-// download below is the cache-location-independent fallback that always works.
-const cacheDirs = (stagingRoot) => [
-  join(stagingRoot, 'root', 'pkgs'),
-  join(process.env.HOME ?? '', '.mamba/pkgs'),
-  join(process.env.HOME ?? '', '.local/share/mamba/pkgs'),
-  join(process.env.HOME ?? '', 'micromamba/pkgs')
-]
-
 // Downloads a URL to destPath (public conda-forge archives; content-addressed, so deterministic).
 const download = async (url, destPath) => {
   const res = await fetch(url)
@@ -90,42 +79,39 @@ const download = async (url, destPath) => {
   writeFileSync(destPath, Buffer.from(await res.arrayBuffer()))
 }
 
-// Solves one default env with micromamba, writes its normalized lock, and collects its tarballs into
-// resources/default-envs/pkgs: fast-path copy from a local cache, else download straight from the
-// lock URL (skipping ones already staged by a previous env).
-const stageEnv = async (mm, stagingRoot, name, pkgs) => {
-  const prefix = join(stagingRoot, name)
-  console.log(`[stage-default-envs] solving ${name}: ${pkgs.join(' ')}`)
-  execFileSync(
+// Solves one default env for the target platform via a micromamba `create --dry-run --json`, builds an
+// @EXPLICIT lock from the solved package set (url#md5 per package), and downloads each referenced
+// tarball into resources/default-envs/pkgs (skipping ones a previous env already fetched). Solving
+// (not a full create) with an explicit --platform lets a single host stage ANY platform's bundle —
+// e.g. osx-64 solved on an Apple-silicon runner — so staging needs no native runner per platform and
+// never links/executes foreign-arch binaries.
+const stageEnv = async (mm, stagingRoot, name, pkgs, platform) => {
+  console.log(`[stage-default-envs] solving ${name} (${platform || 'native'}): ${pkgs.join(' ')}`)
+  const platformArgs = platform ? ['--platform', platform] : []
+  const raw = execFileSync(
     mm,
     [
       'create',
-      '--root-prefix',
-      join(stagingRoot, 'root'),
+      '--dry-run',
+      '--json',
       '--prefix',
-      prefix,
+      join(stagingRoot, name),
       '-y',
       '-c',
       CHANNEL,
+      ...platformArgs,
       ...pkgs
     ],
-    { stdio: 'inherit' }
+    { encoding: 'utf8', maxBuffer: 128 * 1024 * 1024 }
   )
-  const raw = execFileSync(mm, ['list', '--prefix', prefix, '--explicit', '--md5'], {
-    encoding: 'utf8'
-  })
-  const lock = normalizeExplicitLock(raw)
+  const solved = JSON.parse(raw)
+  const fetched = (solved.actions && solved.actions.FETCH) || []
+  if (fetched.length === 0) throw new Error(`solve produced no packages for ${name}`)
+  const lock = '@EXPLICIT\n' + fetched.map((p) => `${p.url}#${p.md5}`).join('\n') + '\n'
   writeFileSync(join(OUT, `${name}.lock`), lock)
   for (const { url, file } of packageEntriesFromLock(lock)) {
     const dest = join(PKGS, file)
     if (existsSync(dest)) continue
-    const cached = cacheDirs(stagingRoot)
-      .map((d) => join(d, file))
-      .find((p) => existsSync(p))
-    if (cached) {
-      copyFileSync(cached, dest)
-      continue
-    }
     try {
       await download(url, dest)
     } catch (err) {
@@ -143,12 +129,14 @@ const main = async () => {
     )
     return
   }
+  // Target conda subdir to solve for (e.g. osx-64 on an arm64 runner). Empty = the host's native subdir.
+  const platform = process.env.OS_STAGE_PLATFORM ?? ''
   // A rerun must not carry obsolete tarballs from an older package spec into the new bundle.
   rmSync(OUT, { recursive: true, force: true })
   mkdirSync(PKGS, { recursive: true })
   const stagingRoot = mkdtempSync(join(tmpdir(), 'os-stage-'))
-  await stageEnv(mm, stagingRoot, 'default-python', PY_PKGS)
-  await stageEnv(mm, stagingRoot, 'default-r', R_PKGS)
+  await stageEnv(mm, stagingRoot, 'default-python', PY_PKGS, platform)
+  await stageEnv(mm, stagingRoot, 'default-r', R_PKGS, platform)
   console.log('[stage-default-envs] staged locks + tarballs into resources/default-envs')
 }
 

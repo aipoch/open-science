@@ -21,15 +21,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # subdir = conda platform to SOLVE for; runner_subdir = the runner's native arch, whose
+        # micromamba we run. They differ only for osx-64: Intel macOS runners (macos-13) are scarce, so
+        # osx-64 is cross-solved on Apple-silicon (macos-14) — the dry-run solve never runs foreign-arch
+        # binaries, so this is safe (see stage-default-envs.mjs).
         include:
           - subdir: osx-arm64
             os: macos-14
+            runner_subdir: osx-arm64
           - subdir: osx-64
-            os: macos-13
+            os: macos-14
+            runner_subdir: osx-arm64
           - subdir: linux-64
             os: ubuntu-latest
+            runner_subdir: linux-64
           - subdir: win-64
             os: windows-latest
+            runner_subdir: win-64
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -41,18 +49,21 @@ jobs:
           cache: npm
 
       # micromamba comes from the public micro.mamba.pm API (see fetch-micromamba.mjs), not our CDN, so
-      # staging never depends on a chicken-and-egg CDN state. It runs natively to solve this subdir.
+      # staging never depends on a chicken-and-egg CDN state. Fetch the RUNNER's native micromamba
+      # (runner_subdir) to execute; the target platform to solve for is passed separately below.
       - name: Fetch micromamba
         shell: bash
         run: |
           bin="$RUNNER_TEMP/micromamba"
-          [ "${{ matrix.subdir }}" = "win-64" ] && bin="$bin.exe"
-          node scripts/fetch-micromamba.mjs "${{ matrix.subdir }}" "$bin"
+          [ "${{ matrix.runner_subdir }}" = "win-64" ] && bin="$bin.exe"
+          node scripts/fetch-micromamba.mjs "${{ matrix.runner_subdir }}" "$bin"
           echo "MICROMAMBA_BIN=$bin" >> "$GITHUB_ENV"
 
-      # Solve default-python + default-r natively and collect their @EXPLICIT locks + tarballs into
-      # resources/default-envs (stage-default-envs.mjs reads MICROMAMBA_BIN).
+      # Solve default-python + default-r for the target subdir (dry-run, so cross-solving osx-64 on an
+      # arm64 runner is fine) and collect their @EXPLICIT locks + tarballs into resources/default-envs.
       - name: Stage default environments
+        env:
+          OS_STAGE_PLATFORM: ${{ matrix.subdir }}
         run: npm run stage-default-envs
 
       # Fail loudly if the solve produced nothing, rather than uploading an empty bundle.
