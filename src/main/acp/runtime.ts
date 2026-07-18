@@ -393,7 +393,7 @@ class AcpRuntime {
       // an orphan. Awaited (not a bare kill) so the quit path, which awaits this in-flight connect, does
       // not exit before the child's whole tree is reaped on Windows.
       if (this.shuttingDown) {
-        await terminateProcessTree(agentProcess)
+        await terminateProcessTree(agentProcess, undefined, log)
         throw new Error('ACP runtime is shutting down.')
       }
 
@@ -884,7 +884,7 @@ class AcpRuntime {
     this.agentProcess = undefined
     if (!child) return
     this.expectedProcessExits.add(child)
-    await terminateProcessTree(child)
+    await terminateProcessTree(child, undefined, log)
   }
 
   private nextConnectionGeneration(): number {

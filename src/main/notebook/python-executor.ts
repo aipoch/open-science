@@ -266,6 +266,10 @@ class NotebookPythonExecutor implements NotebookExecutor {
   private currentCwd: string | undefined
   private passthroughStdout: string[] = []
   private passthroughStderr: string[] = []
+  // In-flight tree-kills started by a hard timeout, which drops the interpreter from reuse BEFORE
+  // reaping it. shutdown() awaits these so a quit landing right after a timeout cannot app.exit before
+  // the kill (notably Windows taskkill /T) has finished tearing the tree down.
+  private terminations = new Set<Promise<void>>()
 
   // Leading args (e.g. the Windows `py` launcher's `-3`) prepended before the bridge invocation.
   private baseArgs: string[] = []
@@ -300,7 +304,7 @@ class NotebookPythonExecutor implements NotebookExecutor {
             this.readline = undefined
             this.child = undefined
           }
-          void terminateProcessTree(child)
+          this.trackTermination(child)
           reject(
             new NotebookExecutionTimeoutError(
               `Notebook execution timed out after ${request.timeoutMs ?? 120_000}ms.`
@@ -329,6 +333,15 @@ class NotebookPythonExecutor implements NotebookExecutor {
     } catch (error) {
       return errorToExecutionResult(error, request)
     }
+  }
+
+  // Fire-and-forget a tree-kill while keeping its promise so shutdown() can await it. Used on the hard
+  // timeout path, which drops the interpreter from reuse before reaping it.
+  private trackTermination(child: ChildProcessWithoutNullStreams): void {
+    const termination = terminateProcessTree(child).finally(() => {
+      this.terminations.delete(termination)
+    })
+    this.terminations.add(termination)
   }
 
   // Stops the interpreter and rejects any caller waiting for an execution result.
@@ -361,6 +374,15 @@ class NotebookPythonExecutor implements NotebookExecutor {
       // runtime/data file handles are released before a caller deletes those dirs.
       await terminateProcessTree(child)
       await Promise.race([exited, delay(SHUTDOWN_EXIT_GRACE_MS)])
+    }
+
+    // A hard timeout may have already dropped an interpreter and started tree-killing it before this
+    // shutdown ran; await that kill too so quit never exits ahead of an in-flight taskkill /T.
+    if (this.terminations.size > 0) {
+      await Promise.race([
+        Promise.allSettled([...this.terminations]),
+        delay(SHUTDOWN_EXIT_GRACE_MS)
+      ])
     }
 
     this.currentCwd = undefined

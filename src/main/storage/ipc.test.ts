@@ -395,6 +395,13 @@ describe('storage IPC handlers', () => {
     const deps = fakeDeps({ relaunch: undefined })
     registerStorageIpcHandlers(deps)
 
+    // Stage a verified copy first (two-phase flow) so the commit actually switches over and relaunches.
+    // migrate itself interrupts the notebook (shutdownAll), so clear the mocks to isolate the commit's
+    // own cleanup below.
+    await invoke('storage:migrate', { parent: targetParent })
+    vi.mocked(deps.notebook.shutdownAll).mockClear()
+    vi.mocked(deps.runtime.shutdownForQuit).mockClear()
+
     await expect(invoke('storage:commit-and-relaunch', { parent: targetParent })).resolves.toEqual({
       ok: true
     })
@@ -651,7 +658,8 @@ describe('storage IPC handlers', () => {
             new Promise<void>((resolve) => {
               releaseDisconnect = resolve
             })
-        )
+        ),
+        shutdownForQuit: vi.fn().mockResolvedValue(undefined)
       }
     })
     registerStorageIpcHandlers(deps)
