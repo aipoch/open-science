@@ -19,10 +19,11 @@ import type {
   SessionSetupContext
 } from './types'
 
-// SPIKE STUB. opencode speaks ACP over `opencode acp` (stdio JSON-RPC). Only the three shapes that
-// differ from Claude are filled in: model config (opencode.json, not ANTHROPIC_* env), system-prompt
-// delivery (prompt prefix, no preset), and skills (unsupported). Everything else reuses the generic
-// runtime. See docs/internal/pluggable-agent-framework-feasibility.md.
+// opencode speaks ACP over `opencode acp` (stdio JSON-RPC). Only the shapes that differ from Claude
+// are implemented here: model config (a generated opencode.json, not ANTHROPIC_* env), system-prompt
+// delivery (a prompt prefix, since opencode has no preset), and skills (materialized into opencode's
+// config dir, which its native skill tool discovers). Everything else reuses the generic runtime.
+// See docs/internal/pluggable-agent-framework-feasibility.md.
 
 // opencode is isolated the way Claude uses CLAUDE_CONFIG_DIR: it reads config from
 // $XDG_CONFIG_HOME/opencode and auth/data from $XDG_DATA_HOME/opencode. Pointing both at app-owned
@@ -162,7 +163,6 @@ export const opencodeFramework: AgentFramework = {
 
   buildSessionSetup(ctx: SessionSetupContext): SessionSetup {
     // No claude_code preset here; deliver appends as a prompt prefix instead of session meta.
-    // TODO(spike): check whether opencode's ACP exposes any system-prompt customization to use instead.
     return {
       promptPrefix:
         ctx.systemPromptAppends.length > 0 ? ctx.systemPromptAppends.join('\n\n') : undefined
@@ -173,8 +173,9 @@ export const opencodeFramework: AgentFramework = {
     profile: PermissionProfileId,
     modes: SessionModeState | null | undefined
   ): PermissionProfileApplication {
-    // The mapper is already framework-neutral (keys off advertised modes). TODO(spike): confirm the
-    // mode ids opencode advertises match Claude's default/auto/bypassPermissions, else add a remap.
+    // Framework-neutral: the shared resolver keys off the modes the agent advertises (opencode offers
+    // `build`/`plan`, Claude `default`/`acceptEdits`/`bypassPermissions`), degrading gracefully when a
+    // profile has no matching mode.
     return resolvePermissionProfileApplication(profile, modes)
   }
 }

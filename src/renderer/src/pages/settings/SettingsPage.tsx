@@ -440,7 +440,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
           {/* Radix requires a Title/Description for a11y; the visible panel title lives in the header. */}
           <Dialog.Title className="sr-only">Settings</Dialog.Title>
           <Dialog.Description className="sr-only">
-            Manage your Claude installation and model providers.
+            Manage your agent runtime and model providers.
           </Dialog.Description>
 
           {/* Left navigation: grouped settings panels (Capabilities, Workspace). */}
