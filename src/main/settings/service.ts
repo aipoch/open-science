@@ -1211,7 +1211,7 @@ class SettingsService {
       )
     ) {
       throw new Error(
-        `The active model provider is not compatible with ${framework.displayName}. Pick a compatible model or switch the agent framework in settings.`
+        `The active model isn't compatible with ${framework.displayName}. Open Settings → Model to pick a compatible model or switch the agent framework.`
       )
     }
 

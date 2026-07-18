@@ -87,6 +87,12 @@ const getResumeFailureMessage = (error: unknown): string => {
     return 'Could not reconnect to the agent; check it is installed, then click Resume to retry.'
   }
 
+  // Model↔framework mismatch is now flagged proactively in Settings → Model, so keep this soft and
+  // actionable rather than an alarming "resume failed" — the fix lives in settings, not here.
+  if (/not compatible with|compatible model/i.test(message)) {
+    return "The active model isn't compatible with this agent framework. Open Settings → Model to pick a compatible model or switch frameworks."
+  }
+
   const detail = unwrapResumeErrorDetail(message)
 
   return detail ? `Agent session resume failed: ${detail}` : 'Agent session resume failed'

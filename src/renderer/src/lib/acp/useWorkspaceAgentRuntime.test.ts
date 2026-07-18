@@ -676,6 +676,42 @@ describe('workspace agent message sending', () => {
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
+  it('softens the model↔framework incompatibility message instead of an alarming resume failure', async () => {
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn(),
+      resumeSession: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            "The active model isn't compatible with Claude Code. Open Settings → Model to pick a compatible model or switch the agent framework."
+          )
+        ),
+      sendPrompt: vi.fn()
+    }
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Previous prompt',
+      cwd: '/workspace/project'
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'Continue restored conversation',
+      cwd: '/workspace/project'
+    })
+
+    // No "Agent session resume failed" prefix — the fix lives in settings, which now flags this early.
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      error:
+        "The active model isn't compatible with this agent framework. Open Settings → Model to pick a compatible model or switch frameworks."
+    })
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+  })
+
   it('reports a distinct message when the agent connection cannot be re-established', async () => {
     const runtime = {
       state: createSnapshot(),
