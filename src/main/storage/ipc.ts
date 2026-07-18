@@ -14,6 +14,7 @@ import {
 } from '../storage-root'
 import { detectActiveSessions } from './detect-active'
 import { beginMigration, clearMigrationPending, endMigrationCopy } from './migration-state'
+import { shutdownBackends } from '../lifecycle-shutdown'
 import {
   classifyDataRoot,
   commitDataRootSwitch,
@@ -27,7 +28,9 @@ import { availableBytes, computeStorageUsage } from './usage'
 type SessionSource = { projectName: string; sessionId: string }
 
 type StorageIpcDeps = {
-  runtime: { disconnect: () => Promise<unknown> }
+  // disconnect drives the migration session-interrupt; shutdownForQuit is the awaited quit/relaunch
+  // teardown used by cleanRelaunch (via shutdownBackends).
+  runtime: { disconnect: () => Promise<unknown>; shutdownForQuit: () => Promise<void> }
   notebook: { shutdownAll: () => Promise<void>; getActiveNotebookSessions: () => SessionSource[] }
   getActivePromptSessions: () => SessionSource[]
   settingsService: {
@@ -251,6 +254,20 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
     }
   )
 
+  // Shuts the backends down (agent process tree + notebook kernels) before relaunching, so a data-root
+  // switch never leaves an orphaned backend from the old process attached to the app it relaunches into.
+  // The injected deps.relaunch (tests) replaces the whole relaunch+exit, so it short-circuits ahead of
+  // any real shutdown. shutdownBackends is bounded and never throws, so relaunch always makes progress.
+  const cleanRelaunch = async (): Promise<void> => {
+    if (deps.relaunch) {
+      deps.relaunch()
+      return
+    }
+    await shutdownBackends({ runtime: deps.runtime, notebook: deps.notebook })
+    app.relaunch()
+    app.exit(0)
+  }
+
   // Phase 2 (commit): invoked by the modal's "Restart now" once the copy is done. Flips
   // settings.dataRoot to the new root, deletes the old dirs, then relaunches. Ordered so an
   // interruption during the delete only orphans the old root (never data loss); see
@@ -295,12 +312,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
         // On success the write-gate stays set through relaunch: the fresh process starts with
         // pending=false, so writes naturally resume against the now-live new root.
         activeStaged = undefined
-        if (deps.relaunch) {
-          deps.relaunch()
-        } else {
-          app.relaunch()
-          app.exit(0)
-        }
+        await cleanRelaunch()
       } else {
         // The commit did not switch over (switchoverFailed, or a no-op refusal: no verified copy /
         // mismatch). The UI's error stage offers no retry, so never leave the app soft-locked: on a
@@ -388,13 +400,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
         if (request.markOnboarding) {
           await deps.settingsService.markOnboardingComplete()
         }
-        ;(
-          deps.relaunch ??
-          (() => {
-            app.relaunch()
-            app.exit(0)
-          })
-        )()
+        await cleanRelaunch()
 
         return { ok: true }
       } catch (err) {

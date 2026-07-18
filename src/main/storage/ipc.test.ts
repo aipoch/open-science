@@ -63,7 +63,10 @@ const tick = (ms = 50): Promise<void> => new Promise((resolve) => setTimeout(res
 type FakeDeps = Parameters<typeof registerStorageIpcHandlers>[0]
 
 const fakeDeps = (overrides: Partial<FakeDeps> = {}): FakeDeps => ({
-  runtime: { disconnect: vi.fn().mockResolvedValue(undefined) },
+  runtime: {
+    disconnect: vi.fn().mockResolvedValue(undefined),
+    shutdownForQuit: vi.fn().mockResolvedValue(undefined)
+  },
   notebook: {
     shutdownAll: vi.fn().mockResolvedValue(undefined),
     getActiveNotebookSessions: vi.fn().mockReturnValue([])
@@ -90,6 +93,8 @@ let target: string
 beforeEach(async () => {
   handlers.clear()
   showOpenDialog.mockReset()
+  appRelaunch.mockClear()
+  appExit.mockClear()
   sentWindows.length = 0
   currentParent = await mkdtemp(join(tmpdir(), 'ds-storage-ipc-current-'))
   dataRoot = dataRootFor(currentParent)
@@ -383,6 +388,42 @@ describe('storage IPC handlers', () => {
     expect(deps.relaunch).not.toHaveBeenCalled()
   })
 
+  it('commit-and-relaunch runs the production cleanup (shutdown backends, then relaunch+exit) with no relaunch override', async () => {
+    initDataRoot(dataRoot)
+    // No injected relaunch: exercise the real cleanRelaunch path (shutdownBackends -> app.relaunch ->
+    // app.exit) instead of the test short-circuit.
+    const deps = fakeDeps({ relaunch: undefined })
+    registerStorageIpcHandlers(deps)
+
+    await expect(invoke('storage:commit-and-relaunch', { parent: targetParent })).resolves.toEqual({
+      ok: true
+    })
+
+    expect(deps.runtime.shutdownForQuit).toHaveBeenCalledTimes(1)
+    expect(deps.notebook.shutdownAll).toHaveBeenCalledTimes(1)
+    expect(appRelaunch).toHaveBeenCalledTimes(1)
+    expect(appExit).toHaveBeenCalledWith(0)
+    // Backends are torn down before the relaunch is triggered.
+    expect(vi.mocked(deps.runtime.shutdownForQuit).mock.invocationCallOrder[0]).toBeLessThan(
+      appRelaunch.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('set-data-root-and-relaunch runs the production cleanup before relaunch+exit with no relaunch override', async () => {
+    initDataRoot(dataRoot)
+    const deps = fakeDeps({ relaunch: undefined })
+    registerStorageIpcHandlers(deps)
+
+    await expect(
+      invoke('storage:set-data-root-and-relaunch', { parent: targetParent })
+    ).resolves.toEqual({ ok: true })
+
+    expect(deps.runtime.shutdownForQuit).toHaveBeenCalledTimes(1)
+    expect(deps.notebook.shutdownAll).toHaveBeenCalledTimes(1)
+    expect(appRelaunch).toHaveBeenCalledTimes(1)
+    expect(appExit).toHaveBeenCalledWith(0)
+  })
+
   it('commit-and-relaunch returns switchoverFailed and does NOT relaunch when setDataRoot throws', async () => {
     initDataRoot(dataRoot)
     const deps = fakeDeps({
@@ -582,7 +623,8 @@ describe('storage IPC handlers', () => {
             new Promise<void>((resolve) => {
               releaseDisconnect = resolve
             })
-        )
+        ),
+        shutdownForQuit: vi.fn().mockResolvedValue(undefined)
       }
     })
     registerStorageIpcHandlers(deps)
@@ -636,7 +678,8 @@ describe('storage IPC handlers', () => {
             new Promise<void>((resolve) => {
               releaseDisconnect = resolve
             })
-        )
+        ),
+        shutdownForQuit: vi.fn().mockResolvedValue(undefined)
       }
     })
     registerStorageIpcHandlers(deps)

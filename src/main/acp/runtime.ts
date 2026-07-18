@@ -39,6 +39,7 @@ import {
 } from '../../shared/permission-profiles'
 import { spawnClaudeAgentAcp, type SpawnClaudeAgentAcpOptions } from './agent-process'
 import { createLogger } from '../logger'
+import { terminateProcessTree } from '../process-tree'
 import {
   extractProviderToolName,
   extractToolFailureText,
@@ -387,10 +388,12 @@ class AcpRuntime {
       const agentProcess = await this.spawnAgentProcess()
 
       // spawnAgentProcess resolves the provider config asynchronously, so the app may have begun
-      // quitting during the spawn. If shutdown() already ran, its killAgentProcess() saw no process
-      // yet — kill this freshly-spawned child now and abort, or it would outlive the app as an orphan.
+      // quitting during the spawn. If a shutdown already latched shuttingDown, its teardown saw no
+      // process yet — tree-kill this freshly-spawned child now and abort, or it would outlive the app as
+      // an orphan. Awaited (not a bare kill) so the quit path, which awaits this in-flight connect, does
+      // not exit before the child's whole tree is reaped on Windows.
       if (this.shuttingDown) {
-        agentProcess.kill()
+        await terminateProcessTree(agentProcess)
         throw new Error('ACP runtime is shutting down.')
       }
 
@@ -765,6 +768,25 @@ class AcpRuntime {
     this.killAgentProcess()
   }
 
+  // Awaitable quit/relaunch teardown. Latches shuttingDown FIRST so a connect that is mid-spawn when
+  // quit lands self-aborts and kills its freshly-spawned child (see connectFresh). Unlike shutdown(),
+  // this can be awaited, so a caller that follows it with app.exit(0) is guaranteed no orphaned agent
+  // remains — assigned, connecting, or mid-spawn.
+  async shutdownForQuit(): Promise<void> {
+    this.shuttingDown = true
+    // Capture the in-flight connect before disconnect() clears it.
+    const inFlight = this.connectInFlight
+    // Kill the currently-assigned agent tree right away. Do NOT wait on the in-flight connect first: it
+    // may be stalled on ACP initialize with the child already assigned, and waiting would let
+    // shutdownBackends time out and app.exit orphan it. disconnect() reaps that child's tree and closes
+    // the connection, which also unblocks (rejects) the stalled connect.
+    await this.disconnect(false)
+    // Cover the child that had not been assigned yet when disconnect ran: a connect still mid-spawn hits
+    // the shutting-down check and tree-kills its freshly-spawned child. Await it (swallowing its
+    // rejection, bounded by shutdownBackends' timeout) so that kill completes before we resolve.
+    if (inFlight) await inFlight.catch(() => undefined)
+  }
+
   // Applies an active-provider change without interrupting the user. The agent bakes its provider env in
   // at spawn, so a new provider needs a reconnect — but if a prompt is running we defer the reconnect
   // until the session goes idle. Because every provider shares one config dir, the reconnect resumes the
@@ -829,7 +851,7 @@ class AcpRuntime {
     this.connection?.close()
     this.connection = undefined
 
-    this.killAgentProcess()
+    await this.killAgentProcessTree()
 
     if (emitClosedStatus) {
       this.setStatus('closed')
@@ -839,7 +861,9 @@ class AcpRuntime {
   }
 
   // Signals the current agent child to exit and marks the exit expected so the stderr/error/exit
-  // handlers stay quiet. Shared by the async disconnect teardown and the synchronous quit shutdown.
+  // handlers stay quiet. Synchronous: used by the will-quit backstop (shutdown()), which Electron
+  // cannot await. It only signals the immediate child — the awaited disconnect path below reaps the
+  // whole tree.
   private killAgentProcess(): void {
     if (this.agentProcess) {
       this.expectedProcessExits.add(this.agentProcess)
@@ -850,6 +874,17 @@ class AcpRuntime {
     }
 
     this.agentProcess = undefined
+  }
+
+  // Awaitable tree teardown for the async disconnect path: marks the exit expected, then hands the
+  // whole process tree to terminateProcessTree so a Windows grandchild (taskkill /T) is reaped before
+  // the caller (before-quit shutdownBackends) proceeds to app.exit.
+  private async killAgentProcessTree(): Promise<void> {
+    const child = this.agentProcess
+    this.agentProcess = undefined
+    if (!child) return
+    this.expectedProcessExits.add(child)
+    await terminateProcessTree(child)
   }
 
   private nextConnectionGeneration(): number {

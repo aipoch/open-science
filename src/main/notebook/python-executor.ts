@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { delimiter } from 'node:path'
 import { createInterface, type Interface } from 'node:readline'
 
+import { terminateProcessTree } from '../process-tree'
 import { resolvePythonCommand } from './python-command'
 import type {
   NotebookExecutionRequest,
@@ -289,7 +290,17 @@ class NotebookPythonExecutor implements NotebookExecutor {
           if (this.pending?.id === id) {
             this.pending = undefined
           }
-          if (!child.killed) child.kill()
+          // Hard timeout: drop the interpreter from reuse BEFORE tree-killing it. On Windows taskkill
+          // does not set Node's child.killed, so ensureStarted()'s `!this.child.killed` check would
+          // otherwise hand the next cell a process that is already being torn down. Clearing
+          // this.child/readline forces the next execute() to spawn a fresh interpreter. tree-kill so a
+          // grandchild the interpreter spawned can't be orphaned.
+          if (this.child === child) {
+            this.readline?.close()
+            this.readline = undefined
+            this.child = undefined
+          }
+          void terminateProcessTree(child)
           reject(
             new NotebookExecutionTimeoutError(
               `Notebook execution timed out after ${request.timeoutMs ?? 120_000}ms.`
@@ -346,7 +357,9 @@ class NotebookPythonExecutor implements NotebookExecutor {
         child.once('close', () => resolve())
       })
 
-      child.kill()
+      // Tree-kill (Windows taskkill /T reaps grandchildren) then wait for the real exit so the cwd/
+      // runtime/data file handles are released before a caller deletes those dirs.
+      await terminateProcessTree(child)
       await Promise.race([exited, delay(SHUTDOWN_EXIT_GRACE_MS)])
     }
 
@@ -404,6 +417,10 @@ class NotebookPythonExecutor implements NotebookExecutor {
     this.readline = createInterface({ input: child.stdout })
     this.readline.on('line', (line) => this.handleLine(line))
     child.stderr.on('data', (data: Buffer) => {
+      // Ignore a superseded child: a hard timeout may have dropped it and spawned a replacement, whose
+      // run must not be failed by the dying interpreter's late stderr.
+      if (this.child !== child) return
+
       const text = data.toString('utf8')
 
       if (!text.trim()) return
@@ -417,6 +434,9 @@ class NotebookPythonExecutor implements NotebookExecutor {
       this.rejectPending(new Error(text.trim()))
     })
     child.on('exit', () => {
+      // Ignore a superseded child's exit: after a hard timeout drops this interpreter and spawns a
+      // replacement, clobbering this.child or rejecting here would kill the new interpreter's run.
+      if (this.child !== child) return
       this.child = undefined
 
       // Unexpected exits are reported to the pending execution instead of being swallowed.

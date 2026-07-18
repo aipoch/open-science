@@ -349,6 +349,70 @@ describe('ACP runtime session management', () => {
     expect(runtime.getSnapshot().sessionId).toBeUndefined()
   })
 
+  it('shutdownForQuit awaits agent teardown so app.exit cannot race a live child', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['quit-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    expect(process.killed).toBe(false)
+
+    // The awaited quit path must have terminated the agent by the time it resolves.
+    await runtime.shutdownForQuit()
+    expect(process.killed).toBe(true)
+    expect(runtime.getSnapshot().sessionId).toBeUndefined()
+  })
+
+  it('shutdownForQuit waits out an in-flight connect and reaps the mid-spawn child before resolving', async () => {
+    const process = new FakeAgentProcess()
+    let quitPromise: Promise<void> | undefined
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      // Model quit landing mid-spawn on the async path: start the quit teardown, then hand back the
+      // freshly-spawned child. shutdownForQuit must await this in-flight connect so connectFresh reaches
+      // its shutting-down check and tree-kills the child before the teardown resolves — otherwise
+      // app.exit() would run first and orphan it.
+      spawnAgent: () => {
+        quitPromise = runtime.shutdownForQuit()
+        return asAgentProcess(process)
+      }
+    })
+
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(/shutting down/)
+    expect(quitPromise).toBeDefined()
+    await quitPromise
+    // The child spawned mid-connect has been reaped by the time the quit teardown resolves.
+    expect(process.killed).toBe(true)
+    expect(runtime.getSnapshot().sessionId).toBeUndefined()
+  })
+
+  it('shutdownForQuit kills an assigned agent instead of waiting on a stalled initialize', async () => {
+    const process = new FakeAgentProcess()
+    // No startFakeAgent: the agent never answers initialize, so connect() assigns the child and then
+    // stalls. shutdownForQuit must kill that assigned child rather than wait out the hung connect.
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const connecting = runtime.createSession({ cwd: '/workspace' }).catch(() => undefined)
+    // Let connectFresh assign this.agentProcess and reach the (unanswered) initialize await.
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(process.killed).toBe(false)
+
+    // Must resolve promptly (not hang until shutdownBackends' timeout) with the child reaped.
+    await runtime.shutdownForQuit()
+    expect(process.killed).toBe(true)
+    expect(runtime.getSnapshot().sessionId).toBeUndefined()
+    await connecting
+  })
+
   it('reports conservative Auto when the Agent has no native auto mode', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['auto-session'], {

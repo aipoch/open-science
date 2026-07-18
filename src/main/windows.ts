@@ -63,7 +63,7 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
   return window
 }
 
-const createMainWindow = (): BrowserWindow => {
+const createMainWindow = (opts?: { shouldHideOnClose?: () => boolean }): BrowserWindow => {
   const window = createAppWindow({
     width: 1280,
     // The first-run environment summary needs enough vertical space to keep its Continue action
@@ -139,7 +139,19 @@ const createMainWindow = (): BrowserWindow => {
     if (rendererListenerReady && rendererResponsive) {
       window.webContents.send(CLOSE_ACTIVE_PANE_CHANNEL)
     } else {
+      // The chord's window-close fallback still honors close-to-tray: window.close() fires the 'close'
+      // event handled below, which hides (stays resident) instead of closing when the tray is active.
       window.close()
+    }
+  })
+
+  // Close-to-tray: when the tray keeps the app resident, hide the window instead of closing it. The
+  // predicate is evaluated at close time so the caller can flip a quitting flag to allow a real exit.
+  // This also backs the Cmd/Ctrl+W fallback above — its window.close() routes through here.
+  window.on('close', (event) => {
+    if (opts?.shouldHideOnClose?.()) {
+      event.preventDefault()
+      window.hide()
     }
   })
 

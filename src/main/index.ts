@@ -32,22 +32,45 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   const [
     { app, BrowserWindow, nativeImage, protocol },
     { electronApp, optimizer },
-    { default: icon }
+    { default: icon },
+    { acquireSingleInstanceLock }
   ] = await Promise.all([
     import('electron'),
     import('@electron-toolkit/utils'),
-    import('../../resources/icon.png?asset')
+    import('../../resources/icon.png?asset'),
+    import('./single-instance')
   ])
+
+  // Single-instance guard, acquired BEFORE the backend modules are imported (UI path only — the MCP
+  // stdio server modes never reach startElectronApp). A second launch hands off to the primary and
+  // exits, so the app never runs as a duplicate instance with a duplicate backend process tree. The
+  // second-instance hook is late-bound: until the lifecycle is installed it just records the request,
+  // which is drained once the window exists.
+  let pendingSecondInstance = false
+  let onSecondInstance: () => void = () => {
+    pendingSecondInstance = true
+  }
+  if (!acquireSingleInstanceLock({ onSecondInstance: () => onSecondInstance() })) {
+    app.quit()
+    return
+  }
+
   const [
     { registerIpcHandlers },
     { createMainWindow },
     { MANAGED_PREVIEW_SCHEME },
-    { installMigrationQuitGuard }
+    { installMigrationQuitGuard, isMigrationInProgress },
+    { createAppTray },
+    { shutdownBackends },
+    { installAppLifecycle }
   ] = await Promise.all([
     import('./ipc'),
     import('./windows'),
     import('./managed-preview-resources'),
-    import('./storage/migration-state')
+    import('./storage/migration-state'),
+    import('./tray'),
+    import('./lifecycle-shutdown'),
+    import('./app-lifecycle')
   ])
 
   // Dev runs get a "(DEV)" suffix so the app name, macOS menu, and per-app paths (logs, userData)
@@ -97,27 +120,33 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   })
 
   // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
-  await registerIpcHandlers({ mainEntryPath })
+  const { runtime, notebook } = await registerIpcHandlers({ mainEntryPath })
 
-  // Warn (rather than silently tear down) if the user tries to quit mid data-root migration.
+  // Warn (rather than silently tear down) if the user tries to quit mid data-root migration. Installed
+  // BEFORE the lifecycle so its before-quit runs first: a migration it cancels leaves event.defaultPrevented
+  // set, which the lifecycle's quit cleanup honors.
   installMigrationQuitGuard(app)
 
-  createMainWindow()
-
-  app.on('activate', function () {
-    // On macOS it's common to re-create a window in the app when the
-    // dock icon is clicked and there are no other windows open.
-    if (BrowserWindow.getAllWindows().length === 0) createMainWindow()
+  // Install the tray, first window, and the quit/activate/window-all-closed handlers. shutdownBackends
+  // is bound with the live backend handles; the agent teardown latches shutting-down and awaits the
+  // process tree so a Windows taskkill /T completes before app.exit.
+  const { showMainWindow } = installAppLifecycle({
+    app,
+    createMainWindow,
+    createTray: (handlers) => createAppTray({ iconPath: icon, ...handlers }),
+    shutdownBackends: () => shutdownBackends({ runtime, notebook, log }),
+    isMigrationInProgress,
+    quit: () => app.quit(),
+    countWindows: () => BrowserWindow.getAllWindows().length
   })
 
-  // Quit when all windows are closed, except on macOS. There, it's common
-  // for applications and their menu bar to stay active until the user quits
-  // explicitly with Cmd + Q.
-  app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') {
-      app.quit()
-    }
-  })
+  // The window now exists: route second-instance handoffs to it, and surface it if one arrived during
+  // startup (before the lifecycle was installed).
+  onSecondInstance = showMainWindow
+  if (pendingSecondInstance) {
+    pendingSecondInstance = false
+    showMainWindow()
+  }
 }
 
 // In this file you can include the rest of your app's specific main process

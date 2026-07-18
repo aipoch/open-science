@@ -19,15 +19,24 @@ const { openExternalMock, ipcMainOnMock, ipcMainRemoveListenerMock } = vi.hoiste
 type WindowOpenDetails = { url: string; referrer: { url: string } }
 let windowOpenHandler: ((details: WindowOpenDetails) => unknown) | undefined
 
-// The most recently constructed window and its captured webContents handlers, so tests can drive the
-// before-input-event / did-start-loading listeners the way Electron would.
+// The most recently constructed window and its captured handlers, so tests can drive the
+// before-input-event / lifecycle listeners and the 'close' interceptor the way Electron would.
 type WebContentsHandler = (...args: unknown[]) => void
+// Fake close event mirroring Electron's: preventDefault records that the close was intercepted.
+type CloseEvent = { preventDefault: () => void; defaultPrevented: boolean }
+
+// currentWindow and lastWindow both point at the latest window; two describe blocks, one shared fake.
 let currentWindow: FakeBrowserWindow | undefined
+let lastWindow: FakeBrowserWindow | undefined
 
 class FakeBrowserWindow {
   closeMock = vi.fn()
   sendMock = vi.fn()
   webContentsHandlers = new Map<string, WebContentsHandler>()
+  handlers = new Map<string, Array<(event: CloseEvent) => void>>()
+  hidden = false
+  destroyed = false
+  hideCalls = 0
   webContents = {
     setWindowOpenHandler: (handler: (details: WindowOpenDetails) => unknown): void => {
       windowOpenHandler = handler
@@ -39,12 +48,38 @@ class FakeBrowserWindow {
     getURL: (): string => 'file:///app/index.html'
   }
 
-  on(): this {
+  on(event: string, handler: (event: CloseEvent) => void): this {
+    const list = this.handlers.get(event) ?? []
+    list.push(handler)
+    this.handlers.set(event, list)
     return this
   }
 
+  // Mirror Electron: close() fires the 'close' handlers, so a close-to-tray interceptor that
+  // preventDefault()s keeps the window alive; otherwise the close proceeds to destroy the window.
   close(): void {
     this.closeMock()
+    const event: CloseEvent = {
+      defaultPrevented: false,
+      preventDefault(): void {
+        this.defaultPrevented = true
+      }
+    }
+    for (const handler of this.handlers.get('close') ?? []) handler(event)
+    if (!event.defaultPrevented) this.destroyed = true
+  }
+
+  show(): void {
+    this.hidden = false
+  }
+
+  hide(): void {
+    this.hidden = true
+    this.hideCalls += 1
+  }
+
+  isDestroyed(): boolean {
+    return this.destroyed
   }
 
   loadURL(): Promise<void> {
@@ -57,11 +92,12 @@ class FakeBrowserWindow {
 }
 
 vi.mock('electron', () => ({
-  // isPackaged=true skips the dev title-suffix branch, keeping the fake focused on the open handler.
+  // isPackaged=true skips the dev title-suffix branch, keeping the fake focused on the open + close handlers.
   app: { isPackaged: true },
   BrowserWindow: class {
     constructor() {
       currentWindow = new FakeBrowserWindow()
+      lastWindow = currentWindow
       return currentWindow as unknown as object
     }
   },
@@ -87,6 +123,20 @@ const closeChord = (overrides: Partial<KeyChordInput> = {}): KeyChordInput => ({
   isAutoRepeat: false,
   ...overrides
 })
+
+// Drives the captured 'close' handlers with a fresh event, then mirrors Electron: an un-prevented
+// close proceeds to destroy the window.
+const emitClose = (window: FakeBrowserWindow): CloseEvent => {
+  const event: CloseEvent = {
+    defaultPrevented: false,
+    preventDefault(): void {
+      this.defaultPrevented = true
+    }
+  }
+  for (const handler of window.handlers.get('close') ?? []) handler(event)
+  if (!event.defaultPrevented) window.destroyed = true
+  return event
+}
 
 describe('window navigation policy', () => {
   it('allows only explicit external URL protocols', async () => {
@@ -345,5 +395,76 @@ describe('close chord interception', () => {
     expect(preventDefault).not.toHaveBeenCalled()
     expect(window.sendMock).not.toHaveBeenCalled()
     expect(window.closeMock).not.toHaveBeenCalled()
+  })
+
+  it('routes the Cmd/Ctrl+W direct-close fallback through the close-to-tray interceptor', () => {
+    // Renderer not ready, so the chord falls back to window.close(); with the tray resident that must
+    // hide the window (via the 'close' interceptor) instead of actually closing it.
+    createMainWindow({ shouldHideOnClose: () => true })
+    const window = currentWindow!
+
+    fireInput(window, closeChord())
+
+    expect(window.closeMock).toHaveBeenCalledTimes(1)
+    expect(window.hidden).toBe(true)
+    expect(window.hideCalls).toBe(1)
+    expect(window.isDestroyed()).toBe(false)
+  })
+})
+
+describe('createMainWindow close-to-tray interceptor', () => {
+  beforeEach(() => {
+    lastWindow = undefined
+  })
+
+  it('hides instead of closing when shouldHideOnClose returns true', () => {
+    createMainWindow({ shouldHideOnClose: () => true })
+    const window = lastWindow!
+    expect(window).toBeDefined()
+
+    const event = emitClose(window)
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(window.hideCalls).toBe(1)
+    expect(window.hidden).toBe(true)
+    expect(window.isDestroyed()).toBe(false)
+  })
+
+  it('evaluates the predicate at close time so a flipped flag allows a real quit', () => {
+    let quitting = false
+    createMainWindow({ shouldHideOnClose: () => !quitting })
+    const window = lastWindow!
+
+    emitClose(window)
+    expect(window.hideCalls).toBe(1)
+    expect(window.isDestroyed()).toBe(false)
+
+    quitting = true
+    const event = emitClose(window)
+    expect(event.defaultPrevented).toBe(false)
+    expect(window.hideCalls).toBe(1)
+    expect(window.isDestroyed()).toBe(true)
+  })
+
+  it('lets the window close when shouldHideOnClose returns false', () => {
+    createMainWindow({ shouldHideOnClose: () => false })
+    const window = lastWindow!
+
+    const event = emitClose(window)
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(window.hideCalls).toBe(0)
+    expect(window.isDestroyed()).toBe(true)
+  })
+
+  it('lets the window close when no options are provided', () => {
+    createMainWindow()
+    const window = lastWindow!
+
+    const event = emitClose(window)
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(window.hideCalls).toBe(0)
+    expect(window.isDestroyed()).toBe(true)
   })
 })

@@ -99,7 +99,12 @@ const refreshConnectorSkillDocs = async (
 }
 
 // Registers every main-process IPC surface used by the renderer.
-const registerIpcHandlers = async ({ mainEntryPath }: IpcRegistrationOptions): Promise<void> => {
+const registerIpcHandlers = async ({
+  mainEntryPath
+}: IpcRegistrationOptions): Promise<{
+  runtime: ReturnType<typeof registerAcpIpcHandlers>
+  notebook: ReturnType<typeof createDefaultNotebookRuntimeService>
+}> => {
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const settingsService = createDefaultSettingsService()
   const storedSettings = await settingsService.getStoredSettings()
@@ -272,6 +277,10 @@ const registerIpcHandlers = async ({ mainEntryPath }: IpcRegistrationOptions): P
   // real handlers instead of no-ops. Passing the already-constructed AcpRuntime so the reviewer
   // can spawn sessions under the same agent connection.
   registerReviewerIpcHandlers({ acpRuntime: runtime })
+
+  // Return the long-lived backend handles so the app lifecycle (before-quit) can shut them down
+  // cleanly on quit — the agent process tree and every notebook kernel.
+  return { runtime, notebook: notebookService }
 }
 
 export { registerIpcHandlers }

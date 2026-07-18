@@ -311,6 +311,19 @@ describe('notebook Python executor', () => {
           stdout: ''
         })
         expect(result.stderr).toContain('timed out')
+
+        // Regression: after a hard timeout the interpreter is dropped from reuse, so the next
+        // execution spawns a fresh one and succeeds rather than writing to a process that is being
+        // torn down. On Windows taskkill does not set Node's child.killed, so the executor must clear
+        // this.child itself for this to hold.
+        const next = await executor.execute({
+          code: 'print(1 + 1)',
+          cwd: root,
+          notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
+          dataRoot: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
+          runtimeRoot: join(root, 'runtime')
+        })
+        expect(next).toMatchObject({ status: 'completed', stdout: '2\n' })
       } finally {
         await executor.shutdown()
       }
