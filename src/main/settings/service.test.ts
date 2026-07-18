@@ -1044,4 +1044,57 @@ describe('checkEnvironment', () => {
     expect(result.runtime).toEqual({ found: true, path: found, version: '2.2.0' })
     expect((await repository.getSettings()).claude?.resolvedPath).toBe(found)
   })
+
+  it('checks both framework runtimes together and gates on the selected one (OpenCode)', async () => {
+    await repository.setAgentFramework('opencode')
+    // Claude is detectable (default detectDeps) and OpenCode is declared installed; both rows appear,
+    // but the result's runtime + gating reflect the SELECTED framework (OpenCode).
+    const service = createService(undefined, {
+      opencodeDetected: { path: '/usr/local/bin/opencode', version: '1.19.0' }
+    })
+
+    const result = await service.checkEnvironment()
+
+    const agentRows = result.checks.filter((check) => check.id === 'agent')
+    expect(agentRows.map((row) => row.label)).toEqual(['Claude Code runtime', 'OpenCode runtime'])
+    expect(agentRows.every((row) => row.status === 'passed')).toBe(true)
+    expect(result.agentFrameworkId).toBe('opencode')
+    expect(result.runtime).toEqual({
+      found: true,
+      path: '/usr/local/bin/opencode',
+      version: '1.19.0'
+    })
+  })
+
+  it('persists a freshly detected OpenCode runtime discovered during the dual probe', async () => {
+    // No recorded opencode; the parallel probe detects one on PATH and must record it so later
+    // gates/cards read the same runtime without re-probing.
+    const service = createService(undefined, {
+      opencodeDetected: { path: '/usr/local/bin/opencode', version: '1.19.0' }
+    })
+
+    await service.checkEnvironment()
+
+    const settings = await repository.getSettings()
+    expect(settings.opencodePath).toBe('/usr/local/bin/opencode')
+    expect(settings.opencodeVersion).toBe('1.19.0')
+  })
+
+  it('gates on the selected framework: OpenCode selected but missing blocks while Claude passes', async () => {
+    await repository.setAgentFramework('opencode')
+    // Claude is detectable (default detectDeps); OpenCode is declared absent (no opencodeDetected).
+    const service = createService()
+
+    const result = await service.checkEnvironment()
+
+    const agentRows = result.checks.filter((check) => check.id === 'agent')
+    expect(agentRows.map((row) => `${row.label}:${row.status}`)).toEqual([
+      'Claude Code runtime:passed',
+      'OpenCode runtime:failed'
+    ])
+    // Selection drives readiness: the missing selected runtime blocks Continue even though Claude runs.
+    expect(result.agentFrameworkId).toBe('opencode')
+    expect(result.ready).toBe(false)
+    expect(result.runtime).toEqual({ found: false })
+  })
 })

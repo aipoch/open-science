@@ -28,6 +28,29 @@ const OPENCODE_PLATFORM_PREFIX = 'opencode'
 
 type OpencodePlatform = { key: string; binName: string }
 
+// The non-baseline native packages opencode publishes as `opencode-ai` optionalDependencies. A host key
+// outside this set has no managed package, so resolveOpencodePlatform must throw rather than hand back a
+// key that later 404s at the registry — this is what lets the environment check report an unsupported
+// arch as not auto-installable, mirroring Claude's NATIVE_PLATFORMS allowlist.
+const OPENCODE_NATIVE_KEYS = new Set([
+  'linux-x64',
+  'linux-arm64',
+  'linux-x64-musl',
+  'linux-arm64-musl',
+  'darwin-x64',
+  'darwin-arm64',
+  'windows-x64',
+  'windows-arm64'
+])
+
+// Injectable host probes so key resolution is unit-testable offline (parallel to Claude's deps).
+export type ResolveOpencodePlatformDeps = {
+  platform?: NodeJS.Platform
+  arch?: string
+  detectMusl?: () => boolean
+  isRosetta?: () => boolean
+}
+
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
 
@@ -54,26 +77,38 @@ const isRosetta = (): boolean => {
 }
 
 // Maps the host to opencode's native-package key. opencode uses `windows` (not Node's `win32`).
-// Resolves the opencode native-package key for this host, throwing on an unsupported arch. Exported so
-// the environment check can gauge opencode auto-installability without the Claude platform map.
-export const resolveOpencodePlatform = (): OpencodePlatform => {
-  const platform = process.platform
-  let cpu = osArch()
+// Resolves the opencode native-package key for this host, throwing on any platform/arch opencode does
+// not publish a package for. Exported so the environment check can gauge opencode auto-installability
+// without the Claude platform map.
+export const resolveOpencodePlatform = (
+  deps: ResolveOpencodePlatformDeps = {}
+): OpencodePlatform => {
+  const platform = deps.platform ?? process.platform
+  let cpu = deps.arch ?? osArch()
+
+  let key: string
+  let binName: string
 
   if (platform === 'linux') {
-    return { key: `linux-${cpu}${detectMusl() ? '-musl' : ''}`, binName: 'opencode' }
+    const musl = deps.detectMusl ? deps.detectMusl() : detectMusl()
+    key = `linux-${cpu}${musl ? '-musl' : ''}`
+    binName = 'opencode'
+  } else if (platform === 'darwin') {
+    if (cpu === 'x64' && (deps.isRosetta ? deps.isRosetta() : isRosetta())) cpu = 'arm64'
+    key = `darwin-${cpu}`
+    binName = 'opencode'
+  } else if (platform === 'win32') {
+    key = `windows-${cpu}`
+    binName = 'opencode.exe'
+  } else {
+    throw new Error(`Unsupported platform for the app-managed OpenCode install: ${platform}-${cpu}`)
   }
 
-  if (platform === 'darwin') {
-    if (cpu === 'x64' && isRosetta()) cpu = 'arm64'
-    return { key: `darwin-${cpu}`, binName: 'opencode' }
+  if (!OPENCODE_NATIVE_KEYS.has(key)) {
+    throw new Error(`Unsupported platform for the app-managed OpenCode install: ${key}`)
   }
 
-  if (platform === 'win32') {
-    return { key: `windows-${cpu}`, binName: 'opencode.exe' }
-  }
-
-  throw new Error(`Unsupported platform for the app-managed OpenCode install: ${platform}-${cpu}`)
+  return { key, binName }
 }
 
 // Stable on-disk location for the managed binary (overwritten on upgrade), parallel to Claude's dir.

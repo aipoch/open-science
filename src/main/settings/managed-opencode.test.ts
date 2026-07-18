@@ -7,7 +7,11 @@ import { gzipSync } from 'node:zlib'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { installManagedOpencode, managedOpencodeDir } from './managed-opencode'
+import {
+  installManagedOpencode,
+  managedOpencodeDir,
+  resolveOpencodePlatform
+} from './managed-opencode'
 
 // One 512-byte ustar header + padded content — synthesizes the npm tarball shape the extractor reads.
 const tarEntry = (name: string, content: Buffer): Buffer => {
@@ -114,5 +118,44 @@ describe('installManagedOpencode', () => {
 
     expect(outcome.result.ok).toBe(false)
     expect(outcome.resolvedPath).toBeUndefined()
+  })
+})
+
+describe('resolveOpencodePlatform', () => {
+  it('resolves the published host keys, including windows-arm64 and musl linux', () => {
+    expect(resolveOpencodePlatform({ platform: 'darwin', arch: 'arm64' })).toEqual({
+      key: 'darwin-arm64',
+      binName: 'opencode'
+    })
+    expect(resolveOpencodePlatform({ platform: 'win32', arch: 'arm64' })).toEqual({
+      key: 'windows-arm64',
+      binName: 'opencode.exe'
+    })
+    expect(
+      resolveOpencodePlatform({ platform: 'linux', arch: 'x64', detectMusl: () => true })
+    ).toEqual({ key: 'linux-x64-musl', binName: 'opencode' })
+  })
+
+  it('promotes Rosetta-translated x64 darwin to the arm64 package', () => {
+    expect(
+      resolveOpencodePlatform({ platform: 'darwin', arch: 'x64', isRosetta: () => true })
+    ).toEqual({ key: 'darwin-arm64', binName: 'opencode' })
+  })
+
+  it('throws for an arch opencode publishes no package for (no false auto-install)', () => {
+    // opencode ships no linux-ia32 / linux-arm (32-bit) native package — resolving must fail rather
+    // than hand back a key that 404s at the registry, so the environment check gates correctly.
+    expect(() => resolveOpencodePlatform({ platform: 'linux', arch: 'ia32' })).toThrow(
+      /Unsupported platform/
+    )
+    expect(() => resolveOpencodePlatform({ platform: 'linux', arch: 'arm' })).toThrow(
+      /Unsupported platform/
+    )
+  })
+
+  it('throws for an unsupported platform', () => {
+    expect(() => resolveOpencodePlatform({ platform: 'aix', arch: 'x64' })).toThrow(
+      /Unsupported platform/
+    )
   })
 })

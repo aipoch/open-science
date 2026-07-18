@@ -293,6 +293,47 @@ describe('OnboardingWizard', () => {
     expect(container.textContent).toContain('OpenCode not detected')
   })
 
+  it("routes the manual OpenCode install button to installOpencode, not installClaude", async () => {
+    const installOpencode = vi.fn().mockResolvedValue({ installId: 'i', ok: true })
+    const installClaude = vi.fn().mockResolvedValue({ installId: 'i', ok: true })
+    useSettingsStore.setState({
+      // Claude is ready (its install card is hidden), so the only "Install with one click" button in
+      // the manual tab belongs to the OpenCode card — even though Claude is the SELECTED framework,
+      // proving the per-card button installs its own runtime.
+      preflight: {
+        claudeReady: true,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: true,
+        activeProviderReady: false
+      },
+      claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
+      environmentCheck: environment(true),
+      installOpencode,
+      installClaude
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+
+    const manualTab = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+    ).find((button) => button.textContent?.includes('Manual setup'))
+    await act(async () => manualTab?.click())
+
+    const installButtons = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('button')
+    ).filter((button) => /install with one click/i.test(button.textContent ?? ''))
+    // Exactly one install button (OpenCode's) since Claude is ready.
+    expect(installButtons).toHaveLength(1)
+    await act(async () => installButtons[0].click())
+
+    // Default source is 'managed'; the OpenCode card must route to installOpencode, never installClaude.
+    expect(installOpencode).toHaveBeenCalledWith('managed')
+    expect(installClaude).not.toHaveBeenCalled()
+  })
+
   it('uses the recommended mirror and surfaces the actual automatic install error', async () => {
     const installClaude = vi
       .fn()
