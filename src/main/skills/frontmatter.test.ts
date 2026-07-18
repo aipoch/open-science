@@ -98,7 +98,8 @@ describe('parseFrontmatter', () => {
       '# Demo'
     ].join('\r\n')
     const { fields } = parseFrontmatter(raw)
-    expect(fields.description).toBe('first line second line')
+    // Same value the LF folded test yields: folded to one line, trailing newline kept (YAML clip).
+    expect(fields.description).toBe('first line second line\n')
   })
 
   it('ignores nested (indented) keys after a block scalar, as a flat reader', () => {
