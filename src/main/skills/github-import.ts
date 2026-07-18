@@ -14,7 +14,9 @@ export type GitHubSkillLocation = {
   path: string
 }
 
-// Injectable fetch so tests don't hit the network.
+// Injectable fetch so tests don't hit the network. `headers.get` is optional: the real fetch Response
+// exposes it (used to read Content-Length before buffering a download), and callers/tests that omit it
+// simply skip the pre-check and fall back to the post-download size guard.
 export type FetchLike = (
   url: string,
   init?: { headers?: Record<string, string> }
@@ -23,6 +25,7 @@ export type FetchLike = (
   status: number
   json: () => Promise<unknown>
   arrayBuffer: () => Promise<ArrayBuffer>
+  headers?: { get: (name: string) => string | null }
 }>
 
 const GITHUB_HEADERS = { 'User-Agent': 'open-science', Accept: 'application/vnd.github+json' }
@@ -64,16 +67,28 @@ const fetchSkillFiles = async (
   const rootPrefix = location.path ? `${location.path}/` : ''
 
   // Bound the recursive download so a huge (or maliciously deep) repository can't freeze or exhaust
-  // the app: cap directory depth, file count, per-file size, and total bytes across the whole skill.
+  // the app: cap directory depth, file count, per-file size, total bytes, AND the number of requests.
+  // The request budget is charged for every fetch — including directory listings — so a wide or
+  // mostly-empty directory tree can't drive an unbounded number of API calls before hitting a byte or
+  // file limit (empty dirs cost nothing against those).
   let fileCount = 0
   let totalBytes = 0
+  let requests = 0
+
+  const request: FetchLike = (url, init) => {
+    requests += 1
+    if (requests > SKILL_IMPORT_LIMITS.maxRequests) {
+      throw new Error(`Skill import exceeded ${SKILL_IMPORT_LIMITS.maxRequests} requests.`)
+    }
+    return fetchImpl(url, init)
+  }
 
   const walk = async (path: string, depth: number): Promise<FetchedSkillFile[]> => {
     if (depth > SKILL_IMPORT_LIMITS.maxDepth) {
       throw new Error(`Skill directory nesting exceeds ${SKILL_IMPORT_LIMITS.maxDepth} levels.`)
     }
 
-    const response = await fetchImpl(contentsUrl(location, path), { headers: GITHUB_HEADERS })
+    const response = await request(contentsUrl(location, path), { headers: GITHUB_HEADERS })
     if (!response.ok) {
       throw new Error(`GitHub API request failed (${response.status}) for ${path || 'repo root'}`)
     }
@@ -89,11 +104,18 @@ const fetchSkillFiles = async (
         if (fileCount >= SKILL_IMPORT_LIMITS.maxFiles) {
           throw new Error(`Skill has too many files (limit ${SKILL_IMPORT_LIMITS.maxFiles}).`)
         }
-        const raw = await fetchImpl(entry.download_url, {
-          headers: { 'User-Agent': 'open-science' }
-        })
+        const raw = await request(entry.download_url, { headers: { 'User-Agent': 'open-science' } })
         if (!raw.ok) {
           throw new Error(`Failed to download ${entry.path} (${raw.status})`)
+        }
+        // Reject on the advertised Content-Length before buffering the body, so an oversized file is
+        // refused without first allocating it in memory. A missing/lying header falls through to the
+        // post-download guard below.
+        const declared = Number(raw.headers?.get('content-length') ?? '')
+        if (Number.isFinite(declared) && declared > SKILL_IMPORT_LIMITS.maxFileBytes) {
+          throw new Error(
+            `File ${entry.path} exceeds the ${SKILL_IMPORT_LIMITS.maxFileBytes}-byte limit.`
+          )
         }
         const content = Buffer.from(await raw.arrayBuffer())
         if (content.length > SKILL_IMPORT_LIMITS.maxFileBytes) {

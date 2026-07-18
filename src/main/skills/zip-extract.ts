@@ -67,6 +67,14 @@ const extractZip = (buffer: Buffer): ExtractedZipFile[] => {
     if (isUnsafePath(name)) continue
     if (method !== 0 && method !== 8) continue
 
+    // Bound nesting the same way the GitHub walk does, so a deeply-nested path can't blow past the
+    // depth other consumers assume.
+    if (name.split('/').length > SKILL_IMPORT_LIMITS.maxDepth) {
+      throw new Error(
+        `ZIP entry ${name} is nested deeper than ${SKILL_IMPORT_LIMITS.maxDepth} levels.`
+      )
+    }
+
     if (files.length >= SKILL_IMPORT_LIMITS.maxFiles) {
       throw new Error(`ZIP bundle has too many files (limit ${SKILL_IMPORT_LIMITS.maxFiles}).`)
     }

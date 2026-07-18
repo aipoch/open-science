@@ -96,8 +96,9 @@ describe('fetchSkillFiles', () => {
     ).rejects.toThrow(/No SKILL\.md/)
   })
 
-  it('rejects a file larger than the per-file limit', async () => {
-    // A single 17 MiB file exceeds SKILL_IMPORT_LIMITS.maxFileBytes (16 MiB).
+  it('rejects a file larger than the per-file limit (post-download guard)', async () => {
+    // A 6 MiB body with no Content-Length header falls through to the post-download size guard
+    // (SKILL_IMPORT_LIMITS.maxFileBytes is 5 MiB).
     const oversized: FetchLike = async (url) => {
       if (url.includes('/contents/')) {
         return {
@@ -111,20 +112,84 @@ describe('fetchSkillFiles', () => {
               download_url: 'https://raw/big'
             }
           ],
-          arrayBuffer: async () => new ArrayBuffer(17 * 1024 * 1024)
+          arrayBuffer: async () => new ArrayBuffer(0)
         }
       }
       return {
         ok: true,
         status: 200,
         json: async () => ({}),
-        arrayBuffer: async () => new ArrayBuffer(17 * 1024 * 1024)
+        arrayBuffer: async () => new ArrayBuffer(6 * 1024 * 1024)
       }
     }
 
     await expect(
       fetchSkillFiles({ owner: 'acme', repo: 'skills', ref: 'main', path: 'pack/foo' }, oversized)
     ).rejects.toThrow(/exceeds the .* limit/)
+  })
+
+  it('rejects an oversized file on Content-Length before buffering the body', async () => {
+    // The download advertises 6 MiB via Content-Length; the guard must fire before arrayBuffer() runs.
+    let bodyRead = false
+    const preCheck: FetchLike = async (url) => {
+      if (url.includes('/contents/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              type: 'file',
+              name: 'SKILL.md',
+              path: 'pack/foo/SKILL.md',
+              download_url: 'https://raw/big'
+            }
+          ],
+          arrayBuffer: async () => new ArrayBuffer(0)
+        }
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        headers: {
+          get: (name) => (name.toLowerCase() === 'content-length' ? `${6 * 1024 * 1024}` : null)
+        },
+        arrayBuffer: async () => {
+          bodyRead = true
+          return new ArrayBuffer(6 * 1024 * 1024)
+        }
+      }
+    }
+
+    await expect(
+      fetchSkillFiles({ owner: 'acme', repo: 'skills', ref: 'main', path: 'pack/foo' }, preCheck)
+    ).rejects.toThrow(/exceeds the .* limit/)
+    expect(bodyRead).toBe(false)
+  })
+
+  it('rejects a wide directory tree that exceeds the request budget', async () => {
+    // The root lists 600 empty subdirectories; walking them all would exceed the 512-request budget
+    // long before any file or byte limit (empty dirs cost nothing against those).
+    const wide: FetchLike = async (url) => {
+      const isRoot = /\/contents\/pack\/foo(\?|$)/.test(url)
+      return {
+        ok: true,
+        status: 200,
+        json: async () =>
+          isRoot
+            ? Array.from({ length: 600 }, (_, i) => ({
+                type: 'dir',
+                name: `d${i}`,
+                path: `pack/foo/d${i}`
+              }))
+            : [],
+        arrayBuffer: async () => new ArrayBuffer(0)
+      }
+    }
+
+    await expect(
+      fetchSkillFiles({ owner: 'acme', repo: 'skills', ref: 'main', path: 'pack/foo' }, wide)
+    ).rejects.toThrow(/exceeded .* requests/)
   })
 
   it('rejects a repository nested deeper than the depth limit', async () => {
@@ -147,8 +212,9 @@ describe('fetchSkillFiles', () => {
   })
 
   it('rejects a directory with more files than the count limit', async () => {
+    // 300 files exceeds the structural cap (SKILL_IMPORT_LIMITS.maxFiles is 256).
     const many = Object.fromEntries(
-      Array.from({ length: 2001 }, (_, i) => [`f${i}.txt`, 'x'])
+      Array.from({ length: 300 }, (_, i) => [`f${i}.txt`, 'x'])
     ) as Record<string, string>
     await expect(
       fetchSkillFiles(
