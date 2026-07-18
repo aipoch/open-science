@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -8,6 +8,7 @@ import { gzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
+  defaultVerifyBinary,
   installManagedOpencode,
   managedOpencodeDir,
   resolveOpencodePlatform
@@ -221,9 +222,10 @@ describe('installManagedOpencode', () => {
       requestedKeys.push('standard')
       return { dist: { tarball: 'https://reg/standard.tgz', integrity: sha512(standardTgz) } }
     }
-    const fetchTarball = async (
-      url: string
-    ): Promise<{ stream: NodeJS.ReadableStream; totalBytes?: number }> => {
+    const fetchTarball = async (url: string): Promise<{
+      stream: NodeJS.ReadableStream
+      totalBytes?: number
+    }> => {
       const tgz = url.includes('baseline') ? baselineTgz : standardTgz
       return { stream: Readable.from(tgz), totalBytes: tgz.length }
     }
@@ -363,4 +365,42 @@ describe('resolveOpencodePlatform', () => {
       /Unsupported platform/
     )
   })
+})
+
+describe('defaultVerifyBinary', () => {
+  let root: string | undefined
+
+  afterEach(async () => {
+    if (root) {
+      await rm(root, { recursive: true, force: true })
+      root = undefined
+    }
+  })
+
+  it('reports ok for a binary that runs `--version` and exits zero', () => {
+    // node itself answers `--version` with exit 0 — the real spawnSync path, host-independent.
+    expect(defaultVerifyBinary(process.execPath)).toEqual({ ok: true })
+  })
+
+  it('reports a spawn error (unrunnable) when the binary path does not exist', () => {
+    const result = defaultVerifyBinary(join(tmpdir(), 'no-such-opencode-binary-xyz'))
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toMatch(/spawn error/)
+  })
+
+  // A non-zero `--version` exit classifies as unrunnable. Uses a chmod'd shell script, so it is skipped
+  // on Windows (advisory CI leg) where the exec-bit trick does not apply.
+  it.skipIf(process.platform === 'win32')(
+    'reports a non-zero exit (unrunnable) from the real probe',
+    async () => {
+      root = await mkdtemp(join(tmpdir(), 'verify-binary-'))
+      const script = join(root, 'exit3.sh')
+      await writeFile(script, '#!/bin/sh\nexit 3\n')
+      await chmod(script, 0o755)
+
+      const result = defaultVerifyBinary(script)
+      expect(result.ok).toBe(false)
+      if (!result.ok) expect(result.reason).toMatch(/exited with code 3/)
+    }
+  )
 })

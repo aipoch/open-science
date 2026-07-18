@@ -158,8 +158,9 @@ export type VerifyBinaryResult =
 export type VerifyBinary = (binPath: string) => VerifyBinaryResult
 
 // Default verifier: run the installed binary with `--version` and classify failures. A spawn error, a
-// terminating signal (SIGILL etc.), or a non-zero exit all mean the binary is not usable here.
-const defaultVerifyBinary: VerifyBinary = (binPath) => {
+// terminating signal (SIGILL etc.), or a non-zero exit all mean the binary is not usable here. Exported
+// so the production classification (not just injected fakes) is exercised by tests.
+export const defaultVerifyBinary: VerifyBinary = (binPath) => {
   const probe = spawnSync(binPath, ['--version'], { encoding: 'utf8', timeout: 15_000 })
   if (probe.error) return { ok: false, reason: `spawn error: ${probe.error.message}` }
   if (probe.signal) return { ok: false, reason: `killed by ${probe.signal}`, signal: probe.signal }
