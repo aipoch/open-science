@@ -54,6 +54,33 @@ const OPENCODE_ENDPOINT_PROVIDER: Record<'anthropic' | 'openai', { id: string; n
   openai: { id: 'openai-compatible', npm: '@ai-sdk/openai-compatible' }
 }
 
+// The decrypted provider key is handed to opencode via this spawn-env var and referenced from the
+// generated config as `{env:...}` (opencode substitutes env refs at config-load time). This keeps the
+// plaintext key OFF disk — opencode.json only ever holds the reference, never the secret.
+const OPENCODE_API_KEY_ENV = 'OPENCODE_APP_API_KEY'
+
+// The app's permission policy for opencode: every side-effecting/MCP tool must ASK the ACP client (the
+// app's broker then enforces the selected profile); only safe read-only tools run silently (parity with
+// Claude's Ask mode). The `*` catch-all covers unlisted tools (MCP artifact/notebook/connectors, etc.),
+// and the sensitive built-ins are pinned to `ask` explicitly so a workspace config that sets one of
+// those keys to `allow` is overridden rather than winning. Enforced above any project config via the
+// OPENCODE_CONFIG_CONTENT layer (see prepareModelConfig) — the config-file block is only a baseline.
+const OPENCODE_PERMISSION_RULES: Record<string, 'ask' | 'allow' | 'deny'> = {
+  '*': 'ask',
+  read: 'allow',
+  glob: 'allow',
+  grep: 'allow',
+  list: 'allow',
+  lsp: 'allow',
+  edit: 'ask',
+  bash: 'ask',
+  task: 'ask',
+  skill: 'ask',
+  webfetch: 'ask',
+  websearch: 'ask',
+  external_directory: 'ask'
+}
+
 const asRecord = (value: unknown): Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -99,22 +126,15 @@ const buildOpencodeConfig = (
     ...baseConfig,
     ...(bareModel ? { model: `${providerId}/${bareModel}` } : {}),
     ...(instructions.length > 0 ? { instructions } : {}),
-    // Force opencode to ASK the ACP client before every side-effecting tool instead of running
-    // silently under its permissive default. opencode keys permissions by TOOL NAME with a "*"
-    // catch-all, so the wildcard is essential: without it MCP tools (artifact/notebook/connectors),
-    // websearch, task, skill, etc. are unmatched and run without a prompt. Safe read-only tools stay
-    // "allow" so Ask mode doesn't prompt on every file read (parity with Claude). Everything else —
-    // edit, bash, webfetch, websearch, task, skill, and all MCP tools — hits "*" → ask → the ACP
-    // client, where the app enforces the selected profile in its broker (ask prompts, auto approves
-    // workspace edits, full approves all). Our rules win over any base config so it can't be disabled.
+    // Baseline permission policy written into the config file. This alone is NOT sufficient: opencode
+    // loads a project-level opencode.json / .opencode config from the session cwd at HIGHER precedence
+    // than this app-owned (global) config, so a workspace could set `permission["*"]="allow"` here and
+    // disable delegation. The authoritative copy of these rules is passed via the OPENCODE_CONFIG_CONTENT
+    // layer in prepareModelConfig, which opencode merges above project config. See
+    // OPENCODE_PERMISSION_RULES for the policy rationale.
     permission: {
       ...basePermission,
-      '*': 'ask',
-      read: 'allow',
-      glob: 'allow',
-      grep: 'allow',
-      list: 'allow',
-      lsp: 'allow'
+      ...OPENCODE_PERMISSION_RULES
     },
     provider: {
       ...baseProviders,
@@ -125,7 +145,9 @@ const buildOpencodeConfig = (
         options: {
           ...baseOptions,
           ...(baseURL ? { baseURL } : {}),
-          ...(provider.key ? { apiKey: provider.key } : {})
+          // Reference the key via env interpolation; the real value is passed in the spawn env only,
+          // so the decrypted key is never persisted to opencode.json (see prepareModelConfig).
+          ...(provider.key ? { apiKey: `{env:${OPENCODE_API_KEY_ENV}}` } : {})
         },
         // Register the model so opencode treats a non-catalog id as a real, selectable model.
         ...(bareModel ? { models: { ...baseModels, [bareModel]: {} } } : {})
@@ -193,7 +215,19 @@ export const opencodeFramework: AgentFramework = {
     configFiles[0].content = buildOpencodeConfig(provider, {}, instructionPaths)
 
     return {
-      env: { XDG_CONFIG_HOME: configHome, XDG_DATA_HOME: dataHome },
+      env: {
+        XDG_CONFIG_HOME: configHome,
+        XDG_DATA_HOME: dataHome,
+        // Enforce the permission policy from the OPENCODE_CONFIG_CONTENT layer, which opencode merges
+        // ABOVE the global XDG config AND above any project-level opencode.json / .opencode config the
+        // repo ships. So a malicious workspace can no longer flip permission["*"] to "allow" and bypass
+        // the app broker; the config-file block above is only a baseline. Residual: a workspace config
+        // that names a specific NON-pinned tool (e.g. an exact MCP tool id) with "allow" still wins for
+        // that one tool, since opencode deep-merges permission keys with no "replace-all" layer here.
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: OPENCODE_PERMISSION_RULES }),
+        // Pass the decrypted key ONLY via the environment; the config references it as `{env:...}`.
+        ...(provider.key ? { [OPENCODE_API_KEY_ENV]: provider.key } : {})
+      },
       configFiles
     }
   },

@@ -33,6 +33,53 @@ describe('opencodeFramework.prepareModelConfig', () => {
     )
     expect(parsed.instructions).toBeUndefined()
   })
+
+  it('passes the decrypted key via the spawn env and keeps it out of the written config', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'sk-plaintext-secret' },
+      { storageRoot: '/data', executablePath: '/bin/opencode' }
+    )
+
+    // The real key rides the env under the referenced var, never touching disk.
+    expect(config.env?.OPENCODE_APP_API_KEY).toBe('sk-plaintext-secret')
+    const opencodeJson = config.configFiles?.find((file) => file.path.endsWith('opencode.json'))
+    expect(opencodeJson?.content).not.toContain('sk-plaintext-secret')
+    expect(JSON.parse(opencodeJson?.content ?? '{}').provider.anthropic.options.apiKey).toBe(
+      '{env:OPENCODE_APP_API_KEY}'
+    )
+  })
+
+  it('does not set the key env var when the provider carries no key', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      { type: 'claude-default' },
+      { storageRoot: '/data', executablePath: '/bin/opencode' }
+    )
+    expect(config.env && 'OPENCODE_APP_API_KEY' in config.env).toBe(false)
+  })
+
+  it('enforces the permission policy via OPENCODE_CONFIG_CONTENT (above any project config)', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
+      { storageRoot: '/data', executablePath: '/bin/opencode' }
+    )
+
+    const rules = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}').permission
+    expect(rules['*']).toBe('ask')
+    for (const tool of ['read', 'glob', 'grep', 'list', 'lsp']) {
+      expect(rules[tool]).toBe('allow')
+    }
+    for (const tool of [
+      'edit',
+      'bash',
+      'task',
+      'skill',
+      'webfetch',
+      'websearch',
+      'external_directory'
+    ]) {
+      expect(rules[tool]).toBe('ask')
+    }
+  })
 })
 
 describe('buildOpencodeConfig', () => {
@@ -50,10 +97,54 @@ describe('buildOpencodeConfig', () => {
     // instead of ignoring it and falling back to its own default.
     expect(config.model).toBe('anthropic/deepseek-v4-pro')
     expect(config.provider.anthropic.models).toEqual({ 'deepseek-v4-pro': {} })
+    // The key is referenced via opencode env interpolation, never emitted as a plaintext literal.
     expect(config.provider.anthropic.options).toEqual({
       baseURL: 'https://gw.example/v1',
-      apiKey: 'sk-secret'
+      apiKey: '{env:OPENCODE_APP_API_KEY}'
     })
+  })
+
+  it('never emits the decrypted key as a plaintext literal (only an env reference)', () => {
+    const serialized = buildOpencodeConfig({
+      type: 'custom',
+      baseUrl: 'https://gw.example/v1',
+      model: 'm',
+      key: 'sk-super-secret'
+    })
+
+    expect(serialized).not.toContain('sk-super-secret')
+    expect(JSON.parse(serialized).provider.anthropic.options.apiKey).toBe(
+      '{env:OPENCODE_APP_API_KEY}'
+    )
+  })
+
+  it('omits apiKey entirely when the provider carries no key', () => {
+    const config = JSON.parse(
+      buildOpencodeConfig({ type: 'custom', baseUrl: 'https://gw/v1', model: 'm' })
+    )
+    expect(config.provider.anthropic.options.apiKey).toBeUndefined()
+  })
+
+  it('pins sensitive built-in tools to ask so a workspace config cannot flip them to allow', () => {
+    const config = JSON.parse(
+      buildOpencodeConfig(
+        { type: 'custom', baseUrl: 'https://gw/v1', model: 'm' },
+        { permission: { edit: 'allow', bash: 'allow', task: 'allow' } }
+      )
+    )
+
+    // Our rules override the base for every side-effecting built-in.
+    for (const tool of [
+      'edit',
+      'bash',
+      'task',
+      'skill',
+      'webfetch',
+      'websearch',
+      'external_directory'
+    ]) {
+      expect(config.permission[tool]).toBe('ask')
+    }
   })
 
   it('delegates every side-effecting tool (incl. MCP) via a "*" catch-all, allowing safe reads', () => {
@@ -68,9 +159,9 @@ describe('buildOpencodeConfig', () => {
     for (const tool of ['read', 'glob', 'grep', 'list', 'lsp']) {
       expect(config.permission[tool]).toBe('allow')
     }
-    // Mutating/external tools are NOT allowlisted, so they fall through to "*" → ask.
-    expect(config.permission.edit).toBeUndefined()
-    expect(config.permission.bash).toBeUndefined()
+    // Mutating/external tools are pinned to ask (and unlisted MCP tools fall through to "*" → ask).
+    expect(config.permission.edit).toBe('ask')
+    expect(config.permission.bash).toBe('ask')
   })
 
   it('keeps delegation on even if the base config tried to disable it', () => {
@@ -116,7 +207,7 @@ describe('buildOpencodeConfig', () => {
     expect(config.provider.anthropic.options).toEqual({
       timeout: 5,
       baseURL: 'https://gw.example/v1',
-      apiKey: 'sk-secret'
+      apiKey: '{env:OPENCODE_APP_API_KEY}'
     })
     expect(config.provider.anthropic.models).toEqual({ 'other-model': {}, 'deepseek-v4-pro': {} })
     expect(config.model).toBe('anthropic/deepseek-v4-pro')
@@ -137,7 +228,7 @@ describe('buildOpencodeConfig', () => {
     expect(config.provider['openai-compatible'].npm).toBe('@ai-sdk/openai-compatible')
     expect(config.provider['openai-compatible'].options).toEqual({
       baseURL: 'https://gw/v1',
-      apiKey: 'k'
+      apiKey: '{env:OPENCODE_APP_API_KEY}'
     })
     expect(config.provider['openai-compatible'].models).toEqual({ 'gpt-x': {} })
     // A 'both' provider prefers OpenAI on opencode (which supports both).
