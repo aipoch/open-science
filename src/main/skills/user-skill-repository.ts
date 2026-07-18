@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto'
-import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve, sep } from 'node:path'
+import { createHash, randomUUID } from 'node:crypto'
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 
 import type { SkillBundlePreview, SkillReference, SkillSource } from '../../shared/settings'
 import { createLogger } from '../logger'
@@ -461,27 +461,55 @@ class UserSkillRepository {
     signature: string
   ): Promise<void> {
     const dir = this.skillDir('imported', slug)
-
-    // Containment gate for every import source (zip, GitHub, ...): resolve every target and confirm it
-    // stays inside the skill directory BEFORE touching disk. Validating up front — rather than per
-    // file mid-write — means a crafted relative path can't leave the prior copy deleted or a new copy
-    // half-written; the whole import is rejected before the destructive rm.
     const root = resolve(dir)
-    const targets = files.map((file) => {
+
+    // Validate the whole file set against the FINAL directory before touching disk. Every target must
+    // stay inside the skill dir, none may BE the dir itself (an empty/`.` path), no two may collide,
+    // and none may be a path-prefix of another (a file `a` and a dir `a/b` can't both exist). A bundle
+    // that fails any of these is rejected outright.
+    const seen = new Set<string>()
+    for (const file of files) {
       const target = resolve(dir, file.relativePath)
-      if (target !== root && !target.startsWith(root + sep)) {
+      if (target === root || !target.startsWith(root + sep)) {
         throw new Error(`Refusing to write skill file outside its directory: ${file.relativePath}`)
       }
-      return { target, content: file.content }
-    })
-
-    await rm(dir, { recursive: true, force: true })
-    for (const { target, content } of targets) {
-      await mkdir(dirname(target), { recursive: true })
-      await writeFile(target, content)
+      if (seen.has(target)) {
+        throw new Error(`Duplicate file path in skill import: ${file.relativePath}`)
+      }
+      seen.add(target)
+    }
+    for (const a of seen) {
+      for (const b of seen) {
+        if (a !== b && b.startsWith(a + sep)) {
+          throw new Error('Conflicting file and directory at the same path in skill import.')
+        }
+      }
     }
 
-    await writeFile(join(dir, SOURCE_MANIFEST), JSON.stringify({ url, signature }, null, 2), 'utf8')
+    // Build the new copy in a sibling staging dir, then swap it in. Because nothing is written into the
+    // live skill dir until the whole set has been staged successfully, a mid-write failure (e.g. an
+    // ancestor/descendant path conflict surfacing as EISDIR/ENOTDIR) can never leave the existing skill
+    // deleted or partially overwritten. The staging dir is a sibling, so the rename stays on one
+    // filesystem; on any failure it is removed and the original is left untouched.
+    const staging = join(dirname(dir), `.${basename(dir)}.import-${randomUUID()}`)
+    try {
+      await mkdir(staging, { recursive: true })
+      for (const file of files) {
+        const target = join(staging, file.relativePath)
+        await mkdir(dirname(target), { recursive: true })
+        await writeFile(target, file.content)
+      }
+      await writeFile(
+        join(staging, SOURCE_MANIFEST),
+        JSON.stringify({ url, signature }, null, 2),
+        'utf8'
+      )
+      await rm(dir, { recursive: true, force: true })
+      await rename(staging, dir)
+    } catch (error) {
+      await rm(staging, { recursive: true, force: true }).catch(() => {})
+      throw error
+    }
   }
 
   // Finds a slug not yet taken under the source, appending -2, -3, ... on collision.

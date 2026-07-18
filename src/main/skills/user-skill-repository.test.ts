@@ -593,6 +593,84 @@ describe('UserSkillRepository', () => {
     expect(await repo.body(first.id)).toContain('original body')
   })
 
+  it('rejects an ancestor/descendant path conflict, leaving the prior skill intact', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+
+    const good = ['---', 'name: Foo', 'description: original.', '---', 'original body'].join('\n')
+    const first = await repo.importFromGitHub(SKILL_URL, fakeFetch(good))
+    expect(first.status).toBe('imported')
+
+    // `a` (a file) and `a/b` (needs `a` to be a directory) can't both exist. Before the staging fix
+    // this failed mid-write and left the old body half-overwritten; now it must be rejected up front.
+    const conflicting: FetchLike = async (url: string) => {
+      if (url.includes('/contents/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              type: 'file',
+              name: 'SKILL.md',
+              path: 'pack/foo/SKILL.md',
+              download_url: 'https://raw/s'
+            },
+            { type: 'file', name: 'a', path: 'pack/foo/a', download_url: 'https://raw/a' },
+            { type: 'file', name: 'b', path: 'pack/foo/a/b', download_url: 'https://raw/ab' }
+          ],
+          arrayBuffer: async () => new ArrayBuffer(0)
+        }
+      }
+      const bytes = new TextEncoder().encode('changed')
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        arrayBuffer: async () =>
+          bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+      }
+    }
+
+    await expect(repo.importFromGitHub(SKILL_URL, conflicting)).rejects.toThrow(
+      /Conflicting file and directory/
+    )
+    expect(await repo.body(first.id)).toContain('original body')
+  })
+
+  it('rejects an import that contains duplicate file paths', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+
+    const duplicate: FetchLike = async (url: string) => {
+      if (url.includes('/contents/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              type: 'file',
+              name: 'SKILL.md',
+              path: 'pack/foo/SKILL.md',
+              download_url: 'https://raw/s'
+            },
+            { type: 'file', name: 'dup', path: 'pack/foo/dup.txt', download_url: 'https://raw/d1' },
+            { type: 'file', name: 'dup', path: 'pack/foo/dup.txt', download_url: 'https://raw/d2' }
+          ],
+          arrayBuffer: async () => new ArrayBuffer(0)
+        }
+      }
+      const bytes = new TextEncoder().encode('x')
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        arrayBuffer: async () =>
+          bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+      }
+    }
+
+    await expect(repo.importFromGitHub(SKILL_URL, duplicate)).rejects.toThrow(/Duplicate file path/)
+    expect(await repo.list()).toEqual([])
+  })
+
   it('marks scanned candidates already imported by URL or by same name', async () => {
     const repo = new UserSkillRepository(await makeStorage())
     const skillMd = ['---', 'name: Foo', 'description: An imported skill.', '---', 'body'].join(
