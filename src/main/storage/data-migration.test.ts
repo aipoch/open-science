@@ -227,6 +227,25 @@ describe('copyAndVerify', () => {
     expect(deleteResult.failed).toEqual([])
     expect(await exists(join(from, 'runtime'))).toBe(false)
   })
+
+  it('preserves nested empty directories before the source tree is deleted', async () => {
+    await mkdir(join(from, 'artifacts', 'empty', 'nested'), { recursive: true })
+
+    const result = await copyAndVerify({
+      from,
+      to,
+      dirs: ['artifacts'],
+      signal: new AbortController().signal,
+      onProgress: () => {}
+    })
+
+    expect(result).toEqual({ ok: true })
+    expect(await exists(join(to, 'artifacts', 'empty', 'nested'))).toBe(true)
+
+    await deleteSources(from, ['artifacts'])
+    expect(await exists(join(from, 'artifacts', 'empty', 'nested'))).toBe(false)
+    expect(await exists(join(to, 'artifacts', 'empty', 'nested'))).toBe(true)
+  })
 })
 
 describe('deleteSources', () => {

@@ -1,7 +1,7 @@
-import { existsSync, type Dirent } from 'node:fs'
-import { readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
-import { join } from 'node:path'
+import { createReadStream, existsSync, type Dirent } from 'node:fs'
+import { lstat, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { join, relative } from 'node:path'
 
 // Sentinel file dropped INTO a staging data root while a migration copy is in flight. Its presence
 // means "this OpenScience folder is a half-baked/uncommitted staging copy, not the live data root",
@@ -17,7 +17,22 @@ export type MigrationMarker = {
   target: string
   createdAt: number
   status: 'copying' | 'verified'
-  inventory?: { dirs: string[]; fileCount: number; totalBytes: number }
+  inventory?: { dirs: string[]; fileCount: number; totalBytes: number; digest: string }
+}
+
+const isInventory = (value: unknown): value is NonNullable<MigrationMarker['inventory']> => {
+  if (!value || typeof value !== 'object') return false
+  const inventory = value as Record<string, unknown>
+  return (
+    Array.isArray(inventory.dirs) &&
+    inventory.dirs.every((dir) => typeof dir === 'string') &&
+    Number.isSafeInteger(inventory.fileCount) &&
+    (inventory.fileCount as number) >= 0 &&
+    Number.isSafeInteger(inventory.totalBytes) &&
+    (inventory.totalBytes as number) >= 0 &&
+    typeof inventory.digest === 'string' &&
+    /^[a-f0-9]{64}$/.test(inventory.digest)
+  )
 }
 
 // Sync existence check so storage-root's synchronous computeDefaultDataRoot can consult it directly.
@@ -32,9 +47,14 @@ export const readMigrationMarker = async (root: string): Promise<MigrationMarker
     const parsed = JSON.parse(raw) as Partial<MigrationMarker>
     if (
       !parsed ||
+      parsed.version !== 1 ||
       typeof parsed.token !== 'string' ||
       typeof parsed.source !== 'string' ||
-      typeof parsed.target !== 'string'
+      typeof parsed.target !== 'string' ||
+      typeof parsed.createdAt !== 'number' ||
+      !Number.isFinite(parsed.createdAt) ||
+      (parsed.status !== 'copying' && parsed.status !== 'verified') ||
+      (parsed.inventory !== undefined && !isInventory(parsed.inventory))
     ) {
       return null
     }
@@ -61,44 +81,57 @@ export const removeMigrationMarker = async (root: string): Promise<void> => {
 export const newToken = (): string => randomUUID()
 
 // Recursively counts files and bytes under each of `dirs` beneath `root`, returning the subset of dirs
-// that actually exist. Missing dirs and stat failures are skipped rather than thrown, so a partial
-// tree still yields a usable tally. Kept here (node-only) so migration-service can record what it
-// staged without importing the copy engine in data-migration.ts.
+// that actually exist. A missing top-level dir is valid, but errors or unsupported entries inside a
+// present dir abort the scan so commit can never accept a partial tally as proof of equivalence.
 export const scanInventory = async (
   root: string,
   dirs: string[]
-): Promise<{ dirs: string[]; fileCount: number; totalBytes: number }> => {
+): Promise<{ dirs: string[]; fileCount: number; totalBytes: number; digest: string }> => {
   const presentDirs: string[] = []
   let fileCount = 0
   let totalBytes = 0
+  const inventoryHash = createHash('sha256')
 
   for (const dir of dirs) {
-    let present = false
+    const topLevel = join(root, dir)
+    let topLevelInfo
+    try {
+      topLevelInfo = await lstat(topLevel)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue
+      throw err
+    }
+    if (!topLevelInfo.isDirectory()) {
+      throw new Error(`Unsupported inventory entry: ${dir}`)
+    }
+    presentDirs.push(dir)
+    inventoryHash.update(JSON.stringify(['dir', dir]))
+
     const walk = async (current: string): Promise<void> => {
-      let entries: Dirent[]
-      try {
-        entries = await readdir(current, { withFileTypes: true })
-      } catch {
-        return
-      }
-      present = true
+      const entries: Dirent[] = (await readdir(current, { withFileTypes: true })).sort(
+        (left, right) => left.name.localeCompare(right.name)
+      )
       for (const entry of entries) {
         const full = join(current, entry.name)
         if (entry.isDirectory()) {
+          inventoryHash.update(JSON.stringify(['nested-dir', relative(root, full)]))
           await walk(full)
         } else if (entry.isFile()) {
+          const info = await stat(full)
+          const fileHash = createHash('sha256')
+          for await (const chunk of createReadStream(full)) fileHash.update(chunk as Buffer)
           fileCount += 1
-          try {
-            totalBytes += (await stat(full)).size
-          } catch {
-            // A file that vanished mid-scan contributes nothing rather than aborting the tally.
-          }
+          totalBytes += info.size
+          inventoryHash.update(
+            JSON.stringify(['file', relative(root, full), info.size, fileHash.digest('hex')])
+          )
+        } else {
+          throw new Error(`Unsupported inventory entry: ${full}`)
         }
       }
     }
-    await walk(join(root, dir))
-    if (present) presentDirs.push(dir)
+    await walk(topLevel)
   }
 
-  return { dirs: presentDirs, fileCount, totalBytes }
+  return { dirs: presentDirs, fileCount, totalBytes, digest: inventoryHash.digest('hex') }
 }

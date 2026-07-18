@@ -146,6 +146,7 @@ describe('computeDefaultDataRoot', () => {
     appMock.isPackaged = true
     homeDir = await mkdtemp(join(tmpdir(), 'ds-storage-root-home-'))
     appMock.getPath.mockReturnValue(homeDir)
+    initDataRoot(undefined)
   })
 
   afterEach(async () => {
@@ -214,15 +215,24 @@ describe('computeDefaultDataRoot', () => {
     await rm(configRoot, { recursive: true, force: true })
   })
 
-  it('prefers a marker-LESS <home>/OpenScience over a legacy config root (committed default wins)', async () => {
-    // Same layout but no marker: homeDefault is a committed data folder, so it is the default and the
-    // leftover legacy config-root data no longer masks it.
+  it('does not treat a markerless partial <home>/OpenScience copy as committed', async () => {
     const configRoot = resolveConfigRoot()
     await mkdir(join(configRoot, 'artifacts'), { recursive: true })
-    // A committed data folder holds real data (not just an empty dir), which is what marks it committed.
     await mkdir(join(homeDir, 'OpenScience', 'artifacts'), { recursive: true })
 
-    expect(computeDefaultDataRoot()).toBe(join(homeDir, 'OpenScience'))
+    expect(computeDefaultDataRoot()).toBe(configRoot)
+
+    await rm(configRoot, { recursive: true, force: true })
+  })
+
+  it('treats an explicitly configured <home>/OpenScience as the committed default', async () => {
+    const configRoot = resolveConfigRoot()
+    const homeDefault = join(homeDir, 'OpenScience')
+    await mkdir(join(configRoot, 'artifacts'), { recursive: true })
+    await mkdir(join(homeDefault, 'artifacts'), { recursive: true })
+    initDataRoot(homeDefault)
+
+    expect(computeDefaultDataRoot()).toBe(homeDefault)
 
     await rm(configRoot, { recursive: true, force: true })
   })
@@ -233,6 +243,7 @@ describe('computeDefaultDataRoot (dev mode)', () => {
     appMock.isPackaged = false
     homeDir = await mkdtemp(join(tmpdir(), 'ds-storage-root-devhome-'))
     appMock.getPath.mockReturnValue(homeDir)
+    initDataRoot(undefined)
   })
 
   afterEach(async () => {
@@ -254,15 +265,17 @@ describe('computeDefaultDataRoot (dev mode)', () => {
     expect(computeDefaultDataRoot()).toBe(join(homeDir, 'OpenScience-DEV'))
   })
 
-  it('prefers <home>/OpenScience-DEV once it exists, even if the config root still has legacy data', async () => {
+  it('prefers an explicitly configured <home>/OpenScience-DEV over legacy data', async () => {
     // A relocated legacy install: leftover markers linger in the config root, but the modern data
     // folder already exists (and is in use). It must win, or isDefault/return-to-default would keep
     // pointing at the stale legacy path.
     const configRoot = resolveConfigRoot()
     await mkdir(join(configRoot, 'artifacts'), { recursive: true })
-    await mkdir(join(homeDir, 'OpenScience-DEV', 'artifacts'), { recursive: true })
+    const homeDefault = join(homeDir, 'OpenScience-DEV')
+    await mkdir(join(homeDefault, 'artifacts'), { recursive: true })
+    initDataRoot(homeDefault)
 
-    expect(computeDefaultDataRoot()).toBe(join(homeDir, 'OpenScience-DEV'))
+    expect(computeDefaultDataRoot()).toBe(homeDefault)
 
     await rm(configRoot, { recursive: true, force: true })
   })

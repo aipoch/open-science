@@ -60,7 +60,7 @@ import {
 } from '../notebook/mcp-server'
 import { getNotebookSessionRoot } from '../notebook/repository'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
-import { assertNoMigrationPending } from '../storage/migration-state'
+import { withDataRootWrite } from '../storage/migration-state'
 import type { UploadRepository } from '../uploads/repository'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, ArtifactReference } from '../../shared/artifacts'
@@ -883,10 +883,10 @@ class AcpRuntime {
 
   // Sends one prompt turn to the targeted session and streams updates until stop.
   async sendPrompt(request: AcpPromptRequest): Promise<PromptResponse> {
-    // Write-gate: during the data-root copy→commit window, a prompt would write into the OLD root that
-    // the commit is about to delete. Refuse up front rather than lose the turn's output.
-    assertNoMigrationPending()
+    return withDataRootWrite(() => this.sendPromptTurn(request))
+  }
 
+  private async sendPromptTurn(request: AcpPromptRequest): Promise<PromptResponse> {
     let activeSession = this.sessions.get(request.sessionId)
 
     if (!activeSession) {

@@ -7,7 +7,7 @@ import type {
   ReadArtifactPreviewRequest
 } from '../../shared/artifacts'
 import { resolveDataRoot } from '../storage-root'
-import { assertNoMigrationPending } from '../storage/migration-state'
+import { withDataRootWrite } from '../storage/migration-state'
 import { ArtifactRepository } from './repository'
 import { ArtifactRunRegistry } from './run-registry'
 
@@ -62,8 +62,10 @@ const createArtifactHandlers = (
 
   return {
     finalizeRunArtifacts: (request) =>
-      withClaimLock(finalizeLocks, request.claimId, () =>
-        finalizeRunArtifacts(repository, runRegistry, request)
+      withDataRootWrite(() =>
+        withClaimLock(finalizeLocks, request.claimId, () =>
+          finalizeRunArtifacts(repository, runRegistry, request)
+        )
       ),
     openFile: async (request) => {
       // Resolve through the repository first so shell.openPath never sees unmanaged locations.
@@ -125,11 +127,9 @@ const registerArtifactIpcHandlers = (
 ): void => {
   const handlers = createArtifactHandlers(repository, runRegistry)
 
-  ipcMain.handle('artifacts:finalize-run', (_event, request: FinalizeRunArtifactsRequest) => {
-    // Finalizing moves artifacts under the data root; block it during the migration copy→commit window.
-    assertNoMigrationPending()
-    return handlers.finalizeRunArtifacts(request)
-  })
+  ipcMain.handle('artifacts:finalize-run', (_event, request: FinalizeRunArtifactsRequest) =>
+    handlers.finalizeRunArtifacts(request)
+  )
   ipcMain.handle('artifacts:open-file', (_event, request: OpenArtifactFileRequest) =>
     handlers.openFile(request)
   )

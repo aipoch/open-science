@@ -9,6 +9,8 @@ import { dialog, type App } from 'electron'
 //     OLD root would be silently discarded by the commit's delete step.
 let copying = false
 let pending = false
+let activeDataRootWriters = 0
+const writerDrainWaiters = new Set<() => void>()
 
 // Marks the start of a migration copy. Sets both flags. Pair with endMigrationCopy() in a finally.
 export const beginMigration = (): void => {
@@ -50,6 +52,25 @@ export const assertNoMigrationPending = (): void => {
       'Open Science is moving your data. Wait for the move to finish before running this.'
     )
   }
+}
+
+export const withDataRootWrite = async <Result>(write: () => Promise<Result>): Promise<Result> => {
+  assertNoMigrationPending()
+  activeDataRootWriters += 1
+  try {
+    return await write()
+  } finally {
+    activeDataRootWriters -= 1
+    if (activeDataRootWriters === 0) {
+      for (const resolve of writerDrainWaiters) resolve()
+      writerDrainWaiters.clear()
+    }
+  }
+}
+
+export const waitForDataRootWriters = (): Promise<void> => {
+  if (activeDataRootWriters === 0) return Promise.resolve()
+  return new Promise((resolve) => writerDrainWaiters.add(resolve))
 }
 
 // Native confirm shown when the user tries to quit mid-migration. Returns true iff they chose to

@@ -9,7 +9,9 @@ const {
   endMigrationCopy,
   installMigrationQuitGuard,
   isMigrationInProgress,
-  isMigrationPending
+  isMigrationPending,
+  waitForDataRootWriters,
+  withDataRootWrite
 } = await import('./migration-state')
 
 // A minimal app double: records the before-quit listener and whether quit() was called.
@@ -79,6 +81,33 @@ describe('migration-state', () => {
 
     expect(isMigrationInProgress()).toBe(false)
     expect(isMigrationPending()).toBe(false)
+  })
+
+  it('drains writes that started before migration and rejects new writes after the gate rises', async () => {
+    let releaseWrite: (() => void) | undefined
+    let writeStarted = false
+    const activeWrite = withDataRootWrite(
+      () =>
+        new Promise<void>((resolve) => {
+          writeStarted = true
+          releaseWrite = resolve
+        })
+    )
+    expect(writeStarted).toBe(true)
+
+    beginMigration()
+    let drained = false
+    const drainPromise = waitForDataRootWriters().then(() => {
+      drained = true
+    })
+    await Promise.resolve()
+    expect(drained).toBe(false)
+    await expect(withDataRootWrite(async () => {})).rejects.toThrow(/moving your data/i)
+
+    releaseWrite?.()
+    await activeWrite
+    await drainPromise
+    expect(drained).toBe(true)
   })
 
   it('quit guard does not interfere when no migration is running', () => {

@@ -38,7 +38,12 @@ describe('migration-marker read/write/remove', () => {
   it('round-trips a written marker', async () => {
     const marker = sampleMarker({
       status: 'verified',
-      inventory: { dirs: ['artifacts'], fileCount: 2, totalBytes: 10 }
+      inventory: {
+        dirs: ['artifacts'],
+        fileCount: 2,
+        totalBytes: 10,
+        digest: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+      }
     })
     await writeMigrationMarker(root, marker)
 
@@ -64,6 +69,15 @@ describe('migration-marker read/write/remove', () => {
 
   it('returns null when required fields are missing (short/partial JSON)', async () => {
     await writeFile(join(root, MIGRATION_MARKER_FILENAME), JSON.stringify({ version: 1 }))
+    expect(await readMigrationMarker(root)).toBeNull()
+  })
+
+  it('returns null when a verified marker has a malformed inventory', async () => {
+    await writeFile(
+      join(root, MIGRATION_MARKER_FILENAME),
+      JSON.stringify({ ...sampleMarker({ status: 'verified' }), inventory: { fileCount: -1 } })
+    )
+
     expect(await readMigrationMarker(root)).toBeNull()
   })
 
@@ -93,20 +107,22 @@ describe('scanInventory', () => {
     expect(inventory.fileCount).toBe(3)
     expect(inventory.totalBytes).toBe(10)
     expect(inventory.dirs.sort()).toEqual(['artifacts', 'notebooks'])
+    expect(inventory.digest).toMatch(/^[a-f0-9]{64}$/)
   })
 
   it('reports an empty tally when no dirs exist', async () => {
     expect(await scanInventory(root, ['artifacts', 'uploads'])).toEqual({
       dirs: [],
       fileCount: 0,
-      totalBytes: 0
+      totalBytes: 0,
+      digest: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
     })
   })
 
   it('counts an existing-but-empty dir as present with zero files', async () => {
     await mkdir(join(root, 'artifacts'), { recursive: true })
 
-    expect(await scanInventory(root, ['artifacts'])).toEqual({
+    expect(await scanInventory(root, ['artifacts'])).toMatchObject({
       dirs: ['artifacts'],
       fileCount: 0,
       totalBytes: 0

@@ -21,7 +21,7 @@ import type {
 import { NotebookPythonExecutor } from './python-executor'
 import { NotebookRunRepository, getNotebookRunJsonPath, getRuntimeRoot } from './repository'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
-import { assertNoMigrationPending } from '../storage/migration-state'
+import { withDataRootWrite } from '../storage/migration-state'
 
 type NotebookExecutionRequest = {
   code: string
@@ -157,6 +157,15 @@ class NotebookRuntimeService {
     writeId: string
     status: NotebookCell['status']
   }> {
+    return withDataRootWrite(() => this.beginCodeCellWrite(request))
+  }
+
+  private async beginCodeCellWrite(request: BeginNotebookCodeCellRequest): Promise<{
+    sessionId: string
+    cellId: string
+    writeId: string
+    status: NotebookCell['status']
+  }> {
     const session = await this.ensureSession(request)
 
     if (session.activeWrite) {
@@ -203,6 +212,15 @@ class NotebookRuntimeService {
     writeId: string
     receivedBytes: number
   }> {
+    return withDataRootWrite(() => this.appendCodeCellWrite(request))
+  }
+
+  private async appendCodeCellWrite(request: AppendNotebookCodeCellRequest): Promise<{
+    sessionId: string
+    cellId: string
+    writeId: string
+    receivedBytes: number
+  }> {
     const session = await this.ensureSession(request)
     const cell = findCell(session, request.cellId)
 
@@ -225,6 +243,15 @@ class NotebookRuntimeService {
     code: string
     status: NotebookCell['status']
   }> {
+    return withDataRootWrite(() => this.finishCodeCellWrite(request))
+  }
+
+  private async finishCodeCellWrite(request: FinishNotebookCodeCellRequest): Promise<{
+    sessionId: string
+    cellId: string
+    code: string
+    status: NotebookCell['status']
+  }> {
     const session = await this.ensureSession(request)
     const cell = findCell(session, request.cellId)
 
@@ -239,10 +266,12 @@ class NotebookRuntimeService {
 
   // Persists a running run, executes the cell, then updates the same history entry with results.
   async runCell(request: RunNotebookCellRequest): Promise<NotebookRunSummary> {
-    // Write-gate: during the data-root copy→commit window, running a cell would write into the OLD
-    // root that the commit is about to delete. Refuse up front rather than lose the run's output.
-    assertNoMigrationPending()
+    return withDataRootWrite(() => this.runCellWithWriteLease(request))
+  }
 
+  private async runCellWithWriteLease(
+    request: RunNotebookCellRequest
+  ): Promise<NotebookRunSummary> {
     const session = await this.ensureSession(request)
     const cell = findCell(session, request.cellId)
 
@@ -372,24 +401,27 @@ class NotebookRuntimeService {
 
   // Convenience path used by the terminal and MCP to write a temporary cell and run it.
   async execute(request: ExecuteNotebookCodeRequest): Promise<NotebookRunSummary> {
-    // Write-gate: like runCell, an ad-hoc execute writes under the data root, so refuse while a
-    // data-root migration is pending (copy→commit window).
-    assertNoMigrationPending()
-    const begin = await this.beginCodeCell(request)
+    return withDataRootWrite(() => this.executeWithWriteLease(request))
+  }
 
-    await this.appendCodeCell({
+  private async executeWithWriteLease(
+    request: ExecuteNotebookCodeRequest
+  ): Promise<NotebookRunSummary> {
+    const begin = await this.beginCodeCellWrite(request)
+
+    await this.appendCodeCellWrite({
       ...request,
       writeId: begin.writeId,
       cellId: begin.cellId,
       delta: request.code
     })
-    await this.finishCodeCell({
+    await this.finishCodeCellWrite({
       ...request,
       writeId: begin.writeId,
       cellId: begin.cellId
     })
 
-    return this.runCell({
+    return this.runCellWithWriteLease({
       ...request,
       cellId: begin.cellId
     })
