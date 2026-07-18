@@ -157,10 +157,14 @@ const fetchSkillFiles = async (
         // a missing or dishonest Content-Length.
         const remainingTotal = SKILL_IMPORT_LIMITS.maxTotalBytes - totalBytes
         const perFileLimit = Math.min(SKILL_IMPORT_LIMITS.maxFileBytes, remainingTotal)
+        // Report which cap actually bound, so the error tells the user whether one file is too big or
+        // the whole skill has outgrown its budget.
         const tooLarge = (): never => {
-          throw new Error(
-            `File ${entry.path} exceeds the import size limit (per-file ${SKILL_IMPORT_LIMITS.maxFileBytes} bytes, ${remainingTotal} left in budget).`
-          )
+          const message =
+            remainingTotal < SKILL_IMPORT_LIMITS.maxFileBytes
+              ? `File ${entry.path} exceeds the ${SKILL_IMPORT_LIMITS.maxTotalBytes}-byte total limit.`
+              : `File ${entry.path} exceeds the ${SKILL_IMPORT_LIMITS.maxFileBytes}-byte per-file limit.`
+          throw new Error(message)
         }
 
         // Reject on the advertised Content-Length before reading a single byte when possible.

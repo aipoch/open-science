@@ -204,7 +204,7 @@ describe('fetchSkillFiles', () => {
 
     await expect(
       fetchSkillFiles({ owner: 'acme', repo: 'skills', ref: 'main', path: 'pack/foo' }, aggregate)
-    ).rejects.toThrow(/import size limit/)
+    ).rejects.toThrow(/total limit/)
     // First two bodies read (8 MiB), the third rejected before its body was touched.
     expect(bodiesRead).toEqual(['https://raw/a', 'https://raw/b'])
   })
@@ -289,7 +289,7 @@ describe('fetchSkillFiles', () => {
 
     await expect(
       fetchSkillFiles({ owner: 'acme', repo: 'skills', ref: 'main', path: 'pack/foo' }, streaming)
-    ).rejects.toThrow(/import size limit/)
+    ).rejects.toThrow(/per-file limit/)
     // Stopped a hair past the 5 MiB cap (6 one-MiB reads), not the whole endless stream, and cancelled.
     expect(chunksServed).toBeLessThanOrEqual(7)
     expect(cancelled).toBe(true)

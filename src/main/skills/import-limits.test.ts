@@ -1,12 +1,21 @@
 import { describe, expect, it } from 'vitest'
 
-import { decodeBoundedBase64 } from './import-limits'
+import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from './import-limits'
 
 describe('decodeBoundedBase64', () => {
   it('decodes a bundle within the limit', () => {
     const bytes = Buffer.from('hello world')
     const decoded = decodeBoundedBase64(bytes.toString('base64'))
     expect(decoded.equals(bytes)).toBe(true)
+  })
+
+  it('accepts an upload exactly at the documented total-byte limit', () => {
+    // A payload whose decoded size equals maxTotalBytes exactly must be allowed (padding-aware sizing).
+    const bytes = Buffer.alloc(SKILL_IMPORT_LIMITS.maxTotalBytes)
+    expect(() => decodeBoundedBase64(bytes.toString('base64'))).not.toThrow()
+    // One byte over the limit is rejected.
+    const over = Buffer.alloc(SKILL_IMPORT_LIMITS.maxTotalBytes + 1)
+    expect(() => decodeBoundedBase64(over.toString('base64'))).toThrow(/exceeds the .* limit/)
   })
 
   it('accounts for padding exactly at the boundary', () => {
