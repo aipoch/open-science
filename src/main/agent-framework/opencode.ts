@@ -39,6 +39,11 @@ const opencodeDataHome = (storageRoot: string): string => join(storageRoot, 'ope
 // it, so the runtime adds this to its protected-read roots.
 export const opencodeStorageDir = (storageRoot: string): string => join(storageRoot, 'opencode')
 
+// An app-owned stand-in for opencode's notion of `$HOME`, passed via OPENCODE_TEST_HOME. It is a stable,
+// empty-by-design directory so opencode's home `.opencode` config walk finds nothing to load.
+const opencodeHomeDir = (storageRoot: string): string =>
+  join(opencodeStorageDir(storageRoot), 'home')
+
 // The opencode config directory ($XDG_CONFIG_HOME/opencode) where opencode.json and skills/ live.
 // opencode discovers skills at <configDir>/skills/<name>/SKILL.md — the same layout Claude uses under
 // its config dir — so the app materializes the enabled skill set here for opencode too.
@@ -253,6 +258,13 @@ export const opencodeFramework: AgentFramework = {
       env: {
         XDG_CONFIG_HOME: configHome,
         XDG_DATA_HOME: dataHome,
+        // Redirect opencode's Global.Path.home (= `OPENCODE_TEST_HOME ?? os.homedir()`) to an app-owned,
+        // empty dir so the user's `~/.opencode` cannot inject config/providers/permissions — the last
+        // non-repo override surface left after OPENCODE_DISABLE_PROJECT_CONFIG closes project config. This
+        // changes ONLY opencode's notion of home; the child's real HOME is untouched, so shell/git tools
+        // behave normally. Tradeoff: opencode also won't read `~/.claude/CLAUDE.md` or home-level skills —
+        // acceptable since the app owns the whole opencode config.
+        OPENCODE_TEST_HOME: opencodeHomeDir(ctx.storageRoot),
         // Refuse to load ANY project config: this stops the session cwd's opencode.json / opencode.jsonc
         // (walked up to the worktree root) and its .opencode/ directory from injecting config at all. A
         // repo therefore cannot flip permission["*"] to "allow", add an exact-id "allow" rule for an MCP

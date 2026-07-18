@@ -1,3 +1,5 @@
+import { join } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import { buildOpencodeConfig, opencodeFramework } from './opencode'
@@ -79,6 +81,21 @@ describe('opencodeFramework.prepareModelConfig', () => {
     ]) {
       expect(rules[tool]).toBe('ask')
     }
+  })
+
+  it('redirects opencode home to an app-owned dir so the user ~/.opencode cannot inject config', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
+      { storageRoot: '/data', executablePath: '/bin/opencode' }
+    )
+
+    // OPENCODE_TEST_HOME overrides opencode's Global.Path.home to an app-owned dir, so its home
+    // `.opencode` config walk finds nothing — set alongside the existing XDG/config isolation env.
+    expect(config.env?.OPENCODE_TEST_HOME).toBe(join('/data', 'opencode', 'home'))
+    expect(config.env?.XDG_CONFIG_HOME).toBe(join('/data', 'opencode', 'config'))
+    expect(config.env?.XDG_DATA_HOME).toBe(join('/data', 'opencode', 'data'))
+    expect(config.env?.OPENCODE_DISABLE_PROJECT_CONFIG).toBe('true')
+    expect(config.env?.OPENCODE_CONFIG_CONTENT).toBeTruthy()
   })
 
   it('disables project config loading so a repo cannot inject opencode.json / .opencode config', () => {
