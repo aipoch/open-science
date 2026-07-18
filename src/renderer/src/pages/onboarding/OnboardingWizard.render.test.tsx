@@ -289,26 +289,27 @@ describe('OnboardingWizard', () => {
     await act(async () => manualTab?.click())
 
     expect(container.querySelector('[role="combobox"][aria-label="Install source"]')).not.toBeNull()
-    // The manual tab shows BOTH runtimes together (Claude status + OpenCode status/install card).
-    expect(container.textContent).toContain('OpenCode not detected')
+    // The manual tab shows ONLY the selected framework's runtime (default: Claude), not the other.
+    expect(container.textContent).toContain('Claude')
+    expect(container.textContent).not.toContain('OpenCode not detected')
   })
 
-  it("routes the manual OpenCode install button to installOpencode, not installClaude", async () => {
+  it('routes the manual OpenCode install button to installOpencode, not installClaude', async () => {
     const installOpencode = vi.fn().mockResolvedValue({ installId: 'i', ok: true })
     const installClaude = vi.fn().mockResolvedValue({ installId: 'i', ok: true })
     useSettingsStore.setState({
-      // Claude is ready (its install card is hidden), so the only "Install with one click" button in
-      // the manual tab belongs to the OpenCode card — even though Claude is the SELECTED framework,
-      // proving the per-card button installs its own runtime.
+      // OpenCode is the selected framework, so the manual tab shows only its (not-detected) card and
+      // its install button must route to installOpencode, never installClaude.
+      agentFrameworkId: 'opencode',
       preflight: {
         claudeReady: true,
         opencodeReady: false,
-        agentFrameworkId: 'claude-code',
-        agentReady: true,
+        agentFrameworkId: 'opencode',
+        agentReady: false,
         activeProviderReady: false
       },
       claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
-      environmentCheck: environment(true),
+      environmentCheck: environment(false),
       installOpencode,
       installClaude
     })
@@ -322,16 +323,127 @@ describe('OnboardingWizard', () => {
     ).find((button) => button.textContent?.includes('Manual setup'))
     await act(async () => manualTab?.click())
 
+    // Only the selected (OpenCode) runtime shows, so there is exactly one install button — its own.
+    expect(container.textContent).toContain('OpenCode not detected')
     const installButtons = Array.from(
       container.querySelectorAll<HTMLButtonElement>('button')
     ).filter((button) => /install with one click/i.test(button.textContent ?? ''))
-    // Exactly one install button (OpenCode's) since Claude is ready.
     expect(installButtons).toHaveLength(1)
     await act(async () => installButtons[0].click())
 
     // Default source is 'managed'; the OpenCode card must route to installOpencode, never installClaude.
     expect(installOpencode).toHaveBeenCalledWith('managed')
     expect(installClaude).not.toHaveBeenCalled()
+  })
+
+  const twoFrameworks = [
+    { id: 'claude-code' as const, displayName: 'Claude Code', supportsSkills: true },
+    { id: 'opencode' as const, displayName: 'OpenCode', supportsSkills: true }
+  ]
+
+  it('auto-selects OpenCode when Claude is not installed but OpenCode is', async () => {
+    const setAgentFramework = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: twoFrameworks,
+      setAgentFramework,
+      // Claude missing, OpenCode present: the prefer-installed rule switches to OpenCode.
+      preflight: {
+        claudeReady: false,
+        opencodeReady: true,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(false)
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+
+    expect(setAgentFramework).toHaveBeenCalledWith('opencode')
+  })
+
+  it('prefers Claude and does not auto-switch when Claude is installed', async () => {
+    const setAgentFramework = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: twoFrameworks,
+      setAgentFramework,
+      // Both installed → keep the Claude default; no auto-switch.
+      preflight: {
+        claudeReady: true,
+        opencodeReady: true,
+        agentFrameworkId: 'claude-code',
+        agentReady: true,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(true)
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+
+    expect(setAgentFramework).not.toHaveBeenCalled()
+  })
+
+  it('does not auto-switch for a returning (recovery) user', async () => {
+    const setAgentFramework = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      onboardingCompletedAt: 1234,
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: twoFrameworks,
+      setAgentFramework,
+      preflight: {
+        claudeReady: false,
+        opencodeReady: true,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(false)
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+
+    expect(setAgentFramework).not.toHaveBeenCalled()
+  })
+
+  it('collapses the switcher to a "Change agent" link when the selected agent is ready', async () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: twoFrameworks,
+      claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
+      preflight: {
+        claudeReady: true,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: true,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(true)
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+
+    // Ready → the toggle is hidden; only a "Change agent" affordance shows.
+    expect(container.querySelector('[role="radiogroup"][aria-label="Agent framework"]')).toBeNull()
+    const changeButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => /change agent/i.test(button.textContent ?? '')
+    )
+    expect(changeButton).not.toBeUndefined()
+
+    // Revealing it exposes the full Claude Code / OpenCode toggle.
+    await act(async () => changeButton?.click())
+    expect(
+      container.querySelector('[role="radiogroup"][aria-label="Agent framework"]')
+    ).not.toBeNull()
   })
 
   it('uses the recommended mirror and surfaces the actual automatic install error', async () => {
