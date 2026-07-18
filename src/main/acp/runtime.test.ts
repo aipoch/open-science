@@ -590,7 +590,9 @@ describe('ACP runtime session management', () => {
       }
     })
 
-    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(/shutting down/)
+    // The gate bumped the generation (no shutting-down latch), so the mid-spawn connect self-aborts on
+    // the stale-generation check rather than a shutdown latch.
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(/superseded/)
     expect(gatePromise).toBeDefined()
     const outcome = await gatePromise
     expect(outcome).toHaveProperty('reaped')
@@ -600,6 +602,43 @@ describe('ACP runtime session management', () => {
     // Non-latching: once the gate resolves, a fresh connect succeeds (no lasting shutting-down latch).
     await expect(runtime.createSession({ cwd: '/workspace' })).resolves.toBeDefined()
     expect(reconnectSpawns).toHaveLength(1)
+  })
+
+  it('shutdownForUpdateGate never latches shutting-down, so an abandoned (hung) teardown still reconnects', async () => {
+    // Models the P2 timeout shape: the gate's in-flight connect hangs inside spawnAgentProcess, so the
+    // gate's own await never settles and runBounded abandons it once the budget elapses. Because the gate
+    // must NOT set a shutting-down latch (it would never clear on an abandoned teardown), a fresh connect
+    // afterward has to succeed instead of self-aborting forever.
+    const neverResolving = new Promise<never>(() => {})
+    const reconnect = new FakeAgentProcess()
+    let spawnCount = 0
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => {
+        spawnCount += 1
+        if (spawnCount === 1) {
+          // Hang the spawn so the connect (and thus the gate awaiting it) never settles.
+          return neverResolving as unknown as ChildProcessWithoutNullStreams
+        }
+        startFakeAgent(reconnect, ['gate-after-hang'])
+        return asAgentProcess(reconnect)
+      }
+    })
+
+    // Start a connect that wedges mid-spawn; do not await it.
+    const hung = runtime.createSession({ cwd: '/workspace' }).catch(() => undefined)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    // Fire the gate but do NOT await it — it hangs on the never-settling in-flight connect, exactly as
+    // runBounded would then abandon at the deadline before any cleanup could clear a latch.
+    void runtime.shutdownForUpdateGate()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    // Refused-install contract: the runtime is not wedged, so a fresh connect succeeds.
+    await expect(runtime.createSession({ cwd: '/workspace' })).resolves.toBeDefined()
+    expect(spawnCount).toBe(2)
+    void hung
   })
 
   it('reports conservative Auto when the Agent has no native auto mode', async () => {

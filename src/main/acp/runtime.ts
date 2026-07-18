@@ -463,15 +463,23 @@ class AcpRuntime {
     try {
       const agentProcess = await this.spawnAgentProcess()
 
-      // spawnAgentProcess resolves the provider config asynchronously, so the app may have begun
-      // quitting during the spawn. If a shutdown already latched shuttingDown, its teardown saw no
-      // process yet — tree-kill this freshly-spawned child now and abort, or it would outlive the app as
-      // an orphan. Awaited (not a bare kill) so the quit path, which awaits this in-flight connect, does
-      // not exit before the child's whole tree is reaped on Windows.
-      if (this.shuttingDown) {
+      // spawnAgentProcess resolves the provider config asynchronously, so the connection may have been
+      // torn down or superseded during the spawn: a quit latched shuttingDown, or any teardown/reconnect
+      // bumped the generation past ours (e.g. the pre-update-install gate calls disconnect()). Either way
+      // this freshly-spawned child was never assigned, so the teardown that ran saw no process to reap —
+      // tree-kill it now and abort, or it would outlive that teardown as an orphan holding file handles.
+      // Keying off the generation (not just shuttingDown) lets the NON-LATCHING update gate collect a
+      // late spawn without holding a shuttingDown latch it might never release if it is itself abandoned
+      // on timeout. Awaited (not a bare kill) so a teardown that awaits this in-flight connect does not
+      // resolve before the child's whole tree is reaped on Windows.
+      if (this.shuttingDown || generation !== this.connectionGeneration) {
         const result = await terminateProcessTree(agentProcess, undefined, log)
         this.lastTreeKillReaped = this.lastTreeKillReaped && result.reaped
-        throw new Error('ACP runtime is shutting down.')
+        throw new Error(
+          this.shuttingDown
+            ? 'ACP runtime is shutting down.'
+            : 'ACP connection superseded during spawn.'
+        )
       }
 
       this.agentProcess = agentProcess
@@ -916,28 +924,23 @@ class AcpRuntime {
   }
 
   // Teardown for the pre-update-install gate. Reaps the current agent tree (so the NSIS installer can
-  // delete files the agent held) but, unlike shutdownForQuit, does NOT leave shuttingDown latched — if
-  // the caller then refuses the install (degraded teardown), the runtime stays usable and the next
-  // prompt lazily reconnects. It DOES latch shuttingDown for the duration of the teardown and awaits the
-  // in-flight connect (like shutdownForQuit), so a connect racing inside spawnAgentProcess self-aborts
-  // and reaps its freshly-spawned child, reflected in the returned reaped signal. Without that window
-  // the mid-spawn child would be assigned after disconnect bumped the generation and outlive a
-  // clean-reported gate, holding open the very files the installer must delete. The latch is released in
-  // finally so a refused install leaves no lasting no-spawn state.
+  // delete files the agent held) but, unlike shutdownForQuit, does NOT latch shuttingDown: a refused
+  // install (degraded or timed-out teardown) must leave the runtime able to lazily reconnect. Crucially
+  // it does not rely on a latch to catch a connect racing inside spawnAgentProcess either — this teardown
+  // can itself be abandoned by its caller (runBounded) once the budget elapses, and a latch set here
+  // would then never clear, wedging every future connect. Instead disconnect() bumps the connection
+  // generation, and connectFresh reaps any freshly-spawned child whose generation is now stale,
+  // independent of shuttingDown. Awaiting the in-flight connect here only sharpens the returned reaped
+  // signal (so a degraded reap makes the caller refuse the install); if that await is abandoned on
+  // timeout the caller refuses on !completed and the stale-generation self-reap still collects the child.
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
     this.lastTreeKillReaped = true
-    this.shuttingDown = true
-    // Capture the in-flight connect before disconnect() clears it, matching shutdownForQuit.
+    // Capture the in-flight connect before disconnect() clears it. disconnect() bumps the generation, so
+    // a connect still mid-spawn will self-reap on the stale-generation check regardless of this await.
     const inFlight = this.connectInFlight
-    try {
-      await this.disconnect(false)
-      // A connect still mid-spawn hits the shutting-down check and tree-kills its child; await it
-      // (swallowing its rejection) so that kill settles before we report the reaped signal.
-      if (inFlight) await inFlight.catch(() => undefined)
-    } finally {
-      // Non-latching: clear the flag so a refused install leaves the runtime able to reconnect.
-      this.shuttingDown = false
-    }
+    await this.disconnect(false)
+    // Await so the mid-spawn child's kill settles before we report the reaped signal.
+    if (inFlight) await inFlight.catch(() => undefined)
     return { reaped: this.lastTreeKillReaped }
   }
 
