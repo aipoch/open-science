@@ -201,6 +201,7 @@ This section describes durable product capabilities rather than a version-specif
 | **Projects and sessions**    | Create, rename, and delete projects; maintain multiple sessions; restore recent work, drafts, conversation history, and preview state.                                 |
 | **Agent workflow**           | Natural-language tasks, streamed responses, typed tool-activity cards, stop controls, approval pauses, and recovery of sessions interrupted by an application restart. |
 | **Models**                   | Built-in cloud providers, custom compatible gateways, Local Claude, connection validation, and model selection per session.                                            |
+| **Agent backend**            | A selectable agent-framework backend so the same workspace can run on more than one underlying agent implementation, with provider and model choices validated against the selected backend.                            |
 | **Execution**                | A persistent Python Notebook kernel with durable code/output history and a user terminal shared with the agent.                                                        |
 | **Inputs and artifacts**     | File attachments, project-level file library, generated artifact cards, `@` references to existing uploads/outputs, and read-only multi-tab previews.                  |
 | **Preview formats**          | Common scientific data, documents, images, source code, molecular structures and reactions, and Notebook history.                                                      |
@@ -208,6 +209,7 @@ This section describes durable product capabilities rather than a version-specif
 | **Skills**                   | Featured and personal skills, package upload, GitHub preview/import, enable/disable controls, and explicit `/` selection in a session.                                 |
 | **Connectors**               | Built-in life-science connectors, custom local/remote MCP connectors, contact metadata, and connector/tool-level permissions.                                          |
 | **Safety controls**          | `Ask for approval`, `Auto-approve edits`, and `Full access` conversation profiles, plus per-connector and per-tool policies.                                           |
+| **Review and verification**  | An opt-in reviewer that audits a completed turn against its own transcript, execution log, and artifacts, reports pass/warn/fail findings, and can run a bounded fix loop to correct them.                              |
 | **Distribution and support** | Installers for macOS, Windows, and Linux, plus update guidance, local diagnostics, and community links.                                                                |
 
 ## Model Providers
