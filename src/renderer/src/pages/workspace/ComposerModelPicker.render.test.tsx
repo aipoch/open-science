@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProviderView } from '../../../../shared/settings'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { ComposerModelPicker } from './ComposerModelPicker'
+import { incompatibilityReason } from './composer-model-picker-utils'
 
 let container: HTMLDivElement
 let root: Root
@@ -92,6 +93,30 @@ describe('ComposerModelPicker', () => {
     expect(
       container.querySelector('[aria-label="No model available — open settings"]')
     ).not.toBeNull()
+  })
+
+  it('explains an endpoint mismatch by route, not by vendor name', () => {
+    const reason = incompatibilityReason(
+      { apiType: 'openai', type: 'custom', name: 'OpenAI Gateway' },
+      'Claude Code',
+      ['anthropic']
+    )
+
+    expect(reason).toContain('OpenAI Gateway')
+    expect(reason).toContain('Claude Code')
+    expect(reason).toContain('/v1/messages')
+    expect(reason).toContain('/v1/chat/completions')
+  })
+
+  it('explains a local Claude provider is only usable by Claude Code', () => {
+    const reason = incompatibilityReason(
+      { apiType: 'anthropic', type: 'claude-default', name: 'Local Claude' },
+      'OpenCode',
+      ['anthropic', 'openai']
+    )
+
+    expect(reason).toContain('local Claude sign-in')
+    expect(reason).toContain('only Claude Code can run')
   })
 
   it('shows the active model label when multiple options exist', () => {

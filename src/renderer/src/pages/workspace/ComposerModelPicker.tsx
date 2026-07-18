@@ -19,6 +19,7 @@ import {
   type ProviderModelOption
 } from '@/stores/settings-store'
 import { isProviderUsableByFramework } from '../../../../shared/settings'
+import { incompatibilityReason } from './composer-model-picker-utils'
 
 const triggerClassName =
   'flex h-8 max-w-[220px] items-center gap-1 rounded-md px-2.5 text-sm text-text-300 hover:bg-bg-200 hover:text-text-100 disabled:cursor-not-allowed disabled:opacity-50 transition-colors'
@@ -38,7 +39,12 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
   const setActiveProvider = useSettingsStore((state) => state.setActiveProvider)
   const openSettings = useSettingsStore((state) => state.openSettings)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
+  const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
+
+  const frameworkName =
+    agentFrameworks.find((framework) => framework.id === agentFrameworkId)?.displayName ??
+    'this framework'
 
   // A provider is selectable only when it can actually drive the current framework (endpoint + type;
   // a Local Claude provider is Claude-only).
@@ -126,7 +132,20 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
               <DropdownMenuLabel>
                 {group.provider.name}
                 {compatible ? null : (
-                  <span className="ml-1 font-normal text-text-300">· unavailable</span>
+                  <span
+                    className="ml-1 cursor-help font-normal text-text-300 underline decoration-dotted underline-offset-2"
+                    title={incompatibilityReason(
+                      {
+                        apiType: group.provider.apiType ?? 'anthropic',
+                        type: group.provider.type,
+                        name: group.provider.name
+                      },
+                      frameworkName,
+                      frameworkEndpoints
+                    )}
+                  >
+                    · unavailable
+                  </span>
                 )}
               </DropdownMenuLabel>
               {group.options.map((option) => {
