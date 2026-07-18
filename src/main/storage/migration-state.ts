@@ -41,6 +41,17 @@ export const isMigrationInProgress = (): boolean => copying
 // they can't write into the old root during the copy→commit window.
 export const isMigrationPending = (): boolean => pending
 
+// Throws the standard user-facing error when a migration is pending. Called at every data-root write
+// entry point (ACP prompt, notebook run/execute, uploads) so no new write can land in the old root
+// during the copy→commit window and be lost on the commit's delete.
+export const assertNoMigrationPending = (): void => {
+  if (pending) {
+    throw new Error(
+      'Open Science is moving your data. Wait for the move to finish before running this.'
+    )
+  }
+}
+
 // Native confirm shown when the user tries to quit mid-migration. Returns true iff they chose to
 // quit anyway. Kept as the injectable default so the guard's control flow stays unit-testable
 // without a real Electron dialog.

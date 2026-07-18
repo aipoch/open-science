@@ -21,7 +21,7 @@ import type {
 import { NotebookPythonExecutor } from './python-executor'
 import { NotebookRunRepository, getNotebookRunJsonPath, getRuntimeRoot } from './repository'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
-import { isMigrationPending } from '../storage/migration-state'
+import { assertNoMigrationPending } from '../storage/migration-state'
 
 type NotebookExecutionRequest = {
   code: string
@@ -241,11 +241,7 @@ class NotebookRuntimeService {
   async runCell(request: RunNotebookCellRequest): Promise<NotebookRunSummary> {
     // Write-gate: during the data-root copy→commit window, running a cell would write into the OLD
     // root that the commit is about to delete. Refuse up front rather than lose the run's output.
-    if (isMigrationPending()) {
-      throw new Error(
-        'Open Science is moving your data. Wait for the move to finish before running this.'
-      )
-    }
+    assertNoMigrationPending()
 
     const session = await this.ensureSession(request)
     const cell = findCell(session, request.cellId)
@@ -376,6 +372,9 @@ class NotebookRuntimeService {
 
   // Convenience path used by the terminal and MCP to write a temporary cell and run it.
   async execute(request: ExecuteNotebookCodeRequest): Promise<NotebookRunSummary> {
+    // Write-gate: like runCell, an ad-hoc execute writes under the data root, so refuse while a
+    // data-root migration is pending (copy→commit window).
+    assertNoMigrationPending()
     const begin = await this.beginCodeCell(request)
 
     await this.appendCodeCell({

@@ -307,6 +307,16 @@ describe('classifyDataRoot', () => {
       error: 'A different folder named OpenScience already exists here. Choose another location.'
     })
   })
+  it('rejects a marker-bearing staging dir as invalid, even when it already holds data', async () => {
+    // A crashed/uncommitted copy carries a marker and may hold a partial data dir; it must never
+    // classify 'adopt' (bypassing the commit gate) — the user must finish or discard the move first.
+    const target = await seedVerifiedMarker(emptyParent, currentDataRoot)
+    await mkdir(join(target, 'artifacts'), { recursive: true })
+
+    const result = await classifyDataRoot(emptyParent, currentDataRoot)
+
+    expect(result.kind).toBe('invalid')
+  })
 })
 
 describe('validateNewDataRoot', () => {
@@ -501,10 +511,9 @@ describe('runDataRootMigration (copy phase)', () => {
     expect(copyAndVerify).not.toHaveBeenCalled()
   })
 
-  it('swallows an interrupt failure and still completes the copy', async () => {
+  it('aborts (and does not copy) when a writer cannot be paused', async () => {
     const deps = fakeDeps()
     deps.runtime.disconnect.mockRejectedValue(new Error('disconnect boom'))
-    deps.notebook.shutdownAll.mockRejectedValue(new Error('shutdown boom'))
     const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({ ok: true }))
 
     const result = await runDataRootMigration(
@@ -513,8 +522,11 @@ describe('runDataRootMigration (copy phase)', () => {
       runOpts()
     )
 
-    expect(result).toEqual({ ok: true })
-    expect(copyAndVerify).toHaveBeenCalledTimes(1)
+    expect(result.ok).toBe(false)
+    // Copying an unfrozen tree could lose a surviving write on the commit's delete, so we never start.
+    expect(copyAndVerify).not.toHaveBeenCalled()
+    // The staging dir (marker) we created is cleaned up on abort.
+    expect(existsSync(dataRootFor(emptyParent))).toBe(false)
   })
 })
 
@@ -649,6 +661,18 @@ describe('commitDataRootSwitch (commit phase)', () => {
 
     expect(result).toEqual({ ok: true })
   })
+  it('refuses when the marker token does not match the session token', async () => {
+    await seedVerifiedMarker(emptyParent, currentDataRoot) // token 'tok-test'
+    const setDataRoot = vi.fn(async () => {})
+
+    const result = await commitDataRootSwitch(
+      { currentDataRoot, setDataRoot, expectedToken: 'a-different-token' },
+      emptyParent
+    )
+
+    expect(result.ok).toBe(false)
+    expect(setDataRoot).not.toHaveBeenCalled()
+  })
 })
 
 describe('discardStagedCopy', () => {
@@ -675,7 +699,7 @@ describe('discardStagedCopy', () => {
 
     const result = await discardStagedCopy({ currentDataRoot }, emptyParent)
 
-    expect(result).toEqual({ ok: false, error: 'Refused: not a staged migration copy.' })
+    expect(result).toEqual({ ok: false, error: 'Refused: not a completed, matching staged copy.' })
     expect(existsSync(target)).toBe(true)
   })
 
@@ -684,7 +708,28 @@ describe('discardStagedCopy', () => {
 
     const result = await discardStagedCopy({ currentDataRoot }, emptyParent)
 
-    expect(result).toEqual({ ok: false, error: 'Refused: not a staged migration copy.' })
+    expect(result).toEqual({ ok: false, error: 'Refused: not a completed, matching staged copy.' })
+    expect(existsSync(target)).toBe(true)
+  })
+
+  it('refuses a mid-copy ("copying") marker so a dir being written is never deleted', async () => {
+    const target = await seedVerifiedMarker(emptyParent, currentDataRoot, { status: 'copying' })
+
+    const result = await discardStagedCopy({ currentDataRoot }, emptyParent)
+
+    expect(result).toEqual({ ok: false, error: 'Refused: not a completed, matching staged copy.' })
+    expect(existsSync(target)).toBe(true)
+  })
+
+  it('refuses when the staged token does not match the session token', async () => {
+    const target = await seedVerifiedMarker(emptyParent, currentDataRoot)
+
+    const result = await discardStagedCopy(
+      { currentDataRoot, expectedToken: 'other-token' },
+      emptyParent
+    )
+
+    expect(result).toEqual({ ok: false, error: 'Refused: not a completed, matching staged copy.' })
     expect(existsSync(target)).toBe(true)
   })
 })

@@ -183,6 +183,29 @@ describe('copyAndVerify', () => {
     }
   )
 
+  it.skipIf(process.platform === 'win32')(
+    'refuses to migrate when a top-level migrated dir is itself a symlink',
+    async () => {
+      await mkdir(join(from, 'real-artifacts'), { recursive: true })
+      await writeFile(join(from, 'real-artifacts', 'a.txt'), 'x')
+      await symlink(join(from, 'real-artifacts'), join(from, 'artifacts'))
+
+      const result = await copyAndVerify({
+        from,
+        to,
+        dirs: ['artifacts'],
+        signal: new AbortController().signal,
+        onProgress: () => {}
+      })
+
+      expect(result.ok).toBe(false)
+      if (!result.ok) expect(result.error).toMatch(/symbolic link|special file/i)
+      // The source symlink is untouched and nothing was copied to the dest.
+      expect(await exists(join(from, 'artifacts'))).toBe(true)
+      expect(await exists(join(to, 'artifacts'))).toBe(false)
+    }
+  )
+
   it('copies an existing-but-empty source dir instead of dropping it', async () => {
     await seedFixture()
     await mkdir(join(from, 'runtime'), { recursive: true })

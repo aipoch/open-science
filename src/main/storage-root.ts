@@ -81,7 +81,14 @@ const computeDefaultDataRoot = (): string => {
   // A marker-bearing homeDefault is a half-copied/uncommitted staging dir, NOT the committed default:
   // treat it as "not there yet" so a crashed or in-flight migration can't fool the legacy fallback into
   // thinking the modern data folder already exists (which would split a legacy user's data).
-  const homeDefaultIsCommitted = existsSync(homeDefault) && !hasPendingMigrationMarker(homeDefault)
+  // "Committed" requires real data present, not mere existence: a crash between mkdir and the marker
+  // write, or a rollback that couldn't fully remove the staging dir, can leave an empty/partial
+  // homeDefault with no marker — that must NOT masquerade as the committed default and strand a legacy
+  // user's data in the config root.
+  const homeDefaultIsCommitted =
+    existsSync(homeDefault) &&
+    !hasPendingMigrationMarker(homeDefault) &&
+    LEGACY_DATA_MARKERS.some((dir) => existsSync(join(homeDefault, dir)))
   const isLegacyInstall =
     LEGACY_DATA_MARKERS.some((dir) => existsSync(join(configRoot, dir))) &&
     !existsSync(join(configRoot, dataFolderName())) &&

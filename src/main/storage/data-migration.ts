@@ -1,6 +1,6 @@
 import { createReadStream, createWriteStream } from 'node:fs'
-import { mkdir, readdir, rm, rmdir, stat } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { lstat, mkdir, readdir, rm, rmdir, stat } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
 export type MigrationPhase = 'scan' | 'copy' | 'verify' | 'delete'
@@ -57,7 +57,17 @@ const listFiles = async (root: string): Promise<string[]> => {
       else throw new NonRegularEntryError(rel)
     }
   }
-  if (await exists(root)) await walk('.')
+  // A top-level source dir that is itself a symlink/special node must be rejected up front: exists()
+  // (stat) and readdir would silently follow it, then deleteSources would remove the link and orphan
+  // its target. Inner symlinks/special files are caught inside walk().
+  let info
+  try {
+    info = await lstat(root)
+  } catch {
+    return out // missing source dir -> nothing to copy
+  }
+  if (!info.isDirectory()) throw new NonRegularEntryError(basename(root))
+  await walk('.')
   return out
 }
 

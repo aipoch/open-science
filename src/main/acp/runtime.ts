@@ -60,7 +60,7 @@ import {
 } from '../notebook/mcp-server'
 import { getNotebookSessionRoot } from '../notebook/repository'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
-import { isMigrationPending } from '../storage/migration-state'
+import { assertNoMigrationPending } from '../storage/migration-state'
 import type { UploadRepository } from '../uploads/repository'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, ArtifactReference } from '../../shared/artifacts'
@@ -885,11 +885,7 @@ class AcpRuntime {
   async sendPrompt(request: AcpPromptRequest): Promise<PromptResponse> {
     // Write-gate: during the data-root copy→commit window, a prompt would write into the OLD root that
     // the commit is about to delete. Refuse up front rather than lose the turn's output.
-    if (isMigrationPending()) {
-      throw new Error(
-        'Open Science is moving your data. Wait for the move to finish before running this.'
-      )
-    }
+    assertNoMigrationPending()
 
     let activeSession = this.sessions.get(request.sessionId)
 

@@ -219,7 +219,8 @@ describe('computeDefaultDataRoot', () => {
     // leftover legacy config-root data no longer masks it.
     const configRoot = resolveConfigRoot()
     await mkdir(join(configRoot, 'artifacts'), { recursive: true })
-    await mkdir(join(homeDir, 'OpenScience'), { recursive: true })
+    // A committed data folder holds real data (not just an empty dir), which is what marks it committed.
+    await mkdir(join(homeDir, 'OpenScience', 'artifacts'), { recursive: true })
 
     expect(computeDefaultDataRoot()).toBe(join(homeDir, 'OpenScience'))
 
@@ -259,7 +260,7 @@ describe('computeDefaultDataRoot (dev mode)', () => {
     // pointing at the stale legacy path.
     const configRoot = resolveConfigRoot()
     await mkdir(join(configRoot, 'artifacts'), { recursive: true })
-    await mkdir(join(homeDir, 'OpenScience-DEV'), { recursive: true })
+    await mkdir(join(homeDir, 'OpenScience-DEV', 'artifacts'), { recursive: true })
 
     expect(computeDefaultDataRoot()).toBe(join(homeDir, 'OpenScience-DEV'))
 

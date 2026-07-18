@@ -475,7 +475,7 @@ describe('storage IPC handlers', () => {
     expect(isMigrationPending()).toBe(false)
   })
 
-  it('commit lifts the write-gate when the switchover fails (app stays usable on the old root)', async () => {
+  it('commit discards the orphan staged copy and lifts the write-gate when the switchover fails', async () => {
     initDataRoot(dataRoot)
     const deps = fakeDeps({
       settingsService: {
@@ -495,7 +495,9 @@ describe('storage IPC handlers', () => {
     }
 
     expect(outcome.switchoverFailed).toBe(true)
+    // The UI can't retry, so the app must not soft-lock: the staged copy is discarded and the gate lifts.
     expect(isMigrationPending()).toBe(false)
+    expect(existsSync(target)).toBe(false)
   })
 
   it('rejects a concurrent migrate call while one is already in flight', async () => {
@@ -549,6 +551,19 @@ describe('storage IPC handlers', () => {
     expect(deps.relaunch).not.toHaveBeenCalled()
     // A cancelled copy leaves the app on the old root, so the write-gate is lifted.
     expect(isMigrationPending()).toBe(false)
+  })
+
+  it('cancel-migrate is a no-op once a copy has completed (only commit/discard may resolve it)', async () => {
+    initDataRoot(dataRoot)
+    registerStorageIpcHandlers(fakeDeps())
+
+    await invoke('storage:migrate', { parent: targetParent }) // copy completes; gate up, staged
+    expect(isMigrationPending()).toBe(true)
+
+    await invoke('storage:cancel-migrate') // late cancel must NOT clear the gate or drop the copy
+
+    expect(isMigrationPending()).toBe(true)
+    expect(existsSync(target)).toBe(true)
   })
 
   it("validate-data-root returns validateNewDataRoot's ok result for a parent with no OpenScience subdir", async () => {

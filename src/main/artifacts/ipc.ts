@@ -7,6 +7,7 @@ import type {
   ReadArtifactPreviewRequest
 } from '../../shared/artifacts'
 import { resolveDataRoot } from '../storage-root'
+import { assertNoMigrationPending } from '../storage/migration-state'
 import { ArtifactRepository } from './repository'
 import { ArtifactRunRegistry } from './run-registry'
 
@@ -124,9 +125,11 @@ const registerArtifactIpcHandlers = (
 ): void => {
   const handlers = createArtifactHandlers(repository, runRegistry)
 
-  ipcMain.handle('artifacts:finalize-run', (_event, request: FinalizeRunArtifactsRequest) =>
-    handlers.finalizeRunArtifacts(request)
-  )
+  ipcMain.handle('artifacts:finalize-run', (_event, request: FinalizeRunArtifactsRequest) => {
+    // Finalizing moves artifacts under the data root; block it during the migration copy→commit window.
+    assertNoMigrationPending()
+    return handlers.finalizeRunArtifacts(request)
+  })
   ipcMain.handle('artifacts:open-file', (_event, request: OpenArtifactFileRequest) =>
     handlers.openFile(request)
   )

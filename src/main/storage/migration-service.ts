@@ -1,4 +1,4 @@
-import { mkdir, readdir, rm, rmdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { type Dirent } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
@@ -170,17 +170,24 @@ export const classifyDataRoot = async (
     return { kind: 'invalid', error: 'The selected folder is not usable.' }
   }
 
+  // A marker means this folder is an in-progress/uncommitted staging copy from a migration that never
+  // finished (e.g. a crash). Never adopt it — that would bypass the commit gate and switch to a possibly
+  // incomplete snapshot — and never populate over it; the user must finish or discard that move first.
+  if (entries.some((entry) => entry.name === MIGRATION_MARKER_FILENAME)) {
+    return {
+      kind: 'invalid',
+      error:
+        'This folder holds an unfinished data move. Finish or discard that move before using it here.'
+    }
+  }
+
   const looksLikeOurData = entries.some(
     (entry) => entry.isDirectory() && (MIGRATED_DIRS as readonly string[]).includes(entry.name)
   )
   if (looksLikeOurData) return { kind: 'adopt' }
 
   // runtime/ doesn't count as content: a folder holding only runtime (or nothing) is treated as empty.
-  // The migration marker is likewise ignored — a staging dir that crashed before any data was copied
-  // holds only the marker, and must still classify 'move' (populate it) rather than 'invalid'.
-  const meaningfulEntries = entries.filter(
-    (entry) => entry.name !== 'runtime' && entry.name !== MIGRATION_MARKER_FILENAME
-  )
+  const meaningfulEntries = entries.filter((entry) => entry.name !== 'runtime')
   if (meaningfulEntries.length === 0) return { kind: 'move' }
 
   return {
@@ -234,6 +241,9 @@ type MigrationCopyDeps = {
 type MigrationCommitDeps = {
   currentDataRoot: string
   setDataRoot: (path: string) => Promise<void>
+  // Marker token the IPC layer captured when THIS session's copy completed. Commit refuses unless the
+  // on-disk marker still carries the same token, so a stale/foreign copy can never be committed.
+  expectedToken?: string
   // Injectable for tests; defaults to the real ./data-migration engine function.
   deleteSources?: (
     from: string,
@@ -273,19 +283,19 @@ export const runDataRootMigration = async (
   await mkdir(target, { recursive: true })
   await writeMigrationMarker(target, marker)
 
-  // Interrupt anything that could write mid-copy. Each step is independently wrapped and its failure
-  // logged, not thrown: the write-gate the IPC layer holds for the whole copy→commit window is what
-  // actually makes a swallowed interrupt safe here — no NEW prompt/cell writes can start against the
-  // old root even if a disconnect silently failed, so attempting the copy anyway stays correct.
+  // Freeze in-flight writers before copying. If either interrupt fails we must NOT copy an unfrozen
+  // tree — a surviving write would land outside the snapshot and be lost on the commit's delete — so
+  // clean up the staging dir and abort rather than swallow the failure and press on.
   try {
     await deps.runtime.disconnect()
-  } catch (err) {
-    console.error('[migration-service] runtime.disconnect failed', err)
-  }
-  try {
     await deps.notebook.shutdownAll()
   } catch (err) {
-    console.error('[migration-service] notebook.shutdownAll failed', err)
+    console.error('[migration-service] failed to pause writers; aborting migration', err)
+    await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    return {
+      ok: false,
+      error: 'Could not pause running work to copy your data safely. Please try again in a moment.'
+    }
   }
 
   const doCopyAndVerify = deps.copyAndVerify ?? copyAndVerify
@@ -298,10 +308,12 @@ export const runDataRootMigration = async (
   })
 
   if (!result.ok) {
-    // copyAndVerify's own rollback rmdir(to) no-ops while our marker still sits in `target`, so remove
-    // the marker ourselves and then drop the now-empty staging shell so a cancelled move leaves no trace.
-    await removeMigrationMarker(target)
-    await rmdir(target).catch(() => undefined)
+    // Remove the whole staging dir we created (marker + anything copyAndVerify's rollback missed) so a
+    // half-baked, marker-less folder can never later be mistaken for a committed data root. Safe: a
+    // 'move' target only ever holds our copy plus at most a rebuildable runtime/, never user data.
+    await rm(target, { recursive: true, force: true }).catch((err) =>
+      console.error('[migration-service] failed to clean up staging dir after failed copy', err)
+    )
     return result
   }
 
@@ -338,6 +350,9 @@ export const commitDataRootSwitch = async (
   if (!samePath(marker.target, target)) {
     return { ok: false, error: 'The staged copy is for a different destination.' }
   }
+  if (deps.expectedToken !== undefined && marker.token !== deps.expectedToken) {
+    return { ok: false, error: 'The staged copy is from a different migration attempt.' }
+  }
 
   try {
     await deps.setDataRoot(target)
@@ -352,9 +367,16 @@ export const commitDataRootSwitch = async (
     }
   }
 
-  // The pointer is now committed, so the target is the live root and must carry NO marker — its
-  // presence is the "staging, not yet live" signal computeDefaultDataRoot and this gate both rely on.
-  await removeMigrationMarker(target)
+  // The pointer is now committed, so the target is the live root and should carry NO marker. Removal is
+  // best-effort: the switch already succeeded, so a failure here must NOT fail the commit — that would
+  // leave settings pointing at the new root while this process still used the old one (split brain). A
+  // leftover marker is benign: discardStagedCopy refuses the live root, and computeDefaultDataRoot only
+  // consults it for a legacy fallback the committed settings.dataRoot overrides anyway.
+  try {
+    await removeMigrationMarker(target)
+  } catch (err) {
+    console.error('[migration-service] failed to remove marker after commit (benign leftover)', err)
+  }
 
   const doDeleteSources = deps.deleteSources ?? deleteSources
   const deleteResult = await doDeleteSources(deps.currentDataRoot, [...MIGRATED_DIRS])
@@ -372,7 +394,7 @@ export const commitDataRootSwitch = async (
 // root — never the live data location, and only when a marker confirms this source→target pair — so a
 // misrouted parent can never rm the folder the app is actively using.
 export const discardStagedCopy = async (
-  deps: { currentDataRoot: string },
+  deps: { currentDataRoot: string; expectedToken?: string },
   parent: string
 ): Promise<{ ok: boolean; error?: string }> => {
   const target = dataRootForPicked(parent)
@@ -384,10 +406,14 @@ export const discardStagedCopy = async (
   const marker = await readMigrationMarker(target)
   if (
     !marker ||
+    marker.status !== 'verified' ||
     !samePath(marker.target, target) ||
-    !samePath(marker.source, deps.currentDataRoot)
+    !samePath(marker.source, deps.currentDataRoot) ||
+    (deps.expectedToken !== undefined && marker.token !== deps.expectedToken)
   ) {
-    return { ok: false, error: 'Refused: not a staged migration copy.' }
+    // status must be 'verified' (never delete a dir mid-copy) and the token must match this session's
+    // staged copy — a stale renderer call for another/earlier path is refused rather than obeyed.
+    return { ok: false, error: 'Refused: not a completed, matching staged copy.' }
   }
 
   await rm(target, { recursive: true, force: true })

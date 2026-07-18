@@ -14,6 +14,7 @@ import {
 } from '../storage-root'
 import { detectActiveSessions } from './detect-active'
 import { beginMigration, clearMigrationPending, endMigrationCopy } from './migration-state'
+import { readMigrationMarker } from './migration-marker'
 import {
   classifyDataRoot,
   commitDataRootSwitch,
@@ -63,6 +64,9 @@ const defaultBroadcast = (progress: MigrationProgress): void => {
 // in-flight AbortController is held in this closure so cancel can reach it.
 const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
   let activeMigration: AbortController | undefined
+  // The token + target of the copy THIS session staged (set when a copy verifies, cleared when the
+  // migration resolves). commit/discard require it so a stale renderer call can't act on a foreign copy.
+  let activeStaged: { token: string; target: string } | undefined
 
   ipcMain.handle('storage:get-info', async () => {
     const dataRoot = resolveDataRoot()
@@ -171,15 +175,23 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
             onProgress: (progress) => (deps.broadcastProgress ?? defaultBroadcast)(progress)
           }
         )
-        // A failed/cancelled copy leaves the app on the old root, so clear the write-gate now; only a
-        // successful copy keeps `pending` set (writes stay blocked until commit or discard resolves it).
-        if (!result.ok) clearMigrationPending()
+        if (!result.ok) {
+          // A failed/cancelled copy leaves the app on the old root, so clear the write-gate now.
+          clearMigrationPending()
+          activeStaged = undefined
+        } else {
+          // Capture the staged copy's token so commit/discard can prove they act on THIS session's copy.
+          // The write-gate (`pending`) stays set until commit or discard resolves it.
+          const marker = await readMigrationMarker(dataRootForPicked(request.parent))
+          activeStaged = marker ? { token: marker.token, target: marker.target } : undefined
+        }
         return result
       } catch (err) {
         // runDataRootMigration never rejects; guard the IPC boundary anyway so a renderer call
         // never sees a raw thrown error. Nothing was committed, so lift the write-gate.
         console.error('[storage-ipc] migrate failed unexpectedly', err)
         clearMigrationPending()
+        activeStaged = undefined
         return { ok: false, error: err instanceof Error ? err.message : String(err) }
       } finally {
         activeMigration = undefined
@@ -190,9 +202,14 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
   )
 
   ipcMain.handle('storage:cancel-migrate', () => {
+    // Once a copy has completed (activeStaged set), only commit/discard may resolve it: a late cancel
+    // (renderer still showing Cancel during the copy→done transition) must NOT clear the gate/token and
+    // leave a committable-but-unfrozen copy behind.
+    if (activeStaged) return
     activeMigration?.abort()
     // The aborted copy leaves the app on the old root, so writes may resume immediately.
     clearMigrationPending()
+    activeStaged = undefined
   })
 
   // Discards a completed-but-uncommitted copy at `<parent>/OpenScience` when the user picks "Keep
@@ -203,13 +220,19 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
   ipcMain.handle(
     'storage:discard-migrated-copy',
     async (_event, request: { parent: string }): Promise<void> => {
+      if (activeMigration) {
+        // A copy is still running; discarding would race the writer. Ignore the (stale) request.
+        console.error('[storage-ipc] discard-migrated-copy ignored: a copy is in progress')
+        return
+      }
       try {
         const result = await discardStagedCopy(
-          { currentDataRoot: resolveDataRoot() },
+          { currentDataRoot: resolveDataRoot(), expectedToken: activeStaged?.token },
           request.parent
         )
         if (result.ok) {
           clearMigrationPending()
+          activeStaged = undefined
         } else {
           console.error('[storage-ipc] discard-migrated-copy refused', { error: result.error })
         }
@@ -233,7 +256,9 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
           {
             currentDataRoot: resolveDataRoot(),
             // Arrow-wrapped so setDataRoot is called as a method (it reads `this.repository`).
-            setDataRoot: (path) => deps.settingsService.setDataRoot(path)
+            setDataRoot: (path) => deps.settingsService.setDataRoot(path),
+            // Prove the on-disk copy is the one this session staged (guards against a stale marker).
+            expectedToken: activeStaged?.token
           },
           request.parent
         )
@@ -241,12 +266,14 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
         console.error('[storage-ipc] commit-and-relaunch failed unexpectedly', err)
         // The commit didn't complete; keep the app usable on the old root by lifting the write-gate.
         clearMigrationPending()
+        activeStaged = undefined
         return { ok: false, error: err instanceof Error ? err.message : String(err) }
       }
 
       if (outcome.ok) {
         // On success the write-gate stays set through relaunch: the fresh process starts with
         // pending=false, so writes naturally resume against the now-live new root.
+        activeStaged = undefined
         if (deps.relaunch) {
           deps.relaunch()
         } else {
@@ -254,9 +281,18 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
           app.exit(0)
         }
       } else {
-        // No switch happened (no verified copy, mismatch, or switchoverFailed): the app stays on the
-        // old root, so lift the write-gate to keep it usable.
+        // The commit did not switch over (switchoverFailed, or a no-op refusal: no verified copy /
+        // mismatch). The UI's error stage offers no retry, so never leave the app soft-locked: on a
+        // switchover failure discard the now-orphan staged copy (best-effort), then lift the write-gate
+        // in every case. The old root is untouched and immediately usable.
+        if ('switchoverFailed' in outcome) {
+          await discardStagedCopy(
+            { currentDataRoot: resolveDataRoot(), expectedToken: activeStaged?.token },
+            request.parent
+          ).catch(() => undefined)
+        }
         clearMigrationPending()
+        activeStaged = undefined
       }
       return outcome
     }

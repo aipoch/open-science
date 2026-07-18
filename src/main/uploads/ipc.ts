@@ -7,6 +7,7 @@ import type {
   StageUploadFilesRequest
 } from '../../shared/uploads'
 import { resolveDataRoot } from '../storage-root'
+import { assertNoMigrationPending } from '../storage/migration-state'
 import { UploadRepository } from './repository'
 
 // Uploads are data-class: they follow the configurable data root (defaults to the config root).
@@ -15,15 +16,19 @@ const createDefaultUploadRepository = (): UploadRepository =>
 
 // Registers the small upload IPC surface used by the renderer composer and preview panel.
 const registerUploadIpcHandlers = (repository = createDefaultUploadRepository()): void => {
-  ipcMain.handle('uploads:stage-files', (_event, request: StageUploadFilesRequest) =>
-    repository.stageFiles(request)
-  )
-  ipcMain.handle('uploads:delete', (_event, request: DeleteUploadRequest) =>
-    repository.deleteUpload(request)
-  )
-  ipcMain.handle('uploads:finalize-session', (_event, request: FinalizeUploadSessionRequest) =>
-    repository.finalizePendingSessionUploads(request.sessionId, request.attachments)
-  )
+  // Uploads write/mutate under the data root, so block them during the data-root copy→commit window.
+  ipcMain.handle('uploads:stage-files', (_event, request: StageUploadFilesRequest) => {
+    assertNoMigrationPending()
+    return repository.stageFiles(request)
+  })
+  ipcMain.handle('uploads:delete', (_event, request: DeleteUploadRequest) => {
+    assertNoMigrationPending()
+    return repository.deleteUpload(request)
+  })
+  ipcMain.handle('uploads:finalize-session', (_event, request: FinalizeUploadSessionRequest) => {
+    assertNoMigrationPending()
+    return repository.finalizePendingSessionUploads(request.sessionId, request.attachments)
+  })
   ipcMain.handle('uploads:read-preview', (_event, request: ReadArtifactPreviewRequest) =>
     repository.readManagedUploadPreview(request)
   )
