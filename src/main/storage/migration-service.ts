@@ -1,4 +1,4 @@
-import { readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rm, rmdir, stat, writeFile } from 'node:fs/promises'
 import { type Dirent } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
@@ -10,6 +10,15 @@ import {
   type MigrationProgress,
   type MigrationResult
 } from './data-migration'
+import {
+  MIGRATION_MARKER_FILENAME,
+  newToken,
+  readMigrationMarker,
+  removeMigrationMarker,
+  scanInventory,
+  writeMigrationMarker,
+  type MigrationMarker
+} from './migration-marker'
 
 // All top-level dirs under a data root. Used elsewhere (usage breakdown, legacy detection) to
 // enumerate what a data root actually holds; no longer consulted by classifyDataRoot itself (see
@@ -68,11 +77,11 @@ export const classifyDataRoot = async (
   const current = resolve(currentDataRoot)
   const target = dataRootForPicked(parent)
 
-  // Reject only control characters (near-impossible from the OS picker, but the New location field
-  // also accepts typed input). Spaces are intentionally allowed on every platform: Windows profile
-  // paths routinely contain them (C:\Users\John Doe), and blocking spaces there — or on macOS,
-  // where spaced folders are common — is more user-hostile than the rare conda/venv quoting issue
-  // it would guard against. Non-ASCII letters (accented, CJK) are allowed too.
+  // Reject control characters on every platform (near-impossible from the OS picker, but the New
+  // location field also accepts typed input). Spaces are handled per-platform below: allowed on
+  // Windows (profile paths routinely contain them, e.g. C:\Users\John Doe, and it has no shebangs),
+  // but rejected on macOS/Linux where a spaced path breaks conda/venv console scripts. Non-ASCII
+  // letters (accented, CJK) are allowed everywhere.
   // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001f]/.test(target)) {
     return {
@@ -167,7 +176,11 @@ export const classifyDataRoot = async (
   if (looksLikeOurData) return { kind: 'adopt' }
 
   // runtime/ doesn't count as content: a folder holding only runtime (or nothing) is treated as empty.
-  const meaningfulEntries = entries.filter((entry) => entry.name !== 'runtime')
+  // The migration marker is likewise ignored — a staging dir that crashed before any data was copied
+  // holds only the marker, and must still classify 'move' (populate it) rather than 'invalid'.
+  const meaningfulEntries = entries.filter(
+    (entry) => entry.name !== 'runtime' && entry.name !== MIGRATION_MARKER_FILENAME
+  )
   if (meaningfulEntries.length === 0) return { kind: 'move' }
 
   return {
@@ -246,8 +259,24 @@ export const runDataRootMigration = async (
 
   const target = dataRootForPicked(parent)
 
-  // Interrupt anything that could write mid-copy. Each step is independently wrapped: an interrupt
-  // failure must not abort the copy (it's still safe to attempt), so it is logged and swallowed.
+  // Stamp a 'copying' marker into the staging dir BEFORE any bytes are copied. Its presence makes a
+  // half-copied target unmistakably "not committed": computeDefaultDataRoot skips a marker-bearing
+  // homeDefault, and the commit gate refuses anything that isn't marked 'verified'.
+  const marker: MigrationMarker = {
+    version: 1,
+    token: newToken(),
+    source: deps.currentDataRoot,
+    target,
+    createdAt: Date.now(),
+    status: 'copying'
+  }
+  await mkdir(target, { recursive: true })
+  await writeMigrationMarker(target, marker)
+
+  // Interrupt anything that could write mid-copy. Each step is independently wrapped and its failure
+  // logged, not thrown: the write-gate the IPC layer holds for the whole copy→commit window is what
+  // actually makes a swallowed interrupt safe here — no NEW prompt/cell writes can start against the
+  // old root even if a disconnect silently failed, so attempting the copy anyway stays correct.
   try {
     await deps.runtime.disconnect()
   } catch (err) {
@@ -260,13 +289,26 @@ export const runDataRootMigration = async (
   }
 
   const doCopyAndVerify = deps.copyAndVerify ?? copyAndVerify
-  return doCopyAndVerify({
+  const result = await doCopyAndVerify({
     from: deps.currentDataRoot,
     to: target,
     dirs: [...MIGRATED_DIRS],
     signal: runOpts.signal,
     onProgress: runOpts.onProgress
   })
+
+  if (!result.ok) {
+    // copyAndVerify's own rollback rmdir(to) no-ops while our marker still sits in `target`, so remove
+    // the marker ourselves and then drop the now-empty staging shell so a cancelled move leaves no trace.
+    await removeMigrationMarker(target)
+    await rmdir(target).catch(() => undefined)
+    return result
+  }
+
+  // Record what was staged and promote the marker to 'verified' — the only state the commit gate accepts.
+  const inventory = await scanInventory(target, [...MIGRATED_DIRS])
+  await writeMigrationMarker(target, { ...marker, status: 'verified', inventory })
+  return result
 }
 
 // PHASE 2 (commit): flip settings.dataRoot to the (already-copied, verified) new root, THEN delete
@@ -282,9 +324,26 @@ export const commitDataRootSwitch = async (
 ): Promise<MigrationOutcome> => {
   const target = dataRootForPicked(parent)
 
+  // Commit gate: only ever promote a fully-staged copy whose marker matches THIS exact source→target
+  // pair. This blocks committing a half-copied dir (crash mid-copy), a stale marker from an earlier
+  // aborted move, or a copy staged against a different current root — any of which could delete the
+  // wrong data on the delete step below.
+  const marker = await readMigrationMarker(target)
+  if (!marker || marker.status !== 'verified') {
+    return { ok: false, error: 'No completed migration copy was found to commit.' }
+  }
+  if (!samePath(marker.source, deps.currentDataRoot)) {
+    return { ok: false, error: 'The staged copy does not match your current data location.' }
+  }
+  if (!samePath(marker.target, target)) {
+    return { ok: false, error: 'The staged copy is for a different destination.' }
+  }
+
   try {
     await deps.setDataRoot(target)
   } catch (err) {
+    // Leave the marker in place: the copy stays a discardable staging dir the user can retry or throw
+    // away, exactly as before the failed switch.
     console.error('[migration-service] failed to persist new dataRoot', err)
     return {
       ok: false,
@@ -292,6 +351,10 @@ export const commitDataRootSwitch = async (
       switchoverFailed: true
     }
   }
+
+  // The pointer is now committed, so the target is the live root and must carry NO marker — its
+  // presence is the "staging, not yet live" signal computeDefaultDataRoot and this gate both rely on.
+  await removeMigrationMarker(target)
 
   const doDeleteSources = deps.deleteSources ?? deleteSources
   const deleteResult = await doDeleteSources(deps.currentDataRoot, [...MIGRATED_DIRS])
@@ -301,5 +364,32 @@ export const commitDataRootSwitch = async (
     })
   }
 
+  return { ok: true }
+}
+
+// Throws away an uncommitted staged copy at `<parent>/OpenScience` (the user chose "Keep current
+// location" on the done stage). Refuses unless the target is genuinely a staging copy for the current
+// root — never the live data location, and only when a marker confirms this source→target pair — so a
+// misrouted parent can never rm the folder the app is actively using.
+export const discardStagedCopy = async (
+  deps: { currentDataRoot: string },
+  parent: string
+): Promise<{ ok: boolean; error?: string }> => {
+  const target = dataRootForPicked(parent)
+
+  if (isPathInsideOrEqual(deps.currentDataRoot, target)) {
+    return { ok: false, error: 'Refused: target is the current data location.' }
+  }
+
+  const marker = await readMigrationMarker(target)
+  if (
+    !marker ||
+    !samePath(marker.target, target) ||
+    !samePath(marker.source, deps.currentDataRoot)
+  ) {
+    return { ok: false, error: 'Refused: not a staged migration copy.' }
+  }
+
+  await rm(target, { recursive: true, force: true })
   return { ok: true }
 }

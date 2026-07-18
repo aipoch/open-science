@@ -8,6 +8,7 @@ import {
   PROD_SESSION_DIR_NAME,
   getSessionPersistenceDir
 } from './session-persistence/repository'
+import { hasPendingMigrationMarker } from './storage/migration-marker'
 
 // Fixed, dev-aware config root (DB, sessions, claude, skills, settings live here). Never relocated.
 // A development-only absolute override supports truly isolated onboarding previews without changing
@@ -77,10 +78,14 @@ const LEGACY_DATA_MARKERS = ['artifacts', 'notebooks', 'uploads']
 const computeDefaultDataRoot = (): string => {
   const configRoot = resolveConfigRoot()
   const homeDefault = dataRootForParent(app.getPath('home'))
+  // A marker-bearing homeDefault is a half-copied/uncommitted staging dir, NOT the committed default:
+  // treat it as "not there yet" so a crashed or in-flight migration can't fool the legacy fallback into
+  // thinking the modern data folder already exists (which would split a legacy user's data).
+  const homeDefaultIsCommitted = existsSync(homeDefault) && !hasPendingMigrationMarker(homeDefault)
   const isLegacyInstall =
     LEGACY_DATA_MARKERS.some((dir) => existsSync(join(configRoot, dir))) &&
     !existsSync(join(configRoot, dataFolderName())) &&
-    !existsSync(homeDefault)
+    !homeDefaultIsCommitted
 
   return isLegacyInstall ? configRoot : homeDefault
 }

@@ -9,15 +9,44 @@ vi.mock('electron', () => ({
   app: { getPath: () => '/home/user', isPackaged: true }
 }))
 
+import { existsSync } from 'node:fs'
+
 import type { MigrationProgress, MigrationResult } from './data-migration'
 import {
   classifyDataRoot,
   commitDataRootSwitch,
   DATA_ROOT_DIRS,
+  discardStagedCopy,
   MIGRATED_DIRS,
   runDataRootMigration,
   validateNewDataRoot
 } from './migration-service'
+import {
+  MIGRATION_MARKER_FILENAME,
+  readMigrationMarker,
+  writeMigrationMarker,
+  type MigrationMarker
+} from './migration-marker'
+
+// Writes a verified staging marker for `<parent>/OpenScience`, as a completed copy phase would have.
+const seedVerifiedMarker = async (
+  parent: string,
+  source: string,
+  overrides: Partial<MigrationMarker> = {}
+): Promise<string> => {
+  const target = dataRootFor(parent)
+  await mkdir(target, { recursive: true })
+  await writeMigrationMarker(target, {
+    version: 1,
+    token: 'tok-test',
+    source,
+    target,
+    createdAt: Date.now(),
+    status: 'verified',
+    ...overrides
+  })
+  return target
+}
 
 // Data folder name mirrors dataFolderName() for a packaged build (see the electron mock above).
 const dataRootFor = (parent: string): string => join(parent, 'OpenScience')
@@ -404,6 +433,54 @@ describe('runDataRootMigration (copy phase)', () => {
     expect(deps.setDataRoot).not.toHaveBeenCalled()
   })
 
+  it("stamps a 'copying' marker before the copy and promotes it to 'verified' on success", async () => {
+    const deps = fakeDeps()
+    const target = dataRootFor(emptyParent)
+    let statusDuringCopy: string | undefined
+    const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => {
+      // The marker must already read 'copying' while bytes are being written.
+      statusDuringCopy = (await readMigrationMarker(target))?.status
+      return { ok: true }
+    })
+
+    await runDataRootMigration(
+      { currentDataRoot, runtime: deps.runtime, notebook: deps.notebook, copyAndVerify },
+      emptyParent,
+      runOpts()
+    )
+
+    expect(statusDuringCopy).toBe('copying')
+    const finalMarker = await readMigrationMarker(target)
+    expect(finalMarker).toMatchObject({
+      status: 'verified',
+      source: currentDataRoot,
+      target,
+      version: 1
+    })
+    // The verified marker records the staged inventory (empty here since the fake copy wrote nothing).
+    expect(finalMarker?.inventory).toEqual({ dirs: [], fileCount: 0, totalBytes: 0 })
+  })
+
+  it('removes the marker and cleans up the empty target on copy failure/cancel', async () => {
+    const deps = fakeDeps()
+    const target = dataRootFor(emptyParent)
+    const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({
+      ok: false,
+      error: 'x',
+      cancelled: true
+    }))
+
+    await runDataRootMigration(
+      { currentDataRoot, runtime: deps.runtime, notebook: deps.notebook, copyAndVerify },
+      emptyParent,
+      runOpts()
+    )
+
+    // No marker, and the empty staging shell is gone — a cancelled move leaves no trace.
+    expect(await readMigrationMarker(target)).toBeNull()
+    expect(existsSync(target)).toBe(false)
+  })
+
   it('short-circuits on validation failure without interrupting or copying', async () => {
     const deps = fakeDeps()
     const copyAndVerify = vi.fn()
@@ -442,7 +519,8 @@ describe('runDataRootMigration (copy phase)', () => {
 })
 
 describe('commitDataRootSwitch (commit phase)', () => {
-  it('persists the new root then deletes the old dirs, in that order', async () => {
+  it('persists the new root then deletes the old dirs, in that order, and removes the marker', async () => {
+    const target = await seedVerifiedMarker(emptyParent, currentDataRoot)
     const order: string[] = []
     const deps = fakeDeps()
     deps.setDataRoot.mockImplementation(async () => {
@@ -453,7 +531,6 @@ describe('commitDataRootSwitch (commit phase)', () => {
       return { deleted: [...MIGRATED_DIRS], failed: [] }
     })
 
-    const target = dataRootFor(emptyParent)
     const result = await commitDataRootSwitch(
       { currentDataRoot, setDataRoot: deps.setDataRoot, deleteSources },
       emptyParent
@@ -465,14 +542,83 @@ describe('commitDataRootSwitch (commit phase)', () => {
     expect(order).toEqual(['setDataRoot', 'deleteSources'])
     expect(deps.setDataRoot).toHaveBeenCalledWith(target)
     expect(deleteSources).toHaveBeenCalledWith(currentDataRoot, [...MIGRATED_DIRS])
+    // The committed (now-live) root must carry NO marker.
+    expect(existsSync(join(target, MIGRATION_MARKER_FILENAME))).toBe(false)
   })
 
-  it('returns switchoverFailed and skips delete when setDataRoot fails, leaving both roots intact', async () => {
+  it('refuses to commit when no marker is present (setDataRoot and delete never run)', async () => {
+    await mkdir(dataRootFor(emptyParent), { recursive: true }) // staging dir, but no marker
+    const deps = fakeDeps()
+    const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({ deleted: [], failed: [] }))
+
+    const result = await commitDataRootSwitch(
+      { currentDataRoot, setDataRoot: deps.setDataRoot, deleteSources },
+      emptyParent
+    )
+
+    expect(result).toEqual({ ok: false, error: 'No completed migration copy was found to commit.' })
+    expect(deps.setDataRoot).not.toHaveBeenCalled()
+    expect(deleteSources).not.toHaveBeenCalled()
+  })
+
+  it("refuses to commit a marker that is only 'copying' (not verified)", async () => {
+    await seedVerifiedMarker(emptyParent, currentDataRoot, { status: 'copying' })
+    const deps = fakeDeps()
+    const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({ deleted: [], failed: [] }))
+
+    const result = await commitDataRootSwitch(
+      { currentDataRoot, setDataRoot: deps.setDataRoot, deleteSources },
+      emptyParent
+    )
+
+    expect(result).toEqual({ ok: false, error: 'No completed migration copy was found to commit.' })
+    expect(deps.setDataRoot).not.toHaveBeenCalled()
+    expect(deleteSources).not.toHaveBeenCalled()
+  })
+
+  it('refuses to commit a marker staged against a different source (wrong current root)', async () => {
+    await seedVerifiedMarker(emptyParent, '/some/other/OpenScience')
+    const deps = fakeDeps()
+    const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({ deleted: [], failed: [] }))
+
+    const result = await commitDataRootSwitch(
+      { currentDataRoot, setDataRoot: deps.setDataRoot, deleteSources },
+      emptyParent
+    )
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'The staged copy does not match your current data location.'
+    })
+    expect(deps.setDataRoot).not.toHaveBeenCalled()
+    expect(deleteSources).not.toHaveBeenCalled()
+  })
+
+  it('refuses to commit a marker whose recorded target differs from the derived one', async () => {
+    const target = await seedVerifiedMarker(emptyParent, currentDataRoot, {
+      target: '/elsewhere/OpenScience'
+    })
+    const deps = fakeDeps()
+    const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({ deleted: [], failed: [] }))
+
+    const result = await commitDataRootSwitch(
+      { currentDataRoot, setDataRoot: deps.setDataRoot, deleteSources },
+      emptyParent
+    )
+
+    expect(result).toEqual({ ok: false, error: 'The staged copy is for a different destination.' })
+    expect(deps.setDataRoot).not.toHaveBeenCalled()
+    expect(deleteSources).not.toHaveBeenCalled()
+    // Marker left intact so the copy stays discardable.
+    expect(existsSync(join(target, MIGRATION_MARKER_FILENAME))).toBe(true)
+  })
+
+  it('returns switchoverFailed, skips delete, and KEEPS the marker when setDataRoot fails', async () => {
+    const target = await seedVerifiedMarker(emptyParent, currentDataRoot)
     const deps = fakeDeps()
     deps.setDataRoot.mockRejectedValue(new Error('disk full'))
     const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({ deleted: [], failed: [] }))
 
-    const target = dataRootFor(emptyParent)
     const result = await commitDataRootSwitch(
       { currentDataRoot, setDataRoot: deps.setDataRoot, deleteSources },
       emptyParent
@@ -484,9 +630,12 @@ describe('commitDataRootSwitch (commit phase)', () => {
       switchoverFailed: true
     })
     expect(deleteSources).not.toHaveBeenCalled()
+    // The copy stays discardable/retryable, so the marker must survive a failed switchover.
+    expect(existsSync(join(target, MIGRATION_MARKER_FILENAME))).toBe(true)
   })
 
   it('still succeeds when deleteSources reports per-dir failures (harmless leftovers)', async () => {
+    await seedVerifiedMarker(emptyParent, currentDataRoot)
     const deps = fakeDeps()
     const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({
       deleted: ['artifacts'],
@@ -499,5 +648,43 @@ describe('commitDataRootSwitch (commit phase)', () => {
     )
 
     expect(result).toEqual({ ok: true })
+  })
+})
+
+describe('discardStagedCopy', () => {
+  it('deletes a marker-confirmed staged copy for the current root', async () => {
+    const target = await seedVerifiedMarker(emptyParent, currentDataRoot)
+
+    const result = await discardStagedCopy({ currentDataRoot }, emptyParent)
+
+    expect(result).toEqual({ ok: true })
+    expect(existsSync(target)).toBe(false)
+  })
+
+  it('refuses (and deletes nothing) when the derived target is the current data location', async () => {
+    // Deriving from currentParent yields currentDataRoot itself.
+    const result = await discardStagedCopy({ currentDataRoot }, currentParent)
+
+    expect(result).toEqual({ ok: false, error: 'Refused: target is the current data location.' })
+    expect(existsSync(currentDataRoot)).toBe(true)
+  })
+
+  it('refuses when there is no marker at the target', async () => {
+    const target = dataRootFor(emptyParent)
+    await mkdir(target, { recursive: true })
+
+    const result = await discardStagedCopy({ currentDataRoot }, emptyParent)
+
+    expect(result).toEqual({ ok: false, error: 'Refused: not a staged migration copy.' })
+    expect(existsSync(target)).toBe(true)
+  })
+
+  it('refuses when the marker was staged against a different source', async () => {
+    const target = await seedVerifiedMarker(emptyParent, '/some/other/OpenScience')
+
+    const result = await discardStagedCopy({ currentDataRoot }, emptyParent)
+
+    expect(result).toEqual({ ok: false, error: 'Refused: not a staged migration copy.' })
+    expect(existsSync(target)).toBe(true)
   })
 })
