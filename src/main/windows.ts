@@ -79,8 +79,8 @@ const createMainWindow = (): BrowserWindow => {
   // forwards the chord to a renderer that cannot handle it, preventDefault() has already suppressed the
   // menu Close accelerator, so Cmd/Ctrl+W becomes a silent no-op. Two independent conditions gate the
   // forward:
-  //   - listener readiness: the renderer mounted its listener (READY) and has not torn it down (UNREADY)
-  //     or been replaced by a fresh document (did-start-loading) or a dead process (render-process-gone).
+  //   - listener readiness: the renderer mounted its listener (READY) and has not torn it down (UNREADY),
+  //     been replaced by a fresh top-level document (did-start-navigation), or died (render-process-gone).
   //   - responsiveness: a hung renderer receives the send but never processes it, so treat unresponsive
   //     as not-forwardable and restore on recovery — tracked separately so a recovered renderer keeps
   //     its subscription instead of having to re-handshake.
@@ -88,17 +88,25 @@ const createMainWindow = (): BrowserWindow => {
   let rendererListenerReady = false
   let rendererResponsive = true
   const onListenerReady = (event: IpcMainEvent): void => {
-    if (event.sender === window.webContents) rendererListenerReady = true
+    if (event.sender !== window.webContents) return
+    rendererListenerReady = true
+    // A renderer that just handshook is by definition running and processing IPC. Clear any stale
+    // unresponsive state here too: after unresponsive -> render-process-gone -> reload, the fresh
+    // process never emits 'responsive' (that only fires as recovery on the *same* process), so READY
+    // is the only signal that the new renderer can act on the chord.
+    rendererResponsive = true
   }
   const onListenerGone = (event: IpcMainEvent): void => {
     if (event.sender === window.webContents) rendererListenerReady = false
   }
   ipcMain.on(CLOSE_ACTIVE_PANE_READY_CHANNEL, onListenerReady)
   ipcMain.on(CLOSE_ACTIVE_PANE_UNREADY_CHANNEL, onListenerGone)
-  // A top-level load swaps in a fresh document that must re-subscribe; a dead render process took its
-  // listener with it. Both revoke readiness until the next READY handshake.
-  window.webContents.on('did-start-loading', () => {
-    rendererListenerReady = false
+  // A top-level document swap replaces the mounted hook, which must re-subscribe; a dead render process
+  // took its listener with it. Both revoke readiness until the next READY handshake. Gate on the main
+  // frame and a real document change so a dynamic preview iframe loading (or a same-document hash /
+  // pushState navigation) — neither of which remounts the hook — does not falsely disarm the forward.
+  window.webContents.on('did-start-navigation', (details) => {
+    if (details.isMainFrame && !details.isSameDocument) rendererListenerReady = false
   })
   window.webContents.on('render-process-gone', () => {
     rendererListenerReady = false

@@ -188,11 +188,18 @@ describe('close chord interception', () => {
     fireHandshake(window, CLOSE_ACTIVE_PANE_UNREADY_CHANNEL)
 
   // Drives one of the captured webContents lifecycle handlers (render-process-gone, unresponsive, ...).
-  const fireWebContentsEvent = (window: FakeBrowserWindow, event: string): void => {
+  const fireWebContentsEvent = (
+    window: FakeBrowserWindow,
+    event: string,
+    ...args: unknown[]
+  ): void => {
     const handler = window.webContentsHandlers.get(event)
     expect(handler).toBeDefined()
-    handler!()
+    handler!(...args)
   }
+
+  // A top-level document swap (reload or new URL): main frame, real document change.
+  const mainFrameNavigation = { isMainFrame: true, isSameDocument: false }
 
   const fireInput = (window: FakeBrowserWindow, input: KeyChordInput): (() => void) => {
     const preventDefault = vi.fn()
@@ -226,18 +233,40 @@ describe('close chord interception', () => {
     expect(window.closeMock).not.toHaveBeenCalled()
   })
 
-  it('re-arms the direct-close fallback after a reload clears renderer readiness', () => {
+  it('re-arms the direct-close fallback after a top-level navigation clears renderer readiness', () => {
     createMainWindow()
     const window = currentWindow!
 
     signalRendererReady(window)
-    // A top-level reload starts loading before the fresh document re-subscribes.
-    window.webContentsHandlers.get('did-start-loading')!()
+    // A top-level reload navigates the main frame before the fresh document re-subscribes.
+    fireWebContentsEvent(window, 'did-start-navigation', mainFrameNavigation)
 
     fireInput(window, closeChord())
 
     expect(window.closeMock).toHaveBeenCalledTimes(1)
     expect(window.sendMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps forwarding when a subframe or same-document navigation fires', () => {
+    createMainWindow()
+    const window = currentWindow!
+
+    signalRendererReady(window)
+    // A dynamic preview iframe load (subframe) and a hash / pushState change (same document) both
+    // navigate the WebContents without remounting the hook, so readiness must survive them.
+    fireWebContentsEvent(window, 'did-start-navigation', {
+      isMainFrame: false,
+      isSameDocument: false
+    })
+    fireWebContentsEvent(window, 'did-start-navigation', {
+      isMainFrame: true,
+      isSameDocument: true
+    })
+
+    fireInput(window, closeChord())
+
+    expect(window.sendMock).toHaveBeenCalledWith(CLOSE_ACTIVE_PANE_CHANNEL)
+    expect(window.closeMock).not.toHaveBeenCalled()
   })
 
   it('re-arms the direct-close fallback when the renderer tears its listener down', () => {
@@ -285,6 +314,25 @@ describe('close chord interception', () => {
     fireInput(window, closeChord())
     expect(window.sendMock).toHaveBeenCalledWith(CLOSE_ACTIVE_PANE_CHANNEL)
     expect(window.closeMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('forwards again after unresponsive -> crash -> reload -> ready, with no responsive event', () => {
+    createMainWindow()
+    const window = currentWindow!
+
+    signalRendererReady(window)
+    // The renderer hangs, then its process dies, then a fresh one loads and re-handshakes. A brand-new
+    // process never emits 'responsive' (that is a same-process recovery signal), so READY alone must
+    // clear the stale unresponsive state or the chord stays a direct close forever.
+    fireWebContentsEvent(window, 'unresponsive')
+    fireWebContentsEvent(window, 'render-process-gone')
+    fireWebContentsEvent(window, 'did-start-navigation', mainFrameNavigation)
+    signalRendererReady(window)
+
+    fireInput(window, closeChord())
+
+    expect(window.sendMock).toHaveBeenCalledWith(CLOSE_ACTIVE_PANE_CHANNEL)
+    expect(window.closeMock).not.toHaveBeenCalled()
   })
 
   it('ignores keys that are not the close chord', () => {
