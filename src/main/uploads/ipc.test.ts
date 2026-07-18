@@ -5,22 +5,37 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const electronState = vi.hoisted(() => ({ homePath: '' }))
+const ipcHandlers = vi.hoisted(
+  () => new Map<string, (event: unknown, request: unknown) => unknown>()
+)
 
 vi.mock('electron', () => ({
   app: {
     getPath: () => electronState.homePath,
     isPackaged: false
   },
-  ipcMain: { handle: vi.fn() }
+  ipcMain: {
+    handle: vi.fn((channel: string, handler: (event: unknown, request: unknown) => unknown) =>
+      ipcHandlers.set(channel, handler)
+    )
+  }
 }))
 
 import { dataFolderName } from '../storage-root'
-import { createDefaultUploadRepository } from './ipc'
+import {
+  beginMigration,
+  clearMigrationPending,
+  waitForDataRootWriters
+} from '../storage/migration-state'
+import { createDefaultUploadRepository, registerUploadIpcHandlers } from './ipc'
+import type { UploadRepository } from './repository'
 
 describe('default upload repository', () => {
   let homeRoot: string | undefined
 
   afterEach(async () => {
+    ipcHandlers.clear()
+    clearMigrationPending()
     if (homeRoot) await rm(homeRoot, { recursive: true, force: true })
     homeRoot = undefined
   })
@@ -55,5 +70,33 @@ describe('default upload repository', () => {
     await expect(
       repository.readManagedUploadPreview({ path: attachment.path, encoding: 'utf8' })
     ).resolves.toMatchObject({ content })
+  })
+
+  it('keeps migration drain pending until an upload that already started finishes', async () => {
+    let releaseUpload: (() => void) | undefined
+    const repository = {
+      stageFiles: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseUpload = resolve
+          })
+      )
+    } as unknown as UploadRepository
+    registerUploadIpcHandlers(repository)
+    const stage = ipcHandlers.get('uploads:stage-files')!
+
+    const uploadPromise = Promise.resolve(stage(undefined, { files: [] }))
+    beginMigration()
+    let drained = false
+    const drainPromise = waitForDataRootWriters().then(() => {
+      drained = true
+    })
+    await Promise.resolve()
+    expect(drained).toBe(false)
+
+    releaseUpload?.()
+    await uploadPromise
+    await drainPromise
+    expect(drained).toBe(true)
   })
 })

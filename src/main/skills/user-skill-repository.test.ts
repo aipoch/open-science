@@ -4,8 +4,15 @@ import { join } from 'node:path'
 import { deflateRawSync } from 'node:zlib'
 
 import { describe, expect, it } from 'vitest'
+import { load as loadYaml } from 'js-yaml'
 
-import { UserSkillRepository, parseUserSkillId, toSlug } from './user-skill-repository'
+import {
+  UserSkillRepository,
+  parseUserSkillId,
+  toSlug,
+  frontmatterBlock
+} from './user-skill-repository'
+import { parseFrontmatter } from './frontmatter'
 import type { FetchLike } from './github-import'
 
 const makeStorage = async (): Promise<string> => mkdtemp(join(tmpdir(), 'user-skills-'))
@@ -101,6 +108,55 @@ describe('toSlug / parseUserSkillId', () => {
   })
 })
 
+describe('frontmatterBlock', () => {
+  // Reads the block back with a conformant YAML parser and asserts each field is byte-identical to
+  // the input — the property that actually matters (Claude Code parses SKILL.md with real YAML).
+  const roundTrip = (name: string, description: string): { name: unknown; description: unknown } =>
+    loadYaml(frontmatterBlock({ name, description })) as { name: unknown; description: unknown }
+
+  it('round-trips ordinary values as strings', () => {
+    const out = roundTrip('My Skill', 'Does a thing.')
+    expect(out).toEqual({ name: 'My Skill', description: 'Does a thing.' })
+  })
+
+  it('keeps YAML-typed tokens as strings (never bool/null/number)', () => {
+    for (const value of ['true', 'false', 'null', 'yes', 'no', '~', '123', '3.14', '+1', '0x1f']) {
+      const out = roundTrip('X', value)
+      expect(out.description).toBe(value)
+      expect(typeof out.description).toBe('string')
+    }
+  })
+
+  it('losslessly round-trips trailing newlines and leading spaces', () => {
+    for (const value of [
+      'line one\n', // trailing newline preserved
+      'a\n\nb\n\n', // multiple trailing newlines
+      '  indented', // leading spaces
+      '  keep\n    me  \n' // leading + trailing whitespace across lines
+    ]) {
+      expect(roundTrip('X', value).description).toBe(value)
+    }
+  })
+
+  it('round-trips values that would otherwise break the frontmatter (--- fence, key: line)', () => {
+    expect(roundTrip('X', 'a\n---\nb').description).toBe('a\n---\nb')
+    expect(roundTrip('X', 'not: a-key').description).toBe('not: a-key')
+  })
+
+  it('round-trips an empty value as an empty string (not null)', () => {
+    expect(roundTrip('X', '').description).toBe('')
+  })
+
+  it('round-trips losslessly through the app frontmatter reader too', () => {
+    // Not just a standard parser — the app's own parseFrontmatter must recover the exact value,
+    // including a trailing newline and leading spaces (it no longer trims).
+    for (const value of ['line one\n', '  indented', 'plain text', 'true', '2026-07-17']) {
+      const doc = `---\n${frontmatterBlock({ name: 'X', description: value })}---\nbody`
+      expect(parseFrontmatter(doc).fields.description).toBe(value)
+    }
+  })
+})
+
 describe('UserSkillRepository', () => {
   it('creates, lists, reads, updates, and deletes a personal skill', async () => {
     const repo = new UserSkillRepository(await makeStorage())
@@ -133,6 +189,29 @@ describe('UserSkillRepository', () => {
 
     await repo.delete(id)
     expect(await repo.list()).toEqual([])
+  })
+
+  it('round-trips a description with newlines and YAML fences without corrupting the body', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+
+    // A description that, interpolated raw, would prematurely close the frontmatter (`---`) and inject
+    // a bogus field (`not: a-key`). It must survive intact and leave the body untouched.
+    const description = 'First line\n---\nnot: a-key\nSecond line'
+    const id = await repo.createPersonal({
+      name: 'Tricky',
+      description,
+      body: '# Real body\nkeep me'
+    })
+
+    const listed = await repo.list()
+    expect(listed).toHaveLength(1)
+    expect(listed[0].description).toBe(description)
+
+    const body = await repo.body(id)
+    expect(body).toContain('# Real body')
+    expect(body).toContain('keep me')
+    // The injected fence/field must not have leaked into the body.
+    expect(body).not.toContain('not: a-key')
   })
 
   it('gives colliding names a numeric suffix', async () => {

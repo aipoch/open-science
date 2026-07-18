@@ -9,12 +9,18 @@ import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-
 let container: HTMLDivElement
 let root: Root
 
-// Lets FileReader (base64 read) and the awaited store mocks settle before assertions.
-const flush = async (): Promise<void> => {
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    await Promise.resolve()
-  })
+// Lets the async drop pipeline settle before assertions: dispatch -> Promise.all(parseFile) ->
+// FileReader.readAsDataURL (a macrotask) -> previewSkillZip -> setState. That's several event-loop
+// turns, so pump multiple macrotask cycles rather than a single one — a single tick was enough locally
+// but flaked on loaded CI runners (the FileReader onload hadn't fired yet). Ten turns is ample and
+// still runs in a few ms.
+const flush = async (cycles = 10): Promise<void> => {
+  for (let i = 0; i < cycles; i += 1) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      await Promise.resolve()
+    })
+  }
 }
 
 // Drops files onto the upload label, matching how the real drag-and-drop hook receives them.
@@ -137,6 +143,56 @@ describe('SkillUploadView (batch upload)', () => {
       replaceId: undefined
     })
     expect(onUploaded).toHaveBeenCalled()
+  })
+
+  it('rejects an oversized markdown file on file.size, before reading its contents', async () => {
+    act(() => {
+      root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />)
+    })
+
+    // 6 MiB exceeds the 5 MiB per-file cap. file.size is checked before file.text() runs.
+    const big = new File(['x'], 'big.md', { type: 'text/markdown' })
+    Object.defineProperty(big, 'size', { value: 6 * 1024 * 1024 })
+    const textSpy = vi.spyOn(big, 'text')
+
+    await dropFiles([big])
+
+    expect(textSpy).not.toHaveBeenCalled()
+    expect(document.body.textContent).toMatch(/too large/)
+    expect(document.body.textContent).not.toContain('Found 1 skill')
+  })
+
+  it('rejects a batch whose total selected size exceeds the cap, before reading any file', async () => {
+    act(() => {
+      root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />)
+    })
+
+    // Two 6 MiB bundles: each is under the 10 MiB per-bundle cap, but together they exceed the total.
+    const a = new File([new Uint8Array([1])], 'a.zip', { type: 'application/zip' })
+    const b = new File([new Uint8Array([2])], 'b.zip', { type: 'application/zip' })
+    Object.defineProperty(a, 'size', { value: 6 * 1024 * 1024 })
+    Object.defineProperty(b, 'size', { value: 6 * 1024 * 1024 })
+
+    await dropFiles([a, b])
+
+    expect(useSettingsStore.getState().previewSkillZip).not.toHaveBeenCalled()
+    expect(document.body.textContent).toMatch(/too large/)
+  })
+
+  it('rejects a single oversized bundle on file.size, without previewing it', async () => {
+    act(() => {
+      root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />)
+    })
+
+    // An 11 MiB bundle exceeds the 10 MiB cap; it must be rejected before previewSkillZip reads it.
+    const big = new File([new Uint8Array([1])], 'huge.zip', { type: 'application/zip' })
+    Object.defineProperty(big, 'size', { value: 11 * 1024 * 1024 })
+
+    await dropFiles([big])
+
+    expect(useSettingsStore.getState().previewSkillZip).not.toHaveBeenCalled()
+    expect(document.body.textContent).toMatch(/too large/)
+    expect(document.body.textContent).not.toContain('Found')
   })
 
   it('parses a markdown file into a candidate that routes to createSkill', async () => {

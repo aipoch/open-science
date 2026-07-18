@@ -11,6 +11,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AcpRuntime } from './runtime'
 import { ArtifactRepository } from '../artifacts/repository'
 import { UploadRepository } from '../uploads/repository'
+import {
+  beginMigration,
+  clearMigrationPending,
+  waitForDataRootWriters
+} from '../storage/migration-state'
 
 // Minimal child-process stand-in that exposes the streams the runtime expects.
 class FakeAgentProcess extends EventEmitter {
@@ -217,6 +222,65 @@ afterEach(async () => {
   }
 })
 
+describe('ACP runtime migration write-gate', () => {
+  afterEach(() => {
+    // migration-state is a module singleton; clear it so a pending gate can't leak between tests.
+    clearMigrationPending()
+  })
+
+  it('rejects sendPrompt while a data-root migration is pending, then resumes once cleared', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['gated-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+
+    beginMigration()
+    await expect(
+      runtime.sendPrompt({ sessionId: session.sessionId, text: 'blocked' })
+    ).rejects.toThrow(/moving your data/i)
+    // The turn never reached the agent.
+    expect(fakeAgent.prompts).toEqual([])
+
+    clearMigrationPending()
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'allowed' })
+    expect(fakeAgent.prompts).toEqual([{ sessionId: 'gated-session', text: 'allowed' }])
+  })
+
+  it('keeps migration drain pending until a prompt that already started finishes', async () => {
+    const process = new FakeAgentProcess()
+    const promptGate = createDeferred()
+    const fakeAgent = startFakeAgent(process, ['drain-session'], {
+      onPrompt: () => promptGate.promise
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+
+    const promptPromise = runtime.sendPrompt({ sessionId: session.sessionId, text: 'running' })
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+    beginMigration()
+    let drained = false
+    const drainPromise = waitForDataRootWriters().then(() => {
+      drained = true
+    })
+    await Promise.resolve()
+    expect(drained).toBe(false)
+
+    promptGate.resolve()
+    await promptPromise
+    await drainPromise
+    expect(drained).toBe(true)
+  })
+})
+
 describe('ACP runtime session management', () => {
   it('applies native Full access before the first prompt', async () => {
     const process = new FakeAgentProcess()
@@ -244,6 +308,45 @@ describe('ACP runtime session management', () => {
     await runtime.sendPrompt({ sessionId: session.sessionId, text: 'continue' })
 
     expect(fakeAgent.actions).toEqual(['mode:bypassPermissions', 'prompt:continue'])
+  })
+
+  it('kills the agent process synchronously on shutdown so it cannot outlive the app', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['shutdown-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    expect(process.killed).toBe(false)
+
+    // shutdown() is synchronous (will-quit cannot await): the child must be signalled before it returns.
+    runtime.shutdown()
+    expect(process.killed).toBe(true)
+
+    // Calling it again after the process is gone is a no-op, not a crash.
+    expect(() => runtime.shutdown()).not.toThrow()
+  })
+
+  it('kills a child that finishes spawning after shutdown began, so quit-during-connect cannot orphan it', async () => {
+    const process = new FakeAgentProcess()
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      // Model the app quitting mid-spawn: shutdown() lands before this child is handed back to connect.
+      spawnAgent: () => {
+        runtime.shutdown()
+        return asAgentProcess(process)
+      }
+    })
+
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(/shutting down/)
+
+    // The child that spawned after killAgentProcess ran must still be terminated, not left as an orphan.
+    expect(process.killed).toBe(true)
+    expect(runtime.getSnapshot().sessionId).toBeUndefined()
   })
 
   it('reports conservative Auto when the Agent has no native auto mode', async () => {

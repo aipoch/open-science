@@ -1,9 +1,9 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { isAbsolute, join, normalize, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { SettingsRepository } from './repository'
+import { SettingsRepository, sanitizeSettings } from './repository'
 import type { StoredProvider } from './types'
 
 let storageRoot: string | undefined
@@ -239,8 +239,36 @@ describe('settings repository', () => {
     const second = await repository.setDataRoot('/mnt/data-b')
     expect(second.dataRoot).toBe('/mnt/data-b')
 
+    // getSettings reads through sanitizeSettings, which normalizes the stored path (backslashes on
+    // Windows), so compare against the platform-normalized form rather than the literal.
     const reloaded = await new SettingsRepository(root).getSettings()
-    expect(reloaded.dataRoot).toBe('/mnt/data-b')
+    expect(reloaded.dataRoot).toBe(normalize('/mnt/data-b'))
+  })
+
+  it('sanitizeSettings drops a relative dataRoot and keeps only an absolute, normalized one', () => {
+    // A relative dataRoot (corrupt or hand-edited settings.json) must be dropped so the data tree
+    // never resolves against process.cwd(); initDataRoot then falls back to the default.
+    expect(sanitizeSettings({ dataRoot: 'relative/path' }).dataRoot).toBeUndefined()
+    expect(sanitizeSettings({ dataRoot: './OpenScience' }).dataRoot).toBeUndefined()
+
+    // Whitespace-only is not a path.
+    expect(sanitizeSettings({ dataRoot: '   ' }).dataRoot).toBeUndefined()
+
+    // Build an absolute path with platform-correct roots so isAbsolute holds on POSIX and Windows.
+    const absolute = isAbsolute('/mnt/data') ? '/mnt/data' : `C:${sep}mnt${sep}data`
+    // Surrounding whitespace is trimmed, then the path is kept.
+    expect(sanitizeSettings({ dataRoot: `  ${absolute} ` }).dataRoot).toBe(normalize(absolute))
+
+    // A redundant separator AND a trailing separator collapse to the canonical no-trailing-slash form.
+    const messy = `${absolute}${sep}${sep}x${sep}`
+    expect(sanitizeSettings({ dataRoot: messy }).dataRoot).toBe(normalize(`${absolute}${sep}x`))
+  })
+
+  it('never strips a trailing separator past a filesystem root', () => {
+    // A drive/filesystem root ("C:\" on Windows, "/" on POSIX) must survive intact: stripping its
+    // trailing separator would turn an absolute path into a drive-relative one.
+    const rootPath = isAbsolute('C:\\') ? 'C:\\' : '/'
+    expect(sanitizeSettings({ dataRoot: rootPath }).dataRoot).toBe(normalize(rootPath))
   })
 
   it('stamps legacyDataMovePromptDismissedAt once, is idempotent, and survives a reload', async () => {

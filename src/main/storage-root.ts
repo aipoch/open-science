@@ -8,6 +8,7 @@ import {
   PROD_SESSION_DIR_NAME,
   getSessionPersistenceDir
 } from './session-persistence/repository'
+import { hasPendingMigrationMarker } from './storage/migration-marker'
 
 // Fixed, dev-aware config root (DB, sessions, claude, skills, settings live here). Never relocated.
 // A development-only absolute override supports truly isolated onboarding previews without changing
@@ -69,18 +70,27 @@ const LEGACY_DATA_MARKERS = ['artifacts', 'notebooks', 'uploads']
 // Default data root for a fresh install is `~/OpenScience` (dev `~/OpenScience-DEV`). A legacy
 // install - config root already holds data and never got an OpenScience subdir - keeps its data
 // where it is instead of silently splitting an existing user's data across two locations. But this
-// legacy fallback applies ONLY while no modern data folder exists yet: once `<home>/OpenScience`
-// has been created (by a migration/relocation), it is the canonical default. Without that guard, a
-// leftover legacy dir in the config root (e.g. old artifacts/ never cleaned up) would keep masking
-// the real, in-use data root, so the app would report itself "not on the default" forever and
-// "return to default" would aim at the wrong place.
+// legacy fallback applies ONLY while settings.dataRoot is unset. A migration becomes committed when
+// settings explicitly points at `<home>/OpenScience`; directory existence alone is not evidence,
+// because a failed copy cleanup may leave a markerless partial tree behind.
 const computeDefaultDataRoot = (): string => {
   const configRoot = resolveConfigRoot()
   const homeDefault = dataRootForParent(app.getPath('home'))
+  // A marker-bearing homeDefault is a half-copied/uncommitted staging dir, NOT the committed default:
+  // treat it as "not there yet" so a crashed or in-flight migration can't fool the legacy fallback into
+  // thinking the modern data folder already exists (which would split a legacy user's data).
+  // The explicit setting is the commit record. A crash between mkdir and marker creation, or a rollback
+  // that couldn't fully remove staging, can leave a markerless partial homeDefault; it must not strand
+  // a legacy user's live data in the config root.
+  const homeDefaultIsCommitted =
+    configuredDataRoot !== undefined &&
+    samePath(configuredDataRoot, homeDefault) &&
+    existsSync(homeDefault) &&
+    !hasPendingMigrationMarker(homeDefault)
   const isLegacyInstall =
     LEGACY_DATA_MARKERS.some((dir) => existsSync(join(configRoot, dir))) &&
     !existsSync(join(configRoot, dataFolderName())) &&
-    !existsSync(homeDefault)
+    !homeDefaultIsCommitted
 
   return isLegacyInstall ? configRoot : homeDefault
 }
@@ -114,10 +124,11 @@ const isPathInsideOrEqual = (parent: string, child: string): boolean => {
 // Relocatable data root. Cached once at startup from settings (a change requires a restart), so this
 // stays a synchronous pure getter for every downstream consumer.
 let cachedDataRoot: string | undefined
+let configuredDataRoot: string | undefined
 
 const initDataRoot = (settingsDataRoot: string | undefined): void => {
-  cachedDataRoot =
-    settingsDataRoot && settingsDataRoot.trim() ? settingsDataRoot : computeDefaultDataRoot()
+  configuredDataRoot = settingsDataRoot && settingsDataRoot.trim() ? settingsDataRoot : undefined
+  cachedDataRoot = configuredDataRoot ?? computeDefaultDataRoot()
 }
 
 // Before initDataRoot has run (early callers, tests), fall back to computeDefaultDataRoot()

@@ -1,4 +1,5 @@
 import { createLogger } from '../logger'
+import { SKILL_IMPORT_LIMITS } from './import-limits'
 
 const log = createLogger('skills')
 
@@ -13,7 +14,21 @@ export type GitHubSkillLocation = {
   path: string
 }
 
-// Injectable fetch so tests don't hit the network.
+// A minimal view of a byte stream (matches the real fetch Response.body's getReader()). Reading a
+// download through this lets us stop the moment the running total crosses a limit, so a body with a
+// missing or lying Content-Length can never be buffered in full.
+type ByteStream = {
+  getReader: () => {
+    read: () => Promise<{ done: boolean; value?: Uint8Array }>
+    // The real ReadableStreamDefaultReader.cancel() returns a Promise; keep both shapes for tests.
+    cancel?: () => void | Promise<void>
+  }
+}
+
+// Injectable fetch so tests don't hit the network. `headers.get` and `body` are optional: the real
+// fetch Response exposes both. `headers` lets us reject on Content-Length before reading anything;
+// `body` lets us read with a hard byte cap. A response with neither falls back to a bounded
+// arrayBuffer() read plus the post-read size guard.
 export type FetchLike = (
   url: string,
   init?: { headers?: Record<string, string> }
@@ -22,9 +37,52 @@ export type FetchLike = (
   status: number
   json: () => Promise<unknown>
   arrayBuffer: () => Promise<ArrayBuffer>
+  headers?: { get: (name: string) => string | null }
+  body?: ByteStream | null
 }>
 
 const GITHUB_HEADERS = { 'User-Agent': 'open-science', Accept: 'application/vnd.github+json' }
+
+// Reads a download body into a Buffer, stopping as soon as the running total crosses `limit` (so an
+// oversized/endless body is never drained). Prefers the streaming reader; falls back to arrayBuffer()
+// when no stream is exposed, still enforcing the cap on the buffered result. Peak memory is bounded by
+// the accumulated chunks (at most `limit` plus one chunk) plus the final Buffer.concat copy — i.e. a
+// small multiple of `limit`, never the whole oversized body.
+const readBounded = async (
+  response: { arrayBuffer: () => Promise<ArrayBuffer>; body?: ByteStream | null },
+  limit: number,
+  onExceeded: () => never
+): Promise<Buffer> => {
+  if (response.body) {
+    const reader = response.body.getReader()
+    const chunks: Buffer[] = []
+    let read = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value) {
+        read += value.byteLength
+        if (read > limit) {
+          // Fire-and-forget the cancel: don't await it (a cancel that never settles must not keep the
+          // import hanging) and don't let it mask the size error. The try/catch swallows a SYNCHRONOUS
+          // throw from cancel() — which would otherwise escape before Promise.resolve wraps it — and
+          // the .catch() handles an async rejection. Either way we abort with the size error next.
+          try {
+            void Promise.resolve(reader.cancel?.()).catch(() => {})
+          } catch {
+            /* ignore a synchronous cancel() failure */
+          }
+          onExceeded()
+        }
+        chunks.push(Buffer.from(value))
+      }
+    }
+    return Buffer.concat(chunks)
+  }
+  const buffer = Buffer.from(await response.arrayBuffer())
+  if (buffer.length > limit) onExceeded()
+  return buffer
+}
 
 // Parses a GitHub URL into the repo + skill directory it points at. Accepts tree/blob URLs and trims a
 // trailing SKILL.md so a link to the file resolves to its directory. Returns null when unrecognizable.
@@ -62,8 +120,29 @@ const fetchSkillFiles = async (
 ): Promise<FetchedSkillFile[]> => {
   const rootPrefix = location.path ? `${location.path}/` : ''
 
-  const walk = async (path: string): Promise<FetchedSkillFile[]> => {
-    const response = await fetchImpl(contentsUrl(location, path), { headers: GITHUB_HEADERS })
+  // Bound the recursive download so a huge (or maliciously deep) repository can't freeze or exhaust
+  // the app: cap directory depth, file count, per-file size, total bytes, AND the number of requests.
+  // The request budget is charged for every fetch — including directory listings — so a wide or
+  // mostly-empty directory tree can't drive an unbounded number of API calls before hitting a byte or
+  // file limit (empty dirs cost nothing against those).
+  let fileCount = 0
+  let totalBytes = 0
+  let requests = 0
+
+  const request: FetchLike = (url, init) => {
+    requests += 1
+    if (requests > SKILL_IMPORT_LIMITS.maxRequests) {
+      throw new Error(`Skill import exceeded ${SKILL_IMPORT_LIMITS.maxRequests} requests.`)
+    }
+    return fetchImpl(url, init)
+  }
+
+  const walk = async (path: string, depth: number): Promise<FetchedSkillFile[]> => {
+    if (depth > SKILL_IMPORT_LIMITS.maxDepth) {
+      throw new Error(`Skill directory nesting exceeds ${SKILL_IMPORT_LIMITS.maxDepth} levels.`)
+    }
+
+    const response = await request(contentsUrl(location, path), { headers: GITHUB_HEADERS })
     if (!response.ok) {
       throw new Error(`GitHub API request failed (${response.status}) for ${path || 'repo root'}`)
     }
@@ -74,15 +153,38 @@ const fetchSkillFiles = async (
 
     for (const entry of entries) {
       if (entry.type === 'dir') {
-        files.push(...(await walk(entry.path)))
+        files.push(...(await walk(entry.path, depth + 1)))
       } else if (entry.type === 'file' && entry.download_url) {
-        const raw = await fetchImpl(entry.download_url, {
-          headers: { 'User-Agent': 'open-science' }
-        })
+        if (fileCount >= SKILL_IMPORT_LIMITS.maxFiles) {
+          throw new Error(`Skill has too many files (limit ${SKILL_IMPORT_LIMITS.maxFiles}).`)
+        }
+        const raw = await request(entry.download_url, { headers: { 'User-Agent': 'open-science' } })
         if (!raw.ok) {
           throw new Error(`Failed to download ${entry.path} (${raw.status})`)
         }
-        const content = Buffer.from(await raw.arrayBuffer())
+
+        // The most this file may add: the smaller of the per-file cap and what remains of the total
+        // budget. Reading is bounded by this, so no single body is ever buffered beyond it — even with
+        // a missing or dishonest Content-Length.
+        const remainingTotal = SKILL_IMPORT_LIMITS.maxTotalBytes - totalBytes
+        const perFileLimit = Math.min(SKILL_IMPORT_LIMITS.maxFileBytes, remainingTotal)
+        // Report which cap actually bound, so the error tells the user whether one file is too big or
+        // the whole skill has outgrown its budget.
+        const tooLarge = (): never => {
+          const message =
+            remainingTotal < SKILL_IMPORT_LIMITS.maxFileBytes
+              ? `File ${entry.path} exceeds the ${SKILL_IMPORT_LIMITS.maxTotalBytes}-byte total limit.`
+              : `File ${entry.path} exceeds the ${SKILL_IMPORT_LIMITS.maxFileBytes}-byte per-file limit.`
+          throw new Error(message)
+        }
+
+        // Reject on the advertised Content-Length before reading a single byte when possible.
+        const declared = Number(raw.headers?.get('content-length') ?? '')
+        if (Number.isFinite(declared) && declared > perFileLimit) tooLarge()
+
+        const content = await readBounded(raw, perFileLimit, tooLarge)
+        totalBytes += content.length
+        fileCount += 1
         const relativePath = entry.path.startsWith(rootPrefix)
           ? entry.path.slice(rootPrefix.length)
           : entry.name
@@ -93,7 +195,7 @@ const fetchSkillFiles = async (
     return files
   }
 
-  const files = await walk(location.path)
+  const files = await walk(location.path, 0)
 
   if (!files.some((file) => file.relativePath.toLowerCase() === 'skill.md')) {
     throw new Error('No SKILL.md found at the linked location.')

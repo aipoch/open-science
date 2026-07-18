@@ -2,6 +2,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 
+import { dump as dumpYaml } from 'js-yaml'
+
 import type { SkillBundlePreview, SkillReference, SkillSource } from '../../shared/settings'
 import { createLogger } from '../logger'
 import {
@@ -62,6 +64,15 @@ const toSlug = (name: string): string =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 64)
+
+// Serializes the SKILL.md frontmatter block from arbitrary user values. A hand-rolled emitter kept
+// getting subtle YAML edge cases wrong (type coercion of `true`/`123`, trailing-newline handling,
+// leading spaces), so this delegates to js-yaml: it quotes or block-escapes each value as needed so
+// every field round-trips LOSSLESSLY and always as a string through any conformant YAML parser. The
+// leading `---`/trailing `---` document markers are added by the caller. `lineWidth: -1` disables line
+// folding so long descriptions aren't rewrapped (which would not be byte-lossless).
+const frontmatterBlock = (fields: { name: string; description: string }): string =>
+  dumpYaml(fields, { lineWidth: -1 })
 
 // A skill id is `<source>-<slug>`; parse it back to its source + slug (null for bundled/unknown ids).
 const parseUserSkillId = (
@@ -711,12 +722,8 @@ class UserSkillRepository {
     const dir = this.skillDir(source, slug)
     await mkdir(dir, { recursive: true })
 
-    const frontmatter = [
-      '---',
-      `name: ${input.name}`,
-      `description: ${input.description}`,
-      '---'
-    ].join('\n')
+    // js-yaml.dump already ends with a newline, so the closing fence follows directly.
+    const frontmatter = `---\n${frontmatterBlock({ name: input.name, description: input.description })}---`
     const contents = `${frontmatter}\n\n${input.body.trimStart()}`
 
     await writeFile(join(dir, 'SKILL.md'), contents, 'utf8')
@@ -754,4 +761,4 @@ class UserSkillRepository {
   }
 }
 
-export { UserSkillRepository, parseUserSkillId, toSlug }
+export { UserSkillRepository, parseUserSkillId, toSlug, frontmatterBlock }

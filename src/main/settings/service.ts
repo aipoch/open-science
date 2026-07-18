@@ -78,6 +78,7 @@ import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import { getConnectorTools } from '../connectors/registry'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
 import { UserSkillRepository } from '../skills/user-skill-repository'
+import { decodeBoundedBase64 } from '../skills/import-limits'
 import { readSkillFile } from '../skills/skill-files'
 import type {
   StoredConnectors,
@@ -320,7 +321,7 @@ class SettingsService {
 
   // Imports a skill from an uploaded .zip / .skill bundle, returning the outcome + refreshed list.
   async importSkillZip(request: ImportSkillZipRequest): Promise<ImportSkillResult> {
-    const outcome = await this.userSkills.importFromZip(Buffer.from(request.dataBase64, 'base64'), {
+    const outcome = await this.userSkills.importFromZip(decodeBoundedBase64(request.dataBase64), {
       subPath: request.subPath,
       replaceId: request.replaceId
     })
@@ -331,7 +332,7 @@ class SettingsService {
   // Parses an uploaded bundle for a confirm-before-import preview, without writing anything. Returns
   // one preview per skill root the bundle contains.
   async previewSkillZip(request: PreviewSkillZipRequest): Promise<SkillBundlePreview[]> {
-    return this.userSkills.previewZip(Buffer.from(request.dataBase64, 'base64'))
+    return this.userSkills.previewZip(decodeBoundedBase64(request.dataBase64))
   }
 
   // Scans a GitHub repo for importable skill directories (marking already-imported ones).
