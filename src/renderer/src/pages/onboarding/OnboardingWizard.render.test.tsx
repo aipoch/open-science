@@ -117,6 +117,36 @@ afterEach(() => {
 })
 
 describe('OnboardingWizard', () => {
+  it('offers an agent-framework choice and switches on selection', async () => {
+    const setAgentFramework = vi.fn().mockResolvedValue(undefined)
+    const checkEnvironment = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [
+        { id: 'claude-code', displayName: 'Claude Code', supportsSkills: true },
+        { id: 'opencode', displayName: 'OpenCode', supportsSkills: true }
+      ],
+      setAgentFramework,
+      checkEnvironment,
+      environmentCheck: environment(true)
+    })
+
+    act(() => {
+      root.render(<OnboardingWizard />)
+    })
+
+    const radios = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+    expect(radios.map((r) => r.textContent)).toEqual(['Claude Code', 'OpenCode'])
+    expect(radios[0].getAttribute('aria-checked')).toBe('true')
+
+    await act(async () => {
+      radios[1].click()
+    })
+
+    expect(setAgentFramework).toHaveBeenCalledWith('opencode')
+    expect(checkEnvironment).toHaveBeenCalled()
+  })
+
   it('keeps first-time users on the environment summary until they explicitly continue', async () => {
     useSettingsStore.setState({
       preflight: {

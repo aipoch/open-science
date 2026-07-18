@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils'
 import { APP } from '../../../../shared/app-config'
 import type { StorageInfo } from '../../../../shared/storage'
 import type {
+  AgentFrameworkId,
   ClaudeInstallResult,
   ClaudeInstallSource,
   UpsertProviderRequest
@@ -24,6 +25,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { DataRootWarning } from '@/components/DataRootWarning'
 import { ClaudeInstallCard } from '../settings/ClaudeInstallCard'
 import { ClaudeStatusCard } from '../settings/ClaudeStatusCard'
+import { OpencodeStatusCard } from '../settings/OpencodeStatusCard'
 import { EnvironmentSetupCard } from './EnvironmentSetupCard'
 import { ProviderForm } from '../settings/ProviderForm'
 import {
@@ -97,6 +99,8 @@ const toUpsertRequest = (value: ProviderFormValue): UpsertProviderRequest => ({
   model: value.model,
   vendorId: value.vendorId,
   region: value.region,
+  // Persist the chosen API format so an OpenAI-compatible provider is validated + driven correctly.
+  apiType: value.apiType,
   key: value.key || undefined
 })
 
@@ -106,6 +110,12 @@ const toUpsertRequest = (value: ProviderFormValue): UpsertProviderRequest => ({
 // re-open only the environment portion when a required dependency later disappears (recovery mode).
 const OnboardingWizard = (): React.JSX.Element => {
   const claude = useSettingsStore((state) => state.claude)
+  const opencode = useSettingsStore((state) => state.opencode)
+  const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
+  const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
+  const setAgentFramework = useSettingsStore((state) => state.setAgentFramework)
+  const isDetectingOpencode = useSettingsStore((state) => state.isDetectingOpencode)
+  const installOpencode = useSettingsStore((state) => state.installOpencode)
   const preflight = useSettingsStore((state) => state.preflight)
   const isDetectingClaude = useSettingsStore((state) => state.isDetectingClaude)
   const isInstalling = useSettingsStore((state) => state.isInstalling)
@@ -206,10 +216,14 @@ const OnboardingWizard = (): React.JSX.Element => {
     setAutomaticInstallError(undefined)
 
     try {
-      const result = await installClaude(
-        source,
-        source === 'managed' ? environmentCheck?.recommendedRegistry : undefined
-      )
+      // Install the framework the user selected for onboarding, not always Claude.
+      const result =
+        agentFrameworkId === 'opencode'
+          ? await installOpencode(source)
+          : await installClaude(
+              source,
+              source === 'managed' ? environmentCheck?.recommendedRegistry : undefined
+            )
 
       if (!result.ok) {
         setAutomaticInstallError(describeInstallFailure(result))
@@ -222,6 +236,16 @@ const OnboardingWizard = (): React.JSX.Element => {
         error instanceof Error ? error.message : 'The installer could not be started.'
       )
     }
+  }
+
+  // Switching the framework re-detects it and re-runs the host inspection so the environment card
+  // reflects the chosen runtime immediately.
+  const handleSelectFramework = async (id: AgentFrameworkId): Promise<void> => {
+    if (id === agentFrameworkId) return
+
+    setAutomaticInstallError(undefined)
+    await setAgentFramework(id)
+    await checkEnvironment()
   }
 
   const handleBrowseLocation = async (): Promise<void> => {
@@ -383,6 +407,40 @@ const OnboardingWizard = (): React.JSX.Element => {
 
                 <CardContent className="flex-1 px-6 py-5">
                   <section aria-label="Prepare environment" className="space-y-5">
+                    {agentFrameworks.length > 1 ? (
+                      <div className="space-y-1.5">
+                        <span className="text-xs font-medium text-text-100">Agent framework</span>
+                        <div
+                          className="grid grid-cols-2 gap-1 rounded-lg bg-bg-10 p-1 ring-1 ring-border-200"
+                          role="radiogroup"
+                          aria-label="Agent framework"
+                        >
+                          {agentFrameworks.map((framework) => (
+                            <button
+                              key={framework.id}
+                              type="button"
+                              role="radio"
+                              aria-checked={agentFrameworkId === framework.id}
+                              onClick={() => void handleSelectFramework(framework.id)}
+                              disabled={isCheckingEnvironment || isInstalling}
+                              className={cn(
+                                'rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-60',
+                                agentFrameworkId === framework.id
+                                  ? 'bg-bg-000 text-text-000 shadow-sm ring-1 ring-border-200'
+                                  : 'text-text-100 hover:text-text-000'
+                              )}
+                            >
+                              {framework.displayName}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-xs leading-5 text-text-300">
+                          Choose the coding agent Open Science drives. You can change it later in
+                          Settings.
+                        </p>
+                      </div>
+                    ) : null}
+
                     <div
                       className="grid grid-cols-2 gap-1 rounded-lg bg-bg-10 p-1 ring-1 ring-border-200"
                       role="tablist"
@@ -453,27 +511,43 @@ const OnboardingWizard = (): React.JSX.Element => {
                           scripts. Use Re-detect after completing any external permission or
                           installation step.
                         </p>
-                        <ClaudeStatusCard
-                          claude={claude}
-                          claudeReady={preflight.claudeReady}
-                          isDetecting={isDetectingClaude || isCheckingEnvironment}
-                          onDetect={() => void handleEnvironmentCheck()}
-                          embedded
-                        />
-                        {!preflight.claudeReady ? (
+                        {agentFrameworkId === 'opencode' ? (
+                          <OpencodeStatusCard
+                            opencode={opencode}
+                            isDetecting={isDetectingOpencode || isCheckingEnvironment}
+                            onDetect={() => void handleEnvironmentCheck()}
+                            isInstalling={isInstalling}
+                            installLogs={installLogs}
+                            installProgress={installProgress}
+                            installError={storeInstallError}
+                            npmAvailable={npmAvailable}
+                            onInstall={(source) => void handleInstall(source)}
+                          />
+                        ) : (
                           <>
-                            <Separator className="bg-border-200" />
-                            <ClaudeInstallCard
-                              isInstalling={isInstalling}
-                              installLogs={installLogs}
-                              installProgress={installProgress}
-                              installError={storeInstallError}
-                              npmAvailable={npmAvailable}
-                              onInstall={(source) => void handleInstall(source)}
+                            <ClaudeStatusCard
+                              claude={claude}
+                              claudeReady={preflight.claudeReady}
+                              isDetecting={isDetectingClaude || isCheckingEnvironment}
+                              onDetect={() => void handleEnvironmentCheck()}
                               embedded
                             />
+                            {!preflight.claudeReady ? (
+                              <>
+                                <Separator className="bg-border-200" />
+                                <ClaudeInstallCard
+                                  isInstalling={isInstalling}
+                                  installLogs={installLogs}
+                                  installProgress={installProgress}
+                                  installError={storeInstallError}
+                                  npmAvailable={npmAvailable}
+                                  onInstall={(source) => void handleInstall(source)}
+                                  embedded
+                                />
+                              </>
+                            ) : null}
                           </>
-                        ) : null}
+                        )}
                       </div>
                     )}
                   </section>

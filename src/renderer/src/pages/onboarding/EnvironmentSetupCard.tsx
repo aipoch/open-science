@@ -141,7 +141,7 @@ const EnvironmentCheckRow = ({ check }: { check: EnvironmentCheckItem }): React.
 }
 
 // Unframed environment summary rendered inside the onboarding work Card: a re-check control, the
-// per-requirement checklist, and (when Claude is the only gap) a one-click app-managed install with
+// per-requirement checklist, and (when the runtime is the only gap) a one-click app-managed install with
 // progress and a copyable technical log. It intentionally carries no card chrome of its own so the
 // wizard keeps a single visible work surface.
 const EnvironmentSetupCard = ({
@@ -197,7 +197,7 @@ const EnvironmentSetupCard = ({
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-sm font-medium text-foreground">
-                  Claude is the only missing item
+                  The agent runtime is the only missing item
                 </p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   Install it into Open Science using the {sourceLabel}, with the other trusted
@@ -235,7 +235,7 @@ const EnvironmentSetupCard = ({
         >
           <div className="flex items-center justify-between text-xs">
             <span className="font-medium text-foreground">
-              {structuredProgress?.label ?? 'Installing Claude runtime'}
+              {structuredProgress?.label ?? 'Installing agent runtime'}
             </span>
             <span className="text-muted-foreground">
               {progress !== undefined ? `${progress}%` : 'In progress'}
