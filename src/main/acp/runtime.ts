@@ -71,6 +71,7 @@ import {
 import { getNotebookSessionRoot } from '../notebook/repository'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { withDataRootWrite } from '../storage/migration-state'
+import { opencodeStorageDir } from '../agent-framework/opencode'
 import type { UploadRepository } from '../uploads/repository'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, ArtifactReference } from '../../shared/artifacts'
@@ -1485,10 +1486,16 @@ class AcpRuntime {
     return sessionCwd
   }
 
-  // App-owned directories the agent's Read tool must never read: the CLAUDE_CONFIG_DIR holds the
-  // materialized skill files, whose (bundled/MCP) contents must not be surfaced into the conversation.
+  // App-owned directories the agent's Read tool must never read: both frameworks' config dirs hold the
+  // materialized skill files (+ opencode.json/auth), whose bundled/MCP contents must not be surfaced
+  // into the conversation. Both are guarded regardless of the active framework so a switch leaves no
+  // gap and the cost is a couple of extra prefix checks.
   private protectedReadRoots(): string[] {
-    return this.artifactOptions ? [getAppClaudeConfigDir(this.artifactOptions.configRoot)] : []
+    if (!this.artifactOptions) return []
+
+    const root = this.artifactOptions.configRoot
+
+    return [getAppClaudeConfigDir(root), opencodeStorageDir(root)]
   }
 
   // Creates an app-owned artifact session id so new ACP sessions never decide their storage directory.

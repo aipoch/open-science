@@ -32,6 +32,11 @@ import type {
 const opencodeConfigHome = (storageRoot: string): string => join(storageRoot, 'opencode', 'config')
 const opencodeDataHome = (storageRoot: string): string => join(storageRoot, 'opencode', 'data')
 
+// The root of opencode's app-owned XDG subtree (both config and data live under here): opencode.json,
+// materialized skills, connector instructions, and auth.json. The agent's Read tool must never surface
+// it, so the runtime adds this to its protected-read roots.
+export const opencodeStorageDir = (storageRoot: string): string => join(storageRoot, 'opencode')
+
 // The opencode config directory ($XDG_CONFIG_HOME/opencode) where opencode.json and skills/ live.
 // opencode discovers skills at <configDir>/skills/<name>/SKILL.md — the same layout Claude uses under
 // its config dir — so the app materializes the enabled skill set here for opencode too.
