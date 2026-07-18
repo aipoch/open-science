@@ -19,6 +19,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
 import { AgentFrameworkSection } from './AgentFrameworkSection'
+import { ModelFrameworkCompatibilityAlert } from './ModelFrameworkCompatibilityAlert'
 import { ClaudeInstallCard } from './ClaudeInstallCard'
 import { ClaudeStatusCard } from './ClaudeStatusCard'
 import { OpencodeStatusCard } from './OpencodeStatusCard'
@@ -666,6 +667,8 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                 ) : (
                   <div className="space-y-5 p-5">
                     <AgentFrameworkSection />
+
+                    <ModelFrameworkCompatibilityAlert />
 
                     {agentFrameworkId === 'opencode' ? (
                       <SettingsSection title="OpenCode" aria-label="OpenCode">
