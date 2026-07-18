@@ -29,6 +29,9 @@ type OpencodeStatusCardProps = {
   active?: boolean
   // Selects OpenCode as the active framework (settings only). The card's title acts as a radio option.
   onSelect?: () => void
+  // Locks selection (e.g. while an install/uninstall is in flight) so the backend can't be switched
+  // mid-operation.
+  selectDisabled?: boolean
   // Uninstall is offered only for the app-managed install (a binary the app owns in its data dir).
   // Disabled while this is the active runtime — the user must switch to the other framework first.
   managed?: boolean
@@ -51,6 +54,7 @@ const OpencodeStatusCard = ({
   onInstall,
   active = false,
   onSelect,
+  selectDisabled = false,
   managed = false,
   isUninstalling = false,
   onUninstall
@@ -83,8 +87,18 @@ const OpencodeStatusCard = ({
               aria-checked={active}
               aria-label="Use OpenCode"
               onClick={onSelect}
-              className="-m-1 flex items-center gap-2 rounded-md p-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              disabled={selectDisabled}
+              className="-m-1 flex cursor-pointer items-center gap-2 rounded-md p-1 text-left hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60"
             >
+              <span
+                aria-hidden="true"
+                className={cn(
+                  'flex size-4 shrink-0 items-center justify-center rounded-full border',
+                  active ? 'border-primary' : 'border-muted-foreground/50'
+                )}
+              >
+                {active ? <span className="size-2 rounded-full bg-primary" /> : null}
+              </span>
               {heading}
             </button>
           ) : (

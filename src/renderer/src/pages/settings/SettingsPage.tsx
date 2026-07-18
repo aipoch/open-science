@@ -747,6 +747,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                           onDetect={() => void detectClaude()}
                           active={agentFrameworkId === 'claude-code'}
                           onSelect={() => requestSwitch('claude-code')}
+                          selectDisabled={isInstalling || isUninstalling}
                           managed={claudeManaged}
                           isUninstalling={isUninstalling && pendingUninstall === 'claude'}
                           onUninstall={() => setPendingUninstall('claude')}
@@ -773,6 +774,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                           onInstall={(source) => void installOpencode(source)}
                           active={agentFrameworkId === 'opencode'}
                           onSelect={() => requestSwitch('opencode')}
+                          selectDisabled={isInstalling || isUninstalling}
                           managed={opencodeManaged}
                           isUninstalling={isUninstalling && pendingUninstall === 'opencode'}
                           onUninstall={() => setPendingUninstall('opencode')}

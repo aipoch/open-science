@@ -112,4 +112,27 @@ describe('ClaudeStatusCard surface', () => {
     act(() => radio?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(onSelect).toHaveBeenCalledTimes(1)
   })
+
+  it('locks selection while selectDisabled (e.g. during an install)', () => {
+    const onSelect = vi.fn()
+
+    act(() => {
+      root.render(
+        <ClaudeStatusCard
+          claude={{ resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' }}
+          claudeReady
+          isDetecting={false}
+          onDetect={vi.fn()}
+          onSelect={onSelect}
+          selectDisabled
+        />
+      )
+    })
+
+    const radio = container.querySelector<HTMLButtonElement>('[role="radio"]')
+    expect(radio?.disabled).toBe(true)
+
+    act(() => radio?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(onSelect).not.toHaveBeenCalled()
+  })
 })
