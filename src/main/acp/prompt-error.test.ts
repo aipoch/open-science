@@ -31,8 +31,32 @@ describe('describePromptError', () => {
 
     expect(text).toContain('model "kimi-k3"')
     expect(text).toContain('没找到对象')
-    // The `Internal error:` RPC wrapper is stripped from the surfaced provider text.
+    // The `Internal error:` and `Not Found:` wrapper prefixes are stripped from the surfaced text.
     expect(text).not.toMatch(/internal error:/i)
+    expect(text).not.toMatch(/not found:/i)
+  })
+
+  it('extracts the provider message when the JSON payload has trailing text', () => {
+    const error = agentError(
+      'Internal error: Not Found: {"error":{"message":"The requested resource was not found","type":"resource_not_found_error"}} (request id: req-abc-123)'
+    )
+
+    const text = describePromptError(error, { model: 'deepseek-v4-flash' })
+
+    expect(text).toContain('The requested resource was not found')
+    // Neither the raw JSON blob nor the trailing request id leaks into the surfaced text.
+    expect(text).not.toContain('{')
+    expect(text).not.toContain('request id')
+  })
+
+  it('passes through a benign "not found" API error that is not a resource lookup', () => {
+    const error = agentError(
+      'Internal error: Overloaded: rate limit config not found, using default'
+    )
+
+    expect(describePromptError(error, { model: 'gpt-5' })).toBe(
+      'Internal error: Overloaded: rate limit config not found, using default'
+    )
   })
 
   it('omits the model clause when no model is known', () => {

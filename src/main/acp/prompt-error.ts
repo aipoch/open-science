@@ -15,10 +15,13 @@ export type PromptErrorContext = {
 // The innermost provider detail pulled from a wrapped error message.
 type UpstreamDetail = { text: string; type?: string }
 
-// Matches the "resource not found" family across the shapes providers actually return (English JSON
-// `type`, plain English text, and the Chinese messages some gateways emit, e.g. Moonshot's 没找到对象).
+// Matches the "resource not found" family across the shapes providers actually return: the resource
+// not-found error type, the HTTP status label the wrapper emits (`Not Found:`), the "no such model"
+// phrasing, and the Chinese messages some gateways emit (e.g. Moonshot's 没找到对象). Deliberately does
+// NOT match a bare "not found" substring, so a benign message like "rate limit config not found" isn't
+// mistaken for a model/endpoint problem.
 const NOT_FOUND_PATTERN =
-  /not[\s_-]?found|resource_not_found|no such (?:model|resource)|没找到|不存在/i
+  /resource[\s_-]?not[\s_-]?found|no such (?:model|resource)|not[\s_-]?found\s*:|没找到|不存在/i
 
 // Converts an unknown thrown value into its base message string.
 const rawErrorMessage = (error: unknown): string =>
@@ -36,9 +39,39 @@ const isApiError = (error: unknown): boolean => {
   return (data as { errorName?: unknown }).errorName === 'APIError'
 }
 
-// Strips the agent's `Internal error:` wrapper so a text-only provider message reads cleanly.
-const stripInternalWrapper = (message: string): string =>
-  message.replace(/^internal error:\s*/i, '').trim() || message
+// Strips the agent's `Internal error:` and HTTP `Not Found:` status prefixes so a text-only provider
+// message reads cleanly. Empty result falls back to the original so we never surface a blank string.
+const stripWrapperPrefixes = (message: string): string =>
+  message
+    .replace(/^\s*internal error:\s*/i, '')
+    .replace(/^\s*not[\s_-]?found:\s*/i, '')
+    .trim() || message
+
+// Returns the first balanced `{…}` JSON object starting at `start`, respecting string literals so an
+// escaped or in-string brace doesn't throw off the depth count. Lets us parse a provider payload that
+// is followed by trailing text (e.g. `{…} (request id: abc)`), which `JSON.parse` would otherwise reject.
+const sliceBalancedJson = (message: string, start: number): string | undefined => {
+  let depth = 0
+  let inString = false
+  let escaped = false
+
+  for (let i = start; i < message.length; i++) {
+    const ch = message[i]
+
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+
+    if (ch === '"') inString = true
+    else if (ch === '{') depth++
+    else if (ch === '}' && --depth === 0) return message.slice(start, i + 1)
+  }
+
+  return undefined
+}
 
 // Extracts the provider's own `{ error: { message, type } }` payload when the wrapper carries one, so
 // we can show the human message instead of a raw JSON blob. Returns undefined for a text-only wrapper.
@@ -47,8 +80,12 @@ const extractUpstreamDetail = (message: string): UpstreamDetail | undefined => {
 
   if (braceStart === -1) return undefined
 
+  const jsonText = sliceBalancedJson(message, braceStart)
+
+  if (jsonText === undefined) return undefined
+
   try {
-    const parsed = JSON.parse(message.slice(braceStart)) as {
+    const parsed = JSON.parse(jsonText) as {
       error?: { message?: unknown; type?: unknown }
       message?: unknown
     }
@@ -89,7 +126,7 @@ export const describePromptError = (error: unknown, ctx: PromptErrorContext = {}
 
   if (!isProviderNotFound(error, raw, detail)) return raw
 
-  const providerText = detail?.text ?? stripInternalWrapper(raw)
+  const providerText = detail?.text ?? stripWrapperPrefixes(raw)
   const modelPart = ctx.model ? ` for model "${ctx.model}"` : ''
 
   return `The model provider could not find the requested resource${modelPart}. The model name or endpoint is likely incorrect — check it in Settings → Model. Provider response: ${providerText}`
