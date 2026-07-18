@@ -135,4 +135,21 @@ describe('ClaudeStatusCard surface', () => {
     act(() => radio?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(onSelect).not.toHaveBeenCalled()
   })
+
+  it('is not selectable when the runtime is not installed', () => {
+    act(() => {
+      root.render(
+        <ClaudeStatusCard
+          claude={{}}
+          claudeReady={false}
+          isDetecting={false}
+          onDetect={vi.fn()}
+          onSelect={vi.fn()}
+        />
+      )
+    })
+
+    // No radio control appears for an uninstalled runtime — you can't switch to a missing agent.
+    expect(container.querySelector('[role="radio"]')).toBeNull()
+  })
 })

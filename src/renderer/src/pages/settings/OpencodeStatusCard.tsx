@@ -61,6 +61,9 @@ const OpencodeStatusCard = ({
 }: OpencodeStatusCardProps): React.JSX.Element => {
   const found = Boolean(opencode.resolvedPath)
   const installSources = useMemo(() => getOpencodeInstallSources(window.api?.platform), [])
+  // Only an installed runtime can be chosen as the active framework — switching to an uninstalled one
+  // would leave sessions with no agent. An uninstalled card shows no radio and isn't clickable.
+  const selectable = Boolean(onSelect) && found
 
   const heading = (
     <>
@@ -72,6 +75,17 @@ const OpencodeStatusCard = ({
       <span className="text-sm font-medium text-foreground">
         {found ? 'OpenCode is installed' : 'OpenCode not detected'}
       </span>
+      {selectable ? (
+        <span
+          aria-hidden="true"
+          className={cn(
+            'flex size-4 shrink-0 items-center justify-center rounded-full border',
+            active ? 'border-primary' : 'border-muted-foreground/50'
+          )}
+        >
+          {active ? <span className="size-2 rounded-full bg-primary" /> : null}
+        </span>
+      ) : null}
       {active ? <Badge variant="secondary">Active</Badge> : null}
     </>
   )
@@ -80,7 +94,7 @@ const OpencodeStatusCard = ({
     <Card className={cn('gap-0 rounded-lg py-0', active && 'ring-1 ring-primary')}>
       <CardContent className="p-4">
         <div className="flex items-center justify-between gap-3">
-          {onSelect ? (
+          {selectable ? (
             <button
               type="button"
               role="radio"
@@ -90,15 +104,6 @@ const OpencodeStatusCard = ({
               disabled={selectDisabled}
               className="-m-1 flex cursor-pointer items-center gap-2 rounded-md p-1 text-left hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60"
             >
-              <span
-                aria-hidden="true"
-                className={cn(
-                  'flex size-4 shrink-0 items-center justify-center rounded-full border',
-                  active ? 'border-primary' : 'border-muted-foreground/50'
-                )}
-              >
-                {active ? <span className="size-2 rounded-full bg-primary" /> : null}
-              </span>
               {heading}
             </button>
           ) : (

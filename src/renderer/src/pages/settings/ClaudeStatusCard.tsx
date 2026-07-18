@@ -44,6 +44,10 @@ const ClaudeStatusCard = ({
   isUninstalling = false,
   onUninstall
 }: ClaudeStatusCardProps): React.JSX.Element => {
+  // Only an installed runtime can be chosen as the active framework — switching to an uninstalled one
+  // would leave sessions with no agent. An uninstalled card shows no radio and isn't clickable.
+  const selectable = Boolean(onSelect) && claudeReady
+
   const heading = (
     <>
       {claudeReady ? (
@@ -54,6 +58,17 @@ const ClaudeStatusCard = ({
       <span className="text-sm font-medium text-foreground">
         {claudeReady ? 'Claude is installed' : 'Claude not detected'}
       </span>
+      {selectable ? (
+        <span
+          aria-hidden="true"
+          className={cn(
+            'flex size-4 shrink-0 items-center justify-center rounded-full border',
+            active ? 'border-primary' : 'border-muted-foreground/50'
+          )}
+        >
+          {active ? <span className="size-2 rounded-full bg-primary" /> : null}
+        </span>
+      ) : null}
       {active ? <Badge variant="secondary">Active</Badge> : null}
     </>
   )
@@ -68,7 +83,7 @@ const ClaudeStatusCard = ({
     >
       <CardContent className={cn('p-4', embedded && 'px-0 py-0')}>
         <div className="flex items-center justify-between gap-3">
-          {onSelect ? (
+          {selectable ? (
             <button
               type="button"
               role="radio"
@@ -78,15 +93,6 @@ const ClaudeStatusCard = ({
               disabled={selectDisabled}
               className="-m-1 flex cursor-pointer items-center gap-2 rounded-md p-1 text-left hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60"
             >
-              <span
-                aria-hidden="true"
-                className={cn(
-                  'flex size-4 shrink-0 items-center justify-center rounded-full border',
-                  active ? 'border-primary' : 'border-muted-foreground/50'
-                )}
-              >
-                {active ? <span className="size-2 rounded-full bg-primary" /> : null}
-              </span>
               {heading}
             </button>
           ) : (
