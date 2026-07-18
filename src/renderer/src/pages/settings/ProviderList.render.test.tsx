@@ -222,9 +222,7 @@ describe('ProviderList', () => {
   it('badges the chat endpoint a provider speaks, defaulting to Anthropic when unset', () => {
     renderList([provider({ apiType: undefined })])
 
-    const badge = container.querySelector(
-      '[aria-label="Speaks the Anthropic /v1/messages endpoint"]'
-    )
+    const badge = container.querySelector('[aria-label="Speaks the /v1/messages endpoint"]')
     expect(badge).not.toBeNull()
     // Shows the raw route path (not a vendor name) plus a route icon, so it can't be read as a provider.
     expect(badge?.textContent).toContain('/v1/messages')
@@ -234,9 +232,7 @@ describe('ProviderList', () => {
   it('badges an OpenAI-compatible provider distinctly', () => {
     renderList([provider({ apiType: 'openai' })])
 
-    const badge = container.querySelector(
-      '[aria-label="Speaks the OpenAI-compatible /v1/chat/completions endpoint"]'
-    )
+    const badge = container.querySelector('[aria-label="Speaks the /v1/chat/completions endpoint"]')
     expect(badge).not.toBeNull()
     expect(badge?.textContent).toContain('/v1/chat/completions')
   })

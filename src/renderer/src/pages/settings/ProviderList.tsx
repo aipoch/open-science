@@ -48,11 +48,11 @@ const describeValidationFailure = (failure: ProviderValidationFailure): string =
 // the provider's own name/brand: Claude Code needs the Anthropic /v1/messages route, while OpenCode also
 // accepts the OpenAI /v1/chat/completions route.
 const ENDPOINT_LABELS: Record<ProviderApiType, { path: string; full: string }> = {
-  anthropic: { path: '/v1/messages', full: 'Anthropic /v1/messages endpoint' },
-  openai: { path: '/v1/chat/completions', full: 'OpenAI-compatible /v1/chat/completions endpoint' },
+  anthropic: { path: '/v1/messages', full: '/v1/messages endpoint' },
+  openai: { path: '/v1/chat/completions', full: '/v1/chat/completions endpoint' },
   both: {
     path: '/v1/messages · /v1/chat/completions',
-    full: 'both the Anthropic /v1/messages and OpenAI /v1/chat/completions endpoints'
+    full: '/v1/messages and /v1/chat/completions endpoints'
   }
 }
 
