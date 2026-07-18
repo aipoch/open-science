@@ -2037,12 +2037,14 @@ class AcpRuntime {
       }
 
       if (text) {
+        // Attribute stderr to a session only when exactly one prompt is in flight — then it's
+        // unambiguously that turn's. With zero or multiple concurrent prompts, omit the sessionId
+        // rather than risk pinning it to the wrong conversation's waiting indicator.
+        const inFlight = Array.from(this.promptInFlightSessionIds)
         this.pushEvent({
           kind: 'system',
           level: 'warning',
-          // Attribute stderr to the in-flight turn so the renderer can show it in that session's
-          // waiting indicator (best-effort: currentSessionId is the active turn's session).
-          sessionId: this.currentSessionId,
+          sessionId: inFlight.length === 1 ? inFlight[0] : undefined,
           title: 'agent',
           text
         })

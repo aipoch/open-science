@@ -187,7 +187,11 @@ const EnvironmentSetupCard = ({
         aria-live="polite"
       >
         {environment
-          ? environment.checks.map((check) => <EnvironmentCheckRow key={check.id} check={check} />)
+          ? // Both agent runtimes share id 'agent', so key by index (+id) to avoid a duplicate-key
+            // collision that could mis-render or skip an update on one of the two runtime rows.
+            environment.checks.map((check, index) => (
+              <EnvironmentCheckRow key={`${check.id}-${index}`} check={check} />
+            ))
           : CHECK_LABELS.map((check) => <PendingCheckRow key={check.id} {...check} />)}
       </ul>
 

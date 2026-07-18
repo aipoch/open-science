@@ -57,6 +57,57 @@ describe('runEnvironmentCheck', () => {
     })
   })
 
+  it('checks both frameworks but gates only on the selected one', async () => {
+    // Claude installed, OpenCode not — with OpenCode selected, its absence blocks (failed) while the
+    // installed Claude row is informational (passed); the non-selected missing case is a warning.
+    const result = await runEnvironmentCheck({
+      storageRoot: '/data',
+      agentFrameworkId: 'opencode' as const,
+      frameworks: [
+        {
+          id: 'claude-code' as const,
+          label: 'Claude',
+          runtime: { found: true, path: '/bin/claude', version: '2.1.0' }
+        },
+        { id: 'opencode' as const, label: 'OpenCode', runtime: { found: false } }
+      ],
+      encryptionAvailable: true,
+      deps: baseDeps()
+    })
+
+    const rows = result.checks.filter((check) => check.id === 'agent')
+    expect(rows.map((row) => `${row.label}:${row.status}`)).toEqual([
+      'Claude runtime:passed',
+      'OpenCode runtime:failed'
+    ])
+    // Selected (OpenCode) missing → not ready, and it can be auto-installed.
+    expect(result.ready).toBe(false)
+    expect(result.canAutoInstall).toBe(true)
+    expect(result.runtime).toEqual({ found: false })
+  })
+
+  it('is ready when the selected framework is installed even if the other is missing', async () => {
+    const result = await runEnvironmentCheck({
+      storageRoot: '/data',
+      agentFrameworkId: 'claude-code' as const,
+      frameworks: [
+        {
+          id: 'claude-code' as const,
+          label: 'Claude',
+          runtime: { found: true, path: '/bin/claude', version: '2.1.0' }
+        },
+        { id: 'opencode' as const, label: 'OpenCode', runtime: { found: false } }
+      ],
+      encryptionAvailable: true,
+      deps: baseDeps()
+    })
+
+    const opencodeRow = result.checks.find((check) => check.label === 'OpenCode runtime')
+    // The non-selected missing framework is an informational warning, not a blocker.
+    expect(opencodeRow?.status).toBe('warning')
+    expect(result.ready).toBe(true)
+  })
+
   it('blocks automatic setup when the app data directory is not writable', async () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/locked',

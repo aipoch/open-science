@@ -12,6 +12,7 @@ import type {
 } from '../../shared/settings'
 import { findPythonCommand, type PythonCommand } from '../notebook/python-command'
 import { getManagedPlatform } from './managed-claude'
+import { resolveOpencodePlatform } from './managed-opencode'
 
 const REGISTRY_URLS: Record<ManagedClaudeRegistry, string> = {
   npmjs: 'https://registry.npmjs.org',
@@ -23,10 +24,14 @@ const REGISTRY_LABELS: Record<ManagedClaudeRegistry, string> = {
   npmmirror: 'China-friendly npmmirror'
 }
 
-const REGISTRY_PROBE_PATH = '/@anthropic-ai%2fclaude-code/latest'
+// The npm package path probed per framework to gauge registry reachability for its managed install.
+const REGISTRY_PROBE_PATHS: Record<AgentFrameworkId, string> = {
+  'claude-code': '/@anthropic-ai%2fclaude-code/latest',
+  opencode: '/opencode-ai/latest'
+}
 const REGISTRY_PROBE_TIMEOUT_MS = 5_000
 
-type RegistryProbe = (registry: ManagedClaudeRegistry) => Promise<number>
+type RegistryProbe = (registry: ManagedClaudeRegistry, packagePath: string) => Promise<number>
 
 export type EnvironmentCheckDeps = {
   platform?: NodeJS.Platform
@@ -65,7 +70,7 @@ const verifyStorageAccess = async (storageRoot: string): Promise<void> => {
 
 // Uses the same direct HTTPS route as the managed downloader and follows a small number of redirects.
 // A HEAD request keeps the required basic source check lightweight on every startup.
-const probeRegistryReachability: RegistryProbe = (registry) => {
+const probeRegistryReachability: RegistryProbe = (registry, packagePath) => {
   const startedAt = Date.now()
 
   return new Promise<number>((resolve, reject) => {
@@ -100,16 +105,17 @@ const probeRegistryReachability: RegistryProbe = (registry) => {
       request.end()
     }
 
-    visit(`${REGISTRY_URLS[registry]}${REGISTRY_PROBE_PATH}`, 3)
+    visit(`${REGISTRY_URLS[registry]}${packagePath}`, 3)
   })
 }
 
 const inspectRegistry = async (
   registry: ManagedClaudeRegistry,
-  probe: RegistryProbe
+  probe: RegistryProbe,
+  packagePath: string
 ): Promise<{ registry: ManagedClaudeRegistry; latencyMs?: number }> => {
   try {
-    return { registry, latencyMs: await probe(registry) }
+    return { registry, latencyMs: await probe(registry, packagePath) }
   } catch {
     return { registry }
   }
@@ -138,7 +144,11 @@ const runEnvironmentCheck = async ({
   const platform = deps.platform ?? process.platform
   const architecture = deps.architecture ?? hostArchitecture()
   const verifyStorage = deps.verifyStorage ?? verifyStorageAccess
-  const resolveManagedPlatform = deps.resolveManagedPlatform ?? (() => getManagedPlatform())
+  // Gauge managed-install availability with the SELECTED framework's own platform map, not always
+  // Claude's, so an arch opencode has no package for isn't reported as auto-installable (and vice versa).
+  const resolveManagedPlatform =
+    deps.resolveManagedPlatform ??
+    (() => (agentFrameworkId === 'opencode' ? resolveOpencodePlatform() : getManagedPlatform()))
   const findPython = deps.findPython ?? findPythonCommand
   const probeRegistry = deps.probeRegistry ?? probeRegistryReachability
   const now = deps.now ?? Date.now
@@ -205,8 +215,8 @@ const runEnvironmentCheck = async ({
     }
   } else {
     const registryResults = await Promise.all([
-      inspectRegistry('npmjs', probeRegistry),
-      inspectRegistry('npmmirror', probeRegistry)
+      inspectRegistry('npmjs', probeRegistry, REGISTRY_PROBE_PATHS[agentFrameworkId]),
+      inspectRegistry('npmmirror', probeRegistry, REGISTRY_PROBE_PATHS[agentFrameworkId])
     ])
     const reachable = registryResults
       .filter(

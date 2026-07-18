@@ -27,7 +27,8 @@ const KNOWN_FRAMEWORKS: AgentFrameworkView[] = [
 
 // Lets the user pick which agent backend drives their sessions. Because a session started on one
 // backend cannot be resumed on another, switching adopts a fresh agent session — so the choice is
-// confirmed first, warning that open conversations lose their prior agent context.
+// confirmed first, noting that open conversations keep their messages and have their transcript
+// replayed to the new backend (soft-replay), though live tool state is not carried over.
 const AgentFrameworkSection = (): React.JSX.Element => {
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
@@ -57,8 +58,8 @@ const AgentFrameworkSection = (): React.JSX.Element => {
       description={
         <>
           Choose which coding-agent backend drives your sessions. Switching starts a fresh agent
-          session — open conversations keep their messages but the new backend won&apos;t have their
-          earlier context.
+          session; open conversations keep their messages, and their earlier transcript is replayed
+          to the new backend so it can continue where you left off.
         </>
       }
       aria-label="Agent framework"
@@ -105,9 +106,10 @@ const AgentFrameworkSection = (): React.JSX.Element => {
               Switch to {pendingName}?
             </AlertDialog.Title>
             <AlertDialog.Description className="mt-2 text-sm leading-relaxed text-muted-foreground">
-              A conversation started on one backend can&apos;t be replayed on another, so switching
-              starts a fresh agent session. Open conversations keep their existing messages, but{' '}
-              {pendingName} won&apos;t have their earlier context. New conversations are unaffected.
+              A conversation can&apos;t be resumed on a different backend, so switching starts a
+              fresh agent session. Open conversations keep their existing messages, and their
+              transcript is replayed to {pendingName} so it can pick up where you left off (tool
+              state is not carried over). New conversations are unaffected.
             </AlertDialog.Description>
             <div className="mt-6 flex justify-end gap-2">
               <AlertDialog.Cancel asChild>

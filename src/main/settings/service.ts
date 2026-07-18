@@ -541,13 +541,21 @@ class SettingsService {
       }
     }
 
-    // detectOpencode persists a hit and clears a stale record, so the card/gates stay accurate.
-    await this.detectOpencode()
+    // Probe once (not twice): detect, then persist a hit or clear a truly-gone record — same rule as
+    // detectOpencode — so the card/gates stay accurate without running the full PATH/version probe again.
     const detected = await detectOpencode(this.opencodeDetectDeps)
 
-    return detected
-      ? { found: true, path: detected.resolvedPath, version: detected.version }
-      : { found: false }
+    if (detected) {
+      await this.repository.setOpencodeInfo(detected.resolvedPath, detected.version)
+
+      return { found: true, path: detected.resolvedPath, version: detected.version }
+    }
+
+    if (cachedPath && !(await this.pathExists(cachedPath))) {
+      await this.repository.clearOpencodeInfo()
+    }
+
+    return { found: false }
   }
 
   // Detects claude and persists the resolved path/version for later spawns.

@@ -147,6 +147,30 @@ describe('OnboardingWizard', () => {
     expect(checkEnvironment).toHaveBeenCalled()
   })
 
+  it('disables Continue when the latest check is for a different framework than selected', async () => {
+    // The env result is a READY Claude check, but OpenCode is now selected — Continue must stay
+    // disabled until a re-check for OpenCode lands (the stale Claude result must not slip through).
+    useSettingsStore.setState({
+      agentFrameworkId: 'opencode',
+      agentFrameworks: [
+        { id: 'claude-code', displayName: 'Claude Code', supportsSkills: true },
+        { id: 'opencode', displayName: 'OpenCode', supportsSkills: true }
+      ],
+      setAgentFramework: vi.fn().mockResolvedValue(undefined),
+      checkEnvironment: vi.fn().mockResolvedValue(undefined),
+      environmentCheck: environment(true) // agentFrameworkId: 'claude-code'
+    })
+
+    act(() => {
+      root.render(<OnboardingWizard />)
+    })
+
+    const continueButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Continue'
+    )
+    expect(continueButton?.disabled).toBe(true)
+  })
+
   it('keeps first-time users on the environment summary until they explicitly continue', async () => {
     useSettingsStore.setState({
       preflight: {

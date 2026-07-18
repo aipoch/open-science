@@ -54,7 +54,9 @@ const isRosetta = (): boolean => {
 }
 
 // Maps the host to opencode's native-package key. opencode uses `windows` (not Node's `win32`).
-const resolveOpencodePlatform = (): OpencodePlatform => {
+// Resolves the opencode native-package key for this host, throwing on an unsupported arch. Exported so
+// the environment check can gauge opencode auto-installability without the Claude platform map.
+export const resolveOpencodePlatform = (): OpencodePlatform => {
   const platform = process.platform
   let cpu = osArch()
 
