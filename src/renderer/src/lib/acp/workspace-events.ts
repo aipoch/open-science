@@ -92,9 +92,9 @@ const assembleReviewRunRequest = (sessionId: string): ReviewRunRequest | undefin
 }
 
 // Triggers a background auto-review for the just-completed turn when autoReviewEnabled is on. The
-// default is on, so a session is auto-reviewed unless the switch was explicitly turned off. Uses the
-// shared assembleReviewRunRequest helper so the auto and manual paths pick the same turn and assemble
-// the same request fields.
+// default is off, so a session is auto-reviewed only when the switch was explicitly turned on. Uses
+// the shared assembleReviewRunRequest helper so the auto and manual paths pick the same turn and
+// assemble the same request fields.
 // Fire-and-forget: errors are caught and silently dropped so the main session is never blocked.
 const triggerAutoReview = async (sessionId: string): Promise<void> => {
   try {
@@ -110,8 +110,8 @@ const triggerAutoReview = async (sessionId: string): Promise<void> => {
 
     if (!session) return
 
-    // Auto-review defaults to enabled: skip only when the switch is explicitly off.
-    if (session.autoReviewEnabled === false) return
+    // Auto-review defaults to disabled: run only when the switch was explicitly turned on.
+    if (session.autoReviewEnabled !== true) return
 
     const request = assembleReviewRunRequest(sessionId)
 
