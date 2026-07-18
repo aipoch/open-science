@@ -84,4 +84,32 @@ describe('ClaudeStatusCard surface', () => {
     act(() => button?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(onUninstall).toHaveBeenCalledTimes(1)
   })
+
+  it('exposes a radio selector that fires onSelect, and disables uninstall while active', () => {
+    const onSelect = vi.fn()
+
+    act(() => {
+      root.render(
+        <ClaudeStatusCard
+          claude={{ resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' }}
+          claudeReady
+          isDetecting={false}
+          onDetect={vi.fn()}
+          active
+          onSelect={onSelect}
+          managed
+          onUninstall={vi.fn()}
+        />
+      )
+    })
+
+    const radio = container.querySelector<HTMLButtonElement>('[role="radio"]')
+    expect(radio?.getAttribute('aria-checked')).toBe('true')
+
+    // The active runtime can't be uninstalled — switch away first.
+    expect(findUninstallButton()?.disabled).toBe(true)
+
+    act(() => radio?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(onSelect).toHaveBeenCalledTimes(1)
+  })
 })

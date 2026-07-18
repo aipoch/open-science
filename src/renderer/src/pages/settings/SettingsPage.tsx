@@ -13,12 +13,15 @@ import {
 import { Dialog } from 'radix-ui'
 import { useEffect, useState } from 'react'
 
-import type { ProviderView, UpsertProviderRequest } from '../../../../shared/settings'
+import type {
+  AgentFrameworkId,
+  ProviderView,
+  UpsertProviderRequest
+} from '../../../../shared/settings'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
-import { AgentFrameworkSection } from './AgentFrameworkSection'
 import { ModelFrameworkCompatibilityAlert } from './ModelFrameworkCompatibilityAlert'
 import { ClaudeInstallCard } from './ClaudeInstallCard'
 import { ClaudeStatusCard } from './ClaudeStatusCard'
@@ -42,6 +45,7 @@ import {
 import { ProviderList } from './ProviderList'
 import { SettingsRow, SettingsSection } from './SettingsLayout'
 import { UninstallRuntimeDialog } from './UninstallRuntimeDialog'
+import { SwitchFrameworkDialog } from './SwitchFrameworkDialog'
 
 type SettingsPageProps = {
   open: boolean
@@ -137,6 +141,8 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
   const isDetectingClaude = useSettingsStore((state) => state.isDetectingClaude)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
+  const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
+  const setAgentFramework = useSettingsStore((state) => state.setAgentFramework)
   const opencode = useSettingsStore((state) => state.opencode)
   const isDetectingOpencode = useSettingsStore((state) => state.isDetectingOpencode)
   const detectOpencode = useSettingsStore((state) => state.detectOpencode)
@@ -179,6 +185,8 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   // flag so the dialog and status cards can show progress and stay locked during removal.
   const [pendingUninstall, setPendingUninstall] = useState<'claude' | 'opencode' | null>(null)
   const [isUninstalling, setIsUninstalling] = useState(false)
+  // The framework the user picked (via a card) but hasn't confirmed switching to yet.
+  const [pendingSwitch, setPendingSwitch] = useState<AgentFrameworkId | null>(null)
   const [statusMessage, setStatusMessage] = useState<string | undefined>(undefined)
   const [statusOk, setStatusOk] = useState(false)
   const [busyProviderId, setBusyProviderId] = useState<string | undefined>(undefined)
@@ -392,6 +400,22 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
       setIsUninstalling(false)
     }
   }
+
+  // Selecting a card requests a framework switch; a no-op when it's already the active one. The actual
+  // switch is deferred to the confirmation, since it starts a fresh agent session.
+  const requestSwitch = (target: AgentFrameworkId): void => {
+    if (target !== agentFrameworkId) setPendingSwitch(target)
+  }
+
+  const confirmSwitch = (): void => {
+    if (pendingSwitch) void setAgentFramework(pendingSwitch)
+    setPendingSwitch(null)
+  }
+
+  const activeFramework = agentFrameworks.find((framework) => framework.id === agentFrameworkId)
+  const pendingSwitchName = agentFrameworks.find(
+    (framework) => framework.id === pendingSwitch
+  )?.displayName
 
   const handleSave = async (): Promise<void> => {
     setIsSaving(true)
@@ -696,20 +720,33 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                   </div>
                 ) : (
                   <div className="space-y-5 p-5">
-                    <AgentFrameworkSection />
-
                     <ModelFrameworkCompatibilityAlert />
 
-                    {/* Both runtimes are shown regardless of the selected framework, so an app-managed
-                        Claude or OpenCode can be detected, installed, or uninstalled without first
-                        switching the active backend (which would churn the agent connection). */}
-                    <SettingsSection title="Claude" aria-label="Claude">
+                    {/* The two runtime cards double as the framework selector: pick a card to make it
+                        the active backend (confirmed, since it starts a fresh session). Both are always
+                        shown so either app-managed runtime can be detected, installed, or uninstalled —
+                        but the active runtime can't be uninstalled (switch to the other one first). */}
+                    <SettingsSection
+                      title="Agent framework"
+                      aria-label="Agent framework"
+                      description={
+                        <>
+                          Choose which coding-agent backend drives your sessions. Select a card to
+                          switch; switching starts a fresh agent session, and open conversations
+                          have their transcript replayed to the new backend. The active runtime
+                          can&apos;t be uninstalled — switch to the other one first.
+                        </>
+                      }
+                      separated
+                    >
                       <div className="space-y-3">
                         <ClaudeStatusCard
                           claude={claude}
                           claudeReady={preflight.claudeReady}
                           isDetecting={isDetectingClaude}
                           onDetect={() => void detectClaude()}
+                          active={agentFrameworkId === 'claude-code'}
+                          onSelect={() => requestSwitch('claude-code')}
                           managed={claudeManaged}
                           isUninstalling={isUninstalling && pendingUninstall === 'claude'}
                           onUninstall={() => setPendingUninstall('claude')}
@@ -724,24 +761,29 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                             onInstall={(source) => void installClaude(source)}
                           />
                         ) : null}
+                        <OpencodeStatusCard
+                          opencode={opencode}
+                          isDetecting={isDetectingOpencode}
+                          onDetect={() => void detectOpencode()}
+                          isInstalling={isInstalling}
+                          installLogs={installLogs}
+                          installProgress={installProgress}
+                          installError={installError}
+                          npmAvailable={npmAvailable}
+                          onInstall={(source) => void installOpencode(source)}
+                          active={agentFrameworkId === 'opencode'}
+                          onSelect={() => requestSwitch('opencode')}
+                          managed={opencodeManaged}
+                          isUninstalling={isUninstalling && pendingUninstall === 'opencode'}
+                          onUninstall={() => setPendingUninstall('opencode')}
+                        />
+                        {activeFramework && !activeFramework.supportsSkills ? (
+                          <p className="text-xs text-muted-foreground">
+                            Skills aren&apos;t available with {activeFramework.displayName}; use
+                            Claude Code for skill-based workflows.
+                          </p>
+                        ) : null}
                       </div>
-                    </SettingsSection>
-
-                    <SettingsSection title="OpenCode" aria-label="OpenCode">
-                      <OpencodeStatusCard
-                        opencode={opencode}
-                        isDetecting={isDetectingOpencode}
-                        onDetect={() => void detectOpencode()}
-                        isInstalling={isInstalling}
-                        installLogs={installLogs}
-                        installProgress={installProgress}
-                        installError={installError}
-                        npmAvailable={npmAvailable}
-                        onInstall={(source) => void installOpencode(source)}
-                        managed={opencodeManaged}
-                        isUninstalling={isUninstalling && pendingUninstall === 'opencode'}
-                        onUninstall={() => setPendingUninstall('opencode')}
-                      />
                     </SettingsSection>
 
                     <SettingsSection
@@ -782,6 +824,11 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
         isUninstalling={isUninstalling}
         onCancel={() => setPendingUninstall(null)}
         onConfirm={() => void handleConfirmUninstall()}
+      />
+      <SwitchFrameworkDialog
+        targetName={pendingSwitchName ?? null}
+        onCancel={() => setPendingSwitch(null)}
+        onConfirm={confirmSwitch}
       />
     </Dialog.Root>
   )

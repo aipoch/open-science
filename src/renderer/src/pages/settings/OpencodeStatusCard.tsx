@@ -2,8 +2,10 @@ import { useMemo } from 'react'
 import { CheckCircle2, RefreshCw, Trash2, XCircle } from 'lucide-react'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { cn } from '@/lib/utils'
 import type {
   ClaudeInstallProgressEvent,
   ClaudeInstallSource,
@@ -23,7 +25,12 @@ type OpencodeStatusCardProps = {
   installError: string | undefined
   npmAvailable: boolean
   onInstall: (source: ClaudeInstallSource) => void
+  // Marks this as the runtime the selected agent framework uses, so it stands out when both cards show.
+  active?: boolean
+  // Selects OpenCode as the active framework (settings only). The card's title acts as a radio option.
+  onSelect?: () => void
   // Uninstall is offered only for the app-managed install (a binary the app owns in its data dir).
+  // Disabled while this is the active runtime — the user must switch to the other framework first.
   managed?: boolean
   isUninstalling?: boolean
   onUninstall?: () => void
@@ -42,6 +49,8 @@ const OpencodeStatusCard = ({
   installError,
   npmAvailable,
   onInstall,
+  active = false,
+  onSelect,
   managed = false,
   isUninstalling = false,
   onUninstall
@@ -49,20 +58,38 @@ const OpencodeStatusCard = ({
   const found = Boolean(opencode.resolvedPath)
   const installSources = useMemo(() => getOpencodeInstallSources(window.api?.platform), [])
 
+  const heading = (
+    <>
+      {found ? (
+        <CheckCircle2 className="size-4 text-primary" aria-hidden="true" />
+      ) : (
+        <XCircle className="size-4 text-muted-foreground" aria-hidden="true" />
+      )}
+      <span className="text-sm font-medium text-foreground">
+        {found ? 'OpenCode is installed' : 'OpenCode not detected'}
+      </span>
+      {active ? <Badge variant="secondary">Active</Badge> : null}
+    </>
+  )
+
   return (
-    <Card className="gap-0 rounded-lg py-0">
+    <Card className={cn('gap-0 rounded-lg py-0', active && 'ring-1 ring-primary')}>
       <CardContent className="p-4">
         <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            {found ? (
-              <CheckCircle2 className="size-4 text-primary" aria-hidden="true" />
-            ) : (
-              <XCircle className="size-4 text-muted-foreground" aria-hidden="true" />
-            )}
-            <span className="text-sm font-medium text-foreground">
-              {found ? 'OpenCode is installed' : 'OpenCode not detected'}
-            </span>
-          </div>
+          {onSelect ? (
+            <button
+              type="button"
+              role="radio"
+              aria-checked={active}
+              aria-label="Use OpenCode"
+              onClick={onSelect}
+              className="-m-1 flex items-center gap-2 rounded-md p-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {heading}
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">{heading}</div>
+          )}
           <div className="flex items-center gap-2">
             {managed && onUninstall && found ? (
               <Button
@@ -70,7 +97,10 @@ const OpencodeStatusCard = ({
                 variant="destructive"
                 size="sm"
                 onClick={onUninstall}
-                disabled={isUninstalling || isDetecting}
+                disabled={active || isUninstalling || isDetecting}
+                title={
+                  active ? 'Switch to the other framework before uninstalling OpenCode' : undefined
+                }
               >
                 <Trash2 aria-hidden="true" />
                 Uninstall

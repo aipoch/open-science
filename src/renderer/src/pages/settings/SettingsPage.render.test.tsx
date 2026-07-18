@@ -156,8 +156,8 @@ describe('SettingsPage layout', () => {
     expect(document.body.textContent).toContain('Claude')
     expect(document.body.textContent).toContain('Providers')
     expect(document.body.textContent).toContain('Agent framework')
-    // Agent framework + Claude + OpenCode (both runtimes always shown) + Providers.
-    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(4)
+    // Agent framework (holds both selectable runtime cards) + Providers.
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(2)
     expect(document.body.querySelector('[data-slot="settings-row"]')).not.toBeNull()
   })
 
@@ -430,30 +430,38 @@ describe('SettingsPage uninstall confirmation', () => {
       (button) => button.textContent?.trim() === text
     )
 
+  const bothFrameworks = [
+    { id: 'claude-code', displayName: 'Claude Code', supportsSkills: true },
+    { id: 'opencode', displayName: 'OpenCode', supportsSkills: true }
+  ]
+
   it('gates the uninstall call behind the confirmation dialog', async () => {
-    const managedSnapshot = {
+    // Claude is managed but NOT the active framework (OpenCode is), so its Uninstall is enabled.
+    // OpenCode carries a path so the "auto-detect when active + missing" effect doesn't run.
+    const snapshot = {
       claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
-      opencode: {},
+      opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
       providers: [],
-      agentFrameworkId: 'claude-code',
-      agentFrameworks: [{ id: 'claude-code', displayName: 'Claude Code', supportsSkills: true }],
+      agentFrameworkId: 'opencode',
+      agentFrameworks: bothFrameworks,
       claudeManaged: true,
       opencodeManaged: false
     }
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
-    api.settings.getSettings = vi.fn().mockResolvedValue(managedSnapshot)
+    api.settings.getSettings = vi.fn().mockResolvedValue(snapshot)
     const uninstallClaude = vi
       .fn()
-      .mockResolvedValue({ ...managedSnapshot, claude: {}, claudeManaged: false })
+      .mockResolvedValue({ ...snapshot, claude: {}, claudeManaged: false })
     api.settings.uninstallClaude = uninstallClaude
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
 
-    // The managed Claude card exposes an Uninstall action, and no confirmation is open yet.
+    // The inactive managed Claude card exposes an Uninstall action, and no confirmation is open yet.
     const cardUninstall = findButton(document.body, 'Uninstall')
     expect(cardUninstall).toBeDefined()
+    expect(cardUninstall?.disabled).toBe(false)
     expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
 
     // Clicking it only opens the confirmation — the uninstall must not fire yet.
@@ -471,5 +479,72 @@ describe('SettingsPage uninstall confirmation', () => {
       confirm?.click()
     })
     expect(uninstallClaude).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables uninstall on the active runtime card', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    // Claude is both managed and the active framework — its Uninstall must be disabled.
+    api.settings.getSettings = vi.fn().mockResolvedValue({
+      claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
+      opencode: {},
+      providers: [],
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: bothFrameworks,
+      claudeManaged: true,
+      opencodeManaged: false
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+
+    const cardUninstall = findButton(document.body, 'Uninstall')
+    expect(cardUninstall).toBeDefined()
+    expect(cardUninstall?.disabled).toBe(true)
+  })
+
+  it('gates a framework switch behind the confirmation dialog', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    api.settings.getSettings = vi.fn().mockResolvedValue({
+      claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
+      opencode: {},
+      providers: [],
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: bothFrameworks,
+      claudeManaged: true,
+      opencodeManaged: false
+    })
+    const setAgentFramework = vi.fn().mockResolvedValue({
+      claude: {},
+      opencode: {},
+      providers: [],
+      agentFrameworkId: 'opencode',
+      agentFrameworks: bothFrameworks,
+      claudeManaged: true,
+      opencodeManaged: false
+    })
+    api.settings.setAgentFramework = setAgentFramework
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+
+    // Selecting the inactive OpenCode card opens the switch confirmation without switching yet.
+    const opencodeRadio = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Use OpenCode"]'
+    )
+    expect(opencodeRadio).not.toBeNull()
+    await act(async () => {
+      opencodeRadio?.click()
+    })
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    expect(dialog?.textContent).toContain('Switch to OpenCode?')
+    expect(setAgentFramework).not.toHaveBeenCalled()
+
+    // Confirming performs the switch.
+    await act(async () => {
+      findButton(dialog!, 'Switch')?.click()
+    })
+    expect(setAgentFramework).toHaveBeenCalledWith({ id: 'opencode' })
   })
 })
