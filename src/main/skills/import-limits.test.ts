@@ -51,4 +51,10 @@ describe('decodeBoundedBase64', () => {
     // A trailing group of a single base64 char encodes no bytes and is malformed.
     expect(() => decodeBoundedBase64('YWJjZ')).toThrow(/not valid base64/)
   })
+
+  it('rejects stray characters and misplaced padding rather than silently dropping them', () => {
+    expect(() => decodeBoundedBase64('YWJj$$$$')).toThrow(/not valid base64/) // non-alphabet chars
+    expect(() => decodeBoundedBase64('YW=j')).toThrow(/not valid base64/) // padding mid-string
+    expect(() => decodeBoundedBase64('YWJjZA=')).toThrow(/not valid base64/) // padded but not a 4-group
+  })
 })
