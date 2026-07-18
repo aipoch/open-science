@@ -63,10 +63,15 @@ const readBounded = async (
       if (value) {
         read += value.byteLength
         if (read > limit) {
-          // Fire-and-forget the cancel: attach a catch so a rejected cancel() can't become an
-          // unhandled rejection, but do NOT await it — a cancel that never settles must not keep the
-          // import hanging. Abort with the size error immediately.
-          void Promise.resolve(reader.cancel?.()).catch(() => {})
+          // Fire-and-forget the cancel: don't await it (a cancel that never settles must not keep the
+          // import hanging) and don't let it mask the size error. The try/catch swallows a SYNCHRONOUS
+          // throw from cancel() — which would otherwise escape before Promise.resolve wraps it — and
+          // the .catch() handles an async rejection. Either way we abort with the size error next.
+          try {
+            void Promise.resolve(reader.cancel?.()).catch(() => {})
+          } catch {
+            /* ignore a synchronous cancel() failure */
+          }
           onExceeded()
         }
         chunks.push(Buffer.from(value))

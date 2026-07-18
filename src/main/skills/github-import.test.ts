@@ -337,6 +337,50 @@ describe('fetchSkillFiles', () => {
     ).rejects.toThrow(/per-file limit/)
   })
 
+  it('still reports the size error when cancel() throws synchronously', async () => {
+    // A synchronous throw from cancel() must not mask the size-limit error (it escapes before
+    // Promise.resolve wraps it, so it needs its own guard).
+    const chunk = new Uint8Array(1024 * 1024)
+    const throwingCancel: FetchLike = async (url) => {
+      if (url.includes('/contents/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              type: 'file',
+              name: 'SKILL.md',
+              path: 'pack/foo/SKILL.md',
+              download_url: 'https://raw/s'
+            }
+          ],
+          arrayBuffer: async () => new ArrayBuffer(0)
+        }
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        body: {
+          getReader: () => ({
+            read: async () => ({ done: false, value: chunk }),
+            cancel: () => {
+              throw new Error('synchronous cancel failure')
+            }
+          })
+        },
+        arrayBuffer: async () => new ArrayBuffer(0)
+      }
+    }
+
+    await expect(
+      fetchSkillFiles(
+        { owner: 'acme', repo: 'skills', ref: 'main', path: 'pack/foo' },
+        throwingCancel
+      )
+    ).rejects.toThrow(/per-file limit/)
+  })
+
   it('reads a streamed body that finishes under the cap and returns its exact bytes', async () => {
     // A finite streamed body (3 MiB in 1 MiB chunks, no Content-Length) under the 5 MiB per-file cap
     // must be accepted and reassembled intact.
