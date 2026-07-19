@@ -19,11 +19,19 @@ export type AcpRuntimeEventKind =
 
 export type AcpRuntimeEventLevel = 'info' | 'warning' | 'error'
 
+// Marks a prompt failure the app can auto-recover from without user action. 'context-overflow' means
+// the conversation outgrew the provider's request-size limit (accumulated media); the renderer resets
+// the agent context and replays a text-only transcript. Absent on ordinary events.
+export type AcpRecoverableFailure = 'context-overflow'
+
 export type AcpRuntimeEvent = {
   id: string
   timestamp: number
   kind: AcpRuntimeEventKind
   level: AcpRuntimeEventLevel
+  // Set on an error event the app can auto-recover from, so the renderer compacts-and-retries instead
+  // of surfacing a dead-end error.
+  recoverable?: AcpRecoverableFailure
   sessionId?: string
   messageId?: string
   role?: 'assistant' | 'user'

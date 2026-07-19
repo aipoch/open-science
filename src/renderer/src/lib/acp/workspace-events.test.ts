@@ -125,6 +125,31 @@ describe('workspace runtime events', () => {
     })
   })
 
+  it('enters the compacting state (not a dead-end error) for a recoverable overflow event', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'compare these screenshots'
+    })
+
+    const applied = await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-overflow',
+        kind: 'error',
+        level: 'error',
+        recoverable: 'context-overflow',
+        title: 'Prompt failed',
+        text: 'Internal error: Request too large (max 32MB).'
+      })
+    )
+
+    expect(applied).toBe(true)
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.compacting).toBe(true)
+    expect(session.status).not.toBe('error')
+    // The raw overflow message is not surfaced as a session error; the UI shows a neutral note instead.
+    expect(session.error).toBeUndefined()
+  })
+
   it('surfaces a session-scoped agent warning as the waiting-indicator status, cleared on stop', async () => {
     const applied = await applyWorkspaceRuntimeEvent(
       createEvent({ id: 'event-1', kind: 'system', level: 'warning', text: 'retrying request…' })

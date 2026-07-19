@@ -217,6 +217,13 @@ const applyWorkspaceRuntimeEvent = async (
   }
 
   if (event.kind === 'error' && event.sessionId) {
+    // A recoverable request-size overflow is auto-compacted-and-retried by the workspace runtime, so
+    // enter the neutral "compacting" state instead of failing the run with a dead-end error.
+    if (event.recoverable === 'context-overflow') {
+      store.beginCompaction(event.sessionId)
+      return true
+    }
+
     store.failRun(event.sessionId, getEventErrorText(event))
     return true
   }

@@ -10,6 +10,7 @@ import {
   BookOpen,
   FileText,
   Image as ImageIcon,
+  Loader2,
   PanelRight,
   Plus,
   ScanEye,
@@ -242,6 +243,13 @@ const ConversationPanel = ({
                     isResuming={isResuming}
                     onResume={() => void handleResume()}
                   />
+                ) : activeSession?.compacting ? (
+                  // Auto-recovery after a request-size overflow: a neutral note, not the red error box,
+                  // while the agent context is reset and the conversation is replayed as text.
+                  <div className="mb-2 flex items-center gap-2 rounded-lg border border-border-200 bg-bg-200 px-3 py-2 text-[12px] leading-5 text-text-300">
+                    <Loader2 className="size-3.5 animate-spin" strokeWidth={2} aria-hidden="true" />
+                    Compacting conversation to fit the context limit…
+                  </div>
                 ) : actionError || activeSession?.error ? (
                   <div className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700">
                     {actionError ?? activeSession?.error}

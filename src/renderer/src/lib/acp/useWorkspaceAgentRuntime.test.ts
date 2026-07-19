@@ -1293,6 +1293,30 @@ describe('recovering from a request-size overflow', () => {
     expect(recover).toHaveBeenCalledWith(runtime, 'session-1')
   })
 
+  it('triggers recovery from the recoverable marker even when the message does not match', () => {
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+    const recover = vi.fn().mockResolvedValue(true)
+    const event = createEvent({
+      id: 'overflow-marker',
+      kind: 'error',
+      level: 'error',
+      recoverable: 'context-overflow',
+      sessionId: 'session-1',
+      // An opaque wrapped message the text classifier would miss; the marker still drives recovery.
+      text: 'Internal error: -32603'
+    })
+
+    processContextOverflowRecovery(runtime, [event], new Set(), new Set(), recover)
+
+    expect(recover).toHaveBeenCalledTimes(1)
+  })
+
   it('ignores non-overflow errors, detached sessions, and sessions already recovering', () => {
     const runtime = {
       state: createSnapshot(['session-1']),

@@ -78,6 +78,7 @@ import { opencodeStorageDir } from '../agent-framework/opencode'
 import type { UploadRepository } from '../uploads/repository'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, ArtifactReference } from '../../shared/artifacts'
+import { isMediaOverflowError } from '../../shared/media-overflow'
 import {
   buildImageContentData,
   canInlineImageInSession,
@@ -1265,12 +1266,20 @@ class AcpRuntime {
       }
     } catch (error) {
       log.error('prompt failed', { sessionId: request.sessionId, error })
+      const text = describePromptError(error, { model: this.pendingSessionModel })
+      // Tag a request-size overflow as recoverable so the renderer compacts-and-retries (reset context +
+      // replay a text transcript) instead of dead-ending; the error still throws to drive that recovery.
+      const recoverable =
+        isMediaOverflowError(text) || isMediaOverflowError(errorMessage(error))
+          ? 'context-overflow'
+          : undefined
       this.pushEvent({
         kind: 'error',
         level: 'error',
+        recoverable,
         sessionId: request.sessionId,
         title: 'Prompt failed',
-        text: describePromptError(error, { model: this.pendingSessionModel })
+        text
       })
       throw error
     } finally {
@@ -2305,6 +2314,7 @@ class AcpRuntime {
       timestamp: event.timestamp ?? Date.now(),
       level: event.level ?? 'info',
       kind: event.kind,
+      recoverable: event.recoverable,
       sessionId: event.sessionId,
       messageId: event.messageId,
       role: event.role,

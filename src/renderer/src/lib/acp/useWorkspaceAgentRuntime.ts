@@ -115,6 +115,13 @@ const getErrorMessage = (error: unknown): string =>
 // (connection still up, e.g. a gateway 5xx) surfaces as a normal session error. Reading the status at
 // failure time avoids the race where failRun would flip the session out of 'running' first.
 const failOrMarkDisconnected = async (sessionId: string, message: string): Promise<void> => {
+  // A conversation being auto-compacted after a request-size overflow owns its own outcome (reset +
+  // retry). Don't overwrite the neutral compacting state with a dead-end error from the prompt rejection
+  // the runtime swallowed into undefined.
+  if (useSessionStore.getState().sessions.find((session) => session.id === sessionId)?.compacting) {
+    return
+  }
+
   try {
     const snapshot = await window.api.acp.getState()
 
@@ -605,6 +612,10 @@ const recoverContextOverflowWorkspaceSession = async (
 
   if (!interruptedTurn) return false
 
+  // Flip to the neutral compacting state up front so the UI never shows the raw overflow error while the
+  // reset round-trip is in flight (idempotent with the event-path beginCompaction).
+  useSessionStore.getState().beginCompaction(sessionId)
+
   try {
     await runtime.resetSessionContext(
       sessionId,
@@ -652,7 +663,15 @@ const processContextOverflowRecovery = (
   for (const event of events) {
     if (handledEventIds.has(event.id)) continue
     if (event.kind !== 'error' || !event.sessionId) continue
-    if (!isMediaOverflowError(event.text) && !isMediaOverflowError(event.title)) continue
+
+    // Prefer the runtime's explicit marker; fall back to matching the message so an unmarked overflow
+    // (older event, or a path that didn't tag it) is still recovered.
+    const isOverflow =
+      event.recoverable === 'context-overflow' ||
+      isMediaOverflowError(event.text) ||
+      isMediaOverflowError(event.title)
+
+    if (!isOverflow) continue
 
     handledEventIds.add(event.id)
 
