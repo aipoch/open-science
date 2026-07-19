@@ -9,8 +9,10 @@ import { HighlightedText } from './HighlightedText'
 // A skill plus the name-match positions to highlight (empty when it matched on description only).
 type SkillMatch = { skill: SkillView; positions: number[] }
 
-// Name matches always outrank description-only matches, regardless of raw fuzzy score.
-const NAME_WEIGHT = 100
+// Match tiers: any name hit ranks strictly above any description-only hit, decided before score.
+// A tier (not an additive weight) is required because a long, gappy fuzzy name score can go negative.
+const TIER_NAME = 1
+const TIER_DESCRIPTION = 0
 
 // Popup that suggests skills for the composer's `/` mention trigger. The composer keeps focus in its
 // editor, so this listens for navigation keys on document while mounted rather than owning focus.
@@ -51,20 +53,28 @@ export const SkillMentionPopup = ({
     if (needle.length === 0) return skills.map((skill) => ({ skill, positions: [] }))
 
     const descNeedle = needle.toLowerCase()
-    return skills
-      .map((skill) => {
-        const nameMatch = fuzzyScore(needle, skill.name)
-        if (nameMatch) {
-          return { skill, score: nameMatch.score + NAME_WEIGHT, positions: nameMatch.positions }
-        }
-        if (skill.description.toLowerCase().includes(descNeedle)) {
-          return { skill, score: 0, positions: [] }
-        }
-        return null
-      })
-      .filter((m): m is SkillMatch & { score: number } => m !== null)
-      .sort((a, b) => b.score - a.score)
-      .map(({ skill, positions }) => ({ skill, positions }))
+    return (
+      skills
+        .map((skill) => {
+          const nameMatch = fuzzyScore(needle, skill.name)
+          if (nameMatch) {
+            return {
+              skill,
+              tier: TIER_NAME,
+              score: nameMatch.score,
+              positions: nameMatch.positions
+            }
+          }
+          if (skill.description.toLowerCase().includes(descNeedle)) {
+            return { skill, tier: TIER_DESCRIPTION, score: 0, positions: [] }
+          }
+          return null
+        })
+        .filter((m): m is SkillMatch & { tier: number; score: number } => m !== null)
+        // Tier first (name always beats description-only), then fuzzy score within a tier.
+        .sort((a, b) => b.tier - a.tier || b.score - a.score)
+        .map(({ skill, positions }) => ({ skill, positions }))
+    )
   }, [skills, query])
 
   const [activeIndex, setActiveIndex] = useState(0)
