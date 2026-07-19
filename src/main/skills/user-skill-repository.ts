@@ -218,13 +218,35 @@ const discoverSkillRoots = (zip: Buffer): SkillDiscovery => {
     roots.push({ subPath: unique, files: rootFiles })
   }
 
-  // Loose (non-archive) top-level files form ordinary roots — but they must still satisfy the per-skill
-  // caps, and a root whose content the lenient walk had to drop is rejected (importing it would produce
-  // a silently-partial skill).
-  const looseSkips = outerSkips.filter((entry) => !isNestedArchive(entry.path)).map((e) => e.path)
-  for (const root of findSkillRoots(files.filter((file) => !isNestedArchive(file.path)))) {
-    const prefix = root.subPath === '' ? '' : `${root.subPath}/`
-    if (looseSkips.some((path) => path === root.subPath || path.startsWith(prefix))) {
+  // Loose (non-archive) top-level files form ordinary roots. A SKILL.md is never an archive, so roots
+  // are discovered from the non-archive files.
+  const looseRoots = findSkillRoots(files.filter((file) => !isNestedArchive(file.path)))
+  const rootPrefixes = looseRoots.map((root) => ({
+    root,
+    prefix: root.subPath === '' ? '' : `${root.subPath}/`
+  }))
+
+  // A .zip/.skill that lives UNDER a discovered loose root is that skill's own resource (e.g.
+  // `tool/references/data.zip`), not a separate skill: fold it back in (re-based) so the root imports
+  // complete, and it counts toward that skill's per-skill caps. Every other archive is standalone.
+  const standaloneArchives: typeof files = []
+  for (const archive of files.filter((file) => isNestedArchive(file.path))) {
+    const owner = rootPrefixes.find(({ prefix }) => archive.path.startsWith(prefix))
+    if (owner) {
+      owner.root.files.push({
+        relativePath: archive.path.slice(owner.prefix.length),
+        content: archive.content
+      })
+    } else {
+      standaloneArchives.push(archive)
+    }
+  }
+
+  // Each loose root must satisfy the per-skill caps (the outer walk used bundle-wide caps), and a root
+  // any of whose files the lenient walk had to drop is rejected — importing it would produce a
+  // silently-partial skill.
+  for (const { root, prefix } of rootPrefixes) {
+    if (outerSkips.some((e) => e.path === root.subPath || e.path.startsWith(prefix))) {
       skipped.push({
         source: root.subPath || 'skill',
         reason: 'contains a file too large to import'
@@ -239,9 +261,9 @@ const discoverSkillRoots = (zip: Buffer): SkillDiscovery => {
     addRoot(root.subPath, root.files)
   }
 
-  // Each nested archive is its own bundle: unpack it under the strict per-skill caps (extractZip throws
-  // on any cap violation, so the whole inner skill is skipped, never partially imported).
-  for (const archive of files.filter((file) => isNestedArchive(file.path))) {
+  // Each standalone archive is its own bundle: unpack it under the strict per-skill caps (extractZip
+  // throws on any cap violation, so the whole inner skill is skipped, never partially imported).
+  for (const archive of standaloneArchives) {
     let innerRoots: SkillRoot[]
     try {
       innerRoots = findSkillRoots(extractZip(archive.content))

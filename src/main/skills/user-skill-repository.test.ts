@@ -640,6 +640,38 @@ describe('UserSkillRepository', () => {
     expect(new Set(previews.map((p) => p.subPath)).size).toBe(2)
   })
 
+  it('folds a .zip living under a loose skill root into that skill, not a separate one', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const zip = buildZip([
+      { path: 'tool/SKILL.md', content: Buffer.from('---\nname: Tool\ndescription: d\n---\nx') },
+      { path: 'tool/references/data.zip', content: Buffer.from('opaque archive bytes') }
+    ])
+
+    const { previews, skipped } = await repo.previewZip(zip)
+    // One skill (Tool) that keeps its bundled archive as a resource — no spurious separate skill and
+    // no "no SKILL.md" skip for the inner archive.
+    expect(previews).toHaveLength(1)
+    expect(previews[0].name).toBe('Tool')
+    expect(previews[0].files).toContain('references/data.zip')
+    expect(skipped).toEqual([])
+  })
+
+  it('imports the bundled-archive resource to disk as part of the skill', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+    const zip = buildZip([
+      { path: 'tool/SKILL.md', content: Buffer.from('---\nname: Tool\ndescription: d\n---\nx') },
+      { path: 'tool/references/data.zip', content: Buffer.from('opaque archive bytes') }
+    ])
+
+    expect((await repo.importFromZip(zip)).status).toBe('imported')
+    const written = await readFile(
+      join(storage, 'skills', 'imported', 'tool', 'references', 'data.zip'),
+      'utf8'
+    )
+    expect(written).toBe('opaque archive bytes')
+  })
+
   it('parses a CRLF-authored SKILL.md the same on preview and import', async () => {
     const repo = new UserSkillRepository(await makeStorage())
     // A bundle authored on Windows: every line ends with \r\n.
