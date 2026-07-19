@@ -15,7 +15,7 @@ describe('parseWebModeOptions', () => {
     expect(parseWebModeOptions(['electron', '--serve'], {}).enabled).toBe(true)
     expect(parseWebModeOptions(['electron', '--serve=0'], {}).port).toBe(0)
     expect(parseWebModeOptions(['electron'], { OPEN_SCIENCE_WEB_PORT: '44200' }).port).toBe(44200)
-    expect(parseWebModeOptions(['electron', '--headless'], {})).toMatchObject({
+    expect(parseWebModeOptions(['electron', '--open-science-headless'], {})).toMatchObject({
       enabled: true,
       headless: true
     })

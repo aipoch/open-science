@@ -10,7 +10,9 @@ const parseWebModeOptions = (
   argv: string[],
   env: NodeJS.ProcessEnv = process.env
 ): WebModeOptions => {
-  const headless = argv.includes('--headless')
+  // Deliberately NOT `--headless`: Chromium interprets that switch itself, which on Windows makes
+  // native menus (e.g. the tray context menu) render invisibly (electron/electron#48982).
+  const headless = argv.includes('--open-science-headless')
   const serveArg = argv.find((arg) => arg === '--serve' || arg.startsWith('--serve='))
   const envPort = env.OPEN_SCIENCE_WEB_PORT?.trim()
   const enabled = headless || Boolean(serveArg) || Boolean(envPort)

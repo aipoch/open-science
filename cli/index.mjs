@@ -149,7 +149,9 @@ const startCommand = async (options) => {
   const logPath = join(configRoot, 'cli-daemon.log')
   const logFd = openSync(logPath, 'a')
   const port = options.port ?? DEFAULT_PORT
-  const child = spawn(app.command, [...app.args, '--headless', `--serve=${port}`], {
+  // `--open-science-headless` instead of `--headless`: Chromium consumes `--headless` and renders
+  // native menus (like the tray context menu) invisibly on Windows (electron/electron#48982).
+  const child = spawn(app.command, [...app.args, '--open-science-headless', `--serve=${port}`], {
     detached: true,
     stdio: ['ignore', logFd, logFd],
     windowsHide: true,

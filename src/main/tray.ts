@@ -1,4 +1,4 @@
-import { Menu, Tray, nativeImage, type NativeImage } from 'electron'
+import { Menu, Tray, nativeImage, screen, type NativeImage } from 'electron'
 
 import { createLogger } from './logger'
 
@@ -50,6 +50,9 @@ const createAppTray = (opts: {
   onShow: () => void
   onHide: () => void
   onQuit: () => void
+  headless?: boolean
+  onOpenWeb?: () => void | Promise<void>
+  onCopyWebUrl?: () => void | Promise<void>
 }): Tray | undefined => {
   try {
     // macOS gets a monochrome template glyph that follows the menu-bar appearance; other platforms use
@@ -60,19 +63,41 @@ const createAppTray = (opts: {
         : nativeImage.createFromPath(opts.iconPath)
     const tray = new Tray(icon)
 
-    // Right-click (or platform default) menu with the core actions.
-    const menu = Menu.buildFromTemplate([
-      { label: 'Show', click: () => opts.onShow() },
-      { label: 'Hide', click: () => opts.onHide() },
-      { type: 'separator' },
-      { label: 'Quit', click: () => opts.onQuit() }
-    ])
+    const headlessWeb = opts.headless && opts.onOpenWeb && opts.onCopyWebUrl
+    const menu = Menu.buildFromTemplate(
+      headlessWeb
+        ? [
+            { label: 'Open Web UI', click: () => void opts.onOpenWeb!() },
+            { label: 'Copy URL', click: () => void opts.onCopyWebUrl!() },
+            { type: 'separator' },
+            { label: 'Quit', click: () => opts.onQuit() }
+          ]
+        : [
+            { label: 'Show', click: () => opts.onShow() },
+            { label: 'Hide', click: () => opts.onHide() },
+            { type: 'separator' },
+            { label: 'Quit', click: () => opts.onQuit() }
+          ]
+    )
 
-    tray.setToolTip('Open Science')
-    tray.setContextMenu(menu)
+    tray.setToolTip(headlessWeb ? 'Open Science (Web)' : 'Open Science')
 
-    // Left click reveals the window on Windows/Linux where it is the expected affordance.
-    tray.on('click', () => opts.onShow())
+    const primaryAction = (): void => {
+      if (headlessWeb) void opts.onOpenWeb!()
+      else opts.onShow()
+    }
+
+    // Windows: setContextMenu suppresses right-click and single-click behavior is inconsistent.
+    // Pop the menu explicitly on right-click and use double-click for the primary action.
+    if (process.platform === 'win32') {
+      tray.on('right-click', () => {
+        tray.popUpContextMenu(menu, screen.getCursorScreenPoint())
+      })
+      tray.on('double-click', primaryAction)
+    } else {
+      tray.setContextMenu(menu)
+      tray.on('click', primaryAction)
+    }
 
     return tray
   } catch (error) {

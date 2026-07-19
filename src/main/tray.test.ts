@@ -20,6 +20,12 @@ type TrayCall = {
   tooltip?: string
   contextMenu?: { template: MenuTemplateItem[] }
   clickHandler?: () => void
+  doubleClickHandler?: () => void
+  rightClickHandler?: () => void
+  poppedMenu?: {
+    menu: { template: MenuTemplateItem[] }
+    position?: { x: number; y: number }
+  }
 }
 
 let lastTray: TrayCall | undefined
@@ -63,8 +69,18 @@ class FakeTray {
     if (lastTray) lastTray.contextMenu = menu
   }
 
+  popUpContextMenu(
+    menu: { template: MenuTemplateItem[] },
+    position?: { x: number; y: number }
+  ): void {
+    if (lastTray) lastTray.poppedMenu = { menu, position }
+  }
+
   on(event: string, handler: () => void): void {
-    if (event === 'click' && lastTray) lastTray.clickHandler = handler
+    if (!lastTray) return
+    if (event === 'click') lastTray.clickHandler = handler
+    if (event === 'double-click') lastTray.doubleClickHandler = handler
+    if (event === 'right-click') lastTray.rightClickHandler = handler
   }
 }
 
@@ -83,6 +99,9 @@ vi.mock('electron', () => ({
   nativeImage: {
     createFromPath: () => makeImage('path'),
     createFromBitmap: () => makeImage('bitmap')
+  },
+  screen: {
+    getCursorScreenPoint: () => ({ x: 1200, y: 800 })
   }
 }))
 
@@ -159,6 +178,81 @@ describe('createAppTray', () => {
 
     lastTray?.clickHandler?.()
     expect(onShow).toHaveBeenCalledTimes(2)
+  })
+
+  it('builds a headless web menu and left click opens the web UI', () => {
+    const onOpenWeb = vi.fn()
+    const onCopyWebUrl = vi.fn()
+    const onQuit = vi.fn()
+
+    createAppTray({
+      iconPath: '/icons/tray.png',
+      onShow: vi.fn(),
+      onHide: vi.fn(),
+      onQuit,
+      headless: true,
+      onOpenWeb,
+      onCopyWebUrl
+    })
+
+    expect(lastTray?.tooltip).toBe('Open Science (Web)')
+    expect(lastTemplate?.filter((item) => item.label).map((item) => item.label)).toEqual([
+      'Open Web UI',
+      'Copy URL',
+      'Quit'
+    ])
+
+    findItem('Open Web UI').click?.()
+    findItem('Copy URL').click?.()
+    findItem('Quit').click?.()
+    lastTray?.clickHandler?.()
+
+    expect(onOpenWeb).toHaveBeenCalledTimes(2)
+    expect(onCopyWebUrl).toHaveBeenCalledTimes(1)
+    expect(onQuit).toHaveBeenCalledTimes(1)
+  })
+
+  describe('on Windows', () => {
+    beforeEach(() => {
+      setPlatform('win32')
+    })
+
+    it('pops the context menu on right click and uses double click for the primary action', () => {
+      const onShow = vi.fn()
+
+      createAppTray({
+        iconPath: '/icons/tray.png',
+        onShow,
+        onHide: vi.fn(),
+        onQuit: vi.fn()
+      })
+
+      expect(lastTray?.contextMenu).toBeUndefined()
+      lastTray?.rightClickHandler?.()
+      expect(lastTray?.poppedMenu?.menu.template).toBe(lastTemplate)
+      expect(lastTray?.poppedMenu?.position).toEqual({ x: 1200, y: 800 })
+      expect(lastTray?.clickHandler).toBeUndefined()
+
+      lastTray?.doubleClickHandler?.()
+      expect(onShow).toHaveBeenCalledTimes(1)
+    })
+
+    it('uses double click to open the web UI in headless mode', () => {
+      const onOpenWeb = vi.fn()
+
+      createAppTray({
+        iconPath: '/icons/tray.png',
+        onShow: vi.fn(),
+        onHide: vi.fn(),
+        onQuit: vi.fn(),
+        headless: true,
+        onOpenWeb,
+        onCopyWebUrl: vi.fn()
+      })
+
+      lastTray?.doubleClickHandler?.()
+      expect(onOpenWeb).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('uses the full-color icon (not a template) on non-darwin platforms', () => {

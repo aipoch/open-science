@@ -67,7 +67,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { createAppTray },
         { installAppLifecycle },
         { installRpcCapture },
-        { parseWebModeOptions, startOptionalWebService }
+        { parseWebModeOptions, startOptionalWebService, buildAuthenticatedWebUrl }
       ] = await Promise.all([
         import('./ipc'),
         import('./windows'),
@@ -142,6 +142,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         isMigrationInProgress,
         createMainWindow,
         createAppTray,
+        buildAuthenticatedWebUrl,
         shutdownCoordinator,
         installAppLifecycle,
         log,
@@ -161,7 +162,27 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       ctx.installAppLifecycle({
         app,
         createMainWindow: ctx.createMainWindow,
-        createTray: (handlers) => ctx.createAppTray({ iconPath: icon, ...handlers }),
+        createTray: (handlers) => {
+          const webPort = ctx.webServer?.port
+          const headlessWeb = ctx.webMode.headless && webPort !== undefined
+          return ctx.createAppTray({
+            iconPath: icon,
+            ...handlers,
+            ...(headlessWeb
+              ? {
+                  headless: true,
+                  onOpenWeb: async () => {
+                    const { shell } = await import('electron')
+                    await shell.openExternal(await ctx.buildAuthenticatedWebUrl(webPort))
+                  },
+                  onCopyWebUrl: async () => {
+                    const { clipboard } = await import('electron')
+                    clipboard.writeText(await ctx.buildAuthenticatedWebUrl(webPort))
+                  }
+                }
+              : {})
+          })
+        },
         // Latching quit teardown via the shared coordinator (the same one the update gate uses). The
         // coordinator awaits the agent + kernel process trees so a Windows taskkill /T completes before
         // app.exit; runForQuit bounds it so a stuck backend can't hang quit.

@@ -73,6 +73,11 @@ const startOptionalWebService = async ({
   }
 }
 
+const buildAuthenticatedWebUrl = async (port: number): Promise<string> => {
+  const token = await loadOrCreateWebToken(resolveConfigRoot())
+  return `http://127.0.0.1:${port}/?token=${encodeURIComponent(token)}`
+}
+
 export { parseWebModeOptions } from './options'
-export { startOptionalWebService }
+export { buildAuthenticatedWebUrl, startOptionalWebService }
 export type { RunningWebServer }
