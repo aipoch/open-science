@@ -913,6 +913,76 @@ describe('ACP runtime session management', () => {
     ).resolves.toBeDefined()
   })
 
+  it('does not let a superseded turn finally clear the replay turn in-flight lock', async () => {
+    const root = await createTemporaryRoot()
+    const artifactRepository = new ArtifactRepository(root)
+    // Hold the abandoned turn's finally open (at emitArtifactRunEvent) until the replay turn has claimed
+    // the lock, reproducing production timing where the renderer resends immediately after the reset.
+    const listGate = createDeferred()
+    vi.spyOn(artifactRepository, 'listPendingRunFiles').mockImplementation(async () => {
+      await listGate.promise
+      return []
+    })
+
+    const process = new FakeAgentProcess()
+    // Both prompts stay in-flight so their locks are held; the first is abandoned by the reset.
+    const gateA = createDeferred()
+    const gateB = createDeferred()
+    let firstPrompt = true
+    startFakeAgent(process, ['remote-session-1', 'remote-session-2'], {
+      onPrompt: () => {
+        if (firstPrompt) {
+          firstPrompt = false
+          return gateA.promise
+        }
+        return gateB.promise
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        repository: artifactRepository
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    // The lock is claimed synchronously at turn start, so no polling is needed to observe it.
+    const failedTurn = runtime
+      .sendPrompt({ sessionId: session.sessionId, text: 'oversized turn' })
+      .catch(() => undefined)
+    expect(runtime.getSnapshot().promptInFlightSessionIds).toContain(session.sessionId)
+
+    // Reset abandons the failed turn (its finally now blocks on the gated listPendingRunFiles — before it
+    // reaches its own lock cleanup) and frees the lock so the replay can start.
+    await runtime.resetSessionContext({ sessionId: session.sessionId, cwd: '/workspace' })
+    expect(runtime.getSnapshot().promptInFlightSessionIds).not.toContain(session.sessionId)
+
+    // The replay turn re-claims the lock for the same app session id while the abandoned turn's finally is
+    // still parked in listPendingRunFiles.
+    const replayTurn = runtime
+      .sendPrompt({ sessionId: session.sessionId, text: 'replayed turn' })
+      .catch(() => undefined)
+    expect(runtime.getSnapshot().promptInFlightSessionIds).toContain(session.sessionId)
+
+    // Let the abandoned turn's finally run to completion — its generation token is now stale, so it must
+    // not delete the replay turn's lock. This is the assertion that fails without the guard.
+    listGate.resolve()
+    await failedTurn
+    expect(runtime.getSnapshot().promptInFlightSessionIds).toContain(session.sessionId)
+
+    // Teardown: release both prompt gates so the fake agent can drain (the abandoned turn's server-side
+    // handler is still parked on its gate, which otherwise blocks the replay from completing).
+    gateA.resolve()
+    gateB.resolve()
+    await replayTurn
+  })
+
   it('sends PDFs as extracted text, never as an inlined base64 file', async () => {
     const root = await createTemporaryRoot()
     const uploadRepository = new UploadRepository(root)

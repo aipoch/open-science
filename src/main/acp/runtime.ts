@@ -279,6 +279,11 @@ class AcpRuntime {
   // and skip a doomed resume. Cleaned per-session on delete.
   private readonly sessionFrameworks = new Map<string, string>()
   private readonly promptInFlightSessionIds = new Set<string>()
+  // Monotonic per-turn token and the token of the turn that currently owns each app session id. When an
+  // overflow-recovery replay reuses a session id, its start bumps the token; the abandoned turn's finally
+  // then sees a newer owner and leaves the replay's shared state (lock, artifact run) untouched.
+  private promptTurnSequence = 0
+  private readonly currentPromptTurnBySession = new Map<string, number>()
   private readonly permissionProfiles = new Map<string, SessionPermissionProfileState>()
   // A provider change requested while a prompt was running, applied when the session next goes idle.
   private pendingProviderReconnect = false
@@ -1047,6 +1052,7 @@ class AcpRuntime {
     this.sessions.clear()
     this.sessionCwds.clear()
     this.sessionInlineImageBytes.clear()
+    this.currentPromptTurnBySession.clear()
     this.sessionMcpServerNames.clear()
     this.sessionProjectNames.clear()
     this.permissionProfiles.clear()
@@ -1194,7 +1200,11 @@ class AcpRuntime {
     }
 
     this.currentSessionId = request.sessionId
+    // Claim ownership of this session's shared turn state so a superseded turn's later finally can tell it
+    // no longer owns the lock/artifact run (see the guarded cleanup in this turn's finally).
+    const promptTurn = ++this.promptTurnSequence
     this.promptInFlightSessionIds.add(request.sessionId)
+    this.currentPromptTurnBySession.set(request.sessionId, promptTurn)
     this.emitState()
     log.info('prompt start', {
       sessionId: request.sessionId,
@@ -1311,8 +1321,18 @@ class AcpRuntime {
           text: errorMessage(error)
         })
       }
-      this.activeArtifactRun = undefined
-      this.promptInFlightSessionIds.delete(request.sessionId)
+      // Only clear shared turn state if a newer turn hasn't taken over this app session id. An
+      // overflow-recovery replay reuses the id: after resetSessionContext releases this (failed) turn's
+      // lock and the renderer starts the replay, this stale finally must not delete the replay's in-flight
+      // lock (which would reopen same-session sends and misreport prompt-in-flight) or clear its active
+      // artifact run. Identity/token comparisons scope each clear to the turn that still owns the state.
+      if (this.activeArtifactRun?.run === artifactRun) {
+        this.activeArtifactRun = undefined
+      }
+      if (this.currentPromptTurnBySession.get(request.sessionId) === promptTurn) {
+        this.currentPromptTurnBySession.delete(request.sessionId)
+        this.promptInFlightSessionIds.delete(request.sessionId)
+      }
       this.emitState()
       // A disabled skill forced for this turn is restored now: clear the force set, then schedule a
       // reconnect so the NEXT prompt respawns with the normal enabled set. Ordering matters — the clear
@@ -1380,6 +1400,7 @@ class AcpRuntime {
     this.sessions.delete(request.sessionId)
     this.sessionCwds.delete(request.sessionId)
     this.sessionInlineImageBytes.delete(request.sessionId)
+    this.currentPromptTurnBySession.delete(request.sessionId)
     this.sessionMcpServerNames.delete(request.sessionId)
     this.sessionProjectNames.delete(request.sessionId)
     this.sessionFrameworks.delete(request.sessionId)
@@ -2290,6 +2311,7 @@ class AcpRuntime {
     this.sessions.clear()
     this.sessionCwds.clear()
     this.sessionInlineImageBytes.clear()
+    this.currentPromptTurnBySession.clear()
     this.sessionMcpServerNames.clear()
     this.sessionProjectNames.clear()
     this.artifactSessionIds.clear()
