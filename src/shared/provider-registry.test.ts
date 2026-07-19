@@ -6,8 +6,10 @@ import {
   getOfficialVendor,
   isOfficialVendorId,
   resolveVendorApiKeyUrl,
+  resolveVendorApiType,
   resolveVendorBaseUrl,
   resolveVendorModelsUrl,
+  resolveVendorOpenAiBaseUrl,
   vendorHasRegions
 } from './provider-registry'
 
@@ -57,6 +59,26 @@ describe('provider registry', () => {
     // GLM/MiniMax don't expose a model-list endpoint yet, so refresh is hidden for them.
     expect(resolveVendorModelsUrl('zhipu')).toBeUndefined()
     expect(resolveVendorModelsUrl('minimax')).toBeUndefined()
+  })
+
+  it('routes OpenRouter through both APIs with a curated catalog and no live refresh', () => {
+    expect(resolveVendorApiType('openrouter')).toBe('both')
+    expect(resolveVendorBaseUrl('openrouter')).toBe('https://openrouter.ai/api')
+    expect(resolveVendorOpenAiBaseUrl('openrouter')).toBe('https://openrouter.ai/api/v1')
+    expect(resolveVendorApiKeyUrl('openrouter')).toBe(
+      'https://openrouter.ai/workspaces/default/keys'
+    )
+    // Curated (300+ live ids would flood the picker), so refresh-from-vendor is hidden.
+    expect(resolveVendorModelsUrl('openrouter')).toBeUndefined()
+    expect(defaultVendorModel('openrouter')).toBe('anthropic/claude-opus-4.8')
+  })
+
+  it('routes Xiaomi MIMO through both APIs with a live model list', () => {
+    expect(resolveVendorApiType('xiaomimimo')).toBe('both')
+    expect(resolveVendorBaseUrl('xiaomimimo')).toBe('https://api.xiaomimimo.com/anthropic')
+    expect(resolveVendorOpenAiBaseUrl('xiaomimimo')).toBe('https://api.xiaomimimo.com/v1')
+    expect(resolveVendorModelsUrl('xiaomimimo')).toBe('https://api.xiaomimimo.com/v1/models')
+    expect(defaultVendorModel('xiaomimimo')).toBe('mimo-v2.5-pro')
   })
 
   it('resolves the key-console URL, preferring the selected region', () => {

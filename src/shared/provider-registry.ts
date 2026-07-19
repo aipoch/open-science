@@ -10,7 +10,14 @@
 import type { ProviderApiType } from './settings'
 
 export type OfficialVendorId =
-  'anthropic' | 'deepseek' | 'zhipu' | 'minimax' | 'kimi' | 'kimiforcode'
+  | 'anthropic'
+  | 'deepseek'
+  | 'zhipu'
+  | 'minimax'
+  | 'kimi'
+  | 'kimiforcode'
+  | 'xiaomimimo'
+  | 'openrouter'
 
 // A selectable endpoint for vendors that publish more than one host — e.g. a Global vs. China region
 // (MiniMax) or a separate overseas/domestic console (GLM's Z.AI vs. BigModel). Each carries its own
@@ -139,6 +146,55 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     baseUrl: 'https://api.kimi.com/coding',
     apiKeyUrl: 'https://www.kimi.com/code/docs',
     models: ['kimi-k3', 'kimi-for-coding', 'kimi-for-coding-highspeed']
+  },
+  {
+    id: 'xiaomimimo',
+    label: 'Xiaomi MIMO',
+    // Xiaomi MiMo exposes both routes: Anthropic /v1/messages under `/anthropic` and the OpenAI-compatible
+    // /v1/chat/completions under `/v1`. The same model ids work on both.
+    apiType: 'both',
+    baseUrl: 'https://api.xiaomimimo.com/anthropic',
+    openaiBaseUrl: 'https://api.xiaomimimo.com/v1',
+    apiKeyUrl: 'https://platform.xiaomimimo.com/console/api-keys',
+    modelsListUrl: 'https://api.xiaomimimo.com/v1/models',
+    models: ['mimo-v2.5-pro', 'mimo-v2.5']
+  },
+  // OpenRouter is an aggregation gateway (many vendors behind one key), so it sits last in the picker.
+  {
+    id: 'openrouter',
+    label: 'OpenRouter',
+    // Multi-vendor gateway: Anthropic /v1/messages under `/api` and the OpenAI-compatible
+    // /v1/chat/completions under `/api/v1`. Its live catalog is 300+ ids, so this ships a curated set of
+    // the top models across vendors (no modelsListUrl) rather than a "refresh from vendor" that would
+    // flood the model picker. Model slugs use OpenRouter's `vendor/model` form.
+    apiType: 'both',
+    baseUrl: 'https://openrouter.ai/api',
+    openaiBaseUrl: 'https://openrouter.ai/api/v1',
+    apiKeyUrl: 'https://openrouter.ai/workspaces/default/keys',
+    models: [
+      // Anthropic
+      'anthropic/claude-opus-4.8',
+      'anthropic/claude-sonnet-5',
+      'anthropic/claude-haiku-4.5',
+      // OpenAI
+      'openai/gpt-5.6-terra-pro',
+      'openai/gpt-5.6-terra',
+      'openai/gpt-5.6-sol-pro',
+      'openai/gpt-5.6-sol',
+      'openai/gpt-5.6-luna-pro',
+      'openai/gpt-5.6-luna',
+      'openai/gpt-5.5-pro',
+      'openai/gpt-5.5',
+      'openai/gpt-5.3-codex',
+      // Other top-ranked vendors on OpenRouter
+      'google/gemini-3.1-pro-preview',
+      'google/gemini-3.5-flash',
+      'x-ai/grok-4.5',
+      'deepseek/deepseek-v4-pro',
+      'z-ai/glm-5.2',
+      'moonshotai/kimi-k3',
+      'qwen/qwen3.7-max'
+    ]
   }
 ]
 
