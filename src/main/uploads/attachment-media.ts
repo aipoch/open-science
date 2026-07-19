@@ -13,6 +13,23 @@ const MAX_IMAGE_PAYLOAD_BYTES = 4.5 * 1024 * 1024
 // Anthropic downscales images past 1568px on the long edge anyway, so this is a lossless-of-info cap.
 const MAX_IMAGE_LONG_EDGE = 1568
 
+// A conversation replays its full history every turn, so inlined image payloads accumulate across
+// turns even though each image is individually capped. Once the running base64 total nears the
+// provider's 32MB request ceiling, further images are sent as file references instead of base64.
+// This bounds what one session can contribute so it never drives the request past the limit — which
+// both fails the turn ("Request too large") and breaks compaction with `media_unstrippable`. Base64
+// inflates ~33% and text/tool payloads share the request, so the budget sits well under 32MB.
+export const MAX_SESSION_INLINE_IMAGE_BYTES = 20 * 1024 * 1024
+
+// Whether another image may be inlined given how many base64 bytes this session has already inlined.
+// The first image of a session always inlines (a lone image is per-image capped well under the limit),
+// so a conversation is never left with zero visual content just because one image is large.
+export const canInlineImageInSession = (
+  alreadyInlinedBytes: number,
+  imageBase64Length: number,
+  budget: number = MAX_SESSION_INLINE_IMAGE_BYTES
+): boolean => alreadyInlinedBytes === 0 || alreadyInlinedBytes + imageBase64Length <= budget
+
 // Extracted PDF text is bounded so a huge document can never recreate the oversized-request problem.
 export const MAX_PDF_TEXT_CHARS = 1024 * 1024
 

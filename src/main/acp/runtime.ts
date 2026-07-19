@@ -78,7 +78,12 @@ import { opencodeStorageDir } from '../agent-framework/opencode'
 import type { UploadRepository } from '../uploads/repository'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, ArtifactReference } from '../../shared/artifacts'
-import { buildImageContentData, extractPdfText } from '../uploads/attachment-media'
+import {
+  buildImageContentData,
+  canInlineImageInSession,
+  extractPdfText,
+  MAX_SESSION_INLINE_IMAGE_BYTES
+} from '../uploads/attachment-media'
 
 type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateSnapshot) => void
@@ -110,6 +115,9 @@ type AcpRuntimeOptions = {
   resumeTimeoutMs?: number
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   clearTimer?: (handle: ReturnType<typeof setTimeout>) => void
+  // Per-session cumulative inlined-image budget in base64 bytes. Defaults to MAX_SESSION_INLINE_IMAGE_BYTES;
+  // injectable so tests can drive the degrade-to-file path with small fixtures.
+  inlineImageBudgetBytes?: number
 }
 
 // Turn-scoped skill force-load hooks, wired from the settings service. Optional so tests that construct
@@ -245,6 +253,11 @@ class AcpRuntime {
   private supportsSessionResume = false
   private readonly sessions = new Map<string, ActiveSession>()
   private readonly sessionCwds = new Map<string, string>()
+  // Running total of base64 image bytes this session has inlined. The agent replays full history each
+  // turn, so this accumulates; once it nears the request ceiling further images degrade to file links
+  // (see canInlineImageInSession) so a long conversation can never overflow the request or break
+  // compaction with `media_unstrippable`. Cleared on session delete and on disconnect.
+  private readonly sessionInlineImageBytes = new Map<string, number>()
   // Per-session names of the MCP servers the agent was actually given (from createMcpServers), so
   // MCP-originated tool calls can be recognized across frameworks (Claude's mcp__<server>__<tool> vs
   // opencode's <server>_<tool>) and never conservatively auto-approved. Derived per session rather
@@ -282,6 +295,7 @@ class AcpRuntime {
   private pendingSessionModel: string | undefined
   // Bounded resume network timeout + injectable timers (defaults to real setTimeout/clearTimeout).
   private readonly resumeTimeoutMs: number
+  private readonly inlineImageBudgetBytes: number
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void
   private readonly artifactOptions: AcpRuntimeArtifactOptions | undefined
@@ -309,6 +323,7 @@ class AcpRuntime {
     this.framework = options.framework ?? claudeCodeFramework
     this.mcpHttpHost = options.mcpHttpHost
     this.resumeTimeoutMs = options.resumeTimeoutMs ?? 30_000
+    this.inlineImageBudgetBytes = options.inlineImageBudgetBytes ?? MAX_SESSION_INLINE_IMAGE_BYTES
     this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
     this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle))
     this.artifactOptions = options.artifacts
@@ -998,6 +1013,7 @@ class AcpRuntime {
 
     this.sessions.clear()
     this.sessionCwds.clear()
+    this.sessionInlineImageBytes.clear()
     this.sessionMcpServerNames.clear()
     this.sessionProjectNames.clear()
     this.permissionProfiles.clear()
@@ -1322,6 +1338,7 @@ class AcpRuntime {
     this.unregisterHttpMcpSession(request.sessionId)
     this.sessions.delete(request.sessionId)
     this.sessionCwds.delete(request.sessionId)
+    this.sessionInlineImageBytes.delete(request.sessionId)
     this.sessionMcpServerNames.delete(request.sessionId)
     this.sessionProjectNames.delete(request.sessionId)
     this.sessionFrameworks.delete(request.sessionId)
@@ -1400,13 +1417,13 @@ class AcpRuntime {
 
       // Keep the user's text first, then append files in the same order they were added.
       for (const attachment of finalizedAttachments) {
-        contentBlocks.push(await this.createAttachmentContentBlock(attachment))
+        contentBlocks.push(await this.createAttachmentContentBlock(sessionId, attachment))
       }
     }
 
     // `@`-mentioned artifacts reuse the same per-type block builder as uploads, in mention order.
     for (const reference of referencedArtifacts) {
-      contentBlocks.push(await this.createReferencedArtifactContentBlock(reference))
+      contentBlocks.push(await this.createReferencedArtifactContentBlock(sessionId, reference))
     }
 
     return contentBlocks
@@ -1414,6 +1431,7 @@ class AcpRuntime {
 
   // Converts one managed upload into the richest ACP content block that is safe for its type.
   private async createAttachmentContentBlock(
+    sessionId: string,
     attachment: UploadedAttachment
   ): Promise<ContentBlock> {
     if (!this.uploadRepository) throw new Error('Upload storage is not configured.')
@@ -1421,6 +1439,7 @@ class AcpRuntime {
     const filePath = await this.uploadRepository.resolveManagedUploadPath({ path: attachment.path })
 
     return this.buildFileContentBlock({
+      sessionId,
       absolutePath: filePath,
       uri: pathToFileURL(filePath).href,
       name: attachment.originalName || attachment.name,
@@ -1431,12 +1450,14 @@ class AcpRuntime {
 
   // Converts one `@`-mentioned artifact into the same content block an equivalent upload produces.
   private async createReferencedArtifactContentBlock(
+    sessionId: string,
     reference: ArtifactReference
   ): Promise<ContentBlock> {
     const filePath = await this.resolveReferencedArtifactPath(reference)
     const { size } = await stat(filePath)
 
     return this.buildFileContentBlock({
+      sessionId,
       absolutePath: filePath,
       uri: pathToFileURL(filePath).href,
       name: reference.name,
@@ -1459,13 +1480,14 @@ class AcpRuntime {
   // Builds the richest ACP content block that is safe for a resolved file, shared by uploads and
   // `@`-mentioned artifacts so both reach the agent through identical per-type logic.
   private async buildFileContentBlock(descriptor: {
+    sessionId: string
     absolutePath: string
     uri: string
     name: string
     mimeType?: string
     size: number
   }): Promise<ContentBlock> {
-    const { absolutePath, uri, name, mimeType, size } = descriptor
+    const { sessionId, absolutePath, uri, name, mimeType, size } = descriptor
 
     // Images are embedded as base64 so vision-capable agents receive the actual pixels.
     // Large images are downscaled/re-encoded first so one file cannot overflow the request.
@@ -1475,6 +1497,18 @@ class AcpRuntime {
         mimeType,
         size
       )
+
+      // Inlined images accumulate over a conversation's replayed history. Once this session's running
+      // total nears the request ceiling, degrade further images to a file reference (like large binary
+      // uploads) instead of base64, so the conversation never overflows the request or breaks
+      // compaction with `media_unstrippable`. The file stays reachable to the agent via its uri.
+      const alreadyInlined = this.sessionInlineImageBytes.get(sessionId) ?? 0
+
+      if (!canInlineImageInSession(alreadyInlined, data.length, this.inlineImageBudgetBytes)) {
+        return { type: 'resource_link', uri, name, title: name, mimeType, size }
+      }
+
+      this.sessionInlineImageBytes.set(sessionId, alreadyInlined + data.length)
 
       return { type: 'image', data, mimeType: outMimeType, uri }
     }
@@ -2214,6 +2248,7 @@ class AcpRuntime {
     this.permissionBroker.cancelAll()
     this.sessions.clear()
     this.sessionCwds.clear()
+    this.sessionInlineImageBytes.clear()
     this.sessionMcpServerNames.clear()
     this.sessionProjectNames.clear()
     this.artifactSessionIds.clear()

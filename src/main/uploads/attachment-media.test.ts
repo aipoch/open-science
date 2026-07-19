@@ -4,7 +4,12 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { buildImageContentData, extractPdfText } from './attachment-media'
+import {
+  buildImageContentData,
+  canInlineImageInSession,
+  extractPdfText,
+  MAX_SESSION_INLINE_IMAGE_BYTES
+} from './attachment-media'
 
 // A configurable fake nativeImage so the >2MB compression path is exercised without an Electron runtime.
 type FakeImage = {
@@ -139,5 +144,24 @@ describe('extractPdfText', () => {
 
     expect(result.pageCount).toBe(1)
     expect(result.text).toBe('')
+  })
+})
+
+describe('canInlineImageInSession', () => {
+  it('always inlines the first image of a session even if it is large', () => {
+    expect(canInlineImageInSession(0, MAX_SESSION_INLINE_IMAGE_BYTES * 2, 10)).toBe(true)
+  })
+
+  it('inlines while the running total stays within budget', () => {
+    expect(canInlineImageInSession(4, 6, 10)).toBe(true)
+  })
+
+  it('degrades once the running total would exceed the budget', () => {
+    expect(canInlineImageInSession(6, 5, 10)).toBe(false)
+  })
+
+  it('defaults to the shared session budget when none is passed', () => {
+    expect(canInlineImageInSession(MAX_SESSION_INLINE_IMAGE_BYTES, 1)).toBe(false)
+    expect(canInlineImageInSession(MAX_SESSION_INLINE_IMAGE_BYTES - 1, 1)).toBe(true)
   })
 })

@@ -12,6 +12,7 @@ import { AcpRuntime } from './runtime'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { claudeCodeFramework, opencodeFramework } from '../agent-framework'
 import { ArtifactRepository } from '../artifacts/repository'
+import type { UploadedAttachment } from '../../shared/uploads'
 import { UploadRepository } from '../uploads/repository'
 import {
   beginMigration,
@@ -772,6 +773,68 @@ describe('ACP runtime session management', () => {
     await expect(
       readFile(join(root, 'uploads', 'default-project', 'remote-session-1', 'notes.txt'), 'utf8')
     ).resolves.toBe('hello from upload')
+  })
+
+  it('degrades images to file links once a session exceeds its cumulative inline budget', async () => {
+    const root = await createTemporaryRoot()
+    const uploadRepository = new UploadRepository(root)
+    const process = new FakeAgentProcess()
+    const receivedPrompts: ContentBlock[][] = []
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: ({ prompt }) => {
+        receivedPrompts.push(prompt)
+      }
+    })
+    // A tiny budget makes small fixtures cross the cliff: the first image inlines, the next degrades
+    // because the conversation's replayed history already holds the first image's bytes.
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      uploads: { repository: uploadRepository },
+      inlineImageBudgetBytes: 15
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+
+    const stageImage = (name: string): Promise<UploadedAttachment[]> =>
+      uploadRepository.stageFiles({
+        files: [
+          { name, mimeType: 'image/png', content: Buffer.from('png-bytes').toString('base64') }
+        ]
+      })
+
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'first image',
+      attachments: await stageImage('first.png')
+    })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'second image',
+      attachments: await stageImage('second.png')
+    })
+
+    expect(receivedPrompts).toHaveLength(2)
+    // First turn: within budget, so the pixels are inlined as base64.
+    expect(receivedPrompts[0][1]).toMatchObject({
+      type: 'image',
+      mimeType: 'image/png',
+      data: Buffer.from('png-bytes').toString('base64')
+    })
+    // Second turn: the accumulated total would overflow, so the image degrades to a file reference
+    // instead of base64 — keeping the request under the ceiling so compaction stays viable.
+    expect(receivedPrompts[1][1]).toMatchObject({
+      type: 'resource_link',
+      name: 'second.png',
+      title: 'second.png',
+      mimeType: 'image/png',
+      uri: expect.stringContaining('second.png')
+    })
+    // The raw image bytes must not be inlined anywhere in the degraded turn.
+    expect(JSON.stringify(receivedPrompts[1])).not.toContain(
+      Buffer.from('png-bytes').toString('base64')
+    )
   })
 
   it('sends PDFs as extracted text, never as an inlined base64 file', async () => {
