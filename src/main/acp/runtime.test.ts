@@ -2766,6 +2766,68 @@ describe('ACP runtime session management', () => {
     expect(claudeAgent.resumedSessions).toEqual([])
   })
 
+  it('skips resume when the same framework switches to a different provider backend', async () => {
+    // Codex shared-profile and isolated-login providers use separate CODEX_HOME session stores even
+    // though both run through the same Codex framework. Sending one store's session id to the other
+    // produces the generic "Internal error" reported by codex-acp, so treat the backend identity as
+    // part of resumability and adopt a fresh agent session directly.
+    const sharedProcess = new FakeAgentProcess()
+    const codexModes = createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+    const sharedAgent = startFakeAgent(sharedProcess, ['shared-session-1'], { modes: codexModes })
+    const isolatedProcess = new FakeAgentProcess()
+    const isolatedAgent = startFakeAgent(isolatedProcess, ['isolated-session-1'], {
+      modes: codexModes
+    })
+
+    let connects = 0
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: async () => {
+        connects += 1
+
+        return {
+          framework: {
+            ...codexFramework,
+            spawn: () => asAgentProcess(connects === 1 ? sharedProcess : isolatedProcess)
+          },
+          backendId: connects === 1 ? 'codex:codex-shared' : 'codex:codex-isolated',
+          executablePath: '/bin/codex-acp',
+          env: {},
+          args: []
+        }
+      }
+    })
+
+    const created = await runtime.createSession({ cwd: '/workspace' })
+    expect(created).toEqual({
+      sessionId: 'shared-session-1',
+      cwd: resolve('/workspace'),
+      frameworkId: 'codex',
+      backendId: 'codex:codex-shared'
+    })
+
+    await runtime.disconnect(false)
+
+    const resumed = await runtime.resumeSession({
+      sessionId: 'shared-session-1',
+      cwd: '/workspace',
+      previousFrameworkId: 'codex',
+      previousBackendId: created.backendId
+    })
+
+    expect(resumed).toEqual({
+      sessionId: 'shared-session-1',
+      cwd: resolve('/workspace'),
+      frameworkId: 'codex',
+      backendId: 'codex:codex-isolated',
+      contextReset: true
+    })
+    expect(isolatedAgent.resumedSessions).toEqual([])
+    expect(isolatedAgent.newSessions).toHaveLength(1)
+    expect(sharedAgent.resumedSessions).toEqual([])
+  })
+
   it('defers a provider reconnect until an in-flight prompt finishes', async () => {
     const process = new FakeAgentProcess()
     const gate = createDeferred()

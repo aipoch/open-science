@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { execPath } from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ClaudeDetectResult } from '../../shared/settings'
+import { CODEX_SUBSCRIPTION_PROVIDER_ID, type ClaudeDetectResult } from '../../shared/settings'
+import type { CodexAuthControllerPort } from './codex-auth'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
 vi.mock('electron', () => ({
@@ -33,6 +34,8 @@ const { netFetch } = await import('../skills/net-fetch')
 
 let storageRoot: string
 let repository: InstanceType<typeof SettingsRepository>
+const CODEX_SHARED_PROVIDER_ID = CODEX_SUBSCRIPTION_PROVIDER_ID
+const CODEX_ISOLATED_PROVIDER_ID = CODEX_SUBSCRIPTION_PROVIDER_ID
 
 type ManagedInstallImpl = (options: {
   installId: string
@@ -73,6 +76,7 @@ const createService = (
     codexExternalNative?: { path: string; version: string }
     // When false, the ACP smoke test fails (adapter present but can't initialize).
     codexSmokeOk?: boolean
+    codexAuth?: CodexAuthControllerPort
   } = {}
 ): InstanceType<typeof SettingsService> =>
   new SettingsService({
@@ -131,7 +135,8 @@ const createService = (
         ? options.codexDetected.path
         : undefined,
       managedCodexPath: options.codexDetected?.nativePath
-    }
+    },
+    codexAuth: options.codexAuth
   })
 
 beforeEach(async () => {
@@ -145,6 +150,109 @@ afterEach(async () => {
 })
 
 describe('SettingsService: providers', () => {
+  it.each([
+    ['codex-shared', CODEX_SHARED_PROVIDER_ID, 'Codex subscription'],
+    ['codex-isolated', CODEX_ISOLATED_PROVIDER_ID, 'Codex subscription']
+  ] as const)('persists %s as one fixed built-in provider', async (type, id, name) => {
+    const service = createService()
+
+    await service.upsertProvider({ type, name: 'ignored', key: 'ignored', model: 'ignored' })
+    const snapshot = await service.upsertProvider({ type, name: 'duplicate attempt' })
+
+    expect(snapshot.providers.filter((provider) => provider.id === id)).toEqual([
+      expect.objectContaining({
+        id,
+        type,
+        name,
+        apiEndpoints: ['responses'],
+        models: [
+          'gpt-5.6-sol',
+          'gpt-5.6-terra',
+          'gpt-5.6-luna',
+          'gpt-5.5',
+          'gpt-5.4',
+          'gpt-5.4-mini'
+        ],
+        hasKey: false
+      })
+    ])
+    expect((await repository.getSettings()).providers).toEqual([
+      expect.objectContaining({ id, type, name, apiEndpoints: ['responses'] })
+    ])
+  })
+
+  it.each([
+    ['codex-shared', CODEX_SHARED_PROVIDER_ID],
+    ['codex-isolated', CODEX_ISOLATED_PROVIDER_ID]
+  ] as const)('deletes an added %s provider', async (type, id) => {
+    const service = createService()
+    await service.upsertProvider({ type })
+
+    await expect(service.deleteProvider(id)).resolves.toMatchObject({ providers: [] })
+    expect((await repository.getSettings()).providers).toEqual([])
+  })
+
+  it('validates shared and isolated subscriptions through their distinct ACP auth flows', async () => {
+    const codexAuth: CodexAuthControllerPort = {
+      getStatus: vi.fn().mockResolvedValue({
+        mode: 'shared',
+        supported: true,
+        authenticated: true
+      }),
+      loginIsolated: vi.fn().mockResolvedValue({
+        mode: 'isolated',
+        supported: true,
+        authenticated: true
+      }),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn()
+    }
+    const service = createService(undefined, { codexAuth })
+    await service.upsertProvider({ type: 'codex-shared' })
+
+    await expect(
+      service.validateProvider({ providerId: CODEX_SHARED_PROVIDER_ID })
+    ).resolves.toMatchObject({ ok: true })
+    await service.upsertProvider({ type: 'codex-isolated' })
+    await expect(
+      service.validateProvider({ providerId: CODEX_ISOLATED_PROVIDER_ID })
+    ).resolves.toMatchObject({ ok: true })
+    expect(codexAuth.getStatus).toHaveBeenCalledWith('shared')
+    expect(codexAuth.loginIsolated).toHaveBeenCalledOnce()
+
+    const stored = await repository.getSettings()
+    expect(stored.providers.every((provider) => provider.lastValidatedAt !== undefined)).toBe(true)
+  })
+
+  it('cancels isolated login and clears provider readiness on logout', async () => {
+    const codexAuth: CodexAuthControllerPort = {
+      getStatus: vi.fn(),
+      loginIsolated: vi.fn().mockResolvedValue({
+        mode: 'isolated',
+        supported: true,
+        authenticated: true
+      }),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn().mockResolvedValue({
+        mode: 'isolated',
+        supported: true,
+        authenticated: false
+      })
+    }
+    const service = createService(undefined, { codexAuth })
+    await service.upsertProvider({ type: 'codex-isolated' })
+    await service.validateProvider({ providerId: CODEX_ISOLATED_PROVIDER_ID })
+
+    service.cancelCodexLogin()
+    await service.logoutIsolatedCodex()
+
+    expect(codexAuth.cancelLogin).toHaveBeenCalledOnce()
+    expect(codexAuth.logoutIsolated).toHaveBeenCalledOnce()
+    const stored = (await repository.getSettings()).providers[0]
+    expect(stored.lastValidatedAt).toBeUndefined()
+    expect(stored.lastValidationFailure).toBeUndefined()
+  })
+
   it('encrypts the key on upsert and never exposes plaintext in the view', async () => {
     const service = createService()
 
@@ -723,6 +831,63 @@ describe('SettingsService: preflight & spawn config', () => {
       methodId: 'api-key',
       _meta: { 'api-key': { apiKey: 'test-key' } }
     })
+  })
+
+  it.each([
+    ['codex-shared', CODEX_SHARED_PROVIDER_ID],
+    ['codex-isolated', CODEX_ISOLATED_PROVIDER_ID]
+  ] as const)('resolves a validated %s subscription without API routing', async (type, id) => {
+    const adapterPath = join(storageRoot, 'bin', 'codex-acp')
+    await mkdir(dirname(adapterPath), { recursive: true })
+    await writeFile(adapterPath, '', 'utf8')
+    const service = createService(undefined, {
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' }
+    })
+    await repository.setCodexInfo({
+      resolvedPath: adapterPath,
+      version: '1.1.4',
+      nativePath: '/data/codex-managed/native/codex',
+      nativeVersion: '0.144.6'
+    })
+    await repository.setAgentFramework('codex')
+    await repository.upsertProvider({
+      id,
+      type,
+      name: type,
+      apiEndpoints: ['responses'],
+      lastValidatedAt: 100
+    })
+    await service.setActiveProvider(id, 'gpt-5.6-terra')
+    if (type === 'codex-isolated') {
+      const configPath = join(storageRoot, 'codex', 'config.toml')
+      await mkdir(dirname(configPath), { recursive: true })
+      await writeFile(
+        configPath,
+        'model = "account-default"\ncli_auth_credentials_store = "ephemeral"\n',
+        'utf8'
+      )
+    }
+
+    expect(await service.getPreflight()).toMatchObject({ activeProviderReady: true })
+    const backend = await service.resolveActiveAgentBackend()
+
+    expect(backend.backendId).toBe(`codex:builtin-${type}`)
+    expect(backend.sessionModel).toBe('gpt-5.6-terra')
+    expect(backend.authentication).toBeUndefined()
+    expect(backend.providerConfiguration).toBeUndefined()
+    expect(backend.env.CODEX_API_KEY).toBeUndefined()
+    expect(backend.env.CODEX_CONFIG).toBeUndefined()
+    expect(backend.env.MODEL_PROVIDER).toBeUndefined()
+    expect(backend.env.NO_BROWSER).toBeUndefined()
+    expect(backend.env.CODEX_PATH).toBe('/data/codex-managed/native/codex')
+    expect(backend.env.CODEX_HOME).toBe(
+      type === 'codex-isolated' ? join(storageRoot, 'codex-subscription') : undefined
+    )
+    if (type === 'codex-isolated') {
+      expect(await readFile(join(storageRoot, 'codex', 'config.toml'), 'utf8')).toBe(
+        'model = "account-default"\ncli_auth_credentials_store = "ephemeral"\n'
+      )
+    }
   })
 
   it('declares the model image capability in the resolved OpenCode backend config', async () => {
@@ -1499,7 +1664,7 @@ describe('SettingsService: skills', () => {
         resolveNpmBinDirs: () => Promise.resolve([])
       }
     })
-    await service.detectCodex()
+    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.1.4' })
     await repository.setAgentFramework('codex')
     const provider = (
       await service.upsertProvider({
@@ -1522,6 +1687,45 @@ describe('SettingsService: skills', () => {
     // test temp root can be removed on every platform.
     await chmod(materializedFile, 0o644)
     await chmod(materializedDir, 0o755)
+  })
+
+  it('does not synchronize app skills into the user-owned shared Codex profile', async () => {
+    const adapterPath = join(storageRoot, 'bin', 'codex-acp')
+    await mkdir(dirname(adapterPath), { recursive: true })
+    await writeFile(adapterPath, '', 'utf8')
+    await chmod(adapterPath, 0o755)
+    const service = new SettingsService({
+      repository,
+      storageRoot,
+      userClaudeDir: join(storageRoot, 'no-user-claude'),
+      skillRegistry: new SkillRegistry(await seedBundle()),
+      codexDetectDeps: {
+        env: {},
+        homePath: '/home',
+        platform: 'linux',
+        isRunnable: (path) => Promise.resolve(path === adapterPath),
+        getAdapterVersion: () => Promise.resolve('codex-acp 1.1.4'),
+        getCodexVersion: () => Promise.resolve(undefined),
+        smokeInitialize: () => Promise.resolve(true),
+        resolveNpmBinDirs: () => Promise.resolve([])
+      }
+    })
+    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.1.4' })
+    await repository.setAgentFramework('codex')
+    await repository.upsertProvider({
+      id: CODEX_SHARED_PROVIDER_ID,
+      type: 'codex-shared',
+      name: 'Existing Codex profile',
+      apiEndpoints: ['responses'],
+      lastValidatedAt: 1
+    })
+    await service.setActiveProvider(CODEX_SHARED_PROVIDER_ID)
+
+    await service.resolveActiveAgentBackend()
+
+    await expect(
+      readFile(join(storageRoot, 'codex', 'skills', 'os-demo', 'SKILL.md'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('reports only disabled picks as needing force-load and maps ids to names', async () => {

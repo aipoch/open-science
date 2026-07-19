@@ -56,6 +56,14 @@ export const ProviderKindIcon = ({
     )
   }
 
+  if (
+    kindKey === 'codex-subscription' ||
+    kindKey === 'codex-shared' ||
+    kindKey === 'codex-isolated'
+  ) {
+    return <img src={openaiLogo} alt="" className={cn('size-5 shrink-0', className)} />
+  }
+
   const vendorId = kindKey.slice('official:'.length) as OfficialVendorId
   const logo = VENDOR_LOGO[vendorId]
 

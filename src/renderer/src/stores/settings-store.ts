@@ -1,7 +1,11 @@
 import { create } from 'zustand'
 
 import type { OfficialVendorId } from '../../../shared/provider-registry'
-import { providerValidationFailed } from '../../../shared/settings'
+import {
+  codexSubscriptionProviderIdentity,
+  isCodexSubscriptionProvider,
+  providerValidationFailed
+} from '../../../shared/settings'
 import type { PackageMirror } from '../../../shared/mirror'
 import { isMirrorConfigured } from '../pages/settings/mirror-view'
 import type {
@@ -148,6 +152,8 @@ type SettingsStore = SettingsStoreData & {
   // Combined onboarding flow: persist + validate + activate only on success.
   saveAndActivateProvider: (request: UpsertProviderRequest) => Promise<SaveProviderResult>
   validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
+  cancelCodexLogin: () => Promise<void>
+  logoutIsolatedCodex: () => Promise<void>
   // Fetches a saved provider's live model list from the vendor and refreshes the cache on success.
   refreshProviderModels: (providerId: string) => Promise<RefreshProviderModelsResult>
   // Activates a provider and, optionally, a specific model within it (composer model switch). An
@@ -332,6 +338,9 @@ const resolveUpsertedProviderId = (
   before: ProviderView[],
   after: ProviderView[]
 ): string | undefined => {
+  if (isCodexSubscriptionProvider(request.type)) {
+    return codexSubscriptionProviderIdentity().id
+  }
   if (request.id) return request.id
 
   const beforeIds = new Set(before.map((provider) => provider.id))
@@ -643,6 +652,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     }
 
     return result
+  },
+
+  cancelCodexLogin: () => window.api.settings.cancelCodexLogin(),
+
+  logoutIsolatedCodex: async () => {
+    set(applySnapshot(await window.api.settings.logoutIsolatedCodex()))
+    await get().refreshPreflight()
   },
 
   // Fetches a provider's live models from the vendor; on success the persisted list is reflected here.

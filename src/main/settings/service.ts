@@ -56,10 +56,16 @@ import type {
   ValidateProviderRequest,
   ValidateProviderResult
 } from '../../shared/settings'
+import {
+  CODEX_ISOLATED_PROVIDER_ID,
+  CODEX_SHARED_PROVIDER_ID,
+  codexSubscriptionProviderIdentity,
+  isCodexSubscriptionProvider,
+  isProviderUsableByFramework
+} from '../../shared/settings'
 import type { PackageMirror } from '../../shared/mirror'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
-import { isProviderUsableByFramework } from '../../shared/settings'
 import {
   defaultVendorModel,
   getOfficialVendor,
@@ -100,7 +106,7 @@ import {
   type InstallManagedOpencodeOptions
 } from './managed-opencode'
 import { opencodeConfigDir } from '../agent-framework/opencode'
-import { codexStorageDir } from '../agent-framework/codex'
+import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import { provisionAppClaudeConfigDir } from './claude-config-provision'
 import { detectNpmAvailable, runInstallWithFallback, type InstallTarget } from './claude-install'
@@ -154,6 +160,12 @@ import type {
   StoredSettings
 } from './types'
 import { classifyStatus, validateProvider, type ClaudeProbeResult } from './validate'
+import {
+  CodexAuthController,
+  openCodexAuthSession,
+  type CodexAuthControllerPort,
+  type CodexAuthStatus
+} from './codex-auth'
 
 const execFileAsync = promisify(execFile)
 
@@ -286,6 +298,7 @@ export type SettingsServiceOptions = {
   installManagedCodexImpl?: (
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
+  codexAuth?: CodexAuthControllerPort
 }
 
 // Orchestrates the settings units (repository + crypto + detect/install + validate) behind one
@@ -310,6 +323,7 @@ class SettingsService {
   private readonly installManagedCodexImpl: (
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
+  private readonly codexAuth: CodexAuthControllerPort
   private responsesBridge: ResponsesBridge | undefined
   private providerSequence = 0
   private readonly providerValidationGenerations = new Map<string, number>()
@@ -356,6 +370,19 @@ class SettingsService {
     this.installManagedClaudeImpl = options.installManagedClaudeImpl ?? installManagedClaude
     this.installManagedOpencodeImpl = options.installManagedOpencodeImpl ?? installManagedOpencode
     this.installManagedCodexImpl = options.installManagedCodexImpl ?? installManagedCodex
+    this.codexAuth =
+      options.codexAuth ??
+      new CodexAuthController({
+        openSession: async (mode) => {
+          const settings = await this.repository.getSettings()
+          return openCodexAuthSession({
+            adapterPath: await this.resolveCodexExecutable(settings.codex?.resolvedPath),
+            nativePath: settings.codex?.nativePath,
+            mode,
+            storageRoot: this.storageRoot
+          })
+        }
+      })
   }
 
   // Returns the raw stored settings document (unmasked), for main-process bootstrap needs (e.g. priming
@@ -1327,14 +1354,20 @@ class SettingsService {
   // Encrypts any new key, recomputes its mask, and inserts/updates the provider record.
   async upsertProvider(request: UpsertProviderRequest): Promise<SettingsSnapshot> {
     const settings = await this.repository.getSettings()
-    const existing = request.id
-      ? settings.providers.find((provider) => provider.id === request.id)
+    const subscriptionIdentity = isCodexSubscriptionProvider(request.type)
+      ? codexSubscriptionProviderIdentity()
+      : undefined
+    const requestedId = subscriptionIdentity?.id ?? request.id
+    const existing = requestedId
+      ? settings.providers.find((provider) => provider.id === requestedId)
       : undefined
 
     const provider: StoredProvider = {
-      id: existing?.id ?? this.createProviderId(),
+      id: subscriptionIdentity?.id ?? existing?.id ?? this.createProviderId(),
       type: request.type,
-      name: request.name?.trim() || existing?.name || 'Untitled provider'
+      name:
+        subscriptionIdentity?.name ??
+        (request.name?.trim() || existing?.name || 'Untitled provider')
     }
 
     // Both custom and official gateways authenticate with a bearer key; carry it (or keep the stored
@@ -1356,7 +1389,9 @@ class SettingsService {
     // Tracks whether credentials/endpoint changed, which invalidates a prior validation.
     let credentialsChanged = false
 
-    if (request.type === 'official') {
+    if (isCodexSubscriptionProvider(request.type)) {
+      provider.apiEndpoints = ['responses']
+    } else if (request.type === 'official') {
       // Base URL and model catalog come from the registry; the provider only stores which vendor
       // (and, for multi-region vendors, which endpoint) plus the key.
       const vendorId = isOfficialVendorId(request.vendorId) ? request.vendorId : existing?.vendorId
@@ -1432,6 +1467,27 @@ class SettingsService {
     return this.getSettingsView()
   }
 
+  cancelCodexLogin(): void {
+    this.codexAuth.cancelLogin()
+  }
+
+  async logoutIsolatedCodex(): Promise<SettingsSnapshot> {
+    await this.codexAuth.logoutIsolated()
+    const settings = await this.repository.getSettings()
+    const provider = settings.providers.find(
+      (candidate) => candidate.id === codexSubscriptionProviderIdentity().id
+    )
+    if (provider) {
+      await this.repository.upsertProvider({
+        ...provider,
+        lastValidatedAt: undefined,
+        lastValidationFailure: undefined
+      })
+    }
+
+    return this.getSettingsView()
+  }
+
   // Activates a provider and the model to run within it. An omitted/unknown model falls back to the
   // provider's default (its stored model, or the vendor's first catalog entry).
   async setActiveProvider(id: string, model?: string): Promise<SettingsSnapshot> {
@@ -1460,15 +1516,18 @@ class SettingsService {
       this.providerValidationGenerations.set(resolved.storedId, validationGeneration)
     }
 
-    // A provider test is a connectivity/key check on the provider's first model — it confirms the key
-    // and endpoint work, nothing more. Per-model Codex bridge compatibility is a static registry mark
-    // (bridgeUnsupportedModels), not a runtime probe, so there is no per-model capability to stamp.
-    const result = await validateProvider(resolved.provider, {
-      runClaudeProbe:
-        resolved.provider.type === 'claude-default'
-          ? () => this.runClaudeProbe(resolved.provider, settings)
-          : undefined
-    })
+    const result = isCodexSubscriptionProvider(resolved.provider.type)
+      ? this.codexAuthValidationResult(
+          await (resolved.provider.type === 'codex-shared'
+            ? this.codexAuth.getStatus('shared')
+            : this.codexAuth.loginIsolated())
+        )
+      : await validateProvider(resolved.provider, {
+          runClaudeProbe:
+            resolved.provider.type === 'claude-default'
+              ? () => this.runClaudeProbe(resolved.provider, settings)
+              : undefined
+        })
 
     if (resolved.storedId) {
       if (this.providerValidationGenerations.get(resolved.storedId) !== validationGeneration) {
@@ -1506,6 +1565,24 @@ class SettingsService {
     }
 
     return result
+  }
+
+  private codexAuthValidationResult(status: CodexAuthStatus): ValidateProviderResult {
+    if (status.authenticated) return { ok: true, category: 'ok' }
+
+    return {
+      ok: false,
+      category: status.message?.toLowerCase().includes('timed out')
+        ? 'timeout'
+        : status.supported
+          ? 'auth'
+          : 'unknown',
+      message:
+        status.message ??
+        (status.mode === 'shared'
+          ? 'No existing Codex login was found. Run `codex login` or use the isolated Open Science login.'
+          : 'Codex sign-in did not complete.')
+    }
   }
 
   // Fetches a saved provider's live model list from the vendor and, on success, persists it as the
@@ -1960,19 +2037,40 @@ class SettingsService {
       // Unchanged Claude path: skills provisioning + Anthropic-shaped env + local-auth handling.
       const { envOverrides, executablePath } = await this.resolveActiveSpawnConfig()
 
-      return { framework, executablePath, env: envOverrides }
+      return {
+        framework,
+        backendId: `${framework.id}:${activeProvider.id}`,
+        executablePath,
+        env: envOverrides
+      }
     }
 
     const executablePath =
       framework.id === 'codex'
         ? await this.resolveCodexExecutable(settings.codex?.resolvedPath)
         : await this.resolveOpencodeExecutable(settings.opencodePath)
+    const provider = this.resolveProvider(activeProvider, settings.activeModel)
+    // The settings UI intentionally stores one subscription card, but runtime sessions created
+    // under the shared and isolated profiles are not interchangeable. Preserve their legacy
+    // mode-specific backend ids so existing sessions still resume under the matching credentials,
+    // and switching the selector adopts a fresh session instead of crossing the auth boundary.
+    const backendProviderId =
+      framework.id === 'codex' && isCodexSubscriptionProvider(provider.type)
+        ? provider.type === 'codex-shared'
+          ? CODEX_SHARED_PROVIDER_ID
+          : CODEX_ISOLATED_PROVIDER_ID
+        : activeProvider.id
     const skillsRoot =
       framework.id === 'codex'
-        ? codexStorageDir(this.storageRoot)
+        ? provider.type === 'codex-isolated'
+          ? codexSubscriptionStorageDir(this.storageRoot)
+          : codexStorageDir(this.storageRoot)
         : opencodeConfigDir(this.storageRoot)
-    await this.materializeAgentSkills(settings, skillsRoot)
-    const provider = this.resolveProvider(activeProvider, settings.activeModel)
+    // Shared mode exposes the user's normal Codex profile exactly as they own it. The app's skill
+    // synchronizer deliberately stays out of ~/.codex so same-named user skills are never replaced.
+    if (!(framework.id === 'codex' && provider.type === 'codex-shared')) {
+      await this.materializeAgentSkills(settings, skillsRoot)
+    }
     const needsResponsesBridge =
       framework.id === 'codex' && (provider.apiEndpoints?.includes('openai') ?? false)
     const enabledConnectorIds = this.enabledConnectorIds(settings.connectors)
@@ -1993,6 +2091,7 @@ class SettingsService {
     // session model configOption (applied best-effort per session by the runtime).
     return {
       framework,
+      backendId: `${framework.id}:${backendProviderId}`,
       executablePath,
       env: {
         ...(modelConfig.env ?? {}),
@@ -2126,6 +2225,7 @@ class SettingsService {
   }
 
   private providerSupportsImageInput(provider: StoredProvider, activeModel?: string): boolean {
+    if (isCodexSubscriptionProvider(provider.type)) return true
     // claude-default always supports images (uses the user's Claude login, which has vision models)
     if (provider.type === 'claude-default') return true
 
@@ -2147,14 +2247,21 @@ class SettingsService {
 
   // Credentials usable: claude-default always; custom/official need a key that still decrypts.
   private isProviderKeyUsable(provider: StoredProvider): boolean {
+    if (isCodexSubscriptionProvider(provider.type)) return true
     if (provider.type === 'claude-default') return true
 
     return Boolean(provider.keyRef) && tryDecryptKey(provider.keyRef) !== undefined
   }
 
-  // Models selectable for a provider: the vendor catalog for official providers, else the single
-  // configured model (custom always has one; claude-default may carry an override).
+  // Models selectable for a provider: Codex subscriptions share the app's curated OpenAI coding
+  // catalog, official providers use their vendor catalog, and custom/local providers expose their
+  // single configured override. codex-acp validates the chosen id against its live session options
+  // before applying it, so an account-specific omission safely leaves the account default in place.
   private availableModels(provider: StoredProvider): string[] {
+    if (isCodexSubscriptionProvider(provider.type)) {
+      return getOfficialVendor('openai')?.models ?? []
+    }
+
     if (provider.type === 'official' && provider.vendorId) {
       // Live-fetched models (via "refresh from vendor") take precedence over the bundled catalog.
       if (provider.fetchedModels && provider.fetchedModels.length > 0) return provider.fetchedModels

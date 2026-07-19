@@ -291,7 +291,8 @@ const startPendingSessionPrompt = (
       pendingSessionId: pending.sessionId,
       sessionId: runtimeSessionId,
       cwd: sessionCwd,
-      agentFrameworkId: createdSession.frameworkId
+      agentFrameworkId: createdSession.frameworkId,
+      agentBackendId: createdSession.backendId
     })
 
     if (!bound) return
@@ -433,11 +434,14 @@ const sendWorkspaceMessage = async (
           resumeCwd,
           sessionProjectName,
           currentSession?.permissionProfile ?? permissionProfile,
-          currentSession?.agentFrameworkId
+          currentSession?.agentFrameworkId,
+          currentSession?.agentBackendId
         )
 
         contextResetFromResume = Boolean(resumeResult?.contextReset)
-        useSessionStore.getState().markResumed(targetSessionId, resumeResult?.frameworkId)
+        useSessionStore
+          .getState()
+          .markResumed(targetSessionId, resumeResult?.frameworkId, resumeResult?.backendId)
       } catch (error) {
         useSessionStore.getState().failRun(targetSessionId, getResumeFailureMessage(error))
         return appended
@@ -600,13 +604,16 @@ const resumeInterruptedWorkspaceSession = async (
       resumeCwd,
       session.projectId,
       session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-      session.agentFrameworkId
+      session.agentFrameworkId,
+      session.agentBackendId
     )
     // Adopting a fresh agent session (framework switch, or an unresumable restart) wipes the agent's
     // context; capture that so the re-sent turn below replays the transcript. The shared send path's
     // own re-resume can't observe this — by then the session is already attached.
     contextReset = Boolean(resumeResult?.contextReset)
-    useSessionStore.getState().markResumed(sessionId, resumeResult?.frameworkId)
+    useSessionStore
+      .getState()
+      .markResumed(sessionId, resumeResult?.frameworkId, resumeResult?.backendId)
   } catch (error) {
     useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
     return

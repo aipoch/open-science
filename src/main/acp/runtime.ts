@@ -82,7 +82,7 @@ import {
   type NotebookRpcConnection
 } from '../notebook/mcp-server'
 import { getNotebookSessionRoot } from '../notebook/repository'
-import { codexStorageDir } from '../agent-framework/codex'
+import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { withDataRootWrite } from '../storage/migration-state'
 import { opencodeStorageDir } from '../agent-framework/opencode'
@@ -337,6 +337,9 @@ class AcpRuntime {
   // switch (which disconnects) can still tell that an existing session belongs to the other framework
   // and skip a doomed resume. Cleaned per-session on delete.
   private readonly sessionFrameworks = new Map<string, string>()
+  // Like sessionFrameworks, retained across disconnects. A provider/profile switch can keep the same
+  // framework while moving to a different on-disk session store, where the old id is not resumable.
+  private readonly sessionBackendIds = new Map<string, string>()
   private readonly promptInFlightSessionIds = new Set<string>()
   // Monotonic per-turn token and the token of the turn that currently owns each app session id. When an
   // overflow-recovery replay reuses a session id, its start bumps the token; the abandoned turn's finally
@@ -354,6 +357,7 @@ class AcpRuntime {
   private readonly skillsHooks: AcpRuntimeSkillsOptions | undefined
   // Mutable: refreshed from resolveBackend on each connect so a framework switch applies on reconnect.
   private framework: AgentFramework
+  private backendId: string | undefined
   private readonly mcpHttpHost: AgentMcpHttpHost | undefined
   // A Chat Completions provider uses the local Responses bridge. The app-owned notebook MCP has an
   // explicit namespaced bridge mapping; other app MCP tools still require native Responses.
@@ -812,6 +816,7 @@ class AcpRuntime {
       this.sessionMcpServerNames.set(session.sessionId, this.mcpServerNamesOf(mcpServers))
       this.sessionProjectNames.set(session.sessionId, projectName)
       this.sessionFrameworks.set(session.sessionId, this.framework.id)
+      if (this.backendId) this.sessionBackendIds.set(session.sessionId, this.backendId)
       this.rememberArtifactSession(session.sessionId, artifactSessionId)
       this.rememberNotebookSession(session.sessionId, notebookSessionId)
       this.currentSessionId = session.sessionId
@@ -826,7 +831,12 @@ class AcpRuntime {
       this.emitState()
 
       log.info('createSession: completed successfully', { sessionId: session.sessionId })
-      return { sessionId: session.sessionId, cwd: sessionCwd, frameworkId: this.framework.id }
+      return {
+        sessionId: session.sessionId,
+        cwd: sessionCwd,
+        frameworkId: this.framework.id,
+        ...(this.backendId ? { backendId: this.backendId } : {})
+      }
     } catch (error) {
       safeLogError('createSession: failed', errorLogFields(error))
       throw error
@@ -853,6 +863,7 @@ class AcpRuntime {
     this.sessionMcpServerNames.set(appSessionId, mcpServerNames)
     this.sessionProjectNames.set(appSessionId, projectName)
     this.sessionFrameworks.set(appSessionId, this.framework.id)
+    if (this.backendId) this.sessionBackendIds.set(appSessionId, this.backendId)
     this.rememberArtifactSession(appSessionId, appSessionId)
     this.rememberNotebookSession(appSessionId, appSessionId)
     this.currentSessionId = appSessionId
@@ -883,7 +894,12 @@ class AcpRuntime {
       this.sessionProjectNames.set(request.sessionId, projectName)
       this.emitState()
 
-      return { sessionId: request.sessionId, cwd: sessionCwd, frameworkId: this.framework.id }
+      return {
+        sessionId: request.sessionId,
+        cwd: sessionCwd,
+        frameworkId: this.framework.id,
+        ...(this.backendId ? { backendId: this.backendId } : {})
+      }
     }
 
     // The reconnect + session/resume handshake spawns a fresh agent and is network-bound, so it is
@@ -970,12 +986,18 @@ class AcpRuntime {
     // resets, so the caller replays the transcript) when we know it last ran under another framework.
     const priorFramework =
       this.sessionFrameworks.get(request.sessionId) ?? request.previousFrameworkId
+    const priorBackend = this.sessionBackendIds.get(request.sessionId) ?? request.previousBackendId
 
-    if (priorFramework && priorFramework !== this.framework.id) {
-      log.info('skipping cross-framework resume; adopting a fresh session', {
+    if (
+      (priorFramework && priorFramework !== this.framework.id) ||
+      (priorBackend && this.backendId && priorBackend !== this.backendId)
+    ) {
+      log.info('skipping incompatible backend resume; adopting a fresh session', {
         sessionId: request.sessionId,
-        from: priorFramework,
-        to: this.framework.id
+        fromFramework: priorFramework,
+        toFramework: this.framework.id,
+        fromBackend: priorBackend,
+        toBackend: this.backendId
       })
 
       return this.adoptFreshSession(connection, request, sessionCwd, projectName)
@@ -1040,6 +1062,7 @@ class AcpRuntime {
     this.sessionMcpServerNames.set(request.sessionId, this.mcpServerNamesOf(mcpServers))
     this.sessionProjectNames.set(request.sessionId, projectName)
     this.sessionFrameworks.set(request.sessionId, this.framework.id)
+    if (this.backendId) this.sessionBackendIds.set(request.sessionId, this.backendId)
     this.rememberArtifactSession(request.sessionId, request.sessionId)
     this.currentSessionId = request.sessionId
     this.cwd = sessionCwd
@@ -1052,7 +1075,12 @@ class AcpRuntime {
     })
     this.emitState()
 
-    return { sessionId: request.sessionId, cwd: sessionCwd, frameworkId: this.framework.id }
+    return {
+      sessionId: request.sessionId,
+      cwd: sessionCwd,
+      frameworkId: this.framework.id,
+      ...(this.backendId ? { backendId: this.backendId } : {})
+    }
   }
 
   // Builds a brand-new agent session under the SAME app id when a resume cannot reattach the original
@@ -1104,6 +1132,7 @@ class AcpRuntime {
       sessionId: request.sessionId,
       cwd: sessionCwd,
       frameworkId: this.framework.id,
+      ...(this.backendId ? { backendId: this.backendId } : {}),
       contextReset: true
     }
   }
@@ -1342,6 +1371,7 @@ class AcpRuntime {
     // Adopt the framework this reconnect resolved so session meta, permission mapping, and the spawn
     // itself all agree with the current selection.
     this.framework = backend.framework
+    this.backendId = backend.backendId
     this.nativeMcpEnabled =
       backend.framework.id !== 'codex' || backend.providerConfiguration === undefined
     this.bridgeMcpAliasesEnabled =
@@ -1354,6 +1384,7 @@ class AcpRuntime {
     // model (e.g. opencode with no app model to inject) is diagnosable in the log rather than silent.
     log.info('agent backend resolved', {
       framework: backend.framework.id,
+      backendId: backend.backendId ?? '(unspecified)',
       sessionModel: backend.sessionModel ?? '(framework default)',
       args: backend.args ?? [],
       executablePath: backend.executablePath,
@@ -1679,6 +1710,7 @@ class AcpRuntime {
     this.sessionMcpServerNames.delete(request.sessionId)
     this.sessionProjectNames.delete(request.sessionId)
     this.sessionFrameworks.delete(request.sessionId)
+    this.sessionBackendIds.delete(request.sessionId)
     this.permissionProfiles.delete(request.sessionId)
     this.artifactSessionIds.delete(request.sessionId)
     this.notebookRoutingIds.delete(request.sessionId)
@@ -2071,7 +2103,12 @@ class AcpRuntime {
 
     const root = this.artifactOptions.configRoot
 
-    return [getAppClaudeConfigDir(root), opencodeStorageDir(root), codexStorageDir(root)]
+    return [
+      getAppClaudeConfigDir(root),
+      opencodeStorageDir(root),
+      codexStorageDir(root),
+      codexSubscriptionStorageDir(root)
+    ]
   }
 
   // Creates an app-owned artifact session id so new ACP sessions never decide their storage directory.
