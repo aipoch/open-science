@@ -52,14 +52,23 @@ describe('planCliLauncher', () => {
     expect(plan.mode).toBe(0o755)
     expect(plan.shim).toContain('#!/bin/sh')
     expect(plan.shim).toContain('ELECTRON_RUN_AS_NODE=1')
-    // Packaged: pins the app path and quotes both paths (they contain a space).
-    expect(plan.shim).toContain('OPEN_SCIENCE_APP_PATH="/opt/Open Science/open-science"')
-    expect(plan.shim).toContain('"/opt/Open Science/resources/cli/index.mjs" "$@"')
+    // Packaged: pins the app path and single-quotes both paths (they contain a space).
+    expect(plan.shim).toContain("OPEN_SCIENCE_APP_PATH='/opt/Open Science/open-science'")
+    expect(plan.shim).toContain('\'/opt/Open Science/resources/cli/index.mjs\' "$@"')
   })
 
   it('omits OPEN_SCIENCE_APP_PATH for a development (unpackaged) build', () => {
     const plan = planCliLauncher(posixEnv({ packaged: false }))
     expect(plan.shim).not.toContain('OPEN_SCIENCE_APP_PATH')
+  })
+
+  it('single-quotes POSIX paths so shell metacharacters cannot expand or break out', () => {
+    // A path with a space, $, backtick, backslash, and a single quote: none may be interpreted, and
+    // the embedded quote must be escaped via the '\'' idiom.
+    const nasty = "/opt/a b/$(x)`y`\\z/o'brien"
+    const plan = planCliLauncher(posixEnv({ appExecPath: nasty, packaged: true }))
+    // The whole path sits inside single quotes; the embedded ' is closed-escaped-reopened as '\''.
+    expect(plan.shim).toContain("OPEN_SCIENCE_APP_PATH='/opt/a b/$(x)`y`\\z/o'\\''brien'")
   })
 
   it('targets a per-user bin dir with a .cmd shim on Windows', () => {

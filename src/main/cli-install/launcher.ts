@@ -40,10 +40,13 @@ const isOnPath = (binDir: string, pathVar: string, platform: NodeJS.Platform): b
     .some((entry) => entry === binDir)
 }
 
-// POSIX: a /bin/sh shim in ~/.local/bin. Double-quote every path (installs live under "Open Science"
-// with a space) and escape embedded quotes defensively.
+// POSIX: a /bin/sh shim in ~/.local/bin. Single-quote every path so it survives spaces and shell
+// metacharacters: inside single quotes nothing is special (no $, backtick, or backslash expansion),
+// so the only thing to escape is an embedded single quote, via the standard '\'' close-escape-reopen
+// idiom. This fully quotes an arbitrary path — unlike double quotes, which would still expand $/backtick
+// and need backslash handling.
 const posixShim = (env: CliLauncherEnv): string => {
-  const quote = (value: string): string => `"${value.replace(/"/g, '\\"')}"`
+  const quote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`
   const appPathLine = env.packaged ? `OPEN_SCIENCE_APP_PATH=${quote(env.appExecPath)} ` : ''
   return [
     '#!/bin/sh',
