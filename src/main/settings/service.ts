@@ -438,11 +438,12 @@ class SettingsService {
   ): Promise<ImportSkillZipBatchResult> {
     const zip = decodeBoundedBase64(request.dataBase64, SKILL_IMPORT_LIMITS.maxBundleBytes)
     const outcomes = await this.userSkills.importFromZipBatch(zip, request.items)
-    // On failure the renderer keys off `error`; `status` is a required-field placeholder ignored then.
-    const results = outcomes.map((entry) =>
+    // Success and failure are mutually exclusive: a succeeded item carries status+id, a failed one
+    // carries only error (never a placeholder status).
+    const results: ImportSkillZipBatchResult['results'] = outcomes.map((entry) =>
       entry.outcome
         ? { subPath: entry.subPath, status: entry.outcome.status, id: entry.outcome.id }
-        : { subPath: entry.subPath, status: 'imported' as const, error: entry.error }
+        : { subPath: entry.subPath, error: entry.error ?? 'Import failed.' }
     )
     return { results, skills: await this.listSkills() }
   }

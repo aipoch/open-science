@@ -523,7 +523,7 @@ describe('UserSkillRepository', () => {
     expect(skipped).toEqual([])
     expect(previews.map((p) => p.name)).toEqual(['Alpha', 'Beta'])
     // Each inner root's subPath is namespaced by the archive base name (+ inner dir).
-    expect(previews.map((p) => p.subPath)).toEqual(['alpha-111/alpha', 'beta-222/beta'])
+    expect(previews.map((p) => p.subPath)).toEqual(['alpha-111.zip/alpha', 'beta-222.zip/beta'])
   })
 
   it('namespaces a root-level SKILL.md inside a nested archive by the archive name alone', async () => {
@@ -534,7 +534,7 @@ describe('UserSkillRepository', () => {
     const outer = buildZip([{ path: 'gamma-333.zip', content: inner }])
 
     const { previews } = await repo.previewZip(outer)
-    expect(previews).toEqual([expect.objectContaining({ name: 'Gamma', subPath: 'gamma-333' })])
+    expect(previews).toEqual([expect.objectContaining({ name: 'Gamma', subPath: 'gamma-333.zip' })])
   })
 
   it('keeps the good nested skills and skips a nested archive with no SKILL.md', async () => {
@@ -585,12 +585,59 @@ describe('UserSkillRepository', () => {
     const outer = buildZip([{ path: 'alpha-111.zip', content: innerBundle('Alpha') }])
 
     const results = await repo.importFromZipBatch(outer, [
-      { subPath: 'alpha-111/alpha' },
+      { subPath: 'alpha-111.zip/alpha' },
       { subPath: 'does/not/exist' }
     ])
     expect(results[0].outcome?.status).toBe('imported')
     expect(results[1].error).toMatch(/no skill at/)
     expect((await repo.list()).map((s) => s.name)).toEqual(['Alpha'])
+  })
+
+  it('skips a loose single-skill root whose file exceeds the per-skill cap', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    // 6 MiB file: within the bundle-wide walk cap but over the 5 MiB per-skill file cap.
+    const zip = buildZip([
+      { path: 'SKILL.md', content: Buffer.from('---\nname: Big\ndescription: d\n---\nx') },
+      { path: 'blob.bin', content: Buffer.alloc(6 * 1024 * 1024, 7) }
+    ])
+
+    const { previews, skipped } = await repo.previewZip(zip)
+    expect(previews).toHaveLength(0)
+    expect(skipped[0].reason).toMatch(/over 5 MB/)
+  })
+
+  it('skips a loose root whose oversized file the lenient walk dropped (no partial import)', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    // 9 MiB file exceeds the nested-archive/entry cap, so the outer walk drops it; the root that owns
+    // it must be skipped rather than imported without it.
+    const zip = buildZip([
+      { path: 'pack/SKILL.md', content: Buffer.from('---\nname: Pack\ndescription: d\n---\nx') },
+      { path: 'pack/huge.bin', content: Buffer.alloc(9 * 1024 * 1024, 7) }
+    ])
+
+    const { previews, skipped } = await repo.previewZip(zip)
+    expect(previews).toHaveLength(0)
+    expect(skipped.some((s) => s.source === 'pack' && /too large/.test(s.reason))).toBe(true)
+  })
+
+  it('does not alias a loose dir and a nested archive that share a stem', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const nested = buildZip([
+      { path: 'SKILL.md', content: Buffer.from('---\nname: FromArchive\ndescription: d\n---\ny') }
+    ])
+    const outer = buildZip([
+      {
+        path: 'alpha/SKILL.md',
+        content: Buffer.from('---\nname: FromDir\ndescription: d\n---\nx')
+      },
+      { path: 'alpha.zip', content: nested }
+    ])
+
+    const { previews } = await repo.previewZip(outer)
+    // Both skills survive under distinct subPaths — selecting one can't import the other.
+    expect(previews.map((p) => p.subPath)).toEqual(['alpha', 'alpha.zip'])
+    expect(previews.map((p) => p.name).sort()).toEqual(['FromArchive', 'FromDir'])
+    expect(new Set(previews.map((p) => p.subPath)).size).toBe(2)
   })
 
   it('parses a CRLF-authored SKILL.md the same on preview and import', async () => {

@@ -166,16 +166,38 @@ const reasonFromError = (error: unknown): string => {
   return message.replace(/^(Error invoking remote method '[^']*': )?(Error: )?/, '') || 'unreadable'
 }
 
+// Rounds a byte count to whole MB for a user-facing size-limit reason.
+const mb = (bytes: number): string => `${Math.round(bytes / (1024 * 1024))} MB`
+
+// Checks one skill's files against the PER-SKILL caps, returning a plain-English reason if it violates
+// them (else null). The outer bundle walk uses generous bundle-wide caps, so a loose (directly-visible)
+// skill root — which never goes through the strict extractZip path a nested archive does — must be
+// re-validated here, otherwise a single-skill upload could sneak in an oversized file or total.
+const perSkillCapReason = (files: FetchedSkillFile[]): string | null => {
+  if (files.length > SKILL_IMPORT_LIMITS.maxFiles) {
+    return `skill has more than ${SKILL_IMPORT_LIMITS.maxFiles} files`
+  }
+  if (files.some((file) => file.content.length > SKILL_IMPORT_LIMITS.maxFileBytes)) {
+    return `contains a file over ${mb(SKILL_IMPORT_LIMITS.maxFileBytes)}`
+  }
+  const total = files.reduce((sum, file) => sum + file.content.length, 0)
+  if (total > SKILL_IMPORT_LIMITS.maxTotalBytes) {
+    return `skill exceeds ${mb(SKILL_IMPORT_LIMITS.maxTotalBytes)}`
+  }
+  return null
+}
+
 // The outcome of scanning a bundle: the skill roots we can import, plus the ones we skipped and why.
 type SkillDiscovery = { roots: SkillRoot[]; skipped: SkippedSkill[] }
 
 // Discovers every importable skill in an uploaded bundle, resilient to individual failures. Direct
 // SKILL.md roots (a plain skill dir, or a bundle of sibling skill dirs) are found as before; any entry
-// that is itself a .zip/.skill is unpacked ONE level deeper and its root(s) surfaced under a
-// namespaced subPath (the archive's base name). An entry that's too large, unreadable, or holds no
-// SKILL.md is recorded as skipped rather than failing the whole bundle. Nesting beyond one archive
-// level is not followed (a nested archive's own nested archives are ignored), which also bounds
-// recursion. The outer walk is lenient so one bad entry never sinks the rest.
+// that is itself a .zip/.skill is unpacked ONE level deeper and its root(s) surfaced under a subPath
+// namespaced by the FULL archive path (so a nested `alpha.zip` can't collide with a loose `alpha/`
+// dir). An entry that's too large, unreadable, holds no SKILL.md, or (for a loose root) violates the
+// per-skill caps is recorded as skipped rather than failing the whole bundle. Nesting beyond one
+// archive level is not followed, which bounds recursion. subPaths are made unique so preview rows,
+// renderer keys, and batch-import selection never alias two different skills onto one key.
 const discoverSkillRoots = (zip: Buffer): SkillDiscovery => {
   const skipped: SkippedSkill[] = []
   const { files, skipped: outerSkips } = extractZipLenient(zip, {
@@ -186,11 +208,39 @@ const discoverSkillRoots = (zip: Buffer): SkillDiscovery => {
   })
   for (const entry of outerSkips) skipped.push({ source: entry.path, reason: entry.reason })
 
-  // Loose files at the outer level (everything that isn't a nested archive) form ordinary roots.
-  const roots = findSkillRoots(files.filter((file) => !isNestedArchive(file.path)))
+  const roots: SkillRoot[] = []
+  const used = new Set<string>()
+  // Claims a unique subPath (suffixing on the rare clash) so no two roots ever share one key.
+  const addRoot = (subPath: string, rootFiles: FetchedSkillFile[]): void => {
+    let unique = subPath
+    for (let n = 2; used.has(unique); n += 1) unique = `${subPath}#${n}`
+    used.add(unique)
+    roots.push({ subPath: unique, files: rootFiles })
+  }
 
-  // Each nested archive is its own bundle: unpack it under the strict per-skill caps and namespace its
-  // roots by the archive's base name, so preview and import derive the same stable subPath.
+  // Loose (non-archive) top-level files form ordinary roots — but they must still satisfy the per-skill
+  // caps, and a root whose content the lenient walk had to drop is rejected (importing it would produce
+  // a silently-partial skill).
+  const looseSkips = outerSkips.filter((entry) => !isNestedArchive(entry.path)).map((e) => e.path)
+  for (const root of findSkillRoots(files.filter((file) => !isNestedArchive(file.path)))) {
+    const prefix = root.subPath === '' ? '' : `${root.subPath}/`
+    if (looseSkips.some((path) => path === root.subPath || path.startsWith(prefix))) {
+      skipped.push({
+        source: root.subPath || 'skill',
+        reason: 'contains a file too large to import'
+      })
+      continue
+    }
+    const violation = perSkillCapReason(root.files)
+    if (violation) {
+      skipped.push({ source: root.subPath || 'skill', reason: violation })
+      continue
+    }
+    addRoot(root.subPath, root.files)
+  }
+
+  // Each nested archive is its own bundle: unpack it under the strict per-skill caps (extractZip throws
+  // on any cap violation, so the whole inner skill is skipped, never partially imported).
   for (const archive of files.filter((file) => isNestedArchive(file.path))) {
     let innerRoots: SkillRoot[]
     try {
@@ -203,12 +253,8 @@ const discoverSkillRoots = (zip: Buffer): SkillDiscovery => {
       skipped.push({ source: archive.path, reason: 'no SKILL.md found' })
       continue
     }
-    const prefix = archive.path.replace(/\.(zip|skill)$/i, '')
     for (const root of innerRoots) {
-      roots.push({
-        subPath: root.subPath === '' ? prefix : `${prefix}/${root.subPath}`,
-        files: root.files
-      })
+      addRoot(root.subPath === '' ? archive.path : `${archive.path}/${root.subPath}`, root.files)
     }
   }
 

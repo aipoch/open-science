@@ -546,13 +546,14 @@ export type ImportSkillZipBatchRequest = {
 
 // Per-item outcome of a batch import: the same status as a single import on success, or an error
 // message on failure, keyed by the requested subPath. The refreshed skill list is returned once.
+// Per-item outcome: on success `status` (+ `id`) is set and `error` is absent; on failure `error` is
+// set and `status`/`id` are absent. The two are mutually exclusive, so a caller keys off `error`.
+export type ImportSkillZipBatchItemResult =
+  | { subPath: string; status: 'imported' | 'unchanged' | 'updated'; id: string; error?: undefined }
+  | { subPath: string; status?: undefined; id?: undefined; error: string }
+
 export type ImportSkillZipBatchResult = {
-  results: {
-    subPath: string
-    status: 'imported' | 'unchanged' | 'updated'
-    id?: string
-    error?: string
-  }[]
+  results: ImportSkillZipBatchItemResult[]
   skills: SkillView[]
 }
 
