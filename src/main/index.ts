@@ -67,7 +67,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { createAppTray },
         { installAppLifecycle },
         { installRpcCapture },
-        { parseWebModeOptions, createWebServiceController, buildAuthenticatedWebUrl }
+        { parseWebModeOptions, createWebServiceController, buildAuthenticatedWebUrl },
+        { routeSecondInstance }
       ] = await Promise.all([
         import('./ipc'),
         import('./windows'),
@@ -76,7 +77,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./tray'),
         import('./app-lifecycle'),
         import('./web-service/rpc-capture'),
-        import('./web-service')
+        import('./web-service'),
+        import('./second-instance-router')
       ])
 
       // Dev runs get a "(DEV)" suffix so the app name, macOS menu, and per-app paths (logs, userData)
@@ -146,7 +148,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         createMainWindow,
         createAppTray,
         buildAuthenticatedWebUrl,
-        parseWebModeOptions,
+        routeSecondInstance,
         shutdownCoordinator,
         installAppLifecycle,
         log,
@@ -204,23 +206,15 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         createInitialWindow: !ctx.webMode.headless
       })
 
-      // Route each second launch by its forwarded argv: a CLI `open-science start` forwards
-      // --serve/--open-science-headless, so start the web service on demand here (attached: this launch
-      // owns the app, not the web service) instead of opening a window. A plain re-launch (double-click)
-      // carries neither, so surface the existing window exactly as before.
-      const onSecondInstance = (argv: string[]): void => {
-        // Empty env: decide purely on the forwarded argv, never the primary's own environment.
-        const requested = ctx.parseWebModeOptions(argv, {})
-        if (requested.enabled) {
-          void ctx.webController
-            .ensureStarted(requested.port, { attached: true })
-            .catch((error) => {
-              ctx.log.error('on-demand web service start failed', error)
-            })
-          return
-        }
-        showMainWindow()
-      }
+      // Route each second launch by its forwarded argv (see second-instance-router): a CLI
+      // `open-science start` forwards --serve/--open-science-headless → start the web service on demand
+      // here (attached); a plain re-launch (double-click) → surface the existing window as before.
+      const onSecondInstance = (argv: string[]): void =>
+        ctx.routeSecondInstance(argv, {
+          ensureWebService: ctx.webController.ensureStarted,
+          showMainWindow,
+          onError: (error) => ctx.log.error('on-demand web service start failed', error)
+        })
       return { onSecondInstance }
     }
   })

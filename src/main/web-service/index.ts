@@ -5,9 +5,9 @@ import { app } from 'electron'
 import { createLogger } from '../logger'
 import { resolveConfigRoot } from '../storage-root'
 import { loadOrCreateWebToken } from './auth'
-import { startWebHttpServer } from './http-server'
+import { startWebHttpServer, type RunningWebServer } from './http-server'
 import type { RpcCapture } from './rpc-capture'
-import { removeWebServiceState, writeWebServiceState } from './state-file'
+import { removeWebServiceState, writeWebServiceState, type WebServiceState } from './state-file'
 
 // A single-instance web service that can be started at launch (--serve) or later, on demand, when a
 // second launch forwards a --serve request to the already-running instance. Starting is idempotent: a
@@ -26,21 +26,55 @@ export type WebServiceController = {
   runningPort: () => number | undefined
 }
 
-const buildAuthenticatedWebUrl = async (port: number): Promise<string> => {
-  const token = await loadOrCreateWebToken(resolveConfigRoot())
-  return `http://127.0.0.1:${port}/?token=${encodeURIComponent(token)}`
+// The I/O the controller depends on, injectable so the idempotency/attached logic is unit-testable
+// without Electron, the network, or the filesystem. Production callers omit these and get the real ones.
+export type WebServiceControllerDeps = {
+  startServer: (options: Parameters<typeof startWebHttpServer>[0]) => Promise<RunningWebServer>
+  resolveConfigRoot: () => string
+  loadWebToken: (configRoot: string) => Promise<string>
+  writeState: (configRoot: string, state: Omit<WebServiceState, 'configRoot'>) => Promise<unknown>
+  removeState: (configRoot: string) => Promise<void>
+  appInfo: () => {
+    appPath: string
+    appName: string
+    appVersion: string
+    versions: { electron: string; chrome: string; node: string }
+    pid: number
+  }
 }
+
+const authUrl = (token: string, port: number): string =>
+  `http://127.0.0.1:${port}/?token=${encodeURIComponent(token)}`
+
+const buildAuthenticatedWebUrl = async (port: number): Promise<string> =>
+  authUrl(await loadOrCreateWebToken(resolveConfigRoot()), port)
 
 // Builds the controller. `rpc` is the always-installed capture layer (so handlers registered before any
 // serving are reachable over HTTP); `requestQuit` quits the whole app when a dedicated headless daemon
 // is asked to shut down. An attached service instead only tears itself down and leaves the app running.
-const createWebServiceController = ({
-  rpc,
-  requestQuit
-}: {
-  rpc: RpcCapture
-  requestQuit: () => void
-}): WebServiceController => {
+const createWebServiceController = (
+  { rpc, requestQuit }: { rpc: RpcCapture; requestQuit: () => void },
+  deps: Partial<WebServiceControllerDeps> = {}
+): WebServiceController => {
+  const startServer = deps.startServer ?? startWebHttpServer
+  const getConfigRoot = deps.resolveConfigRoot ?? resolveConfigRoot
+  const loadWebToken = deps.loadWebToken ?? loadOrCreateWebToken
+  const writeState = deps.writeState ?? writeWebServiceState
+  const removeState = deps.removeState ?? removeWebServiceState
+  const appInfo =
+    deps.appInfo ??
+    (() => ({
+      appPath: app.getAppPath(),
+      appName: app.getName(),
+      appVersion: app.getVersion(),
+      versions: {
+        electron: process.versions.electron,
+        chrome: process.versions.chrome,
+        node: process.versions.node
+      },
+      pid: process.pid
+    }))
+
   let running: { close: () => Promise<void>; port: number; configRoot: string } | undefined
   let starting: Promise<{ port: number; url: string }> | undefined
 
@@ -52,26 +86,23 @@ const createWebServiceController = ({
   }
 
   const start = async (port: number, attached: boolean): Promise<{ port: number; url: string }> => {
-    const configRoot = resolveConfigRoot()
-    const token = await loadOrCreateWebToken(configRoot)
-    const server = await startWebHttpServer({
+    const configRoot = getConfigRoot()
+    const token = await loadWebToken(configRoot)
+    const info = appInfo()
+    const server = await startServer({
       host: '127.0.0.1',
       port,
       token,
-      staticRoot: join(app.getAppPath(), 'out', 'web'),
+      staticRoot: join(info.appPath, 'out', 'web'),
       rpc,
       // Attached: a graceful shutdown request stops only the web service (the app keeps running). A
       // dedicated daemon quits the process, which is what stops it serving.
       onShutdownRequest: attached ? () => void close() : requestQuit,
       bootstrap: {
-        appName: app.getName(),
-        appVersion: app.getVersion(),
+        appName: info.appName,
+        appVersion: info.appVersion,
         platform: process.platform,
-        versions: {
-          electron: process.versions.electron,
-          chrome: process.versions.chrome,
-          node: process.versions.node
-        }
+        versions: info.versions
       }
     })
 
@@ -82,17 +113,17 @@ const createWebServiceController = ({
         try {
           await server.close()
         } finally {
-          await removeWebServiceState(configRoot)
+          await removeState(configRoot)
         }
       }
     }
 
     try {
-      await writeWebServiceState(configRoot, {
-        pid: process.pid,
+      await writeState(configRoot, {
+        pid: info.pid,
         port: server.port,
         startedAt: new Date().toISOString(),
-        appVersion: app.getVersion(),
+        appVersion: info.appVersion,
         attached
       })
     } catch (error) {
@@ -100,7 +131,7 @@ const createWebServiceController = ({
       throw error
     }
 
-    const url = `http://127.0.0.1:${server.port}/?token=${encodeURIComponent(token)}`
+    const url = authUrl(token, server.port)
     createLogger('web-service').info('local web service started', {
       host: '127.0.0.1',
       port: server.port,
@@ -114,7 +145,10 @@ const createWebServiceController = ({
     port: number,
     { attached }: { attached: boolean }
   ): Promise<{ port: number; url: string }> => {
-    if (running) return { port: running.port, url: await buildAuthenticatedWebUrl(running.port) }
+    if (running) {
+      const token = await loadWebToken(running.configRoot)
+      return { port: running.port, url: authUrl(token, running.port) }
+    }
     if (starting) return starting
     starting = start(port, attached).finally(() => {
       starting = undefined
