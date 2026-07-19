@@ -1,8 +1,8 @@
 // IPC layer for the reviewer feature. Follows the same patterns as src/main/acp/ipc.ts and
-// src/main/artifacts/ipc.ts: ipcMain.handle for renderer-callable commands, BrowserWindow.send
-// for push events from main to renderer.
+// src/main/artifacts/ipc.ts: ipcMain.handle for renderer-callable commands and the shared renderer
+// broadcaster for push events to Electron windows and optional web clients.
 
-import { BrowserWindow, ipcMain } from 'electron'
+import { ipcMain } from 'electron'
 
 import type { ReviewWithChecks, ReviewRunRequest, ReviewUpdateEvent } from '../../shared/reviewer'
 import { REVIEWER_IPC } from '../../shared/reviewer'
@@ -13,16 +13,13 @@ import type { AcpRuntime } from '../acp/runtime'
 import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { SessionRepository } from '../session-persistence/repository'
+import { broadcastToRenderers } from '../renderer-broadcast'
 
 const log = createLogger('reviewer:ipc')
 
 // Sends a review update event to every open renderer window.
 const broadcastReviewUpdate = (event: ReviewUpdateEvent): void => {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.webContents.send(REVIEWER_IPC.UPDATED, event)
-    }
-  }
+  broadcastToRenderers(REVIEWER_IPC.UPDATED, event)
 }
 
 // Broadcasts the loop-guard event that tells the renderer to skip the next auto-review call for the
@@ -31,31 +28,19 @@ const broadcastReviewUpdate = (event: ReviewUpdateEvent): void => {
 // it instead cancels a pending suppression — used when the correction turn failed to send, so the
 // one-shot flag doesn't leak into the session's next real turn.
 const broadcastSuppressNextAutoReview = (sessionId: string, clear = false): void => {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.webContents.send(REVIEWER_IPC.SUPPRESS_NEXT_AUTO_REVIEW, { sessionId, clear })
-    }
-  }
+  broadcastToRenderers(REVIEWER_IPC.SUPPRESS_NEXT_AUTO_REVIEW, { sessionId, clear })
 }
 
 // Broadcasts a fix-loop-start event: the renderer reacts by setting fixLoopActive=true on the
 // session and disabling the composer send button for the duration of the loop.
 const broadcastFixLoopStart = (sessionId: string): void => {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.webContents.send(REVIEWER_IPC.FIX_LOOP_START, { sessionId })
-    }
-  }
+  broadcastToRenderers(REVIEWER_IPC.FIX_LOOP_START, { sessionId })
 }
 
 // Broadcasts a fix-loop-end event: the renderer reacts by clearing fixLoopActive on the session
 // and re-enabling the composer send button.
 const broadcastFixLoopEnd = (sessionId: string): void => {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.webContents.send(REVIEWER_IPC.FIX_LOOP_END, { sessionId })
-    }
-  }
+  broadcastToRenderers(REVIEWER_IPC.FIX_LOOP_END, { sessionId })
 }
 
 // Creates the shared ReviewRepository backed by the production SQLite client.

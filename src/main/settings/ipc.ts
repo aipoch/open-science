@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain } from 'electron'
+import { ipcMain } from 'electron'
 
 import type {
   CreateSkillRequest,
@@ -30,6 +30,7 @@ import type {
 } from '../../shared/settings'
 import { createDefaultSettingsService, SettingsService } from './service'
 import { createLogger } from '../logger'
+import { broadcastToRenderers } from '../renderer-broadcast'
 
 const log = createLogger('settings-ipc')
 
@@ -49,11 +50,7 @@ export type SettingsIpcOptions = {
 
 // Streams one install event (log line or progress tick) to every open renderer window.
 const broadcastInstallEvent = (event: ClaudeInstallEvent): void => {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.webContents.send(SETTINGS_INSTALL_LOG_CHANNEL, event)
-    }
-  }
+  broadcastToRenderers(SETTINGS_INSTALL_LOG_CHANNEL, event)
 }
 
 // Registers renderer-callable settings commands. Secret handling stays entirely in the service; the

@@ -2,6 +2,10 @@
 @import 'tw-animate-css';
 @import './agent-markdown.css';
 
+/* Explicit source root so utility scanning is independent of the Vite root — the localhost web
+   build (vite.web.config.ts) roots at src/renderer/web and would otherwise miss these files. */
+@source '../';
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {

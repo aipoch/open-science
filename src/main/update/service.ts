@@ -8,6 +8,7 @@ import { isNewer, selectDownload, type UpdateStatus } from '../../shared/update'
 import { downloadInstaller } from './downloader'
 import { fetchManifest } from './manifest'
 import type { UpdateStrategy } from './strategy'
+import { broadcastToRenderers } from '../renderer-broadcast'
 
 export type UpdateServiceDeps = {
   fetchImpl?: typeof fetch
@@ -27,9 +28,7 @@ export type UpdateServiceDeps = {
 
 // Default broadcast pushes to every live window, mirroring the connector approval-broker pattern.
 const defaultBroadcast = (channel: string, payload: unknown): void => {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send(channel, payload)
-  }
+  broadcastToRenderers(channel, payload)
 }
 
 // Derive a safe on-disk installer name from the URL path only (never the query string), so a

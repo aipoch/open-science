@@ -275,15 +275,33 @@ Useful commands:
 | Command               | Purpose                              |
 | --------------------- | ------------------------------------ |
 | `npm run dev`         | Start the development application    |
+| `npm run dev:web`     | Dev app + localhost web UI (127.0.0.1) |
+| `npm run dev:headless`| Dev backend + web UI, no Electron window |
 | `npm run lint`        | Run ESLint                           |
 | `npm run typecheck`   | Type-check main and renderer code    |
 | `npm test`            | Run the Vitest suite                 |
 | `npm run build`       | Type-check and build the application |
+| `npm run build:web`   | Build the optional localhost web UI  |
 | `npm run build:mac`   | Package macOS builds                 |
 | `npm run build:win`   | Package Windows builds               |
 | `npm run build:linux` | Package Linux builds                 |
 
 Packaged output is written under `dist/`.
+
+### Localhost web and headless modes
+
+The desktop backend can optionally serve the same renderer to a browser on the local computer. This
+feature is off by default and binds only to `127.0.0.1`.
+
+```bash
+npm run build:web
+npm run dev:web
+```
+
+Open the authenticated URL printed by the application. Use `npm run dev:headless` to start the
+backend, tray, agent runtime, and localhost web service without opening an Electron window.
+Set `OPEN_SCIENCE_WEB_PORT` to choose a port (default `44100`). Explicitly quitting the
+application still shuts down agent and Notebook processes normally.
 
 ## Building From Source
 

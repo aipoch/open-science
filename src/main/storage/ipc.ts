@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, dialog, ipcMain } from 'electron'
 
 import type { DataRootInspection, MigrationOutcome, MigrationProgress } from '../../shared/storage'
 import {
@@ -24,6 +24,7 @@ import {
   type ValidateResult
 } from './migration-service'
 import { availableBytes, computeStorageUsage } from './usage'
+import { broadcastToRenderers } from '../renderer-broadcast'
 
 type SessionSource = { projectName: string; sessionId: string }
 
@@ -62,9 +63,7 @@ type StorageIpcDeps = {
 
 // Pushes migration progress to every live window, mirroring the acp/update broadcast pattern.
 const defaultBroadcast = (progress: MigrationProgress): void => {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send('storage:migrate-progress', progress)
-  }
+  broadcastToRenderers('storage:migrate-progress', progress)
 }
 
 // Registers the renderer-callable data-root storage commands: info/usage, active-session

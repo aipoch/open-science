@@ -95,7 +95,10 @@ type Harness = {
 
 const setup = (
   overrides: Partial<
-    Pick<AppLifecycleDeps, 'shutdownBackends' | 'isMigrationInProgress' | 'platform'>
+    Pick<
+      AppLifecycleDeps,
+      'shutdownBackends' | 'isMigrationInProgress' | 'platform' | 'createInitialWindow'
+    >
   > & {
     trayHost?: boolean
   } = {}
@@ -123,6 +126,7 @@ const setup = (
     isMigrationInProgress: overrides.isMigrationInProgress ?? ((): boolean => false),
     quit,
     countWindows: () => windows.filter((w) => !w.destroyed).length,
+    createInitialWindow: overrides.createInitialWindow,
     platform: overrides.platform ?? 'linux'
   })
 
@@ -134,6 +138,13 @@ describe('installAppLifecycle', () => {
     const { windows, trayHandlers } = setup()
     expect(windows).toHaveLength(1)
     expect(trayHandlers).toBeDefined()
+  })
+
+  it('starts headless and creates a window only when requested', () => {
+    const { windows, trayHandlers } = setup({ createInitialWindow: false })
+    expect(windows).toHaveLength(0)
+    trayHandlers?.onShow()
+    expect(windows).toHaveLength(1)
   })
 
   it('runs an awaited backend teardown then exits on a normal quit', async () => {

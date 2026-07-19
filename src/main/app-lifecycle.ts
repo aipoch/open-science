@@ -21,6 +21,8 @@ export type AppLifecycleDeps = {
   quit: () => void
   // Number of live BrowserWindows, used to decide whether to recreate on macOS activate.
   countWindows: () => number
+  // Headless web mode starts the backend and tray without opening a renderer window.
+  createInitialWindow?: boolean
   // Overridable for tests; defaults to the host platform.
   platform?: NodeJS.Platform
 }
@@ -107,7 +109,7 @@ export const installAppLifecycle = (deps: AppLifecycleDeps): { showMainWindow: (
     if (platform !== 'darwin' && !trayBox.current) deps.quit()
   })
 
-  mainWindow = openWindow()
+  if (deps.createInitialWindow !== false) mainWindow = openWindow()
 
   return { showMainWindow }
 }

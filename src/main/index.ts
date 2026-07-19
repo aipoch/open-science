@@ -36,7 +36,7 @@ if (shouldRunArtifactMcpServer) {
 // Boots the Electron app only in normal UI mode, keeping artifact MCP mode free of Electron imports.
 async function startElectronApp(mainEntryPath: string): Promise<void> {
   const [
-    { app, BrowserWindow, nativeImage, protocol },
+    { app, BrowserWindow, ipcMain, nativeImage, protocol },
     { electronApp, optimizer },
     { default: icon },
     { acquireSingleInstanceLock },
@@ -65,14 +65,18 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { MANAGED_PREVIEW_SCHEME },
         { installMigrationQuitGuard, isMigrationInProgress },
         { createAppTray },
-        { installAppLifecycle }
+        { installAppLifecycle },
+        { installRpcCapture },
+        { parseWebModeOptions, startOptionalWebService }
       ] = await Promise.all([
         import('./ipc'),
         import('./windows'),
         import('./managed-preview-resources'),
         import('./storage/migration-state'),
         import('./tray'),
-        import('./app-lifecycle')
+        import('./app-lifecycle'),
+        import('./web-service/rpc-capture'),
+        import('./web-service')
       ])
 
       // Dev runs get a "(DEV)" suffix so the app name, macOS menu, and per-app paths (logs, userData)
@@ -121,8 +125,13 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         optimizer.watchWindowShortcuts(window)
       })
 
+      const webMode = parseWebModeOptions(process.argv)
+      const rpcCapture = webMode.enabled ? installRpcCapture(ipcMain) : undefined
       // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
       const { shutdownCoordinator } = await registerIpcHandlers({ mainEntryPath })
+      const webServer = rpcCapture
+        ? await startOptionalWebService({ options: webMode, rpc: rpcCapture })
+        : undefined
 
       return {
         installMigrationQuitGuard,
@@ -131,7 +140,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         createAppTray,
         shutdownCoordinator,
         installAppLifecycle,
-        log
+        log,
+        webMode,
+        webServer,
+        rpcCapture
       }
     },
     // Warn (rather than silently tear down) if the user tries to quit mid data-root migration. Installed
@@ -150,11 +162,17 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         // coordinator awaits the agent + kernel process trees so a Windows taskkill /T completes before
         // app.exit; runForQuit bounds it so a stuck backend can't hang quit.
         shutdownBackends: async () => {
-          await ctx.shutdownCoordinator.runForQuit()
+          try {
+            await ctx.shutdownCoordinator.runForQuit()
+          } finally {
+            await ctx.webServer?.close()
+            ctx.rpcCapture?.dispose()
+          }
         },
         isMigrationInProgress: ctx.isMigrationInProgress,
         quit: () => app.quit(),
-        countWindows: () => BrowserWindow.getAllWindows().length
+        countWindows: () => BrowserWindow.getAllWindows().length,
+        createInitialWindow: !ctx.webMode.headless
       })
   })
 }

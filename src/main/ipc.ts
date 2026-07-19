@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-import { BrowserWindow, ipcMain } from 'electron'
+import { ipcMain } from 'electron'
 
 import { createDefaultNotebookRuntimeService, registerAcpIpcHandlers } from './acp/ipc'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
@@ -51,6 +51,7 @@ import {
 import { registerUpdateIpcHandlers } from './update/ipc'
 import { startUpdateScheduler } from './update/scheduler'
 import { createDefaultUploadRepository, registerUploadIpcHandlers } from './uploads/ipc'
+import { broadcastToRenderers } from './renderer-broadcast'
 
 type IpcRegistrationOptions = {
   mainEntryPath: string
@@ -179,9 +180,7 @@ const registerIpcHandlers = async ({
   const approvalBroker = new ApprovalBroker({
     generateId: () => randomUUID(),
     broadcast: (request) => {
-      for (const window of BrowserWindow.getAllWindows()) {
-        if (!window.isDestroyed()) window.webContents.send('connectors:approval-request', request)
-      }
+      broadcastToRenderers('connectors:approval-request', request)
     }
   })
   // Late-bound app runtime for connector tools that attach a generated file to the current turn. The

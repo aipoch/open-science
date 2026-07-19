@@ -1,10 +1,11 @@
-import { app, BrowserWindow } from 'electron'
+import { app } from 'electron'
 import { autoUpdater } from 'electron-updater'
 
 import { APP } from '../../shared/app-config'
 import type { UpdateStatus } from '../../shared/update'
 import { fetchManifest } from './manifest'
 import type { InstallGate, UpdateStrategy } from './strategy'
+import { broadcastToRenderers } from '../renderer-broadcast'
 
 // Minimal logger surface so tests inject a spy without pulling electron-log.
 type UpdaterLogger = { info: (msg: string) => void; error: (msg: string, err?: unknown) => void }
@@ -37,9 +38,7 @@ export type ElectronUpdaterDeps = {
 // Default broadcast pushes to every live window (mirrors service.ts). Never runs in unit tests, which
 // inject their own broadcast.
 const defaultBroadcast = (channel: string, payload: unknown): void => {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send(channel, payload)
-  }
+  broadcastToRenderers(channel, payload)
 }
 
 // Coerce electron-updater's releaseNotes (string | {note}[] | null) to a plain string for the dialog.

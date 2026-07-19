@@ -1,6 +1,6 @@
 import { homedir } from 'node:os'
 
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, ipcMain } from 'electron'
 
 import type {
   AcpCancelPromptRequest,
@@ -28,6 +28,7 @@ import { NotebookRuntimeService } from '../notebook/runtime-service'
 import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import type { SettingsService } from '../settings/service'
 import type { UploadRepository } from '../uploads/repository'
+import { broadcastToRenderers } from '../renderer-broadcast'
 
 type AcpIpcArtifacts = {
   repository: ArtifactRepository
@@ -44,11 +45,7 @@ type AcpIpcOptions = AcpIpcArtifacts & {
 
 // Sends one runtime payload to every currently open renderer window.
 const broadcast = <Payload>(channel: string, payload: Payload): void => {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.webContents.send(channel, payload)
-    }
-  }
+  broadcastToRenderers(channel, payload)
 }
 
 // Creates the shared runtime instance used by all ACP IPC handlers and artifact claims.
