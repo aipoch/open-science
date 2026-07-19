@@ -1,11 +1,12 @@
 import { useMemo } from 'react'
-import { CheckCircle2, RefreshCw, Trash2, XCircle } from 'lucide-react'
+import { CheckCircle2, RefreshCw, XCircle } from 'lucide-react'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
+import { RuntimeUninstallControl } from './RuntimeUninstallControl'
 import type {
   ClaudeInstallProgressEvent,
   ClaudeInstallSource,
@@ -35,8 +36,10 @@ type OpencodeStatusCardProps = {
   // Locks selection (e.g. while an install/uninstall is in flight) so the backend can't be switched
   // mid-operation.
   selectDisabled?: boolean
-  // Uninstall is offered only for the app-managed install (a binary the app owns in its data dir).
-  // Disabled while this is the active runtime — the user must switch to the other framework first.
+  // The Uninstall button always shows for a detected runtime (omitting onUninstall hides it entirely).
+  // `managed` gates whether it's actionable: only an app-managed binary (one the app owns in its data
+  // dir) can be removed in-app. A non-managed (PATH/npm) install shows a greyed button with a `?`
+  // explaining manual removal; the active runtime is greyed with a "switch first" `?`.
   managed?: boolean
   isUninstalling?: boolean
   onUninstall?: () => void
@@ -115,20 +118,16 @@ const OpencodeStatusCard = ({
             <div className="flex items-center gap-2">{heading}</div>
           )}
           <div className="flex items-center gap-2">
-            {managed && onUninstall && found ? (
-              <Button
-                type="button"
-                variant="destructive"
-                size="sm"
-                onClick={onUninstall}
-                disabled={active || isUninstalling || isDetecting}
-                title={
-                  active ? 'Switch to the other framework before uninstalling OpenCode' : undefined
-                }
-              >
-                <Trash2 aria-hidden="true" />
-                Uninstall
-              </Button>
+            {onUninstall && found ? (
+              <RuntimeUninstallControl
+                label="OpenCode"
+                uninstallCommand="npm uninstall -g opencode-ai"
+                managed={managed}
+                active={active}
+                isUninstalling={isUninstalling}
+                isDetecting={isDetecting}
+                onUninstall={onUninstall}
+              />
             ) : null}
             <Button
               type="button"

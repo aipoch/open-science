@@ -66,25 +66,29 @@ describe('OpencodeStatusCard', () => {
     expect(trigger?.textContent).toContain('App-managed download (recommended)')
   })
 
-  it('offers an uninstall action only for a managed install and fires onUninstall on click', () => {
+  it('greys out uninstall (with a `?`) for a non-managed install and enables it for a managed one', () => {
     const onUninstall = vi.fn()
     const findUninstall = (): HTMLButtonElement | undefined =>
       Array.from(container.querySelectorAll('button')).find((button) =>
         button.textContent?.includes('Uninstall')
       )
 
-    // A detected but non-managed (PATH) opencode shows no uninstall action.
-    render({ opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' } })
-    expect(findUninstall()).toBeUndefined()
+    // A detected but non-managed (PATH) opencode shows the button greyed out with an explainer.
+    render({
+      opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
+      onUninstall: vi.fn()
+    })
+    expect(findUninstall()?.disabled).toBe(true)
+    expect(container.querySelector('button[aria-label^="Why can\'t"]')).not.toBeNull()
 
-    // The same install marked managed exposes the action.
+    // The same install marked managed enables the action and fires onUninstall on click.
     render({
       opencode: { resolvedPath: '/data/opencode-managed/bin/opencode', version: '1.18.3' },
       managed: true,
       onUninstall
     })
     const button = findUninstall()
-    expect(button).toBeDefined()
+    expect(button?.disabled).toBe(false)
 
     act(() => button?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(onUninstall).toHaveBeenCalledTimes(1)

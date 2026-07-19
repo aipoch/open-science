@@ -56,10 +56,29 @@ describe('ClaudeStatusCard surface', () => {
     expect(card?.className).toContain('bg-transparent')
   })
 
-  it('hides the uninstall action unless the install is app-managed', () => {
+  it('hides the uninstall action entirely when onUninstall is omitted (onboarding)', () => {
     render()
 
     expect(findUninstallButton()).toBeUndefined()
+  })
+
+  it('shows a disabled uninstall with a `?` explainer for a non-managed (PATH) install', () => {
+    act(() => {
+      root.render(
+        <ClaudeStatusCard
+          claude={{ resolvedPath: '/usr/local/bin/claude', version: '2.1.0' }}
+          claudeReady
+          isDetecting={false}
+          onDetect={vi.fn()}
+          onUninstall={vi.fn()}
+        />
+      )
+    })
+
+    // The button now always shows for a detected runtime, but a non-managed install can't be removed.
+    expect(findUninstallButton()?.disabled).toBe(true)
+    const help = container.querySelector('button[aria-label^="Why can\'t"]')
+    expect(help).not.toBeNull()
   })
 
   it('offers an uninstall action for a managed install and fires onUninstall on click', () => {
