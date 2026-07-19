@@ -70,6 +70,17 @@ describe('startWebHttpServer', () => {
     })
     expect(await rpcResponse.json()).toEqual({ ok: true, result: { value: 1 } })
 
+    // Channels the browser reimplements client-side (native-dialog / window handlers) are rejected
+    // over /rpc without ever reaching the handler.
+    const blockedResponse = await fetch(`${base}/rpc/window%3Aclose`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ args: [] })
+    })
+    expect(blockedResponse.status).toBe(403)
+    expect(await blockedResponse.json()).toMatchObject({ ok: false })
+    expect(rpc.invoke).toHaveBeenCalledTimes(1)
+
     const socket = new WebSocket(`ws://127.0.0.1:${server.port}/events?client=test-client`, {
       headers: { cookie, origin: base }
     })

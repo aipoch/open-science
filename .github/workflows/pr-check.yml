@@ -60,6 +60,12 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # Guards against src/preload drifting from the generated web API map. Pure Node and
+      # platform-independent, so hard-gate it on all three OSes rather than relying on the
+      # macOS-only vitest leg (the Linux/Windows test run is advisory).
+      - name: Check web API map
+        run: npm run check:web-api-map
+
       # Full test suite + coverage gate on macOS (thresholds live in vitest.config.ts).
       - name: Test (with coverage)
         if: matrix.os == 'macos-14'
