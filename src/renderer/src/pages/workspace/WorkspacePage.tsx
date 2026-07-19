@@ -241,7 +241,10 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     (!docIsEmpty(draftDoc) || attachments.length > 0) &&
     activeSession?.status !== 'running' &&
     activeSession?.status !== 'waiting-permission' &&
-    !activeSession?.fixLoopActive
+    !activeSession?.fixLoopActive &&
+    // Auto-recovery drops the session to idle while it resets context and replays the transcript; block
+    // sends in that window so a manual prompt can't race the recovery resend into the same session.
+    !activeSession?.compacting
   const canChangePermissionProfile =
     isSessionPersistenceReady &&
     activeSession?.status !== 'running' &&

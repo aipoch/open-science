@@ -715,6 +715,11 @@ class AcpRuntime {
     // The fresh agent session holds no history, so the accumulated media is gone; start its budget clean.
     this.sessionInlineImageBytes.delete(request.sessionId)
 
+    // Release the failed turn's in-flight lock now. Its own `finally` clears it too, but that runs only
+    // after async artifact cleanup, so the recovery resend that follows this reset would otherwise race
+    // it and be rejected with "An ACP prompt is already running for this session".
+    this.promptInFlightSessionIds.delete(request.sessionId)
+
     return this.adoptFreshSession(connection, request, sessionCwd, projectName)
   }
 

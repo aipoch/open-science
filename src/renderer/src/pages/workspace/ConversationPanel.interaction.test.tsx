@@ -428,3 +428,29 @@ describe('ConversationPanel fix loop lock', () => {
     expect(onCancelRun).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('ConversationPanel compacting state', () => {
+  const compactingSession: ChatSession = {
+    id: 'session-compacting',
+    projectId: 'project-a',
+    title: 'Compacting session',
+    cwd: '/workspace',
+    status: 'idle',
+    compacting: true,
+    messages: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }
+
+  it('shows a neutral compacting note and hides the overflow error during recovery', () => {
+    // The raw overflow error is still present as a global actionError, but must be suppressed while the
+    // session is compacting so the user sees the recovery affordance, not a dead-end.
+    renderPanel({
+      activeSession: compactingSession,
+      actionError: 'Internal error: Request too large (max 32MB).'
+    })
+
+    expect(container.textContent).toContain('Compacting conversation to fit the context limit')
+    expect(container.textContent).not.toContain('Request too large')
+  })
+})

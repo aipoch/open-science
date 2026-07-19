@@ -869,6 +869,50 @@ describe('ACP runtime session management', () => {
     expect(receivedPrompts.at(-1)).toBeDefined()
   })
 
+  it('releases the in-flight prompt lock on reset so the recovery resend is not rejected', async () => {
+    const process = new FakeAgentProcess()
+    // Only the first prompt is gated so it stays in-flight — the overflow-recovery reset happens while it
+    // is still "running", exactly as in production before the failing prompt's finally clears the lock.
+    // Disposing that session rejects the gated prompt, so its promise is caught up front.
+    const promptGate = createDeferred()
+    let firstPrompt = true
+    startFakeAgent(process, ['remote-session-1', 'remote-session-2'], {
+      onPrompt: () => {
+        if (firstPrompt) {
+          firstPrompt = false
+          return promptGate.promise
+        }
+        return Promise.resolve()
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    const inflight = runtime
+      .sendPrompt({ sessionId: session.sessionId, text: 'oversized turn' })
+      .catch(() => undefined)
+    await vi.waitFor(() =>
+      expect(runtime.getSnapshot().promptInFlightSessionIds).toContain(session.sessionId)
+    )
+
+    await runtime.resetSessionContext({ sessionId: session.sessionId, cwd: '/workspace' })
+
+    // The lock the torn-down turn held is released immediately by the reset.
+    expect(runtime.getSnapshot().promptInFlightSessionIds).not.toContain(session.sessionId)
+
+    // Once the disposed turn has settled, a resend into the same app id succeeds instead of throwing
+    // "An ACP prompt is already running for this session".
+    promptGate.resolve()
+    await inflight
+    await expect(
+      runtime.sendPrompt({ sessionId: session.sessionId, text: 'replayed turn' })
+    ).resolves.toBeDefined()
+  })
+
   it('sends PDFs as extracted text, never as an inlined base64 file', async () => {
     const root = await createTemporaryRoot()
     const uploadRepository = new UploadRepository(root)
