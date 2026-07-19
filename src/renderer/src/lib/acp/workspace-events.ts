@@ -4,6 +4,7 @@ import type { ReviewRunRequest } from '../../../../shared/reviewer'
 import { createPreviewFileItem } from '../../pages/workspace/preview-file-item'
 import { getPreviewFormatForFile } from '../../pages/workspace/preview-support'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
+import { isMediaOverflowError } from '../../../../shared/media-overflow'
 import { useSessionStore } from '../../stores/session-store'
 import { useSettingsStore } from '../../stores/settings-store'
 import { createRuntimeStreamId, isAssistantRuntimeChatMessageEvent } from './chat-events'
@@ -217,10 +218,22 @@ const applyWorkspaceRuntimeEvent = async (
   }
 
   if (event.kind === 'error' && event.sessionId) {
-    // A recoverable request-size overflow is auto-compacted-and-retried by the workspace runtime, so
-    // enter the neutral "compacting" state instead of failing the run with a dead-end error.
-    if (event.recoverable === 'context-overflow') {
-      store.beginCompaction(event.sessionId)
+    // A recoverable request-size overflow shows the neutral "compacting" note ONLY while a recovery is
+    // actually in flight — the workspace runtime flips the session to `compacting` first (its recovery
+    // effect runs before this event is applied). If the session is not compacting, no recovery started
+    // for this overflow (a repeat overflow inside the cooldown, nothing to replay, or a detached
+    // session), so surface a normal error instead of leaving a stuck "Compacting…".
+    const isCompacting = store.sessions.find(
+      (session) => session.id === event.sessionId
+    )?.compacting
+    // Same overflow detection the recovery effect uses (marker first, message as a fallback), so the two
+    // agree on which errors are recoverable.
+    const isOverflow =
+      event.recoverable === 'context-overflow' ||
+      isMediaOverflowError(event.text) ||
+      isMediaOverflowError(event.title)
+
+    if (isOverflow && isCompacting) {
       return true
     }
 

@@ -744,13 +744,11 @@ const useWorkspaceAgentRuntime = (): {
   const handledOverflowEventIds = useRef(new Set<string>())
   const recoveringOverflowSessionIds = useRef(new Set<string>())
 
-  // Applies each visible runtime event once and trims ids that fell out of the runtime window.
-  useEffect(() => {
-    void eventProcessor.current.process(runtime.state.events)
-  }, [runtime.state.events])
-
   // Auto-recovers when a conversation outgrows the provider's request-size limit: resets the agent
-  // context and replays a text-only transcript instead of dead-ending on an unrecoverable error.
+  // context and replays a text-only transcript instead of dead-ending on an unrecoverable error. Runs
+  // BEFORE the event processor below so it can flip the session to `compacting` first — the event
+  // processor then shows the neutral note only when a recovery actually started, and surfaces a real
+  // error otherwise (e.g. a repeat overflow inside the cooldown), never a stuck "Compacting…".
   useEffect(() => {
     processContextOverflowRecovery(
       runtime,
@@ -759,6 +757,11 @@ const useWorkspaceAgentRuntime = (): {
       recoveringOverflowSessionIds.current
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runtime is read fresh; fire on new events.
+  }, [runtime.state.events])
+
+  // Applies each visible runtime event once and trims ids that fell out of the runtime window.
+  useEffect(() => {
+    void eventProcessor.current.process(runtime.state.events)
   }, [runtime.state.events])
 
   // Mirrors pending permission requests into per-session store status.

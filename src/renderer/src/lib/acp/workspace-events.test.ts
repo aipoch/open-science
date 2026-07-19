@@ -125,29 +125,48 @@ describe('workspace runtime events', () => {
     })
   })
 
-  it('enters the compacting state (not a dead-end error) for a recoverable overflow event', async () => {
+  const overflowEvent = (): AcpRuntimeEvent =>
+    createEvent({
+      id: 'event-overflow',
+      kind: 'error',
+      level: 'error',
+      recoverable: 'context-overflow',
+      title: 'Prompt failed',
+      text: 'Internal error: Request too large (max 32MB).'
+    })
+
+  it('defers to the neutral compacting note while a recovery is already in flight', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
       content: 'compare these screenshots'
     })
+    // The recovery effect flips the session to compacting before this event is applied.
+    useSessionStore.getState().beginCompaction('transport-session-1')
 
-    const applied = await applyWorkspaceRuntimeEvent(
-      createEvent({
-        id: 'event-overflow',
-        kind: 'error',
-        level: 'error',
-        recoverable: 'context-overflow',
-        title: 'Prompt failed',
-        text: 'Internal error: Request too large (max 32MB).'
-      })
-    )
+    const applied = await applyWorkspaceRuntimeEvent(overflowEvent())
 
     expect(applied).toBe(true)
     const session = useSessionStore.getState().sessions[0]
+    // Stays neutral: no dead-end error surfaced while the recovery runs.
     expect(session.compacting).toBe(true)
     expect(session.status).not.toBe('error')
-    // The raw overflow message is not surfaced as a session error; the UI shows a neutral note instead.
     expect(session.error).toBeUndefined()
+  })
+
+  it('surfaces a real error for a recoverable overflow when no recovery started (e.g. cooldown)', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'compare these screenshots'
+    })
+    // Session is NOT compacting — a repeat overflow inside the cooldown gets no recovery, so it must not
+    // be left in a stuck "Compacting…"; the error becomes visible instead.
+    const applied = await applyWorkspaceRuntimeEvent(overflowEvent())
+
+    expect(applied).toBe(true)
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.status).toBe('error')
+    expect(session.compacting).toBeFalsy()
+    expect(session.error).toContain('Request too large')
   })
 
   it('surfaces a session-scoped agent warning as the waiting-indicator status, cleared on stop', async () => {
