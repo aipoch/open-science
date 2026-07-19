@@ -130,7 +130,11 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
       const { shutdownCoordinator } = await registerIpcHandlers({ mainEntryPath })
       const webServer = rpcCapture
-        ? await startOptionalWebService({ options: webMode, rpc: rpcCapture })
+        ? await startOptionalWebService({
+            options: webMode,
+            rpc: rpcCapture,
+            requestShutdown: () => app.quit()
+          })
         : undefined
 
       return {

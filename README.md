@@ -272,19 +272,19 @@ npm run dev
 
 Useful commands:
 
-| Command               | Purpose                              |
-| --------------------- | ------------------------------------ |
-| `npm run dev`         | Start the development application    |
-| `npm run dev:web`     | Dev app + localhost web UI (127.0.0.1) |
-| `npm run dev:headless`| Dev backend + web UI, no Electron window |
-| `npm run lint`        | Run ESLint                           |
-| `npm run typecheck`   | Type-check main and renderer code    |
-| `npm test`            | Run the Vitest suite                 |
-| `npm run build`       | Type-check and build the application |
-| `npm run build:web`   | Build the optional localhost web UI  |
-| `npm run build:mac`   | Package macOS builds                 |
-| `npm run build:win`   | Package Windows builds               |
-| `npm run build:linux` | Package Linux builds                 |
+| Command                | Purpose                                  |
+| ---------------------- | ---------------------------------------- |
+| `npm run dev`          | Start the development application        |
+| `npm run dev:web`      | Dev app + localhost web UI (127.0.0.1)   |
+| `npm run dev:headless` | Dev backend + web UI, no Electron window |
+| `npm run lint`         | Run ESLint                               |
+| `npm run typecheck`    | Type-check main and renderer code        |
+| `npm test`             | Run the Vitest suite                     |
+| `npm run build`        | Type-check and build the application     |
+| `npm run build:web`    | Build the optional localhost web UI      |
+| `npm run build:mac`    | Package macOS builds                     |
+| `npm run build:win`    | Package Windows builds                   |
+| `npm run build:linux`  | Package Linux builds                     |
 
 Packaged output is written under `dist/`.
 
@@ -302,6 +302,25 @@ Open the authenticated URL printed by the application. Use `npm run dev:headless
 backend, tray, agent runtime, and localhost web service without opening an Electron window.
 Set `OPEN_SCIENCE_WEB_PORT` to choose a port (default `44100`). Explicitly quitting the
 application still shuts down agent and Notebook processes normally.
+
+### CLI daemon management
+
+The CLI manages the Electron headless process as a background service, so the browser is the only
+UI and closing the terminal does not stop active sessions:
+
+```bash
+npm run build
+npm run cli -- start       # starts the daemon and opens the authenticated URL
+npm run cli -- status
+npm run cli -- url
+npm run cli -- stop        # graceful agent and Notebook shutdown
+```
+
+Use `--no-open` to start without opening a browser, `--port <port>` to choose a port, and `--json`
+with `status` for machine-readable output. Development builds are discovered from the repository.
+For an installed build, the CLI checks standard installation locations; override discovery with
+`--app-path <executable>` or `OPEN_SCIENCE_APP_PATH`. Use `--config-root <directory>` when an
+explicit configuration location is required.
 
 ## Building From Source
 

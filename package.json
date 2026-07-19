@@ -7,6 +7,9 @@
   "author": "aipoch",
   "license": "Apache-2.0",
   "homepage": "https://www.aipoch.com/open-science",
+  "bin": {
+    "open-science": "cli/index.mjs"
+  },
   "scripts": {
     "format": "prettier --write .",
     "lint": "eslint --cache .",
@@ -22,6 +25,7 @@
     "dev": "electron-vite dev",
     "dev:web": "node scripts/dev-app-branding.cjs && node scripts/dev-web.cjs",
     "dev:headless": "node scripts/dev-app-branding.cjs && node scripts/dev-web.cjs --headless",
+    "cli": "node cli/index.mjs",
     "build": "npm run typecheck && electron-vite build && npm run build:web",
     "postinstall": "prisma generate && electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",

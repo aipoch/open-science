@@ -8,23 +8,28 @@ import { loadOrCreateWebToken } from './auth'
 import { startWebHttpServer, type RunningWebServer } from './http-server'
 import type { WebModeOptions } from './options'
 import type { RpcCapture } from './rpc-capture'
+import { removeWebServiceState, writeWebServiceState } from './state-file'
 
 const startOptionalWebService = async ({
   options,
-  rpc
+  rpc,
+  requestShutdown
 }: {
   options: WebModeOptions
   rpc: RpcCapture
+  requestShutdown: () => void
 }): Promise<RunningWebServer | undefined> => {
   if (!options.enabled) return undefined
 
-  const token = await loadOrCreateWebToken(resolveConfigRoot())
+  const configRoot = resolveConfigRoot()
+  const token = await loadOrCreateWebToken(configRoot)
   const server = await startWebHttpServer({
     host: '127.0.0.1',
     port: options.port,
     token,
     staticRoot: join(app.getAppPath(), 'out', 'web'),
     rpc,
+    onShutdownRequest: requestShutdown,
     bootstrap: {
       appName: app.getName(),
       appVersion: app.getVersion(),
@@ -37,6 +42,18 @@ const startOptionalWebService = async ({
     }
   })
 
+  try {
+    await writeWebServiceState(configRoot, {
+      pid: process.pid,
+      port: server.port,
+      startedAt: new Date().toISOString(),
+      appVersion: app.getVersion()
+    })
+  } catch (error) {
+    await server.close()
+    throw error
+  }
+
   const url = `http://127.0.0.1:${server.port}/?token=${encodeURIComponent(token)}`
   createLogger('web-service').info('local web service started', {
     host: '127.0.0.1',
@@ -44,7 +61,16 @@ const startOptionalWebService = async ({
     url: `http://127.0.0.1:${server.port}/`
   })
   console.log(`Open Science Web: ${url}`)
-  return server
+  return {
+    port: server.port,
+    close: async () => {
+      try {
+        await server.close()
+      } finally {
+        await removeWebServiceState(configRoot)
+      }
+    }
+  }
 }
 
 export { parseWebModeOptions } from './options'
