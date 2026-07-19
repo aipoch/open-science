@@ -5,6 +5,7 @@ import { delimiter, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
+  buildWindowsPathCommand,
   getCliLauncherStatus,
   installCliLauncher,
   planCliLauncher,
@@ -22,6 +23,17 @@ const posixEnv = (overrides: Partial<CliLauncherEnv> = {}): CliLauncherEnv => ({
   homeDir: home,
   userDataDir: join(home, '.config', 'Open Science'),
   pathVar: '/usr/bin',
+  ...overrides
+})
+
+const winEnv = (overrides: Partial<CliLauncherEnv> = {}): CliLauncherEnv => ({
+  platform: 'win32',
+  appExecPath: 'C:\\Program Files\\Open Science\\open-science.exe',
+  cliEntryPath: 'C:\\Program Files\\Open Science\\resources\\cli\\index.mjs',
+  packaged: true,
+  homeDir: home,
+  userDataDir: join(home, 'AppData', 'Roaming', 'Open Science'),
+  pathVar: 'C:\\Windows\\System32',
   ...overrides
 })
 
@@ -98,5 +110,64 @@ describe('installCliLauncher / status / uninstall (POSIX)', () => {
     const removed = await uninstallCliLauncher(env)
     expect(removed.installed).toBe(false)
     expect((await getCliLauncherStatus(env)).installed).toBe(false)
+  })
+})
+
+describe('buildWindowsPathCommand', () => {
+  it('embeds the bin dir as a PowerShell literal, not via -args', () => {
+    const { command, args } = buildWindowsPathCommand(
+      'C:\\Users\\me\\AppData\\Roaming\\Open Science\\bin'
+    )
+    expect(command).toBe('powershell')
+    // The script must be passed to -Command and contain the actual dir literal; -args (the fragile
+    // form that could leave $args empty and write the wrong PATH) must not be used.
+    expect(args).toContain('-Command')
+    expect(args).not.toContain('-args')
+    const script = args[args.length - 1]
+    expect(script).toContain("$binDir = 'C:\\Users\\me\\AppData\\Roaming\\Open Science\\bin'")
+    expect(script).toContain("[Environment]::SetEnvironmentVariable('Path'")
+  })
+
+  it("doubles embedded single quotes so a quote in the path can't break out of the literal", () => {
+    const script = buildWindowsPathCommand("C:\\weird'dir\\bin").args.at(-1) ?? ''
+    expect(script).toContain("$binDir = 'C:\\weird''dir\\bin'")
+  })
+})
+
+describe('installCliLauncher on Windows PATH edit', () => {
+  it('runs the PATH command with the real bin dir and reports the new-terminal hint on success', async () => {
+    const calls: Array<{ command: string; args: string[] }> = []
+    const status = await installCliLauncher(winEnv(), (command, args) => {
+      calls.push({ command, args })
+      return true
+    })
+
+    expect(status.installed).toBe(true)
+    expect(status.onPath).toBe(true)
+    expect(status.pathHint).toContain('new terminal')
+    // The injected runner received the actual bin dir embedded in the script (regression guard for
+    // the -args passing bug).
+    const binDir = join(home, 'AppData', 'Roaming', 'Open Science', 'bin')
+    expect(calls).toHaveLength(1)
+    expect(calls[0].args.at(-1)).toContain(binDir)
+  })
+
+  it('keeps onPath false with an Add-to-PATH hint when the PATH edit fails', async () => {
+    const status = await installCliLauncher(winEnv(), () => false)
+    expect(status.onPath).toBe(false)
+    expect(status.pathHint).toContain('Add ')
+    expect(status.pathHint).toContain('PATH')
+  })
+
+  it('skips the PATH edit entirely when the bin dir is already on PATH', async () => {
+    const binDir = join(home, 'AppData', 'Roaming', 'Open Science', 'bin')
+    let called = false
+    const status = await installCliLauncher(winEnv({ pathVar: `C:\\Windows;${binDir}` }), () => {
+      called = true
+      return true
+    })
+    expect(called).toBe(false)
+    expect(status.onPath).toBe(true)
+    expect(status.pathHint).toBeUndefined()
   })
 })

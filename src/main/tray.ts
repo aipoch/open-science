@@ -87,11 +87,12 @@ const createAppTray = (opts: {
       else opts.onShow()
     }
 
-    // Windows: setContextMenu makes single-click open the menu (swallowing the primary action) and
-    // native menus render invisibly under --open-science-headless (electron/electron#48982). Pop the
-    // menu explicitly on right-click instead, and keep both single- and double-click bound to the
-    // primary action so click-to-show still works for the desktop app.
-    if (process.platform === 'win32') {
+    // Under --open-science-headless on Windows, Chromium renders the native tray menu invisibly
+    // (electron/electron#48982), so setContextMenu is useless there: pop the menu explicitly on
+    // right-click and bind single/double click to the primary action. The normal desktop app — every
+    // platform, Windows included — keeps the standard setContextMenu + single-click-to-show, so this
+    // workaround stays scoped to the headless case it exists for.
+    if (process.platform === 'win32' && headlessWeb) {
       tray.on('right-click', () => {
         tray.popUpContextMenu(menu, screen.getCursorScreenPoint())
       })

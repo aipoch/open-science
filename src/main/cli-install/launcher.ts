@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { access, chmod, mkdir, rm, writeFile } from 'node:fs/promises'
-import { delimiter, join } from 'node:path'
+import { join } from 'node:path'
 
 import type { CliLauncherStatus } from '../../shared/cli'
 
@@ -30,11 +30,15 @@ export type CliLauncherPlan = {
   onPath: boolean
 }
 
-const isOnPath = (binDir: string, pathVar: string): boolean =>
-  pathVar
-    .split(delimiter)
+// PATH entries are ';'-separated on Windows and ':'-separated elsewhere. Derive the separator from the
+// target platform (not the host's path.delimiter) so the check is correct regardless of where it runs.
+const isOnPath = (binDir: string, pathVar: string, platform: NodeJS.Platform): boolean => {
+  const separator = platform === 'win32' ? ';' : ':'
+  return pathVar
+    .split(separator)
     .filter(Boolean)
     .some((entry) => entry === binDir)
+}
 
 // POSIX: a /bin/sh shim in ~/.local/bin. Double-quote every path (installs live under "Open Science"
 // with a space) and escape embedded quotes defensively.
@@ -70,7 +74,7 @@ export const planCliLauncher = (env: CliLauncherEnv): CliLauncherPlan => {
       binDir,
       target: join(binDir, 'open-science.cmd'),
       shim: windowsShim(env),
-      onPath: isOnPath(binDir, env.pathVar)
+      onPath: isOnPath(binDir, env.pathVar, env.platform)
     }
   }
   const binDir = join(env.homeDir, '.local', 'bin')
@@ -79,7 +83,7 @@ export const planCliLauncher = (env: CliLauncherEnv): CliLauncherPlan => {
     target: join(binDir, 'open-science'),
     shim: posixShim(env),
     mode: 0o755,
-    onPath: isOnPath(binDir, env.pathVar)
+    onPath: isOnPath(binDir, env.pathVar, env.platform)
   }
 }
 
@@ -92,11 +96,23 @@ const exists = async (path: string): Promise<boolean> => {
   }
 }
 
-// Adds binDir to the persistent per-user PATH on Windows (HKCU\Environment) via PowerShell, without an
-// admin prompt. Returns true if the edit ran; the change only reaches new terminals. Never throws.
-const addToWindowsUserPath = (binDir: string): boolean => {
+// Runs a command synchronously and reports success (exit 0). Injectable so the Windows PATH edit can
+// be asserted in tests without invoking a real shell.
+export type CommandRunner = (command: string, args: string[]) => boolean
+
+const defaultRunCommand: CommandRunner = (command, args) => {
+  const result = spawnSync(command, args, { stdio: 'ignore', windowsHide: true })
+  return result.status === 0
+}
+
+// Builds the PowerShell invocation that appends binDir to the persistent per-user PATH
+// (HKCU\Environment), without an admin prompt. The path is embedded as a single-quoted PowerShell
+// literal (single quotes doubled) rather than passed via `-args`: under `-Command`, trailing tokens
+// like `-args <dir>` are unreliable and can leave $args empty, writing the wrong value into PATH.
+export const buildWindowsPathCommand = (binDir: string): { command: string; args: string[] } => {
+  const literal = `'${binDir.replace(/'/g, "''")}'`
   const script = [
-    '$binDir = $args[0]',
+    `$binDir = ${literal}`,
     "$current = [Environment]::GetEnvironmentVariable('Path', 'User')",
     "$parts = @($current -split ';' | Where-Object { $_ -ne '' })",
     'if ($parts -notcontains $binDir) {',
@@ -104,17 +120,15 @@ const addToWindowsUserPath = (binDir: string): boolean => {
     "  [Environment]::SetEnvironmentVariable('Path', $next, 'User')",
     '}'
   ].join('\n')
-  const result = spawnSync(
-    'powershell',
-    ['-NoProfile', '-NonInteractive', '-Command', script, '-args', binDir],
-    { stdio: 'ignore', windowsHide: true }
-  )
-  return result.status === 0
+  return { command: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', script] }
 }
 
 // Writes the launcher shim and, on Windows, ensures its dir is on the user PATH. Returns the resulting
 // status (installed + whether `open-science` is callable, with a hint when a manual step remains).
-export const installCliLauncher = async (env: CliLauncherEnv): Promise<CliLauncherStatus> => {
+export const installCliLauncher = async (
+  env: CliLauncherEnv,
+  runCommand: CommandRunner = defaultRunCommand
+): Promise<CliLauncherStatus> => {
   const plan = planCliLauncher(env)
   await mkdir(plan.binDir, { recursive: true })
   await writeFile(plan.target, plan.shim, plan.mode !== undefined ? { mode: plan.mode } : {})
@@ -124,7 +138,8 @@ export const installCliLauncher = async (env: CliLauncherEnv): Promise<CliLaunch
   let pathHint: string | undefined
   if (!onPath) {
     if (env.platform === 'win32') {
-      onPath = addToWindowsUserPath(plan.binDir)
+      const { command, args } = buildWindowsPathCommand(plan.binDir)
+      onPath = runCommand(command, args)
       pathHint = onPath
         ? 'Added to your PATH — open a new terminal to use "open-science".'
         : `Add ${plan.binDir} to your PATH to use "open-science".`

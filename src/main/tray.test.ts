@@ -217,7 +217,7 @@ describe('createAppTray', () => {
       setPlatform('win32')
     })
 
-    it('pops the context menu on right click and shows on both single and double click', () => {
+    it('keeps the standard context menu and single-click for the desktop app', () => {
       const onShow = vi.fn()
 
       createAppTray({
@@ -227,18 +227,15 @@ describe('createAppTray', () => {
         onQuit: vi.fn()
       })
 
-      expect(lastTray?.contextMenu).toBeUndefined()
-      lastTray?.rightClickHandler?.()
-      expect(lastTray?.poppedMenu?.menu.template).toBe(lastTemplate)
-      expect(lastTray?.poppedMenu?.position).toEqual({ x: 1200, y: 800 })
-
-      // Single-click must still show the window on Windows (regression: it was double-click only).
+      // Non-headless desktop: the native menu works, so the headless right-click workaround must NOT
+      // apply — setContextMenu is used and single-click shows the window (the #206 regression).
+      expect(lastTray?.contextMenu).not.toBeUndefined()
+      expect(lastTray?.poppedMenu).toBeUndefined()
       lastTray?.clickHandler?.()
-      lastTray?.doubleClickHandler?.()
-      expect(onShow).toHaveBeenCalledTimes(2)
+      expect(onShow).toHaveBeenCalledTimes(1)
     })
 
-    it('uses double click to open the web UI in headless mode', () => {
+    it('pops the context menu on right click and opens the web UI on single/double click when headless', () => {
       const onOpenWeb = vi.fn()
 
       createAppTray({
@@ -251,8 +248,15 @@ describe('createAppTray', () => {
         onCopyWebUrl: vi.fn()
       })
 
+      // Headless: setContextMenu renders invisibly (#48982), so the menu is popped on right-click.
+      expect(lastTray?.contextMenu).toBeUndefined()
+      lastTray?.rightClickHandler?.()
+      expect(lastTray?.poppedMenu?.menu.template).toBe(lastTemplate)
+      expect(lastTray?.poppedMenu?.position).toEqual({ x: 1200, y: 800 })
+
+      lastTray?.clickHandler?.()
       lastTray?.doubleClickHandler?.()
-      expect(onOpenWeb).toHaveBeenCalledTimes(1)
+      expect(onOpenWeb).toHaveBeenCalledTimes(2)
     })
   })
 
