@@ -3,6 +3,15 @@ import { useEffect, useId, useMemo, useState } from 'react'
 import type { SkillSource, SkillView } from '../../../../../shared/settings'
 import { useSettingsStore } from '@/stores/settings-store'
 
+import { fuzzyScore } from './fuzzy-match'
+import { HighlightedText } from './HighlightedText'
+
+// A skill plus the name-match positions to highlight (empty when it matched on description only).
+type SkillMatch = { skill: SkillView; positions: number[] }
+
+// Name matches always outrank description-only matches, regardless of raw fuzzy score.
+const NAME_WEIGHT = 100
+
 // Popup that suggests skills for the composer's `/` mention trigger. The composer keeps focus in its
 // editor, so this listens for navigation keys on document while mounted rather than owning focus.
 type SkillMentionPopupProps = {
@@ -33,16 +42,29 @@ export const SkillMentionPopup = ({
     if (skills.length === 0) void loadSkills()
   }, [skills.length, loadSkills])
 
-  // Case-insensitive match of the query against name or description; empty query shows every skill.
-  const matches = useMemo(() => {
-    const needle = query.trim().toLowerCase()
-    if (needle.length === 0) return skills
+  // Rank the query best-first: fuzzy subsequence against the name (so "cg" finds "clinical-genomics"),
+  // falling back to a plain substring in the description. Names always outrank description-only hits;
+  // descriptions stay a contiguous "contains" test since scattered matches across prose are noise.
+  // Empty query shows every skill in its original order.
+  const matches = useMemo<SkillMatch[]>(() => {
+    const needle = query.trim()
+    if (needle.length === 0) return skills.map((skill) => ({ skill, positions: [] }))
 
-    return skills.filter(
-      (skill) =>
-        skill.name.toLowerCase().includes(needle) ||
-        skill.description.toLowerCase().includes(needle)
-    )
+    const descNeedle = needle.toLowerCase()
+    return skills
+      .map((skill) => {
+        const nameMatch = fuzzyScore(needle, skill.name)
+        if (nameMatch) {
+          return { skill, score: nameMatch.score + NAME_WEIGHT, positions: nameMatch.positions }
+        }
+        if (skill.description.toLowerCase().includes(descNeedle)) {
+          return { skill, score: 0, positions: [] }
+        }
+        return null
+      })
+      .filter((m): m is SkillMatch & { score: number } => m !== null)
+      .sort((a, b) => b.score - a.score)
+      .map(({ skill, positions }) => ({ skill, positions }))
   }, [skills, query])
 
   const [activeIndex, setActiveIndex] = useState(0)
@@ -71,7 +93,7 @@ export const SkillMentionPopup = ({
         const active = matches[safeIndex]
         if (active) {
           event.preventDefault()
-          onSelect(active)
+          onSelect(active.skill)
         }
       } else if (event.key === 'Escape') {
         event.preventDefault()
@@ -91,7 +113,7 @@ export const SkillMentionPopup = ({
         aria-label="Skill suggestions"
         className="overflow-y-auto max-h-[min(45vh,18rem)]"
       >
-        {matches.map((skill, index) => {
+        {matches.map(({ skill, positions }, index) => {
           const isActive = index === safeIndex
           return (
             <li
@@ -109,7 +131,9 @@ export const SkillMentionPopup = ({
             >
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="truncate font-medium text-sm">{skill.name}</span>
+                  <span className="truncate font-medium text-sm">
+                    <HighlightedText text={skill.name} positions={positions} />
+                  </span>
                   <div className="flex-1" />
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent text-accent-foreground">
                     {SOURCE_LABELS[skill.source]}
