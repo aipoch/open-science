@@ -42,6 +42,10 @@ type PreloadApi = {
     uninstallClaude: () => unknown
     uninstallOpencode: () => unknown
   }
+  acp: {
+    resumeSession: (request: unknown) => unknown
+    resetSessionContext: (request: unknown) => unknown
+  }
 }
 
 let api: PreloadApi
@@ -77,6 +81,7 @@ const sampleDeleteProject = { projectId: 'p-1' }
 const sampleManifest = { projectId: 'p-1', sessionId: 's-1' }
 const sampleInstall = { executablePath: '/usr/local/bin/opencode' }
 const sampleFramework = { framework: 'opencode' }
+const sampleResumeRequest = { sessionId: 's-1', cwd: '/workspace/project' }
 
 const cases: ForwardingCase[] = [
   // sessions block
@@ -140,6 +145,19 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.settings.uninstallOpencode(),
     channel: 'settings:uninstall-opencode',
     args: []
+  },
+  // ACP session context: resume vs the overflow-recovery reset must hit distinct channels.
+  {
+    name: 'acp.resumeSession → acp:resume-session',
+    invoke: (a) => a.acp.resumeSession(sampleResumeRequest),
+    channel: 'acp:resume-session',
+    args: [sampleResumeRequest]
+  },
+  {
+    name: 'acp.resetSessionContext → acp:reset-session-context',
+    invoke: (a) => a.acp.resetSessionContext(sampleResumeRequest),
+    channel: 'acp:reset-session-context',
+    args: [sampleResumeRequest]
   }
 ]
 
