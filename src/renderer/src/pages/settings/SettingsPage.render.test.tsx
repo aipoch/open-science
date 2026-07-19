@@ -500,7 +500,9 @@ describe('SettingsPage uninstall confirmation', () => {
 
     const cardUninstall = findButton(document.body, 'Uninstall')
     expect(cardUninstall).toBeDefined()
-    expect(cardUninstall?.disabled).toBe(true)
+    // The active managed runtime is greyed via aria-disabled (kept hoverable for its explainer tooltip),
+    // not the native disabled attribute.
+    expect(cardUninstall?.getAttribute('aria-disabled')).toBe('true')
   })
 
   it('gates a framework switch behind the confirmation dialog', async () => {

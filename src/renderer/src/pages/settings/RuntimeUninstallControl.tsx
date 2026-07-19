@@ -2,6 +2,7 @@ import { CircleHelp, Trash2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 import { uninstallDisabledHint } from './runtime-uninstall-hint'
 
 type RuntimeUninstallControlProps = {
@@ -19,9 +20,11 @@ type RuntimeUninstallControlProps = {
 }
 
 // Destructive Uninstall action for a detected runtime, always shown so every card carries the button.
-// Enabled only for a non-active app-managed install; otherwise greyed out. When the disabled state has a
-// standing reason (not app-managed, or the active framework), an adjacent `?` icon explains it on hover —
-// the tooltip hangs off the icon, not the button, because a disabled button doesn't fire hover events.
+// Enabled only for a non-active app-managed install; otherwise greyed out. When the greyed state has a
+// standing reason (not app-managed, or the active framework), a trailing `?` icon appears inside the
+// button and its tooltip explains why. To keep that tooltip hoverable, the greyed button is only
+// aria-disabled (not natively disabled, which would swallow hover events) with its click neutralized; a
+// transient busy state (uninstalling/detecting) natively disables it with no `?`.
 const RuntimeUninstallControl = ({
   label,
   uninstallCommand,
@@ -31,41 +34,39 @@ const RuntimeUninstallControl = ({
   isDetecting,
   onUninstall
 }: RuntimeUninstallControlProps): React.JSX.Element => {
-  const disabled = !managed || active || isUninstalling || isDetecting
-
-  // Only the two standing reasons get an explainer; a transient busy state (uninstalling/detecting)
-  // greys the button without a `?`.
   const hint = uninstallDisabledHint(label, uninstallCommand, { managed, active })
+  const busy = isUninstalling || isDetecting
+
+  const button = (
+    <Button
+      type="button"
+      variant="destructive"
+      size="sm"
+      // A standing reason keeps the button hoverable via aria-disabled so its tooltip can open; only a
+      // transient busy state uses the native disabled attribute.
+      aria-disabled={hint ? true : undefined}
+      disabled={!hint && busy}
+      onClick={hint ? undefined : onUninstall}
+      className={cn(
+        hint && 'cursor-not-allowed opacity-50 hover:bg-destructive/10 dark:hover:bg-destructive/20'
+      )}
+    >
+      <Trash2 aria-hidden="true" />
+      Uninstall
+      {hint ? <CircleHelp aria-hidden="true" /> : null}
+    </Button>
+  )
+
+  // No standing reason (actionable, or only transiently busy): a plain button with no explainer.
+  if (!hint) return button
 
   return (
-    <div className="flex items-center gap-1.5">
-      <Button
-        type="button"
-        variant="destructive"
-        size="sm"
-        onClick={onUninstall}
-        disabled={disabled}
-      >
-        <Trash2 aria-hidden="true" />
-        Uninstall
-      </Button>
-      {hint ? (
-        <TooltipProvider delayDuration={200}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                aria-label={`Why can't ${label} be uninstalled?`}
-                className="flex size-5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
-              >
-                <CircleHelp className="size-4" aria-hidden="true" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-xs leading-relaxed">{hint}</TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      ) : null}
-    </div>
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipContent className="max-w-xs leading-relaxed">{hint}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
 }
 

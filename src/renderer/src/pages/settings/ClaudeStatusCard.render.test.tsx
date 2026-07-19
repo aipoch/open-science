@@ -75,10 +75,11 @@ describe('ClaudeStatusCard surface', () => {
       )
     })
 
-    // The button now always shows for a detected runtime, but a non-managed install can't be removed.
-    expect(findUninstallButton()?.disabled).toBe(true)
-    const help = container.querySelector('button[aria-label^="Why can\'t"]')
-    expect(help).not.toBeNull()
+    // The button now always shows for a detected runtime, but a non-managed install can't be removed:
+    // greyed via aria-disabled (kept hoverable for the tooltip) with an inline `?` icon.
+    const button = findUninstallButton()
+    expect(button?.getAttribute('aria-disabled')).toBe('true')
+    expect(button?.querySelector('.lucide-circle-question-mark')).not.toBeNull()
   })
 
   it('offers an uninstall action for a managed install and fires onUninstall on click', () => {
@@ -125,8 +126,8 @@ describe('ClaudeStatusCard surface', () => {
     const radio = container.querySelector<HTMLButtonElement>('[role="radio"]')
     expect(radio?.getAttribute('aria-checked')).toBe('true')
 
-    // The active runtime can't be uninstalled — switch away first.
-    expect(findUninstallButton()?.disabled).toBe(true)
+    // The active runtime can't be uninstalled — switch away first (greyed via aria-disabled).
+    expect(findUninstallButton()?.getAttribute('aria-disabled')).toBe('true')
 
     act(() => radio?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(onSelect).toHaveBeenCalledTimes(1)

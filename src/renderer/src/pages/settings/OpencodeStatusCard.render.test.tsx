@@ -73,13 +73,14 @@ describe('OpencodeStatusCard', () => {
         button.textContent?.includes('Uninstall')
       )
 
-    // A detected but non-managed (PATH) opencode shows the button greyed out with an explainer.
+    // A detected but non-managed (PATH) opencode shows the button greyed out (aria-disabled) with an
+    // inline `?` explainer.
     render({
       opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
       onUninstall: vi.fn()
     })
-    expect(findUninstall()?.disabled).toBe(true)
-    expect(container.querySelector('button[aria-label^="Why can\'t"]')).not.toBeNull()
+    expect(findUninstall()?.getAttribute('aria-disabled')).toBe('true')
+    expect(findUninstall()?.querySelector('.lucide-circle-question-mark')).not.toBeNull()
 
     // The same install marked managed enables the action and fires onUninstall on click.
     render({
@@ -89,6 +90,7 @@ describe('OpencodeStatusCard', () => {
     })
     const button = findUninstall()
     expect(button?.disabled).toBe(false)
+    expect(button?.getAttribute('aria-disabled')).toBeNull()
 
     act(() => button?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(onUninstall).toHaveBeenCalledTimes(1)

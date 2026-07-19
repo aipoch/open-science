@@ -50,9 +50,10 @@ const uninstallButton = (): HTMLButtonElement | undefined =>
     button.textContent?.includes('Uninstall')
   )
 
-// The `?` explainer trigger, identified by its aria-label.
-const helpTrigger = (): HTMLButtonElement | null =>
-  container.querySelector<HTMLButtonElement>('button[aria-label^="Why can\'t"]')
+// The `?` explainer now lives inside the Uninstall button as a lucide CircleHelp icon (which lucide
+// renders with the `lucide-circle-question-mark` class).
+const hasHelpIcon = (): boolean =>
+  uninstallButton()?.querySelector('.lucide-circle-question-mark') != null
 
 describe('RuntimeUninstallControl', () => {
   it('enables uninstall and fires onUninstall for a non-active managed runtime, with no explainer', () => {
@@ -60,33 +61,43 @@ describe('RuntimeUninstallControl', () => {
 
     const button = uninstallButton()
     expect(button?.disabled).toBe(false)
-    // A working uninstall needs no explanation.
-    expect(helpTrigger()).toBeNull()
+    expect(button?.getAttribute('aria-disabled')).toBeNull()
+    // A working uninstall needs no `?`.
+    expect(hasHelpIcon()).toBe(false)
 
     act(() => button?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(onUninstall).toHaveBeenCalledTimes(1)
   })
 
-  it('greys out uninstall and renders a `?` explainer for a non-managed install', () => {
-    render({ managed: false })
+  it('greys out uninstall (aria-disabled) with an inline `?` for a non-managed install', () => {
+    const onUninstall = render({ managed: false, onUninstall: vi.fn() })
 
-    expect(uninstallButton()?.disabled).toBe(true)
-    expect(helpTrigger()).not.toBeNull()
+    const button = uninstallButton()
+    // Greyed via aria-disabled (not the native attribute) so the tooltip stays hoverable.
+    expect(button?.disabled).toBe(false)
+    expect(button?.getAttribute('aria-disabled')).toBe('true')
+    expect(hasHelpIcon()).toBe(true)
+
+    // The neutralized click does nothing.
+    act(() => button?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(onUninstall).not.toHaveBeenCalled()
   })
 
-  it('greys out uninstall and renders a `?` explainer when the runtime is active', () => {
+  it('greys out uninstall with an inline `?` when the runtime is active', () => {
     render({ managed: true, active: true })
 
-    expect(uninstallButton()?.disabled).toBe(true)
-    expect(helpTrigger()).not.toBeNull()
+    const button = uninstallButton()
+    expect(button?.getAttribute('aria-disabled')).toBe('true')
+    expect(hasHelpIcon()).toBe(true)
   })
 
-  it('greys out uninstall without an explainer while a removal is in flight', () => {
+  it('natively disables uninstall without a `?` while a removal is in flight', () => {
     render({ managed: true, active: false, isUninstalling: true })
 
-    expect(uninstallButton()?.disabled).toBe(true)
-    // Transient busy states get no `?` — the button just locks.
-    expect(helpTrigger()).toBeNull()
+    const button = uninstallButton()
+    // Transient busy states use the native disabled attribute and get no `?`.
+    expect(button?.disabled).toBe(true)
+    expect(hasHelpIcon()).toBe(false)
   })
 })
 
