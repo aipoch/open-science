@@ -11,7 +11,9 @@ import {
   createWorkspaceRuntimeEventProcessor,
   getResumeFailureMessage,
   markRunningSessionsDisconnectedOnDrop,
+  processContextOverflowRecovery,
   processVisibleWorkspaceRuntimeEvents,
+  recoverContextOverflowWorkspaceSession,
   resumeInterruptedWorkspaceSession,
   sendWorkspaceMessage
 } from './useWorkspaceAgentRuntime'
@@ -244,6 +246,7 @@ describe('workspace agent message sending', () => {
       state: createSnapshot(),
       createSession: vi.fn(() => createdSession),
       resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
     }
 
@@ -317,6 +320,7 @@ describe('workspace agent message sending', () => {
         cwd: '/workspace/project'
       }),
       resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
     }
 
@@ -388,6 +392,7 @@ describe('workspace agent message sending', () => {
         cwd: '/workspace/project'
       }),
       resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
     }
 
@@ -415,6 +420,7 @@ describe('workspace agent message sending', () => {
         cwd: '/workspace/project'
       }),
       resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
     }
 
@@ -474,6 +480,7 @@ describe('workspace agent message sending', () => {
       state: createSnapshot(['session-1']),
       createSession: vi.fn(),
       resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -508,6 +515,7 @@ describe('workspace agent message sending', () => {
       state: createSnapshot(['session-1']),
       createSession: vi.fn(),
       resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn().mockResolvedValue(undefined)
     }
 
@@ -546,6 +554,7 @@ describe('workspace agent message sending', () => {
       state: createSnapshot(['session-1']),
       createSession: vi.fn(),
       resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn().mockResolvedValue(undefined)
     }
 
@@ -576,6 +585,7 @@ describe('workspace agent message sending', () => {
       state: createSnapshot(),
       createSession: vi.fn(),
       resumeSession: vi.fn(() => resumeCanFinish.promise),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -615,6 +625,7 @@ describe('workspace agent message sending', () => {
         .mockRejectedValue(
           new Error('Invalid params: cwd does not exist on the machine running the agent: /gone')
         ),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn()
     }
 
@@ -649,6 +660,7 @@ describe('workspace agent message sending', () => {
             "Error invoking remote method 'acp:resume-session': Error: agent process crashed"
           )
         ),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn()
     }
 
@@ -680,6 +692,7 @@ describe('workspace agent message sending', () => {
       resumeSession: vi
         .fn()
         .mockRejectedValue(new Error('ACP agent does not support session resume.')),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn()
     }
 
@@ -714,6 +727,7 @@ describe('workspace agent message sending', () => {
             "The active model isn't compatible with Claude Code. Open Settings → Model to pick a compatible model or switch the agent framework."
           )
         ),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn()
     }
 
@@ -744,6 +758,7 @@ describe('workspace agent message sending', () => {
       state: createSnapshot(),
       createSession: vi.fn(),
       resumeSession: vi.fn().mockRejectedValue(new Error('ACP connection failed')),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn()
     }
 
@@ -799,6 +814,7 @@ describe('resuming an interrupted session on demand', () => {
       resumeSession: vi
         .fn()
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn()
     }
     seedDetachedSession()
@@ -821,6 +837,7 @@ describe('resuming an interrupted session on demand', () => {
       state: createSnapshot(),
       createSession: vi.fn(),
       resumeSession: vi.fn().mockRejectedValue(new Error('unexpected agent state')),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn()
     }
     seedDetachedSession()
@@ -838,6 +855,7 @@ describe('resuming an interrupted session on demand', () => {
       state: createSnapshot(['session-1']),
       createSession: vi.fn(),
       resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn()
     }
     seedDetachedSession()
@@ -853,6 +871,7 @@ describe('resuming an interrupted session on demand', () => {
       state: { ...createSnapshot(), cwd: '' },
       createSession: vi.fn(),
       resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn()
     }
     seedDetachedSession('')
@@ -915,6 +934,7 @@ describe('resuming an interrupted session on demand', () => {
       resumeSession: vi
         .fn()
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -982,6 +1002,7 @@ describe('resuming an interrupted session on demand', () => {
           contextReset: true
         })
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -1026,6 +1047,7 @@ describe('resuming an interrupted session on demand', () => {
       resumeSession: vi
         .fn()
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -1060,6 +1082,7 @@ describe('resuming an interrupted session on demand', () => {
         cwd: '/workspace/project',
         contextReset: true
       }),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -1101,6 +1124,7 @@ describe('resuming an interrupted session on demand', () => {
       resumeSession: vi
         .fn()
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -1138,6 +1162,7 @@ describe('resuming an interrupted session on demand', () => {
       resumeSession: vi
         .fn()
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
+      resetSessionContext: vi.fn(),
       sendPrompt: vi.fn()
     }
 
@@ -1147,5 +1172,186 @@ describe('resuming an interrupted session on demand', () => {
     expect(runtime.resumeSession).toHaveBeenCalledTimes(1)
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
+  })
+})
+
+describe('recovering from a request-size overflow', () => {
+  beforeEach(() => {
+    useSessionStore.setState(createInitialSessionState())
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  const seedOverflowedConversation = (): void => {
+    // A completed prior turn (replayed as text) followed by the unanswered turn that overflowed.
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Analyze the first screenshot',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: 'Here is what it shows'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'now compare with this new screenshot',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    useSessionStore.getState().failRun('session-1', 'Request too large (max 32MB)')
+  }
+
+  it('resets the agent context, drops the failed turn, and re-sends with a text preamble', async () => {
+    vi.stubGlobal('window', {
+      api: { acp: { getState: vi.fn().mockResolvedValue(createSnapshot(['session-1'])) } }
+    })
+    seedOverflowedConversation()
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        contextReset: true
+      }),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    const recovered = await recoverContextOverflowWorkspaceSession(runtime, 'session-1')
+    await flushRuntimeTasks()
+
+    expect(recovered).toBe(true)
+    expect(runtime.resetSessionContext).toHaveBeenCalledWith(
+      'session-1',
+      '/workspace/project',
+      'default-project',
+      'ask'
+    )
+    // The unanswered turn is re-sent (not duplicated) with the prior turn replayed as a text preamble.
+    expect(runtime.sendPrompt.mock.calls[0]?.[1]).toBe('now compare with this new screenshot')
+    const preamble = runtime.sendPrompt.mock.calls[0]?.[5]
+    expect(preamble).toContain('Analyze the first screenshot')
+    expect(preamble).toContain('Here is what it shows')
+    expect(preamble).not.toContain('now compare with this new screenshot')
+  })
+
+  it('keeps the error visible when the context reset itself fails', async () => {
+    seedOverflowedConversation()
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn().mockRejectedValue(new Error('ACP connection failed')),
+      sendPrompt: vi.fn()
+    }
+
+    const recovered = await recoverContextOverflowWorkspaceSession(runtime, 'session-1')
+
+    expect(recovered).toBe(false)
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]?.status).toBe('error')
+  })
+
+  it('triggers recovery once per overflow error event for an attached session', () => {
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+    const recover = vi.fn().mockResolvedValue(true)
+    const handled = new Set<string>()
+    const recovering = new Set<string>()
+    const event = createEvent({
+      id: 'overflow-1',
+      kind: 'error',
+      level: 'error',
+      sessionId: 'session-1',
+      title: 'Prompt failed',
+      text: 'Internal error: Request too large (max 32MB).'
+    })
+
+    processContextOverflowRecovery(runtime, [event], handled, recovering, recover)
+    // A repeated snapshot delivering the same event must not recover twice.
+    processContextOverflowRecovery(runtime, [event], handled, recovering, recover)
+
+    expect(recover).toHaveBeenCalledTimes(1)
+    expect(recover).toHaveBeenCalledWith(runtime, 'session-1')
+  })
+
+  it('ignores non-overflow errors, detached sessions, and sessions already recovering', () => {
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+    const recover = vi.fn().mockResolvedValue(true)
+
+    // An unrelated turn-level error is not a size overflow.
+    processContextOverflowRecovery(
+      runtime,
+      [
+        createEvent({
+          id: 'e1',
+          kind: 'error',
+          level: 'error',
+          sessionId: 'session-1',
+          text: 'gateway 502'
+        })
+      ],
+      new Set(),
+      new Set(),
+      recover
+    )
+    // A detached session goes through the normal Resume path, not auto-recovery.
+    processContextOverflowRecovery(
+      runtime,
+      [
+        createEvent({
+          id: 'e2',
+          kind: 'error',
+          level: 'error',
+          sessionId: 'other-session',
+          text: 'Request too large'
+        })
+      ],
+      new Set(),
+      new Set(),
+      recover
+    )
+    // A session already within its recovery cooldown is skipped.
+    processContextOverflowRecovery(
+      runtime,
+      [
+        createEvent({
+          id: 'e3',
+          kind: 'error',
+          level: 'error',
+          sessionId: 'session-1',
+          text: 'Request too large'
+        })
+      ],
+      new Set(),
+      new Set(['session-1']),
+      recover
+    )
+
+    expect(recover).not.toHaveBeenCalled()
   })
 })

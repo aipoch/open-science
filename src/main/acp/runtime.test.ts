@@ -837,6 +837,38 @@ describe('ACP runtime session management', () => {
     )
   })
 
+  it('adopts a fresh agent session under the same app id on a context reset', async () => {
+    const process = new FakeAgentProcess()
+    const receivedPrompts: ContentBlock[][] = []
+    // A second agent session id is available for the fresh adoption that the reset performs.
+    startFakeAgent(process, ['remote-session-1', 'remote-session-2'], {
+      onPrompt: ({ prompt }) => {
+        receivedPrompts.push(prompt)
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    const reset = await runtime.resetSessionContext({
+      sessionId: session.sessionId,
+      cwd: '/workspace'
+    })
+
+    // The app-facing id stays attached (a brand-new agent session now backs it), and the caller is told
+    // to replay a transcript because the agent-side context was dropped.
+    expect(reset.contextReset).toBe(true)
+    expect(reset.sessionId).toBe(session.sessionId)
+    expect(runtime.getSnapshot().sessionIds).toContain(session.sessionId)
+
+    // The fresh session still accepts prompts, so the conversation continues after the reset.
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'continue after compaction' })
+    expect(receivedPrompts.at(-1)).toBeDefined()
+  })
+
   it('sends PDFs as extracted text, never as an inlined base64 file', async () => {
     const root = await createTemporaryRoot()
     const uploadRepository = new UploadRepository(root)

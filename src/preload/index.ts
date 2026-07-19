@@ -162,6 +162,7 @@ type OpenScienceAPI = {
     disconnect: () => Promise<AcpStateSnapshot>
     createSession: (request?: AcpCreateSessionRequest) => Promise<AcpCreateSessionResponse>
     resumeSession: (request: AcpResumeSessionRequest) => Promise<AcpCreateSessionResponse>
+    resetSessionContext: (request: AcpResumeSessionRequest) => Promise<AcpCreateSessionResponse>
     sendPrompt: (request: AcpPromptRequest) => Promise<AcpStateSnapshot>
     cancel: (request: AcpCancelPromptRequest) => Promise<AcpStateSnapshot>
     deleteSession: (request: AcpDeleteSessionRequest) => Promise<AcpStateSnapshot>
@@ -376,6 +377,8 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('acp:create-session', request) as Promise<AcpCreateSessionResponse>,
     resumeSession: (request) =>
       ipcRenderer.invoke('acp:resume-session', request) as Promise<AcpCreateSessionResponse>,
+    resetSessionContext: (request) =>
+      ipcRenderer.invoke('acp:reset-session-context', request) as Promise<AcpCreateSessionResponse>,
     sendPrompt: (request) =>
       ipcRenderer.invoke('acp:send-prompt', request) as Promise<AcpStateSnapshot>,
     cancel: (request) => ipcRenderer.invoke('acp:cancel', request) as Promise<AcpStateSnapshot>,

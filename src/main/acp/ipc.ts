@@ -126,6 +126,9 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntime => {
   ipcMain.handle('acp:resume-session', async (_event, request: AcpResumeSessionRequest) =>
     runtime.resumeSession(request)
   )
+  ipcMain.handle('acp:reset-session-context', async (_event, request: AcpResumeSessionRequest) =>
+    runtime.resetSessionContext(request)
+  )
   // Prompt calls wait for the turn to stop, then return the latest snapshot.
   ipcMain.handle('acp:send-prompt', async (_event, request: AcpPromptRequest) => {
     await runtime.sendPrompt(request)

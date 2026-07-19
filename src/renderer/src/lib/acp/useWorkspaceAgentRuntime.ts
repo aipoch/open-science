@@ -16,6 +16,7 @@ import type { ArtifactReference } from '../../../../shared/artifacts'
 import type { MessagePart } from '../../../../shared/session-persistence'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
 import { useSessionStore, type ChatMessage } from '../../stores/session-store'
+import { isMediaOverflowError } from '../../../../shared/media-overflow'
 import { useAcpRuntime } from './useAcpRuntime'
 import { buildHistoryPreamble } from './history-preamble'
 import { applyWorkspaceRuntimeEvent, syncWorkspacePermissionState } from './workspace-events'
@@ -49,7 +50,7 @@ type SendWorkspaceMessageResult = {
 
 type WorkspaceMessageRuntime = Pick<
   ReturnType<typeof useAcpRuntime>,
-  'state' | 'createSession' | 'resumeSession' | 'sendPrompt'
+  'state' | 'createSession' | 'resumeSession' | 'resetSessionContext' | 'sendPrompt'
 >
 
 type RuntimeEventApplier = (event: AcpRuntimeEvent) => Promise<boolean>
@@ -575,6 +576,108 @@ const resumeInterruptedWorkspaceSession = async (
   })
 }
 
+// After an auto-recovery, ignore further overflow events for this session for a short window so a retry
+// that immediately overflows again falls through to a visible error instead of looping. Prevention (the
+// per-session inline-image budget) makes a second overflow unlikely, so this is a backstop, not the norm.
+const CONTEXT_OVERFLOW_RECOVERY_COOLDOWN_MS = 15_000
+
+// Auto-recovers a conversation whose replayed history outgrew the provider's request-size limit
+// (accumulated images/attachments → "Request too large" / the backend's compaction failing with
+// media_unstrippable). This is the app-level compaction the backend cannot do: reset the agent context
+// to a fresh session (no media), then replay a bounded TEXT transcript and re-send the unanswered turn.
+// Mirrors resumeInterruptedWorkspaceSession, differing only in resetting rather than resuming. Returns
+// false when there is nothing to recover or the reset itself fails, so the caller keeps the visible error.
+const recoverContextOverflowWorkspaceSession = async (
+  runtime: WorkspaceMessageRuntime,
+  sessionId: string
+): Promise<boolean> => {
+  const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
+
+  if (!session) return false
+
+  const resumeCwd = session.cwd || runtime.state.cwd
+
+  if (!resumeCwd) return false
+
+  // The unanswered user turn is what we re-send; if the last turn already got a reply there is nothing
+  // to retry (a stray late overflow event), so bail before disturbing the agent session.
+  const interruptedTurn = findInterruptedUserTurn(session.messages)
+
+  if (!interruptedTurn) return false
+
+  try {
+    await runtime.resetSessionContext(
+      sessionId,
+      resumeCwd,
+      session.projectId,
+      session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE
+    )
+  } catch (error) {
+    useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
+    return false
+  }
+
+  // Drop the unanswered turn so the re-send does not duplicate the bubble; the remaining prior turns are
+  // replayed as a text preamble via forceHistoryReplay (session.messages was captured before removal).
+  useSessionStore.getState().removeMessage(sessionId, interruptedTurn.id)
+
+  await sendWorkspaceMessage(runtime, {
+    sessionId,
+    text: interruptedTurn.content,
+    attachments: interruptedTurn.uploads ?? [],
+    parts: interruptedTurn.parts,
+    cwd: resumeCwd,
+    projectId: session.projectId,
+    permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+    // A fresh agent session lost the prior context, so replay the transcript on this first prompt.
+    forceHistoryReplay: true
+  })
+
+  return true
+}
+
+// Scans runtime error events for the request-size overflow and triggers one auto-recovery per event.
+// handledEventIds dedups across the repeated event snapshots a bounded window re-delivers; the recovery
+// runs only for attached sessions (a detached one uses the normal Resume path) and only once per cooldown.
+const processContextOverflowRecovery = (
+  runtime: WorkspaceMessageRuntime,
+  events: AcpRuntimeEvent[],
+  handledEventIds: Set<string>,
+  recoveringSessionIds: Set<string>,
+  recover: (
+    runtime: WorkspaceMessageRuntime,
+    sessionId: string
+  ) => Promise<boolean> = recoverContextOverflowWorkspaceSession
+): void => {
+  for (const event of events) {
+    if (handledEventIds.has(event.id)) continue
+    if (event.kind !== 'error' || !event.sessionId) continue
+    if (!isMediaOverflowError(event.text) && !isMediaOverflowError(event.title)) continue
+
+    handledEventIds.add(event.id)
+
+    const { sessionId } = event
+
+    if (!runtime.state.sessionIds.includes(sessionId)) continue
+    if (recoveringSessionIds.has(sessionId)) continue
+
+    recoveringSessionIds.add(sessionId)
+    void recover(runtime, sessionId).finally(() => {
+      setTimeout(
+        () => recoveringSessionIds.delete(sessionId),
+        CONTEXT_OVERFLOW_RECOVERY_COOLDOWN_MS
+      )
+    })
+  }
+
+  // Forget ids that fell out of the bounded runtime event window so the set cannot grow unbounded.
+  const visibleIds = new Set(events.map((event) => event.id))
+
+  for (const id of handledEventIds) {
+    if (!visibleIds.has(id)) handledEventIds.delete(id)
+  }
+}
+
 // Flags running sessions as disconnected on a TRANSITION into a dropped connection state. Abnormal
 // drops (agent crash / gateway drop) go through main's handleConnectionClosed → status 'closed';
 // deliberate mid-prompt disconnects use disconnect(false) (no 'closed' emit) and idle provider/skills
@@ -618,10 +721,25 @@ const useWorkspaceAgentRuntime = (): {
   // Tracks the last connection status so the disconnect effect fires only on a transition, not on
   // every unrelated snapshot re-render.
   const previousStatusRef = useRef(runtime.state.status)
+  // Dedup + cooldown state for the request-size overflow auto-recovery, kept across re-renders.
+  const handledOverflowEventIds = useRef(new Set<string>())
+  const recoveringOverflowSessionIds = useRef(new Set<string>())
 
   // Applies each visible runtime event once and trims ids that fell out of the runtime window.
   useEffect(() => {
     void eventProcessor.current.process(runtime.state.events)
+  }, [runtime.state.events])
+
+  // Auto-recovers when a conversation outgrows the provider's request-size limit: resets the agent
+  // context and replays a text-only transcript instead of dead-ending on an unrecoverable error.
+  useEffect(() => {
+    processContextOverflowRecovery(
+      runtime,
+      runtime.state.events,
+      handledOverflowEventIds.current,
+      recoveringOverflowSessionIds.current
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runtime is read fresh; fire on new events.
   }, [runtime.state.events])
 
   // Mirrors pending permission requests into per-session store status.
@@ -742,7 +860,9 @@ export {
   createWorkspaceRuntimeEventProcessor,
   getResumeFailureMessage,
   markRunningSessionsDisconnectedOnDrop,
+  processContextOverflowRecovery,
   processVisibleWorkspaceRuntimeEvents,
+  recoverContextOverflowWorkspaceSession,
   resumeInterruptedWorkspaceSession,
   sendWorkspaceMessage,
   useWorkspaceAgentRuntime

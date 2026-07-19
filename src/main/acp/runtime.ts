@@ -690,6 +690,33 @@ class AcpRuntime {
     return this.resumeSessionWithTimeout(request, sessionCwd, projectName)
   }
 
+  // Forcibly drops the agent-side context for a session whose accumulated history can no longer be sent
+  // — chiefly when inlined media pushed the request past the provider's size limit and the backend's own
+  // compaction fails with `media_unstrippable`. Disposes the current agent session and adopts a brand-new
+  // one under the SAME app id, resetting the per-session inline-image budget so a replayed text-only
+  // transcript starts clean. Returns contextReset so the caller replays a bounded transcript into the
+  // next prompt (the app-level equivalent of compaction, which — unlike the backend's — drops all media).
+  async resetSessionContext(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
+    const sessionCwd = resolve(request.cwd || this.cwd || this.options.defaultCwd)
+    const projectName = this.normalizeProjectName(request.projectName)
+    const connection = await this.ensureConnected(sessionCwd)
+
+    // Tear down the currently attached agent session (if any) before adopting a replacement, dropping
+    // its reverse routing so late events from the old agent session can no longer target this app id.
+    const attached = this.sessions.get(request.sessionId)
+
+    if (attached) {
+      attached.dispose()
+      this.agentToAppSessionId.delete(attached.sessionId)
+      this.sessions.delete(request.sessionId)
+    }
+
+    // The fresh agent session holds no history, so the accumulated media is gone; start its budget clean.
+    this.sessionInlineImageBytes.delete(request.sessionId)
+
+    return this.adoptFreshSession(connection, request, sessionCwd, projectName)
+  }
+
   // Races the network-bound resume against a timeout so a stalled agent handshake cannot hang Resume
   // forever. On timeout the half-open connection is torn down so the next Resume reconnects cleanly.
   private async resumeSessionWithTimeout(
