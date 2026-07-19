@@ -34,7 +34,8 @@ type SessionPersistenceHandlers = {
 // Adapts the repository into small handlers that are easy to unit test.
 const createSessionPersistenceHandlers = (
   repository: SessionPersistenceRepository,
-  reviewRepository: ReviewRepository
+  reviewRepository: ReviewRepository,
+  deleteSessionUploads: (sessionId: string) => Promise<void> = async () => undefined
 ): SessionPersistenceHandlers => ({
   loadAll: () => repository.loadAll(),
   saveSession: (session) => repository.saveSession(session),
@@ -48,6 +49,12 @@ const createSessionPersistenceHandlers = (
       })
     })
     await repository.deleteSession(request.projectId, request.sessionId)
+    await deleteSessionUploads(request.sessionId).catch((error: unknown) => {
+      log.warn('deleteSessionUploads failed after session delete (non-fatal)', {
+        sessionId: request.sessionId,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    })
   },
   deleteProjectSessions: async (request) => {
     // Delete cascade: remove reviewer rows first so no orphan reviews/findings remain.
@@ -59,7 +66,20 @@ const createSessionPersistenceHandlers = (
         error: error instanceof Error ? error.message : String(error)
       })
     })
+    const sessions = (await repository.loadAll()).sessions.filter(
+      (session) => session.projectId === request.projectId
+    )
     await repository.deleteProjectSessions(request.projectId)
+    await Promise.all(
+      sessions.map((session) =>
+        deleteSessionUploads(session.id).catch((error: unknown) => {
+          log.warn('deleteSessionUploads failed after project delete (non-fatal)', {
+            sessionId: session.id,
+            error: error instanceof Error ? error.message : String(error)
+          })
+        })
+      )
+    )
   },
   saveManifest: (request) => repository.saveManifest(request)
 })
@@ -74,9 +94,14 @@ const createDefaultReviewRepository = (): ReviewRepository =>
 // Registers renderer-callable persistence commands without coupling them to ACP runtime IPC.
 const registerSessionPersistenceIpcHandlers = (
   repository = createDefaultSessionRepository(),
-  reviewRepository = createDefaultReviewRepository()
+  reviewRepository = createDefaultReviewRepository(),
+  deleteSessionUploads?: (sessionId: string) => Promise<void>
 ): void => {
-  const handlers = createSessionPersistenceHandlers(repository, reviewRepository)
+  const handlers = createSessionPersistenceHandlers(
+    repository,
+    reviewRepository,
+    deleteSessionUploads
+  )
 
   // Keep persistence IPC separate from ACP runtime commands; it owns durable UI state only.
   ipcMain.handle('sessions:load-all', () => handlers.loadAll())

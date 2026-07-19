@@ -28,6 +28,7 @@ const provider = (overrides: Partial<ProviderView>): ProviderView => ({
   type: 'custom',
   name: 'Gateway',
   models: ['m'],
+  supportsImageInput: false,
   hasKey: true,
   needsKey: false,
   ...overrides
@@ -45,6 +46,12 @@ const FRAMEWORKS: AgentFrameworkView[] = [
     displayName: 'OpenCode',
     supportsSkills: true,
     supportedApiTypes: ['anthropic', 'openai']
+  },
+  {
+    id: 'codex',
+    displayName: 'Codex',
+    supportsSkills: true,
+    supportedApiTypes: ['responses']
   }
 ]
 
@@ -57,7 +64,7 @@ describe('ModelFrameworkCompatibilityAlert', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: FRAMEWORKS,
-      providers: [provider({ id: 'p1', apiType: 'openai' })],
+      providers: [provider({ id: 'p1', apiEndpoints: ['openai'] })],
       activeProviderId: undefined
     })
     render()
@@ -69,7 +76,7 @@ describe('ModelFrameworkCompatibilityAlert', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: FRAMEWORKS,
-      providers: [provider({ id: 'p1', apiType: 'anthropic' })],
+      providers: [provider({ id: 'p1', apiEndpoints: ['anthropic'] })],
       activeProviderId: 'p1'
     })
     render()
@@ -82,7 +89,7 @@ describe('ModelFrameworkCompatibilityAlert', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: FRAMEWORKS,
-      providers: [provider({ id: 'p1', name: 'DeepSeek', apiType: 'openai' })],
+      providers: [provider({ id: 'p1', name: 'DeepSeek', apiEndpoints: ['openai'] })],
       activeProviderId: 'p1'
     })
     render()
@@ -99,7 +106,12 @@ describe('ModelFrameworkCompatibilityAlert', () => {
       agentFrameworkId: 'opencode',
       agentFrameworks: FRAMEWORKS,
       providers: [
-        provider({ id: 'p1', name: 'Local Claude', type: 'claude-default', apiType: 'anthropic' })
+        provider({
+          id: 'p1',
+          name: 'Local Claude',
+          type: 'claude-default',
+          apiEndpoints: ['anthropic']
+        })
       ],
       activeProviderId: 'p1'
     })
@@ -110,11 +122,28 @@ describe('ModelFrameworkCompatibilityAlert', () => {
     expect(alert?.textContent).toContain('OpenCode')
   })
 
+  it('does not warn for a bridge-compatible Chat Completions provider under Codex', () => {
+    // A Chat Completions provider is usable through the Codex Responses bridge, and a custom provider's
+    // model is always bridge-supported (static registry check, not a runtime probe), so no alert shows.
+    useSettingsStore.setState({
+      agentFrameworkId: 'codex',
+      agentFrameworks: FRAMEWORKS,
+      providers: [
+        provider({ id: 'p1', name: 'DeepSeek', apiEndpoints: ['openai'], models: ['m'] })
+      ],
+      activeProviderId: 'p1',
+      activeModel: 'm'
+    })
+    render()
+
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+
   it('clears the warning after switching to a compatible framework', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: FRAMEWORKS,
-      providers: [provider({ id: 'p1', apiType: 'openai' })],
+      providers: [provider({ id: 'p1', apiEndpoints: ['openai'] })],
       activeProviderId: 'p1'
     })
     render()

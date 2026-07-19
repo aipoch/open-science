@@ -22,6 +22,24 @@ const baseDeps = (): EnvironmentCheckDeps => ({
 })
 
 describe('runEnvironmentCheck', () => {
+  it('probes the codex-acp package when Codex is selected', async () => {
+    const probeRegistry = vi.fn().mockResolvedValue(20)
+
+    await runEnvironmentCheck({
+      storageRoot: '/data',
+      agentFrameworkId: 'codex',
+      frameworks: [{ id: 'codex', label: 'Codex', runtime: { found: false } }],
+      encryptionAvailable: true,
+      deps: { ...baseDeps(), probeRegistry }
+    })
+
+    expect(probeRegistry).toHaveBeenCalledTimes(2)
+    expect(probeRegistry.mock.calls.map((call) => call[1])).toEqual([
+      '/@agentclientprotocol%2fcodex-acp/latest',
+      '/@agentclientprotocol%2fcodex-acp/latest'
+    ])
+  })
+
   it('selects the fastest reachable trusted registry for a missing runtime', async () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
@@ -200,7 +218,7 @@ describe('runEnvironmentCheck', () => {
     expect(result.ready).toBe(true)
   })
 
-  it('treats unavailable OS key encryption as a non-blocking warning', async () => {
+  it('warns without blocking keyless setup when secure credential storage is unavailable', async () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
       agentFrameworkId: 'claude-code' as const,

@@ -1,4 +1,10 @@
 import type { ChatMessage } from '../../stores/session-store'
+import {
+  MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
+  MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
+  type AcpMessageImage
+} from '../../../../shared/acp'
+import { MAX_COMPOSER_ATTACHMENTS, type UploadedAttachment } from '../../../../shared/uploads'
 
 // Character budget for the replayed transcript. Kept modest so a long conversation cannot blow the new
 // agent's context window on its very first turn; older turns past the budget are summarized as omitted.
@@ -49,6 +55,42 @@ export const buildHistoryPreamble = (
   const omittedSome = kept.length < usable.length
   const body = kept.map(formatMessage).join('\n\n')
   const transcript = omittedSome ? `${OMISSION_NOTE}\n\n${body}` : body
+  const omissionPrefix = `${OMISSION_NOTE}\n\n`
+  const boundedTranscript =
+    transcript.length <= budget
+      ? transcript
+      : `${omissionPrefix}${transcript.slice(-Math.max(0, budget - omissionPrefix.length))}`
 
-  return `${HEADER}\n\n${transcript}`
+  return `${HEADER}\n\n${boundedTranscript}`
+}
+
+export const buildHistoryReplayMedia = (
+  messages: ChatMessage[]
+): { attachments: UploadedAttachment[]; images: AcpMessageImage[] } => {
+  const attachments: UploadedAttachment[] = []
+  const images: AcpMessageImage[] = []
+  let imageBytes = 0
+
+  for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
+    const message = messages[messageIndex]
+    for (let index = (message.uploads?.length ?? 0) - 1; index >= 0; index -= 1) {
+      const upload = message.uploads?.[index]
+      if (upload?.mimeType?.startsWith('image/') && attachments.length < MAX_COMPOSER_ATTACHMENTS) {
+        attachments.unshift(upload)
+      }
+    }
+    for (let index = (message.images?.length ?? 0) - 1; index >= 0; index -= 1) {
+      const image = message.images?.[index]
+      if (
+        image &&
+        images.length < MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE &&
+        imageBytes + image.byteLength <= MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE
+      ) {
+        images.unshift(image)
+        imageBytes += image.byteLength
+      }
+    }
+  }
+
+  return { attachments, images }
 }

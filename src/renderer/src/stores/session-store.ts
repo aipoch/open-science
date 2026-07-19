@@ -8,11 +8,17 @@ import type {
 
 import type { ArtifactFile } from '../../../shared/artifacts'
 import {
+  MAX_ACP_SESSION_IMAGE_BYTES,
+  sanitizeAcpMessageImage,
+  type AcpMessageImage
+} from '../../../shared/acp'
+import {
   DEFAULT_PERMISSION_PROFILE,
   type PermissionProfileId
 } from '../../../shared/permission-profiles'
 import {
   INTERRUPTED_SESSION_ERROR,
+  sanitizeMessageImages,
   sanitizeToolActivity,
   type MessagePart,
   type PersistedActiveRun,
@@ -105,13 +111,15 @@ type BindPendingSessionInput = {
   pendingSessionId: string
   sessionId: string
   cwd?: string
+  agentFrameworkId?: PersistedChatSession['agentFrameworkId']
 }
 
 type AppendAgentMessageChunkInput = {
   sessionId: string
   streamId: string
   eventId: string
-  content: string
+  content?: string
+  image?: AcpMessageImage
 }
 
 type UpsertToolActivityInput = {
@@ -176,7 +184,10 @@ type SessionStore = SessionStoreData & {
   // Enters the auto-recovery "compacting" state after a request-size overflow: clears the error so the
   // UI shows a neutral note instead of a dead-end, without blocking the recovery re-send.
   beginCompaction: (sessionId: string) => void
-  markResumed: (sessionId: string) => void
+  markResumed: (
+    sessionId: string,
+    agentFrameworkId?: PersistedChatSession['agentFrameworkId']
+  ) => void
   markDisconnected: (sessionId: string) => void
   removeMessage: (sessionId: string, messageId: string) => void
   upsertToolActivity: (input: UpsertToolActivityInput) => void
@@ -590,7 +601,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   // Replaces the temporary renderer id once ACP returns the real protocol session id.
-  bindPendingSession: ({ pendingSessionId, sessionId, cwd }) => {
+  bindPendingSession: ({ pendingSessionId, sessionId, cwd, agentFrameworkId }) => {
     if (!pendingSessionId || !sessionId) return undefined
 
     const state = get()
@@ -612,6 +623,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               id: sessionId,
               isPending: false,
               cwd: cwd ?? session.cwd,
+              agentFrameworkId: agentFrameworkId ?? session.agentFrameworkId,
               updatedAt: now
             }
           : session
@@ -639,13 +651,29 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   // Appends or extends a streamed agent message using a stable stream id.
-  appendAgentMessageChunk: ({ sessionId, streamId, eventId, content }) => {
-    if (!sessionId || !streamId || !eventId || content.length === 0) return undefined
+  appendAgentMessageChunk: ({ sessionId, streamId, eventId, content = '', image }) => {
+    let sanitizedImage = sanitizeAcpMessageImage(image)
+
+    if (!sessionId || !streamId || !eventId || (content.length === 0 && !sanitizedImage)) {
+      return undefined
+    }
 
     const state = get()
     const session = state.sessions.find((item) => item.id === sessionId)
 
     if (!session) return undefined
+    const sessionImageBytes = session.messages.reduce(
+      (total, message) =>
+        total + (message.images ?? []).reduce((sum, candidate) => sum + candidate.byteLength, 0),
+      0
+    )
+    if (
+      sanitizedImage &&
+      sessionImageBytes + sanitizedImage.byteLength > MAX_ACP_SESSION_IMAGE_BYTES
+    ) {
+      sanitizedImage = undefined
+      if (content.length === 0) return undefined
+    }
 
     const existingMessage = session.messages.find(
       (message) => message.role === 'agent' && message.streamId === streamId
@@ -674,6 +702,12 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
                 ? {
                     ...message,
                     content: `${message.content}${content}`,
+                    images: sanitizedImage
+                      ? sanitizeMessageImages([
+                          ...(message.images ?? []),
+                          { id: eventId, ...sanitizedImage }
+                        ])
+                      : message.images,
                     eventIds: [...message.eventIds, eventId],
                     updatedAt: now
                   }
@@ -692,6 +726,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           streamId,
           responseToMessageId,
           eventIds: [eventId],
+          images: sanitizedImage ? [{ id: eventId, ...sanitizedImage }] : undefined,
           sortIndex: createSortIndex(),
           createdAt: now,
           updatedAt: now
@@ -1082,7 +1117,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   // Clears the interrupted/error state after a successful resume so the composer is usable again.
-  markResumed: (sessionId) => {
+  markResumed: (sessionId, agentFrameworkId) => {
     set((state) => ({
       sessions: state.sessions.map((session) =>
         session.id === sessionId
@@ -1091,6 +1126,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               status: 'idle',
               error: undefined,
               interrupted: undefined,
+              agentFrameworkId: agentFrameworkId ?? session.agentFrameworkId,
               compacting: undefined,
               updatedAt: Date.now()
             }

@@ -3,6 +3,7 @@ import { isAbsolute, join, normalize, parse } from 'node:path'
 
 import type {
   AgentFrameworkId,
+  ChatApiEndpoint,
   ClaudeInfo,
   ProviderType,
   ProviderValidationFailure,
@@ -13,6 +14,7 @@ import { isOfficialVendorId } from '../../shared/provider-registry'
 import {
   createEmptySettings,
   type StoredConnectors,
+  type StoredCodexInfo,
   type StoredCustomMcpServer,
   type StoredProvider,
   type StoredSettings
@@ -80,6 +82,23 @@ const sanitizeClaudeInfo = (value: unknown): ClaudeInfo | undefined => {
   return Object.keys(info).length > 0 ? info : undefined
 }
 
+const sanitizeCodexInfo = (value: unknown): StoredCodexInfo | undefined => {
+  if (!isRecord(value)) return undefined
+
+  const info: StoredCodexInfo = {}
+  const resolvedPath = asString(value.resolvedPath)
+  const version = asString(value.version)
+  const nativePath = asString(value.nativePath)
+  const nativeVersion = asString(value.nativeVersion)
+
+  if (resolvedPath) info.resolvedPath = resolvedPath
+  if (version) info.version = version
+  if (nativePath) info.nativePath = nativePath
+  if (nativeVersion) info.nativeVersion = nativeVersion
+
+  return Object.keys(info).length > 0 ? info : undefined
+}
+
 // Rebuilds a recorded validation failure, dropping it unless it has a numeric timestamp and a known
 // category (status/message are optional). Without this the field would be stripped on every read.
 const sanitizeValidationFailure = (value: unknown): ProviderValidationFailure | undefined => {
@@ -119,6 +138,7 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
   const provider: StoredProvider = { id, type, name }
   const baseUrl = asString(value.baseUrl)
   const model = asString(value.model)
+  const supportsImageInput = asBoolean(value.supportsImageInput)
   const region = asString(value.region)
   const keyRef = asString(value.keyRef)
   const keyMask = asString(value.keyMask)
@@ -131,14 +151,29 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
       )
     : undefined
 
-  // Preserve the provider's chat-API type through the read; only known values survive.
-  const apiType = asString(value.apiType)
+  // Resolve the provider's chat endpoints, migrating the removed scalar `apiType` on legacy records
+  // ('both' meant anthropic+openai) to the explicit array. Only known endpoint values survive.
+  const rawEndpoints = Array.isArray(value.apiEndpoints) ? value.apiEndpoints : []
+  const knownEndpoints = rawEndpoints.filter(
+    (entry): entry is ChatApiEndpoint =>
+      entry === 'anthropic' || entry === 'openai' || entry === 'responses'
+  )
+  const legacyApiType = asString(value.apiType)
+  const apiEndpoints: ChatApiEndpoint[] =
+    knownEndpoints.length > 0
+      ? [...new Set(knownEndpoints)]
+      : legacyApiType === 'both'
+        ? ['anthropic', 'openai']
+        : legacyApiType === 'anthropic' ||
+            legacyApiType === 'openai' ||
+            legacyApiType === 'responses'
+          ? [legacyApiType]
+          : []
 
   if (baseUrl) provider.baseUrl = baseUrl
   if (model) provider.model = model
-  if (apiType === 'anthropic' || apiType === 'openai' || apiType === 'both') {
-    provider.apiType = apiType
-  }
+  if (supportsImageInput !== undefined) provider.supportsImageInput = supportsImageInput
+  if (apiEndpoints.length > 0) provider.apiEndpoints = apiEndpoints
   if (vendorId) provider.vendorId = vendorId
   if (region) provider.region = region
   if (fetchedModels && fetchedModels.length > 0) provider.fetchedModels = fetchedModels
@@ -184,9 +219,13 @@ export const sanitizeCustomMcpServer = (value: unknown): StoredCustomMcpServer |
   if (args.length) server.args = args
   const env = asStringRecord(value.env)
   if (env) server.env = env
+  const envRefs = asStringRecord(value.envRefs)
+  if (envRefs) server.envRefs = envRefs
   if (url) server.url = url
   const headers = asStringRecord(value.headers)
   if (headers) server.headers = headers
+  const headerRefs = asStringRecord(value.headerRefs)
+  if (headerRefs) server.headerRefs = headerRefs
   const trustedAt = asNumber(value.trustedAt)
   if (trustedAt !== undefined) server.trustedAt = trustedAt
   const description = asString(value.description)
@@ -236,9 +275,11 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     providers
   }
   const claude = sanitizeClaudeInfo(value.claude)
+  const codex = sanitizeCodexInfo(value.codex)
   const activeProviderId = asString(value.activeProviderId)
 
   if (claude) settings.claude = claude
+  if (codex) settings.codex = codex
   if (activeProviderId && providers.some((provider) => provider.id === activeProviderId)) {
     settings.activeProviderId = activeProviderId
 
@@ -305,7 +346,11 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   // Selected agent backend; only the known ids survive so a bad value can't leak through.
   const agentFrameworkId = asString(value.agentFrameworkId)
 
-  if (agentFrameworkId === 'claude-code' || agentFrameworkId === 'opencode') {
+  if (
+    agentFrameworkId === 'claude-code' ||
+    agentFrameworkId === 'opencode' ||
+    agentFrameworkId === 'codex'
+  ) {
     settings.agentFrameworkId = agentFrameworkId
   }
 
@@ -406,6 +451,19 @@ class SettingsRepository {
       opencodePath: resolvedPath,
       opencodeVersion: version
     }))
+  }
+
+  async setCodexInfo(codex: StoredCodexInfo): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, codex }))
+  }
+
+  async clearCodexInfo(): Promise<StoredSettings> {
+    return this.mutate((settings) => {
+      const { codex, ...rest } = settings
+
+      void codex
+      return rest
+    })
   }
 
   // Forgets the recorded opencode executable so the status card and gates reflect an uninstall. Called

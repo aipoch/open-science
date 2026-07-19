@@ -61,16 +61,31 @@ describe('provider-kind helpers', () => {
     )
 
     expect(apiKeys).toContain('official:deepseek')
+    expect(apiKeys).toContain('official:openai')
     expect(otherKeys).toEqual(['custom', 'claude-default'])
   })
 
   it('seeds region (no per-provider model) when picking an official vendor', () => {
     expect(providerKindPatch('official:minimax')).toEqual({
       type: 'official',
+      name: 'MiniMax',
       vendorId: 'minimax',
       region: 'global',
       model: ''
     })
+  })
+
+  it('seeds the official OpenAI Responses provider without a model input', () => {
+    expect(providerKindPatch('official:openai')).toEqual({
+      type: 'official',
+      name: 'OpenAI',
+      vendorId: 'openai',
+      region: undefined,
+      model: ''
+    })
+    expect(
+      selectedKindKey(createEmptyProviderFormValue({ type: 'official', vendorId: 'openai' }))
+    ).toBe('official:openai')
   })
 
   it('clears vendor-only fields when picking custom or local', () => {

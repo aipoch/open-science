@@ -69,6 +69,41 @@ describe('session persistence repository (per-session files)', () => {
     })
   })
 
+  it('sanitizes embedded message images before writing session JSON', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const session = createSession({
+      messages: [
+        {
+          ...createSession().messages[0],
+          role: 'agent',
+          content: '',
+          images: [
+            { id: 'image-1', mimeType: 'image/png', data: 'AQID', byteLength: 999 },
+            {
+              id: 'image-svg',
+              mimeType: 'image/svg+xml',
+              data: 'PHN2Zz4=',
+              byteLength: 5
+            }
+          ] as PersistedChatSession['messages'][number]['images']
+        }
+      ]
+    })
+
+    await repository.saveSession(session)
+
+    const filePath = join(storageRoot!, 'sessions', 'project-a', 'session-1.json')
+    const raw = await readFile(filePath, 'utf8')
+
+    expect(raw).toContain('AQID')
+    expect(raw).not.toContain('PHN2Zz4=')
+
+    const { sessions } = await repository.loadAll()
+    expect(sessions[0].messages[0].images).toEqual([
+      { id: 'image-1', mimeType: 'image/png', data: 'AQID', byteLength: 3 }
+    ])
+  })
+
   it('returns an empty result when nothing is stored yet', async () => {
     const repository = new SessionRepository(await createStorageRoot())
 

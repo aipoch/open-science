@@ -4,7 +4,8 @@ import type {
   AcpConnectionStatus,
   AcpPermissionGrant,
   AcpPermissionRequest,
-  AcpRuntimeEvent
+  AcpRuntimeEvent,
+  AcpMessageImage
 } from '../../../../shared/acp'
 import {
   DEFAULT_PERMISSION_PROFILE,
@@ -14,11 +15,12 @@ import {
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import type { ArtifactReference } from '../../../../shared/artifacts'
 import type { MessagePart } from '../../../../shared/session-persistence'
+import { isMediaOverflowError } from '../../../../shared/media-overflow'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
 import { useSessionStore, type ChatMessage } from '../../stores/session-store'
-import { isMediaOverflowError } from '../../../../shared/media-overflow'
+import { useSettingsStore } from '../../stores/settings-store'
 import { useAcpRuntime } from './useAcpRuntime'
-import { buildHistoryPreamble } from './history-preamble'
+import { buildHistoryPreamble, buildHistoryReplayMedia } from './history-preamble'
 import { applyWorkspaceRuntimeEvent, syncWorkspacePermissionState } from './workspace-events'
 
 type SendWorkspaceMessageInput = {
@@ -41,6 +43,8 @@ type SendWorkspaceMessageInput = {
   // internal re-resume below runs against an already-attached session and can't report the reset
   // again, so this forces the prior turns to be replayed as a history preamble on the re-sent turn.
   forceHistoryReplay?: boolean
+  // Current Provider capability, injected by the hook so context replay cannot bypass image gating.
+  supportsImageInput?: boolean
 }
 
 type SendWorkspaceMessageResult = {
@@ -275,7 +279,8 @@ const startPendingSessionPrompt = (
     const bound = useSessionStore.getState().bindPendingSession({
       pendingSessionId: pending.sessionId,
       sessionId: runtimeSessionId,
-      cwd: createdSession.cwd ?? cwd ?? runtime.state.cwd
+      cwd: createdSession.cwd ?? cwd ?? runtime.state.cwd,
+      agentFrameworkId: createdSession.frameworkId
     })
 
     if (!bound) return
@@ -325,7 +330,8 @@ const sendWorkspaceMessage = async (
     forcedSkillIds,
     referencedArtifacts,
     parts,
-    forceHistoryReplay
+    forceHistoryReplay,
+    supportsImageInput
   }: SendWorkspaceMessageInput
 ): Promise<SendWorkspaceMessageResult | undefined> => {
   const content = text.trim()
@@ -405,6 +411,8 @@ const sendWorkspaceMessage = async (
     // A resume that lands on a freshly-adopted session (framework switch, or an unresumable restart)
     // lost the agent's context, so replay the prior turns as a preamble on this first prompt.
     let historyPreamble: string | undefined
+    let historyAttachments: UploadedAttachment[] | undefined
+    let historyImages: AcpMessageImage[] | undefined
     let contextResetFromResume = false
 
     if (resumeCwd) {
@@ -413,10 +421,12 @@ const sendWorkspaceMessage = async (
           targetSessionId,
           resumeCwd,
           sessionProjectName,
-          currentSession?.permissionProfile ?? permissionProfile
+          currentSession?.permissionProfile ?? permissionProfile,
+          currentSession?.agentFrameworkId
         )
 
         contextResetFromResume = Boolean(resumeResult?.contextReset)
+        useSessionStore.getState().markResumed(targetSessionId, resumeResult?.frameworkId)
       } catch (error) {
         useSessionStore.getState().failRun(targetSessionId, getResumeFailureMessage(error))
         return appended
@@ -429,7 +439,31 @@ const sendWorkspaceMessage = async (
     // appended, so this is the prior conversation only — the turn being sent is not duplicated in.
     if ((contextResetFromResume || forceHistoryReplay) && currentSession) {
       historyPreamble = buildHistoryPreamble(currentSession.messages)
+      const media = buildHistoryReplayMedia(currentSession.messages)
+      if (supportsImageInput === false && media.images.length > 0) {
+        useSessionStore
+          .getState()
+          .failRun(
+            targetSessionId,
+            'This conversation needs image replay, but the selected model does not support image input.'
+          )
+        return appended
+      }
+      historyAttachments = media.attachments
+      historyImages = media.images
     }
+
+    const resumeFallback =
+      forcedSkillIds && forcedSkillIds.length > 0 && currentSession
+        ? (() => {
+            const media = buildHistoryReplayMedia(currentSession.messages)
+            return {
+              historyPreamble: buildHistoryPreamble(currentSession.messages),
+              historyAttachments: media.attachments,
+              historyImages: supportsImageInput === false ? undefined : media.images
+            }
+          })()
+        : undefined
 
     let promptAttachments = attachments
 
@@ -455,7 +489,10 @@ const sendWorkspaceMessage = async (
         promptAttachments,
         forcedSkillIds,
         referencedArtifacts,
-        historyPreamble
+        historyPreamble,
+        historyAttachments,
+        historyImages,
+        resumeFallback
       )
       .then((snapshot) => {
         if (!snapshot) {
@@ -522,7 +559,8 @@ const findInterruptedUserTurn = (messages: ChatMessage[]): ChatMessage | undefin
 // success the composer is unlocked; on failure the interrupted banner stays so a retry stays possible.
 const resumeInterruptedWorkspaceSession = async (
   runtime: WorkspaceMessageRuntime,
-  sessionId: string
+  sessionId: string,
+  supportsImageInput?: boolean
 ): Promise<void> => {
   const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
 
@@ -550,13 +588,14 @@ const resumeInterruptedWorkspaceSession = async (
       sessionId,
       resumeCwd,
       session.projectId,
-      session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE
+      session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+      session.agentFrameworkId
     )
     // Adopting a fresh agent session (framework switch, or an unresumable restart) wipes the agent's
     // context; capture that so the re-sent turn below replays the transcript. The shared send path's
     // own re-resume can't observe this — by then the session is already attached.
     contextReset = Boolean(resumeResult?.contextReset)
-    useSessionStore.getState().markResumed(sessionId)
+    useSessionStore.getState().markResumed(sessionId, resumeResult?.frameworkId)
   } catch (error) {
     useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
     return
@@ -579,7 +618,8 @@ const resumeInterruptedWorkspaceSession = async (
     projectId: session.projectId,
     permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
     // Replay the prior conversation when this resume adopted a fresh agent session.
-    forceHistoryReplay: contextReset
+    forceHistoryReplay: contextReset,
+    supportsImageInput
   })
 }
 
@@ -736,6 +776,10 @@ const useWorkspaceAgentRuntime = (): {
   revokePermissionGrant: (sessionId: string, categoryKey: string) => Promise<void>
 } => {
   const runtime = useAcpRuntime()
+  const supportsImageInput = useSettingsStore((state) => {
+    const provider = state.providers.find((candidate) => candidate.id === state.activeProviderId)
+    return provider?.supportsImageInput ?? false
+  })
   const eventProcessor = useRef(createWorkspaceRuntimeEventProcessor())
   // Tracks the last connection status so the disconnect effect fires only on a transition, not on
   // every unrelated snapshot re-render.
@@ -780,15 +824,16 @@ const useWorkspaceAgentRuntime = (): {
   // Creates a session if needed, records the user message, then starts the prompt in the background.
   const sendMessage = useCallback(
     (input: SendWorkspaceMessageInput): Promise<SendWorkspaceMessageResult | undefined> =>
-      sendWorkspaceMessage(runtime, input),
-    [runtime]
+      sendWorkspaceMessage(runtime, { ...input, supportsImageInput }),
+    [runtime, supportsImageInput]
   )
 
   // Explicitly re-attaches an interrupted session's ACP runtime so the user can keep chatting. On
   // success the composer is unlocked; on failure the interrupted banner stays so a retry stays possible.
   const resumeInterruptedSession = useCallback(
-    (sessionId: string): Promise<void> => resumeInterruptedWorkspaceSession(runtime, sessionId),
-    [runtime]
+    (sessionId: string): Promise<void> =>
+      resumeInterruptedWorkspaceSession(runtime, sessionId, supportsImageInput),
+    [runtime, supportsImageInput]
   )
 
   // Sends a cancellation request while the runtime waits for the eventual stop event.

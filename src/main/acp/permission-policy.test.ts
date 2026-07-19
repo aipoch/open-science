@@ -102,6 +102,12 @@ describe('permission policy', () => {
     expect(isMcpToolName('write_artifact_file', servers)).toBe(false)
   })
 
+  it('recognizes Codex ACP leaf names for app-owned MCP tools', () => {
+    expect(isMcpToolName('execute', ['open-science-notebook'])).toBe(true)
+    expect(isMcpToolName('write', ['open-science-artifacts'])).toBe(true)
+    expect(isMcpToolName('execute', ['some-other-server'])).toBe(false)
+  })
+
   it('never auto-approves opencode-named MCP tools (<server>_<tool>) reporting a low-risk kind', () => {
     // The write_artifact_file MCP tool renamed by opencode still performs arbitrary side effects, so a
     // reported edit/read kind with a workspace location must not slip through the conservative fallback.

@@ -5,8 +5,8 @@ import {
   defaultVendorModel,
   getOfficialVendor,
   isOfficialVendorId,
+  resolveVendorApiEndpoints,
   resolveVendorApiKeyUrl,
-  resolveVendorApiType,
   resolveVendorBaseUrl,
   resolveVendorModelsUrl,
   resolveVendorOpenAiBaseUrl,
@@ -26,12 +26,14 @@ describe('provider registry', () => {
 
   it('narrows known vendor ids and rejects unknown values', () => {
     expect(isOfficialVendorId('deepseek')).toBe(true)
-    expect(isOfficialVendorId('openai')).toBe(false)
+    expect(isOfficialVendorId('openai')).toBe(true)
     expect(isOfficialVendorId(undefined)).toBe(false)
     expect(isOfficialVendorId(42)).toBe(false)
   })
 
   it('resolves a single-endpoint vendor base URL', () => {
+    expect(resolveVendorBaseUrl('openai')).toBe('https://api.openai.com')
+    expect(getOfficialVendor('openai')?.apiEndpoints).toEqual(['responses'])
     expect(resolveVendorBaseUrl('deepseek')).toBe('https://api.deepseek.com/anthropic')
     expect(getOfficialVendor('deepseek')?.label).toBe('DeepSeek')
   })
@@ -44,13 +46,20 @@ describe('provider registry', () => {
     expect(resolveVendorBaseUrl('minimax')).toBe('https://api.minimax.io/anthropic')
   })
 
-  it('routes GLM to Z.AI overseas and BigModel in China', () => {
+  it('routes GLM to Z.AI overseas and BigModel in China, on both endpoints', () => {
     expect(vendorHasRegions('zhipu')).toBe(true)
     expect(resolveVendorBaseUrl('zhipu', 'global')).toBe('https://api.z.ai/api/anthropic')
     expect(resolveVendorBaseUrl('zhipu', 'china')).toBe('https://open.bigmodel.cn/api/anthropic')
+    // GLM also serves an OpenAI route under /api/paas/v4 (not /v1), so Codex can bridge it.
+    expect(resolveVendorApiEndpoints('zhipu')).toEqual(['anthropic', 'openai'])
+    expect(resolveVendorOpenAiBaseUrl('zhipu', 'global')).toBe('https://api.z.ai/api/paas/v4')
+    expect(resolveVendorOpenAiBaseUrl('zhipu', 'china')).toBe(
+      'https://open.bigmodel.cn/api/paas/v4'
+    )
   })
 
   it('exposes the first catalog entry as the default model', () => {
+    expect(defaultVendorModel('openai')).toBe('gpt-5.6-sol')
     expect(defaultVendorModel('zhipu')).toBe('glm-5.2')
   })
 
@@ -62,7 +71,7 @@ describe('provider registry', () => {
   })
 
   it('routes OpenRouter through both APIs with a curated catalog and no live refresh', () => {
-    expect(resolveVendorApiType('openrouter')).toBe('both')
+    expect(resolveVendorApiEndpoints('openrouter')).toEqual(['anthropic', 'openai'])
     expect(resolveVendorBaseUrl('openrouter')).toBe('https://openrouter.ai/api')
     expect(resolveVendorOpenAiBaseUrl('openrouter')).toBe('https://openrouter.ai/api/v1')
     expect(resolveVendorApiKeyUrl('openrouter')).toBe(
@@ -74,11 +83,18 @@ describe('provider registry', () => {
   })
 
   it('routes Xiaomi MIMO through both APIs with a live model list', () => {
-    expect(resolveVendorApiType('xiaomimimo')).toBe('both')
+    expect(resolveVendorApiEndpoints('xiaomimimo')).toEqual(['anthropic', 'openai'])
     expect(resolveVendorBaseUrl('xiaomimimo')).toBe('https://api.xiaomimimo.com/anthropic')
     expect(resolveVendorOpenAiBaseUrl('xiaomimimo')).toBe('https://api.xiaomimimo.com/v1')
     expect(resolveVendorModelsUrl('xiaomimimo')).toBe('https://api.xiaomimimo.com/v1/models')
     expect(defaultVendorModel('xiaomimimo')).toBe('mimo-v2.5-pro')
+  })
+
+  it('routes Kimi through both APIs so Codex can bridge it', () => {
+    expect(resolveVendorApiEndpoints('kimi')).toEqual(['anthropic', 'openai'])
+    expect(resolveVendorBaseUrl('kimi')).toBe('https://api.moonshot.cn/anthropic')
+    expect(resolveVendorOpenAiBaseUrl('kimi')).toBe('https://api.moonshot.cn/v1')
+    expect(resolveVendorModelsUrl('kimi')).toBe('https://api.moonshot.cn/v1/models')
   })
 
   it('resolves the key-console URL, preferring the selected region', () => {

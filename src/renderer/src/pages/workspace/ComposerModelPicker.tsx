@@ -20,6 +20,7 @@ import {
   type ProviderModelOption
 } from '@/stores/settings-store'
 import { isProviderUsableByFramework } from '../../../../shared/settings'
+import { isModelBridgeSupported } from '../../../../shared/provider-registry'
 import { incompatibilityReason } from './composer-model-picker-utils'
 
 const triggerClassName =
@@ -49,17 +50,18 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
 
   // A provider is selectable only when it can actually drive the current framework (endpoint + type;
   // a Local Claude provider is Claude-only).
-  const isCompatible = (provider: (typeof providers)[number]): boolean =>
+  const isCompatible = (provider: (typeof providers)[number], model: string): boolean =>
     isProviderUsableByFramework(
-      { apiType: provider.apiType ?? 'anthropic', type: provider.type },
+      { apiEndpoints: provider.apiEndpoints, type: provider.type },
       { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
-    )
+    ) &&
+    (agentFrameworkId !== 'codex' || isModelBridgeSupported(provider, model))
 
   const options = selectProviderModelOptions(providers)
-  const compatibleProviderIds = new Set(
-    providers.filter((provider) => isCompatible(provider)).map((provider) => provider.id)
-  )
-  const usableOptions = options.filter((option) => compatibleProviderIds.has(option.providerId))
+  const usableOptions = options.filter((option) => {
+    const provider = providers.find((candidate) => candidate.id === option.providerId)
+    return provider ? isCompatible(provider, option.model) : false
+  })
   const hasUsable = usableOptions.length > 0
 
   // No provider configured at all: nothing to pick or explain, so warn with a button that opens
@@ -138,18 +140,29 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="max-h-[320px] min-w-[15rem] overflow-y-auto">
         {groups.map((group) => {
-          const compatible = isCompatible(group.provider)
+          const compatible = group.options.some((option) =>
+            isCompatible(group.provider, option.model)
+          )
+          const endpointCompatible = isProviderUsableByFramework(
+            {
+              apiEndpoints: group.provider.apiEndpoints,
+              type: group.provider.type
+            },
+            { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
+          )
           const reason = compatible
             ? undefined
-            : incompatibilityReason(
-                {
-                  apiType: group.provider.apiType ?? 'anthropic',
-                  type: group.provider.type,
-                  name: group.provider.name
-                },
-                frameworkName,
-                frameworkEndpoints
-              )
+            : endpointCompatible && agentFrameworkId === 'codex'
+              ? `No model from ${group.provider.name} is supported over the Codex Chat Completions bridge.`
+              : incompatibilityReason(
+                  {
+                    apiEndpoints: group.provider.apiEndpoints,
+                    type: group.provider.type,
+                    name: group.provider.name
+                  },
+                  frameworkName,
+                  frameworkEndpoints
+                )
 
           return (
             <DropdownMenuGroup key={group.provider.id}>
@@ -158,6 +171,28 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
                 group.options.map((option) => {
                   const isActive =
                     option.providerId === activeProviderId && option.model === activeKeyModel
+                  const optionCompatible = isCompatible(group.provider, option.model)
+
+                  if (!optionCompatible) {
+                    // Endpoint is fine but this model is statically marked unsupported over the Codex
+                    // bridge. Grey it with a warning icon; the full reason is on hover (title) and read
+                    // by assistive tech (aria-label), so it isn't a long inline string.
+                    const optionReason = `${optionLabel(option)} is not supported over the Codex Chat Completions bridge.`
+                    return (
+                      <DropdownMenuItem
+                        key={`${option.providerId}:${option.model}`}
+                        aria-disabled
+                        aria-label={optionReason}
+                        title={optionReason}
+                        onSelect={(event) => event.preventDefault()}
+                        className="gap-2 text-text-300"
+                      >
+                        <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
+                        <span className="min-w-0 flex-1 truncate">{optionLabel(option)}</span>
+                        <span className="text-xs">unsupported</span>
+                      </DropdownMenuItem>
+                    )
+                  }
 
                   return (
                     <DropdownMenuItem
@@ -183,22 +218,21 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
                   )
                 })
               ) : (
-                // An incompatible provider gets one focusable, non-actionable item that states WHY it
-                // is unavailable. It stays keyboard-reachable via roving focus (a `disabled` item is
-                // skipped, and a label is not focusable at all), and its visible text is the reason —
-                // so mouse and keyboard/AT users get it without a hover-only tooltip. aria-disabled
-                // marks it unselectable and onSelect is prevented so it never switches the model.
+                // An incompatible provider gets one greyed, non-actionable row: a short "Unavailable"
+                // label + warning icon, with the full reason on hover (title) and exposed to assistive
+                // tech (aria-label) — so the dropdown stays compact instead of wrapping a long
+                // sentence. It stays keyboard-reachable via roving focus (a `disabled` item is skipped,
+                // and a label is not focusable), aria-disabled marks it unselectable, and onSelect is
+                // prevented so it never switches the model.
                 <DropdownMenuItem
                   aria-disabled
+                  aria-label={reason}
+                  title={reason}
                   onSelect={(event) => event.preventDefault()}
-                  className="items-start gap-2 text-text-300"
+                  className="gap-2 text-text-300"
                 >
-                  <AlertTriangle
-                    className="mt-0.5 size-4 shrink-0"
-                    strokeWidth={2}
-                    aria-hidden="true"
-                  />
-                  <span className="min-w-0 flex-1 whitespace-normal">{reason}</span>
+                  <AlertTriangle className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
+                  <span className="min-w-0 flex-1 truncate">Unavailable for {frameworkName}</span>
                 </DropdownMenuItem>
               )}
             </DropdownMenuGroup>

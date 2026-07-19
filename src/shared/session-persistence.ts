@@ -1,9 +1,17 @@
 import type { UploadedAttachment } from './uploads'
 import {
+  MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
+  MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
+  MAX_ACP_SESSION_IMAGE_BYTES,
+  sanitizeAcpMessageImage,
+  type AcpMessageImage
+} from './acp'
+import {
   DEFAULT_PERMISSION_PROFILE,
   normalizePermissionProfile,
   type PermissionProfileId
 } from './permission-profiles'
+import type { AgentFrameworkId } from './settings'
 
 // One JSON file per session (sessions/<projectId>/<sessionId>.json) carries this envelope version.
 export const SESSION_FILE_VERSION = 1
@@ -32,6 +40,10 @@ export type PersistedArtifact = {
 // Stores uploaded file references on the user message that submitted them.
 export type PersistedUploadedAttachment = UploadedAttachment
 
+export type PersistedMessageImage = AcpMessageImage & {
+  id: string
+}
+
 // Ordered structural segments of a user message, letting the bubble re-render skill/artifact
 // mentions as styled pills instead of plain text. Structurally mirrors the renderer ComposerNode
 // (shared cannot import renderer code). Absent on older messages, which fall back to plain content.
@@ -58,6 +70,8 @@ export type PersistedChatMessage = {
   // Links a message to session-level artifact metadata without duplicating file records per message.
   artifactIds?: string[]
   uploads?: PersistedUploadedAttachment[]
+  // Bounded raster blocks emitted directly by ACP agent_message_chunk notifications.
+  images?: PersistedMessageImage[]
   // Structured mention segments for the styled user bubble; optional for backward compatibility.
   parts?: MessagePart[]
   createdAt: number
@@ -106,6 +120,7 @@ export type PersistedChatSession = {
   title: string
   cwd: string
   status: PersistedSessionStatus
+  agentFrameworkId?: AgentFrameworkId
   // Per-conversation approval posture. Older session files omit it and safely restore to Ask.
   permissionProfile?: PermissionProfileId
   // Per-conversation auto-review toggle. Absent (older files) or non-true is treated as disabled;
@@ -124,6 +139,7 @@ export type PersistedChatSession = {
 export const INTERRUPTED_SESSION_ERROR = 'Session was interrupted before the app closed.'
 
 const MESSAGE_ROLES = new Set<PersistedMessageRole>(['user', 'agent'])
+const AGENT_FRAMEWORK_IDS = new Set<AgentFrameworkId>(['claude-code', 'opencode', 'codex'])
 const MESSAGE_STATUSES = new Set<PersistedMessageStatus>(['complete', 'streaming', 'error'])
 const TOOL_ACTIVITY_STATUSES = new Set<PersistedToolActivityStatus>([
   'pending',
@@ -507,6 +523,50 @@ const sanitizeMessagePart = (part: unknown): MessagePart | undefined => {
   }
 }
 
+// Revalidates embedded message images before writing or restoring a session file. The count and
+// aggregate byte budget prevent many individually valid chunks from growing one message without bound.
+export const sanitizeMessageImages = (value: unknown): PersistedMessageImage[] | undefined => {
+  if (!Array.isArray(value)) return undefined
+
+  const images: PersistedMessageImage[] = []
+  let totalBytes = 0
+
+  for (const candidate of value) {
+    if (images.length >= MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE || !isRecord(candidate)) break
+
+    const id = asString(candidate.id)
+    const image = sanitizeAcpMessageImage(candidate)
+
+    if (!id || !image) continue
+    if (totalBytes + image.byteLength > MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE) break
+
+    images.push({ id, ...image })
+    totalBytes += image.byteLength
+  }
+
+  return images.length > 0 ? images : undefined
+}
+
+// Applies the image boundary immediately before repository serialization without changing runtime
+// status fields (running sessions must remain restorable as interrupted sessions after a restart).
+export const sanitizeSessionMessageImages = (
+  session: PersistedChatSession
+): PersistedChatSession => {
+  let totalBytes = 0
+
+  return {
+    ...session,
+    messages: session.messages.map((message) => {
+      const images = (sanitizeMessageImages(message.images) ?? []).filter((image) => {
+        if (totalBytes + image.byteLength > MAX_ACP_SESSION_IMAGE_BYTES) return false
+        totalBytes += image.byteLength
+        return true
+      })
+      return { ...message, images: images.length > 0 ? images : undefined }
+    })
+  }
+}
+
 // Rebuilds a message from durable UI fields and strips unknown renderer payload.
 const sanitizeMessage = (message: unknown): PersistedChatMessage | undefined => {
   if (!isRecord(message)) return undefined
@@ -537,12 +597,14 @@ const sanitizeMessage = (message: unknown): PersistedChatMessage | undefined => 
   const parts = Array.isArray(message.parts)
     ? message.parts.map(sanitizeMessagePart).filter((item): item is MessagePart => !!item)
     : []
+  const images = sanitizeMessageImages(message.images)
 
   if (streamId) sanitized.streamId = streamId
   if (responseToMessageId) sanitized.responseToMessageId = responseToMessageId
   if (artifactIds.length > 0) sanitized.artifactIds = artifactIds
   if (uploads.length > 0) sanitized.uploads = uploads
   if (parts.length > 0) sanitized.parts = parts
+  if (images) sanitized.images = images
 
   return sanitized
 }
@@ -596,13 +658,17 @@ const sanitizeSession = (session: unknown): PersistedChatSession | undefined => 
   }
   const activeRun = sanitizeActiveRun(session.activeRun)
   const error = asString(session.error)
+  const agentFrameworkId = asString(session.agentFrameworkId) as AgentFrameworkId | undefined
 
   if (activeRun) sanitized.activeRun = activeRun
   if (error) sanitized.error = error
+  if (agentFrameworkId && AGENT_FRAMEWORK_IDS.has(agentFrameworkId)) {
+    sanitized.agentFrameworkId = agentFrameworkId
+  }
   if (artifacts.length > 0) sanitized.artifacts = artifacts
   if (activities.length > 0) sanitized.activities = activities
 
-  return normalizeSessionAfterRestore(sanitized)
+  return sanitizeSessionMessageImages(normalizeSessionAfterRestore(sanitized))
 }
 
 // ---------------------------------------------------------------------------

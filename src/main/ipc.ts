@@ -6,6 +6,7 @@ import { ipcMain } from 'electron'
 import { createDefaultNotebookRuntimeService, registerAcpIpcHandlers } from './acp/ipc'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
+import { wireConnectorReload } from './connector-reload'
 import { ApprovalBroker } from './connectors/approval-broker'
 import { toCustomMcpConfig, selectEnabledCustomServers } from './connectors/custom-mcp-bootstrap'
 import { McpClientManager } from './connectors/mcp-client-manager'
@@ -264,15 +265,21 @@ const registerIpcHandlers = async ({
     onActiveProviderChanged: () => void runtime.requestProviderReconnect(),
     onSkillsChanged: () => void runtime.requestSkillsReload(),
     // Re-sync bundled + custom skill docs and refresh the in-memory snapshot the connector
-    // service reads, so a connector/tool/credential change takes effect without an app restart.
+    // service reads, then request a skills reload. The reload respawns the agent on next idle so a
+    // non-Claude framework (Codex, opencode) — whose connector docs are materialized into its own
+    // home at spawn — picks up the change too, not just the Claude config dir.
     onConnectorsChanged: () =>
-      void refreshConnectorSkillDocs(
-        settingsService,
-        resolveStorageRoot(),
-        mcpClientManager,
-        (connectors) => {
-          connectorsSnapshot = connectors
-        }
+      void wireConnectorReload(
+        () =>
+          refreshConnectorSkillDocs(
+            settingsService,
+            resolveStorageRoot(),
+            mcpClientManager,
+            (connectors) => {
+              connectorsSnapshot = connectors
+            }
+          ),
+        () => void runtime.requestSkillsReload()
       )
   })
   registerNotebookIpcHandlers(notebookService)
@@ -287,7 +294,9 @@ const registerIpcHandlers = async ({
   })
   registerArtifactIpcHandlers(artifactRepository, artifactRunRegistry)
   registerUploadIpcHandlers(uploadRepository)
-  registerSessionPersistenceIpcHandlers(sessionRepository)
+  registerSessionPersistenceIpcHandlers(sessionRepository, undefined, (sessionId) =>
+    uploadRepository.deleteSessionUploads(sessionId)
+  )
   registerProjectIpcHandlers(projectRepository, previewStateRepository)
   // Wire the reviewer backend into the app lifecycle: installs ipcMain.handle('reviewer:run', ...)
   // and 'reviewer:get-for-session' so the renderer's fire-and-forget reviewer calls resolve to

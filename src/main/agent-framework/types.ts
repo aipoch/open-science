@@ -5,6 +5,7 @@ import type { PermissionProfileApplication } from '../acp/permission-profile-con
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { AgentFrameworkId, ChatApiEndpoint } from '../../shared/settings'
 import type { ResolvedProvider } from '../settings/provider-env'
+import type { ResponsesBridgeConnection } from '../settings/responses-bridge'
 
 // The agent frameworks the app can drive over ACP (id union defined in shared settings so the renderer
 // and persisted settings share it). Adding one means implementing AgentFramework.
@@ -15,6 +16,21 @@ export type { AgentFrameworkId }
 export type AgentConfigFile = {
   path: string
   content: string
+  mode?: number
+}
+
+// Authentication is sent over ACP after initialize. Keeping it out of the child environment avoids
+// Codex copying the key into shell snapshots or its default auth.json file.
+export type AgentAuthentication = {
+  methodId: string
+  _meta?: Record<string, unknown>
+}
+
+export type AgentProviderConfiguration = {
+  providerId: 'custom-gateway'
+  apiType: 'openai'
+  baseUrl: string
+  headers: Record<string, string>
 }
 
 // How the app's provider maps onto a framework's native model configuration. Claude reads env
@@ -24,6 +40,11 @@ export type AgentModelConfig = {
   env?: Record<string, string>
   configFiles?: AgentConfigFile[]
   args?: string[]
+  authentication?: AgentAuthentication
+  providerConfiguration?: AgentProviderConfiguration
+  // Framework-specific model id used for local metadata/configuration. A bridge may keep this
+  // separate from the provider's upstream model id.
+  sessionModel?: string
 }
 
 // Inputs for translating a provider; paths differ per framework (Claude wants its executable + config
@@ -33,6 +54,7 @@ export type ModelConfigContext = {
   storageRoot: string
   // Absolute path to the detected framework executable (claude / opencode).
   executablePath: string
+  responsesBridge?: ResponsesBridgeConnection
   // Combined instructions markdown (connector conventions + tools) for frameworks that lack on-demand
   // skill loading; the adapter writes it and wires it into the agent's instruction mechanism so the
   // agent learns host.mcp instead of reimplementing connector calls with raw HTTP. Empty ⇒ omitted.
@@ -108,4 +130,6 @@ export type ResolvedAgentBackend = {
   // over the protocol rather than via env (opencode). Undefined ⇒ the framework's env/config drives it
   // (Claude uses ANTHROPIC_MODEL). Applied best-effort: skipped when the agent advertises no match.
   sessionModel?: string
+  authentication?: AgentAuthentication
+  providerConfiguration?: AgentProviderConfiguration
 }

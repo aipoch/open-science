@@ -1,11 +1,11 @@
 import { CircleCheck, Pencil, PlugZap, Route, TriangleAlert, Trash2 } from 'lucide-react'
 
 import type {
-  ProviderApiType,
+  ChatApiEndpoint,
   ProviderValidationFailure,
   ProviderView
 } from '../../../../shared/settings'
-import { providerValidationFailed } from '../../../../shared/settings'
+import { providerEndpoints, providerValidationFailed } from '../../../../shared/settings'
 import { getOfficialVendor } from '../../../../shared/provider-registry'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ProviderKindIcon } from './provider-icons'
@@ -47,13 +47,10 @@ const describeValidationFailure = (failure: ProviderValidationFailure): string =
 // showing the raw /v1 path (not a vendor name) so the user reads it as "which API shape", distinct from
 // the provider's own name/brand: Claude Code needs the Anthropic /v1/messages route, while OpenCode also
 // accepts the OpenAI /v1/chat/completions route.
-const ENDPOINT_LABELS: Record<ProviderApiType, { path: string; full: string }> = {
-  anthropic: { path: '/v1/messages', full: '/v1/messages endpoint' },
-  openai: { path: '/v1/chat/completions', full: '/v1/chat/completions endpoint' },
-  both: {
-    path: '/v1/messages · /v1/chat/completions',
-    full: '/v1/messages and /v1/chat/completions endpoints'
-  }
+const ENDPOINT_PATHS: Record<ChatApiEndpoint, string> = {
+  anthropic: '/v1/messages',
+  openai: '/v1/chat/completions',
+  responses: '/v1/responses'
 }
 
 // Human label for a provider type badge: the vendor name for official providers, else a type name.
@@ -102,7 +99,13 @@ const ProviderList = ({
           // removing it would leave no model to run, so its delete action stays disabled.
           const canDelete = !isActiveSource && providers.length > 1
           // The chat endpoint(s) this provider speaks; defaults to Anthropic when unset (older/custom).
-          const endpoint = ENDPOINT_LABELS[provider.apiType ?? 'anthropic']
+          const providerRoutes = providerEndpoints(provider)
+          const endpoint = {
+            path: providerRoutes.map((route) => ENDPOINT_PATHS[route]).join(' · '),
+            full:
+              providerRoutes.map((route) => ENDPOINT_PATHS[route]).join(' and ') +
+              (providerRoutes.length > 1 ? ' endpoints' : ' endpoint')
+          }
 
           return (
             <li

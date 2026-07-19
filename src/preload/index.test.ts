@@ -37,10 +37,13 @@ type PreloadApi = {
   }
   settings: {
     detectOpencode: () => unknown
+    detectCodex: () => unknown
     installOpencode: (request: unknown) => unknown
+    installCodex: (request: unknown) => unknown
     setAgentFramework: (request: unknown) => unknown
     uninstallClaude: () => unknown
     uninstallOpencode: () => unknown
+    uninstallCodex: () => unknown
   }
   acp: {
     resumeSession: (request: unknown) => unknown
@@ -134,6 +137,18 @@ const cases: ForwardingCase[] = [
     args: [sampleInstall]
   },
   {
+    name: 'settings.detectCodex → settings:detect-codex (no args)',
+    invoke: (a) => a.settings.detectCodex(),
+    channel: 'settings:detect-codex',
+    args: []
+  },
+  {
+    name: 'settings.installCodex → settings:install-codex',
+    invoke: (a) => a.settings.installCodex(sampleInstall),
+    channel: 'settings:install-codex',
+    args: [sampleInstall]
+  },
+  {
     name: 'settings.setAgentFramework → settings:set-agent-framework',
     invoke: (a) => a.settings.setAgentFramework(sampleFramework),
     channel: 'settings:set-agent-framework',
@@ -149,6 +164,12 @@ const cases: ForwardingCase[] = [
     name: 'settings.uninstallOpencode → settings:uninstall-opencode (no args)',
     invoke: (a) => a.settings.uninstallOpencode(),
     channel: 'settings:uninstall-opencode',
+    args: []
+  },
+  {
+    name: 'settings.uninstallCodex → settings:uninstall-codex (no args)',
+    invoke: (a) => a.settings.uninstallCodex(),
+    channel: 'settings:uninstall-codex',
     args: []
   },
   // command-line launcher install/uninstall/status

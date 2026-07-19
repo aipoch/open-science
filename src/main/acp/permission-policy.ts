@@ -19,6 +19,10 @@ type PermissionPolicyContext = {
 // opencode joins them <server>_<tool>. The mcp__ prefix identifies Claude's regardless of server;
 // opencode's are recognized against the session's known MCP server names.
 const MCP_TOOL_PREFIX = 'mcp__'
+const MCP_PROVIDER_LEAF_NAMES: Record<string, readonly string[]> = {
+  'open-science-notebook': ['execute'],
+  'open-science-artifacts': ['write']
+}
 
 // Recognizes an MCP-originated tool name across frameworks (see MCP_TOOL_PREFIX): Claude's mcp__ prefix,
 // or a known MCP server name used as the tool's own prefix (opencode's <server>_<tool>).
@@ -28,7 +32,12 @@ const isMcpToolName = (
 ): boolean =>
   name != null &&
   (name.startsWith(MCP_TOOL_PREFIX) ||
-    mcpServerNames.some((server) => name === server || name.startsWith(`${server}_`)))
+    mcpServerNames.some(
+      (server) =>
+        name === server ||
+        name.startsWith(`${server}_`) ||
+        MCP_PROVIDER_LEAF_NAMES[server]?.includes(name)
+    ))
 
 // Tests whether a tool-reported path stays within the workspace after resolving relative paths.
 const isWithinWorkspace = (path: string, cwd: string): boolean => {

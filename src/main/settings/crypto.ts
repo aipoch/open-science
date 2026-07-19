@@ -7,23 +7,18 @@ import { safeStorage } from 'electron'
 // Stored ciphertext is base64 with this prefix so the on-disk shape is self-describing.
 const KEY_REF_PREFIX = 'enc:'
 
-// Reduced-protection fallback used only when the OS keychain is unavailable (safeStorage reports
-// not-available, e.g. a locked/denied keychain). The key is base64-encoded, NOT encrypted — the
-// onboarding and settings UI warn the user that storage is degraded in this case. Without this the
-// app would hard-fail on save despite promising a fallback, leaving keyless machines unable to add a
-// provider. The prefix keeps the on-disk shape self-describing so decoding never depends on the
-// keychain state at read time (a key saved while degraded stays readable once the keychain returns).
+// Legacy reduced-protection refs remain readable for migration, but new writes never create them.
 const PLAIN_REF_PREFIX = 'plain:'
 
 // Reports whether the OS keychain backing safeStorage is usable on this machine.
 const isEncryptionAvailable = (): boolean => safeStorage.isEncryptionAvailable()
 
-// Turns a plaintext key into a stored keyRef. Uses OS encryption when the keychain is available;
-// otherwise falls back to a base64 "reduced protection" ref (see PLAIN_REF_PREFIX) so key storage
-// still works instead of throwing.
+// Turns plaintext into an OS-protected keyRef. Saving secrets fails closed when safeStorage is absent.
 const encryptKey = (plaintext: string): string => {
   if (!isEncryptionAvailable()) {
-    return `${PLAIN_REF_PREFIX}${Buffer.from(plaintext, 'utf8').toString('base64')}`
+    throw new Error(
+      'Secure credential storage is unavailable. Unlock the system keychain and retry.'
+    )
   }
 
   const ciphertext = safeStorage.encryptString(plaintext)
@@ -31,9 +26,7 @@ const encryptKey = (plaintext: string): string => {
   return `${KEY_REF_PREFIX}${ciphertext.toString('base64')}`
 }
 
-// Decrypts a stored keyRef back to plaintext. A reduced-protection (plain:) ref is base64-decoded
-// directly; an encrypted (enc:) ref goes through safeStorage and throws when the ref is malformed or
-// undecryptable (e.g. the keychain changed), which the service maps to a "needs re-entry" state.
+// Decrypts a stored keyRef. `plain:` is accepted only for backwards-compatible migration.
 const decryptKey = (keyRef: string): string => {
   if (keyRef.startsWith(PLAIN_REF_PREFIX)) {
     return Buffer.from(keyRef.slice(PLAIN_REF_PREFIX.length), 'base64').toString('utf8')

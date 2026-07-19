@@ -5,8 +5,18 @@ import {
   classifyFetchError,
   classifyStatus,
   extractProviderErrorMessage,
+  hasBridgeProbeToolCall,
   validateProvider
 } from './validate'
+
+const toolCallSse = [
+  'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"open_science_bridge_probe","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}',
+  'data: [DONE]',
+  ''
+].join('\n\n')
+
+const chatSseResponse = (body: string = toolCallSse): Response =>
+  new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } })
 
 describe('validate: request construction', () => {
   it('builds a bearer /v1/messages probe with anthropic-version and a 1-token body', () => {
@@ -44,19 +54,52 @@ describe('validate: request construction', () => {
     )
   })
 
-  it('builds a /v1/chat/completions probe (no anthropic-version) for an OpenAI provider', () => {
+  it('builds a basic non-streaming probe for an OpenAI provider outside Codex', () => {
     const request = buildValidationRequest({
       type: 'custom',
       baseUrl: 'https://gateway.example.com',
       model: 'gpt-x',
       key: 'test-token',
-      apiType: 'openai'
+      apiEndpoints: ['openai']
     })
+
+    expect(JSON.parse(request.body)).toEqual({
+      model: 'gpt-x',
+      max_tokens: 1,
+      messages: [{ role: 'user', content: 'ping' }],
+      stream: false
+    })
+    expect(request.requiresBridgeToolCall).toBeUndefined()
+  })
+
+  it('builds the streaming function-tool probe required by the Codex bridge', () => {
+    const request = buildValidationRequest(
+      {
+        type: 'custom',
+        baseUrl: 'https://gateway.example.com',
+        model: 'gpt-x',
+        key: 'test-token',
+        apiEndpoints: ['openai']
+      },
+      true
+    )
 
     expect(request.url).toBe('https://gateway.example.com/v1/chat/completions')
     expect(request.headers.authorization).toBe('Bearer test-token')
     expect(request.headers['anthropic-version']).toBeUndefined()
-    expect(JSON.parse(request.body)).toMatchObject({ model: 'gpt-x', max_tokens: 1 })
+    expect(JSON.parse(request.body)).toMatchObject({
+      model: 'gpt-x',
+      max_tokens: 512,
+      stream: true,
+      stream_options: { include_usage: true },
+      tools: [
+        {
+          type: 'function',
+          function: { name: 'open_science_bridge_probe' }
+        }
+      ],
+      tool_choice: 'auto'
+    })
   })
 
   it('uses the OpenAI endpoint for a both-capable provider and never doubles /v1', () => {
@@ -65,11 +108,30 @@ describe('validate: request construction', () => {
       baseUrl: 'https://gateway.example.com/v1',
       model: 'm',
       key: 'k',
-      apiType: 'both'
+      apiEndpoints: ['anthropic', 'openai']
     })
 
     // preferredEndpoint(both) → openai, so the probe hits chat/completions once.
     expect(request.url).toBe('https://gateway.example.com/v1/chat/completions')
+  })
+
+  it('builds a minimal /v1/responses probe without treating it as chat completions', () => {
+    const request = buildValidationRequest({
+      type: 'custom',
+      baseUrl: 'https://api.openai.com/v1/responses',
+      model: 'gpt-5-codex',
+      key: 'test-token',
+      apiEndpoints: ['responses']
+    })
+
+    expect(request.url).toBe('https://api.openai.com/v1/responses')
+    expect(request.headers.authorization).toBe('Bearer test-token')
+    expect(request.headers['anthropic-version']).toBeUndefined()
+    expect(JSON.parse(request.body)).toEqual({
+      model: 'gpt-5-codex',
+      input: 'ping',
+      max_output_tokens: 16
+    })
   })
 })
 
@@ -79,7 +141,7 @@ describe('validate: classification', () => {
     expect(classifyStatus(401)).toBe('auth')
     expect(classifyStatus(403)).toBe('auth')
     expect(classifyStatus(404)).toBe('model-not-found')
-    expect(classifyStatus(400)).toBe('model-not-found')
+    expect(classifyStatus(400)).toBe('unknown')
     expect(classifyStatus(500)).toBe('unknown')
   })
 
@@ -90,6 +152,27 @@ describe('validate: classification', () => {
     expect(classifyFetchError(abort)).toBe('timeout')
     expect(classifyFetchError(new Error('Invalid base URL.'))).toBe('bad-url')
     expect(classifyFetchError(new Error('fetch failed'))).toBe('network')
+  })
+})
+
+describe('validate: bridge contract', () => {
+  it('accepts a complete streaming function tool call with fragmented fields', () => {
+    expect(
+      hasBridgeProbeToolCall(
+        [
+          'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_","function":{"name":"open_science_","arguments":"{"}}]}}]}',
+          'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"1","function":{"name":"bridge_probe","arguments":"}"}}]},"finish_reason":"tool_calls"}]}',
+          'data: [DONE]',
+          ''
+        ].join('\n')
+      )
+    ).toBe(true)
+    expect(
+      hasBridgeProbeToolCall(
+        '{"choices":[{"message":{"tool_calls":[{"id":"call_1","function":{"name":"open_science_bridge_probe","arguments":"{}"}}]}}]}'
+      )
+    ).toBe(false)
+    expect(hasBridgeProbeToolCall('data: not-json\n\n')).toBe(false)
   })
 })
 
@@ -143,6 +226,136 @@ describe('validate: provider dispatch', () => {
     )
 
     expect(result).toMatchObject({ ok: true, category: 'ok', status: 200 })
+  })
+
+  it('requires an actual function call from a Chat Completions bridge provider', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(chatSseResponse())
+
+    const result = await validateProvider(
+      { type: 'custom', apiEndpoints: ['openai'], baseUrl: 'https://g/v1', key: 'k', model: 'm' },
+      { fetchImpl: fetchImpl as unknown as typeof fetch, requireBridgeToolCall: true }
+    )
+
+    expect(result).toMatchObject({ ok: true, category: 'ok', status: 200 })
+  })
+
+  it('uses the production Responses-to-Chat conversion for the bridge probe', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(chatSseResponse())
+
+    await validateProvider(
+      { type: 'custom', apiEndpoints: ['openai'], baseUrl: 'https://g/v1', key: 'k', model: 'm' },
+      { fetchImpl: fetchImpl as unknown as typeof fetch, requireBridgeToolCall: true }
+    )
+
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toMatchObject({
+      model: 'm',
+      max_tokens: 512,
+      messages: [
+        { role: 'user', content: 'Call the validation tool now. Do not answer with text.' }
+      ],
+      tool_choice: 'auto',
+      stream: true,
+      stream_options: { include_usage: true },
+      tools: [
+        {
+          type: 'function',
+          function: { name: 'open_science_bridge_probe' }
+        }
+      ]
+    })
+  })
+
+  it('probes a GLM dual-endpoint provider at its verbatim OpenAI base, not a hard-coded /v1', async () => {
+    // apiEndpoints ['anthropic','openai'] → OpenAI wins; the OpenAI base is the vendor's exact
+    // openaiBaseUrl (GLM's /api/paas/v4), so the probe must hit /api/paas/v4/chat/completions.
+    const fetchImpl = vi.fn().mockResolvedValue({ status: 200 } as Response)
+
+    await validateProvider(
+      {
+        type: 'custom',
+        apiEndpoints: ['anthropic', 'openai'],
+        baseUrl: 'https://api.z.ai/api/anthropic',
+        openaiBaseUrl: 'https://api.z.ai/api/paas/v4',
+        model: 'glm-5.2',
+        key: 'k'
+      },
+      { fetchImpl: fetchImpl as unknown as typeof fetch }
+    )
+
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://api.z.ai/api/paas/v4/chat/completions')
+  })
+
+  it('probes a custom OpenAI root at <root>/v1/chat/completions', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ status: 200 } as Response)
+
+    await validateProvider(
+      {
+        type: 'custom',
+        apiEndpoints: ['openai'],
+        baseUrl: 'https://host/proxy',
+        model: 'm',
+        key: 'k'
+      },
+      { fetchImpl: fetchImpl as unknown as typeof fetch }
+    )
+
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://host/proxy/v1/chat/completions')
+  })
+
+  it('surfaces a non-model 400 instead of misreporting model-not-found', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('{"error":{"message":"tool_choice is not supported"}}', { status: 400 })
+      )
+
+    const result = await validateProvider(
+      { type: 'custom', apiEndpoints: ['openai'], baseUrl: 'https://g/v1', key: 'k', model: 'm' },
+      { fetchImpl: fetchImpl as unknown as typeof fetch, requireBridgeToolCall: true }
+    )
+
+    expect(result).toMatchObject({
+      ok: false,
+      category: 'unknown',
+      status: 400,
+      message: 'tool_choice is not supported'
+    })
+  })
+
+  it('keeps a model-specific 400 classified as model-not-found', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('{"error":{"message":"Model m was not found"}}', { status: 400 })
+      )
+
+    const result = await validateProvider(
+      { type: 'custom', apiEndpoints: ['openai'], baseUrl: 'https://g/v1', key: 'k', model: 'm' },
+      { fetchImpl: fetchImpl as unknown as typeof fetch, requireBridgeToolCall: true }
+    )
+
+    expect(result).toMatchObject({ ok: false, category: 'model-not-found', status: 400 })
+  })
+
+  it('keeps a text-only Chat Completions provider unverified', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        chatSseResponse(
+          'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'
+        )
+      )
+
+    const result = await validateProvider(
+      { type: 'custom', apiEndpoints: ['openai'], baseUrl: 'https://g/v1', key: 'k', model: 'm' },
+      { fetchImpl: fetchImpl as unknown as typeof fetch, requireBridgeToolCall: true }
+    )
+
+    expect(result).toMatchObject({
+      ok: false,
+      category: 'unknown',
+      message: expect.stringContaining('required streaming function tool call')
+    })
   })
 
   it('keeps the friendly auth guidance and does not surface a raw 401 body', async () => {

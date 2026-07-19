@@ -27,6 +27,7 @@ const run = (overrides: Partial<PreflightInput> = {}): ReturnType<typeof compute
     settings: baseSettings(),
     claudePathExists: true,
     opencodePathExists: false,
+    codexPathExists: false,
     agentFrameworkId: 'claude-code',
     isProviderKeyUsable: alwaysUsable,
     activeProviderCompatible: true,
@@ -38,6 +39,7 @@ describe('computePreflight', () => {
     expect(run()).toEqual({
       claudeReady: true,
       opencodeReady: false,
+      codexReady: false,
       agentFrameworkId: 'claude-code',
       agentReady: true,
       activeProviderReady: true
@@ -80,6 +82,19 @@ describe('computePreflight', () => {
     )
   })
 
+  it('tracks Codex readiness and binds agentReady to Codex when selected', () => {
+    const settings = baseSettings({ codex: { resolvedPath: '/bin/codex-acp' } })
+
+    expect(run({ settings, agentFrameworkId: 'codex', codexPathExists: true })).toMatchObject({
+      codexReady: true,
+      agentReady: true
+    })
+    expect(run({ settings, agentFrameworkId: 'codex', codexPathExists: false })).toMatchObject({
+      codexReady: false,
+      agentReady: false
+    })
+  })
+
   it('is not provider-ready without an active provider', () => {
     expect(
       run({ settings: baseSettings({ activeProviderId: undefined }) }).activeProviderReady
@@ -89,6 +104,20 @@ describe('computePreflight', () => {
   it('is not provider-ready when the active provider never validated', () => {
     const settings = baseSettings({
       providers: [{ ...customProvider, lastValidatedAt: undefined }]
+    })
+
+    expect(run({ settings }).activeProviderReady).toBe(false)
+  })
+
+  it('is not provider-ready when the latest validation failed after an earlier success', () => {
+    const settings = baseSettings({
+      providers: [
+        {
+          ...customProvider,
+          lastValidatedAt: 100,
+          lastValidationFailure: { at: 200, category: 'auth' }
+        }
+      ]
     })
 
     expect(run({ settings }).activeProviderReady).toBe(false)

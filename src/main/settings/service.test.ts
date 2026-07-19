@@ -45,6 +45,18 @@ type ManagedInstallImpl = (options: {
   version?: string
 }>
 
+type ManagedCodexInstallImpl = (options: {
+  installId: string
+  onEvent: (event: { kind: string; installId: string }) => void
+  dataRoot: string
+}) => Promise<{
+  result: { installId: string; ok: boolean; error?: string }
+  adapterPath?: string
+  adapterVersion?: string
+  codexPath?: string
+  codexVersion?: string
+}>
+
 const createService = (
   detectResult: ClaudeDetectResult = { found: true, path: '/bin/claude', version: '2.1.0' },
   options: {
@@ -52,8 +64,10 @@ const createService = (
     executeClaudeProbe?: (executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>
     installManagedClaudeImpl?: ManagedInstallImpl
     installManagedOpencodeImpl?: ManagedInstallImpl
+    installManagedCodexImpl?: ManagedCodexInstallImpl
     // When set, opencode detection resolves this path/version; otherwise it finds nothing.
     opencodeDetected?: { path: string; version: string }
+    codexDetected?: { path: string; version: string; nativePath?: string; nativeVersion?: string }
   } = {}
 ): InstanceType<typeof SettingsService> =>
   new SettingsService({
@@ -66,6 +80,8 @@ const createService = (
     installManagedClaudeImpl: options.installManagedClaudeImpl as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     installManagedOpencodeImpl: options.installManagedOpencodeImpl as any,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    installManagedCodexImpl: options.installManagedCodexImpl as any,
     detectDeps: {
       env: {},
       homePath: '/home',
@@ -86,6 +102,28 @@ const createService = (
           path === options.opencodeDetected?.path ? options.opencodeDetected.version : undefined
         ),
       resolveNpmBinDirs: () => Promise.resolve([])
+    },
+    codexDetectDeps: {
+      env: options.codexDetected ? { PATH: dirname(options.codexDetected.path) } : {},
+      homePath: '/home',
+      platform: 'linux',
+      isRunnable: (path) => Promise.resolve(path === options.codexDetected?.path),
+      getAdapterVersion: (path) =>
+        Promise.resolve(
+          path === options.codexDetected?.path ? options.codexDetected.version : undefined
+        ),
+      getCodexVersion: (path) =>
+        Promise.resolve(
+          path === options.codexDetected?.nativePath
+            ? options.codexDetected.nativeVersion
+            : undefined
+        ),
+      smokeInitialize: () => Promise.resolve(true),
+      resolveNpmBinDirs: () => Promise.resolve([]),
+      managedAdapterPath: options.codexDetected?.nativePath
+        ? options.codexDetected.path
+        : undefined,
+      managedCodexPath: options.codexDetected?.nativePath
     }
   })
 
@@ -167,6 +205,24 @@ describe('SettingsService: providers', () => {
 
     // None of the rejected drafts reached disk.
     expect((await repository.getSettings()).providers).toEqual([])
+  })
+
+  it('accepts a custom Responses-compatible gateway', async () => {
+    const service = createService()
+
+    const snapshot = await service.upsertProvider({
+      type: 'custom',
+      name: 'Responses gateway',
+      apiEndpoints: ['responses'],
+      baseUrl: 'https://gateway.example/v1',
+      model: 'codex-model',
+      key: 'k'
+    })
+
+    expect(snapshot.providers[0]).toMatchObject({
+      apiEndpoints: ['responses'],
+      baseUrl: 'https://gateway.example/v1'
+    })
   })
 
   it('allows a claude-default provider with no key or base URL', async () => {
@@ -268,6 +324,53 @@ describe('SettingsService: validation', () => {
     expect(stored.lastValidatedAt).toBeGreaterThan(0)
   })
 
+  it('invalidates an earlier success when the latest validation fails', async () => {
+    const service = createService()
+    const fetchMock = vi.fn().mockResolvedValue({ status: 200 })
+    vi.stubGlobal('fetch', fetchMock)
+    const created = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'G',
+        baseUrl: 'https://g/v1',
+        model: 'm',
+        key: 'k'
+      })
+    ).providers[0]
+
+    await service.validateProvider({ providerId: created.id })
+    fetchMock.mockResolvedValue({ status: 401 })
+    await service.validateProvider({ providerId: created.id })
+
+    const stored = (await repository.getSettings()).providers[0]
+    expect(stored.lastValidatedAt).toBeUndefined()
+    expect(stored.lastValidationFailure).toMatchObject({ category: 'auth' })
+  })
+
+  it.each([
+    ['base URL', { baseUrl: 'https://other.example/v1' }],
+    ['model', { model: 'm2' }],
+    ['API format', { apiEndpoints: ['responses' as const] }]
+  ])('invalidates prior validation when the custom provider %s changes', async (_label, change) => {
+    const service = createService()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 200 }))
+    const created = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'G',
+        baseUrl: 'https://g/v1',
+        model: 'm',
+        apiEndpoints: ['openai'],
+        key: 'k'
+      })
+    ).providers[0]
+    await service.validateProvider({ providerId: created.id })
+
+    await service.upsertProvider({ id: created.id, type: 'custom', name: 'G', ...change })
+
+    expect((await repository.getSettings()).providers[0].lastValidatedAt).toBeUndefined()
+  })
+
   it('drops a recorded failure when credentials change on edit', async () => {
     const service = createService()
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 401 }))
@@ -289,6 +392,122 @@ describe('SettingsService: validation', () => {
     await service.upsertProvider({ id: created.id, type: 'custom', name: 'G', key: 'k2' })
 
     expect((await repository.getSettings()).providers[0].lastValidationFailure).toBeUndefined()
+  })
+
+  it('does not let a late validation overwrite a provider edited while the request was in flight', async () => {
+    const service = createService()
+    let resolveFetch!: (response: { status: number }) => void
+    const fetchMock = vi.fn(
+      () => new Promise<{ status: number }>((resolve) => (resolveFetch = resolve))
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const created = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'G',
+        baseUrl: 'https://g/v1',
+        model: 'm1',
+        key: 'k'
+      })
+    ).providers[0]
+
+    const validation = service.validateProvider({ providerId: created.id })
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+    await service.upsertProvider({ id: created.id, type: 'custom', name: 'G', model: 'm2' })
+    resolveFetch({ status: 200 })
+    await validation
+
+    const stored = (await repository.getSettings()).providers[0]
+    expect(stored.model).toBe('m2')
+    expect(stored.lastValidatedAt).toBeUndefined()
+  })
+
+  it('does not let a late validation recreate a deleted provider', async () => {
+    const service = createService()
+    let resolveFetch!: (response: { status: number }) => void
+    const fetchMock = vi.fn(
+      () => new Promise<{ status: number }>((resolve) => (resolveFetch = resolve))
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const created = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'G',
+        baseUrl: 'https://g/v1',
+        model: 'm',
+        key: 'k'
+      })
+    ).providers[0]
+
+    const validation = service.validateProvider({ providerId: created.id })
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+    await service.deleteProvider(created.id)
+    resolveFetch({ status: 200 })
+    await validation
+
+    expect((await repository.getSettings()).providers).toEqual([])
+  })
+
+  it('ignores an older validation result that finishes after a newer success', async () => {
+    const service = createService()
+    const resolvers: Array<(response: { status: number }) => void> = []
+    const fetchMock = vi.fn(
+      () => new Promise<{ status: number }>((resolve) => resolvers.push(resolve))
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const created = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'G',
+        baseUrl: 'https://g/v1',
+        model: 'm',
+        key: 'k'
+      })
+    ).providers[0]
+
+    const older = service.validateProvider({ providerId: created.id })
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    const newer = service.validateProvider({ providerId: created.id })
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    resolvers[1]({ status: 200 })
+    await newer
+    resolvers[0]({ status: 401 })
+    await older
+
+    const stored = (await repository.getSettings()).providers[0]
+    expect(stored.lastValidatedAt).toBeGreaterThan(0)
+    expect(stored.lastValidationFailure).toBeUndefined()
+  })
+
+  it('runs a plain connectivity probe under Codex without a per-model capability check', async () => {
+    const service = createService()
+    const fetchMock = vi.fn().mockResolvedValue({ status: 200 })
+    vi.stubGlobal('fetch', fetchMock)
+    const created = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'Chat Gateway',
+        apiEndpoints: ['openai'],
+        baseUrl: 'https://g/v1',
+        model: 'm',
+        key: 'k'
+      })
+    ).providers[0]
+
+    // Under Codex a provider test stays a connectivity/key check: a basic non-streaming ping on the
+    // provider's endpoint, not a strict streaming function-tool probe. Per-model bridge support is a
+    // static registry mark (bridgeUnsupportedModels), so there is no runtime capability to record.
+    await repository.setAgentFramework('codex')
+    await service.validateProvider({ providerId: created.id })
+
+    const stored = (await repository.getSettings()).providers[0]
+    expect(stored.lastValidatedAt).toBeGreaterThan(0)
+    expect(stored.lastValidationFailure).toBeUndefined()
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body))
+    expect(fetchMock.mock.calls[0][0]).toBe('https://g/v1/chat/completions')
+    expect(body).toMatchObject({ stream: false, messages: [{ role: 'user', content: 'ping' }] })
+    expect(body).not.toHaveProperty('tools')
   })
 })
 
@@ -321,6 +540,7 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(await service.getPreflight()).toEqual({
       claudeReady: true,
       opencodeReady: false,
+      codexReady: false,
       agentFrameworkId: 'claude-code',
       agentReady: true,
       activeProviderReady: true
@@ -348,6 +568,205 @@ describe('SettingsService: preflight & spawn config', () => {
     const preflight = await service.getPreflight()
 
     expect(preflight.opencodeReady).toBe(false)
+  })
+
+  it('detects Codex and exposes readiness for its selected adapter', async () => {
+    const adapterPath = '/data/codex-managed/adapter/dist/index.js'
+    const nativePath = '/data/codex-managed/codex/vendor/target/bin/codex'
+    const service = createService(undefined, {
+      codexDetected: {
+        path: adapterPath,
+        version: 'codex-acp 1.1.4',
+        nativePath,
+        nativeVersion: 'codex-cli 0.144.6'
+      }
+    })
+
+    await repository.setAgentFramework('codex')
+    const snapshot = await service.detectCodex()
+
+    expect(snapshot.codex).toEqual({
+      resolvedPath: adapterPath,
+      version: '1.1.4',
+      nativeVersion: '0.144.6'
+    })
+    expect(await service.getPreflight()).toMatchObject({ codexReady: true, agentReady: true })
+  })
+
+  it('does not mark an app-managed Codex pair ready when its native binary is broken', async () => {
+    const { managedCodexAdapterEntry, managedCodexBinary } = await import('./managed-codex')
+    const service = createService(undefined, {
+      codexDetected: {
+        path: managedCodexAdapterEntry(storageRoot),
+        version: 'codex-acp 1.1.4',
+        nativePath: managedCodexBinary(storageRoot)
+      }
+    })
+    await repository.setAgentFramework('codex')
+    await service.detectCodex()
+
+    expect(await service.getPreflight()).toMatchObject({ codexReady: false, agentReady: false })
+  })
+
+  it('resolves a forced Codex backend only for a Responses provider', async () => {
+    const adapterPath = join(storageRoot, 'bin', 'codex-acp')
+    await mkdir(dirname(adapterPath), { recursive: true })
+    await writeFile(adapterPath, '', 'utf8')
+    const service = createService(undefined, {
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' }
+    })
+    await service.detectCodex()
+    await repository.setCodexInfo({
+      resolvedPath: adapterPath,
+      version: '1.1.4',
+      nativePath: '/data/codex-managed/native/codex',
+      nativeVersion: '0.144.6'
+    })
+    const provider = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'OpenAI Responses',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://api.openai.com/v1/responses',
+        model: 'gpt-5-codex',
+        key: 'test-key'
+      })
+    ).providers[0]
+    await service.setActiveProvider(provider.id)
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
+
+    const backend = await service.resolveActiveAgentBackend()
+
+    expect(backend.framework.id).toBe('codex')
+    expect(backend.executablePath).toBe(adapterPath)
+    // Responses provider ⇒ no bridge ⇒ Codex runs the provider's own model, not the bridge catalog model.
+    expect(backend.sessionModel).toBe('gpt-5-codex')
+    expect(backend.env).toMatchObject({
+      CODEX_HOME: join(storageRoot, 'codex'),
+      CODEX_PATH: '/data/codex-managed/native/codex',
+      NO_BROWSER: '1'
+    })
+    expect(backend.env.CODEX_API_KEY).toBeUndefined()
+    expect(backend.authentication).toEqual({
+      methodId: 'api-key',
+      _meta: { 'api-key': { apiKey: 'test-key' } }
+    })
+  })
+
+  it('resolves a Chat Completions provider through the Codex Responses bridge', async () => {
+    const localFetch = globalThis.fetch
+    let upstreamRequest: Record<string, unknown> | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        upstreamRequest = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return new Response(
+          [
+            'data: ' +
+              JSON.stringify({
+                id: 'chat-service-bridge',
+                model: 'deepseek-v4-flash',
+                choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
+              }),
+            '',
+            'data: [DONE]',
+            ''
+          ].join('\n'),
+          { headers: { 'content-type': 'text/event-stream' } }
+        )
+      })
+    )
+    const adapterPath = join(storageRoot, 'bin', 'codex-acp')
+    await mkdir(dirname(adapterPath), { recursive: true })
+    await writeFile(adapterPath, '', 'utf8')
+    const service = createService(undefined, {
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' }
+    })
+    await repository.setCodexInfo({
+      resolvedPath: adapterPath,
+      version: '1.1.4',
+      nativePath: '/data/codex-managed/native/codex',
+      nativeVersion: '0.144.6'
+    })
+    await repository.setAgentFramework('codex')
+    const provider = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'DeepSeek',
+        apiEndpoints: ['openai'],
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-flash',
+        key: 'test-key'
+      })
+    ).providers[0]
+    const storedProvider = (await repository.getSettings()).providers[0]
+    await repository.upsertProvider({
+      ...storedProvider,
+      lastValidatedAt: Date.now()
+    })
+    await service.setActiveProvider(provider.id)
+
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
+    const backend = await service.resolveActiveAgentBackend()
+
+    // Chat Completions provider ⇒ bridge ⇒ Codex runs the classic-tool-mode catalog model so it
+    // advertises the shell_command function tool the bridge can forward (CODEX_BRIDGE_MODEL).
+    expect(backend.sessionModel).toBe('gpt-5.5')
+    expect(backend.providerConfiguration).toEqual({
+      providerId: 'custom-gateway',
+      apiType: 'openai',
+      baseUrl: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/v1$/),
+      headers: { authorization: expect.stringMatching(/^Bearer [a-f0-9]+$/) }
+    })
+    expect(backend.env.CODEX_CONFIG).toContain('"wire_api":"responses"')
+    expect(backend.env.CODEX_CONFIG).not.toContain('test-key')
+
+    const bridgeResponse = await localFetch(`${backend.providerConfiguration?.baseUrl}/responses`, {
+      method: 'POST',
+      headers: {
+        authorization: backend.providerConfiguration?.headers.authorization ?? '',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'gpt-5.5',
+        input: 'Use PubMed to find cancer papers',
+        stream: true
+      })
+    })
+    await bridgeResponse.text()
+    expect(upstreamRequest).toMatchObject({
+      tools: expect.arrayContaining([
+        expect.objectContaining({
+          type: 'function',
+          function: expect.objectContaining({
+            name: 'mcp__open_science_notebook__notebook_execute',
+            description: expect.stringContaining('MUST call host.mcp')
+          })
+        }),
+        expect.objectContaining({
+          type: 'function',
+          function: expect.objectContaining({
+            name: 'mcp__open_science_artifacts__write_artifact_file'
+          })
+        })
+      ])
+    })
+    expect(upstreamRequest?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'system',
+          content: expect.stringContaining('host.mcp("pubmed", "search_articles"')
+        })
+      ])
+    )
+
+    // Connector skill docs (host.mcp guidance) must be materialized into Codex's own home, not only
+    // the Claude config dir, or bridged Codex never learns to reach connectors via the notebook.
+    const pubmedSkill = await readFile(
+      join(storageRoot, 'codex', 'skills', 'mcp-pubmed', 'SKILL.md'),
+      'utf8'
+    )
+    expect(pubmedSkill).toContain('host.mcp')
   })
 
   it('builds spawn env from the active provider with the decrypted key', async () => {
@@ -595,7 +1014,7 @@ describe('SettingsService: official vendors', () => {
     expect(result.message).toMatch(/no model-list endpoint/i)
   })
 
-  it('validates an official draft against the vendor endpoint', async () => {
+  it('uses a basic Chat Completions probe outside Codex', async () => {
     const service = createService()
     const fetchMock = vi.fn().mockResolvedValue({ status: 200 })
     vi.stubGlobal('fetch', fetchMock)
@@ -605,9 +1024,29 @@ describe('SettingsService: official vendors', () => {
     })
 
     expect(result.ok).toBe(true)
-    // DeepSeek is a dual-endpoint vendor (apiType 'both'), so the probe prefers its OpenAI base +
-    // /v1/chat/completions rather than the Anthropic route.
     expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/v1/chat/completions')
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
+      stream: false,
+      max_tokens: 1
+    })
+  })
+
+  it('probes DeepSeek on its OpenAI route as a plain connectivity check under Codex', async () => {
+    const service = createService()
+    await repository.setAgentFramework('codex')
+    const fetchMock = vi.fn().mockResolvedValue({ status: 200 })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await service.validateProvider({
+      draft: { type: 'official', vendorId: 'deepseek', key: 'sk-ds' }
+    })
+
+    expect(result.ok).toBe(true)
+    // The dual-endpoint vendor is probed on its OpenAI /v1/chat/completions route, but with a basic
+    // non-streaming ping — not a strict streaming function-tool probe. Bridge compatibility is static.
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body))
+    expect(body).toMatchObject({ stream: false, messages: [{ role: 'user', content: 'ping' }] })
+    expect(body).not.toHaveProperty('tools')
   })
 
   it('validates an anthropic-only official draft against its /v1/messages route', async () => {
@@ -800,6 +1239,51 @@ describe('SettingsService: skills', () => {
     expect(await exists(skillDir)).toBe(false)
   })
 
+  it('materializes enabled skills into the app-owned CODEX_HOME before spawn', async () => {
+    const adapterPath = join(storageRoot, 'bin', 'codex-acp')
+    await mkdir(dirname(adapterPath), { recursive: true })
+    await writeFile(adapterPath, '', 'utf8')
+    const service = new SettingsService({
+      repository,
+      storageRoot,
+      userClaudeDir: join(storageRoot, 'no-user-claude'),
+      skillRegistry: new SkillRegistry(await seedBundle()),
+      codexDetectDeps: {
+        env: { PATH: dirname(adapterPath) },
+        homePath: '/home',
+        platform: 'linux',
+        isRunnable: (path) => Promise.resolve(path === adapterPath),
+        getAdapterVersion: () => Promise.resolve('codex-acp 1.1.4'),
+        getCodexVersion: () => Promise.resolve(undefined),
+        smokeInitialize: () => Promise.resolve(true),
+        resolveNpmBinDirs: () => Promise.resolve([])
+      }
+    })
+    await service.detectCodex()
+    await repository.setAgentFramework('codex')
+    const provider = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'Responses',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://api.openai.com',
+        model: 'gpt-5-codex',
+        key: 'k'
+      })
+    ).providers[0]
+    await service.setActiveProvider(provider.id)
+
+    await service.resolveActiveAgentBackend()
+
+    const materializedDir = join(storageRoot, 'codex', 'skills', 'os-demo')
+    const materializedFile = join(materializedDir, 'SKILL.md')
+    expect(await readFile(materializedFile, 'utf8')).toContain('demo body')
+    // The materializer intentionally makes agent-visible skills read-only; restore permissions so the
+    // test temp root can be removed on every platform.
+    await chmod(materializedFile, 0o644)
+    await chmod(materializedDir, 0o755)
+  })
+
   it('reports only disabled picks as needing force-load and maps ids to names', async () => {
     const service = await createSkillService()
 
@@ -962,6 +1446,30 @@ describe('installOpencode', () => {
   })
 })
 
+describe('installCodex', () => {
+  it('persists the managed adapter and native Codex pair', async () => {
+    const service = createService(undefined, {
+      installManagedCodexImpl: async ({ installId }) => ({
+        result: { installId, ok: true },
+        adapterPath: '/data/codex-managed/adapter/dist/index.js',
+        adapterVersion: '1.1.4',
+        codexPath: '/data/codex-managed/codex/vendor/target/bin/codex',
+        codexVersion: '0.144.6'
+      })
+    })
+
+    const result = await service.installCodex({ source: 'managed' }, () => undefined)
+
+    expect(result.ok).toBe(true)
+    expect((await repository.getSettings()).codex).toEqual({
+      resolvedPath: '/data/codex-managed/adapter/dist/index.js',
+      version: '1.1.4',
+      nativePath: '/data/codex-managed/codex/vendor/target/bin/codex',
+      nativeVersion: '0.144.6'
+    })
+  })
+})
+
 describe('detectOpencode', () => {
   it('clears a stale record when nothing runnable is found (e.g. after an uninstall)', async () => {
     // Simulate a prior install still recorded in settings.
@@ -1120,8 +1628,12 @@ describe('checkEnvironment', () => {
     const result = await service.checkEnvironment()
 
     const agentRows = result.checks.filter((check) => check.id === 'agent')
-    expect(agentRows.map((row) => row.label)).toEqual(['Claude Code runtime', 'OpenCode runtime'])
-    expect(agentRows.every((row) => row.status === 'passed')).toBe(true)
+    expect(agentRows.map((row) => row.label)).toEqual([
+      'Claude Code runtime',
+      'OpenCode runtime',
+      'Codex runtime'
+    ])
+    expect(agentRows.map((row) => row.status)).toEqual(['passed', 'passed', 'warning'])
     expect(result.agentFrameworkId).toBe('opencode')
     expect(result.runtime).toEqual({
       found: true,
@@ -1154,7 +1666,8 @@ describe('checkEnvironment', () => {
     const agentRows = result.checks.filter((check) => check.id === 'agent')
     expect(agentRows.map((row) => `${row.label}:${row.status}`)).toEqual([
       'Claude Code runtime:passed',
-      'OpenCode runtime:failed'
+      'OpenCode runtime:failed',
+      'Codex runtime:warning'
     ])
     // Selection drives readiness: the missing selected runtime blocks Continue even though Claude runs.
     expect(result.agentFrameworkId).toBe('opencode')
@@ -1181,6 +1694,24 @@ describe('SettingsService: managed-runtime flags', () => {
 })
 
 describe('SettingsService: uninstall managed runtime', () => {
+  it('uninstalls app-managed Codex and falls back to ready Claude', async () => {
+    const { managedCodexAdapterEntry } = await import('./managed-codex')
+    const adapterPath = managedCodexAdapterEntry(storageRoot)
+    await mkdir(dirname(adapterPath), { recursive: true })
+    await writeFile(adapterPath, '', 'utf8')
+    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.1.4' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setAgentFramework('codex')
+    const service = createService()
+
+    const { snapshot, activeBackendAffected } = await service.uninstallCodex()
+
+    await expect(readFile(adapterPath)).rejects.toThrow()
+    expect(snapshot.codex).toEqual({})
+    expect(snapshot.agentFrameworkId).toBe('claude-code')
+    expect(activeBackendAffected).toBe(true)
+  })
+
   it('uninstallClaude is a no-op for a non-managed (PATH/npm) install', async () => {
     await repository.setClaudeInfo({ resolvedPath: '/usr/local/bin/claude', version: '2.1.0' })
     const service = createService()
@@ -1253,5 +1784,27 @@ describe('SettingsService: uninstall managed runtime', () => {
 
     // A broken runtime is never auto-selected: the selection stays put and the gate will flag it.
     expect(snapshot.agentFrameworkId).toBe('opencode')
+  })
+
+  it('falls through to ready Codex when earlier fallback runtimes are unavailable', async () => {
+    const opencodeBin = join(managedOpencodeDir(storageRoot), 'opencode')
+    const codexAdapter = join(storageRoot, 'fallback', 'codex-acp')
+    await mkdir(dirname(opencodeBin), { recursive: true })
+    await mkdir(dirname(codexAdapter), { recursive: true })
+    await writeFile(opencodeBin, '', 'utf8')
+    await writeFile(codexAdapter, '', 'utf8')
+    await repository.setOpencodeInfo(opencodeBin, '1.18.3')
+    await repository.setCodexInfo({ resolvedPath: codexAdapter, version: '1.1.4' })
+    await repository.setAgentFramework('opencode')
+    const service = createService(
+      { found: false },
+      {
+        codexDetected: { path: codexAdapter, version: 'codex-acp 1.1.4' }
+      }
+    )
+
+    const { snapshot } = await service.uninstallOpencode()
+
+    expect(snapshot.agentFrameworkId).toBe('codex')
   })
 })

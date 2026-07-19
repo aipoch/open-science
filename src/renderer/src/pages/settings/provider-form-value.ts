@@ -1,4 +1,4 @@
-import type { ProviderApiType, ProviderType } from '../../../../shared/settings'
+import type { ChatApiEndpoint, ProviderType } from '../../../../shared/settings'
 import {
   OFFICIAL_VENDORS,
   getOfficialVendor,
@@ -13,8 +13,10 @@ export type ProviderFormValue = {
   baseUrl: string
   model: string
   // Which chat API a custom gateway speaks; drives which agent frameworks can use it. Defaults to
-  // 'anthropic'. Only meaningful for custom providers (official providers take it from the registry).
-  apiType: ProviderApiType
+  // 'anthropic'. A custom provider serves exactly one endpoint (official providers take theirs from
+  // the registry); it is stored as the single-entry apiEndpoints array.
+  apiEndpoint: ChatApiEndpoint
+  supportsImageInput: boolean
   // Set when type is 'official': the chosen vendor and (for multi-region vendors) the endpoint. Base
   // URL and the model catalog then come from the registry rather than these free-text fields.
   vendorId?: OfficialVendorId
@@ -31,7 +33,8 @@ export const createEmptyProviderFormValue = (
   name: '',
   baseUrl: '',
   model: '',
-  apiType: 'anthropic',
+  apiEndpoint: 'anthropic',
+  supportsImageInput: false,
   key: '',
   ...overrides
 })
@@ -91,7 +94,7 @@ export const PROVIDER_KINDS: ProviderKind[] = [
   {
     key: 'custom',
     label: 'Custom Gateway',
-    description: 'Base URL, key, and model for an Anthropic or OpenAI-compatible endpoint',
+    description: 'Base URL, key, and model for a Messages or Chat Completions endpoint',
     group: 'other'
   },
   {
@@ -114,7 +117,13 @@ export const providerKindPatch = (key: string): Partial<ProviderFormValue> => {
     const vendor = getOfficialVendor(vendorId)
 
     // No per-provider model: the vendor catalog is fixed and the chosen model is the global selection.
-    return { type: 'official', vendorId, region: vendor?.regions?.[0]?.id, model: '' }
+    return {
+      type: 'official',
+      name: vendor?.label,
+      vendorId,
+      region: vendor?.regions?.[0]?.id,
+      model: ''
+    }
   }
 
   return { type: 'custom', vendorId: undefined, region: undefined, model: '' }
@@ -122,7 +131,9 @@ export const providerKindPatch = (key: string): Partial<ProviderFormValue> => {
 
 // Maps the current form value back to its provider-kind key (the dropdown's selected value).
 export const selectedKindKey = (value: ProviderFormValue): string => {
-  if (value.type === 'custom') return 'custom'
+  if (value.type === 'custom') {
+    return 'custom'
+  }
   if (value.type === 'claude-default') return 'claude-default'
 
   return value.vendorId ? `official:${value.vendorId}` : 'custom'

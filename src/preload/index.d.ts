@@ -73,6 +73,7 @@ import type {
   DeleteProviderRequest,
   EnvironmentCheckResult,
   InstallClaudeRequest,
+  InstallCodexRequest,
   InstallOpencodeRequest,
   Preflight,
   RefreshProviderModelsRequest,
@@ -174,10 +175,13 @@ interface OpenScienceAPI {
     checkEnvironment(): Promise<EnvironmentCheckResult>
     detectClaude(): Promise<ClaudeDetectResult>
     detectOpencode(): Promise<SettingsSnapshot>
+    detectCodex(): Promise<SettingsSnapshot>
     installClaude(request: InstallClaudeRequest): Promise<ClaudeInstallResult>
     installOpencode(request: InstallOpencodeRequest): Promise<ClaudeInstallResult>
+    installCodex(request: InstallCodexRequest): Promise<ClaudeInstallResult>
     uninstallClaude(): Promise<SettingsSnapshot>
     uninstallOpencode(): Promise<SettingsSnapshot>
+    uninstallCodex(): Promise<SettingsSnapshot>
     upsertProvider(request: UpsertProviderRequest): Promise<SettingsSnapshot>
     deleteProvider(request: DeleteProviderRequest): Promise<SettingsSnapshot>
     setActiveProvider(request: SetActiveProviderRequest): Promise<SettingsSnapshot>

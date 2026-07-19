@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils'
 import claudeLogo from '@/assets/provider-icons/claude.svg'
 import deepseekLogo from '@/assets/provider-icons/deepseek.svg'
 import minimaxLogo from '@/assets/provider-icons/minimax.svg'
+import openaiLogo from '@/assets/provider-icons/openai.svg'
 import zhipuLogo from '@/assets/provider-icons/zhipu.svg'
 import kimiLogo from '@/assets/provider-icons/kimi.svg'
 import openrouterLogo from '@/assets/provider-icons/openrouter.svg'
@@ -14,6 +15,7 @@ import type { OfficialVendorId } from '../../../../shared/provider-registry'
 // and Kimi For Coding) share the one Kimi mark. Any vendor without an entry falls back to a neutral
 // glyph rather than a made-up logo. Custom uses a plus-in-circle and local Claude a laptop.
 const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
+  openai: openaiLogo,
   anthropic: claudeLogo,
   deepseek: deepseekLogo,
   minimax: minimaxLogo,

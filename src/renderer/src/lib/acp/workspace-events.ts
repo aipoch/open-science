@@ -7,7 +7,12 @@ import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
 import { isMediaOverflowError } from '../../../../shared/media-overflow'
 import { useSessionStore } from '../../stores/session-store'
 import { useSettingsStore } from '../../stores/settings-store'
-import { createRuntimeStreamId, isAssistantRuntimeChatMessageEvent } from './chat-events'
+import {
+  createRuntimeStreamId,
+  getAcpRuntimeEventImage,
+  getAcpRuntimeEventText,
+  isAssistantRuntimeChatMessageEvent
+} from './chat-events'
 
 // Remembers which sessions were marked as waiting during the previous permission sync.
 const pendingPermissionSessionIds = new Set<string>()
@@ -133,11 +138,14 @@ const applyWorkspaceRuntimeEvent = async (
 
   // Assistant chat deltas extend the transcript as streamed markdown messages.
   if (isAssistantRuntimeChatMessageEvent(event)) {
+    const image = getAcpRuntimeEventImage(event)
+
     store.appendAgentMessageChunk({
       sessionId: event.sessionId,
       streamId: createRuntimeStreamId(event),
       eventId: event.id,
-      content: event.text
+      content: getAcpRuntimeEventText(event),
+      image
     })
     return true
   }

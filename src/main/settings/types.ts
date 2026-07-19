@@ -1,6 +1,7 @@
 import type {
+  ChatApiEndpoint,
   ClaudeInfo,
-  ProviderApiType,
+  CodexInfo,
   ProviderType,
   ProviderValidationFailure
 } from '../../shared/settings'
@@ -18,11 +19,13 @@ export type StoredProvider = {
   id: string
   type: ProviderType
   name: string
-  // Which chat API a custom gateway speaks. Official providers derive it from the registry; absent
-  // means 'anthropic' (all pre-existing providers).
-  apiType?: ProviderApiType
+  // Which chat APIs a custom gateway speaks. Official providers derive it from the registry; absent
+  // means ['anthropic'] (all pre-existing providers). Legacy records may carry the removed scalar
+  // `apiType` on disk; the repository migrates it to this field on read.
+  apiEndpoints?: ChatApiEndpoint[]
   baseUrl?: string
   model?: string
+  supportsImageInput?: boolean
   // Set for official-vendor providers only.
   vendorId?: OfficialVendorId
   region?: string
@@ -31,26 +34,30 @@ export type StoredProvider = {
   fetchedModels?: string[]
   keyRef?: string
   keyMask?: string
+  // Timestamp of the last successful connectivity/key check on the provider's first model.
   lastValidatedAt?: number
   // Recorded when a validation fails; cleared on the next success or a credential change. Kept so the
-  // "unverified" warning and the model-picker gating survive a restart.
+  // "unverified" warning survives a restart.
   lastValidationFailure?: ProviderValidationFailure
 }
 
 // A user-added custom MCP server. Phase 1 = stdio (local command). Phase 2 adds the remote
 // transports (streamable_http / sse) with static auth `headers` (e.g. Authorization). OAuth and a
-// dynamic headers-helper command are a later task. Env/header values are stored as-is for now —
-// sensitive values are the caller's responsibility.
+// dynamic headers-helper command are a later task. Secret values are stored as safeStorage refs and
+// decrypted only in the main process when constructing the MCP transport.
 export type StoredCustomMcpServer = {
   id: string
   name: string
   transport: 'stdio' | 'streamable_http' | 'sse'
   command?: string
   args?: string[]
+  // Legacy plaintext fields are read only for one-time migration; new writes use the ref maps below.
   env?: Record<string, string>
+  envRefs?: Record<string, string>
   url?: string
   // Static auth headers (e.g. Authorization) sent with every request on remote transports.
   headers?: Record<string, string>
+  headerRefs?: Record<string, string>
   enabled: boolean
   // Timestamp of the user's explicit add-time trust confirmation (see plan §3.5).
   trustedAt?: number
@@ -75,6 +82,11 @@ export type StoredConnectors = {
   customMcpServers?: StoredCustomMcpServer[]
 }
 
+export type StoredCodexInfo = CodexInfo & {
+  // App-managed bundles pin the native Codex executable paired with codex-acp.
+  nativePath?: string
+}
+
 // The whole settings.json document.
 export type StoredSettings = {
   version: typeof SETTINGS_FILE_VERSION
@@ -84,6 +96,8 @@ export type StoredSettings = {
   // Detected opencode executable path + reported version (for the status card). Absent = detect on PATH.
   opencodePath?: string
   opencodeVersion?: string
+  // codex-acp adapter plus the native Codex runtime it launches.
+  codex?: StoredCodexInfo
   activeProviderId?: string
   // Active model within the active provider; backfilled from the provider's own model on load when a
   // pre-v2 settings file (which had no per-model selection) is read.

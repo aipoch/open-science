@@ -75,6 +75,7 @@ import type {
   DeleteProviderRequest,
   EnvironmentCheckResult,
   InstallClaudeRequest,
+  InstallCodexRequest,
   InstallOpencodeRequest,
   Preflight,
   RefreshProviderModelsRequest,
@@ -191,10 +192,13 @@ type OpenScienceAPI = {
     checkEnvironment: () => Promise<EnvironmentCheckResult>
     detectClaude: () => Promise<ClaudeDetectResult>
     detectOpencode: () => Promise<SettingsSnapshot>
+    detectCodex: () => Promise<SettingsSnapshot>
     installClaude: (request: InstallClaudeRequest) => Promise<ClaudeInstallResult>
     installOpencode: (request: InstallOpencodeRequest) => Promise<ClaudeInstallResult>
+    installCodex: (request: InstallCodexRequest) => Promise<ClaudeInstallResult>
     uninstallClaude: () => Promise<SettingsSnapshot>
     uninstallOpencode: () => Promise<SettingsSnapshot>
+    uninstallCodex: () => Promise<SettingsSnapshot>
     upsertProvider: (request: UpsertProviderRequest) => Promise<SettingsSnapshot>
     deleteProvider: (request: DeleteProviderRequest) => Promise<SettingsSnapshot>
     setActiveProvider: (request: SetActiveProviderRequest) => Promise<SettingsSnapshot>
@@ -432,14 +436,19 @@ const api: OpenScienceAPI = {
     detectClaude: () => ipcRenderer.invoke('settings:detect-claude') as Promise<ClaudeDetectResult>,
     detectOpencode: () =>
       ipcRenderer.invoke('settings:detect-opencode') as Promise<SettingsSnapshot>,
+    detectCodex: () => ipcRenderer.invoke('settings:detect-codex') as Promise<SettingsSnapshot>,
     installClaude: (request) =>
       ipcRenderer.invoke('settings:install-claude', request) as Promise<ClaudeInstallResult>,
     installOpencode: (request) =>
       ipcRenderer.invoke('settings:install-opencode', request) as Promise<ClaudeInstallResult>,
+    installCodex: (request: InstallCodexRequest) =>
+      ipcRenderer.invoke('settings:install-codex', request) as Promise<ClaudeInstallResult>,
     uninstallClaude: () =>
       ipcRenderer.invoke('settings:uninstall-claude') as Promise<SettingsSnapshot>,
     uninstallOpencode: () =>
       ipcRenderer.invoke('settings:uninstall-opencode') as Promise<SettingsSnapshot>,
+    uninstallCodex: () =>
+      ipcRenderer.invoke('settings:uninstall-codex') as Promise<SettingsSnapshot>,
     upsertProvider: (request) =>
       ipcRenderer.invoke('settings:upsert-provider', request) as Promise<SettingsSnapshot>,
     deleteProvider: (request) =>
