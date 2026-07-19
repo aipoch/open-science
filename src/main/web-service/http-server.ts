@@ -11,6 +11,17 @@ import type { RpcCapture } from './rpc-capture'
 
 const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
 
+// Channels the web client reimplements in the browser (see src/renderer/web/bootstrap.ts) because
+// their main handlers require a real Electron WebContents: file:save-* open a native save dialog
+// parented to a window, and window:close resolves a BrowserWindow from the sender. The synthetic
+// RPC sender has neither, so a direct /rpc call would pop a desktop dialog or silently no-op. The
+// browser never routes these through /rpc, so reject them outright rather than expose that behavior.
+const WEB_CLIENT_OVERRIDDEN_CHANNELS = new Set([
+  'file:save-blob',
+  'file:save-managed',
+  'window:close'
+])
+
 const MIME_TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
@@ -193,6 +204,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
 
       if (url.pathname.startsWith('/rpc/') && request.method === 'POST') {
         const channel = decodeURIComponent(url.pathname.slice('/rpc/'.length))
+        if (WEB_CLIENT_OVERRIDDEN_CHANNELS.has(channel)) {
+          json(response, 403, { ok: false, error: `Channel not available over web: ${channel}` })
+          return
+        }
         const body = (await readJsonBody(request)) as { args?: unknown[] }
         const clientId = String(request.headers['x-open-science-client'] ?? 'web')
         try {
