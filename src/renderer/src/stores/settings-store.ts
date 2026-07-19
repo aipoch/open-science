@@ -23,7 +23,8 @@ import type {
   CreateSkillRequest,
   UpdateSkillRequest,
   ImportSkillResult,
-  SkillBundlePreview,
+  ImportSkillZipBatchResult,
+  SkillBundlePreviewResult,
   ScanRepoResult,
   UpsertProviderRequest,
   ValidateProviderRequest,
@@ -168,8 +169,15 @@ type SettingsStore = SettingsStoreData & {
     dataBase64: string,
     opts?: { subPath?: string; replaceId?: string }
   ) => Promise<ImportSkillResult>
-  // Parses an uploaded bundle without importing it, for a confirm-before-import preview.
-  previewSkillZip: (dataBase64: string) => Promise<SkillBundlePreview[]>
+  // Imports several skills from ONE uploaded bundle in a single call (decoded/unpacked once), returning
+  // a per-item outcome. Per-item failures are reported inline without aborting the rest.
+  importSkillZipBatch: (
+    dataBase64: string,
+    items: { subPath: string; replaceId?: string }[]
+  ) => Promise<ImportSkillZipBatchResult>
+  // Parses an uploaded bundle without importing it, for a confirm-before-import preview. Returns the
+  // importable skills plus any the bundle contained that were skipped and why.
+  previewSkillZip: (dataBase64: string) => Promise<SkillBundlePreviewResult>
   // Scans a GitHub repo for importable skill directories (does not mutate state).
   scanRepoSkills: (repo: string) => Promise<ScanRepoResult>
   // Loads the bundled-connector list (enabled/auto-allow + NCBI credential state) from main.
@@ -695,6 +703,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       subPath: opts?.subPath,
       replaceId: opts?.replaceId
     })
+    set({ skills: result.skills })
+    return result
+  },
+
+  importSkillZipBatch: async (dataBase64, items) => {
+    const result = await window.api.settings.importSkillZipBatch({ dataBase64, items })
     set({ skills: result.skills })
     return result
   },

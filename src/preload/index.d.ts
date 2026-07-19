@@ -89,8 +89,10 @@ import type {
   ImportSkillRequest,
   ImportSkillResult,
   ImportSkillZipRequest,
+  ImportSkillZipBatchRequest,
+  ImportSkillZipBatchResult,
   PreviewSkillZipRequest,
-  SkillBundlePreview,
+  SkillBundlePreviewResult,
   ScanRepoRequest,
   ScanRepoResult,
   ConnectorsSnapshot,
@@ -191,7 +193,8 @@ interface OpenScienceAPI {
     deleteSkill(request: DeleteSkillRequest): Promise<SkillView[]>
     importSkill(request: ImportSkillRequest): Promise<ImportSkillResult>
     importSkillZip(request: ImportSkillZipRequest): Promise<ImportSkillResult>
-    previewSkillZip(request: PreviewSkillZipRequest): Promise<SkillBundlePreview[]>
+    importSkillZipBatch(request: ImportSkillZipBatchRequest): Promise<ImportSkillZipBatchResult>
+    previewSkillZip(request: PreviewSkillZipRequest): Promise<SkillBundlePreviewResult>
     scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult>
     listConnectors(): Promise<ConnectorsSnapshot>
     getConnectorDetail(id: string): Promise<ConnectorDetailView>

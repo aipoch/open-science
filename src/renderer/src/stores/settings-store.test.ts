@@ -31,6 +31,7 @@ type SettingsApi = {
   listSkills: ReturnType<typeof vi.fn>
   setSkillEnabled: ReturnType<typeof vi.fn>
   importSkillZip: ReturnType<typeof vi.fn>
+  importSkillZipBatch: ReturnType<typeof vi.fn>
   previewSkillZip: ReturnType<typeof vi.fn>
   listConnectors: ReturnType<typeof vi.fn>
   getConnectorDetail: ReturnType<typeof vi.fn>
@@ -117,7 +118,8 @@ beforeEach(() => {
     listSkills: vi.fn().mockResolvedValue([]),
     setSkillEnabled: vi.fn().mockResolvedValue([]),
     importSkillZip: vi.fn().mockResolvedValue({ status: 'imported', id: 'z', skills: [] }),
-    previewSkillZip: vi.fn().mockResolvedValue([]),
+    importSkillZipBatch: vi.fn().mockResolvedValue({ results: [], skills: [] }),
+    previewSkillZip: vi.fn().mockResolvedValue({ previews: [], skipped: [] }),
     listConnectors: vi
       .fn()
       .mockResolvedValue({ connectors: [], customServers: [], ncbi: { hasApiKey: false } }),
@@ -730,29 +732,62 @@ describe('settings store: openSettingsToSkill', () => {
 })
 
 describe('settings store: skill bundle upload', () => {
-  it('previewSkillZip returns one preview per skill root the bundle contains', async () => {
-    api.previewSkillZip.mockResolvedValue([
-      {
-        subPath: 'skills/alpha',
-        name: 'Alpha',
-        description: '',
-        files: ['SKILL.md'],
-        alreadyImported: false
-      },
-      {
-        subPath: 'skills/beta',
-        name: 'Beta',
-        description: '',
-        files: ['SKILL.md'],
-        alreadyImported: true
-      }
-    ])
+  it('previewSkillZip returns the importable previews plus any skipped skills', async () => {
+    api.previewSkillZip.mockResolvedValue({
+      previews: [
+        {
+          subPath: 'skills/alpha',
+          name: 'Alpha',
+          description: '',
+          files: ['SKILL.md'],
+          alreadyImported: false
+        },
+        {
+          subPath: 'skills/beta',
+          name: 'Beta',
+          description: '',
+          files: ['SKILL.md'],
+          alreadyImported: true
+        }
+      ],
+      skipped: [{ source: 'oversized.zip', reason: 'too large (limit 8 MB)' }]
+    })
 
-    const previews = await useSettingsStore.getState().previewSkillZip('YmFzZTY0')
+    const { previews, skipped } = await useSettingsStore.getState().previewSkillZip('YmFzZTY0')
 
     expect(api.previewSkillZip).toHaveBeenCalledWith({ dataBase64: 'YmFzZTY0' })
-    expect(previews).toHaveLength(2)
     expect(previews.map((preview) => preview.name)).toEqual(['Alpha', 'Beta'])
+    expect(skipped).toEqual([{ source: 'oversized.zip', reason: 'too large (limit 8 MB)' }])
+  })
+
+  it('importSkillZipBatch forwards every item and reconciles the skill list once', async () => {
+    api.importSkillZipBatch.mockResolvedValue({
+      results: [
+        { subPath: 'skills/alpha', status: 'imported', id: 'imported-alpha' },
+        { subPath: 'skills/beta', status: 'unchanged', id: 'imported-beta' }
+      ],
+      skills: [
+        {
+          id: 'imported-alpha',
+          name: 'Alpha',
+          description: '',
+          source: 'imported',
+          updatedAt: '',
+          enabled: true
+        }
+      ]
+    })
+
+    const result = await useSettingsStore
+      .getState()
+      .importSkillZipBatch('YmFzZTY0', [{ subPath: 'skills/alpha' }, { subPath: 'skills/beta' }])
+
+    expect(api.importSkillZipBatch).toHaveBeenCalledWith({
+      dataBase64: 'YmFzZTY0',
+      items: [{ subPath: 'skills/alpha' }, { subPath: 'skills/beta' }]
+    })
+    expect(result.results).toHaveLength(2)
+    expect(useSettingsStore.getState().skills.map((skill) => skill.id)).toEqual(['imported-alpha'])
   })
 
   it('importSkillZip forwards the subPath/replaceId opts and reconciles the skill list', async () => {

@@ -16,6 +16,25 @@ const EOCD_MIN_SIZE = 22
 // An extracted file: its posix-style path within the archive plus its decompressed bytes.
 export type ExtractedZipFile = { path: string; content: Buffer }
 
+// One entry the lenient extractor declined to unpack, with a plain-English reason (for surfacing to
+// the user as a skipped item rather than failing the whole import).
+export type SkippedZipEntry = { path: string; reason: string }
+
+// The lenient extractor's outcome: the entries it did unpack, plus the ones it skipped and why.
+export type LenientExtractOutcome = { files: ExtractedZipFile[]; skipped: SkippedZipEntry[] }
+
+// Caps the lenient extractor enforces per call. Split out so the OUTER bundle walk can allow larger
+// single entries (nested skill archives) than the per-file cap used for a single skill's own files.
+export type LenientExtractLimits = {
+  maxFiles: number
+  maxFileBytes: number
+  maxTotalBytes: number
+  maxDepth: number
+}
+
+// Rounds a byte count to whole MB for a user-facing size-limit reason.
+const mb = (bytes: number): string => `${Math.round(bytes / (1024 * 1024))} MB`
+
 // Rejects paths that would escape the extraction root (zip-slip) or aren't real bundle files.
 const isUnsafePath = (path: string): boolean => {
   if (path.length === 0) return true
@@ -115,4 +134,84 @@ const extractZip = (buffer: Buffer): ExtractedZipFile[] => {
   return files
 }
 
-export { extractZip }
+// Lenient sibling of extractZip: instead of throwing when a single entry violates a cap, it SKIPS that
+// entry (recording a plain-English reason) and keeps going, so one oversized/unsupported/too-deep
+// entry can't sink an otherwise-importable bundle. Only a structurally invalid archive (no central
+// directory) still throws. Used for the OUTER walk of a multi-skill bundle, where each entry is
+// either a nested skill archive or a loose skill file and failures should be reported, not fatal.
+const extractZipLenient = (buffer: Buffer, limits: LenientExtractLimits): LenientExtractOutcome => {
+  const eocd = findEocd(buffer)
+  if (eocd < 0) throw new Error('Not a valid ZIP archive.')
+
+  const entryCount = buffer.readUInt16LE(eocd + 10)
+  let pointer = buffer.readUInt32LE(eocd + 16)
+  const files: ExtractedZipFile[] = []
+  const skipped: SkippedZipEntry[] = []
+  let totalBytes = 0
+
+  for (let index = 0; index < entryCount; index += 1) {
+    if (pointer + 46 > buffer.length || buffer.readUInt32LE(pointer) !== CENTRAL_SIGNATURE) break
+
+    const method = buffer.readUInt16LE(pointer + 10)
+    const compressedSize = buffer.readUInt32LE(pointer + 20)
+    const nameLength = buffer.readUInt16LE(pointer + 28)
+    const extraLength = buffer.readUInt16LE(pointer + 30)
+    const commentLength = buffer.readUInt16LE(pointer + 32)
+    const localOffset = buffer.readUInt32LE(pointer + 42)
+    const name = buffer.toString('utf8', pointer + 46, pointer + 46 + nameLength)
+
+    // Advance to the next central-directory record before any skip.
+    pointer += 46 + nameLength + extraLength + commentLength
+
+    // Directory records and archive metadata carry no importable content — drop them silently.
+    if (name.endsWith('/')) continue
+    if (isUnsafePath(name)) continue
+    if (method !== 0 && method !== 8) {
+      skipped.push({ path: name, reason: 'unsupported compression method' })
+      continue
+    }
+    if (name.split('/').length - 1 > limits.maxDepth) {
+      skipped.push({ path: name, reason: `nested deeper than ${limits.maxDepth} levels` })
+      continue
+    }
+    if (files.length >= limits.maxFiles) {
+      skipped.push({ path: name, reason: `bundle has too many entries (limit ${limits.maxFiles})` })
+      continue
+    }
+
+    if (buffer.readUInt32LE(localOffset) !== LOCAL_SIGNATURE) continue
+    const localNameLength = buffer.readUInt16LE(localOffset + 26)
+    const localExtraLength = buffer.readUInt16LE(localOffset + 28)
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength
+    const data = buffer.subarray(dataStart, dataStart + compressedSize)
+
+    // For a STORE entry the decompressed size is known up front, so an oversized one is skipped
+    // WITHOUT copying its bytes into memory (the common case for a nested, already-compressed .zip).
+    if (method === 0 && data.length > limits.maxFileBytes) {
+      skipped.push({ path: name, reason: `too large (limit ${mb(limits.maxFileBytes)})` })
+      continue
+    }
+    let content: Buffer
+    try {
+      content =
+        method === 0
+          ? Buffer.from(data)
+          : inflateRawSync(data, { maxOutputLength: limits.maxFileBytes })
+    } catch {
+      // A DEFLATE entry that would expand past maxFileBytes throws here (a bomb): skip it.
+      skipped.push({ path: name, reason: `too large (limit ${mb(limits.maxFileBytes)})` })
+      continue
+    }
+
+    if (totalBytes + content.length > limits.maxTotalBytes) {
+      skipped.push({ path: name, reason: `bundle exceeds the ${mb(limits.maxTotalBytes)} limit` })
+      continue
+    }
+    totalBytes += content.length
+    files.push({ path: name, content })
+  }
+
+  return { files, skipped }
+}
+
+export { extractZip, extractZipLenient }

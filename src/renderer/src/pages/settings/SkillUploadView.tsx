@@ -18,6 +18,23 @@ const ErrorBanner = ({ message }: { message: string }): React.JSX.Element => (
   </div>
 )
 
+// A muted note listing skills the bundle contained but couldn't import (too large, no SKILL.md, ...),
+// so a partial import tells the user exactly what was left out instead of failing silently.
+const SkippedNote = ({ items }: { items: SkippedEntry[] }): React.JSX.Element => (
+  <div className="mt-3 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+    <p className="font-medium text-foreground">
+      Skipped {items.length} skill{items.length === 1 ? '' : 's'}
+    </p>
+    <ul className="mt-1 flex flex-col gap-0.5">
+      {items.map((item) => (
+        <li key={`${item.fileName}:${item.source}`} className="truncate">
+          {item.source} — {item.reason}
+        </li>
+      ))}
+    </ul>
+  </div>
+)
+
 type SkillUploadViewProps = {
   onUploaded: () => void
   onWriteInstead: () => void
@@ -49,9 +66,20 @@ type Candidate =
       body: string
     }
 
-// The outcome of parsing one picked file: zero-or-more candidates, plus an optional per-file error so
-// one bad file never blocks the others.
-type ParseResult = { candidates: Candidate[]; error?: string }
+// One skill a bundle contained but that couldn't be imported (too large, no SKILL.md, no name, ...),
+// tagged with the file it came from so the user can tell which upload it belongs to.
+type SkippedEntry = { fileName: string; source: string; reason: string }
+
+// The outcome of parsing one picked file: zero-or-more candidates, an optional per-file error (so one
+// bad file never blocks the others), and any skills inside the file that were individually skipped.
+type ParseResult = { candidates: Candidate[]; error?: string; skipped?: SkippedEntry[] }
+
+// Strips the electron IPC wrapper ("Error invoking remote method '…': Error: …") off a rejection so
+// the user sees only the human-readable message, never the internal method name.
+const cleanMessage = (error: unknown): string => {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.replace(/^Error invoking remote method '[^']*':\s*/, '').replace(/^Error:\s*/, '')
+}
 
 // Pulls name/description out of a .md frontmatter block, returning the stripped body (mirrors the
 // editor's consumeFrontmatter so an uploaded SKILL.md fills the same fields).
@@ -90,11 +118,12 @@ const SkillUploadView = ({
   onWriteInstead
 }: SkillUploadViewProps): React.JSX.Element => {
   const createSkill = useSettingsStore((state) => state.createSkill)
-  const importSkillZip = useSettingsStore((state) => state.importSkillZip)
+  const importSkillZipBatch = useSettingsStore((state) => state.importSkillZipBatch)
   const previewSkillZip = useSettingsStore((state) => state.previewSkillZip)
   const skills = useSettingsStore((state) => state.skills)
   const [candidates, setCandidates] = useState<Candidate[] | null>(null)
   const [errors, setErrors] = useState<string[]>([])
+  const [skipped, setSkipped] = useState<SkippedEntry[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [summary, setSummary] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -105,9 +134,9 @@ const SkillUploadView = ({
     const isBundle = name.endsWith('.zip') || name.endsWith('.skill')
 
     // Reject on file.size BEFORE reading the file into memory / base64 / IPC. A bundle is bounded by
-    // the total-import cap (it may hold several files); a bare .md by the per-file cap.
+    // the whole-bundle cap (it may hold many skills); a bare .md by the per-file cap.
     const sizeLimit = isBundle
-      ? SKILL_IMPORT_LIMITS.maxTotalBytes
+      ? SKILL_IMPORT_LIMITS.maxBundleBytes
       : SKILL_IMPORT_LIMITS.maxFileBytes
     if (file.size > sizeLimit) {
       return { candidates: [], error: `${file.name}: file is too large (limit ${mb(sizeLimit)}).` }
@@ -116,8 +145,13 @@ const SkillUploadView = ({
     if (isBundle) {
       try {
         const base64 = await fileToBase64(file)
-        const previews = await previewSkillZip(base64)
-        if (previews.length === 0) {
+        const { previews, skipped } = await previewSkillZip(base64)
+        const skippedEntries = skipped.map((entry) => ({
+          fileName: file.name,
+          source: entry.source,
+          reason: entry.reason
+        }))
+        if (previews.length === 0 && skipped.length === 0) {
           return { candidates: [], error: `${file.name}: no skills found in the bundle.` }
         }
         return {
@@ -132,11 +166,11 @@ const SkillUploadView = ({
             files: preview.files,
             alreadyImported: preview.alreadyImported,
             replaceableId: preview.replaceableId
-          }))
+          })),
+          skipped: skippedEntries
         }
       } catch (error) {
-        const detail = error instanceof Error ? error.message : 'could not read the bundle.'
-        return { candidates: [], error: `${file.name}: ${detail}` }
+        return { candidates: [], error: `${file.name}: ${cleanMessage(error)}` }
       }
     }
 
@@ -174,17 +208,19 @@ const SkillUploadView = ({
       // Cap the whole selection before reading anything, so a batch drop can't allocate an unbounded
       // amount of memory across all files at once.
       const totalSize = files.reduce((sum, file) => sum + file.size, 0)
-      if (totalSize > SKILL_IMPORT_LIMITS.maxTotalBytes) {
+      if (totalSize > SKILL_IMPORT_LIMITS.maxBundleBytes) {
         setCandidates([])
         setErrors([
-          `Selection is too large (${mb(totalSize)}); upload at most ${mb(SKILL_IMPORT_LIMITS.maxTotalBytes)} at a time.`
+          `Selection is too large (${mb(totalSize)}); upload at most ${mb(SKILL_IMPORT_LIMITS.maxBundleBytes)} at a time.`
         ])
+        setSkipped([])
         setSelected(new Set())
         return
       }
       const results = await Promise.all(files.map(parseFile))
       setCandidates(results.flatMap((result) => result.candidates))
       setErrors(results.map((result) => result.error).filter((error): error is string => !!error))
+      setSkipped(results.flatMap((result) => result.skipped ?? []))
       // Default selection is empty — the user opts in per row (or via Select all).
       setSelected(new Set())
     } finally {
@@ -192,7 +228,9 @@ const SkillUploadView = ({
     }
   }
 
-  // Imports every checked candidate, tallying successes / skips (no-op re-imports) / failures.
+  // Imports every checked candidate, tallying successes / skips (no-op re-imports) / failures. Bundle
+  // candidates are grouped by their source file so a bundle holding many skills is decoded and unpacked
+  // ONCE (one batch call) instead of re-sent per skill.
   const importSelected = async (): Promise<void> => {
     if (busy || !candidates || selected.size === 0) return
     setBusy(true)
@@ -200,27 +238,52 @@ const SkillUploadView = ({
     let imported = 0
     let skipped = 0
     let failed = 0
-    for (const candidate of candidates.filter((entry) => selected.has(entry.key))) {
+
+    const chosen = candidates.filter((entry) => selected.has(entry.key))
+    const bundleGroups = new Map<string, Extract<Candidate, { kind: 'bundle' }>[]>()
+    const markdowns: Extract<Candidate, { kind: 'markdown' }>[] = []
+    for (const candidate of chosen) {
+      if (candidate.kind === 'bundle') {
+        const group = bundleGroups.get(candidate.base64) ?? []
+        group.push(candidate)
+        bundleGroups.set(candidate.base64, group)
+      } else {
+        markdowns.push(candidate)
+      }
+    }
+
+    for (const [base64, group] of bundleGroups) {
       try {
-        if (candidate.kind === 'bundle') {
-          const result = await importSkillZip(candidate.base64, {
+        const { results } = await importSkillZipBatch(
+          base64,
+          group.map((candidate) => ({
             subPath: candidate.subPath,
             replaceId: candidate.replaceableId
-          })
-          if (result.status === 'unchanged') skipped += 1
+          }))
+        )
+        for (const result of results) {
+          if (result.error) failed += 1
+          else if (result.status === 'unchanged') skipped += 1
           else imported += 1
-        } else {
-          await createSkill({
-            name: candidate.name,
-            description: candidate.description,
-            body: candidate.body
-          })
-          imported += 1
         }
+      } catch {
+        failed += group.length
+      }
+    }
+
+    for (const candidate of markdowns) {
+      try {
+        await createSkill({
+          name: candidate.name,
+          description: candidate.description,
+          body: candidate.body
+        })
+        imported += 1
       } catch {
         failed += 1
       }
     }
+
     setSummary(`Imported ${imported} · skipped ${skipped} · failed ${failed}`)
     setBusy(false)
     if (imported > 0) onUploaded()
@@ -354,6 +417,7 @@ const SkillUploadView = ({
         {errors.map((error) => (
           <ErrorBanner key={error} message={error} />
         ))}
+        {skipped.length > 0 ? <SkippedNote items={skipped} /> : null}
         {summary ? <p className="mt-3 text-xs text-muted-foreground">{summary}</p> : null}
 
         <div className="mt-4">
@@ -363,6 +427,7 @@ const SkillUploadView = ({
             onClick={() => {
               setCandidates(null)
               setErrors([])
+              setSkipped([])
               setSelected(new Set())
               setSummary(null)
             }}
@@ -412,6 +477,7 @@ const SkillUploadView = ({
       {errors.map((error) => (
         <ErrorBanner key={error} message={error} />
       ))}
+      {skipped.length > 0 ? <SkippedNote items={skipped} /> : null}
       {summary ? <p className="mt-3 text-xs text-muted-foreground">{summary}</p> : null}
 
       <div className="mt-5 text-center">

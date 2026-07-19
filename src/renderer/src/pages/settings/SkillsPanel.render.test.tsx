@@ -49,15 +49,22 @@ beforeEach(() => {
     importSkillZip: vi
       .fn()
       .mockResolvedValue({ status: 'imported', id: 'imported-zip', skills: [] }),
-    previewSkillZip: vi.fn().mockResolvedValue([
-      {
-        subPath: '',
-        name: 'Bundled',
-        description: 'From a bundle',
-        files: ['SKILL.md'],
-        alreadyImported: false
-      }
-    ]),
+    importSkillZipBatch: vi.fn().mockResolvedValue({
+      results: [{ subPath: '', status: 'imported', id: 'imported-zip' }],
+      skills: []
+    }),
+    previewSkillZip: vi.fn().mockResolvedValue({
+      previews: [
+        {
+          subPath: '',
+          name: 'Bundled',
+          description: 'From a bundle',
+          files: ['SKILL.md'],
+          alreadyImported: false
+        }
+      ],
+      skipped: []
+    }),
     scanRepoSkills: vi.fn().mockResolvedValue({
       skills: [
         {

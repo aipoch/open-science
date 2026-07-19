@@ -4,7 +4,14 @@ import { basename, dirname, join, resolve, sep } from 'node:path'
 
 import { dump as dumpYaml } from 'js-yaml'
 
-import type { SkillBundlePreview, SkillReference, SkillSource } from '../../shared/settings'
+import type {
+  SkillBundlePreview,
+  SkillBundlePreviewResult,
+  SkillReference,
+  SkillSource,
+  SkippedSkill
+} from '../../shared/settings'
+import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
 import { createLogger } from '../logger'
 import {
   fetchSkillFiles,
@@ -18,7 +25,7 @@ import {
 import { parseFrontmatter } from './frontmatter'
 import type { BundledSkill } from './registry'
 import { readSkillFile } from './skill-files'
-import { extractZip } from './zip-extract'
+import { extractZip, extractZipLenient } from './zip-extract'
 
 const log = createLogger('skills')
 
@@ -148,6 +155,74 @@ const findSkillRoots = (entries: { path: string; content: Buffer }[]): SkillRoot
       return { subPath, files }
     })
     .sort((a, b) => a.subPath.localeCompare(b.subPath))
+}
+
+// True for an archive entry that is itself a skill bundle (a .zip / .skill nested inside the upload).
+const isNestedArchive = (path: string): boolean => /\.(zip|skill)$/i.test(path)
+
+// Strips the electron/main wrapper off an error so only the human-readable tail is shown as a reason.
+const reasonFromError = (error: unknown): string => {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.replace(/^(Error invoking remote method '[^']*': )?(Error: )?/, '') || 'unreadable'
+}
+
+// The outcome of scanning a bundle: the skill roots we can import, plus the ones we skipped and why.
+type SkillDiscovery = { roots: SkillRoot[]; skipped: SkippedSkill[] }
+
+// Discovers every importable skill in an uploaded bundle, resilient to individual failures. Direct
+// SKILL.md roots (a plain skill dir, or a bundle of sibling skill dirs) are found as before; any entry
+// that is itself a .zip/.skill is unpacked ONE level deeper and its root(s) surfaced under a
+// namespaced subPath (the archive's base name). An entry that's too large, unreadable, or holds no
+// SKILL.md is recorded as skipped rather than failing the whole bundle. Nesting beyond one archive
+// level is not followed (a nested archive's own nested archives are ignored), which also bounds
+// recursion. The outer walk is lenient so one bad entry never sinks the rest.
+const discoverSkillRoots = (zip: Buffer): SkillDiscovery => {
+  const skipped: SkippedSkill[] = []
+  const { files, skipped: outerSkips } = extractZipLenient(zip, {
+    maxFiles: SKILL_IMPORT_LIMITS.maxBundleEntries,
+    maxFileBytes: SKILL_IMPORT_LIMITS.maxSkillArchiveBytes,
+    maxTotalBytes: SKILL_IMPORT_LIMITS.maxBundleBytes,
+    maxDepth: SKILL_IMPORT_LIMITS.maxDepth
+  })
+  for (const entry of outerSkips) skipped.push({ source: entry.path, reason: entry.reason })
+
+  // Loose files at the outer level (everything that isn't a nested archive) form ordinary roots.
+  const roots = findSkillRoots(files.filter((file) => !isNestedArchive(file.path)))
+
+  // Each nested archive is its own bundle: unpack it under the strict per-skill caps and namespace its
+  // roots by the archive's base name, so preview and import derive the same stable subPath.
+  for (const archive of files.filter((file) => isNestedArchive(file.path))) {
+    let innerRoots: SkillRoot[]
+    try {
+      innerRoots = findSkillRoots(extractZip(archive.content))
+    } catch (error) {
+      skipped.push({ source: archive.path, reason: reasonFromError(error) })
+      continue
+    }
+    if (innerRoots.length === 0) {
+      skipped.push({ source: archive.path, reason: 'no SKILL.md found' })
+      continue
+    }
+    const prefix = archive.path.replace(/\.(zip|skill)$/i, '')
+    for (const root of innerRoots) {
+      roots.push({
+        subPath: root.subPath === '' ? prefix : `${prefix}/${root.subPath}`,
+        files: root.files
+      })
+    }
+  }
+
+  // Bound the candidate count so a pathological archive of tiny skills can't flood the checklist.
+  if (roots.length > SKILL_IMPORT_LIMITS.maxSkillsPerBundle) {
+    for (const dropped of roots.splice(SKILL_IMPORT_LIMITS.maxSkillsPerBundle)) {
+      skipped.push({
+        source: dropped.subPath || 'skill',
+        reason: `bundle has more than ${SKILL_IMPORT_LIMITS.maxSkillsPerBundle} skills`
+      })
+    }
+  }
+
+  return { roots: roots.sort((a, b) => a.subPath.localeCompare(b.subPath)), skipped }
 }
 
 // Reads and writes user-authored (personal) and imported skills under `<storageRoot>/skills/`.
@@ -408,9 +483,8 @@ class UserSkillRepository {
   // lists the files, flags whether the identical bundle was already imported, and — when its name
   // collides with exactly one existing imported skill of different content — offers that skill's id as
   // a replace target. Writes nothing.
-  async previewZip(zip: Buffer): Promise<SkillBundlePreview[]> {
-    const roots = findSkillRoots(extractZip(zip))
-    if (roots.length === 0) throw new Error('The bundle must contain a SKILL.md.')
+  async previewZip(zip: Buffer): Promise<SkillBundlePreviewResult> {
+    const { roots, skipped } = discoverSkillRoots(zip)
 
     // Recovery + all dedup reads run under the lock so the alreadyImported/replaceable computation
     // reflects a consistent, fully-recovered view of the imported dir.
@@ -418,28 +492,37 @@ class UserSkillRepository {
       await this.doRecoverImportedTransactions()
 
       const previews: SkillBundlePreview[] = []
+      // A root that can't be parsed into a valid preview (no name, bad frontmatter) is skipped with a
+      // reason instead of failing the whole bundle — so the importable skills still come through.
       for (const root of roots) {
-        const skillMd = root.files.find((file) => file.relativePath.toLowerCase() === 'skill.md')!
-        const { fields } = parseFrontmatter(skillMd.content.toString('utf8'))
-        const name = fields.name?.trim()
-        if (!name) throw new Error("The bundle's SKILL.md needs a name in its frontmatter.")
+        try {
+          const skillMd = root.files.find((file) => file.relativePath.toLowerCase() === 'skill.md')!
+          const { fields } = parseFrontmatter(skillMd.content.toString('utf8'))
+          const name = fields.name?.trim()
+          if (!name) {
+            skipped.push({ source: root.subPath || 'skill', reason: 'SKILL.md has no name' })
+            continue
+          }
 
-        const alreadyImported = Boolean(
-          await this.findImportedSlugBySignature(signatureOf(root.files))
-        )
-        const replaceableId = alreadyImported ? undefined : await this.replaceableImportedId(name)
+          const alreadyImported = Boolean(
+            await this.findImportedSlugBySignature(signatureOf(root.files))
+          )
+          const replaceableId = alreadyImported ? undefined : await this.replaceableImportedId(name)
 
-        previews.push({
-          name,
-          description: fields.description ?? '',
-          files: root.files.map((file) => file.relativePath).sort(),
-          alreadyImported,
-          replaceableId,
-          subPath: root.subPath
-        })
+          previews.push({
+            name,
+            description: fields.description ?? '',
+            files: root.files.map((file) => file.relativePath).sort(),
+            alreadyImported,
+            replaceableId,
+            subPath: root.subPath
+          })
+        } catch (error) {
+          skipped.push({ source: root.subPath || 'skill', reason: reasonFromError(error) })
+        }
       }
 
-      return previews
+      return { previews, skipped }
     })
   }
 
@@ -478,43 +561,87 @@ class UserSkillRepository {
     zip: Buffer,
     options: { subPath?: string; replaceId?: string } = {}
   ): Promise<ImportOutcome> {
-    const roots = findSkillRoots(extractZip(zip))
+    const { roots } = discoverSkillRoots(zip)
     if (roots.length === 0) throw new Error('The bundle must contain a SKILL.md.')
 
     const root = this.selectRoot(roots, options.subPath)
-    const files = root.files
-    const skillMd = files.find((file) => file.relativePath.toLowerCase() === 'skill.md')!
-    const signature = signatureOf(files)
 
     // Recovery, dedup, slug allocation and the swap share one critical section (see importFromGitHub).
     return this.runExclusive(async () => {
       await this.doRecoverImportedTransactions()
-
-      if (options.replaceId !== undefined) {
-        const parsed = parseUserSkillId(options.replaceId)
-        if (
-          !parsed ||
-          parsed.source !== 'imported' ||
-          !(await this.slugTaken('imported', parsed.slug))
-        ) {
-          throw new Error(`Not an imported skill to replace: ${options.replaceId}`)
-        }
-        await this.writeImported(parsed.slug, files, '', signature)
-        return { status: 'updated', id: `imported-${parsed.slug}` }
-      }
-
-      const existingSlug = await this.findImportedSlugBySignature(signature)
-      if (existingSlug) {
-        return { status: 'unchanged', id: `imported-${existingSlug}` }
-      }
-
-      // CRLF-aware name extraction (from #181) inside #170's operation-level critical section.
-      const name = parseFrontmatter(skillMd.content.toString('utf8')).fields.name?.trim()
-      const base = toSlug(name ?? 'skill') || 'skill'
-      const slug = await this.uniqueSlug('imported', base)
-      await this.writeImported(slug, files, '', signature)
-      return { status: 'imported', id: `imported-${slug}` }
+      return this.writeRootLocked(root, options.replaceId)
     })
+  }
+
+  // Imports several skills from ONE bundle in a single pass: the bundle is discovered once and the
+  // whole batch runs under one critical section (one recovery, no per-skill re-extraction of a large
+  // upload). Each requested subPath is imported independently — a failure on one is captured as an
+  // error for that item and does not abort the rest. Returns one result per requested item.
+  async importFromZipBatch(
+    zip: Buffer,
+    items: { subPath: string; replaceId?: string }[]
+  ): Promise<{ subPath: string; outcome?: ImportOutcome; error?: string }[]> {
+    const { roots } = discoverSkillRoots(zip)
+    const bySubPath = new Map(roots.map((root) => [root.subPath, root]))
+
+    return this.runExclusive(async () => {
+      await this.doRecoverImportedTransactions()
+
+      const results: { subPath: string; outcome?: ImportOutcome; error?: string }[] = []
+      for (const item of items) {
+        const root = bySubPath.get(item.subPath)
+        if (!root) {
+          results.push({
+            subPath: item.subPath,
+            error: `The bundle has no skill at "${item.subPath}".`
+          })
+          continue
+        }
+        try {
+          results.push({
+            subPath: item.subPath,
+            outcome: await this.writeRootLocked(root, item.replaceId)
+          })
+        } catch (error) {
+          results.push({ subPath: item.subPath, error: reasonFromError(error) })
+        }
+      }
+      return results
+    })
+  }
+
+  // Writes one discovered skill root: replaces `replaceId` in place when given, else dedups by content
+  // signature (a re-import of the same bytes is a no-op) and allocates a fresh (possibly suffixed) slug.
+  // MUST be called from within a runExclusive critical section that has already recovered.
+  private async writeRootLocked(root: SkillRoot, replaceId?: string): Promise<ImportOutcome> {
+    const files = root.files
+    const skillMd = files.find((file) => file.relativePath.toLowerCase() === 'skill.md')!
+    const signature = signatureOf(files)
+
+    if (replaceId !== undefined) {
+      const parsed = parseUserSkillId(replaceId)
+      if (
+        !parsed ||
+        parsed.source !== 'imported' ||
+        !(await this.slugTaken('imported', parsed.slug))
+      ) {
+        throw new Error(`Not an imported skill to replace: ${replaceId}`)
+      }
+      await this.writeImported(parsed.slug, files, '', signature)
+      return { status: 'updated', id: `imported-${parsed.slug}` }
+    }
+
+    const existingSlug = await this.findImportedSlugBySignature(signature)
+    if (existingSlug) {
+      return { status: 'unchanged', id: `imported-${existingSlug}` }
+    }
+
+    // CRLF-aware name extraction (from #181) inside #170's operation-level critical section.
+    const name = parseFrontmatter(skillMd.content.toString('utf8')).fields.name?.trim()
+    const base = toSlug(name ?? 'skill') || 'skill'
+    const slug = await this.uniqueSlug('imported', base)
+    await this.writeImported(slug, files, '', signature)
+    return { status: 'imported', id: `imported-${slug}` }
   }
 
   // Finds an imported skill whose recorded content signature matches, for zip dedup.
