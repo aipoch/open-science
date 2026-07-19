@@ -223,7 +223,47 @@ describe('extractZipLenient', () => {
     expect(skipped[0].reason).toMatch(/exceeds/)
   })
 
+  it('records unsafe paths as skipped so their owning root can be rejected', () => {
+    const zip = buildZip([
+      { path: 'tool/SKILL.md', content: Buffer.from('ok'), method: 0 },
+      { path: 'tool/../evil.txt', content: Buffer.from('nope'), method: 0 }
+    ])
+
+    const { files, skipped } = extractZipLenient(zip, limits)
+    expect(files.map((f) => f.path)).toEqual(['tool/SKILL.md'])
+    expect(skipped).toEqual([{ path: 'tool/../evil.txt', reason: 'unsafe path' }])
+  })
+
   it('still throws on a structurally invalid archive', () => {
     expect(() => extractZipLenient(Buffer.from('not a zip'), limits)).toThrow(/valid ZIP/)
+  })
+
+  it('records an out-of-range local-header offset as skipped, never throwing', () => {
+    const zip = buildZip([
+      { path: 'good.txt', content: Buffer.from('ok'), method: 0 },
+      { path: 'bad.txt', content: Buffer.from('nope'), method: 0 }
+    ])
+    // Point bad.txt's central record at an out-of-range local-header offset. Central records follow
+    // entry order, so bad.txt's is the second (after good.txt's 46 + name-length bytes).
+    const centralStart = zip.readUInt32LE(zip.length - 22 + 16)
+    const badCentral = centralStart + 46 + 'good.txt'.length
+    zip.writeUInt32LE(0x7fffffff, badCentral + 42)
+
+    const { files, skipped } = extractZipLenient(zip, limits)
+    expect(files.map((f) => f.path)).toEqual(['good.txt'])
+    expect(skipped).toEqual([{ path: 'bad.txt', reason: expect.stringMatching(/local header/) }])
+  })
+
+  it('records a corrupt local signature as skipped, keeping the other entries', () => {
+    const zip = buildZip([
+      { path: 'bad.txt', content: Buffer.from('nope'), method: 0 },
+      { path: 'good.txt', content: Buffer.from('ok'), method: 0 }
+    ])
+    // bad.txt is the first entry, so its local header sits at offset 0; wipe its signature.
+    zip.writeUInt32LE(0, 0)
+
+    const { files, skipped } = extractZipLenient(zip, limits)
+    expect(files.map((f) => f.path)).toEqual(['good.txt'])
+    expect(skipped).toEqual([{ path: 'bad.txt', reason: 'malformed local header' }])
   })
 })

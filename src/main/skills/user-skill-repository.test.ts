@@ -629,6 +629,18 @@ describe('UserSkillRepository', () => {
     )
   })
 
+  it('skips a loose root whose unsafe path was dropped (no partial import)', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const zip = buildZip([
+      { path: 'tool/SKILL.md', content: Buffer.from('---\nname: Tool\ndescription: d\n---\nx') },
+      { path: 'tool/../evil.txt', content: Buffer.from('nope') }
+    ])
+
+    const { previews, skipped } = await repo.previewZip(zip)
+    expect(previews).toHaveLength(0)
+    expect(skipped.some((s) => s.source === 'tool' && /unsafe path/.test(s.reason))).toBe(true)
+  })
+
   it('does not alias a loose dir and a nested archive that share a stem', async () => {
     const repo = new UserSkillRepository(await makeStorage())
     const nested = buildZip([

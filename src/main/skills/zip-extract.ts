@@ -165,7 +165,14 @@ const extractZipLenient = (buffer: Buffer, limits: LenientExtractLimits): Lenien
 
     // Directory records and archive metadata carry no importable content — drop them silently.
     if (name.endsWith('/')) continue
-    if (isUnsafePath(name)) continue
+    if (isUnsafePath(name)) {
+      // Metadata entries were never part of a skill. Real unsafe paths, though, must be recorded so a
+      // loose skill root that owned one is rejected instead of imported silently incomplete.
+      if (!name.startsWith('__MACOSX/') && !name.startsWith('.')) {
+        skipped.push({ path: name, reason: 'unsafe path' })
+      }
+      continue
+    }
     if (method !== 0 && method !== 8) {
       skipped.push({ path: name, reason: 'unsupported compression method' })
       continue
@@ -179,10 +186,20 @@ const extractZipLenient = (buffer: Buffer, limits: LenientExtractLimits): Lenien
       continue
     }
 
-    if (buffer.readUInt32LE(localOffset) !== LOCAL_SIGNATURE) continue
+    // Read the local header to find where the data starts. A malformed/out-of-range offset must be
+    // RECORDED as skipped, never left to throw a RangeError (which would abort the whole bundle) and
+    // never silently dropped (which would let a loose skill root import missing this file).
+    if (localOffset + 30 > buffer.length || buffer.readUInt32LE(localOffset) !== LOCAL_SIGNATURE) {
+      skipped.push({ path: name, reason: 'malformed local header' })
+      continue
+    }
     const localNameLength = buffer.readUInt16LE(localOffset + 26)
     const localExtraLength = buffer.readUInt16LE(localOffset + 28)
     const dataStart = localOffset + 30 + localNameLength + localExtraLength
+    if (dataStart + compressedSize > buffer.length) {
+      skipped.push({ path: name, reason: 'entry data extends past end of archive' })
+      continue
+    }
     const data = buffer.subarray(dataStart, dataStart + compressedSize)
 
     // For a STORE entry the decompressed size is known up front, so an oversized one is skipped
