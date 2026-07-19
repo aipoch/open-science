@@ -34,18 +34,20 @@ const RuntimeUninstallControl = ({
   isDetecting,
   onUninstall
 }: RuntimeUninstallControlProps): React.JSX.Element => {
-  const hint = uninstallDisabledHint(label, uninstallCommand, { managed, active })
   const busy = isUninstalling || isDetecting
+  // Busy takes priority: during detect/uninstall the button is natively disabled with no explainer, even
+  // if a standing reason (non-managed / active) also applies — that reason is stale mid-operation.
+  const hint = busy ? null : uninstallDisabledHint(label, uninstallCommand, { managed, active })
 
   const button = (
     <Button
       type="button"
       variant="destructive"
       size="sm"
-      // A standing reason keeps the button hoverable via aria-disabled so its tooltip can open; only a
-      // transient busy state uses the native disabled attribute.
+      // A standing reason keeps the button hoverable via aria-disabled so its tooltip can open; a
+      // transient busy state uses the native disabled attribute instead (and shows no `?`).
       aria-disabled={hint ? true : undefined}
-      disabled={!hint && busy}
+      disabled={busy}
       onClick={hint ? undefined : onUninstall}
       className={cn(
         hint && 'cursor-not-allowed opacity-50 hover:bg-destructive/10 dark:hover:bg-destructive/20'

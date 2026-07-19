@@ -328,6 +328,7 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - All focusable controls use `focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50`.
 - Inputs may add `focus-visible:border-ring/50`; the light focus border target is `rgb(134 182 239)`.
 - Disabled controls use `disabled:pointer-events-none disabled:opacity-50`; shared buttons also use `touch-manipulation`.
+- **Exception — a disabled control that must explain _why_:** a natively `disabled` element receives no pointer events, so a `Tooltip` on it never opens. When the disabled state needs an on-hover explanation (e.g. the agent-framework Uninstall button when the runtime is not app-managed or is the active backend), render it as `aria-disabled` + `opacity-50 cursor-not-allowed` with a neutralized `onClick` instead of the native `disabled` attribute, so it keeps the greyed look yet stays hoverable as the tooltip trigger. Reserve this for standing (non-transient) reasons; transient busy states (in-flight install/detect) still use native `disabled` with no tooltip.
 - Sidebar buttons and icon triggers may use `cursor-pointer`; decorative row wrappers provide hover/active styling only and must not imply a click target outside the nested button.
 - Hover, focus, and active states must not change width, height, padding, or border width.
 

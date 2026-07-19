@@ -99,6 +99,17 @@ describe('RuntimeUninstallControl', () => {
     expect(button?.disabled).toBe(true)
     expect(hasHelpIcon()).toBe(false)
   })
+
+  it('lets a busy state take priority over a standing reason (native disabled, no `?`)', () => {
+    // A non-managed install has a standing reason, but a concurrent detect must still win: the button
+    // is natively disabled with no stale explainer while the operation is in flight.
+    render({ managed: false, isDetecting: true })
+
+    const button = uninstallButton()
+    expect(button?.disabled).toBe(true)
+    expect(button?.getAttribute('aria-disabled')).toBeNull()
+    expect(hasHelpIcon()).toBe(false)
+  })
 })
 
 // The tooltip content is portal-rendered by Radix only once open, which is unreliable to drive in jsdom,
