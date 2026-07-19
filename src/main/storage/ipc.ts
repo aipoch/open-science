@@ -13,6 +13,7 @@ import {
   samePath
 } from '../storage-root'
 import { detectActiveSessions } from './detect-active'
+import { isDataRootMissing } from './path-presence'
 import { beginMigration, clearMigrationPending, endMigrationCopy } from './migration-state'
 import { shutdownBackends } from '../lifecycle-shutdown'
 import {
@@ -95,7 +96,11 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
     let legacyDataMovePrompt = false
     try {
       const storedSettings = await deps.settingsService.getStoredSettings()
-      dataRootMissing = Boolean(storedSettings.dataRoot) && !existsSync(dataRoot)
+      // Only an explicitly-configured root that stat proves is gone (ENOENT/ENOTDIR) counts as
+      // missing. isDataRootMissing deliberately does NOT collapse other stat errors into "missing"
+      // the way a bare existsSync would, so a non-ENOENT failure (seen with non-ASCII paths on some
+      // Windows setups, or a transient drive/IO hiccup) can't nag the user to abandon real data.
+      dataRootMissing = Boolean(storedSettings.dataRoot) && (await isDataRootMissing(dataRoot))
 
       const configRoot = resolveConfigRoot()
       const legacyInPlace = !storedSettings.dataRoot && samePath(dataRoot, configRoot)
