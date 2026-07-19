@@ -42,7 +42,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@prisma/client": "^6.19.3",
     "electron-updater": "^6.3.9",
-    "js-yaml": "^4.1.0",
+    "js-yaml": "^5.2.1",
     "openchemlib": "^9.24.0",
     "pdfjs-dist": "^4.10.38",
     "ws": "^8.21.1",
