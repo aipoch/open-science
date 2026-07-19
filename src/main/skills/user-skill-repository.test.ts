@@ -13,6 +13,7 @@ import {
   frontmatterBlock
 } from './user-skill-repository'
 import { parseFrontmatter } from './frontmatter'
+import { SKILL_IMPORT_LIMITS } from './import-limits'
 import type { FetchLike } from './github-import'
 
 const makeStorage = async (): Promise<string> => mkdtemp(join(tmpdir(), 'user-skills-'))
@@ -593,31 +594,39 @@ describe('UserSkillRepository', () => {
     expect((await repo.list()).map((s) => s.name)).toEqual(['Alpha'])
   })
 
-  it('skips a loose single-skill root whose file exceeds the per-skill cap', async () => {
+  it('skips a loose single-skill root that exceeds the per-skill file-count cap', async () => {
     const repo = new UserSkillRepository(await makeStorage())
-    // 6 MiB file: within the bundle-wide walk cap but over the 5 MiB per-skill file cap.
+    // A SKILL.md plus more loose files than the per-skill cap allows — within the bundle-wide walk
+    // caps, but over the per-skill file count, so the root is rejected rather than imported.
+    const extras = Array.from({ length: SKILL_IMPORT_LIMITS.maxFiles + 1 }, (_, i) => ({
+      path: `f${i}.txt`,
+      content: Buffer.from('x')
+    }))
     const zip = buildZip([
       { path: 'SKILL.md', content: Buffer.from('---\nname: Big\ndescription: d\n---\nx') },
-      { path: 'blob.bin', content: Buffer.alloc(6 * 1024 * 1024, 7) }
+      ...extras
     ])
 
     const { previews, skipped } = await repo.previewZip(zip)
     expect(previews).toHaveLength(0)
-    expect(skipped[0].reason).toMatch(/over 5 MB/)
+    expect(skipped[0].reason).toMatch(/more than \d+ files/)
   })
 
-  it('skips a loose root whose oversized file the lenient walk dropped (no partial import)', async () => {
+  it('skips a loose root whose file the lenient walk dropped (no partial import)', async () => {
     const repo = new UserSkillRepository(await makeStorage())
-    // 9 MiB file exceeds the nested-archive/entry cap, so the outer walk drops it; the root that owns
-    // it must be skipped rather than imported without it.
+    // A file nested past the depth cap is dropped by the outer walk; the root that owns it must be
+    // skipped rather than imported without it. (Depth is a cheap stand-in for any dropped-file cause.)
+    const tooDeep = `pack/${Array.from({ length: SKILL_IMPORT_LIMITS.maxDepth }, (_, i) => `d${i}`).join('/')}/x.txt`
     const zip = buildZip([
       { path: 'pack/SKILL.md', content: Buffer.from('---\nname: Pack\ndescription: d\n---\nx') },
-      { path: 'pack/huge.bin', content: Buffer.alloc(9 * 1024 * 1024, 7) }
+      { path: tooDeep, content: Buffer.from('deep') }
     ])
 
     const { previews, skipped } = await repo.previewZip(zip)
     expect(previews).toHaveLength(0)
-    expect(skipped.some((s) => s.source === 'pack' && /too large/.test(s.reason))).toBe(true)
+    expect(skipped.some((s) => s.source === 'pack' && /couldn't be imported/.test(s.reason))).toBe(
+      true
+    )
   })
 
   it('does not alias a loose dir and a nested archive that share a stem', async () => {

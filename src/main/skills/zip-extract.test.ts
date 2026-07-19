@@ -2,6 +2,7 @@ import { deflateRawSync } from 'node:zlib'
 
 import { describe, expect, it } from 'vitest'
 
+import { SKILL_IMPORT_LIMITS } from './import-limits'
 import { extractZip, extractZipLenient } from './zip-extract'
 
 // CRC-32 (used only to build genuinely valid local/central headers in the test archives).
@@ -146,24 +147,26 @@ describe('extractZip', () => {
   })
 
   it('rejects an oversized STORE entry from its known size', () => {
-    // A single STORE file over the 5 MiB per-file cap is rejected without copying it out.
-    const big = Buffer.alloc(5 * 1024 * 1024 + 1, 0x61)
+    // A single STORE file over the per-file cap is rejected without copying it out.
+    const big = Buffer.alloc(SKILL_IMPORT_LIMITS.maxFileBytes + 1, 0x61)
     expect(() => extractZip(buildZip([{ path: 'big.txt', content: big, method: 0 }]))).toThrow(
       /exceeds the .* limit/
     )
   })
 
   it('rejects a DEFLATE bomb via the inflate output bound', () => {
-    // 6 MiB of zeros compresses to almost nothing but would inflate past the 5 MiB per-file cap;
-    // inflateRawSync's maxOutputLength makes that throw instead of expanding into memory.
-    const bomb = Buffer.alloc(6 * 1024 * 1024, 0)
+    // Zeros compress to almost nothing but would inflate past the per-file cap; inflateRawSync's
+    // maxOutputLength makes that throw instead of expanding into memory.
+    const bomb = Buffer.alloc(SKILL_IMPORT_LIMITS.maxFileBytes + 1024, 0)
     expect(() => extractZip(buildZip([{ path: 'bomb.bin', content: bomb, method: 8 }]))).toThrow()
   })
 
   it('rejects a bundle whose decompressed total exceeds the cap', () => {
-    // Three 4 MiB files are each under the per-file cap but sum to 12 MiB > the 10 MiB total cap.
-    const chunk = Buffer.alloc(4 * 1024 * 1024, 0x62)
-    const inputs: ZipInput[] = [0, 1, 2].map((i) => ({
+    // Files each at the per-file cap, enough of them to overflow the per-skill total cap.
+    const chunk = Buffer.alloc(SKILL_IMPORT_LIMITS.maxFileBytes, 0x62)
+    const count =
+      Math.floor(SKILL_IMPORT_LIMITS.maxTotalBytes / SKILL_IMPORT_LIMITS.maxFileBytes) + 1
+    const inputs: ZipInput[] = Array.from({ length: count }, (_, i) => ({
       path: `f${i}.txt`,
       content: chunk,
       method: 0 as const

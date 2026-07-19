@@ -154,9 +154,9 @@ describe('SkillUploadView (batch upload)', () => {
       root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />)
     })
 
-    // 6 MiB exceeds the 5 MiB per-file cap. file.size is checked before file.text() runs.
+    // 51 MiB exceeds the 50 MiB per-file cap. file.size is checked before file.text() runs.
     const big = new File(['x'], 'big.md', { type: 'text/markdown' })
-    Object.defineProperty(big, 'size', { value: 6 * 1024 * 1024 })
+    Object.defineProperty(big, 'size', { value: 51 * 1024 * 1024 })
     const textSpy = vi.spyOn(big, 'text')
 
     await dropFiles([big])
@@ -171,11 +171,11 @@ describe('SkillUploadView (batch upload)', () => {
       root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />)
     })
 
-    // Two 40 MiB bundles: each is under the per-bundle cap, but together they exceed the total cap.
+    // Two 130 MiB bundles: each is under the per-bundle cap, but together they exceed the total cap.
     const a = new File([new Uint8Array([1])], 'a.zip', { type: 'application/zip' })
     const b = new File([new Uint8Array([2])], 'b.zip', { type: 'application/zip' })
-    Object.defineProperty(a, 'size', { value: 40 * 1024 * 1024 })
-    Object.defineProperty(b, 'size', { value: 40 * 1024 * 1024 })
+    Object.defineProperty(a, 'size', { value: 130 * 1024 * 1024 })
+    Object.defineProperty(b, 'size', { value: 130 * 1024 * 1024 })
 
     await dropFiles([a, b])
 
@@ -188,9 +188,9 @@ describe('SkillUploadView (batch upload)', () => {
       root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />)
     })
 
-    // A 65 MiB bundle exceeds the per-bundle cap; it must be rejected before previewSkillZip reads it.
+    // A 257 MiB bundle exceeds the per-bundle cap; it must be rejected before previewSkillZip reads it.
     const big = new File([new Uint8Array([1])], 'huge.zip', { type: 'application/zip' })
-    Object.defineProperty(big, 'size', { value: 65 * 1024 * 1024 })
+    Object.defineProperty(big, 'size', { value: 257 * 1024 * 1024 })
 
     await dropFiles([big])
 

@@ -246,10 +246,11 @@ const discoverSkillRoots = (zip: Buffer): SkillDiscovery => {
   // any of whose files the lenient walk had to drop is rejected — importing it would produce a
   // silently-partial skill.
   for (const { root, prefix } of rootPrefixes) {
-    if (outerSkips.some((e) => e.path === root.subPath || e.path.startsWith(prefix))) {
+    const droppedFile = outerSkips.find((e) => e.path === root.subPath || e.path.startsWith(prefix))
+    if (droppedFile) {
       skipped.push({
         source: root.subPath || 'skill',
-        reason: 'contains a file too large to import'
+        reason: `contains a file that couldn't be imported (${droppedFile.reason})`
       })
       continue
     }
