@@ -40,7 +40,8 @@ type FakeSettingsService = Record<
   | 'setSkillEnabled'
   | 'createSkill'
   | 'updateSkill'
-  | 'deleteSkill',
+  | 'deleteSkill'
+  | 'importSkillZipBatch',
   ReturnType<typeof vi.fn>
 >
 
@@ -83,7 +84,8 @@ const createFakeService = (): FakeSettingsService => ({
   setSkillEnabled: vi.fn().mockResolvedValue([]),
   createSkill: vi.fn().mockResolvedValue([]),
   updateSkill: vi.fn().mockResolvedValue([]),
-  deleteSkill: vi.fn().mockResolvedValue([])
+  deleteSkill: vi.fn().mockResolvedValue([]),
+  importSkillZipBatch: vi.fn().mockResolvedValue({ results: [], skills: [] })
 })
 
 // Adapts the spy bag into the SettingsService shape the registration function expects.
@@ -266,6 +268,27 @@ describe('settings IPC handlers', () => {
     expect(service.deleteSkill).toHaveBeenCalledWith({ id: 'personal-s' })
 
     expect(onSkillsChanged).toHaveBeenCalledTimes(3)
+  })
+
+  it('routes import-skill-zip-batch to the service, forwards its result, and fires onSkillsChanged', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const onSkillsChanged = vi.fn()
+    const result = {
+      results: [{ subPath: 'a', status: 'imported' as const, id: 'imported-a' }],
+      skills: []
+    }
+    service.importSkillZipBatch.mockResolvedValue(result)
+    registerSettingsIpcHandlers({ service: asService(service), onSkillsChanged })
+
+    expect(handlers.has('settings:import-skill-zip-batch')).toBe(true)
+
+    const request = { dataBase64: 'YmFzZTY0', items: [{ subPath: 'a' }] }
+    const forwarded = await invoke('settings:import-skill-zip-batch', request)
+
+    expect(service.importSkillZipBatch).toHaveBeenCalledWith(request)
+    expect(forwarded).toBe(result)
+    expect(onSkillsChanged).toHaveBeenCalledTimes(1)
   })
 
   it('registers the OpenCode / framework-switch channels', () => {

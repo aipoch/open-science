@@ -91,8 +91,10 @@ import type {
   ImportSkillRequest,
   ImportSkillResult,
   ImportSkillZipRequest,
+  ImportSkillZipBatchRequest,
+  ImportSkillZipBatchResult,
   PreviewSkillZipRequest,
-  SkillBundlePreview,
+  SkillBundlePreviewResult,
   ScanRepoRequest,
   ScanRepoResult,
   ConnectorsSnapshot,
@@ -208,7 +210,8 @@ type OpenScienceAPI = {
     deleteSkill: (request: DeleteSkillRequest) => Promise<SkillView[]>
     importSkill: (request: ImportSkillRequest) => Promise<ImportSkillResult>
     importSkillZip: (request: ImportSkillZipRequest) => Promise<ImportSkillResult>
-    previewSkillZip: (request: PreviewSkillZipRequest) => Promise<SkillBundlePreview[]>
+    importSkillZipBatch: (request: ImportSkillZipBatchRequest) => Promise<ImportSkillZipBatchResult>
+    previewSkillZip: (request: PreviewSkillZipRequest) => Promise<SkillBundlePreviewResult>
     scanRepoSkills: (request: ScanRepoRequest) => Promise<ScanRepoResult>
     listConnectors: () => Promise<ConnectorsSnapshot>
     getConnectorDetail: (id: string) => Promise<ConnectorDetailView>
@@ -458,8 +461,16 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('settings:import-skill', request) as Promise<ImportSkillResult>,
     importSkillZip: (request: ImportSkillZipRequest) =>
       ipcRenderer.invoke('settings:import-skill-zip', request) as Promise<ImportSkillResult>,
+    importSkillZipBatch: (request: ImportSkillZipBatchRequest) =>
+      ipcRenderer.invoke(
+        'settings:import-skill-zip-batch',
+        request
+      ) as Promise<ImportSkillZipBatchResult>,
     previewSkillZip: (request: PreviewSkillZipRequest) =>
-      ipcRenderer.invoke('settings:preview-skill-zip', request) as Promise<SkillBundlePreview[]>,
+      ipcRenderer.invoke(
+        'settings:preview-skill-zip',
+        request
+      ) as Promise<SkillBundlePreviewResult>,
     scanRepoSkills: (request: ScanRepoRequest) =>
       ipcRenderer.invoke('settings:scan-repo-skills', request) as Promise<ScanRepoResult>,
     listConnectors: () =>

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { SKILL_IMPORT_LIMITS } from './import-limits'
 import {
   parseGitHubSkillUrl,
   parseGitHubRepo,
@@ -7,6 +8,11 @@ import {
   scanRepoForSkills,
   type FetchLike
 } from './github-import'
+
+// Per-file / total caps the download guards enforce; tests derive sizes from these so they track the
+// configured limits instead of hard-coded numbers.
+const OVER_FILE = SKILL_IMPORT_LIMITS.maxFileBytes + 1
+const AT_FILE = SKILL_IMPORT_LIMITS.maxFileBytes
 
 describe('parseGitHubSkillUrl', () => {
   it('parses tree URLs into owner/repo/ref/path', () => {
@@ -97,8 +103,8 @@ describe('fetchSkillFiles', () => {
   })
 
   it('rejects a file larger than the per-file limit (post-download guard)', async () => {
-    // A 6 MiB body with no Content-Length header falls through to the post-download size guard
-    // (SKILL_IMPORT_LIMITS.maxFileBytes is 5 MiB).
+    // A body one byte over the per-file cap with no Content-Length header falls through to the
+    // post-download size guard.
     const oversized: FetchLike = async (url) => {
       if (url.includes('/contents/')) {
         return {
@@ -119,7 +125,7 @@ describe('fetchSkillFiles', () => {
         ok: true,
         status: 200,
         json: async () => ({}),
-        arrayBuffer: async () => new ArrayBuffer(6 * 1024 * 1024)
+        arrayBuffer: async () => new ArrayBuffer(OVER_FILE)
       }
     }
 
@@ -129,7 +135,8 @@ describe('fetchSkillFiles', () => {
   })
 
   it('rejects an oversized file on Content-Length before buffering the body', async () => {
-    // The download advertises 6 MiB via Content-Length; the guard must fire before arrayBuffer() runs.
+    // The download advertises an over-cap size via Content-Length; the guard must fire before
+    // arrayBuffer() runs.
     let bodyRead = false
     const preCheck: FetchLike = async (url) => {
       if (url.includes('/contents/')) {
@@ -152,11 +159,11 @@ describe('fetchSkillFiles', () => {
         status: 200,
         json: async () => ({}),
         headers: {
-          get: (name) => (name.toLowerCase() === 'content-length' ? `${6 * 1024 * 1024}` : null)
+          get: (name) => (name.toLowerCase() === 'content-length' ? `${OVER_FILE}` : null)
         },
         arrayBuffer: async () => {
           bodyRead = true
-          return new ArrayBuffer(6 * 1024 * 1024)
+          return new ArrayBuffer(0)
         }
       }
     }
@@ -168,10 +175,10 @@ describe('fetchSkillFiles', () => {
   })
 
   it('rejects on the aggregate budget via Content-Length before reading the over-budget body', async () => {
-    // Three files each declaring 4 MiB. The total cap is 10 MiB, so the third pushes the aggregate to
-    // 12 MiB and must be rejected on its Content-Length — before its body is ever read.
+    // Three files each declaring one per-file cap's worth. Two fit the total cap; the third pushes the
+    // aggregate over it and must be rejected on its Content-Length — before its body is ever read.
     const bodiesRead: string[] = []
-    const size = 4 * 1024 * 1024
+    const size = AT_FILE
     const aggregate: FetchLike = async (url) => {
       if (url.includes('/contents/')) {
         return {
@@ -205,13 +212,14 @@ describe('fetchSkillFiles', () => {
     await expect(
       fetchSkillFiles({ owner: 'acme', repo: 'skills', ref: 'main', path: 'pack/foo' }, aggregate)
     ).rejects.toThrow(/total limit/)
-    // First two bodies read (8 MiB), the third rejected before its body was touched.
+    // First two bodies read, the third rejected before its body was touched.
     expect(bodiesRead).toEqual(['https://raw/a', 'https://raw/b'])
   })
 
-  it('accepts files sitting exactly on the per-file and total limits', async () => {
-    // Two 5 MiB files == the 5 MiB per-file cap each and 10 MiB total exactly. Both must be accepted.
-    const size = 5 * 1024 * 1024
+  it('accepts files sitting exactly on the per-file cap', async () => {
+    // Two files each exactly at the per-file cap (and within the total cap). Both must be accepted —
+    // a file at the cap is allowed, only one over it is rejected.
+    const size = AT_FILE
     const exact: FetchLike = async (url) => {
       if (url.includes('/contents/')) {
         return {
@@ -248,7 +256,8 @@ describe('fetchSkillFiles', () => {
 
   it('bounds a streamed body with no Content-Length, stopping once the cap is passed', async () => {
     // A body that streams 1 MiB chunks with no Content-Length. Reading must abort once it crosses the
-    // 5 MiB per-file cap instead of draining the whole (here effectively endless) stream.
+    // per-file cap instead of draining the whole (here effectively endless) stream.
+    const capMiB = Math.ceil(SKILL_IMPORT_LIMITS.maxFileBytes / (1024 * 1024))
     let chunksServed = 0
     let cancelled = false
     const chunk = new Uint8Array(1024 * 1024)
@@ -290,8 +299,8 @@ describe('fetchSkillFiles', () => {
     await expect(
       fetchSkillFiles({ owner: 'acme', repo: 'skills', ref: 'main', path: 'pack/foo' }, streaming)
     ).rejects.toThrow(/per-file limit/)
-    // Stopped a hair past the 5 MiB cap (6 one-MiB reads), not the whole endless stream, and cancelled.
-    expect(chunksServed).toBeLessThanOrEqual(7)
+    // Stopped a hair past the cap, not the whole endless stream, and cancelled.
+    expect(chunksServed).toBeLessThanOrEqual(capMiB + 2)
     expect(cancelled).toBe(true)
   })
 
@@ -382,8 +391,8 @@ describe('fetchSkillFiles', () => {
   })
 
   it('reads a streamed body that finishes under the cap and returns its exact bytes', async () => {
-    // A finite streamed body (3 MiB in 1 MiB chunks, no Content-Length) under the 5 MiB per-file cap
-    // must be accepted and reassembled intact.
+    // A finite streamed body (3 MiB in 1 MiB chunks, no Content-Length) under the per-file cap must be
+    // accepted and reassembled intact.
     const chunk = new Uint8Array(1024 * 1024).fill(7)
     const finite: FetchLike = async (url) => {
       if (url.includes('/contents/')) {

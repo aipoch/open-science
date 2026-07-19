@@ -55,25 +55,32 @@ beforeEach(() => {
       }
     ],
     createSkill: vi.fn().mockResolvedValue(undefined),
-    importSkillZip: vi
-      .fn()
-      .mockResolvedValue({ status: 'imported', id: 'imported-zip', skills: [] }),
-    previewSkillZip: vi.fn().mockResolvedValue([
-      {
-        subPath: 'skills/one',
-        name: 'One',
-        description: 'First bundled skill',
-        files: ['SKILL.md'],
-        alreadyImported: false
-      },
-      {
-        subPath: 'skills/two',
-        name: 'Two',
-        description: 'Second bundled skill',
-        files: ['SKILL.md'],
-        alreadyImported: false
-      }
-    ])
+    importSkillZipBatch: vi.fn().mockResolvedValue({
+      results: [
+        { subPath: 'skills/one', status: 'imported', id: 'imported-one' },
+        { subPath: 'skills/two', status: 'imported', id: 'imported-two' }
+      ],
+      skills: []
+    }),
+    previewSkillZip: vi.fn().mockResolvedValue({
+      previews: [
+        {
+          subPath: 'skills/one',
+          name: 'One',
+          description: 'First bundled skill',
+          files: ['SKILL.md'],
+          alreadyImported: false
+        },
+        {
+          subPath: 'skills/two',
+          name: 'Two',
+          description: 'Second bundled skill',
+          files: ['SKILL.md'],
+          alreadyImported: false
+        }
+      ],
+      skipped: []
+    })
   })
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -132,16 +139,13 @@ describe('SkillUploadView (batch upload)', () => {
     clickButton('Import selected')
     await flush()
 
-    const importSkillZip = useSettingsStore.getState().importSkillZip
-    expect(importSkillZip).toHaveBeenCalledTimes(2)
-    expect(importSkillZip).toHaveBeenCalledWith(expect.any(String), {
-      subPath: 'skills/one',
-      replaceId: undefined
-    })
-    expect(importSkillZip).toHaveBeenCalledWith(expect.any(String), {
-      subPath: 'skills/two',
-      replaceId: undefined
-    })
+    // Both roots came from one file, so they import in a single batch call carrying every subPath.
+    const importSkillZipBatch = useSettingsStore.getState().importSkillZipBatch
+    expect(importSkillZipBatch).toHaveBeenCalledTimes(1)
+    expect(importSkillZipBatch).toHaveBeenCalledWith(expect.any(String), [
+      { subPath: 'skills/one', replaceId: undefined },
+      { subPath: 'skills/two', replaceId: undefined }
+    ])
     expect(onUploaded).toHaveBeenCalled()
   })
 
@@ -150,9 +154,9 @@ describe('SkillUploadView (batch upload)', () => {
       root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />)
     })
 
-    // 6 MiB exceeds the 5 MiB per-file cap. file.size is checked before file.text() runs.
+    // 51 MiB exceeds the 50 MiB per-file cap. file.size is checked before file.text() runs.
     const big = new File(['x'], 'big.md', { type: 'text/markdown' })
-    Object.defineProperty(big, 'size', { value: 6 * 1024 * 1024 })
+    Object.defineProperty(big, 'size', { value: 51 * 1024 * 1024 })
     const textSpy = vi.spyOn(big, 'text')
 
     await dropFiles([big])
@@ -167,11 +171,11 @@ describe('SkillUploadView (batch upload)', () => {
       root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />)
     })
 
-    // Two 6 MiB bundles: each is under the 10 MiB per-bundle cap, but together they exceed the total.
+    // Two 130 MiB bundles: each is under the per-bundle cap, but together they exceed the total cap.
     const a = new File([new Uint8Array([1])], 'a.zip', { type: 'application/zip' })
     const b = new File([new Uint8Array([2])], 'b.zip', { type: 'application/zip' })
-    Object.defineProperty(a, 'size', { value: 6 * 1024 * 1024 })
-    Object.defineProperty(b, 'size', { value: 6 * 1024 * 1024 })
+    Object.defineProperty(a, 'size', { value: 130 * 1024 * 1024 })
+    Object.defineProperty(b, 'size', { value: 130 * 1024 * 1024 })
 
     await dropFiles([a, b])
 
@@ -184,9 +188,9 @@ describe('SkillUploadView (batch upload)', () => {
       root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />)
     })
 
-    // An 11 MiB bundle exceeds the 10 MiB cap; it must be rejected before previewSkillZip reads it.
+    // A 257 MiB bundle exceeds the per-bundle cap; it must be rejected before previewSkillZip reads it.
     const big = new File([new Uint8Array([1])], 'huge.zip', { type: 'application/zip' })
-    Object.defineProperty(big, 'size', { value: 11 * 1024 * 1024 })
+    Object.defineProperty(big, 'size', { value: 257 * 1024 * 1024 })
 
     await dropFiles([big])
 

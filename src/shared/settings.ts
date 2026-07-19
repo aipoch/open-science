@@ -536,6 +536,27 @@ export type PreviewSkillZipRequest = {
   dataBase64: string
 }
 
+// Import several skills from ONE uploaded bundle in a single call, so a bundle holding many skills is
+// unpacked once instead of re-decoded per skill. Each item selects a skill root by subPath (and may
+// target an existing imported skill to replace).
+export type ImportSkillZipBatchRequest = {
+  dataBase64: string
+  items: { subPath: string; replaceId?: string }[]
+}
+
+// Per-item outcome of a batch import: the same status as a single import on success, or an error
+// message on failure, keyed by the requested subPath. The refreshed skill list is returned once.
+// Per-item outcome: on success `status` (+ `id`) is set and `error` is absent; on failure `error` is
+// set and `status`/`id` are absent. The two are mutually exclusive, so a caller keys off `error`.
+export type ImportSkillZipBatchItemResult =
+  | { subPath: string; status: 'imported' | 'unchanged' | 'updated'; id: string; error?: undefined }
+  | { subPath: string; status?: undefined; id?: undefined; error: string }
+
+export type ImportSkillZipBatchResult = {
+  results: ImportSkillZipBatchItemResult[]
+  skills: SkillView[]
+}
+
 // The parsed contents of a bundle: the skill's name/description, the files it contains, whether an
 // identical bundle was already imported (same content signature), and — when the name collides with
 // exactly one existing imported skill of different content — the id of that skill, offered as a
@@ -547,6 +568,22 @@ export type SkillBundlePreview = {
   files: string[]
   alreadyImported: boolean
   replaceableId?: string
+}
+
+// One skill the bundle contained but that couldn't be imported (too large, no SKILL.md, no name, an
+// unreadable nested archive, ...). `source` identifies it within the bundle (the nested archive name
+// or subPath); `reason` is a plain-English explanation shown to the user. Surfaced so a partial import
+// tells the user exactly what was left out instead of failing the whole bundle.
+export type SkippedSkill = {
+  source: string
+  reason: string
+}
+
+// Result of previewing a bundle: the importable skills, plus any that were skipped and why. A bundle
+// with a mix of good and bad skills yields previews for the good ones and a skipped entry per bad one.
+export type SkillBundlePreviewResult = {
+  previews: SkillBundlePreview[]
+  skipped: SkippedSkill[]
 }
 
 // Scan a GitHub repo (owner/repo, owner/repo@ref, or a URL) for skill directories.

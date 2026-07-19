@@ -41,8 +41,10 @@ import type {
   ImportSkillRequest,
   ImportSkillResult,
   ImportSkillZipRequest,
+  ImportSkillZipBatchRequest,
+  ImportSkillZipBatchResult,
   PreviewSkillZipRequest,
-  SkillBundlePreview,
+  SkillBundlePreviewResult,
   ScanRepoRequest,
   ScanRepoResult,
   UpdateSkillRequest,
@@ -108,7 +110,7 @@ import { getConnectorTools } from '../connectors/registry'
 import { renderConnectorInstructions } from '../connectors/skill-doc'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
 import { UserSkillRepository } from '../skills/user-skill-repository'
-import { decodeBoundedBase64 } from '../skills/import-limits'
+import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limits'
 import { readSkillFile } from '../skills/skill-files'
 import type {
   StoredConnectors,
@@ -416,9 +418,11 @@ class SettingsService {
     return { status: outcome.status, id: outcome.id, skills: await this.listSkills() }
   }
 
-  // Imports a skill from an uploaded .zip / .skill bundle, returning the outcome + refreshed list.
+  // Imports a skill from an uploaded .zip / .skill bundle, returning the outcome + refreshed list. The
+  // decode is bounded by the (larger) whole-bundle cap since one upload may carry many skills.
   async importSkillZip(request: ImportSkillZipRequest): Promise<ImportSkillResult> {
-    const outcome = await this.userSkills.importFromZip(decodeBoundedBase64(request.dataBase64), {
+    const zip = decodeBoundedBase64(request.dataBase64, SKILL_IMPORT_LIMITS.maxBundleBytes)
+    const outcome = await this.userSkills.importFromZip(zip, {
       subPath: request.subPath,
       replaceId: request.replaceId
     })
@@ -426,10 +430,30 @@ class SettingsService {
     return { status: outcome.status, id: outcome.id, skills: await this.listSkills() }
   }
 
+  // Imports several skills from ONE uploaded bundle in a single call (the bundle is decoded and
+  // unpacked once). Per-item failures are reported without aborting the rest; the refreshed list is
+  // returned once at the end.
+  async importSkillZipBatch(
+    request: ImportSkillZipBatchRequest
+  ): Promise<ImportSkillZipBatchResult> {
+    const zip = decodeBoundedBase64(request.dataBase64, SKILL_IMPORT_LIMITS.maxBundleBytes)
+    const outcomes = await this.userSkills.importFromZipBatch(zip, request.items)
+    // Success and failure are mutually exclusive: a succeeded item carries status+id, a failed one
+    // carries only error (never a placeholder status).
+    const results: ImportSkillZipBatchResult['results'] = outcomes.map((entry) =>
+      entry.outcome
+        ? { subPath: entry.subPath, status: entry.outcome.status, id: entry.outcome.id }
+        : { subPath: entry.subPath, error: entry.error ?? 'Import failed.' }
+    )
+    return { results, skills: await this.listSkills() }
+  }
+
   // Parses an uploaded bundle for a confirm-before-import preview, without writing anything. Returns
-  // one preview per skill root the bundle contains.
-  async previewSkillZip(request: PreviewSkillZipRequest): Promise<SkillBundlePreview[]> {
-    return this.userSkills.previewZip(decodeBoundedBase64(request.dataBase64))
+  // the importable skills plus any the bundle contained that were skipped (too large, no SKILL.md, ...).
+  async previewSkillZip(request: PreviewSkillZipRequest): Promise<SkillBundlePreviewResult> {
+    return this.userSkills.previewZip(
+      decodeBoundedBase64(request.dataBase64, SKILL_IMPORT_LIMITS.maxBundleBytes)
+    )
   }
 
   // Scans a GitHub repo for importable skill directories (marking already-imported ones).

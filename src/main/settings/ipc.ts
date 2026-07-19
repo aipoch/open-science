@@ -6,6 +6,7 @@ import type {
   DeleteSkillRequest,
   ImportSkillRequest,
   ImportSkillZipRequest,
+  ImportSkillZipBatchRequest,
   PreviewSkillZipRequest,
   ScanRepoRequest,
   InstallClaudeRequest,
@@ -181,6 +182,14 @@ const registerSettingsIpcHandlers = ({
     onSkillsChanged?.()
     return result
   })
+  ipcMain.handle(
+    'settings:import-skill-zip-batch',
+    async (_event, request: ImportSkillZipBatchRequest) => {
+      const result = await service.importSkillZipBatch(request)
+      onSkillsChanged?.()
+      return result
+    }
+  )
   ipcMain.handle('settings:preview-skill-zip', (_event, request: PreviewSkillZipRequest) =>
     service.previewSkillZip(request)
   )
