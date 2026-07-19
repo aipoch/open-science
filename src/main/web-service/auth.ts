@@ -83,4 +83,4 @@ const persistAuthCookie = (response: ServerResponse, token: string): void => {
   )
 }
 
-export { authenticateRequest, loadOrCreateWebToken, persistAuthCookie }
+export { authenticateRequest, loadOrCreateWebToken, persistAuthCookie, TOKEN_FILE }

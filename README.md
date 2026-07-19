@@ -196,21 +196,21 @@ The long-term destination is a traceable loop connecting literature, data, compu
 
 This section describes durable product capabilities rather than a version-specific inventory. The installed app and [latest release notes](https://github.com/aipoch/open-science/releases/latest) are the source of truth for changing catalogs, packaging details, and newly added options.
 
-| Area                         | Core capability                                                                                                                                                        |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Projects and sessions**    | Create, rename, and delete projects; maintain multiple sessions; restore recent work, drafts, conversation history, and preview state.                                 |
-| **Agent workflow**           | Natural-language tasks, streamed responses, typed tool-activity cards, stop controls, approval pauses, and recovery of sessions interrupted by an application restart. |
-| **Models**                   | Built-in cloud providers, custom compatible gateways, Local Claude, connection validation, and model selection per session.                                            |
-| **Agent backend**            | A selectable agent-framework backend so the same workspace can run on more than one underlying agent implementation, with provider and model choices validated against the selected backend.                            |
-| **Execution**                | A persistent Python Notebook kernel with durable code/output history and a user terminal shared with the agent.                                                        |
-| **Inputs and artifacts**     | File attachments, project-level file library, generated artifact cards, `@` references to existing uploads/outputs, and read-only multi-tab previews.                  |
-| **Preview formats**          | Common scientific data, documents, images, source code, molecular structures and reactions, and Notebook history.                                                      |
-| **Local data management**    | Local project and application data, configurable storage location, and guided migration.                                                                               |
-| **Skills**                   | Featured and personal skills, package upload, GitHub preview/import, enable/disable controls, and explicit `/` selection in a session.                                 |
-| **Connectors**               | Built-in life-science connectors, custom local/remote MCP connectors, contact metadata, and connector/tool-level permissions.                                          |
-| **Safety controls**          | `Ask for approval`, `Auto-approve edits`, and `Full access` conversation profiles, plus per-connector and per-tool policies.                                           |
-| **Review and verification**  | An opt-in reviewer that audits a completed turn against its own transcript, execution log, and artifacts, reports pass/warn/fail findings, and can run a bounded fix loop to correct them.                              |
-| **Distribution and support** | Installers for macOS, Windows, and Linux, plus update guidance, local diagnostics, and community links.                                                                |
+| Area                         | Core capability                                                                                                                                                                              |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Projects and sessions**    | Create, rename, and delete projects; maintain multiple sessions; restore recent work, drafts, conversation history, and preview state.                                                       |
+| **Agent workflow**           | Natural-language tasks, streamed responses, typed tool-activity cards, stop controls, approval pauses, and recovery of sessions interrupted by an application restart.                       |
+| **Models**                   | Built-in cloud providers, custom compatible gateways, Local Claude, connection validation, and model selection per session.                                                                  |
+| **Agent backend**            | A selectable agent-framework backend so the same workspace can run on more than one underlying agent implementation, with provider and model choices validated against the selected backend. |
+| **Execution**                | A persistent Python Notebook kernel with durable code/output history and a user terminal shared with the agent.                                                                              |
+| **Inputs and artifacts**     | File attachments, project-level file library, generated artifact cards, `@` references to existing uploads/outputs, and read-only multi-tab previews.                                        |
+| **Preview formats**          | Common scientific data, documents, images, source code, molecular structures and reactions, and Notebook history.                                                                            |
+| **Local data management**    | Local project and application data, configurable storage location, and guided migration.                                                                                                     |
+| **Skills**                   | Featured and personal skills, package upload, GitHub preview/import, enable/disable controls, and explicit `/` selection in a session.                                                       |
+| **Connectors**               | Built-in life-science connectors, custom local/remote MCP connectors, contact metadata, and connector/tool-level permissions.                                                                |
+| **Safety controls**          | `Ask for approval`, `Auto-approve edits`, and `Full access` conversation profiles, plus per-connector and per-tool policies.                                                                 |
+| **Review and verification**  | An opt-in reviewer that audits a completed turn against its own transcript, execution log, and artifacts, reports pass/warn/fail findings, and can run a bounded fix loop to correct them.   |
+| **Distribution and support** | Installers for macOS, Windows, and Linux, plus update guidance, local diagnostics, and community links.                                                                                      |
 
 ## Model Providers
 
@@ -321,6 +321,23 @@ with `status` for machine-readable output. Development builds are discovered fro
 For an installed build, the CLI checks standard installation locations; override discovery with
 `--app-path <executable>` or `OPEN_SCIENCE_APP_PATH`. Use `--config-root <directory>` when an
 explicit configuration location is required.
+
+#### Installing the command from an installed app
+
+After installing the packaged app, open **Settings → General → Command line tool** and choose
+**Install command**. This adds an `open-science` launcher to your PATH (`~/.local/bin` on macOS and
+Linux; a per-user directory added to your PATH on Windows) that runs the bundled CLI using the app's
+own runtime — no separate Node.js install is needed. Then, from any terminal:
+
+```bash
+open-science start       # start the backend and open the authenticated URL
+open-science status
+open-science url
+open-science stop        # graceful agent and Notebook shutdown
+```
+
+If the launcher's directory is not yet on your PATH, the Settings panel shows the one line to add
+(open a new terminal afterwards). Use **Uninstall command** to remove the launcher.
 
 ## Building From Source
 

@@ -87,12 +87,15 @@ const createAppTray = (opts: {
       else opts.onShow()
     }
 
-    // Windows: setContextMenu suppresses right-click and single-click behavior is inconsistent.
-    // Pop the menu explicitly on right-click and use double-click for the primary action.
+    // Windows: setContextMenu makes single-click open the menu (swallowing the primary action) and
+    // native menus render invisibly under --open-science-headless (electron/electron#48982). Pop the
+    // menu explicitly on right-click instead, and keep both single- and double-click bound to the
+    // primary action so click-to-show still works for the desktop app.
     if (process.platform === 'win32') {
       tray.on('right-click', () => {
         tray.popUpContextMenu(menu, screen.getCursorScreenPoint())
       })
+      tray.on('click', primaryAction)
       tray.on('double-click', primaryAction)
     } else {
       tray.setContextMenu(menu)

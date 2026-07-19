@@ -76,6 +76,15 @@ const installApi = (): void => {
       getPath: vi.fn().mockResolvedValue('/Users/x/Library/Logs/Open Science/main.log'),
       openFile: vi.fn().mockResolvedValue({ opened: true }),
       revealInFolder: vi.fn().mockResolvedValue({ revealed: true })
+    },
+    cli: {
+      getStatus: vi.fn().mockResolvedValue({
+        installed: false,
+        target: '/Users/x/.local/bin/open-science',
+        onPath: false
+      }),
+      install: vi.fn(),
+      uninstall: vi.fn()
     }
   }
 }
@@ -215,7 +224,8 @@ describe('SettingsPage layout', () => {
       generalTab?.click()
     })
 
-    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(3)
+    // AppVersion, Diagnostics, Command line tool, Community.
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(4)
     expect(document.body.querySelector('[data-slot="settings-row"]')).not.toBeNull()
 
     // The Diagnostics panel surfaces the log file path plus Open and Reveal controls.

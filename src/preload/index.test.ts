@@ -46,6 +46,11 @@ type PreloadApi = {
     resumeSession: (request: unknown) => unknown
     resetSessionContext: (request: unknown) => unknown
   }
+  cli: {
+    getStatus: () => unknown
+    install: () => unknown
+    uninstall: () => unknown
+  }
 }
 
 let api: PreloadApi
@@ -144,6 +149,25 @@ const cases: ForwardingCase[] = [
     name: 'settings.uninstallOpencode → settings:uninstall-opencode (no args)',
     invoke: (a) => a.settings.uninstallOpencode(),
     channel: 'settings:uninstall-opencode',
+    args: []
+  },
+  // command-line launcher install/uninstall/status
+  {
+    name: 'cli.getStatus → cli:get-status (no args)',
+    invoke: (a) => a.cli.getStatus(),
+    channel: 'cli:get-status',
+    args: []
+  },
+  {
+    name: 'cli.install → cli:install (no args)',
+    invoke: (a) => a.cli.install(),
+    channel: 'cli:install',
+    args: []
+  },
+  {
+    name: 'cli.uninstall → cli:uninstall (no args)',
+    invoke: (a) => a.cli.uninstall(),
+    channel: 'cli:uninstall',
     args: []
   },
   // ACP session context: resume vs the overflow-recovery reset must hit distinct channels.

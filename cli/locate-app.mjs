@@ -37,7 +37,10 @@ const defaultInstalledCandidates = (env = process.env) => {
     ].filter(Boolean)
   }
   if (process.platform === 'darwin') {
-    return ['/Applications/Open Science.app/Contents/MacOS/Open Science']
+    const app = 'Open Science.app/Contents/MacOS/Open Science'
+    return [join('/Applications', app), env.HOME && join(env.HOME, 'Applications', app)].filter(
+      Boolean
+    )
   }
   return ['/usr/bin/open-science', '/usr/local/bin/open-science']
 }
@@ -81,9 +84,18 @@ export const locateApp = async ({ appPath, env = process.env } = {}) => {
     if (command) return { command, args: [], packaged: true, repositoryRoot }
   }
 
-  const packageJson = JSON.parse(await readFile(join(repositoryRoot, 'package.json'), 'utf8'))
+  // When run from a packaged build's resources dir there is no package.json next to the CLI, so fall
+  // back to the product name rather than letting the read mask the real "could not locate" message.
+  let productName = 'Open Science'
+  try {
+    productName =
+      JSON.parse(await readFile(join(repositoryRoot, 'package.json'), 'utf8')).productName ??
+      productName
+  } catch {
+    // No package.json alongside the CLI (packaged): keep the default product name.
+  }
   throw new Error(
-    `Could not locate ${packageJson.productName}. Run "npm run build" in the repository, install the app, or pass --app-path.`
+    `Could not locate ${productName}. Run "npm run build" in the repository, install the app, or pass --app-path.`
   )
 }
 

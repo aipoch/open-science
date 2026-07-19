@@ -119,6 +119,7 @@ import type {
   MigrationProgress,
   StorageInfo
 } from '../shared/storage'
+import type { CliLauncherStatus } from '../shared/cli'
 import type { AppInfo, UpdateStatus } from '../shared/update'
 import type {
   DeleteUploadRequest,
@@ -218,6 +219,11 @@ interface OpenScienceAPI {
   }
   github: {
     getStars(): Promise<number | null>
+  }
+  cli: {
+    getStatus(): Promise<CliLauncherStatus>
+    install(): Promise<CliLauncherStatus>
+    uninstall(): Promise<CliLauncherStatus>
   }
   update: {
     getAppInfo(): Promise<AppInfo>

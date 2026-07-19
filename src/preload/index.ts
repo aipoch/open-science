@@ -121,6 +121,7 @@ import type {
   MigrationProgress,
   StorageInfo
 } from '../shared/storage'
+import type { CliLauncherStatus } from '../shared/cli'
 import type { AppInfo, UpdateStatus } from '../shared/update'
 import type {
   DeleteUploadRequest,
@@ -235,6 +236,13 @@ type OpenScienceAPI = {
   }
   github: {
     getStars: () => Promise<number | null>
+  }
+  cli: {
+    // The `open-science` command-line launcher: read status, install the shim into the user's PATH,
+    // or remove it. Install/uninstall touch only the user's own bin dir (no elevation).
+    getStatus: () => Promise<CliLauncherStatus>
+    install: () => Promise<CliLauncherStatus>
+    uninstall: () => Promise<CliLauncherStatus>
   }
   update: {
     getAppInfo: () => Promise<AppInfo>
@@ -517,6 +525,11 @@ const api: OpenScienceAPI = {
   },
   github: {
     getStars: () => ipcRenderer.invoke('github:get-stars') as Promise<number | null>
+  },
+  cli: {
+    getStatus: () => ipcRenderer.invoke('cli:get-status') as Promise<CliLauncherStatus>,
+    install: () => ipcRenderer.invoke('cli:install') as Promise<CliLauncherStatus>,
+    uninstall: () => ipcRenderer.invoke('cli:uninstall') as Promise<CliLauncherStatus>
   },
   update: {
     getAppInfo: () => ipcRenderer.invoke('update:get-app-info') as Promise<AppInfo>,

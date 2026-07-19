@@ -57,6 +57,12 @@ extraResources:
     to: node_modules/.prisma
   - from: node_modules/@prisma/client
     to: node_modules/@prisma/client
+  # Ship the `open-science` CLI as plain files (not in the asar) so the installed command-line launcher
+  # can run it with the app's own Electron in Node mode. Only the runtime .mjs files; tests are excluded.
+  - from: cli
+    to: cli
+    filter:
+      - '**/*.mjs'
 # Windows: an NSIS installer. The build is unsigned (no Authenticode certificate), so SmartScreen
 # shows a bypassable "unknown publisher" prompt — the same trade-off as the unsigned macOS build. The
 # afterPack ad-hoc-sign hook is a no-op off macOS (it returns early), so it is safe on this target.

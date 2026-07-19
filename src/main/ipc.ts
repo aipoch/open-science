@@ -14,6 +14,7 @@ import { ALL_CONNECTOR_IDS } from './connectors/registry'
 import { ConnectorService } from './connectors/service'
 import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './connectors/provision'
 import { registerFileSaveHandlers } from './file-save'
+import { registerCliInstallIpcHandlers } from './cli-install/ipc'
 import { registerGithubIpcHandlers } from './github-ipc'
 import { BackendShutdownCoordinator, UPDATE_SHUTDOWN_BUDGET_MS } from './lifecycle-shutdown'
 import { registerLogsIpcHandlers } from './logs-ipc'
@@ -228,6 +229,7 @@ const registerIpcHandlers = async ({
   registerFileSaveHandlers({ resolveManagedFilePath })
   registerLogsIpcHandlers()
   registerGithubIpcHandlers()
+  registerCliInstallIpcHandlers()
   registerWindowIpcHandlers()
   const updateService = registerUpdateIpcHandlers()
   startUpdateScheduler(updateService)

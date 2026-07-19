@@ -217,7 +217,7 @@ describe('createAppTray', () => {
       setPlatform('win32')
     })
 
-    it('pops the context menu on right click and uses double click for the primary action', () => {
+    it('pops the context menu on right click and shows on both single and double click', () => {
       const onShow = vi.fn()
 
       createAppTray({
@@ -231,10 +231,11 @@ describe('createAppTray', () => {
       lastTray?.rightClickHandler?.()
       expect(lastTray?.poppedMenu?.menu.template).toBe(lastTemplate)
       expect(lastTray?.poppedMenu?.position).toEqual({ x: 1200, y: 800 })
-      expect(lastTray?.clickHandler).toBeUndefined()
 
+      // Single-click must still show the window on Windows (regression: it was double-click only).
+      lastTray?.clickHandler?.()
       lastTray?.doubleClickHandler?.()
-      expect(onShow).toHaveBeenCalledTimes(1)
+      expect(onShow).toHaveBeenCalledTimes(2)
     })
 
     it('uses double click to open the web UI in headless mode', () => {

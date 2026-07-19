@@ -31,6 +31,14 @@ Options:
   --json                 Machine-readable output for status
   -h, --help             Show this help`
 
+// Flags that take a value, mapped to their camelCase option key (explicit so new hyphenated flags
+// can't collide the way a generic slice/replace would).
+const VALUE_OPTIONS = {
+  '--port': 'port',
+  '--app-path': 'appPath',
+  '--config-root': 'configRoot'
+}
+
 export const parseCliArgs = (argv) => {
   const args = [...argv]
   const command = args.shift()
@@ -40,10 +48,10 @@ export const parseCliArgs = (argv) => {
     if (arg === '--no-open') options.open = false
     else if (arg === '--json') options.json = true
     else if (arg === '-h' || arg === '--help') options.help = true
-    else if (arg === '--port' || arg === '--app-path' || arg === '--config-root') {
+    else if (Object.hasOwn(VALUE_OPTIONS, arg)) {
       const value = args.shift()
       if (!value) throw new Error(`${arg} requires a value.`)
-      options[arg.slice(2).replace('-p', 'P').replace('-r', 'R')] = value
+      options[VALUE_OPTIONS[arg]] = value
     } else {
       throw new Error(`Unknown option: ${arg}`)
     }
@@ -115,6 +123,26 @@ const removeStateFiles = async (configRoot) => {
   await rm(join(configRoot, STATE_FILE), { force: true })
 }
 
+// Force-kills the daemon's entire process tree after graceful shutdown failed. The daemon is spawned
+// detached, so on POSIX it leads its own process group: negating the PID signals the whole group
+// (agent/Notebook children included), and SIGKILL is required because the graceful SIGTERM was ignored.
+const forceKillTree = (pid) => {
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
+    return
+  }
+  try {
+    process.kill(-pid, 'SIGKILL')
+  } catch {
+    // Group already gone or never formed: fall back to the lone leader.
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch {
+      // Already dead.
+    }
+  }
+}
+
 const readLogTail = async (logPath) => {
   try {
     const text = await readFile(logPath, 'utf8')
@@ -151,15 +179,19 @@ const startCommand = async (options) => {
   const port = options.port ?? DEFAULT_PORT
   // `--open-science-headless` instead of `--headless`: Chromium consumes `--headless` and renders
   // native menus (like the tray context menu) invisibly on Windows (electron/electron#48982).
+  const childEnv = {
+    ...process.env,
+    ...(app.packaged ? {} : { OPEN_SCIENCE_STORAGE_ROOT: configRoot }),
+    OPEN_SCIENCE_WEB_PORT: String(port)
+  }
+  // The installed launcher runs this CLI via the app's Electron in Node mode (ELECTRON_RUN_AS_NODE=1).
+  // Drop it here so the daemon we spawn starts as the normal Electron app, not another Node process.
+  delete childEnv.ELECTRON_RUN_AS_NODE
   const child = spawn(app.command, [...app.args, '--open-science-headless', `--serve=${port}`], {
     detached: true,
     stdio: ['ignore', logFd, logFd],
     windowsHide: true,
-    env: {
-      ...process.env,
-      ...(app.packaged ? {} : { OPEN_SCIENCE_STORAGE_ROOT: configRoot }),
-      OPEN_SCIENCE_WEB_PORT: String(port)
-    }
+    env: childEnv
   })
   child.unref()
   closeSync(logFd)
@@ -209,11 +241,13 @@ const stopCommand = async (options) => {
   const deadline = Date.now() + STOP_TIMEOUT_MS
   while (Date.now() < deadline && isProcessAlive(state.pid)) await sleep(250)
   if (isProcessAlive(state.pid)) {
-    console.warn('Graceful shutdown timed out; terminating the process tree.')
-    if (process.platform === 'win32') {
-      spawnSync('taskkill', ['/PID', String(state.pid), '/T', '/F'], { stdio: 'ignore' })
-    } else {
-      process.kill(state.pid, 'SIGTERM')
+    console.warn('Graceful shutdown timed out; force-killing the process tree.')
+    forceKillTree(state.pid)
+    // Confirm the process is actually gone before claiming success or dropping its state file.
+    const killDeadline = Date.now() + 2_000
+    while (Date.now() < killDeadline && isProcessAlive(state.pid)) await sleep(250)
+    if (isProcessAlive(state.pid)) {
+      throw new Error(`Could not stop Open Science (PID ${state.pid}); it is still running.`)
     }
   }
   await removeStateFiles(state.configRoot)
