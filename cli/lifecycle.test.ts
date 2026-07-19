@@ -136,6 +136,45 @@ describe('stopCommand', () => {
     expect(deps.warn).toHaveBeenCalledWith(expect.stringContaining('Graceful shutdown failed'))
     expect(deps.forceKill).toHaveBeenCalledWith(RUNNING_STATE.pid)
   })
+
+  it('stops only the web service and never kills the pid when the state is attached', async () => {
+    // Attached = the web service rides on the running desktop app. The /api/shutdown request succeeds,
+    // then the health-check endpoint stops responding (service down) — the app process itself stays up.
+    const deps = makeDeps({
+      findServiceState: vi.fn().mockResolvedValue({ ...RUNNING_STATE, attached: true }),
+      fetch: vi.fn().mockImplementation(async (url: string) => {
+        if (String(url).endsWith('/api/shutdown')) {
+          return { ok: true, arrayBuffer: async () => new ArrayBuffer(0) }
+        }
+        throw new Error('connection refused')
+      })
+    })
+
+    await stopCommand({}, deps)
+
+    expect(deps.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:44100/api/shutdown',
+      expect.objectContaining({ method: 'POST' })
+    )
+    // The pid is the user's app — it must never be signalled.
+    expect(deps.forceKill).not.toHaveBeenCalled()
+    expect(deps.removeState).toHaveBeenCalledWith(RUNNING_STATE.configRoot)
+    expect(deps.log).toHaveBeenCalledWith(
+      'Open Science web service stopped; the app is still running.'
+    )
+  })
+
+  it('fails loudly without killing the pid when an attached web service refuses to stop', async () => {
+    // Attached, but the service keeps answering health checks (never stops). We must fail rather than
+    // escalate to a force-kill, because that pid is the desktop app, not a daemon we own.
+    const deps = makeDeps({
+      findServiceState: vi.fn().mockResolvedValue({ ...RUNNING_STATE, attached: true })
+    })
+
+    await expect(stopCommand({}, deps)).rejects.toThrow(/still serving/)
+    expect(deps.forceKill).not.toHaveBeenCalled()
+    expect(deps.removeState).not.toHaveBeenCalled()
+  })
 })
 
 describe('statusCommand', () => {

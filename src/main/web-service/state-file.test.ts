@@ -25,15 +25,45 @@ describe('web service state file', () => {
       pid: process.pid,
       port: 44100,
       startedAt: '2026-07-19T00:00:00.000Z',
-      appVersion: '0.4.0'
+      appVersion: '0.4.0',
+      attached: false
     })
 
     expect(state.configRoot).toBe(root)
+    expect(state.attached).toBe(false)
     expect(await readWebServiceState(root)).toEqual(state)
     expect(JSON.parse(await readFile(statePathFor(root), 'utf8'))).toEqual(state)
 
     await removeWebServiceState(root)
     expect(await readWebServiceState(root)).toBeUndefined()
+  })
+
+  it('preserves an attached flag and defaults it to false for pre-existing state files', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-state-'))
+    roots.push(root)
+
+    const attached = await writeWebServiceState(root, {
+      pid: process.pid,
+      port: 44100,
+      startedAt: '2026-07-19T00:00:00.000Z',
+      appVersion: '0.4.0',
+      attached: true
+    })
+    expect((await readWebServiceState(root))?.attached).toBe(true)
+    expect(attached.attached).toBe(true)
+
+    // A state file written before `attached` existed reads back as a dedicated (non-attached) daemon.
+    await writeFile(
+      statePathFor(root),
+      JSON.stringify({
+        pid: process.pid,
+        port: 44100,
+        startedAt: '2026-07-19T00:00:00.000Z',
+        appVersion: '0.4.0',
+        configRoot: root
+      })
+    )
+    expect((await readWebServiceState(root))?.attached).toBe(false)
   })
 
   it('removes stale and invalid state files', async () => {

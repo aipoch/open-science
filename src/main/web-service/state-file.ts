@@ -9,6 +9,11 @@ export type WebServiceState = {
   startedAt: string
   appVersion: string
   configRoot: string
+  // True when the web service rides on an already-running instance (e.g. the desktop app), started on
+  // demand via a second-instance --serve request. `stop` then only tears down the web service and must
+  // never kill that pid — it is the user's app, not a daemon this launch owns. False for a dedicated
+  // headless daemon, where stopping the web service means quitting the process.
+  attached: boolean
 }
 
 const statePathFor = (configRoot: string): string => join(configRoot, WEB_SERVICE_STATE_FILE)
@@ -40,7 +45,8 @@ const readWebServiceState = async (configRoot: string): Promise<WebServiceState 
       await rm(statePath, { force: true })
       return undefined
     }
-    return state
+    // Coerce attached so a state file written before this field existed reads as a dedicated daemon.
+    return { ...state, attached: state.attached === true }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
     await rm(statePath, { force: true })

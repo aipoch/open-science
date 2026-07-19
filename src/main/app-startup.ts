@@ -4,30 +4,29 @@
 // combination, not just each helper in isolation.
 
 // A late-bound relay for OS 'second-instance' events. The lock's handler must be supplied at lock time,
-// but the window that a second launch should surface does not exist until the lifecycle is installed.
-// The relay records a request that arrives in that window and drains it once a target is bound.
+// but the handler a second launch needs (surface the window, or start the web service for a --serve
+// request) does not exist until the lifecycle is installed. The relay queues the forwarded argv of any
+// request that arrives during that window and drains it, in order, once a target is bound.
 export type SecondInstanceRelay = {
-  // Wired into the single-instance lock as its onSecondInstance handler.
-  signal: () => void
-  // Bind the window surfacer once it exists; immediately drains a request that arrived during startup.
-  bind: (handler: () => void) => void
+  // Wired into the single-instance lock as its onSecondInstance handler; carries the launch's argv so the
+  // bound handler can tell a plain re-launch (surface the window) from a CLI --serve request.
+  signal: (argv: string[]) => void
+  // Bind the second-instance handler once it exists; immediately drains any requests queued during startup.
+  bind: (handler: (argv: string[]) => void) => void
 }
 
 export const createSecondInstanceRelay = (): SecondInstanceRelay => {
-  let pending = false
-  let handler: (() => void) | undefined
+  const pending: string[][] = []
+  let handler: ((argv: string[]) => void) | undefined
 
   return {
-    signal: () => {
-      if (handler) handler()
-      else pending = true
+    signal: (argv) => {
+      if (handler) handler(argv)
+      else pending.push(argv)
     },
     bind: (next) => {
       handler = next
-      if (pending) {
-        pending = false
-        handler()
-      }
+      while (pending.length > 0) handler(pending.shift() as string[])
     }
   }
 }
@@ -35,7 +34,7 @@ export const createSecondInstanceRelay = (): SecondInstanceRelay => {
 export type AppStartupDeps<Context> = {
   // Acquires the OS single-instance lock, wiring the relay's signal as the second-instance handler.
   // Returns false for a secondary launch (the caller must quit) and true for the primary.
-  acquireSingleInstanceLock: (opts: { onSecondInstance: () => void }) => boolean
+  acquireSingleInstanceLock: (opts: { onSecondInstance: (argv: string[]) => void }) => boolean
   // Quits this launch when it is a secondary instance.
   quit: () => void
   // Heavy post-lock preparation (backend module imports, app.whenReady, logger, IPC registration). Runs
@@ -45,8 +44,9 @@ export type AppStartupDeps<Context> = {
   // Installs the migration quit-guard. Must run before the lifecycle so its before-quit fires first: a
   // migration-cancelled quit leaves defaultPrevented set, which the lifecycle's quit cleanup honors.
   installMigrationQuitGuard: (context: Context) => void
-  // Installs the tray/window/quit lifecycle; returns the window surfacer for second-instance handoff.
-  installAppLifecycle: (context: Context) => { showMainWindow: () => void }
+  // Installs the tray/window/quit lifecycle; returns the second-instance handler for the relay to drain.
+  // The handler decides per forwarded argv whether to surface the window or start the web service.
+  installAppLifecycle: (context: Context) => { onSecondInstance: (argv: string[]) => void }
 }
 
 // Runs the ordered startup sequence: gate on the single-instance lock (quitting a secondary launch
@@ -64,6 +64,6 @@ export const orchestrateAppStartup = async <Context>(
 
   const context = await deps.prepare()
   deps.installMigrationQuitGuard(context)
-  const { showMainWindow } = deps.installAppLifecycle(context)
-  relay.bind(showMainWindow)
+  const { onSecondInstance } = deps.installAppLifecycle(context)
+  relay.bind(onSecondInstance)
 }

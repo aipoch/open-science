@@ -67,7 +67,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { createAppTray },
         { installAppLifecycle },
         { installRpcCapture },
-        { parseWebModeOptions, startOptionalWebService, buildAuthenticatedWebUrl }
+        { parseWebModeOptions, createWebServiceController, buildAuthenticatedWebUrl }
       ] = await Promise.all([
         import('./ipc'),
         import('./windows'),
@@ -126,16 +126,19 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       })
 
       const webMode = parseWebModeOptions(process.argv)
-      const rpcCapture = webMode.enabled ? installRpcCapture(ipcMain) : undefined
+      // Always install the capture layer BEFORE handlers register: it records ipcMain.handle handlers as
+      // they are added, so an on-demand web service (started later for a second launch's --serve request)
+      // can reach them. It only wraps ipcMain.handle — no server, no cost until something serves.
+      const rpcCapture = installRpcCapture(ipcMain)
       // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
       const { shutdownCoordinator } = await registerIpcHandlers({ mainEntryPath })
-      const webServer = rpcCapture
-        ? await startOptionalWebService({
-            options: webMode,
-            rpc: rpcCapture,
-            requestShutdown: () => app.quit()
-          })
-        : undefined
+      const webController = createWebServiceController({
+        rpc: rpcCapture,
+        requestQuit: () => app.quit()
+      })
+      // A launch that itself requested serving (a dedicated headless daemon, or an explicit --serve) is
+      // not attached: stopping it quits the process. On-demand starts for a running instance are attached.
+      if (webMode.enabled) await webController.ensureStarted(webMode.port, { attached: false })
 
       return {
         installMigrationQuitGuard,
@@ -143,11 +146,12 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         createMainWindow,
         createAppTray,
         buildAuthenticatedWebUrl,
+        parseWebModeOptions,
         shutdownCoordinator,
         installAppLifecycle,
         log,
         webMode,
-        webServer,
+        webController,
         rpcCapture
       }
     },
@@ -158,12 +162,12 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     // Install the tray, first window, and the quit/activate/window-all-closed handlers. shutdownBackends
     // is bound with the live backend handles; the agent teardown latches shutting-down and awaits the
     // process tree so a Windows taskkill /T completes before app.exit.
-    installAppLifecycle: (ctx) =>
-      ctx.installAppLifecycle({
+    installAppLifecycle: (ctx) => {
+      const { showMainWindow } = ctx.installAppLifecycle({
         app,
         createMainWindow: ctx.createMainWindow,
         createTray: (handlers) => {
-          const webPort = ctx.webServer?.port
+          const webPort = ctx.webController.runningPort()
           const headlessWeb = ctx.webMode.headless && webPort !== undefined
           return ctx.createAppTray({
             iconPath: icon,
@@ -190,8 +194,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           try {
             await ctx.shutdownCoordinator.runForQuit()
           } finally {
-            await ctx.webServer?.close()
-            ctx.rpcCapture?.dispose()
+            await ctx.webController.close()
+            ctx.rpcCapture.dispose()
           }
         },
         isMigrationInProgress: ctx.isMigrationInProgress,
@@ -199,6 +203,26 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         countWindows: () => BrowserWindow.getAllWindows().length,
         createInitialWindow: !ctx.webMode.headless
       })
+
+      // Route each second launch by its forwarded argv: a CLI `open-science start` forwards
+      // --serve/--open-science-headless, so start the web service on demand here (attached: this launch
+      // owns the app, not the web service) instead of opening a window. A plain re-launch (double-click)
+      // carries neither, so surface the existing window exactly as before.
+      const onSecondInstance = (argv: string[]): void => {
+        // Empty env: decide purely on the forwarded argv, never the primary's own environment.
+        const requested = ctx.parseWebModeOptions(argv, {})
+        if (requested.enabled) {
+          void ctx.webController
+            .ensureStarted(requested.port, { attached: true })
+            .catch((error) => {
+              ctx.log.error('on-demand web service start failed', error)
+            })
+          return
+        }
+        showMainWindow()
+      }
+      return { onSecondInstance }
+    }
   })
 }
 

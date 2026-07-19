@@ -3,15 +3,16 @@ import { describe, expect, it, vi } from 'vitest'
 import { createSecondInstanceRelay, orchestrateAppStartup } from './app-startup'
 
 describe('createSecondInstanceRelay', () => {
-  it('records a signal that arrives before bind and drains it on bind', () => {
+  it('records a signal that arrives before bind and drains it on bind, with its argv', () => {
     const relay = createSecondInstanceRelay()
     const handler = vi.fn()
 
-    relay.signal()
+    relay.signal(['app', '--serve=44100'])
     expect(handler).not.toHaveBeenCalled()
 
     relay.bind(handler)
     expect(handler).toHaveBeenCalledTimes(1)
+    expect(handler).toHaveBeenCalledWith(['app', '--serve=44100'])
   })
 
   it('forwards a signal that arrives after bind directly to the handler', () => {
@@ -21,20 +22,23 @@ describe('createSecondInstanceRelay', () => {
     relay.bind(handler)
     expect(handler).not.toHaveBeenCalled()
 
-    relay.signal()
-    relay.signal()
+    relay.signal(['app'])
+    relay.signal(['app', '--serve'])
     expect(handler).toHaveBeenCalledTimes(2)
+    expect(handler).toHaveBeenNthCalledWith(2, ['app', '--serve'])
   })
 
-  it('drains only once when bound, even if multiple signals arrived first', () => {
+  it('drains every queued signal in arrival order when bound', () => {
     const relay = createSecondInstanceRelay()
     const handler = vi.fn()
 
-    relay.signal()
-    relay.signal()
+    relay.signal(['app', 'first'])
+    relay.signal(['app', 'second'])
     relay.bind(handler)
 
-    expect(handler).toHaveBeenCalledTimes(1)
+    expect(handler).toHaveBeenCalledTimes(2)
+    expect(handler).toHaveBeenNthCalledWith(1, ['app', 'first'])
+    expect(handler).toHaveBeenNthCalledWith(2, ['app', 'second'])
   })
 })
 
@@ -42,13 +46,13 @@ describe('orchestrateAppStartup', () => {
   const makeDeps = (
     overrides: Partial<Parameters<typeof orchestrateAppStartup<{ tag: string }>>[0]> = {}
   ): Parameters<typeof orchestrateAppStartup<{ tag: string }>>[0] => {
-    const showMainWindow = vi.fn()
+    const onSecondInstance = vi.fn()
     return {
       acquireSingleInstanceLock: vi.fn(() => true),
       quit: vi.fn(),
       prepare: vi.fn(async () => ({ tag: 'ctx' })),
       installMigrationQuitGuard: vi.fn(),
-      installAppLifecycle: vi.fn(() => ({ showMainWindow })),
+      installAppLifecycle: vi.fn(() => ({ onSecondInstance })),
       ...overrides
     }
   }
@@ -79,43 +83,44 @@ describe('orchestrateAppStartup', () => {
     expect(deps.installAppLifecycle).toHaveBeenCalledWith({ tag: 'ctx' })
   })
 
-  it('surfaces the window for a second instance that arrives during startup', async () => {
-    const showMainWindow = vi.fn()
-    let signalDuringStartup: () => void = () => {}
+  it('drains a second instance that arrives during startup, forwarding its argv', async () => {
+    const onSecondInstance = vi.fn()
+    let signalDuringStartup: (argv: string[]) => void = () => {}
     const deps = makeDeps({
       // Capture the relay signal the lock is wired with, then fire it while prepare() is still running.
-      acquireSingleInstanceLock: vi.fn(({ onSecondInstance }) => {
-        signalDuringStartup = onSecondInstance
+      acquireSingleInstanceLock: vi.fn(({ onSecondInstance: signal }) => {
+        signalDuringStartup = signal
         return true
       }),
       prepare: vi.fn(async () => {
-        signalDuringStartup()
+        signalDuringStartup(['app', '--serve=44100'])
         return { tag: 'ctx' }
       }),
-      installAppLifecycle: vi.fn(() => ({ showMainWindow }))
+      installAppLifecycle: vi.fn(() => ({ onSecondInstance }))
     })
 
     await orchestrateAppStartup(deps)
 
-    // The handoff arrived before the window existed; it must be drained once the lifecycle is installed.
-    expect(showMainWindow).toHaveBeenCalledTimes(1)
+    // The handoff arrived before the lifecycle existed; it must be drained once it is installed.
+    expect(onSecondInstance).toHaveBeenCalledTimes(1)
+    expect(onSecondInstance).toHaveBeenCalledWith(['app', '--serve=44100'])
   })
 
-  it('routes a second instance that arrives after startup straight to the window', async () => {
-    const showMainWindow = vi.fn()
-    let signal: () => void = () => {}
+  it('routes a second instance that arrives after startup straight to the lifecycle handler', async () => {
+    const onSecondInstance = vi.fn()
+    let signal: (argv: string[]) => void = () => {}
     const deps = makeDeps({
-      acquireSingleInstanceLock: vi.fn(({ onSecondInstance }) => {
-        signal = onSecondInstance
+      acquireSingleInstanceLock: vi.fn(({ onSecondInstance: relaySignal }) => {
+        signal = relaySignal
         return true
       }),
-      installAppLifecycle: vi.fn(() => ({ showMainWindow }))
+      installAppLifecycle: vi.fn(() => ({ onSecondInstance }))
     })
 
     await orchestrateAppStartup(deps)
-    expect(showMainWindow).not.toHaveBeenCalled()
+    expect(onSecondInstance).not.toHaveBeenCalled()
 
-    signal()
-    expect(showMainWindow).toHaveBeenCalledTimes(1)
+    signal(['app'])
+    expect(onSecondInstance).toHaveBeenCalledWith(['app'])
   })
 })

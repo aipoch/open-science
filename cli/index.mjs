@@ -183,6 +183,18 @@ export const terminateDaemon = async (pid, opts) => {
   return !isAlive(pid)
 }
 
+// Waits for an attached web service (one riding on the desktop app) to stop responding after a graceful
+// shutdown request. Returns true once it is no longer healthy. Never kills the pid — that process is the
+// user's app, not a daemon this CLI owns, so if it refuses to stop we fail loudly rather than force it.
+const waitForWebServiceStopped = async (state, deps, timeoutMs) => {
+  const deadline = deps.now() + timeoutMs
+  while (deps.now() < deadline) {
+    if (!(await healthCheck(state, deps))) return true
+    await deps.sleep(250)
+  }
+  return false
+}
+
 const readLogTail = async (logPath) => {
   try {
     const text = await readFile(logPath, 'utf8')
@@ -276,6 +288,20 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
     await response.arrayBuffer()
   } catch (error) {
     deps.warn(`Graceful shutdown failed: ${error.message}`)
+  }
+
+  // Attached: the web service rides on the running desktop app. A graceful request stops only the web
+  // service; the app stays up. Never fall through to force-killing — that pid is the user's app.
+  if (state.attached) {
+    const stopped = await waitForWebServiceStopped(state, deps, STOP_TIMEOUT_MS)
+    if (!stopped) {
+      throw new Error(
+        `Could not stop the Open Science web service (PID ${state.pid}); the app is still serving.`
+      )
+    }
+    await deps.removeState(state.configRoot)
+    deps.log('Open Science web service stopped; the app is still running.')
+    return
   }
 
   const stopped = await terminateDaemon(state.pid, {
