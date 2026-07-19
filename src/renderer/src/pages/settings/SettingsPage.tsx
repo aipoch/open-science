@@ -750,6 +750,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                           selectDisabled={isInstalling || isUninstalling}
                           managed={claudeManaged}
                           isUninstalling={isUninstalling && pendingUninstall === 'claude'}
+                          isInstalling={isInstalling}
                           onUninstall={() => setPendingUninstall('claude')}
                         />
                         {!preflight.claudeReady ? (

@@ -14,8 +14,11 @@ type RuntimeUninstallControlProps = {
   managed: boolean
   // Whether this runtime backs the active agent framework (can't be removed out from under sessions).
   active: boolean
+  // In-flight operations that lock the button. `isInstalling` is a global flag (one install at a time),
+  // so an install of either framework locks both cards' uninstall — matching the selection lock.
   isUninstalling: boolean
   isDetecting: boolean
+  isInstalling: boolean
   onUninstall: () => void
 }
 
@@ -24,7 +27,7 @@ type RuntimeUninstallControlProps = {
 // standing reason (not app-managed, or the active framework), a trailing `?` icon appears inside the
 // button and its tooltip explains why. To keep that tooltip hoverable, the greyed button is only
 // aria-disabled (not natively disabled, which would swallow hover events) with its click neutralized; a
-// transient busy state (uninstalling/detecting) natively disables it with no `?`.
+// transient busy state (installing/uninstalling/detecting) natively disables it with no `?`.
 const RuntimeUninstallControl = ({
   label,
   uninstallCommand,
@@ -32,9 +35,10 @@ const RuntimeUninstallControl = ({
   active,
   isUninstalling,
   isDetecting,
+  isInstalling,
   onUninstall
 }: RuntimeUninstallControlProps): React.JSX.Element => {
-  const busy = isUninstalling || isDetecting
+  const busy = isUninstalling || isDetecting || isInstalling
   // Busy takes priority: during detect/uninstall the button is natively disabled with no explainer, even
   // if a standing reason (non-managed / active) also applies — that reason is stale mid-operation.
   const hint = busy ? null : uninstallDisabledHint(label, uninstallCommand, { managed, active })

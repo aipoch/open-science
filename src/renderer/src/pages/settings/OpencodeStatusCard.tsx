@@ -126,6 +126,7 @@ const OpencodeStatusCard = ({
                 active={active}
                 isUninstalling={isUninstalling}
                 isDetecting={isDetecting}
+                isInstalling={isInstalling}
                 onUninstall={onUninstall}
               />
             ) : null}

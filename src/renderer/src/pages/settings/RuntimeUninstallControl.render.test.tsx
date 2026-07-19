@@ -36,6 +36,7 @@ const render = (
         active={false}
         isUninstalling={false}
         isDetecting={false}
+        isInstalling={false}
         onUninstall={onUninstall}
         {...props}
       />
@@ -104,6 +105,17 @@ describe('RuntimeUninstallControl', () => {
     // A non-managed install has a standing reason, but a concurrent detect must still win: the button
     // is natively disabled with no stale explainer while the operation is in flight.
     render({ managed: false, isDetecting: true })
+
+    const button = uninstallButton()
+    expect(button?.disabled).toBe(true)
+    expect(button?.getAttribute('aria-disabled')).toBeNull()
+    expect(hasHelpIcon()).toBe(false)
+  })
+
+  it('natively disables uninstall (no `?`) while an install is running, even with a standing reason', () => {
+    // isInstalling is global (either framework), so an install locks the button — including a
+    // non-managed card that would otherwise show its explainer.
+    render({ managed: false, isInstalling: true })
 
     const button = uninstallButton()
     expect(button?.disabled).toBe(true)

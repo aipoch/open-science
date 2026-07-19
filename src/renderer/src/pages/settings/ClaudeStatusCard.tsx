@@ -21,6 +21,8 @@ type ClaudeStatusCardProps = {
   // Locks selection (e.g. while an install/uninstall is in flight) so the backend can't be switched
   // mid-operation.
   selectDisabled?: boolean
+  // Whether an install is running (global, either framework); locks the Uninstall button mid-operation.
+  isInstalling?: boolean
   // The Uninstall button always shows for a detected runtime (omitting onUninstall, as onboarding does,
   // hides it entirely). `managed` gates whether it's actionable: only an app-managed binary (one the app
   // owns in its data dir) can be removed in-app. A non-managed (PATH/npm) install shows a greyed button
@@ -44,6 +46,7 @@ const ClaudeStatusCard = ({
   selectDisabled = false,
   managed = false,
   isUninstalling = false,
+  isInstalling = false,
   onUninstall
 }: ClaudeStatusCardProps): React.JSX.Element => {
   // Only an installed runtime can be chosen as the active framework — switching to an uninstalled one
@@ -109,6 +112,7 @@ const ClaudeStatusCard = ({
                 active={active}
                 isUninstalling={isUninstalling}
                 isDetecting={isDetecting}
+                isInstalling={isInstalling}
                 onUninstall={onUninstall}
               />
             ) : null}
