@@ -83,6 +83,9 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   // fully settled. A retry awaits this so it never reuses electron-updater's still-live downloadPromise
   // (which ignores a fresh token — see AppUpdater.downloadUpdate) or races an aborted download's cleanup.
   private downloadLifecycle?: Promise<void>
+  // Monotonic id per started download; the finally only clears downloadLifecycle when it is still the
+  // latest, so an older (drained) download can't clear a newer one's lifecycle.
+  private downloadGeneration = 0
   private status: UpdateStatus
   // In-flight manifest notes fetch for the current update, awaited by check() so the returned
   // status reflects the hydrated notes.
@@ -197,6 +200,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     // and await it INSIDE the new lifecycle — awaiting here (before claiming the token) would defer a
     // microtask and let a concurrent download() slip past the guard.
     const previous = this.downloadLifecycle
+    const generation = ++this.downloadGeneration
     const token = this.createCancellationToken()
     this.downloadToken = token
     this.setStatus({ ...this.status, state: 'downloading', progress: 0 })
@@ -227,7 +231,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     try {
       await lifecycle
     } finally {
-      if (this.downloadLifecycle === lifecycle) this.downloadLifecycle = undefined
+      if (this.downloadGeneration === generation) this.downloadLifecycle = undefined
     }
     return this.status
   }

@@ -51,6 +51,9 @@ export class UpdateService implements UpdateStrategy {
   // (including its partial-file rm cleanup on abort). A retry awaits this so an aborted download's
   // deferred rm can't delete a same-path retry's freshly written installer.
   private downloadLifecycle?: Promise<void>
+  // Monotonic id per started download; the finally only clears downloadLifecycle when it is still the
+  // latest, so an older (drained) download can't clear a newer one's lifecycle.
+  private downloadGeneration = 0
   private readonly fetchImpl?: typeof fetch
   private readonly platform: NodeJS.Platform
   private readonly arch: string
@@ -158,6 +161,7 @@ export class UpdateService implements UpdateStrategy {
     // Claim the slot synchronously, before any await, so a concurrent download() is rejected and a
     // cancel() during the drain (below) aborts this download instead of being a no-op.
     const previous = this.downloadLifecycle
+    const generation = ++this.downloadGeneration
     const abort = new AbortController()
     this.downloadAbort = abort
 
@@ -201,7 +205,7 @@ export class UpdateService implements UpdateStrategy {
     try {
       await lifecycle
     } finally {
-      if (this.downloadLifecycle === lifecycle) this.downloadLifecycle = undefined
+      if (this.downloadGeneration === generation) this.downloadLifecycle = undefined
     }
     return this.status
   }
