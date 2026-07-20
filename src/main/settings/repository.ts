@@ -11,6 +11,9 @@ import type {
 } from '../../shared/settings'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import { isOfficialVendorId } from '../../shared/provider-registry'
+import type { PackageMirror } from '../../shared/mirror'
+import type { NotebookLanguage } from '../../shared/notebook'
+import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import {
   createEmptySettings,
   type StoredConnectors,
@@ -60,6 +63,18 @@ const asStringRecord = (value: unknown): Record<string, string> | undefined => {
   )
 
   return entries.length > 0 ? Object.fromEntries(entries) : undefined
+}
+
+// Rebuilds a record<string,boolean>, dropping any key whose value isn't a boolean. Returns an empty
+// record (never undefined) for a non-record input so callers get a stable, always-mergeable map.
+const asBooleanRecord = (value: unknown): Record<string, boolean> => {
+  if (!isRecord(value)) return {}
+
+  const entries = Object.entries(value).filter(
+    (entry): entry is [string, boolean] => typeof entry[1] === 'boolean'
+  )
+
+  return Object.fromEntries(entries)
 }
 
 const CUSTOM_MCP_TRANSPORTS = new Set<StoredCustomMcpServer['transport']>([
@@ -261,6 +276,25 @@ export const sanitizeConnectors = (value: unknown): StoredConnectors | undefined
   return connectors
 }
 
+// Rebuilds a PackageMirror from untrusted JSON, keeping only string url/path fields. Returns
+// undefined when nothing valid remains (absent == public hosts default).
+export const sanitizePackageMirror = (value: unknown): PackageMirror | undefined => {
+  if (!isRecord(value)) return undefined
+
+  const condaChannel = asString(value.condaChannel)
+  const pypiIndex = asString(value.pypiIndex)
+  const cranMirror = asString(value.cranMirror)
+  const caBundle = asString(value.caBundle)
+  const result: PackageMirror = {}
+
+  if (condaChannel) result.condaChannel = condaChannel
+  if (pypiIndex) result.pypiIndex = pypiIndex
+  if (cranMirror) result.cranMirror = cranMirror
+  if (caBundle) result.caBundle = caBundle
+
+  return Object.keys(result).length > 0 ? result : undefined
+}
+
 // Rebuilds the whole settings document, keeping activeProviderId only when it points at a provider.
 const sanitizeSettings = (value: unknown): StoredSettings => {
   if (!isRecord(value)) return createEmptySettings()
@@ -315,6 +349,10 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
 
   if (connectors) settings.connectors = connectors
 
+  const packageMirror = sanitizePackageMirror(value.packageMirror)
+
+  if (packageMirror) settings.packageMirror = packageMirror
+
   const pathsNormalizedAt = asNumber(value.pathsNormalizedAt)
 
   if (pathsNormalizedAt !== undefined) {
@@ -363,7 +401,109 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     if (opencodeVersion) settings.opencodeVersion = opencodeVersion
   }
 
+  const notebookRuntimes = sanitizeNotebookRuntimes(value.notebookRuntimes)
+
+  if (notebookRuntimes) {
+    settings.notebookRuntimes = notebookRuntimes
+  }
+
+  const notebookRuntimeEnablement = sanitizeRuntimeEnablement(value.notebookRuntimeEnablement)
+
+  if (notebookRuntimeEnablement) {
+    settings.notebookRuntimeEnablement = notebookRuntimeEnablement
+  }
+
+  const notebookManualInterpreters = sanitizeManualInterpreters(value.notebookManualInterpreters)
+
+  if (notebookManualInterpreters) {
+    settings.notebookManualInterpreters = notebookManualInterpreters
+  }
+
   return settings
+}
+
+// Validates the per-language manual-interpreter catalog: a map of language -> array of non-empty,
+// de-duplicated absolute-ish path strings. Non-string / empty entries are dropped; an empty result for
+// a language is omitted, and an empty overall map returns undefined (so it is not persisted).
+const sanitizeManualInterpreters = (
+  value: unknown
+): Partial<Record<NotebookLanguage, string[]>> | undefined => {
+  if (!isRecord(value)) return undefined
+  const result: Partial<Record<NotebookLanguage, string[]>> = {}
+  for (const language of ['python', 'r'] as const) {
+    const paths = asStringArray(value[language])
+    const cleaned = [...new Set((paths ?? []).map((p) => p.trim()).filter((p) => p.length > 0))]
+    if (cleaned.length > 0) result[language] = cleaned
+  }
+  return Object.keys(result).length > 0 ? result : undefined
+}
+
+// Validates one persisted RuntimeSelection. 'managed' carries no extra fields; 'external' requires a
+// non-empty interpreter path and coerces the two boolean flags (default false — a persisted external
+// env is read-only and not an app overlay unless explicitly recorded). Anything else -> undefined
+// (dropped), so a corrupt entry can never grant unexpected package-write authority.
+const sanitizeRuntimeSelection = (value: unknown): RuntimeSelection | undefined => {
+  if (!isRecord(value)) return undefined
+  if (value.source === 'managed') return { source: 'managed' }
+  if (value.source === 'external') {
+    const interpreterPath = asString(value.interpreterPath)
+    if (!interpreterPath) return undefined
+    const interpreterArgs = asStringArray(value.interpreterArgs)
+    return {
+      source: 'external',
+      interpreterPath,
+      ...(interpreterArgs.length > 0 ? { interpreterArgs } : {}),
+      appOwnedOverlay: value.appOwnedOverlay === true,
+      packageInstallAuthorized: value.packageInstallAuthorized === true
+    }
+  }
+  return undefined
+}
+
+// Per-language runtime selections; only the known languages are kept, invalid entries dropped. Returns
+// undefined when nothing valid is present so the field stays absent (== "use the managed default").
+const sanitizeNotebookRuntimes = (
+  value: unknown
+): Partial<Record<NotebookLanguage, RuntimeSelection>> | undefined => {
+  if (!isRecord(value)) return undefined
+  const result: Partial<Record<NotebookLanguage, RuntimeSelection>> = {}
+  for (const language of ['python', 'r'] as const) {
+    const selection = sanitizeRuntimeSelection(value[language])
+    // R is managed-only in v1 (the external resolver + overlay are Python-specific), so an external R
+    // selection is rejected here rather than reaching a broken code path from a hand-edited file.
+    if (!selection) continue
+    if (language === 'r' && selection.source === 'external') continue
+    result[language] = selection
+  }
+  return Object.keys(result).length > 0 ? result : undefined
+}
+
+// Rebuilds one language's RuntimeEnablement, keeping only string->boolean entries in both maps and
+// dropping any non-object input. A hand-edited or corrupt entry can therefore never grant unexpected
+// enablement or package-write authority (a bad value simply falls back to the provenance default).
+const sanitizeRuntimeEnablementEntry = (value: unknown): RuntimeEnablement => ({
+  enabled: asBooleanRecord(isRecord(value) ? value.enabled : undefined),
+  installAuthorized: asBooleanRecord(isRecord(value) ? value.installAuthorized : undefined)
+})
+
+// Per-language v4 enablement; only the known languages are kept, empty entries dropped. Returns
+// undefined when nothing valid is present so the field stays absent (== "use the provenance default").
+const sanitizeRuntimeEnablement = (
+  value: unknown
+): Partial<Record<NotebookLanguage, RuntimeEnablement>> | undefined => {
+  if (!isRecord(value)) return undefined
+  const result: Partial<Record<NotebookLanguage, RuntimeEnablement>> = {}
+  for (const language of ['python', 'r'] as const) {
+    const entry = sanitizeRuntimeEnablementEntry(value[language])
+    if (
+      Object.keys(entry.enabled).length === 0 &&
+      Object.keys(entry.installAuthorized).length === 0
+    ) {
+      continue
+    }
+    result[language] = entry
+  }
+  return Object.keys(result).length > 0 ? result : undefined
 }
 
 // Owns durable reads/writes of the single settings.json document. Writes are serialized through a
@@ -437,6 +577,13 @@ class SettingsRepository {
   // Records the detected claude executable metadata for later spawns.
   async setClaudeInfo(claude: ClaudeInfo): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, claude }))
+  }
+
+  // Sets (or clears back to public hosts when empty) the package-mirror configuration.
+  async setPackageMirror(mirror: PackageMirror): Promise<StoredSettings> {
+    const sanitized = sanitizePackageMirror(mirror)
+
+    return this.mutate((settings) => ({ ...settings, packageMirror: sanitized }))
   }
 
   // Persists the selected agent backend; applied on the next reconnect.
@@ -513,6 +660,89 @@ class SettingsRepository {
   // Unlike the marker fields above this is not idempotent-once: each call overwrites the prior value.
   async setDataRoot(path: string): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, dataRoot: path }))
+  }
+
+  // Sets (or clears, when `selection` is null) the persisted runtime choice for one language. The
+  // value is run through the SAME sanitizer used on read, so a bad selection can never be persisted;
+  // external R is rejected here too (managed-only in v1, mirroring sanitizeNotebookRuntimes). Clearing
+  // deletes the language's entry and drops the whole `notebookRuntimes` map when it becomes empty, so
+  // an absent map keeps meaning "use the managed default".
+  async setRuntimeSelection(
+    language: NotebookLanguage,
+    selection: RuntimeSelection | null
+  ): Promise<StoredSettings> {
+    const sanitized = selection === null ? null : sanitizeRuntimeSelection(selection)
+
+    if (selection !== null && !sanitized) {
+      throw new Error('Invalid runtime selection.')
+    }
+    if (sanitized && language === 'r' && sanitized.source === 'external') {
+      throw new Error('R only supports the managed runtime.')
+    }
+
+    return this.mutate((settings) => {
+      const current: Partial<Record<NotebookLanguage, RuntimeSelection>> = {
+        ...settings.notebookRuntimes
+      }
+
+      if (sanitized === null) delete current[language]
+      else current[language] = sanitized
+
+      const notebookRuntimes = Object.keys(current).length > 0 ? current : undefined
+
+      return { ...settings, notebookRuntimes }
+    })
+  }
+
+  // Replaces one language's v4 RuntimeEnablement (the explicit enabled-override + install-auth maps).
+  // The value is run through the SAME sanitizer used on read, so a corrupt entry can never be
+  // persisted. An entry that sanitizes to empty (both maps empty) deletes the language's entry, and
+  // the whole `notebookRuntimeEnablement` map is dropped once it becomes empty, so an absent map keeps
+  // meaning "use the provenance default".
+  async setRuntimeEnablement(
+    language: NotebookLanguage,
+    enablement: RuntimeEnablement
+  ): Promise<StoredSettings> {
+    const sanitized = sanitizeRuntimeEnablementEntry(enablement)
+    const isEmpty =
+      Object.keys(sanitized.enabled).length === 0 &&
+      Object.keys(sanitized.installAuthorized).length === 0
+
+    return this.mutate((settings) => {
+      const current: Partial<Record<NotebookLanguage, RuntimeEnablement>> = {
+        ...settings.notebookRuntimeEnablement
+      }
+
+      if (isEmpty) delete current[language]
+      else current[language] = sanitized
+
+      const notebookRuntimeEnablement = Object.keys(current).length > 0 ? current : undefined
+
+      return { ...settings, notebookRuntimeEnablement }
+    })
+  }
+
+  // Replaces one language's manual-interpreter catalog (the paths the user added via "Add interpreter…").
+  // Sanitized like on read (trim + dedupe + drop empties); an empty list deletes the language's entry,
+  // and the whole map is dropped once empty, so an absent map keeps meaning "no manual interpreters".
+  async setManualInterpreters(
+    language: NotebookLanguage,
+    paths: string[]
+  ): Promise<StoredSettings> {
+    const cleaned = [...new Set(paths.map((p) => p.trim()).filter((p) => p.length > 0))]
+
+    return this.mutate((settings) => {
+      const current: Partial<Record<NotebookLanguage, string[]>> = {
+        ...settings.notebookManualInterpreters
+      }
+
+      if (cleaned.length === 0) delete current[language]
+      else current[language] = cleaned
+
+      const notebookManualInterpreters = Object.keys(current).length > 0 ? current : undefined
+
+      return { ...settings, notebookManualInterpreters }
+    })
   }
 
   // Adds or removes a skill id from the disabled set (default-on model), returning the new document.

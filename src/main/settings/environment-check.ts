@@ -275,20 +275,25 @@ const runEnvironmentCheck = async ({
           'Unlock or authorize the system keychain before saving API keys. Keyless runtimes can continue setup.'
       }
 
+  // Notebooks run in an app-managed Python environment (provisioned on demand), so a system Python 3
+  // is NOT required — it is only an optional interpreter the user can point notebooks at instead.
+  // Both branches are therefore "passed": its absence is not a limitation, so it must not raise an
+  // amber warning that makes the (fully functional) managed default look broken.
   const pythonCheck: EnvironmentCheckItem = python
     ? {
         id: 'python',
         label: 'Python for Notebook',
         status: 'passed',
-        summary: 'Python is available for the optional Notebook feature.',
+        summary:
+          'A system Python 3 was detected. Notebooks can optionally use it instead of the app-managed environment.',
         detail: [python.command, ...python.baseArgs].join(' ')
       }
     : {
         id: 'python',
         label: 'Python for Notebook',
-        status: 'warning',
-        summary: 'Python 3 was not found. Core setup can continue.',
-        detail: 'Notebook execution will be unavailable until Python 3 is installed.'
+        status: 'passed',
+        summary:
+          'Notebooks run in an app-managed Python environment. A system Python 3 is optional and was not found.'
       }
 
   // One runtime row per framework, shown together. Only the SELECTED framework's absence is a failure

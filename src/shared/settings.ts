@@ -5,6 +5,7 @@
 // only while the user is actively typing one in.
 
 import type { OfficialVendorId } from './provider-registry'
+import type { PackageMirror } from './mirror'
 
 // Settings file schema version; bumped when the on-disk shape changes. v2 adds official-vendor
 // providers (vendorId/region) and a per-selection activeModel alongside activeProviderId.
@@ -191,7 +192,12 @@ export type SettingsSnapshot = {
   codexManaged: boolean
   // Timestamp of first-run onboarding completion; undefined until it finishes at least once.
   onboardingCompletedAt?: number
+  // Non-secret package-mirror overrides (conda/pypi/cran). Absent means public hosts.
+  packageMirror?: PackageMirror
 }
+
+// Request to set (or clear, via omitted fields) the package-mirror configuration.
+export type SetPackageMirrorRequest = PackageMirror
 
 export type SetAgentFrameworkRequest = {
   id: AgentFrameworkId

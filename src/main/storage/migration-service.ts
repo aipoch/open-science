@@ -1,5 +1,5 @@
 import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { type Dirent } from 'node:fs'
+import { existsSync, type Dirent } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
 
@@ -224,6 +224,11 @@ export const validateNewDataRoot = async (
 export type MigrationOutcome =
   MigrationResult | { ok: false; error: string; switchoverFailed: true }
 
+// runtime/ is not copied wholesale (env prefixes bake absolute paths), but its pkgs cache IS
+// relocatable inert data — copied so the envs can be rebuilt offline at the new root from their
+// exported locks. Nested path is intentional: copyAndVerify mirrors `from/<dir>` → `to/<dir>`.
+const RUNTIME_PKGS_DIR = join('runtime', 'pkgs')
+
 type MigrationInventory = NonNullable<MigrationMarker['inventory']>
 
 const sameInventory = (left: MigrationInventory, right: MigrationInventory): boolean =>
@@ -239,6 +244,10 @@ type MigrationCopyDeps = {
   // Return ignored (awaited only), so kept as Promise<unknown> — mirrors runtime.disconnect above and
   // stays compatible with both the real service (now returns { reaped }) and void test fakes.
   notebook: { shutdownAll: () => Promise<unknown> }
+  // Exports each conda env under the old runtime to an @EXPLICIT lock at the new root (offline
+  // reconstruction bundle). Returns the env names preserved; [] when nothing could be exported.
+  // Injectable/optional so tests and non-notebook contexts skip it. Best-effort (must not throw).
+  exportRuntimeLocks?: (fromDataRoot: string, toDataRoot: string) => Promise<string[]>
   // Injectable for tests; defaults to the real ./data-migration engine function.
   copyAndVerify?: (opts: {
     from: string
@@ -321,13 +330,28 @@ export const runDataRootMigration = async (
     }
   }
 
+  // Preserve the runtime: export each env to an offline @EXPLICIT lock at the new root, then copy the
+  // (relocatable) pkgs cache alongside the user data so the envs can be rebuilt offline there. Both
+  // are best-effort — a failure just leaves the new root to re-provision defaults, never blocks the
+  // user-data copy. pkgs is copied only when at least one env was actually preserved.
+  let preservedEnvs: string[] = []
+  if (deps.exportRuntimeLocks) {
+    try {
+      preservedEnvs = await deps.exportRuntimeLocks(deps.currentDataRoot, target)
+    } catch (err) {
+      console.error('[migration-service] exportRuntimeLocks failed', err)
+    }
+  }
+  const migrateDirs =
+    preservedEnvs.length > 0 ? [...MIGRATED_DIRS, RUNTIME_PKGS_DIR] : [...MIGRATED_DIRS]
+
   const doCopyAndVerify = deps.copyAndVerify ?? copyAndVerify
   let result: MigrationResult
   try {
     result = await doCopyAndVerify({
       from: deps.currentDataRoot,
       to: target,
-      dirs: [...MIGRATED_DIRS],
+      dirs: migrateDirs,
       signal: runOpts.signal,
       onProgress: runOpts.onProgress
     })
@@ -452,8 +476,17 @@ export const commitDataRootSwitch = async (
     console.error('[migration-service] failed to remove marker after commit (benign leftover)', err)
   }
 
+  // Clean up the old runtime too, but ONLY when the new root holds a reconstructable bundle (exported
+  // env locks + the copied pkgs cache) — then the user's envs rebuild offline there and the old
+  // runtime is safe to drop. Without that bundle the old runtime is left intact (orphaned, no data
+  // loss) rather than deleting an un-preserved environment.
+  const newRuntime = join(target, 'runtime')
+  const runtimePreserved =
+    existsSync(join(newRuntime, 'envs.lock')) && existsSync(join(newRuntime, 'pkgs'))
+  const dirsToDelete = runtimePreserved ? [...MIGRATED_DIRS, 'runtime'] : [...MIGRATED_DIRS]
+
   const doDeleteSources = deps.deleteSources ?? deleteSources
-  const deleteResult = await doDeleteSources(deps.currentDataRoot, [...MIGRATED_DIRS])
+  const deleteResult = await doDeleteSources(deps.currentDataRoot, dirsToDelete)
   if (deleteResult.failed.length > 0) {
     console.error('[migration-service] some old data-root dirs could not be deleted', {
       failed: deleteResult.failed
