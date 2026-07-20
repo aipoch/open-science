@@ -137,6 +137,9 @@ export type StoredSettings = {
   // are merged into environment discovery (probed + classified user-own) so a manually-picked
   // interpreter shows up as an enable-able runtime card even when it is not on PATH / in a conda root.
   notebookManualInterpreters?: Partial<Record<NotebookLanguage, string[]>>
+  // Pinned bookmark folders for the remote file browser, keyed by provider_id.
+  // Each value is an ordered array of absolute paths the user has pinned via Go-to.
+  computeBookmarks?: Record<string, string[]>
 }
 
 // Canonical empty settings used for a first run or an unreadable file.
