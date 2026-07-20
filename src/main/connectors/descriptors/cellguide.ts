@@ -188,7 +188,8 @@ export const CELLGUIDE_TOOLS: ToolDescriptor[] = [
     required: ['cell_type'],
     returns:
       '`{ "id": str, "name": str, "synonyms": [ str ], "ontologyDescription": str, "description": str, "descriptionSource": str, "references": [ ... ] }` — `descriptionSource` is `validated`, `gpt`, or `none` (with `description` empty). Returns `{ "error": str }` when the cell type is not found.',
-    example: 'result = host.mcp("cellguide", "get_cell_type_info", {"cell_type": "acinar cell"})',
+    example:
+      'const result = await host.mcp("cellguide", "get_cell_type_info", {"cell_type": "acinar cell"})',
     run: async (ctx, a) => {
       const input = String(a.cell_type)
       const loaded = await loadCellType(ctx, input)
@@ -223,7 +224,7 @@ export const CELLGUIDE_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "result": [ { "id": str, "name": str, "synonyms": [ str ], "ontology_description": str } ] }` — cell types whose name or a synonym contains `query` (case-insensitive), capped at `limit` (default 25).',
     example:
-      'result = host.mcp("cellguide", "search_cell_types", {"query": "T cell", "limit": 25})',
+      'const result = await host.mcp("cellguide", "search_cell_types", {"query": "T cell", "limit": 25})',
     run: async (ctx, a) => {
       const query = String(a.query).trim().toLowerCase()
       const limit = Number(a.limit ?? DEFAULT_LIMIT)
@@ -273,7 +274,7 @@ export const CELLGUIDE_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "id": str, "name": str, "markerType": str, "returned": int, "markerGenes": [ ... ] }`. Computational items: `{ "symbol": str, "name": str, "geneId": str, "markerScore": float, "specificity": float, "meanExpression": float, "percentExpressing": float, "groupbyDims": { ... } }` sorted by `markerScore` desc. Canonical items: `{ "symbol": str, "name": str, "tissue": str, "publication": str, "publicationTitle": str }`. Capped at `limit` (default 25); an empty list means no markers are curated/computed for this cell type. `{ "error": str }` when the cell type is not found.',
     example:
-      'result = host.mcp("cellguide", "get_marker_genes", {"cell_type": "CL:0000084", "marker_type": "computational", "limit": 25})',
+      'const result = await host.mcp("cellguide", "get_marker_genes", {"cell_type": "CL:0000084", "marker_type": "computational", "limit": 25})',
     run: async (ctx, a) => {
       const input = String(a.cell_type)
       const markerType = a.marker_type === 'canonical' ? 'canonical' : 'computational'
@@ -326,7 +327,8 @@ export const CELLGUIDE_TOOLS: ToolDescriptor[] = [
     required: ['cell_type'],
     returns:
       '`{ "id": str, "name": str, "count": int, "sources": [ { "collectionName": str, "collectionUrl": str, "publicationUrl": str, "publicationTitle": str, "tissues": [ { "id": str, "label": str } ], "diseases": [ { "id": str, "label": str } ], "organisms": [ { "id": str, "label": str } ] } ] }` — empty `sources` when no source collections exist. `{ "error": str }` when the cell type is not found.',
-    example: 'result = host.mcp("cellguide", "get_source_data", {"cell_type": "CL:0000622"})',
+    example:
+      'const result = await host.mcp("cellguide", "get_source_data", {"cell_type": "CL:0000622"})',
     run: async (ctx, a) => {
       const input = String(a.cell_type)
       const loaded = await loadCellType(ctx, input)
@@ -365,7 +367,8 @@ export const CELLGUIDE_TOOLS: ToolDescriptor[] = [
     required: ['cell_type'],
     returns:
       '`{ "id": str, "name": str, "count": int, "tissues": [ { "id": str, "label": str } ] }` — unique UBERON tissues (by ontology term id) the cell type appears in, sorted by label. `{ "error": str }` when the cell type is not found.',
-    example: 'result = host.mcp("cellguide", "get_cell_tissues", {"cell_type": "T cell"})',
+    example:
+      'const result = await host.mcp("cellguide", "get_cell_tissues", {"cell_type": "T cell"})',
     run: async (ctx, a) => {
       const input = String(a.cell_type)
       const loaded = await loadCellType(ctx, input)

@@ -231,7 +231,7 @@ export const RNA_TOOLS: ToolDescriptor[] = [
     required: ['family'],
     returns:
       '`{ "rfam_acc": str, "rfam_id": str, "description": str, "comment": str, "clan_acc": str|null, "clan_id": str|null, "rna_type": str, "structure_source": str, "num_seed": int, "num_full": int, "num_species": int, "gathering_cutoff": float, "trusted_cutoff": float, "noise_cutoff": float, "release_number": str, "release_date": str, "raw": {…} }` — flattened metadata; `raw` is the complete upstream `rfam` record. Absent fields are `null`/`undefined`.',
-    example: 'result = host.mcp("rna", "get_family", {"family": "RF00005"})',
+    example: 'const result = await host.mcp("rna", "get_family", {"family": "RF00005"})',
     url: (a) => `${RFAM}/family/${seg(a.family)}?content-type=application/json`,
     parse: (raw) => {
       const payload = raw as RfamFamilyPayload
@@ -259,7 +259,7 @@ export const RNA_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "family": str, "format": str, "num_sequences": int, "sequence_names": [str], "sha256": str, "alignment": str }` — when the alignment exceeds `max_bytes` (default 400000) "alignment" is dropped and replaced by "alignment_omitted"/"size_bytes"; metadata, counts and sha256 are always present. Raise `max_bytes` to force the full body.',
     example:
-      'result = host.mcp("rna", "get_seed_alignment", {"family": "RF00162", "fmt": "stockholm"})',
+      'const result = await host.mcp("rna", "get_seed_alignment", {"family": "RF00162", "fmt": "stockholm"})',
     url: (a) => {
       const fmt = String(a.fmt ?? 'stockholm')
       if (fmt === 'stockholm')
@@ -300,7 +300,7 @@ export const RNA_TOOLS: ToolDescriptor[] = [
     format: 'text',
     returns:
       '`{ "family": str, "header": { "NAME": str, "ACC": str, "STATES": int, "CLEN": int, "W": int, … }, "size_bytes": int, "sha256": str, "cm": str }` — when the CM exceeds `max_bytes` (default 400000) "cm" is dropped for "cm_omitted"; header, size_bytes and sha256 are always present.',
-    example: 'result = host.mcp("rna", "get_covariance_model", {"family": "RF00162"})',
+    example: 'const result = await host.mcp("rna", "get_covariance_model", {"family": "RF00162"})',
     url: (a) => `${RFAM}/family/${seg(a.family)}/cm?content-type=text/plain`,
     parse: (raw, a) => {
       const text = String(raw)
@@ -327,7 +327,7 @@ export const RNA_TOOLS: ToolDescriptor[] = [
     format: 'text',
     returns:
       '`{ "family": str, "num_leaf_labels": int, "sha256": str, "tree": str }` — `tree` is NHX/Newick text; `num_leaf_labels` counts labelled leaves.',
-    example: 'result = host.mcp("rna", "get_tree", {"family": "RF00162"})',
+    example: 'const result = await host.mcp("rna", "get_tree", {"family": "RF00162"})',
     url: (a) => `${RFAM}/family/${seg(a.family)}/tree?content-type=text/plain`,
     parse: (raw, a) => {
       const text = String(raw)
@@ -354,7 +354,7 @@ export const RNA_TOOLS: ToolDescriptor[] = [
     format: 'text',
     returns:
       '`{ "family": str, "declared_count": int|null, "num_regions": int, "regions": [ { "sequence_accession": str, "bits_score": str, "region_start": str, "region_end": str, "sequence_description": str, "species": str, "ncbi_tax_id": str } ] }` — `declared_count` is the server\'s own "# found N regions" header. Very large families surface an HTTP 403 error as-is.',
-    example: 'result = host.mcp("rna", "get_sequence_regions", {"family": "RF00162"})',
+    example: 'const result = await host.mcp("rna", "get_sequence_regions", {"family": "RF00162"})',
     url: (a) => `${RFAM}/family/${seg(a.family)}/regions?content-type=text/plain`,
     parse: (raw, a) => {
       const parsed = parseRegions(String(raw))
@@ -379,7 +379,7 @@ export const RNA_TOOLS: ToolDescriptor[] = [
     required: ['family'],
     returns:
       '`{ "family": str, "num_mappings": int, "num_pdb_ids": int, "pdb_ids": [str], "mapping": [ { "pdb_id": str, "chain": str, "pdb_start": int, "pdb_end": int, "cm_start": int, "cm_end": int, "bit_score": float, "evalue_score": str, "rfam_acc": str } ] }` — rows sorted by (pdb_id, chain, pdb_start, pdb_end, cm_start); exact per-row fields follow upstream. `mapping` is `[]` when no structures exist.',
-    example: 'result = host.mcp("rna", "get_structure_mapping", {"family": "RF00162"})',
+    example: 'const result = await host.mcp("rna", "get_structure_mapping", {"family": "RF00162"})',
     url: (a) => `${RFAM}/family/${seg(a.family)}/structures?content-type=application/json`,
     parse: (raw, a) => {
       const payload = (raw ?? {}) as { mapping?: StructureRow[] }
@@ -407,7 +407,7 @@ export const RNA_TOOLS: ToolDescriptor[] = [
     format: 'text',
     returns:
       '`{ "accession": str, "rfam_id": str }` — echoes the input accession and its resolved family id.',
-    example: 'result = host.mcp("rna", "accession_to_id", {"accession": "RF00005"})',
+    example: 'const result = await host.mcp("rna", "accession_to_id", {"accession": "RF00005"})',
     url: (a) => `${RFAM}/family/${seg(a.accession)}/id?content-type=text/plain`,
     parse: (raw, a) => ({ accession: String(a.accession), rfam_id: String(raw).trim() })
   },
@@ -424,7 +424,7 @@ export const RNA_TOOLS: ToolDescriptor[] = [
     format: 'text',
     returns:
       '`{ "rfam_id": str, "accession": str }` — echoes the input id and its resolved RF##### accession. Throws when no accession resolves.',
-    example: 'result = host.mcp("rna", "id_to_accession", {"family_id": "tRNA"})',
+    example: 'const result = await host.mcp("rna", "id_to_accession", {"family_id": "tRNA"})',
     url: (a) => `${RFAM}/family/${seg(a.family_id)}/acc?content-type=text/plain`,
     parse: (raw, a) => {
       const acc = String(raw).trim()
@@ -452,7 +452,7 @@ export const RNA_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "job_id": str, "num_hits": int, "families": [str], "hits": { family_id: [ { e-value, score, alignment blocks, … } ] }, "search_sequence": str }` — hits grouped by matching family id. Surfaces upstream SearchUnavailable/400/timeout errors as-is; no local fallback.',
     example:
-      'result = host.mcp("rna", "search_sequence", {"sequence": "GGUUCCGGGAAGGCAGCAGGUGGAAACCUGCCA"})',
+      'const result = await host.mcp("rna", "search_sequence", {"sequence": "GGUUCCGGGAAGGCAGCAGGUGGAAACCUGCCA"})',
     run: async (ctx: ToolContext, a) => {
       const sequence = String(a.sequence)
       const maxWaitS = Number(a.max_wait_s ?? 300)

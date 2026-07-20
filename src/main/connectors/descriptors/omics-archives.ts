@@ -1092,7 +1092,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "total_hits": int, "is_total_exact": bool, "truncated": bool, "params": {...}, "records": [ { "accession": str, "title": str, "release_date": str, "files": int, "links": int, "is_public": bool } ] }` — every match is walked and the unique count verified against `total_hits`; `records` is capped at `max_records` (default 50) with `truncated=true`, `total_hits` still the full count. Sorted release_date desc, accession asc.',
     example:
-      'result = host.mcp("omics_archives", "arrayexpress_search_experiments", {"organism": "Homo sapiens", "study_type": "ChIP-seq", "max_records": 50})',
+      'const result = await host.mcp("omics_archives", "arrayexpress_search_experiments", {"organism": "Homo sapiens", "study_type": "ChIP-seq", "max_records": 50})',
     run: (ctx, a) => aeSearch(ctx, aeSearchParams(a), Number(a.max_records ?? 50))
   },
   {
@@ -1109,7 +1109,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "accession", "title", "release_date", "study_type", "organisms": [str], "description", "assay_count", "sample_count", "technology", "assay_by_molecule", "experimental_designs": [str], "experimental_factors": [str], "authors": [{name,email,role,affiliations}], "submitter_organizations": [str], "publications": [{accno,title,authors,doi,status}], "protocol_count", "protocol_types": [str], "array_designs": [str], "file_count", "files_by_type": {type:count}, "total_file_bytes", "links": [{target,type}] }` — absent attributes are undefined.',
     example:
-      'result = host.mcp("omics_archives", "arrayexpress_get_experiment", {"accession": "E-MTAB-5061"})',
+      'const result = await host.mcp("omics_archives", "arrayexpress_get_experiment", {"accession": "E-MTAB-5061"})',
     url: (a) => `${BIOSTUDIES}/studies/${encodeURIComponent(String(a.accession))}`,
     parse: (raw) => flattenStudy(asObj(raw))
   },
@@ -1127,7 +1127,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "accession", "n_files": int, "files": [ { "path", "size_bytes", "type", "format", "description", "download_url" } ], "info_reported_file_count": int, "http_link", "ftp_link", "rel_path" }` — files sorted by path.',
     example:
-      'result = host.mcp("omics_archives", "arrayexpress_get_experiment_files", {"accession": "E-MTAB-5061"})',
+      'const result = await host.mcp("omics_archives", "arrayexpress_get_experiment_files", {"accession": "E-MTAB-5061"})',
     run: async (ctx, a) => {
       const acc = encodeURIComponent(String(a.accession))
       const raw = asObj(await ctx.fetchJson(`${BIOSTUDIES}/studies/${acc}`))
@@ -1167,7 +1167,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "accession", "sdrf_file", "sdrf_size_bytes", "headers": [str], "n_samples": int, "samples": [ {header: value} ], "n_samples_returned": int, "rows_truncated": bool }` — `n_samples` is the true total; `samples` capped at `max_rows_returned` (default 200). No SDRF yields `{ "accession", "error": "no_sdrf", "n_samples": 0, "samples": [], ... }`.',
     example:
-      'result = host.mcp("omics_archives", "arrayexpress_get_experiment_samples", {"accession": "E-MTAB-5061", "max_rows_returned": 200})',
+      'const result = await host.mcp("omics_archives", "arrayexpress_get_experiment_samples", {"accession": "E-MTAB-5061", "max_rows_returned": 200})',
     run: async (ctx, a) => {
       const accEnc = encodeURIComponent(String(a.accession))
       const maxRows = Number(a.max_rows_returned ?? 200)
@@ -1246,7 +1246,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "term": str, "count": int, "retrieved": int, "complete": bool, "records": [ { "accession", "title", "summary", "gdstype", "taxon", "n_samples", "pdat", "ftplink", "bioproject", "pubmedids", "samples": [{accession,title}], ... } ] }` — `count` is esearch\'s own total (may exceed `retrieved` when > retmax); records sorted by accession.',
     example:
-      'result = host.mcp("omics_archives", "geo_search_series", {"term": "asthma AND gse[ETYP]", "retmax": 20})',
+      'const result = await host.mcp("omics_archives", "geo_search_series", {"term": "asthma AND gse[ETYP]", "retmax": 20})',
     run: async (ctx, a) => {
       const etiquette = ncbiEtiquette(ctx.credentials)
       const found = await esearchGds(ctx, String(a.term), Number(a.retmax ?? 500), etiquette)
@@ -1282,7 +1282,8 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     required: ['accessions'],
     returns:
       '`{ "n_requested": int (accessions requested, before de-duplication), "records": [ { "accession", "title", "organism": [str], "series_type": [str], "status", "submission_date", "last_update_date", "summary", "overall_design", "pubmed_ids": [str], "platforms": [str], "n_samples": int, "samples": [ {accession,title,organism,characteristics:[{tag,value}],library_strategy,instrument_model,...} ], "supplementary_files": {series:[str],samples:{acc:[str]},ftp_root}, "esummary": {...} } ] }` — records ordered by accession.',
-    example: 'result = host.mcp("omics_archives", "geo_get_series", {"accessions": ["GSE131907"]})',
+    example:
+      'const result = await host.mcp("omics_archives", "geo_get_series", {"accessions": ["GSE131907"]})',
     run: async (ctx, a) => {
       const etiquette = ncbiEtiquette(ctx.credentials)
       const accessions = asArr(a.accessions).map(String)
@@ -1302,7 +1303,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     input: { type: 'object', properties: {} },
     returns:
       '`{ "accessions": [str], "count": int, "reported_count": int }` — full accession list (MTBLS1, MTBLS2, ...); `count` and `reported_count` should agree.',
-    example: 'result = host.mcp("omics_archives", "metabolights_list_studies", {})',
+    example: 'const result = await host.mcp("omics_archives", "metabolights_list_studies", {})',
     url: () => `${METABOLIGHTS}/studies`,
     parse: (raw) => {
       const payload = asObj(raw)
@@ -1332,7 +1333,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "n_requested": int, "records": [ { "accession", "title", "description", "study_status", "release_year", "submission_year", "organisms": [{organism,organism_part}], "organism_names": [str], "assays": [{assay_number,measurement,technology,platform,filename}], "assay_count", "technologies": [str], "factors": [str], "descriptors": [str], "sample_count", "protocols": [{name,description}], "sample_table"? } ], "not_found": [str] }` — records sorted by numeric accession.',
     example:
-      'result = host.mcp("omics_archives", "metabolights_get_studies", {"accessions": ["MTBLS1"], "include_samples": False})',
+      'const result = await host.mcp("omics_archives", "metabolights_get_studies", {"accessions": ["MTBLS1"], "include_samples": False})',
     run: async (ctx, a) => {
       const unique = sortMtbls(asArr(a.accessions).map(String))
       const includeSamples = Boolean(a.include_samples)
@@ -1379,7 +1380,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "accession", "latest_version", "study_folder": [ {file,type,status,directory} ], "n_study_folder_entries": int, "metadata_files": [str], "data_files"?: [str], "n_data_files"?: int }` — sorted deterministically; volatile timestamps dropped.',
     example:
-      'result = host.mcp("omics_archives", "metabolights_get_study_files", {"accession": "MTBLS1"})',
+      'const result = await host.mcp("omics_archives", "metabolights_get_study_files", {"accession": "MTBLS1"})',
     run: async (ctx, a) => {
       const acc = String(a.accession).trim().toUpperCase()
       if (!MTBLS_RE.test(acc))
@@ -1440,7 +1441,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "accession", "pattern": str|null, "file_match": true, "folder_match": false, "files": [str], "n_files": int }` — relative paths under the study folder (FILES/...), sorted.',
     example:
-      'result = host.mcp("omics_archives", "metabolights_search_data_files", {"accession": "MTBLS1", "pattern": "*.zip"})',
+      'const result = await host.mcp("omics_archives", "metabolights_search_data_files", {"accession": "MTBLS1", "pattern": "*.zip"})',
     run: (ctx, a) => searchMetabolightsDataFiles(ctx, String(a.accession), cleanStr(a.pattern))
   },
   // ---- MGnify ----
@@ -1462,7 +1463,8 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ "spec": {...}, "count": int, "pages_fetched": int, "records": [ { "accession", "secondary_accession", "bioproject", "study_name", "biome_lineages": [str], "samples_count", "centre_name", "data_origination", "is_private", "last_update" } ] }` — `count == records.length` (verified); records sorted by MGYS accession.',
-    example: 'result = host.mcp("omics_archives", "mgnify_search_studies", {"query": "coral"})',
+    example:
+      'const result = await host.mcp("omics_archives", "mgnify_search_studies", {"query": "coral"})',
     run: async (ctx, a) => {
       const query = cleanStr(a.query)
       const biome = cleanStr(a.biome_lineage)
@@ -1505,7 +1507,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "studies": [ { "accession", "secondary_accession", "bioproject", "study_name", "biome_lineages": [str], "samples_count", "centre_name", "data_origination", "is_private", "last_update", "analyses_total"?, "analyses_by_pipeline_version"?, "analyses_by_experiment_type"? } ], "missing": [str], "analyses"?: {acc: [record]} }` — studies sorted by accession.',
     example:
-      'result = host.mcp("omics_archives", "mgnify_get_studies", {"accessions": ["MGYS00000410"], "include_analyses": False})',
+      'const result = await host.mcp("omics_archives", "mgnify_get_studies", {"accessions": ["MGYS00000410"], "include_analyses": False})',
     run: async (ctx, a) => {
       const includeAnalyses = Boolean(a.include_analyses)
       const unique = [...new Set(asArr(a.accessions).map(String))].sort()
@@ -1555,7 +1557,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "study_accession", "analyses_count": int, "analyses": [ { "analysis_accession", "study_accession", "pipeline_version", "experiment_type", "analysis_status", "run_accession", "assembly_accession", "sample_accession", "instrument_platform" } ] }` — `analyses_count` is the API total (retrieval verified against it); sorted by MGYA accession.',
     example:
-      'result = host.mcp("omics_archives", "mgnify_get_study_analyses", {"accession": "MGYS00000410"})',
+      'const result = await host.mcp("omics_archives", "mgnify_get_study_analyses", {"accession": "MGYS00000410"})',
     run: (ctx, a) => fetchStudyAnalyses(ctx, String(a.accession))
   },
   // ---- PRIDE ----
@@ -1581,7 +1583,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "spec": {...}, "filter": str|null, "api_total": int, "complete": bool, "pages_fetched": int, "n_records_returned": int, "records_truncated": bool, "records": [ { "accession", "title", "organisms": [str], "diseases": [str], "instruments": [str], "experiment_types": [str], "quantification_methods": [str], "submission_date", "publication_date", "submitters": [str], "lab_pis": [str], "references": [{pubmed_id,doi,reference_line}], ... } ] }` — `api_total` is the true count; `records` capped at `max_records_returned` (default 50) with `records_truncated`.',
     example:
-      'result = host.mcp("omics_archives", "pride_search_projects", {"keyword": "phosphoproteome", "organism": "Homo sapiens (human)", "max_records_returned": 50})',
+      'const result = await host.mcp("omics_archives", "pride_search_projects", {"keyword": "phosphoproteome", "organism": "Homo sapiens (human)", "max_records_returned": 50})',
     run: async (ctx, a) => {
       const spec: Obj = {}
       for (const k of ['keyword', 'organism', 'instrument', 'disease'] as const) {
@@ -1616,7 +1618,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "n_requested": int, "records": [ { "accession", "title", "organisms": [str], "organism_parts": [str], "diseases": [str], "instruments": [str], "experiment_types": [str], "quantification_methods": [str], "keywords": [str], "submission_date", "publication_date", "submitters": [str], "lab_pis": [str], "references": [{pubmed_id,doi,reference_line}], "source": "detail" } ], "not_found": [str] }` — records sorted by accession.',
     example:
-      'result = host.mcp("omics_archives", "pride_get_projects", {"accessions": ["PXD010154"]})',
+      'const result = await host.mcp("omics_archives", "pride_get_projects", {"accessions": ["PXD010154"]})',
     run: async (ctx, a) => {
       const unique = [
         ...new Set(
@@ -1666,7 +1668,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "project_accession", "keyword": str|null, "n_proteins": int, "proteins": [ { "protein_accession", "protein_name", "gene", "project_count" } ] }` — sorted by protein accession; empty for MS-only projects.',
     example:
-      'result = host.mcp("omics_archives", "pride_search_project_proteins", {"project_accession": "PXD010154"})',
+      'const result = await host.mcp("omics_archives", "pride_search_project_proteins", {"project_accession": "PXD010154"})',
     run: async (ctx, a) => {
       const projectAccession = String(a.project_accession)
       const keyword = cleanStr(a.keyword)
@@ -1718,7 +1720,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "query_accession", "n_records": int, "records": [ { "protein_accession", "n_projects": int, "projects": [str] } ] }` — project lists sorted.',
     example:
-      'result = host.mcp("omics_archives", "pride_find_projects_for_protein", {"protein_accession": "P04637"})',
+      'const result = await host.mcp("omics_archives", "pride_find_projects_for_protein", {"protein_accession": "P04637"})',
     run: async (ctx, a) => {
       const proteinAccession = String(a.protein_accession)
       const rows = asArr(

@@ -371,7 +371,7 @@ export const STRUCTURES_PDB_TOOLS: ToolDescriptor[] = [
     returns:
       '{total_count (API match total), n_retrieved, truncated (total_count > n_retrieved), max_rows, records:[{pdb_id, score}]} in relevance order; records is [] when nothing matches.',
     example:
-      'result = host.mcp("structures", "pdb_search_structures", {"uniprot_accession": "P04637", "experimental_method": "X-RAY DIFFRACTION", "max_rows": 50})',
+      'const result = await host.mcp("structures", "pdb_search_structures", {"uniprot_accession": "P04637", "experimental_method": "X-RAY DIFFRACTION", "max_rows": 50})',
     run: async (ctx, a) => {
       const maxRows = clampInt(a.max_rows, 100, 1, MAX_ROWS_LIMIT)
       const query = buildSearchQuery(a)
@@ -437,7 +437,7 @@ export const STRUCTURES_PDB_TOOLS: ToolDescriptor[] = [
     returns:
       '{n_requested, n_unique, n_blank_skipped, n_duplicate_skipped, records:[{pdb_id, title, experimental_methods, resolution_angstrom, ..., polymer_entity_ids, nonpolymer_entity_ids, citation} | {pdb_id, error:"not_found"}]}.',
     example:
-      'result = host.mcp("structures", "pdb_get_structures", {"pdb_ids": ["1TUP", "1tup", "6XYZ"]})',
+      'const result = await host.mcp("structures", "pdb_get_structures", {"pdb_ids": ["1TUP", "1tup", "6XYZ"]})',
     run: async (ctx, a) => {
       const rawIds = Array.isArray(a.pdb_ids) ? (a.pdb_ids as unknown[]) : []
       // Blank-strip + case-insensitive dedupe BEFORE the cap: a batch whose raw count exceeds the
@@ -501,7 +501,7 @@ export const STRUCTURES_PDB_TOOLS: ToolDescriptor[] = [
     returns:
       '{pdb_id, n_polymer_entities (entry total when entity_ids=null, else null), polymer_entity_ids, truncated, records:[{rcsb_id, entity_id, description, polymer_type, sequence_length, source_organisms, uniprot_ids, reference_sequence_identifiers, uniprot_aligned_regions, sequence?}], not_found:[...], sequences_omitted?}.',
     example:
-      'result = host.mcp("structures", "pdb_get_entities", {"pdb_id": "1TUP", "include_sequences": True})',
+      'const result = await host.mcp("structures", "pdb_get_entities", {"pdb_id": "1TUP", "include_sequences": True})',
     run: async (ctx, a) => {
       const pdbId = asStr(a.pdb_id).toUpperCase()
       const includeSequences = a.include_sequences === true
@@ -580,7 +580,7 @@ export const STRUCTURES_PDB_TOOLS: ToolDescriptor[] = [
     required: ['pdb_id'],
     returns:
       '{pdb_id, n_nonpolymer_entities (entry total), n_returned, truncated, ligands:[{entity_id, comp_id, description, n_copies_deposited, auth_asym_ids, chem_comp:{name, formula, formula_weight, inchikey, smiles, ...} | {comp_id, error:"not_found"} | null} | {entity_id, comp_id:null, error:"not_found", chem_comp:null}]}.',
-    example: 'result = host.mcp("structures", "pdb_get_ligands", {"pdb_id": "1TUP"})',
+    example: 'const result = await host.mcp("structures", "pdb_get_ligands", {"pdb_id": "1TUP"})',
     run: async (ctx, a) => {
       const pdbId = asStr(a.pdb_id).toUpperCase()
       const maxLigands = clampInt(a.max_ligands, PDB_MAX_IDS, 1, PDB_MAX_IDS)
