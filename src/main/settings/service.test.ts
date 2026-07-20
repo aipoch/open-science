@@ -1,5 +1,5 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, join, normalize } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execPath } from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -1222,10 +1222,14 @@ describe('SettingsService: onboarding', () => {
   it('persists a new dataRoot across a fresh read', async () => {
     const service = createService()
 
-    await service.setDataRoot('/mnt/new-data')
+    // The repository canonicalizes dataRoot to the host separator on read (for samePath comparisons),
+    // so build the fixture the same way — a bare POSIX literal comes back with backslashes on Windows
+    // and would fail the round-trip.
+    const dataRoot = normalize('/mnt/new-data')
+    await service.setDataRoot(dataRoot)
 
     const settings = await service.getStoredSettings()
-    expect(settings.dataRoot).toBe('/mnt/new-data')
+    expect(settings.dataRoot).toBe(dataRoot)
   })
 })
 
