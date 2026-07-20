@@ -247,6 +247,34 @@ describe('workspace runtime events', () => {
     expect(useSessionStore.getState().sessions[0].agentStatus).toBeUndefined()
   })
 
+  it('does not append Codex diagnostic assistant chunks to the transcript', async () => {
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        agentFrameworkId: 'codex'
+      }))
+    }))
+    const diagnostic = [
+      'Warning: Skill descriptions were shortened to fit the 2% skills context budget.',
+      'Codex can still see every skill, but some descriptions are shorter.',
+      'Disable unused skills or plugins to leave more room for the rest.',
+      '',
+      'Warning: Falling back from WebSockets to HTTPS transport. request timed out'
+    ].join('\n')
+
+    const applied = await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-codex-message-warning',
+        role: 'assistant',
+        messageId: 'assistant-message-1',
+        text: diagnostic
+      })
+    )
+
+    expect(applied).toBe(true)
+    expect(useSessionStore.getState().sessions[0].messages).toHaveLength(1)
+  })
+
   it('ignores an info-level system event (only warnings become status)', async () => {
     const applied = await applyWorkspaceRuntimeEvent(
       createEvent({ id: 'event-1', kind: 'system', level: 'info', text: 'Session created' })

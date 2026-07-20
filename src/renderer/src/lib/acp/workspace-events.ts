@@ -192,12 +192,24 @@ const applyWorkspaceRuntimeEvent = async (
   // Assistant chat deltas extend the transcript as streamed markdown messages.
   if (isAssistantRuntimeChatMessageEvent(event)) {
     const image = getAcpRuntimeEventImage(event)
+    const content = getAcpRuntimeEventText(event)
+    const session = store.sessions.find((candidate) => candidate.id === event.sessionId)
+
+    if (
+      session?.agentFrameworkId === 'codex' &&
+      !image &&
+      typeof content === 'string' &&
+      content.trim().length > 0 &&
+      isNonActionableCodexDiagnostic(content)
+    ) {
+      return true
+    }
 
     store.appendAgentMessageChunk({
       sessionId: event.sessionId,
       streamId: createRuntimeStreamId(event),
       eventId: event.id,
-      content: getAcpRuntimeEventText(event),
+      content,
       image
     })
     return true
