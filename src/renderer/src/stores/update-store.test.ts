@@ -134,8 +134,10 @@ describe('useUpdateStore', () => {
     expect(useUpdateStore.getState().status.state).toBe('available')
   })
 
-  it('closeDialog does not cancel when no download is running', () => {
-    const cancel = vi.fn()
+  it('closeDialog cancels unconditionally so a not-yet-broadcast download is still aborted', () => {
+    // The 'downloading' broadcast may not have arrived when the user clicks Cancel right after
+    // Download; closeDialog must still call cancel (a main-process no-op when nothing is downloading).
+    const cancel = vi.fn(() => Promise.resolve({ state: 'available', current: '0.2.0' }))
     ;(window as unknown as { api: unknown }).api = {
       update: { onStatus: vi.fn(), onProgress: vi.fn(), cancel }
     }
@@ -146,7 +148,7 @@ describe('useUpdateStore', () => {
 
     useUpdateStore.getState().closeDialog()
 
-    expect(cancel).not.toHaveBeenCalled()
+    expect(cancel).toHaveBeenCalledTimes(1)
     expect(useUpdateStore.getState().isDialogOpen).toBe(false)
   })
 

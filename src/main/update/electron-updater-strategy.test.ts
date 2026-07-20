@@ -127,6 +127,67 @@ describe('ElectronUpdaterStrategy', () => {
     expect(status.state).toBe('available')
   })
 
+  it('ignores a second download() while one is already in flight', async () => {
+    const updater = new FakeUpdater()
+    let release: (() => void) | undefined
+    updater.downloadUpdate = vi.fn(async () => {
+      await new Promise<void>((resolve) => (release = resolve))
+      updater.emit('update-downloaded', { version: '0.3.0' })
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    await strategy.check()
+
+    const first = strategy.download()
+    const second = strategy.download()
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
+
+    release?.()
+    await Promise.all([first, second])
+    expect(strategy.getStatus().state).toBe('ready')
+  })
+
+  it('supports cancel followed by an immediate retry to completion', async () => {
+    const updater = new FakeUpdater()
+    let calls = 0
+    let release: (() => void) | undefined
+    updater.downloadUpdate = vi.fn(async (token?: { cancelled: boolean }) => {
+      calls += 1
+      if (calls === 1) {
+        await new Promise<void>((resolve) => (release = resolve))
+        if (token?.cancelled) throw new Error('cancelled')
+      } else {
+        updater.emit('download-progress', { percent: 55 })
+        updater.emit('update-downloaded', { version: '0.3.0' })
+      }
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    await strategy.check()
+
+    const first = strategy.download()
+    const cancelled = await strategy.cancel()
+    expect(cancelled.state).toBe('available')
+
+    // Immediate retry: the token slot is free, so a fresh download starts and completes.
+    const retry = await strategy.download()
+    expect(retry.state).toBe('ready')
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(2)
+
+    // The first (cancelled) attempt settling later must not surface an error.
+    release?.()
+    const firstFinal = await first
+    expect(firstFinal.error).toBeUndefined()
+  })
+
   it('reports up-to-date when no update is available', async () => {
     const updater = new FakeUpdater()
     updater.checkForUpdates = vi.fn(async () => {

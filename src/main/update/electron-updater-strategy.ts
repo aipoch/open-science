@@ -182,6 +182,9 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   }
 
   async download(): Promise<UpdateStatus> {
+    // A download is already in flight; ignore repeat clicks / concurrent renderers. Starting a second
+    // would overwrite downloadToken and orphan the first download (cancel() could no longer stop it).
+    if (this.downloadToken) return this.status
     this.setStatus({ ...this.status, state: 'downloading', progress: 0 })
     const token = this.createCancellationToken()
     this.downloadToken = token

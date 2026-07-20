@@ -200,6 +200,107 @@ describe('UpdateService.download', () => {
     expect(existsSync(target)).toBe(false)
   })
 
+  it('ignores a second download() while one is already in flight', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'svc-'))
+    const target = join(dir, 'installer.dmg')
+    const manifestForCheck = downloadManifest(100, 'irrelevant')
+    let installerFetches = 0
+    let onInstallerFetch: (() => void) | undefined
+    const fetched = new Promise<void>((resolve) => (onInstallerFetch = resolve))
+    const fetchImpl = ((input: unknown, init?: { signal?: AbortSignal }) => {
+      if (String(input).endsWith('version.json')) {
+        return Promise.resolve(jsonResponse(manifestForCheck))
+      }
+      installerFetches += 1
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]))
+          init?.signal?.addEventListener('abort', () =>
+            controller.error(new DOMException('The user aborted a request.', 'AbortError'))
+          )
+        }
+      })
+      onInstallerFetch?.()
+      return Promise.resolve(new Response(body, { status: 200 }))
+    }) as unknown as typeof fetch
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn(),
+      promptSavePath: () => Promise.resolve(target)
+    })
+
+    await service.check()
+    const first = service.download()
+    await fetched
+    const second = await service.download()
+    expect(second.state).toBe('downloading')
+    expect(installerFetches).toBe(1)
+
+    await service.cancel()
+    await first
+  })
+
+  it('supports cancel followed by an immediate retry to completion', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'svc-'))
+    const target1 = join(dir, 'installer-1.dmg')
+    const target2 = join(dir, 'installer-2.dmg')
+    const body = Buffer.from('installer-bytes')
+    const manifestForCheck = downloadManifest(
+      body.byteLength,
+      createHash('sha256').update(body).digest('hex')
+    )
+    let installerCall = 0
+    let onFirstFetch: (() => void) | undefined
+    const firstFetched = new Promise<void>((resolve) => (onFirstFetch = resolve))
+    const fetchImpl = ((input: unknown, init?: { signal?: AbortSignal }) => {
+      if (String(input).endsWith('version.json')) {
+        return Promise.resolve(jsonResponse(manifestForCheck))
+      }
+      installerCall += 1
+      if (installerCall === 1) {
+        const hanging = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array([1, 2, 3]))
+            init?.signal?.addEventListener('abort', () =>
+              controller.error(new DOMException('The user aborted a request.', 'AbortError'))
+            )
+          }
+        })
+        onFirstFetch?.()
+        return Promise.resolve(new Response(hanging, { status: 200 }))
+      }
+      return Promise.resolve(new Response(body, { status: 200 }))
+    }) as unknown as typeof fetch
+    let saveCall = 0
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn(),
+      promptSavePath: () => Promise.resolve(saveCall++ === 0 ? target1 : target2)
+    })
+
+    await service.check()
+    const first = service.download()
+    await firstFetched
+    const cancelled = await service.cancel()
+    expect(cancelled.state).toBe('available')
+
+    const retry = await service.download()
+    expect(retry.state).toBe('ready')
+    expect(retry.localPath).toBe(target2)
+    expect(existsSync(target2)).toBe(true)
+
+    const firstFinal = await first
+    expect(firstFinal.error).toBeUndefined()
+  })
+
   it('rejects a download whose URL host differs from the manifest host, without fetching', async () => {
     const offHostManifest: UpdateManifest = {
       version: '0.3.0',

@@ -129,6 +129,10 @@ export class UpdateService implements UpdateStrategy {
   }
 
   async download(): Promise<UpdateStatus> {
+    // A download is already in flight; ignore repeat clicks / concurrent renderers. Starting a second
+    // would overwrite downloadAbort and orphan the first download (cancel() could no longer stop it).
+    if (this.downloadAbort) return this.status
+
     const { download } = this.status
     if (!download) return this.status
 
@@ -146,13 +150,20 @@ export class UpdateService implements UpdateStrategy {
       return this.status
     }
 
-    // Ask where to save (platform-aware). A cancel leaves the status untouched (stays 'available').
-    const targetPath = await this.promptSavePath(installerFileName(download.url))
-    if (!targetPath) return this.status
-
-    this.setStatus({ ...this.status, state: 'downloading', progress: 0 })
+    // Claim the in-flight slot synchronously, before the save-dialog await, so a concurrent download()
+    // is rejected by the guard above and cancel() can abort even while the save prompt is open.
     const abort = new AbortController()
     this.downloadAbort = abort
+
+    // Ask where to save (platform-aware). A dialog cancel — or a cancel() during the prompt — leaves
+    // the status untouched (stays 'available') and releases the slot.
+    const targetPath = await this.promptSavePath(installerFileName(download.url))
+    if (!targetPath || abort.signal.aborted) {
+      if (this.downloadAbort === abort) this.downloadAbort = undefined
+      return this.status
+    }
+
+    this.setStatus({ ...this.status, state: 'downloading', progress: 0 })
     try {
       const localPath = await downloadInstaller(download, targetPath, {
         fetchImpl: this.fetchImpl,

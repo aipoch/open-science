@@ -51,11 +51,12 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
 
   openDialog: () => set({ isDialogOpen: true }),
 
-  // Closing the dialog mid-download aborts the download. The Cancel button and the X / overlay /
-  // Escape dismissals all route here, so any way of closing the dialog stops the background download
-  // rather than letting it run on invisibly.
+  // Closing the dialog aborts any in-flight download. Cancel a request unconditionally rather than
+  // gating on the local 'downloading' state: right after clicking Download the 'downloading' broadcast
+  // may not have arrived yet, so a guarded call would miss it and leave the download running — the
+  // exact race in issue #216. The main-process cancel() is a no-op when nothing is downloading.
   closeDialog: () => {
-    if (get().status.state === 'downloading') void get().cancel()
+    void get().cancel()
     set({ isDialogOpen: false })
   },
 
@@ -66,9 +67,9 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
   },
 
   cancel: async () => {
-    const api = window.api?.update
-    if (!api) return
-    set({ status: await api.cancel() })
+    const cancel = window.api?.update?.cancel
+    if (!cancel) return
+    set({ status: await cancel() })
   },
 
   apply: async () => {
