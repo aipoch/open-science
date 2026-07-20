@@ -294,4 +294,47 @@ describe('artifact IPC handlers', () => {
 
     expect('listMessageFiles' in handlers).toBe(false)
   })
+
+  it('excludes both prompt-active runs and unfinalized claims from the orphan scan', async () => {
+    const listProjectArtifacts = vi.fn().mockResolvedValue([])
+    const repository = { listProjectArtifacts } as unknown as ArtifactRepository
+    const runRegistry = new ArtifactRunRegistry()
+
+    // A run whose files were emitted and are awaiting the renderer's finalize call — it has left the
+    // runtime's prompt-active set but must still be treated as in-flight, not orphaned.
+    runRegistry.register({
+      projectName: 'default-project',
+      artifactSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      runId: 'run-awaiting-finalize'
+    })
+
+    const handlers = createArtifactHandlers(repository, runRegistry, {
+      getActiveArtifactRunIds: () => ['run-in-prompt']
+    })
+
+    await handlers.listProjectFiles({ projectName: 'default-project' })
+
+    const passedSet = listProjectArtifacts.mock.calls[0][1] as Set<string>
+    expect([...passedSet].sort()).toEqual(['run-awaiting-finalize', 'run-in-prompt'])
+  })
+
+  it('drops a run from the exclusion set once its claim is finalized', async () => {
+    const listProjectArtifacts = vi.fn().mockResolvedValue([])
+    const repository = { listProjectArtifacts } as unknown as ArtifactRepository
+    const runRegistry = new ArtifactRunRegistry()
+    const claimId = runRegistry.register({
+      projectName: 'default-project',
+      artifactSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      runId: 'run-done'
+    })
+    runRegistry.markFinalized(claimId, 'message-1')
+
+    const handlers = createArtifactHandlers(repository, runRegistry)
+    await handlers.listProjectFiles({ projectName: 'default-project' })
+
+    const passedSet = listProjectArtifacts.mock.calls[0][1] as Set<string>
+    expect(passedSet.has('run-done')).toBe(false)
+  })
 })

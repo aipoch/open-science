@@ -17,8 +17,10 @@ import type {
   ArtifactFile,
   ArtifactPreviewResult,
   FinalizeRunArtifactsRequest,
+  ListProjectArtifactsRequest,
   OpenArtifactFileRequest,
-  ReadArtifactPreviewRequest
+  ReadArtifactPreviewRequest,
+  ReconcilePendingArtifactsRequest
 } from '../shared/artifacts'
 import type {
   SaveBlobFileRequest,
@@ -128,7 +130,12 @@ import type {
   StageUploadFilesRequest,
   UploadedAttachment
 } from '../shared/uploads'
-import type { ReviewWithChecks, ReviewRunRequest, ReviewUpdateEvent } from '../shared/reviewer'
+import type {
+  ReviewWithChecks,
+  ReviewRunRequest,
+  ReviewRunResult,
+  ReviewUpdateEvent
+} from '../shared/reviewer'
 
 type RemoveListener = () => void
 type AcpListener<Payload> = (payload: Payload) => void
@@ -258,6 +265,8 @@ interface OpenScienceAPI {
   }
   artifacts: {
     finalizeRunArtifacts(request: FinalizeRunArtifactsRequest): Promise<ArtifactFile[]>
+    listProjectFiles(request: ListProjectArtifactsRequest): Promise<ArtifactFile[]>
+    reconcilePendingArtifacts(request: ReconcilePendingArtifactsRequest): Promise<ArtifactFile[]>
     openFile(request: OpenArtifactFileRequest): Promise<void>
     readPreview(request: ReadArtifactPreviewRequest): Promise<ArtifactPreviewResult>
   }
@@ -327,7 +336,7 @@ interface OpenScienceAPI {
   }
   reviewer: {
     // Trigger a background review for the given turn. Fire-and-forget; updates come via onUpdated.
-    run(request: ReviewRunRequest): Promise<void>
+    run(request: ReviewRunRequest): Promise<ReviewRunResult>
     // Load persisted reviews for a session (called at workspace startup).
     getForSession(sessionId: string): Promise<ReviewWithChecks[]>
     // Subscribe to review lifecycle/findings updates pushed from the main process.

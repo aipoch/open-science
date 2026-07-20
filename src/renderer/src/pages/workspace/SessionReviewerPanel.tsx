@@ -274,6 +274,15 @@ const SessionReviewerPanel = ({
         <p className="mt-0.5 text-[11px] text-text-300">
           {review.model} &middot; {new Date(review.createdAt).toLocaleString()}
         </p>
+        {review.stale && (
+          <p
+            data-testid="reviewer-stale-notice"
+            className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800"
+          >
+            This turn changed after the review ran (e.g. an artifact was edited). The result below
+            may be out of date — re-run the review to refresh it.
+          </p>
+        )}
       </div>
 
       {/* Scrollable body */}

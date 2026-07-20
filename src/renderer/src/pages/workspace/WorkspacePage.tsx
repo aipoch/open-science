@@ -219,8 +219,10 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   })
   // "Request review" is disabled when:
   //   - there is no active session or no completed agent turn yet, OR
-  //   - the last turn already has a review (any lifecycle — no duplicate reviews), OR
+  //   - the last turn already has a NON-STALE review (no duplicate reviews), OR
   //   - any review for this session is currently running (no concurrency).
+  // A stale last-turn review (its turn changed after it ran) does NOT disable the button — re-running
+  // is the explicit refresh path the stale notice points the user to.
   const isRequestReviewDisabled = useReviewStore((state) => {
     if (!activeSessionId) return true
     if (!activeSession) return true
@@ -229,8 +231,13 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     if (isReviewing) return true
     const reviews = state.reviewsBySession[activeSessionId]
     if (reviews) {
-      const hasReviewForLastTurn = reviews.some((r) => r.turnMessageId === lastAgentMessage.id)
-      if (hasReviewForLastTurn) return true
+      // Newest-first, so find() returns the most recent review for the last turn. Only a fresh,
+      // completed verdict blocks a new review; a stale one (turn changed) or an errored one must stay
+      // retriable so the user isn't stuck without any review entry point.
+      const lastTurnReview = reviews.find((r) => r.turnMessageId === lastAgentMessage.id)
+      if (lastTurnReview && lastTurnReview.lifecycle === 'complete' && !lastTurnReview.stale) {
+        return true
+      }
     }
     return false
   })
@@ -730,7 +737,8 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
 
     if (!request) return
 
-    void window.api.reviewer.run(request)
+    // Explicit user action: bypass main's auto-only per-turn idempotency so a manual review always runs.
+    void window.api.reviewer.run({ ...request, origin: 'manual' })
   }
 
   // Revokes one always-allow grant for the visible session; new conversations have no grants.

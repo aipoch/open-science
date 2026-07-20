@@ -8,6 +8,7 @@ import { ArtifactFileIcon } from './artifact-file-icon'
 import { fuzzyScore, type FuzzyMatch } from './fuzzy-match'
 import { HighlightedText } from './HighlightedText'
 import { buildProjectFileLibrary } from '../project-files-library'
+import { useProjectArtifactFiles } from '../use-project-artifact-files'
 
 // The reference passed back to the composer when an artifact row is picked.
 export type PickedArtifact = {
@@ -46,12 +47,14 @@ export const ArtifactMentionPopup = ({
 }: ArtifactMentionPopupProps): React.JSX.Element | null => {
   const sessions = useSessionStore((state) => state.sessions)
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
+  const diskArtifacts = useProjectArtifactFiles(activeProjectId)
   const listboxId = useId()
 
-  // Derive the project's artifact library the same way the Files panel does: uploads then outputs.
+  // Derive the project's artifact library the same way the Files panel does: uploads then outputs, plus
+  // orphaned on-disk files so a deleted session's artifacts stay referenceable via `@`.
   const rows = useMemo<ArtifactRow[]>(() => {
     const projectSessions = sessions.filter((session) => session.projectId === activeProjectId)
-    const library = buildProjectFileLibrary(projectSessions)
+    const library = buildProjectFileLibrary(projectSessions, diskArtifacts)
 
     const uploadRows: ArtifactRow[] = library.uploadFiles.map((file) => ({
       id: file.id,
@@ -76,7 +79,7 @@ export const ArtifactMentionPopup = ({
     )
 
     return [...uploadRows, ...artifactRows]
-  }, [sessions, activeProjectId])
+  }, [sessions, activeProjectId, diskArtifacts])
 
   // Fuzzy-match the query against each filename, ranked best-first. Ranking happens within each section
   // so uploads still render before outputs — the flat highlight index depends on that order. Empty

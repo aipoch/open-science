@@ -43,13 +43,26 @@ const hashContent = (value: unknown): string =>
   createHash('sha256').update(stableStringify(value)).digest('hex')
 
 // Hashes only the durable, reviewer-relevant fields of a message so cosmetic/runtime churn does not
-// invalidate a locator, while any change to what the agent actually said or produced does.
-const hashMessage = (message: PersistedChatMessage): string =>
-  hashContent({
+// invalidate a locator, while any change to what the agent actually said or produced does. When
+// artifact digests are supplied, each referenced artifact's current content digest is folded in so an
+// external edit to a generated file invalidates this block's hash (and any finding locator anchored to
+// it) — the id alone never pinned the bytes. Messages with no artifacts keep their prior hash exactly,
+// so existing locators stay valid across this change.
+const hashMessage = (
+  message: PersistedChatMessage,
+  artifactDigests: ReadonlyMap<string, string>
+): string => {
+  const artifactIds = [...(message.artifactIds ?? [])].sort()
+
+  return hashContent({
     role: message.role,
     content: message.content,
-    artifactIds: [...(message.artifactIds ?? [])].sort()
+    artifactIds,
+    ...(artifactIds.length > 0
+      ? { artifactDigests: artifactIds.map((id) => artifactDigests.get(id) ?? null) }
+      : {})
   })
+}
 
 // Hashes the execution record of a tool activity — the ground truth the reviewer compares claims against.
 const hashActivity = (activity: PersistedToolActivity): string =>
@@ -100,7 +113,8 @@ const isUserMessage = (item: TurnItem): boolean =>
 // from other turns are never included. An unknown id yields an empty scope so callers can no-op safely.
 export const resolveTurnScope = (
   session: PersistedChatSession,
-  turnMessageId: string
+  turnMessageId: string,
+  artifactDigests: ReadonlyMap<string, string> = new Map()
 ): TurnScope => {
   const items = buildOrderedItems(session)
   const targetIndex = items.findIndex((item) => item.sourceId === turnMessageId)
@@ -126,7 +140,10 @@ export const resolveTurnScope = (
     kind: item.kind,
     sourceId: item.sourceId,
     blockIndex,
-    contentHash: item.kind === 'message' ? hashMessage(item.message) : hashActivity(item.activity)
+    contentHash:
+      item.kind === 'message'
+        ? hashMessage(item.message, artifactDigests)
+        : hashActivity(item.activity)
   }))
 
   const artifactVersionIds: string[] = []
@@ -138,4 +155,16 @@ export const resolveTurnScope = (
   }
 
   return { turnMessageId, blocks, artifactVersionIds }
+}
+
+// Reports whether a stored review scope no longer matches the freshly-resolved scope for the same turn.
+// A review is stale when any block it audited has since changed, disappeared, or was added — including
+// an artifact edit, which changes its producing message block's content hash (the digest is folded in
+// by resolveTurnScopeWithArtifactDigests). Used at load time so the UI can flag a review whose verdict
+// no longer describes the current turn instead of presenting a stale "No issues found" as current.
+export const isTurnScopeStale = (stored: TurnScope, current: TurnScope): boolean => {
+  const hashesOf = (scope: TurnScope): string =>
+    scope.blocks.map((block) => `${block.sourceId}:${block.contentHash}`).join('\n')
+
+  return hashesOf(stored) !== hashesOf(current)
 }

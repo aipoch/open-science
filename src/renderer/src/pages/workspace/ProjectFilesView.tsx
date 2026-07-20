@@ -24,6 +24,7 @@ import {
   type ProjectArtifactFileNode,
   type ProjectUploadFileNode
 } from './project-files-library'
+import { useProjectArtifactFiles } from './use-project-artifact-files'
 import {
   createPreviewFileItemFromArtifact,
   createPreviewFileItemFromUpload
@@ -388,7 +389,12 @@ const ProjectFilesView = (): React.JSX.Element => {
     () => allSessions.filter((session) => session.projectId === activeProjectId),
     [allSessions, activeProjectId]
   )
-  const library = useMemo(() => buildProjectFileLibrary(sessions), [sessions])
+  // On-disk artifacts include files whose owning session was deleted, surfaced as an "Orphaned" group.
+  const diskArtifacts = useProjectArtifactFiles(activeProjectId)
+  const library = useMemo(
+    () => buildProjectFileLibrary(sessions, diskArtifacts),
+    [sessions, diskArtifacts]
+  )
   const totalFileCount =
     library.uploadFiles.length +
     library.artifactGroups.reduce((total, group) => total + group.files.length, 0)

@@ -461,4 +461,68 @@ describe('review repository (integration)', () => {
     const others = stored.checks.filter((c) => c.claim !== 'ran 33 rows')
     expect(others.every((c) => c.reflagCount === 0)).toBe(true)
   })
+
+  it('rolls back the finding write when the version bump (touchReview) fails', async () => {
+    // Prove the atomicity guarantee: the finding mutation and the Review.updatedAt bump commit together
+    // or not at all. Use the REAL transaction (so rollback is real) but force the review.update inside
+    // it to throw, standing in for a version-bump failure after the finding write has been staged.
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-reviewer-'))
+    const realClient = createProjectDbClient(storageRoot)
+    await ensureProjectSchema(realClient)
+    client = realClient
+
+    // Client whose $transaction runs the real one but, once armed, hands the callback a tx whose
+    // review.update rejects — everything else (finding writes, $executeRaw) uses the real tx. Arming is
+    // deferred so the setup writes below (which also bump the version) succeed normally.
+    let failTouch = false
+    const failingClient = {
+      review: realClient.review,
+      finding: realClient.finding,
+      $executeRaw: realClient.$executeRaw.bind(realClient),
+      $transaction: ((callback: (tx: Record<string, unknown>) => Promise<unknown>) =>
+        realClient.$transaction((tx) => {
+          const txRecord = tx as unknown as {
+            review: { update: (...args: unknown[]) => Promise<unknown> }
+          }
+          return callback({
+            ...(tx as unknown as Record<string, unknown>),
+            review: {
+              ...txRecord.review,
+              update: (...args: unknown[]) =>
+                failTouch
+                  ? Promise.reject(new Error('touch failed'))
+                  : txRecord.review.update(...args)
+            }
+          })
+        })) as PrismaClient['$transaction']
+    } as unknown as PrismaClient
+
+    const repository = new ReviewRepository(() => Promise.resolve(failingClient))
+    const review = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-rollback',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+    await repository.addChecks(review.id, [
+      {
+        status: 'fail',
+        claim: 'ran 33 rows',
+        evidence: 'tool_result shows 0 rows',
+        locator: { blockRef: { blockIndex: 0 }, contentHash: 'h1' },
+        sortIndex: 0
+      }
+    ])
+
+    // The reflag increment + touchReview run in one transaction; the forced touch failure rejects it.
+    failTouch = true
+    await expect(repository.incrementReflagCount(review.id, 'ran 33 rows')).rejects.toThrow(
+      /touch failed/
+    )
+    failTouch = false
+
+    // Read back with the real client: the reflag increment was rolled back (still 0), not left partial.
+    const [stored] = await repository.getReviewsForSession('session-rollback')
+    expect(stored.checks[0]!.reflagCount).toBe(0)
+  })
 })

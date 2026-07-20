@@ -1,6 +1,6 @@
 import type { AcpRuntimeEvent, AcpPermissionRequest } from '../../../../shared/acp'
 import type { ArtifactFile, FinalizeRunArtifactsRequest } from '../../../../shared/artifacts'
-import type { ReviewRunRequest } from '../../../../shared/reviewer'
+import type { ReviewRunNotStartedReason, ReviewRunRequest } from '../../../../shared/reviewer'
 import { createPreviewFileItem } from '../../pages/workspace/preview-file-item'
 import { getPreviewFormatForFile } from '../../pages/workspace/preview-support'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
@@ -97,6 +97,26 @@ const assembleReviewRunRequest = (sessionId: string): ReviewRunRequest | undefin
   }
 }
 
+// Bounded retry for a started:false auto-review. A brand-new session is persisted through an async
+// queue, but this fires the instant the first turn stops — so main's disk load can momentarily miss
+// the session and report started:false. Since main treats not-found as "release the lock, no row",
+// a retry is safe: it either catches the now-flushed session, hits a genuine dedup/deletion (stays
+// false, we give up), or succeeds. Without it, the first turn of a new session is silently un-reviewed.
+const AUTO_REVIEW_START_ATTEMPTS = 4
+const AUTO_REVIEW_RETRY_DELAY_MS = 400
+
+// Only these started:false reasons are retried — both are transient, create no Review row, and hold no
+// in-flight lock, so a retry cannot double-run a turn. 'already-in-flight' and 'run-failed' are omitted
+// deliberately (see ReviewRunNotStartedReason): retrying them risks a duplicate review or is pointless.
+const RETRYABLE_START_FAILURE_REASONS = new Set<ReviewRunNotStartedReason>([
+  'not-found',
+  'load-failed',
+  // The main-side idempotency lookup threw (fail-closed, no run started) — retry re-runs the check.
+  'idempotency-check-failed'
+])
+
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
 // Triggers a background auto-review for the just-completed turn when autoReviewEnabled is on. The
 // default is off, so a session is auto-reviewed only when the switch was explicitly turned on. Uses
 // the shared assembleReviewRunRequest helper so the auto and manual paths pick the same turn and
@@ -123,7 +143,22 @@ const triggerAutoReview = async (sessionId: string): Promise<void> => {
 
     if (!request) return
 
-    await window.api.reviewer.run(request)
+    // Retry a started:false a bounded number of times, but ONLY for reasons a persistence race can
+    // produce (the session may not be flushed to disk yet). Every other reason is terminal for the auto
+    // path: 'already-in-flight' / 'already-reviewed' mean the turn is (being) handled, 'run-failed' is a
+    // genuine failure for the user's manual Re-run — and a bridge that returns nothing is treated done.
+    //
+    // Idempotency across the whole retry task is enforced by MAIN, not here: it reserves the in-flight
+    // key synchronously and, for origin='auto', refuses a turn that already has a review. So even if
+    // another entry starts and finishes during our delay (releasing the lock), the next attempt reaches
+    // main and comes back 'already-reviewed' rather than launching a duplicate. A renderer-local store
+    // check could only race that cross-process window, so we rely on main's verdict.
+    for (let attempt = 0; attempt < AUTO_REVIEW_START_ATTEMPTS; attempt++) {
+      const result = await window.api.reviewer.run({ ...request, origin: 'auto' })
+      if (result?.started !== false) return
+      if (!result.reason || !RETRYABLE_START_FAILURE_REASONS.has(result.reason)) return
+      if (attempt < AUTO_REVIEW_START_ATTEMPTS - 1) await delay(AUTO_REVIEW_RETRY_DELAY_MS)
+    }
   } catch {
     // Reviewer errors must never surface to the main session.
   }

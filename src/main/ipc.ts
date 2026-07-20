@@ -191,9 +191,9 @@ const registerIpcHandlers = async ({
     current: undefined
   }
   const moleculePreviewHandler = createMoleculePreviewHandler({
-    writeArtifactForCurrentRun: (input) => {
+    writeArtifactForCurrentRun: (sessionId, input) => {
       if (!runtimeRef.current) throw new Error('Artifact runtime is not initialized.')
-      return runtimeRef.current.writeArtifactForCurrentRun(input)
+      return runtimeRef.current.writeArtifactForCurrentRun(sessionId, input)
     }
   })
   const connectorService = new ConnectorService({
@@ -292,7 +292,9 @@ const registerIpcHandlers = async ({
     getActivePromptSessions: () => runtime.getActivePromptSessions(),
     settingsService
   })
-  registerArtifactIpcHandlers(artifactRepository, artifactRunRegistry)
+  registerArtifactIpcHandlers(artifactRepository, artifactRunRegistry, () =>
+    runtimeRef.current ? runtimeRef.current.getActiveArtifactRunIds() : []
+  )
   registerUploadIpcHandlers(uploadRepository)
   registerSessionPersistenceIpcHandlers(sessionRepository, undefined, (sessionId) =>
     uploadRepository.deleteSessionUploads(sessionId)

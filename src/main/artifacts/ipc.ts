@@ -3,8 +3,10 @@ import { ipcMain, shell } from 'electron'
 import type { ArtifactFile, ArtifactPreviewResult } from '../../shared/artifacts'
 import type {
   FinalizeRunArtifactsRequest,
+  ListProjectArtifactsRequest,
   OpenArtifactFileRequest,
-  ReadArtifactPreviewRequest
+  ReadArtifactPreviewRequest,
+  ReconcilePendingArtifactsRequest
 } from '../../shared/artifacts'
 import { resolveDataRoot } from '../storage-root'
 import { withDataRootWrite } from '../storage/migration-state'
@@ -13,12 +15,17 @@ import { ArtifactRunRegistry } from './run-registry'
 
 type ArtifactHandlers = {
   finalizeRunArtifacts: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
+  listProjectFiles: (request: ListProjectArtifactsRequest) => Promise<ArtifactFile[]>
+  reconcilePendingArtifacts: (request: ReconcilePendingArtifactsRequest) => Promise<ArtifactFile[]>
   openFile: (request: OpenArtifactFileRequest) => Promise<void>
   readPreview: (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
 }
 
 type ArtifactHandlerDependencies = {
   openPath?: (path: string) => Promise<string>
+  // Run ids of turns in flight right now (live runtime state). Their pending files are still being
+  // written, so the orphan scan excludes them; a crashed run is absent here and correctly surfaces.
+  getActiveArtifactRunIds?: () => string[]
 }
 
 // Serializes finalization per claim so duplicate renderer event processing cannot move files twice.
@@ -59,6 +66,13 @@ const createArtifactHandlers = (
   const finalizeLocks = new Map<string, Promise<void>>()
   const openPath =
     dependencies.openPath ?? ((filePath: string): Promise<string> => shell.openPath(filePath))
+  const getActiveArtifactRunIds = dependencies.getActiveArtifactRunIds ?? ((): string[] => [])
+
+  // A pending run must be treated as in-flight (not orphaned) for its whole lifecycle: while the prompt
+  // runs (getActiveArtifactRunIds), AND after stop while its claim awaits the renderer's finalize call
+  // (runRegistry unfinalized claims) — the run leaves the runtime's active set at stop, before finalize.
+  const inFlightRunIds = (): Set<string> =>
+    new Set([...getActiveArtifactRunIds(), ...runRegistry.getUnfinalizedRunIds()])
 
   return {
     finalizeRunArtifacts: (request) =>
@@ -67,6 +81,10 @@ const createArtifactHandlers = (
           finalizeRunArtifacts(repository, runRegistry, request)
         )
       ),
+    listProjectFiles: (request) =>
+      repository.listProjectArtifacts(request.projectName, inFlightRunIds()),
+    reconcilePendingArtifacts: (request) =>
+      withDataRootWrite(() => repository.reconcilePendingArtifactPaths(request)),
     openFile: async (request) => {
       // Resolve through the repository first so shell.openPath never sees unmanaged locations.
       const filePath = await repository.resolveManagedFilePath(request)
@@ -123,12 +141,21 @@ const createDefaultArtifactRepository = (): ArtifactRepository =>
 // Registers the renderer-visible artifact commands without exposing internal message-file listing.
 const registerArtifactIpcHandlers = (
   repository = createDefaultArtifactRepository(),
-  runRegistry = new ArtifactRunRegistry()
+  runRegistry = new ArtifactRunRegistry(),
+  getActiveArtifactRunIds?: () => string[]
 ): void => {
-  const handlers = createArtifactHandlers(repository, runRegistry)
+  const handlers = createArtifactHandlers(repository, runRegistry, { getActiveArtifactRunIds })
 
   ipcMain.handle('artifacts:finalize-run', (_event, request: FinalizeRunArtifactsRequest) =>
     handlers.finalizeRunArtifacts(request)
+  )
+  ipcMain.handle('artifacts:list-project-files', (_event, request: ListProjectArtifactsRequest) =>
+    handlers.listProjectFiles(request)
+  )
+  ipcMain.handle(
+    'artifacts:reconcile-pending',
+    (_event, request: ReconcilePendingArtifactsRequest) =>
+      handlers.reconcilePendingArtifacts(request)
   )
   ipcMain.handle('artifacts:open-file', (_event, request: OpenArtifactFileRequest) =>
     handlers.openFile(request)
