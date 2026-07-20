@@ -14,12 +14,6 @@ const sentWindows: {
 }[] = []
 const appRelaunch = vi.fn()
 const appExit = vi.fn()
-const electronApp = {
-  getPath: () => electronHome.path,
-  isPackaged: true,
-  relaunch: appRelaunch,
-  exit: appExit
-}
 // Home is mutable so a few tests can point it at a real temp dir (legacy-in-place detection reads
 // the config root under home); it defaults to /home/user so every other test is unaffected.
 const electronHome = { path: '/home/user' }
@@ -32,7 +26,7 @@ vi.mock('electron', () => ({
   },
   BrowserWindow: { getAllWindows: () => sentWindows },
   dialog: { showOpenDialog: (...args: unknown[]) => showOpenDialog(...args) },
-  app: electronApp
+  app: { getPath: () => electronHome.path, isPackaged: true, relaunch: appRelaunch, exit: appExit }
 }))
 
 const { initDataRoot } = await import('../storage-root')
@@ -98,7 +92,6 @@ let target: string
 
 beforeEach(async () => {
   handlers.clear()
-  electronApp.isPackaged = true
   showOpenDialog.mockReset()
   appRelaunch.mockClear()
   appExit.mockClear()
@@ -830,22 +823,6 @@ describe('storage IPC handlers', () => {
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target)
     expect(deps.settingsService.markOnboardingComplete).not.toHaveBeenCalled()
     expect(deps.relaunch).toHaveBeenCalledTimes(1)
-  })
-
-  it('exits without app.relaunch in development so electron-vite keeps no orphan renderer', async () => {
-    electronApp.isPackaged = false
-    const devTarget = join(targetParent, 'OpenScience-DEV')
-    initDataRoot(dataRoot)
-    const deps = fakeDeps({ relaunch: undefined })
-    registerStorageIpcHandlers(deps)
-
-    await expect(
-      invoke('storage:set-data-root-and-relaunch', { parent: targetParent })
-    ).resolves.toEqual({ ok: true })
-
-    expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(devTarget)
-    expect(appRelaunch).not.toHaveBeenCalled()
-    expect(appExit).toHaveBeenCalledWith(0)
   })
 
   it('set-data-root-and-relaunch creates the derived target directory for a fresh empty folder', async () => {

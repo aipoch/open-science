@@ -274,14 +274,6 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
       return
     }
     await shutdownBackends({ runtime: deps.runtime, notebook: deps.notebook })
-    // electron-vite exits its dev server when its Electron child closes. app.relaunch() therefore
-    // opens a replacement window after the renderer server has gone away, leaving it permanently
-    // blank. End the development run cleanly instead; start `npm run dev` again to load the new
-    // data-root configuration. Packaged apps retain Electron's normal automatic relaunch.
-    if (!app.isPackaged) {
-      app.exit(0)
-      return
-    }
     app.relaunch()
     app.exit(0)
   }
