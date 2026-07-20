@@ -972,6 +972,51 @@ describe('ComputeService.listDir', () => {
     expect(err.remoteFsError?.retry_after_user_action).toBe(true)
   })
 
+  // Regression guard for the "silent fallback to $HOME" bug: the remote command must abort on a
+  // failed `cd` (nonzero exit) rather than swallowing it with `|| true`, and must NOT fold cd's
+  // stderr into stdout (`2>&1`) — stderr has to reach classifyRemoteError intact.
+  it('builds a remote command that aborts on cd failure and preserves cd stderr', async () => {
+    const runMock = vi.fn(() =>
+      Promise.resolve({
+        exitCode: 0,
+        stdout: buildListDirStdout('/path', '/home/user', ''),
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+    )
+    const runner: SshRunner = { run: runMock }
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo)
+
+    await service.listDir('ssh:biowulf', '/path')
+
+    const remoteCmd = (runMock.mock.calls[0] as unknown as [unknown, string])?.[1]
+    expect(remoteCmd).toContain('cd ')
+    expect(remoteCmd).toContain('|| exit 1')
+    // The bug lived here: `|| true` swallowed the failure and `2>&1` hid the reason.
+    expect(remoteCmd).not.toContain('|| true')
+    expect(remoteCmd).not.toContain('cd "/path" 2>&1')
+  })
+
+  // End-to-end of the fix: when `cd` into a nonexistent dir fails, the remote shell exits nonzero
+  // with cd's stderr — this must throw (not_found), never silently list $HOME.
+  it('throws not_found when cd into a nonexistent path fails', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 1,
+      // realpath echoed the raw path to stdout, then cd failed to stderr and `exit 1` aborted.
+      stdout: '/no/such/path\n',
+      stderr: 'bash: line 2: cd: /no/such/path: No such file or directory',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo)
+
+    const err = await service.listDir('ssh:biowulf', '/no/such/path').catch((e) => e)
+    expect(err.remoteFsError?.remoteKind).toBe('not_found')
+  })
+
   it('throws when the host does not exist', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,

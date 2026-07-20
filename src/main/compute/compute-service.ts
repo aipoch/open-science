@@ -399,10 +399,15 @@ export class ComputeService {
     // Stdout format: <resolvedPath>\n<home>\n<find_output>
     // %Y = file type following symlinks (d for dir, f for file, l for broken symlink, etc.)
     // %s = size in bytes; %T@ = mtime as float seconds; %f = filename (last component)
+    //
+    // `cd … || exit 1` is deliberate: a nonexistent / inaccessible path must surface a real
+    // error (nonzero exit + cd's stderr) rather than silently falling back to listing $HOME.
+    // We keep cd's stderr intact (no `2>&1`) so classifyRemoteError can distinguish
+    // not_found ("no such file or directory") from permission ("permission denied").
     const quotedPath = JSON.stringify(path)
     const remoteCmd = [
       `realpath ${quotedPath} 2>/dev/null || echo ${quotedPath}`,
-      `cd ${quotedPath} 2>&1 || true`,
+      `cd ${quotedPath} || exit 1`,
       'echo "$HOME"',
       `find . -maxdepth 1 -mindepth 1 -printf '%Y\\t%s\\t%T@\\t%f\\0' 2>/dev/null`
     ].join('\n')
