@@ -84,24 +84,36 @@ const fileExtension = (name: string): string => {
 // (Browsers/OSes emit application/octet-stream for unrecognized types, including plain-text data files.)
 const GENERIC_MIME_TYPES = new Set(['application/octet-stream', 'binary/octet-stream'])
 
+// The lower-cased MIME essence (type/subtype) with any parameters and casing stripped, or undefined when
+// none was given. A real MIME arrives as `Text/CSV` or `application/json; charset=utf-8`, so every
+// comparison must run against this — not the raw string — or a valid text MIME reads as a concrete binary.
+const mimeEssence = (mimeType?: string): string | undefined => {
+  const essence = mimeType?.split(';', 1)[0]?.trim().toLowerCase()
+
+  return essence ? essence : undefined
+}
+
 // True when the file can be read as UTF-8 text. An explicit text MIME wins; an explicit *non-text*,
 // non-generic MIME (e.g. application/gzip, image/png) loses outright so a gzipped `.fastq` is never
 // treated as text. Only a missing or generic MIME defers to the known-text extension list.
 export const isTextLikeAttachment = (name: string, mimeType?: string): boolean => {
-  if (mimeType?.startsWith('text/') || mimeType === 'application/json') return true
-  if (mimeType === 'application/xml' || mimeType === 'application/x-ndjson') return true
+  const essence = mimeEssence(mimeType)
 
-  const normalizedMime = mimeType?.trim().toLowerCase()
+  if (essence?.startsWith('text/')) return true
+  if (essence === 'application/json' || essence === 'application/xml') return true
+  if (essence === 'application/x-ndjson') return true
 
   // A concrete non-text MIME is authoritative — do not second-guess it from the extension.
-  if (normalizedMime && !GENERIC_MIME_TYPES.has(normalizedMime)) return false
+  if (essence && !GENERIC_MIME_TYPES.has(essence)) return false
 
   return TEXT_LIKE_EXTENSIONS.has(fileExtension(name))
 }
 
 // True when the file is column-oriented (drives the rows/columns wording in the oversized notice).
 export const isTabularAttachment = (name: string, mimeType?: string): boolean => {
-  if (mimeType === 'text/csv' || mimeType === 'text/tab-separated-values') return true
+  const essence = mimeEssence(mimeType)
+
+  if (essence === 'text/csv' || essence === 'text/tab-separated-values') return true
 
   return TABULAR_EXTENSIONS.has(fileExtension(name))
 }

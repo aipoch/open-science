@@ -44,6 +44,14 @@ describe('isTextLikeAttachment', () => {
     expect(isTextLikeAttachment('data.csv', 'binary/octet-stream')).toBe(true)
     expect(isTextLikeAttachment('archive.zip', 'application/octet-stream')).toBe(false)
   })
+
+  it('normalizes MIME casing and parameters before classifying', () => {
+    expect(isTextLikeAttachment('data.csv', 'Text/CSV')).toBe(true)
+    expect(isTextLikeAttachment('data.json', 'application/json; charset=utf-8')).toBe(true)
+    expect(isTextLikeAttachment('notes.txt', 'TEXT/PLAIN')).toBe(true)
+    // A generic MIME with a parameter still defers to the extension.
+    expect(isTextLikeAttachment('data.csv', 'application/octet-stream; charset=binary')).toBe(true)
+  })
 })
 
 describe('isTabularAttachment', () => {
@@ -56,6 +64,10 @@ describe('isTabularAttachment', () => {
   it('does not treat plain text or JSON as tabular', () => {
     expect(isTabularAttachment('notes.txt')).toBe(false)
     expect(isTabularAttachment('config.json')).toBe(false)
+  })
+
+  it('normalizes MIME casing and parameters', () => {
+    expect(isTabularAttachment('x', 'Text/CSV; charset=utf-8')).toBe(true)
   })
 })
 
