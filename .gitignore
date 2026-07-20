@@ -5,6 +5,8 @@ node_modules
 # Build outputs
 dist/
 out/
+dist-e2e-mac/
+dist-e2e-win/
 release/
 
 # Test coverage reports
@@ -91,3 +93,14 @@ dist-win-artifact/
 .scratch/
 
 .worktreeinclude
+
+# Per-platform micromamba is staged by CI at build time (electron-builder extraResources), never committed.
+resources/bin/
+
+# Offline default-env bundle (locks + ~350MB pkgs cache) is produced by `npm run stage-default-envs`
+# before packaging and published to the CDN; staged at build time, never committed.
+resources/default-envs/
+
+# Python bytecode cache generated when the notebook kernel loop scripts are imported/run locally.
+__pycache__/
+*.pyc

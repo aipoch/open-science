@@ -11,8 +11,14 @@ export default defineConfig(
       '**/node_modules',
       '**/dist',
       '**/out',
+      // Packaged e2e build output (electron-builder --dir into dist-e2e-*); bundled JS, not source.
+      '**/dist-e2e-*',
+      // Runtime kernel loop scripts shipped as raw resources (CommonJS, not part of the TS source tree).
+      'resources/notebook/*.js',
       // Git worktrees live under .claude/worktrees and hold full source copies; don't lint duplicates.
       '**/.claude/**',
+      // Local subagent scratch (ledgers, briefs, ad-hoc demo scripts) — never shipped.
+      '**/.superpowers/**',
       // Keep official shadcn registry output unmodified; local adaptations live in wrappers.
       'src/renderer/src/components/ui/message-scroller.tsx'
     ]
