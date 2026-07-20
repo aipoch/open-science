@@ -378,17 +378,18 @@ class ArtifactRepository {
     return { artifactSessionId, runId }
   }
 
-  // Enumerates every finalized artifact on disk for one project, across all sessions and messages —
-  // including sessions whose metadata has since been deleted. Skips pending runs and sidecar metadata.
-  // Used to surface orphaned artifacts whose owning session no longer exists, so deleting a session or
-  // project never strands files that the user was promised would remain in the project.
+  // Enumerates every artifact on disk for one project, across all sessions — finalized files under
+  // message directories, plus files a crashed turn left behind in `.pending/<run>/` with no owning
+  // message (which startup reconciliation cannot claim). Skips sidecar metadata and the current-run
+  // handoff. Used to surface orphaned artifacts whose owning session/message no longer exists, so a
+  // delete or a mid-turn crash never strands files that the user was promised would remain.
   async listProjectArtifacts(projectName: string): Promise<ArtifactFile[]> {
     const project = assertSafePathSegment(projectName)
     const projectDir = getProjectArtifactDir(this.storageRoot, project)
     const files: ArtifactFile[] = []
 
     // Session and message dirs use safe segments; the pattern also skips the `.pending`/`.metadata`
-    // dot-directories, so only real session/message directories are traversed.
+    // dot-directories, so only real session/message directories are traversed here.
     for (const sessionId of await this.readSubdirectoryNames(projectDir)) {
       if (!SAFE_SEGMENT_PATTERN.test(sessionId)) continue
       const sessionDir = join(projectDir, sessionId)
@@ -396,9 +397,8 @@ class ArtifactRepository {
       for (const messageId of await this.readSubdirectoryNames(sessionDir)) {
         if (!SAFE_SEGMENT_PATTERN.test(messageId)) continue
         const messageDir = join(sessionDir, messageId)
-        const entries = await this.readFileEntries(messageDir)
 
-        for (const entry of entries) {
+        for (const entry of await this.readFileEntries(messageDir)) {
           const metadata = await this.readArtifactMetadata(messageDir, entry.name)
 
           files.push(
@@ -408,6 +408,31 @@ class ArtifactRepository {
               messageId,
               filename: entry.name,
               filePath: join(messageDir, entry.name),
+              mimeType: metadata.mimeType
+            })
+          )
+        }
+      }
+
+      // Ownerless pending files: a turn that crashed before the renderer attached its artifacts leaves
+      // files here with no message to reconcile against, so surface them rather than hide them forever.
+      // Only `.pending/<run>/` subdirectories hold artifacts; the `current-run.json` handoff is a plain
+      // file and is skipped by the subdirectory walk.
+      const pendingDir = join(sessionDir, PENDING_DIR)
+      for (const runId of await this.readSubdirectoryNames(pendingDir)) {
+        if (!SAFE_SEGMENT_PATTERN.test(runId)) continue
+        const runDir = join(pendingDir, runId)
+
+        for (const entry of await this.readFileEntries(runDir)) {
+          const metadata = await this.readArtifactMetadata(runDir, entry.name)
+
+          files.push(
+            await this.createArtifactFile({
+              projectName: project,
+              sessionId,
+              runId,
+              filename: entry.name,
+              filePath: join(runDir, entry.name),
               mimeType: metadata.mimeType
             })
           )
@@ -483,10 +508,13 @@ class ArtifactRepository {
       const projectDir = dirname(sourceSessionDir)
       const candidate = join(projectDir, marker.sessionId, marker.messageId, filename)
       const candidateStat = await stat(candidate).catch(() => undefined)
-      if (candidateStat?.isFile()) return candidate
+      // A marker pins the exact run→message this file finalized into. If that file is gone (the run's
+      // artifact was deleted), the artifact no longer exists — never fall back to a same-named file from
+      // a different run. The newest-mtime scan below is only for legacy artifacts that have no marker.
+      return candidateStat?.isFile() ? candidate : undefined
     }
 
-    // Legacy fallback: no (or stale) marker. Scan the session's message dirs for the newest same name.
+    // Legacy fallback: no marker exists. Scan the session's message dirs for the newest same name.
     const entries = await readdir(sourceSessionDir, { withFileTypes: true }).catch(() => null)
     if (!entries) return undefined
 

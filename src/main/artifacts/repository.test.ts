@@ -8,12 +8,16 @@ import {
   rm,
   writeFile
 } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type { ArtifactWriteSource } from '../../shared/artifacts'
-import { ArtifactRepository, getProjectArtifactDir } from './repository'
+import {
+  ArtifactRepository,
+  getArtifactCurrentRunFilePath,
+  getProjectArtifactDir
+} from './repository'
 
 let storageRoot: string | undefined
 
@@ -346,6 +350,54 @@ describe('artifact repository', () => {
     expect(preview.content).toContain('run-a-content')
   })
 
+  it('never falls back to another run when a marker exists but its target file is gone', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+
+    // Same two-run setup, but run A's finalized file is deleted afterward (e.g. by the user). A marker
+    // for run A still exists, so recovery must NOT fall back to run B's same-named file — the artifact
+    // is simply gone.
+    await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'run-a',
+      filename: 'report.csv',
+      source: createInlineSource('run-a-content')
+    })
+    await repository.finalizeRunArtifacts({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'run-a',
+      messageId: 'message-a'
+    })
+    await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'run-b',
+      filename: 'report.csv',
+      source: createInlineSource('run-b-content')
+    })
+    await repository.finalizeRunArtifacts({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'run-b',
+      messageId: 'message-b'
+    })
+
+    await rm(join(root, 'artifacts', 'default-project', 'session-1', 'message-a', 'report.csv'))
+
+    const pendingPathA = join(
+      root,
+      'artifacts',
+      'default-project',
+      'session-1',
+      '.pending',
+      'run-a',
+      'report.csv'
+    )
+    await expect(repository.resolveManagedFilePath({ path: pendingPathA })).rejects.toThrow()
+  })
+
   it('falls back to a newest-mtime scan when no run marker exists (legacy artifacts)', async () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)
@@ -632,19 +684,44 @@ describe('artifact repository', () => {
       runId: 'run-2',
       messageId: 'message-2'
     })
-    // A never-finalized pending file must not be listed as a project artifact.
+    const files = await repository.listProjectArtifacts('default-project')
+
+    expect(files.map((file) => file.name).sort()).toEqual(['alpha.txt', 'beta.txt'])
+    expect(files.map((file) => file.sessionId).sort()).toEqual(['session-1', 'session-2'])
+  })
+
+  it('surfaces ownerless pending files (crash before attach) as orphaned artifacts', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+
+    // A file written into a pending run whose turn crashed before the renderer attached it: no message
+    // owns it, so startup reconciliation cannot claim it. It must still be surfaced, not hidden forever.
     await repository.writePendingFile({
       projectName: 'default-project',
       sessionId: 'session-1',
-      runId: 'run-3',
+      runId: 'run-orphan',
       filename: 'draft.txt',
       source: createInlineSource('d')
     })
 
     const files = await repository.listProjectArtifacts('default-project')
 
-    expect(files.map((file) => file.name).sort()).toEqual(['alpha.txt', 'beta.txt'])
-    expect(files.map((file) => file.sessionId).sort()).toEqual(['session-1', 'session-2'])
+    expect(files.map((file) => file.name)).toEqual(['draft.txt'])
+    expect(files[0].runId).toBe('run-orphan')
+    expect(files[0].path).toContain('.pending')
+  })
+
+  it('does not list the current-run handoff file as an artifact', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+
+    // The handoff lives directly in `.pending/` (a file, not a run subdir), so the subdirectory walk
+    // must skip it — otherwise it would show up as a bogus orphaned artifact.
+    const handoff = getArtifactCurrentRunFilePath(root, 'default-project', 'session-1')
+    await mkdir(dirname(handoff), { recursive: true })
+    await writeFile(handoff, JSON.stringify({ runId: 'x' }), 'utf8')
+
+    await expect(repository.listProjectArtifacts('default-project')).resolves.toEqual([])
   })
 
   it('returns an empty list when a project has no artifacts on disk', async () => {
