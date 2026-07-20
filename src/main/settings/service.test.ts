@@ -29,6 +29,7 @@ const { getAppClaudeConfigDir } = await import('./provider-env')
 const { SkillRegistry } = await import('../skills/registry')
 const { managedClaudeDir } = await import('./managed-claude')
 const { managedOpencodeDir } = await import('./managed-opencode')
+const { netFetch } = await import('../skills/net-fetch')
 
 let storageRoot: string
 let repository: InstanceType<typeof SettingsRepository>
@@ -814,6 +815,43 @@ describe('SettingsService: skills', () => {
       'My Skill',
       'Demo'
     ])
+  })
+
+  // GitHub scan/import must go through the proxy-aware net.fetch, not Node's global fetch (which
+  // ignores the system/VPN proxy and gets a 403 in proxied environments). These lock the wiring so a
+  // regression back to the default fetch is caught.
+  it('imports a GitHub skill through the proxy-aware net.fetch', async () => {
+    const importFromGitHub = vi.fn().mockResolvedValue({ status: 'imported', id: 'imported-x' })
+    const service = new SettingsService({
+      repository,
+      storageRoot,
+      userClaudeDir: join(storageRoot, 'no-user-claude'),
+      skillRegistry: new SkillRegistry(await seedBundle()),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      userSkills: { importFromGitHub, list: () => Promise.resolve([]) } as any
+    })
+
+    await service.importSkill({ url: 'https://github.com/o/r/tree/main/skills/demo' })
+
+    expect(importFromGitHub).toHaveBeenCalledWith(
+      'https://github.com/o/r/tree/main/skills/demo',
+      netFetch
+    )
+  })
+
+  it('scans a GitHub repo through the proxy-aware net.fetch', async () => {
+    const scanRepo = vi.fn().mockResolvedValue([])
+    const service = new SettingsService({
+      repository,
+      storageRoot,
+      userClaudeDir: join(storageRoot, 'no-user-claude'),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      userSkills: { scanRepo } as any
+    })
+
+    await service.scanRepoSkills({ repo: 'o/r' })
+
+    expect(scanRepo).toHaveBeenCalledWith('o/r', netFetch)
   })
 })
 
