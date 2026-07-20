@@ -39,7 +39,7 @@ import type {
   DetailsAuthor,
   ProbeResult
 } from '../shared/compute'
-import type { DirListing } from '../shared/remote-fs'
+import type { DirListing, DownloadDest, LocalFile } from '../shared/remote-fs'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
   AppendNotebookCodeCellRequest,
@@ -320,6 +320,11 @@ type OpenScienceAPI = {
     concurrencySet: (providerId: string, limit: number) => Promise<void>
     // Lists a remote directory (browse experience).
     listDir: (providerId: string, path: string) => Promise<DirListing>
+    // Downloads a remote file to OS Downloads (os-downloads) or project artifact (artifact).
+    // Human-initiated downloads are NOT approval-gated — only the agent path (session-cache) is.
+    download: (providerId: string, remotePath: string, dest: DownloadDest) => Promise<LocalFile>
+    // Reveals a local file path in the OS file manager (Finder / Explorer).
+    revealInFolder: (filePath: string) => Promise<void>
     // Bookmark folders for the file browser Go-to/Pin feature, persisted in settings JSON.
     bookmarksGet: (providerId: string) => Promise<string[]>
     bookmarksSet: (providerId: string, folders: string[]) => Promise<void>
@@ -697,6 +702,10 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('compute:scratch:set', providerId, path) as Promise<void>,
     concurrencySet: (providerId, limit) =>
       ipcRenderer.invoke('compute:concurrency:set', providerId, limit) as Promise<void>,
+    download: (providerId, remotePath, dest) =>
+      ipcRenderer.invoke('compute:download', providerId, remotePath, dest) as Promise<LocalFile>,
+    revealInFolder: (filePath) =>
+      ipcRenderer.invoke('compute:reveal-in-folder', filePath) as Promise<void>,
     // Fires when a compute call needs user approval (runs before any SSH is made).
     onApprovalRequest: (listener: (request: ComputeApprovalRequest) => void) =>
       onIpcMessage<ComputeApprovalRequest>('compute:approval-request', listener),

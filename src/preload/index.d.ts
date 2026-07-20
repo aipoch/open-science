@@ -37,7 +37,7 @@ import type {
   DetailsAuthor,
   ProbeResult
 } from '../shared/compute'
-import type { DirListing } from '../shared/remote-fs'
+import type { DirListing, DownloadDest, LocalFile } from '../shared/remote-fs'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
   AppendNotebookCodeCellRequest,
@@ -304,6 +304,10 @@ interface OpenScienceAPI {
     respondApproval(request: { id: string; decision: ComputeApprovalDecision }): Promise<void>
     // Lists a remote directory (browse experience).
     listDir(providerId: string, path: string): Promise<DirListing>
+    // Downloads a remote file to OS Downloads or project artifact. No approval gate for UI actions.
+    download(providerId: string, remotePath: string, dest: DownloadDest): Promise<LocalFile>
+    // Reveals a local file path in the OS file manager (Finder / Explorer).
+    revealInFolder(filePath: string): Promise<void>
     // Bookmark folders for the file browser Go-to/Pin feature, persisted in settings JSON.
     bookmarksGet(providerId: string): Promise<string[]>
     bookmarksSet(providerId: string, folders: string[]): Promise<void>

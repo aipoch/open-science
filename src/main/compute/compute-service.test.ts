@@ -1,10 +1,16 @@
-import { describe, expect, it, vi } from 'vitest'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 
 import type { ComputeHost } from '../../shared/compute'
+import type { DownloadDest } from '../../shared/remote-fs'
 import { ComputeService, parseProbeOutput } from './compute-service'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeHostRepository } from './repository'
 import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
+import type { ScpRunner } from './scp-runner'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1119,5 +1125,194 @@ describe('ComputeService.appendDetails', () => {
     await expect(
       service.appendDetails('ssh:ghost', { text: 'hello', author: 'agent' })
     ).rejects.toThrow(/no compute host found/i)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ComputeService.download — fake SshRunner + fake ScpRunner
+// ---------------------------------------------------------------------------
+
+// Fake ScpRunner: returns a configurable result.
+const makeFakeScpRunner = (result: Awaited<ReturnType<ScpRunner['copy']>>): ScpRunner => ({
+  copy: vi.fn(() => Promise.resolve(result))
+})
+
+// Success scpRunner.
+const successScpRunner = makeFakeScpRunner({ exitCode: 0, stderr: '', timedOut: false })
+
+describe('ComputeService.download (os-downloads)', () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'cs-download-test-'))
+  })
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('downloads a file to os-downloads and returns LocalFile', async () => {
+    const runner = makeFakeRunner({ exitCode: 0, stdout: '1024', stderr: '', truncated: false, timedOut: false })
+    const { repo } = makeRepo()
+    // Fake the scpRunner to create the dest file so stat succeeds after transfer.
+    const scpRunner: ScpRunner = {
+      copy: vi.fn(async (_bin, args) => {
+        // args last element is local dest path
+        const localPath = args[args.length - 1] as string
+        await writeFile(localPath, 'x'.repeat(1024))
+        return { exitCode: 0, stderr: '', timedOut: false }
+      })
+    }
+    const service = new ComputeService(runner, repo, undefined, scpRunner, tmpDir)
+    const dest: DownloadDest = { kind: 'os-downloads' }
+
+    const result = await service.download('ssh:biowulf', '/remote/data.csv', dest)
+
+    expect(result.name).toBe('data.csv')
+    expect(result.size).toBe(1024)
+    expect(result.path).toContain('data.csv')
+    expect(result.mimeType).toBe('text/csv')
+  })
+
+  it('renames colliding file with (1) suffix', async () => {
+    const runner = makeFakeRunner({ exitCode: 0, stdout: '100', stderr: '', truncated: false, timedOut: false })
+    const { repo } = makeRepo()
+    // Pre-create the collision file.
+    await writeFile(join(tmpDir, 'data.csv'), 'existing')
+    const scpRunner: ScpRunner = {
+      copy: vi.fn(async (_bin, args) => {
+        const localPath = args[args.length - 1] as string
+        await writeFile(localPath, 'downloaded')
+        return { exitCode: 0, stderr: '', timedOut: false }
+      })
+    }
+    const service = new ComputeService(runner, repo, undefined, scpRunner, tmpDir)
+    const result = await service.download('ssh:biowulf', '/remote/data.csv', { kind: 'os-downloads' })
+
+    expect(result.name).toBe('data (1).csv')
+  })
+
+  it('throws too_large when stat says >2GiB', async () => {
+    const bigSize = 2 * 1024 * 1024 * 1024 + 1
+    const runner = makeFakeRunner({ exitCode: 0, stdout: `f ${bigSize}`, stderr: '', truncated: false, timedOut: false })
+    const { repo } = makeRepo()
+    const scpRunner: ScpRunner = {
+      copy: vi.fn(async () => ({ exitCode: 0, stderr: '', timedOut: false }))
+    }
+    const service = new ComputeService(runner, repo, undefined, scpRunner, tmpDir)
+
+    const err = await service.download('ssh:biowulf', '/remote/big.bin', { kind: 'os-downloads' }).catch(e => e)
+    expect(err.remoteFsError?.remoteKind).toBe('too_large')
+  })
+
+  it('throws connection error when scp fails with exit 255', async () => {
+    const runner = makeFakeRunner({ exitCode: 0, stdout: 'f 100', stderr: '', truncated: false, timedOut: false })
+    const { repo } = makeRepo()
+    const scpRunner = makeFakeScpRunner({ exitCode: 255, stderr: 'Connection refused', timedOut: false })
+    const service = new ComputeService(runner, repo, undefined, scpRunner, tmpDir)
+
+    const err = await service.download('ssh:biowulf', '/remote/data.csv', { kind: 'os-downloads' }).catch(e => e)
+    expect(err.remoteFsError?.remoteKind).toBe('connection')
+  })
+
+  it('throws when host is not found', async () => {
+    const runner = makeFakeRunner({ exitCode: 0, stdout: 'f 100', stderr: '', truncated: false, timedOut: false })
+    const { repo } = makeRepo(null)
+    const service = new ComputeService(runner, repo, undefined, successScpRunner, tmpDir)
+
+    await expect(
+      service.download('ssh:nonexistent', '/remote/data.csv', { kind: 'os-downloads' })
+    ).rejects.toThrow(/no compute host found/i)
+  })
+})
+
+describe('ComputeService.download (artifact)', () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'cs-artifact-test-'))
+  })
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('imports a file as artifact and returns LocalFile with provenance', async () => {
+    // stat command returns: is_file=1 size=4096
+    const runner = makeFakeRunner({ exitCode: 0, stdout: 'f 4096', stderr: '', truncated: false, timedOut: false })
+    const { repo } = makeRepo()
+    const scpRunner: ScpRunner = {
+      copy: vi.fn(async (_bin, args) => {
+        const localPath = args[args.length - 1] as string
+        await writeFile(localPath, 'x'.repeat(4096))
+        return { exitCode: 0, stderr: '', timedOut: false }
+      })
+    }
+    const service = new ComputeService(runner, repo, undefined, scpRunner, tmpDir)
+    const dest: DownloadDest = { kind: 'artifact', projectId: 'proj-1' }
+
+    const result = await service.download('ssh:biowulf', '/remote/results.csv', dest)
+
+    expect(result.name).toBe('results.csv')
+    expect(result.size).toBe(4096)
+    expect(result.mimeType).toBe('text/csv')
+    expect(result.artifactId).toBeDefined()
+  })
+
+  it('throws not_a_file when remote is empty (size=0)', async () => {
+    // stat returns size=0 → empty file rejected
+    const runner = makeFakeRunner({ exitCode: 0, stdout: 'f 0', stderr: '', truncated: false, timedOut: false })
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo, undefined, successScpRunner, tmpDir)
+
+    const err = await service.download('ssh:biowulf', '/remote/empty.csv', { kind: 'artifact', projectId: 'proj-1' }).catch(e => e)
+    expect(err.remoteFsError?.remoteKind).toBe('not_a_file')
+  })
+
+  it('throws too_large when remote file >50MB', async () => {
+    const bigSize = 50 * 1024 * 1024 + 1
+    const runner = makeFakeRunner({ exitCode: 0, stdout: `f ${bigSize}`, stderr: '', truncated: false, timedOut: false })
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo, undefined, successScpRunner, tmpDir)
+
+    const err = await service.download('ssh:biowulf', '/remote/big.csv', { kind: 'artifact', projectId: 'proj-1' }).catch(e => e)
+    expect(err.remoteFsError?.remoteKind).toBe('too_large')
+  })
+
+  it('throws outside_roots when path has glob chars', async () => {
+    const runner = makeFakeRunner({ exitCode: 0, stdout: 'f 100', stderr: '', truncated: false, timedOut: false })
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo, undefined, successScpRunner, tmpDir)
+
+    const err = await service.download('ssh:biowulf', '/remote/*.csv', { kind: 'artifact', projectId: 'proj-1' }).catch(e => e)
+    expect(err.remoteFsError?.remoteKind).toBe('outside_roots')
+  })
+
+  it('throws not_a_file when remote is a directory', async () => {
+    // stat returns type 'd'
+    const runner = makeFakeRunner({ exitCode: 0, stdout: 'd 4096', stderr: '', truncated: false, timedOut: false })
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo, undefined, successScpRunner, tmpDir)
+
+    const err = await service.download('ssh:biowulf', '/remote/mydir', { kind: 'artifact', projectId: 'proj-1' }).catch(e => e)
+    expect(err.remoteFsError?.remoteKind).toBe('not_a_file')
+  })
+
+  it('throws not_a_file if post-transfer re-stat detects size growth', async () => {
+    // Pre-transfer stat: 100 bytes; post-transfer actual file: 200 bytes (growth detected)
+    const runner = makeFakeRunner({ exitCode: 0, stdout: 'f 100', stderr: '', truncated: false, timedOut: false })
+    const { repo } = makeRepo()
+    const scpRunner: ScpRunner = {
+      copy: vi.fn(async (_bin, args) => {
+        const localPath = args[args.length - 1] as string
+        // Write more bytes than reported by pre-transfer stat (simulates growth during transfer)
+        await writeFile(localPath, 'x'.repeat(200))
+        return { exitCode: 0, stderr: '', timedOut: false }
+      })
+    }
+    const service = new ComputeService(runner, repo, undefined, scpRunner, tmpDir)
+
+    const err = await service.download('ssh:biowulf', '/remote/growing.csv', { kind: 'artifact', projectId: 'proj-1' }).catch(e => e)
+    expect(err.remoteFsError?.remoteKind).toBe('not_a_file')
   })
 })

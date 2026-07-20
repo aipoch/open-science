@@ -1,4 +1,4 @@
-// Remote file browser modal (compute-file-preview, issue 02).
+// Remote file browser modal (compute-file-preview, issue 02 + issue 03).
 // Opened from the ComputePanel host card folder-icon button (and later from the Files panel REMOTE
 // dropdown, issue 05). Presents a listbox-style directory listing with navigation, a detail panel for
 // selected files, and a Go-to dropdown with Scratch / Home / Pin / bookmarks.
@@ -8,6 +8,8 @@
 //   - Selecting a file does NOT trigger any remote content request
 //   - Transport = find -printf via exec SshRunner (no sftp, no ssh2)
 //   - Bookmarks persist in settings JSON (keyed by provider_id)
+//   - Download → OS Downloads via scp (issue 03); Add to project → artifact (issue 03)
+//   - Neither Download nor Add to project triggers an approval card (human actions, no gate)
 
 import {
   ArrowLeft,
@@ -15,6 +17,8 @@ import {
   Bookmark,
   ChevronDown,
   ClipboardCopy,
+  Download,
+  FolderOpen,
   Folder,
   File,
   MapPin,
@@ -29,6 +33,8 @@ import { resolveRemotePath, validateRemotePath } from '../../../../shared/remote
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
+import { useNavigationStore } from '@/stores/navigation-store'
+import { useProjectStore } from '@/stores/project-store'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -123,11 +129,23 @@ type DetailPanelProps = {
   entry: RemoteDirEntry
   // The resolved absolute path of the containing directory.
   resolvedDir: string
+  // The provider id for the host, used for download IPC calls.
+  providerId: string
+  // The project name to import into (undefined when no project is active).
+  activeProjectId?: string
   onClose: () => void
 }
 
-function DetailPanel({ entry, resolvedDir, onClose }: DetailPanelProps): React.JSX.Element {
+// Short-lived action status shown in the detail panel after Download / Add to project.
+type ActionStatus =
+  | { kind: 'idle' }
+  | { kind: 'loading'; action: 'download' | 'import' }
+  | { kind: 'success'; action: 'download' | 'import'; message: string; filePath?: string }
+  | { kind: 'error'; message: string }
+
+function DetailPanel({ entry, resolvedDir, providerId, activeProjectId, onClose }: DetailPanelProps): React.JSX.Element {
   const [copied, setCopied] = useState(false)
+  const [actionStatus, setActionStatus] = useState<ActionStatus>({ kind: 'idle' })
   const remoteAbsPath = `${resolvedDir.replace(/\/$/, '')}/${entry.name}`
 
   const copyPath = async (): Promise<void> => {
@@ -135,6 +153,54 @@ function DetailPanel({ entry, resolvedDir, onClose }: DetailPanelProps): React.J
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
   }
+
+  // Download → OS Downloads folder (no approval gate).
+  const handleDownload = async (): Promise<void> => {
+    setActionStatus({ kind: 'loading', action: 'download' })
+    try {
+      const result = await window.api.compute.download(providerId, remoteAbsPath, {
+        kind: 'os-downloads'
+      })
+      setActionStatus({
+        kind: 'success',
+        action: 'download',
+        message: `Saved to Downloads: ${result.name}`,
+        filePath: result.path
+      })
+    } catch (err) {
+      const e = err as Error & { remoteFsError?: { detail: string; remoteKind: string } }
+      const detail = e.remoteFsError?.detail ?? e.message ?? 'Download failed'
+      setActionStatus({ kind: 'error', message: detail })
+    }
+  }
+
+  // Reveal in Finder/Explorer after a successful download.
+  const handleReveal = (filePath: string): void => {
+    void window.api.compute.revealInFolder(filePath)
+  }
+
+  // Add to project → artifact (no approval gate).
+  const handleAddToProject = async (): Promise<void> => {
+    if (!activeProjectId) return
+    setActionStatus({ kind: 'loading', action: 'import' })
+    try {
+      await window.api.compute.download(providerId, remoteAbsPath, {
+        kind: 'artifact',
+        projectId: activeProjectId
+      })
+      setActionStatus({
+        kind: 'success',
+        action: 'import',
+        message: `Added ${entry.name} to project`
+      })
+    } catch (err) {
+      const e = err as Error & { remoteFsError?: { detail: string; remoteKind: string } }
+      const detail = e.remoteFsError?.detail ?? e.message ?? 'Import failed'
+      setActionStatus({ kind: 'error', message: detail })
+    }
+  }
+
+  const isLoading = actionStatus.kind === 'loading'
 
   return (
     <div className="flex w-52 shrink-0 flex-col border-l border-border">
@@ -168,6 +234,64 @@ function DetailPanel({ entry, resolvedDir, onClose }: DetailPanelProps): React.J
         <div className="rounded border border-dashed border-border bg-muted/30 px-3 py-4 text-center">
           <p className="text-xs text-muted-foreground">No preview · {formatSize(entry.size)}</p>
         </div>
+
+        {/* Action status banner */}
+        {actionStatus.kind === 'success' && (
+          <div className="rounded bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 px-2 py-1.5 text-xs text-emerald-700 dark:text-emerald-300 space-y-1">
+            <p>{actionStatus.message}</p>
+            {actionStatus.action === 'download' && actionStatus.filePath && (
+              <button
+                type="button"
+                className="underline text-xs"
+                onClick={() => handleReveal(actionStatus.filePath!)}
+              >
+                Show in Finder
+              </button>
+            )}
+          </div>
+        )}
+        {actionStatus.kind === 'error' && (
+          <div
+            role="alert"
+            className="rounded bg-destructive/10 border border-destructive/30 px-2 py-1.5 text-xs text-destructive"
+          >
+            {actionStatus.message}
+          </div>
+        )}
+
+        {/* Download → OS Downloads (no approval) */}
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          className="w-full gap-1.5 text-xs"
+          disabled={isLoading}
+          onClick={() => void handleDownload()}
+          aria-label="Download file to OS Downloads folder"
+        >
+          <Download className="size-3.5" />
+          {actionStatus.kind === 'loading' && actionStatus.action === 'download'
+            ? 'Downloading…'
+            : 'Download'}
+        </Button>
+
+        {/* Add to project → artifact (no approval) */}
+        {activeProjectId && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="w-full gap-1.5 text-xs"
+            disabled={isLoading}
+            onClick={() => void handleAddToProject()}
+            aria-label="Add file to current project as artifact"
+          >
+            <FolderOpen className="size-3.5" />
+            {actionStatus.kind === 'loading' && actionStatus.action === 'import'
+              ? 'Importing…'
+              : 'Add to project'}
+          </Button>
+        )}
 
         {/* Copy path — pure front-end, no remote request */}
         <Button
@@ -207,6 +331,10 @@ export function FileBrowserModal({
   initialProviderId
 }: FileBrowserModalProps): React.JSX.Element | null {
   const hosts = useComputeStore((s) => s.hosts)
+  // Active project for "Add to project" — derived from navigation state.
+  const activeProjectId = useNavigationStore((s) => s.activeProjectId)
+  const projects = useProjectStore((s) => s.projects)
+  const activeProject = projects.find((p) => p.id === activeProjectId)
 
   // Active host — defaults to initialProviderId or first reachable host.
   const [activeProviderId, setActiveProviderId] = useState<string | undefined>(
@@ -664,6 +792,8 @@ export function FileBrowserModal({
               <DetailPanel
                 entry={selected}
                 resolvedDir={listing?.resolvedPath ?? cwd}
+                providerId={host?.providerId ?? ''}
+                activeProjectId={activeProject?.id}
                 onClose={() => setSelected(null)}
               />
             )}

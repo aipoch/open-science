@@ -36,6 +36,20 @@ export type DownloadDest =
   | { kind: 'os-downloads' } // Download button → OS Downloads folder
   | { kind: 'session-cache' } // Python host.compute.download() → session cache
 
+// Result returned by ComputeService.download().
+export type LocalFile = {
+  // Absolute local path of the downloaded file.
+  path: string
+  // Display name (basename of the remote path).
+  name: string
+  // File size in bytes.
+  size: number
+  // Inferred MIME type from extension, or 'application/octet-stream' when unknown.
+  mimeType: string
+  // For artifact dest: the saved ArtifactFile id; undefined otherwise.
+  artifactId?: string
+}
+
 // Structured error returned by ComputeService on any remote-fs failure.
 export type RemoteFsError = {
   detail: string

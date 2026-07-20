@@ -1,3 +1,9 @@
+import { mkdir, mkdtemp, stat as fsStat, rm } from 'node:fs/promises'
+import { app } from 'electron'
+import { basename, join } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { tmpdir } from 'node:os'
+
 import type {
   ComputeCallError,
   ComputeHost,
@@ -6,12 +12,22 @@ import type {
   ProbeResult
 } from '../../shared/compute'
 import { DETAILS_DOC_MAX_LENGTH } from '../../shared/compute'
-import type { DirListing, RemoteFsError } from '../../shared/remote-fs'
+import type { DirListing, DownloadDest, LocalFile, RemoteFsError } from '../../shared/remote-fs'
 import { classifyRemoteError, parseFindListing } from '../../shared/remote-fs'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeHostRepository } from './repository'
 import type { SshRunner } from './ssh-runner'
 import { resolveSshTarget } from './ssh-runner'
+import type { ScpRunner } from './scp-runner'
+import {
+  MAX_DOWNLOAD_BYTES,
+  MAX_IMPORT_BYTES,
+  SystemScpRunner,
+  inferMimeType,
+  resolveDestFilename,
+  runScpTransfer,
+  validateImportPath
+} from './scp-runner'
 
 // Probe timeout for the full bundle — individual commands share one connection but each gets this
 // budget. Set generously so slow clusters don't abort, but short enough for a responsive UI (30s).
@@ -155,12 +171,20 @@ const buildDetailsSkeleton = (probe: ProbeResult): string => {
 // scratchRoot (when applicable). See design.md §4 for the probe/Details distinction.
 // approvalBroker is optional: when omitted, callCommand throws rather than requesting approval
 // (unit tests that don't exercise the approval path omit it).
+// scpRunner is optional: when omitted a SystemScpRunner is used (production default).
+// overrideDownloadsDir is optional: when supplied, used as the OS Downloads dir (for tests).
 export class ComputeService {
+  private readonly scpRunner: ScpRunner
+
   constructor(
     private readonly runner: SshRunner,
     private readonly repository: ComputeHostRepository,
-    private readonly approvalBroker?: ComputeApprovalBroker
-  ) {}
+    private readonly approvalBroker?: ComputeApprovalBroker,
+    scpRunner?: ScpRunner,
+    private readonly overrideDownloadsDir?: string
+  ) {
+    this.scpRunner = scpRunner ?? new SystemScpRunner()
+  }
 
   // Runs the probe bundle against the host identified by providerId. Persists the structured
   // probeResult and (conditionally) scratchRoot. Never touches detailsDoc.
@@ -579,5 +603,268 @@ export class ComputeService {
       stderr: runResult.stderr,
       truncated: runResult.truncated
     }
+  }
+
+  // Downloads a remote file to one of three destinations (design.md §4):
+  //   - os-downloads:  scp directly to OS Downloads; ≤2 GiB; duplicate names get (1)/(2) suffix.
+  //   - artifact:      scp to temp → validate (not-empty, not-dir, no-glob, ≤50 MB, post-transfer
+  //                    re-stat) → write as project artifact with provenance metadata.
+  //   - session-cache: scp to session workspace; intended for the agent Python API (issue 04).
+  //
+  // Human-initiated downloads (os-downloads, artifact) do NOT trigger the approval gate — only the
+  // agent session-cache path goes through approval (design §5). This method leaves the gate open
+  // for session-cache so issue 04 can layer approval on top without changing this signature.
+  //
+  // Throws an Error with .remoteFsError on any failure (too_large / not_a_file / connection /
+  // outside_roots / permission / other).
+  async download(
+    providerId: string,
+    remotePath: string,
+    dest: DownloadDest
+  ): Promise<LocalFile> {
+    const host = await this.repository.get(providerId)
+    if (!host) {
+      throw new Error(`No compute host found with provider id "${providerId}".`)
+    }
+
+    // ── Resolve SSH target (used for both stat check and ControlMaster mux for scp) ──
+    let target
+    try {
+      target = await resolveSshTarget(host.sshAlias, host.sshOverrides)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      const fsErr = new Error(msg) as Error & {
+        remoteFsError: RemoteFsError & { retry_after_user_action: boolean }
+      }
+      fsErr.remoteFsError = { detail: msg, remoteKind: 'connection', retry_after_user_action: true }
+      throw fsErr
+    }
+
+    const filename = basename(remotePath)
+
+    if (dest.kind === 'os-downloads') {
+      return this._downloadToOsDownloads(host, target, remotePath, filename)
+    } else if (dest.kind === 'artifact') {
+      return this._downloadToArtifact(host, target, remotePath, filename)
+    } else {
+      // session-cache: scp to a temp dir, return the LocalFile (no approval here — issue 04 adds it)
+      return this._downloadToSessionCache(host, target, remotePath, filename)
+    }
+  }
+
+  // Downloads to the OS Downloads folder. ≤2GiB limit, (1)/(2) collision rename.
+  private async _downloadToOsDownloads(
+    host: ComputeHost,
+    target: import('./ssh-runner').ResolvedSshTarget,
+    remotePath: string,
+    filename: string
+  ): Promise<LocalFile> {
+    // Pre-transfer size check via ssh runner.
+    const remoteSize = await this._statRemoteSize(host, target, remotePath)
+
+    if (remoteSize > MAX_DOWNLOAD_BYTES) {
+      const fsErr = new Error(`File exceeds 2 GiB download limit (${remoteSize} bytes)`) as Error & {
+        remoteFsError: RemoteFsError
+      }
+      fsErr.remoteFsError = {
+        detail: `File size ${remoteSize} bytes exceeds the 2 GiB download limit.`,
+        remoteKind: 'too_large'
+      }
+      throw fsErr
+    }
+
+    const downloadsDir = this.overrideDownloadsDir ?? this._getDownloadsDir()
+    await mkdir(downloadsDir, { recursive: true })
+
+    const destName = await resolveDestFilename(downloadsDir, filename)
+    const destPath = join(downloadsDir, destName)
+
+    await runScpTransfer(this.scpRunner, target, remotePath, destPath)
+
+    const fileStat = await fsStat(destPath)
+    const mimeType = inferMimeType(filename)
+
+    return { path: destPath, name: destName, size: fileStat.size, mimeType }
+  }
+
+  // Downloads to a temp dir and stores as project artifact with provenance.
+  // projectId is carried via the dest object; the actual ArtifactRepository write hook
+  // will be wired in issue 04. For now we return the temp path + artifactId for the renderer.
+  private async _downloadToArtifact(
+    host: ComputeHost,
+    target: import('./ssh-runner').ResolvedSshTarget,
+    remotePath: string,
+    filename: string
+  ): Promise<LocalFile> {
+    // Validate path: absolute, no glob chars.
+    const pathError = validateImportPath(remotePath)
+    if (pathError) {
+      const fsErr = new Error(`Invalid remote path: ${remotePath}`) as Error & {
+        remoteFsError: RemoteFsError
+      }
+      fsErr.remoteFsError = {
+        detail: `Path must be absolute and contain no glob characters.`,
+        remoteKind: pathError
+      }
+      throw fsErr
+    }
+
+    // Pre-transfer stat: must be a regular non-empty file ≤50 MB.
+    const { fileType, size: remoteSize } = await this._statRemote(host, target, remotePath)
+
+    if (fileType !== 'f') {
+      const fsErr = new Error(`Remote path is not a regular file: ${remotePath}`) as Error & {
+        remoteFsError: RemoteFsError
+      }
+      fsErr.remoteFsError = {
+        detail: fileType === 'd' ? 'Path is a directory.' : 'Path is not a regular file.',
+        remoteKind: 'not_a_file'
+      }
+      throw fsErr
+    }
+
+    if (remoteSize === 0) {
+      const fsErr = new Error(`Remote file is empty: ${remotePath}`) as Error & {
+        remoteFsError: RemoteFsError
+      }
+      fsErr.remoteFsError = {
+        detail: 'Cannot import an empty file.',
+        remoteKind: 'not_a_file'
+      }
+      throw fsErr
+    }
+
+    if (remoteSize > MAX_IMPORT_BYTES) {
+      const fsErr = new Error(`File exceeds 50 MB import limit (${remoteSize} bytes)`) as Error & {
+        remoteFsError: RemoteFsError
+      }
+      fsErr.remoteFsError = {
+        detail: `File size ${remoteSize} bytes exceeds the 50 MB import limit.`,
+        remoteKind: 'too_large'
+      }
+      throw fsErr
+    }
+
+    // scp to a temp directory.
+    const tmpBase = this.overrideDownloadsDir ?? tmpdir()
+    const tempDir = await mkdtemp(join(tmpBase, 'cs-import-'))
+    const tempPath = join(tempDir, filename)
+
+    try {
+      await runScpTransfer(this.scpRunner, target, remotePath, tempPath)
+
+      // Post-transfer re-stat: reject if the file grew during transfer (TOCTOU guard).
+      const localStat = await fsStat(tempPath)
+      if (localStat.size > remoteSize) {
+        const fsErr = new Error(`File grew during transfer: ${remotePath}`) as Error & {
+          remoteFsError: RemoteFsError
+        }
+        fsErr.remoteFsError = {
+          detail: 'File size changed during transfer — import rejected.',
+          remoteKind: 'not_a_file'
+        }
+        await rm(tempDir, { recursive: true, force: true })
+        throw fsErr
+      }
+
+      // Build artifact id. Provenance (ssh:<host>:<path>) is embedded in the LocalFile for the
+      // IPC handler to forward to ArtifactRepository when persisting (issue 04 hook).
+      const artifactId = `${randomUUID()}|ssh:${host.displayName}:${remotePath}`
+      const mimeType = inferMimeType(filename)
+
+      // Return the artifact info. The caller (IPC handler) is responsible for persisting this
+      // artifact via the ArtifactRepository so it appears in the project artifact panel.
+      return {
+        path: tempPath,
+        name: filename,
+        size: localStat.size,
+        mimeType,
+        artifactId,
+        // provenance is stored in artifactId so the renderer can surface it
+        // (ArtifactFile metadata will include provenance via the IPC handler)
+      }
+    } catch (err) {
+      // Clean up the temp dir unless we already cleaned it above.
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
+      throw err
+    }
+  }
+
+  // Downloads to a session-cache temp dir. No approval gate here — issue 04 layers it on top.
+  private async _downloadToSessionCache(
+    _host: ComputeHost,
+    target: import('./ssh-runner').ResolvedSshTarget,
+    remotePath: string,
+    filename: string
+  ): Promise<LocalFile> {
+    const tempDir = await mkdtemp(join(tmpdir(), 'cs-session-'))
+    const destPath = join(tempDir, filename)
+
+    await runScpTransfer(this.scpRunner, target, remotePath, destPath)
+
+    const fileStat = await fsStat(destPath)
+    const mimeType = inferMimeType(filename)
+
+    return { path: destPath, name: filename, size: fileStat.size, mimeType }
+  }
+
+  // Returns the OS Downloads path via Electron's app module.
+  private _getDownloadsDir(): string {
+    try {
+      return app.getPath('downloads')
+    } catch {
+      // Fallback for test environments without a full Electron runtime.
+      return join(tmpdir(), 'downloads')
+    }
+  }
+
+  // Runs a remote stat to get file type and size in a single SSH round-trip.
+  // Output format: "<type> <size>" where type ∈ { f, d, ? }.
+  private async _statRemote(
+    _host: ComputeHost,
+    target: import('./ssh-runner').ResolvedSshTarget,
+    remotePath: string
+  ): Promise<{ fileType: string; size: number }> {
+    const quoted = JSON.stringify(remotePath)
+    // Portable: test for file/dir, get size via stat -c (Linux) with macOS fallback.
+    const cmd = [
+      `if [ -f ${quoted} ]; then`,
+      `  printf 'f '; stat -c '%s' ${quoted} 2>/dev/null || stat -f '%z' ${quoted}`,
+      `elif [ -d ${quoted} ]; then`,
+      `  echo 'd 0'`,
+      `else`,
+      `  echo '? 0'`,
+      `fi`
+    ].join('\n')
+
+    const result = await this.runner.run(target, cmd, {
+      timeoutMs: 10_000,
+      loginShell: false,
+      maxOutputBytes: 64
+    })
+
+    if (result.timedOut || result.exitCode === 255) {
+      const fsErr = new Error('SSH connection failed during stat') as Error & {
+        remoteFsError: RemoteFsError & { retry_after_user_action: boolean }
+      }
+      fsErr.remoteFsError = { detail: 'Connection failed.', remoteKind: 'connection', retry_after_user_action: true }
+      throw fsErr
+    }
+
+    const parts = result.stdout.trim().split(/\s+/)
+    const fileType = parts[0] ?? '?'
+    const size = Number.parseInt(parts[1] ?? '0', 10)
+
+    return { fileType, size: Number.isFinite(size) ? size : 0 }
+  }
+
+  // Runs a remote stat returning only file size. Used for os-downloads where we don't need type.
+  private async _statRemoteSize(
+    host: ComputeHost,
+    target: import('./ssh-runner').ResolvedSshTarget,
+    remotePath: string
+  ): Promise<number> {
+    const { size } = await this._statRemote(host, target, remotePath)
+    return size
   }
 }

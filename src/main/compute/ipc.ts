@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import { BrowserWindow, ipcMain } from 'electron'
+import { BrowserWindow, ipcMain, shell } from 'electron'
 
 import type {
   ComputeApprovalDecision,
@@ -11,7 +11,7 @@ import type {
   DetailsAuthor,
   ProbeResult
 } from '../../shared/compute'
-import type { DirListing } from '../../shared/remote-fs'
+import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { resolveStorageRoot } from '../storage-root'
 import { SettingsRepository } from '../settings/repository'
@@ -29,6 +29,7 @@ import { join } from 'node:path'
 // host record CRUD + ssh-config alias listing. Issue 02 adds probe. Issue 03 adds
 // details/scratch/concurrency. Issue 04 adds callCommand + the approval broker wiring.
 // Issue 05 (browse) adds listDir. Issue 06 adds list (via ComputeService) and skill doc sync.
+// Issue 03 (file-preview) adds download (os-downloads + artifact).
 type ComputeHandlers = {
   list: () => Promise<ComputeHost[]>
   get: (providerId: string) => Promise<ComputeHost | null>
@@ -52,6 +53,10 @@ type ComputeHandlers = {
   concurrencySet: (providerId: string, limit: number) => Promise<void>
   // Lists the contents of a remote directory (non-approval, metadata only).
   listDir: (providerId: string, path: string) => Promise<DirListing>
+  // Downloads a remote file to OS Downloads or project artifact. No approval gate for UI actions.
+  download: (providerId: string, remotePath: string, dest: DownloadDest) => Promise<LocalFile>
+  // Reveals a local file in the OS file manager (Finder/Explorer).
+  revealInFolder: (filePath: string) => void
   // The compute service instance, exposed so the notebook RPC server can wire computeCall.
   computeService: ComputeService
   // Responds to a pending approval request from the renderer. Decision now includes
@@ -127,6 +132,8 @@ const createComputeHandlers = (
     scratchSet: (providerId, path) => service.setScratchRoot(providerId, path),
     concurrencySet: (providerId, limit) => service.setConcurrencyLimit(providerId, limit),
     listDir: (providerId, path) => service.listDir(providerId, path),
+    download: (providerId, remotePath, dest) => service.download(providerId, remotePath, dest),
+    revealInFolder: (filePath) => { shell.showItemInFolder(filePath) },
     computeService: service,
     approvalRespond: (id, decision) => broker.respond(id, decision)
   }
@@ -196,6 +203,16 @@ const registerComputeIpcHandlers = (
   ipcMain.handle('compute:list-dir', (_event, providerId: string, path: string) =>
     handlers.listDir(providerId, path)
   )
+  // Downloads a remote file to OS Downloads or project artifact. No approval gate (issue 03).
+  ipcMain.handle(
+    'compute:download',
+    (_event, providerId: string, remotePath: string, dest: DownloadDest) =>
+      handlers.download(providerId, remotePath, dest)
+  )
+  // Reveals a local file path in the OS file manager (Finder / Explorer).
+  ipcMain.handle('compute:reveal-in-folder', (_event, filePath: string) => {
+    handlers.revealInFolder(filePath)
+  })
   // Renderer responds to an in-flight approval card (issue 04/05). Decision now carries the
   // chosen scope: 'once' | 'conversation' | 'project' | 'deny'.
   ipcMain.handle(

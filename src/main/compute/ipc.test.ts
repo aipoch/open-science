@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ComputeHost, CreateComputeHostRequest } from '../../shared/compute'
-import type { DirListing } from '../../shared/remote-fs'
+import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs'
 import type { ComputeService } from './compute-service'
 import { createComputeHandlers } from './ipc'
 import type { ComputeHostRepository } from './repository'
@@ -118,6 +118,40 @@ describe('compute handlers', () => {
     expect(listDir).toHaveBeenCalledWith('ssh:biowulf', '/home/user/projects')
     expect(result.entries).toHaveLength(1)
     expect(result.resolvedPath).toBe('/home/user/projects')
+  })
+
+  it('download delegates to the injected ComputeService (os-downloads)', async () => {
+    const localFile: LocalFile = {
+      path: '/Users/user/Downloads/data.csv',
+      name: 'data.csv',
+      size: 1024,
+      mimeType: 'text/csv'
+    }
+    const download = vi.fn(() => Promise.resolve(localFile))
+    const handlers = createComputeHandlers(mockRepository({}), undefined, mockService({ download }))
+    const dest: DownloadDest = { kind: 'os-downloads' }
+
+    const result = await handlers.download('ssh:biowulf', '/remote/data.csv', dest)
+    expect(download).toHaveBeenCalledWith('ssh:biowulf', '/remote/data.csv', dest)
+    expect(result.name).toBe('data.csv')
+    expect(result.size).toBe(1024)
+  })
+
+  it('download delegates to the injected ComputeService (artifact)', async () => {
+    const localFile: LocalFile = {
+      path: '/tmp/cs-import-xyz/results.csv',
+      name: 'results.csv',
+      size: 4096,
+      mimeType: 'text/csv',
+      artifactId: 'some-uuid'
+    }
+    const download = vi.fn(() => Promise.resolve(localFile))
+    const handlers = createComputeHandlers(mockRepository({}), undefined, mockService({ download }))
+    const dest: DownloadDest = { kind: 'artifact', projectId: 'proj-1' }
+
+    const result = await handlers.download('ssh:biowulf', '/remote/results.csv', dest)
+    expect(download).toHaveBeenCalledWith('ssh:biowulf', '/remote/results.csv', dest)
+    expect(result.artifactId).toBe('some-uuid')
   })
 })
 
