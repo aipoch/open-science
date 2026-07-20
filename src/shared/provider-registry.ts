@@ -96,7 +96,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   },
   {
     id: 'anthropic',
-    label: 'Claude',
+    label: 'Anthropic',
     baseUrl: 'https://api.anthropic.com',
     apiKeyUrl: 'https://console.anthropic.com/settings/keys',
     modelsListUrl: 'https://api.anthropic.com/v1/models',
