@@ -160,6 +160,50 @@ describe('PreviewFileContent', () => {
     })
   }
 
+  it('shows the format-aware quiet progress state while a file is loading', async () => {
+    vi.mocked(window.api.artifacts.readPreview).mockReturnValue(new Promise(() => undefined))
+
+    await renderFile(createFileItem({ format: 'text', name: 'notes.txt' }))
+
+    const status = container.querySelector('[data-preview-status="loading"]')
+    expect(status?.getAttribute('role')).toBe('status')
+    expect(status?.textContent).toContain('TXT')
+    expect(status?.textContent).toContain('Preparing text file')
+    expect(status?.textContent).toContain('notes.txt')
+    expect(status?.querySelectorAll('[data-preview-activity-dot]')).toHaveLength(3)
+    expect(status?.querySelector('[data-preview-progress]')).not.toBeNull()
+  })
+
+  it('restarts a failed preview when Retry is selected', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.mocked(window.api.artifacts.readPreview)
+      .mockRejectedValueOnce(new Error('temporary read failure'))
+      .mockResolvedValueOnce({
+        content: 'recovered preview',
+        encoding: 'utf8',
+        size: 17,
+        truncated: false
+      })
+
+    await renderFile(createFileItem({ format: 'text', name: 'notes.txt' }))
+    await vi.waitFor(() => expect(container.textContent).toContain("File couldn't be read"))
+
+    const retry = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Retry'
+    )
+    expect(retry).toBeDefined()
+
+    await act(async () => {
+      retry?.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await vi.waitFor(() => expect(container.textContent).toContain('recovered preview'))
+    expect(window.api.artifacts.readPreview).toHaveBeenCalledTimes(2)
+    consoleError.mockRestore()
+  })
+
   it('formats valid JSON previews with indentation', async () => {
     vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
       content: '{"name":"sample","values":[1,true]}',
@@ -252,13 +296,19 @@ describe('PreviewFileContent', () => {
     expect(container.textContent).toContain('This file is no longer available')
     expect(container.querySelector('pre')).toBeNull()
 
+    const retry = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Retry'
+    )
+    expect(retry).toBeDefined()
+
     await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>('button')
-        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      retry?.click()
+      await Promise.resolve()
+      await Promise.resolve()
     })
 
-    expect(window.api.artifacts.openFile).toHaveBeenCalledWith({ path: '/workspace/gone.txt' })
+    expect(window.api.artifacts.readPreview).toHaveBeenCalledTimes(2)
+    expect(window.api.artifacts.openFile).not.toHaveBeenCalled()
   })
 
   it('renders line numbers next to formatted JSON previews', async () => {

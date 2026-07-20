@@ -48,10 +48,9 @@ export const PreviewImageContent = ({
     return (
       <PreviewFallbackCard
         icon={ImageOff}
-        path={path}
         name={name}
-        source={source}
         message="Image couldn't be loaded for preview"
+        retryable
       />
     )
   }

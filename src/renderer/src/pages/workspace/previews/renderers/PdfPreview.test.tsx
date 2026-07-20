@@ -191,6 +191,41 @@ describe('PdfPreviewContent', () => {
     expect(container.querySelectorAll('canvas')).toHaveLength(1)
   })
 
+  it('uses the compact status for a page that is still loading', async () => {
+    let intersectionCallback: IntersectionObserverCallback | undefined
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        observe = vi.fn()
+        unobserve = vi.fn()
+        disconnect = vi.fn()
+
+        constructor(callback: IntersectionObserverCallback) {
+          intersectionCallback = callback
+        }
+      }
+    )
+    getPage.mockReturnValue(new Promise(() => undefined))
+
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent path="/workspace/loading.pdf" name="loading.pdf" source="artifact" />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      intersectionCallback?.(
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('[data-preview-status="compact-loading"]')).not.toBeNull()
+    expect(container.textContent).not.toContain('loading.pdf')
+  })
+
   it('creates lazy page containers beyond page thirty', async () => {
     vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
       promise: Promise.resolve({ numPages: 31, getPage, destroy: destroyDocument }),

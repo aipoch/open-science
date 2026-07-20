@@ -98,7 +98,7 @@ const PdfPageCanvas = ({
     >
       {displayedStatus === 'loading' || (displayedStatus === 'idle' && isNearViewport) ? (
         <div className="absolute inset-0">
-          <PreviewLoadingContent />
+          <PreviewLoadingContent compact />
         </div>
       ) : null}
       {displayedStatus === 'error' ? (

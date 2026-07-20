@@ -377,6 +377,41 @@ describe('renderOfficeFile', () => {
     }
   )
 
+  it('overrides spreadsheet parsing surfaces with the shared quiet progress style', async () => {
+    const unmount = vi.fn()
+    mocks.renderSpreadsheet.mockImplementation(async (_buffer, target, _type, context) => {
+      new Worker(context?.options?.spreadsheet?.workerUrl, { type: 'module' })
+      const wrapper = document.createElement('div')
+      wrapper.className = 'excel-wrapper'
+      wrapper.innerHTML = [
+        '<div class="loading"><div class="loading-card"></div></div>',
+        '<div class="sheet-loading"><span class="sheet-loading-dot"></span></div>'
+      ].join('')
+      target.appendChild(wrapper)
+      queueMicrotask(() => context?.onProgressiveRender?.())
+      return { unmount }
+    })
+
+    const cleanup = await renderOfficeFile({
+      bytes,
+      extension: 'xlsx',
+      name: 'results.xlsx',
+      container,
+      signal
+    })
+
+    const style = container.querySelector<HTMLStyleElement>(
+      'style[data-open-science-spreadsheet-status]'
+    )
+    expect(style?.textContent).toContain('.excel-wrapper .loading-card')
+    expect(style?.textContent).toContain('.excel-wrapper .sheet-loading')
+    expect(style?.textContent).toContain('box-shadow: none')
+    expect(style?.textContent).toContain('@media (prefers-reduced-motion: reduce)')
+
+    await cleanup()
+    expect(container.querySelector('style[data-open-science-spreadsheet-status]')).toBeNull()
+  })
+
   it('unmounts a spreadsheet Worker when rendering is aborted before first paint', async () => {
     const controller = new AbortController()
     const unmount = vi.fn()

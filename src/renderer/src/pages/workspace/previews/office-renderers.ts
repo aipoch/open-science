@@ -116,6 +116,94 @@ const neutralizeDocxLinks = (container: HTMLElement): void => {
 }
 
 const SPREADSHEET_WORKER_STARTUP_TIMEOUT_MS = 5_000
+const SPREADSHEET_STATUS_STYLE = `
+.excel-wrapper .loading {
+  background: var(--bg-10);
+  backdrop-filter: none;
+}
+.excel-wrapper .loading-card {
+  width: min(19rem, calc(100% - 3rem));
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.excel-wrapper .loading-brand {
+  width: 36px;
+  height: 36px;
+  border: 1px solid color-mix(in srgb, var(--primary) 15%, transparent);
+  border-radius: 8px;
+  background: var(--bg-000);
+  color: var(--primary);
+  font-size: 9px;
+  font-weight: 600;
+}
+.excel-wrapper .loading-kicker {
+  display: none;
+}
+.excel-wrapper .loading-copy strong {
+  margin-top: 0;
+  color: var(--text-000);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+.excel-wrapper .loading-copy p {
+  margin-top: 2px;
+  color: var(--text-300);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.excel-wrapper .loading-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--bg-400);
+  border-top-color: var(--primary);
+  box-shadow: none;
+}
+.excel-wrapper .sheet-loading {
+  right: 12px;
+  bottom: 12px;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-000);
+  box-shadow: none;
+  color: var(--text-100);
+  font-size: 10px;
+  font-weight: 500;
+}
+.excel-wrapper .sheet-loading-dot {
+  width: 4px;
+  height: 4px;
+  background: var(--primary);
+  box-shadow: none;
+}
+.excel-wrapper .sheet-loading-summary {
+  color: var(--text-300);
+}
+@media (prefers-reduced-motion: reduce) {
+  .excel-wrapper .loading-spinner,
+  .excel-wrapper .sheet-loading-dot {
+    animation: none;
+  }
+}
+`
+
+// Keeps vendor-owned parsing surfaces aligned with the application's shared preview status UI.
+const installSpreadsheetStatusStyle = (container: HTMLElement): HTMLStyleElement => {
+  const style = container.ownerDocument.createElement('style')
+  style.dataset.openScienceSpreadsheetStatus = 'true'
+  style.textContent = SPREADSHEET_STATUS_STYLE
+  container.appendChild(style)
+  return style
+}
 
 // Canonicalizes Vite's relative worker asset so the vendor resolver and handshake compare one URL.
 const resolveSpreadsheetWorkerUrl = (workerUrl: string, container: HTMLElement): string =>
@@ -314,6 +402,7 @@ export const renderOfficeFile = async ({
     })
     let instance: Awaited<ReturnType<typeof renderFileViewerSpreadsheet>>
     let claimed = false
+    let statusStyle: HTMLStyleElement | undefined
     try {
       const rendered = await renderWithReadySpreadsheetWorker(
         workerUrl,
@@ -335,6 +424,7 @@ export const renderOfficeFile = async ({
       )
       instance = rendered.instance
       claimed = rendered.claimed
+      statusStyle = installSpreadsheetStatusStyle(container)
     } catch (error) {
       errorObserver.disconnect()
       readyWorker.terminate()
@@ -352,6 +442,7 @@ export const renderOfficeFile = async ({
         else if ('$destroy' in instance) await instance.$destroy()
         else await instance.destroy()
       } finally {
+        statusStyle?.remove()
         readyWorker.terminate()
         clearContainer(container)
       }

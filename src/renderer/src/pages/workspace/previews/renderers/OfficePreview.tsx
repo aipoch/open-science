@@ -13,9 +13,24 @@ import {
 } from '../office-package'
 import { renderOfficeFile, type OfficeRenderCleanup } from '../office-renderers'
 import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
+import { usePreviewRuntime } from '../preview-runtime'
 import type { PreviewFileRendererProps } from '../preview-types'
 
 export const OFFICE_PREVIEW_TIMEOUT_MS = 30_000
+export const LARGE_SPREADSHEET_PREVIEW_TIMEOUT_MS = 120_000
+
+const LARGE_SPREADSHEET_PREVIEW_BYTES = 20 * 1024 * 1024
+const MAX_OFFICE_RETRY_TIMEOUT_MS = 300_000
+
+// Every retry gets one fixed doubled allowance; repeated retries never compound the timeout.
+const getOfficePreviewTimeoutMs = (item: PreviewFileItem, attempt: number): number => {
+  const defaultTimeout =
+    item.format === 'spreadsheet' && (item.size ?? 0) >= LARGE_SPREADSHEET_PREVIEW_BYTES
+      ? LARGE_SPREADSHEET_PREVIEW_TIMEOUT_MS
+      : OFFICE_PREVIEW_TIMEOUT_MS
+
+  return attempt > 0 ? Math.min(defaultTimeout * 2, MAX_OFFICE_RETRY_TIMEOUT_MS) : defaultTimeout
+}
 
 type OfficeRenderState = {
   key: string
@@ -52,7 +67,9 @@ export const OfficePreviewContent = ({
 }): React.JSX.Element => {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [renderState, setRenderState] = useState<OfficeRenderState | null>(null)
+  const attempt = usePreviewRuntime()?.attempt ?? 0
   const renderKey = `${source}:${item.path}:${item.name}:${item.format}`
+  const timeoutMs = getOfficePreviewTimeoutMs(item, attempt)
 
   useEffect(() => {
     const container = containerRef.current
@@ -81,7 +98,7 @@ export const OfficePreviewContent = ({
         status: 'error',
         message: 'This Office file took too long to preview'
       })
-    }, OFFICE_PREVIEW_TIMEOUT_MS)
+    }, timeoutMs)
 
     const render = async (): Promise<void> => {
       // Check the format-specific limit against managed stat metadata before any range transfer.
@@ -128,17 +145,17 @@ export const OfficePreviewContent = ({
       disposeOfficeRender(cleanup)
       cleanup = undefined
     }
-  }, [item, renderKey, source])
+  }, [item, renderKey, source, timeoutMs])
 
   const state = renderState?.key === renderKey ? renderState : null
   if (state?.status === 'error') {
     return (
       <PreviewFallbackCard
         icon={FileWarning}
-        path={item.path}
         name={item.name}
-        source={source}
+        title={state.message ? 'Preview timed out' : 'Preview unavailable'}
         message={state.message ?? "This Office file couldn't be rendered for preview"}
+        retryable
       />
     )
   }

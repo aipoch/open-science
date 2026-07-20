@@ -4,7 +4,12 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
-import { OFFICE_PREVIEW_TIMEOUT_MS, OfficePreviewRenderer } from './OfficePreview'
+import { PreviewFileContent } from '../PreviewFileContent'
+import {
+  LARGE_SPREADSHEET_PREVIEW_TIMEOUT_MS,
+  OFFICE_PREVIEW_TIMEOUT_MS,
+  OfficePreviewRenderer
+} from './OfficePreview'
 
 const mocks = vi.hoisted(() => ({
   readBytes: vi.fn(),
@@ -258,4 +263,98 @@ describe('OfficePreviewRenderer', () => {
     expect(signal.aborted).toBe(true)
     expect(container.textContent).toContain('This Office file took too long to preview')
   })
+
+  it('keeps a larger timeout for large spreadsheet parsing', async () => {
+    vi.useFakeTimers()
+    mocks.render.mockReturnValue(new Promise(() => undefined))
+
+    await act(async () => {
+      root.render(
+        <OfficePreviewRenderer
+          item={createItem({
+            format: 'spreadsheet',
+            name: 'large.xlsx',
+            size: 40 * 1024 * 1024
+          })}
+        />
+      )
+      await flushMicrotasks()
+    })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(OFFICE_PREVIEW_TIMEOUT_MS)
+    })
+    expect(container.textContent).not.toContain('This Office file took too long to preview')
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(
+        LARGE_SPREADSHEET_PREVIEW_TIMEOUT_MS - OFFICE_PREVIEW_TIMEOUT_MS
+      )
+    })
+    expect(container.textContent).toContain('This Office file took too long to preview')
+  })
+
+  it.each([
+    {
+      label: 'regular Office files',
+      item: createItem(),
+      initialTimeout: OFFICE_PREVIEW_TIMEOUT_MS,
+      retryTimeout: OFFICE_PREVIEW_TIMEOUT_MS * 2
+    },
+    {
+      label: 'large spreadsheets',
+      item: createItem({
+        format: 'spreadsheet',
+        name: 'large.xlsx',
+        size: 40 * 1024 * 1024
+      }),
+      initialTimeout: LARGE_SPREADSHEET_PREVIEW_TIMEOUT_MS,
+      retryTimeout: LARGE_SPREADSHEET_PREVIEW_TIMEOUT_MS * 2
+    }
+  ])(
+    'uses the default timeout once and a fixed doubled timeout for every retry of $label',
+    async ({ item, initialTimeout, retryTimeout }) => {
+      vi.useFakeTimers()
+      mocks.render.mockReturnValue(new Promise(() => undefined))
+
+      await act(async () => {
+        root.render(<PreviewFileContent item={item} />)
+        await flushMicrotasks()
+      })
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(initialTimeout)
+      })
+      expect(container.textContent).toContain('Preview timed out')
+
+      const clickRetry = async (): Promise<void> => {
+        const retry = Array.from(container.querySelectorAll('button')).find(
+          (button) => button.textContent?.trim() === 'Retry'
+        )
+        expect(retry).toBeDefined()
+        await act(async () => {
+          retry?.click()
+          await flushMicrotasks()
+        })
+      }
+
+      await clickRetry()
+      const firstRetrySignal = mocks.render.mock.calls[1]?.[0].signal as AbortSignal
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(retryTimeout - 1)
+      })
+      expect(firstRetrySignal.aborted).toBe(false)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      expect(firstRetrySignal.aborted).toBe(true)
+
+      await clickRetry()
+      const secondRetrySignal = mocks.render.mock.calls[2]?.[0].signal as AbortSignal
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(retryTimeout)
+      })
+      expect(secondRetrySignal.aborted).toBe(true)
+    }
+  )
 })

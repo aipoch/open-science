@@ -31,7 +31,7 @@ const relationshipsXml = (relationship: string): Uint8Array =>
 
 const createZip = (
   entries: ZipEntry[],
-  options: { reportedEntryCount?: number; zip64?: boolean } = {}
+  options: { reportedEntryCount?: number; trailingData?: Uint8Array; zip64?: boolean } = {}
 ): Uint8Array => {
   const localRecords: Array<{ bytes: Uint8Array; offset: number }> = []
   let localOffset = 0
@@ -63,7 +63,8 @@ const createZip = (
     (size, entry) => size + 46 + encoder.encode(entry.name).length + (entry.extra?.length ?? 0),
     0
   )
-  const result = new Uint8Array(localOffset + centralSize + 22)
+  const trailingData = options.trailingData ?? new Uint8Array()
+  const result = new Uint8Array(localOffset + centralSize + 22 + trailingData.length)
   let offset = 0
 
   for (const record of localRecords) {
@@ -96,6 +97,7 @@ const createZip = (
   eocd.setUint16(10, reportedEntryCount, true)
   eocd.setUint32(12, centralSize, true)
   eocd.setUint32(16, localOffset, true)
+  result.set(trailingData, offset + 22)
 
   return result
 }
@@ -126,6 +128,32 @@ describe('validateOfficePackage', () => {
       ).resolves.toBeUndefined()
     }
   )
+
+  it('accepts an OOXML package with trailing line whitespace', async () => {
+    const docx = createZip(
+      validEntries.docx.map((name) => ({
+        name,
+        data:
+          name === 'word/document.xml' ? encoder.encode('<document><body/></document>') : undefined
+      })),
+      { trailingData: new Uint8Array([0x0d, 0x0a]) }
+    )
+
+    await expect(validateOfficePackage(docx, 'docx')).resolves.toBeUndefined()
+  })
+
+  it('rejects an OOXML package with arbitrary trailing data', async () => {
+    const docx = createZip(
+      validEntries.docx.map((name) => ({
+        name,
+        data:
+          name === 'word/document.xml' ? encoder.encode('<document><body/></document>') : undefined
+      })),
+      { trailingData: new Uint8Array([0xde, 0xad]) }
+    )
+
+    await expect(validateOfficePackage(docx, 'docx')).rejects.toThrow(/damaged or unsupported/i)
+  })
 
   it('accepts a legacy XLS compound file', async () => {
     const bytes = new Uint8Array(512)
@@ -186,6 +214,23 @@ describe('validateOfficePackage', () => {
     await expect(validateOfficePackage(createZip(entries), 'docx')).rejects.toThrow(
       /entry is too large/i
     )
+  })
+
+  it('allows a large XLSX worksheet entry within the package expansion limit', async () => {
+    const worksheet = new Uint8Array(32 * 1024 * 1024 + 1)
+    const compressedWorksheet = deflateRawSync(worksheet)
+    const xlsx = createZip([
+      { name: '[Content_Types].xml' },
+      { name: 'xl/workbook.xml' },
+      {
+        name: 'xl/worksheets/sheet1.xml',
+        compressionMethod: 8,
+        data: compressedWorksheet,
+        uncompressedSize: worksheet.byteLength
+      }
+    ])
+
+    await expect(validateOfficePackage(xlsx, 'xlsx')).resolves.toBeUndefined()
   })
 
   it('rejects a package expanding beyond 256 MiB in total', async () => {
@@ -326,7 +371,7 @@ describe('validateOfficePackage', () => {
     await expect(validateOfficePackage(docx, 'docx')).rejects.toThrow(/external resources/i)
   })
 
-  it('rejects external relationships in non-DOCX packages even when the type is a hyperlink', async () => {
+  it('allows external hyperlinks in PPTX packages', async () => {
     const pptx = createZip([
       { name: '[Content_Types].xml' },
       { name: 'ppt/presentation.xml' },
@@ -338,7 +383,7 @@ describe('validateOfficePackage', () => {
       }
     ])
 
-    await expect(validateOfficePackage(pptx, 'pptx')).rejects.toThrow(/external resources/i)
+    await expect(validateOfficePackage(pptx, 'pptx')).resolves.toBeUndefined()
   })
 
   it('rejects relationship XML larger than 4 MiB', async () => {

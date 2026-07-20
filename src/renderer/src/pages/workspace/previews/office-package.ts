@@ -16,12 +16,13 @@ const MAX_DOCX_DOCUMENT_XML_BYTES = 8 * 1024 * 1024
 const MAX_DOCX_DOCUMENT_ELEMENTS = 100_000
 const MAX_DOCX_DOCUMENT_DEPTH = 128
 const XML_PARSE_CHUNK_BYTES = 64 * 1024
-const MAX_EOCD_SEARCH_BYTES = 65_557
+const MAX_EOCD_TRAILING_WHITESPACE_BYTES = 16
+const MAX_EOCD_SEARCH_BYTES = 65_557 + MAX_EOCD_TRAILING_WHITESPACE_BYTES
 const EOCD_SIGNATURE = 0x06054b50
 const CENTRAL_ENTRY_SIGNATURE = 0x02014b50
 const LOCAL_ENTRY_SIGNATURE = 0x04034b50
 const UNICODE_PATH_EXTRA_FIELD_ID = 0x7075
-const DOCX_EXTERNAL_HYPERLINK_TYPES = new Set([
+const OOXML_EXTERNAL_HYPERLINK_TYPES = new Set([
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink',
   'http://purl.oclc.org/ooxml/officeDocument/relationships/hyperlink'
 ])
@@ -102,7 +103,19 @@ const findEndOfCentralDirectory = (view: DataView): number => {
     if (view.getUint32(offset, true) !== EOCD_SIGNATURE) continue
 
     const commentLength = view.getUint16(offset + 20, true)
-    if (offset + 22 + commentLength === view.byteLength) return offset
+    const endOffset = offset + 22 + commentLength
+    const trailingBytes = view.byteLength - endOffset
+    if (trailingBytes < 0 || trailingBytes > MAX_EOCD_TRAILING_WHITESPACE_BYTES) continue
+
+    let hasOnlyWhitespace = true
+    for (let trailingOffset = endOffset; trailingOffset < view.byteLength; trailingOffset += 1) {
+      const byte = view.getUint8(trailingOffset)
+      if (byte !== 0x09 && byte !== 0x0a && byte !== 0x0d && byte !== 0x20) {
+        hasOnlyWhitespace = false
+        break
+      }
+    }
+    if (hasOnlyWhitespace) return offset
   }
 
   throw invalidPackage()
@@ -110,7 +123,10 @@ const findEndOfCentralDirectory = (view: DataView): number => {
 
 // Builds a bounded OOXML index from ZIP metadata before any entry is decompressed. Local and central
 // names must agree, and Unicode Path overrides are rejected to prevent parser name confusion.
-const inspectOoxmlPackage = (bytes: Uint8Array): OoxmlPackageIndex => {
+const inspectOoxmlPackage = (
+  bytes: Uint8Array,
+  extension: Exclude<OfficeFileExtension, 'xls'>
+): OoxmlPackageIndex => {
   if (bytes.length < 22) throw invalidPackage()
 
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
@@ -175,7 +191,8 @@ const inspectOoxmlPackage = (bytes: Uint8Array): OoxmlPackageIndex => {
     ) {
       throw new Error('ZIP64 Office packages are not supported for preview')
     }
-    if (uncompressedSize > MAX_ZIP_ENTRY_BYTES) {
+    const maxEntryBytes = extension === 'xlsx' ? MAX_ZIP_TOTAL_BYTES : MAX_ZIP_ENTRY_BYTES
+    if (uncompressedSize > maxEntryBytes) {
       throw new Error('An Office package entry is too large to preview safely')
     }
 
@@ -260,13 +277,14 @@ const measureInflatedEntry = async (
   entry: OoxmlPackageEntry,
   totalBeforeEntry: number,
   maxTotalBytes: number,
+  maxEntryBytes: number,
   capture: EntryCapture | undefined,
   signal?: AbortSignal
 ): Promise<InflatedEntry> => {
   throwIfAborted(signal)
 
   if (entry.compressionMethod === 0) {
-    if (entry.compressedSize > MAX_ZIP_ENTRY_BYTES) {
+    if (entry.compressedSize > maxEntryBytes) {
       throw new Error('An Office package entry is too large to preview safely')
     }
     if (totalBeforeEntry + entry.compressedSize > maxTotalBytes) {
@@ -300,7 +318,7 @@ const measureInflatedEntry = async (
       if (done) break
 
       inflatedSize += value.byteLength
-      if (inflatedSize > MAX_ZIP_ENTRY_BYTES) {
+      if (inflatedSize > maxEntryBytes) {
         await reader.cancel()
         throw new Error('An Office package entry is too large to preview safely')
       }
@@ -366,8 +384,8 @@ const parsePackageXml = (
   }
 }
 
-// Allows inert DOCX hyperlinks while blocking relationships that could fetch external resources.
-const assertNoExternalResources = (data: Uint8Array, extension: OfficeFileExtension): void => {
+// Allows inert OOXML hyperlinks while blocking relationships that could fetch external resources.
+const assertNoExternalResources = (data: Uint8Array): void => {
   if (data.byteLength > MAX_RELATIONSHIPS_XML_BYTES) {
     throw new Error('This Office relationship file is too large to preview safely')
   }
@@ -390,11 +408,7 @@ const assertNoExternalResources = (data: Uint8Array, extension: OfficeFileExtens
         const relationshipType = Object.values(tag.attributes)
           .find((attribute) => attribute.local === 'Type' && attribute.prefix === '')
           ?.value.trim()
-        if (
-          extension === 'docx' &&
-          relationshipType &&
-          DOCX_EXTERNAL_HYPERLINK_TYPES.has(relationshipType)
-        ) {
+        if (relationshipType && OOXML_EXTERNAL_HYPERLINK_TYPES.has(relationshipType)) {
           return
         }
         throw new Error('Office files with external resources cannot be previewed')
@@ -449,18 +463,20 @@ const verifyActualInflatedSizes = async (
             tooLargeError: () => new Error('This Word document is too complex to preview safely')
           }
         : undefined
+    const maxEntryBytes = extension === 'xlsx' ? MAX_ZIP_TOTAL_BYTES : MAX_ZIP_ENTRY_BYTES
     const inflated = await measureInflatedEntry(
       bytes,
       entry,
       totalInflatedBytes,
       maxTotalBytes,
+      maxEntryBytes,
       capture,
       signal
     )
     if (inflated.size !== entry.declaredUncompressedSize) throw invalidPackage()
 
     if (inflated.data && hasEntryExtension(entry.name, '.rels')) {
-      assertNoExternalResources(inflated.data, extension)
+      assertNoExternalResources(inflated.data)
     }
     if (inflated.data && extension === 'docx' && hasEntryExtension(entry.name, '.xml')) {
       assertDocxXmlComplexity(inflated.data)
@@ -492,7 +508,7 @@ export const validateOfficePackage = async (
     return
   }
 
-  const { entries, names } = inspectOoxmlPackage(bytes)
+  const { entries, names } = inspectOoxmlPackage(bytes, extension)
   const hasExpectedMarkers = OOXML_MARKERS[extension].every((name) => names.has(name))
 
   if (!hasExpectedMarkers) {

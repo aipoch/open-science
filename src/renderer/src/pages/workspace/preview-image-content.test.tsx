@@ -29,7 +29,7 @@ describe('PreviewUnsupportedContent', () => {
     container.remove()
   })
 
-  it('shows the fallback message and opens the file externally on request', async () => {
+  it('shows the unsupported message without an action', async () => {
     root = createRoot(container)
     await act(async () => {
       root.render(<PreviewUnsupportedContent path="/workspace/report.pdf" name="report.pdf" />)
@@ -37,13 +37,8 @@ describe('PreviewUnsupportedContent', () => {
 
     expect(container.textContent).toContain('report.pdf')
     expect(container.textContent).toContain("This file type isn't supported for preview")
-
-    const openButton = container.querySelector('button')
-    await act(async () => {
-      openButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
-
-    expect(window.api.artifacts.openFile).toHaveBeenCalledWith({ path: '/workspace/report.pdf' })
+    expect(container.querySelector('button')).toBeNull()
+    expect(window.api.artifacts.openFile).not.toHaveBeenCalled()
   })
 })
 
@@ -96,7 +91,7 @@ describe('PreviewImageContent', () => {
       root.render(<PreviewImageContent path="/workspace/photo.png" name="photo.png" />)
     })
 
-    expect(container.querySelector('.animate-spin')).not.toBeNull()
+    expect(container.querySelector('[data-preview-status="loading"]')).not.toBeNull()
 
     await act(async () => {
       resolveAcquire?.({
