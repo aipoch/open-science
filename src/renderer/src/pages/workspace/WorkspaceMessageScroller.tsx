@@ -28,7 +28,7 @@ import type { ArtifactMentionPart } from './WorkspaceMessageItem'
 import { createConversationItems } from './workspace-conversation-items'
 import { groupConversationItems } from './workspace-tool-activity-groups'
 import type { ActivityExpansionOverrides } from './workspace-tool-activity-groups'
-import type { GoToTranscriptIntent } from '../../../../shared/reviewer'
+import type { GoToTranscriptIntent, ReviewWithChecks } from '../../../../shared/reviewer'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
@@ -105,6 +105,20 @@ const WorkspaceMessageScroller = ({
     if (currentSessionId) {
       void loadReviewsForSession(currentSessionId)
     }
+  }, [currentSessionId, loadReviewsForSession])
+
+  // Reload (which recomputes staleness against current artifact bytes) when the window regains focus.
+  // An artifact edited outside the app while this session stays open would otherwise keep showing its
+  // review as current until the user switched sessions away and back; a focus return is the natural
+  // moment an out-of-app edit could have happened.
+  useEffect(() => {
+    if (!currentSessionId) return
+
+    const onFocus = (): void => {
+      void loadReviewsForSession(currentSessionId)
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
   }, [currentSessionId, loadReviewsForSession])
 
   // Group expansion is keyed by session so switching conversations never reuses stale UI state.
@@ -241,6 +255,30 @@ const WorkspaceMessageScroller = ({
     openSessionReviewer(currentSessionId, intent)
   }
 
+  // Re-runs the review for a specific (stale) turn — the actionable refresh the stale notice offers.
+  // Unlike the composer's last-turn-only "Request review", this reaches any turn's review. The row is
+  // grouped under review.turnMessageId (so a fix-loop review refreshes in place), but the audited
+  // content is review.scope.turnMessageId — the turn whose bytes actually changed. Fire-and-forget:
+  // a fresh review supersedes the stale one via reviewer:updated; concurrent runs are deduped in main.
+  const handleRerunReview = async (review: ReviewWithChecks): Promise<boolean> => {
+    try {
+      const result = await window.api.reviewer.run({
+        sessionId: review.sessionId,
+        turnMessageId: review.turnMessageId,
+        scopeTurnMessageId: review.scope.turnMessageId,
+        projectId: review.projectId,
+        mainSessionId: review.sessionId,
+        model: useSettingsStore.getState().activeModel,
+        // Explicit user Re-run: bypass main's auto-only per-turn idempotency so the stale/error review
+        // is genuinely re-run rather than refused as already-reviewed.
+        origin: 'manual'
+      })
+      return result?.started ?? false
+    } catch {
+      return false
+    }
+  }
+
   return (
     <MessageScrollerProvider
       key={activeSession?.id ?? 'empty-conversation'}
@@ -283,7 +321,11 @@ const WorkspaceMessageScroller = ({
                         <div className="px-4 pb-1 md:px-6">
                           <div className="mx-auto w-full max-w-[56rem]">
                             {/* Only "Go to transcript" navigates to the reviewer page; the card itself does not. */}
-                            <ReviewerCard review={review} onGoToTranscript={handleGoToTranscript} />
+                            <ReviewerCard
+                              review={review}
+                              onGoToTranscript={handleGoToTranscript}
+                              onRerun={handleRerunReview}
+                            />
                           </div>
                         </div>
                       ) : null}

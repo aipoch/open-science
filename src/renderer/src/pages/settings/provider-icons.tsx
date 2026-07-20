@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils'
 import claudeLogo from '@/assets/provider-icons/claude.svg'
 import deepseekLogo from '@/assets/provider-icons/deepseek.svg'
 import minimaxLogo from '@/assets/provider-icons/minimax.svg'
+import stepfunLogo from '@/assets/provider-icons/stepfun.svg'
 import openaiLogo from '@/assets/provider-icons/openai.svg'
 import zhipuLogo from '@/assets/provider-icons/zhipu.svg'
 import kimiLogo from '@/assets/provider-icons/kimi.svg'
@@ -19,6 +20,7 @@ const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   anthropic: claudeLogo,
   deepseek: deepseekLogo,
   minimax: minimaxLogo,
+  stepfun: stepfunLogo,
   zhipu: zhipuLogo,
   kimi: kimiLogo,
   kimiforcode: kimiLogo,

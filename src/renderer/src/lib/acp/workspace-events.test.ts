@@ -564,6 +564,214 @@ describe('workspace runtime events', () => {
 
       vi.unstubAllGlobals()
     })
+
+    it('retries a started:false auto-review so a not-yet-persisted new session still gets reviewed', async () => {
+      // A brand-new session persists via an async queue; the first stop can beat the flush, so main's
+      // disk load reports started:false. The auto path must retry, not silently drop the first review.
+      vi.useFakeTimers()
+      const reviewerRun = vi
+        .fn()
+        .mockResolvedValueOnce({ started: false, reason: 'not-found' }) // session not on disk yet
+        .mockResolvedValueOnce({ started: true }) // flushed by the time the retry runs
+      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'Analysis complete'
+      })
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
+      // Drive the retry delay + the fire-and-forget promise chain to completion.
+      await vi.runAllTimersAsync()
+
+      expect(reviewerRun).toHaveBeenCalledTimes(2)
+
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    })
+
+    it('does NOT retry an already-in-flight started:false (avoids launching a duplicate review)', async () => {
+      // The turn is already being reviewed. If a second auto trigger sees already-in-flight and the
+      // original run finishes/fails within the retry window, retrying would start a DUPLICATE review /
+      // fix-loop once the lock releases. The auto path must treat already-in-flight as already handled.
+      vi.useFakeTimers()
+      const reviewerRun = vi
+        .fn()
+        .mockResolvedValueOnce({ started: false, reason: 'already-in-flight' })
+        .mockResolvedValueOnce({ started: true }) // would be a DUPLICATE if wrongly retried
+      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'Analysis complete'
+      })
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
+      await vi.runAllTimersAsync()
+
+      // Exactly one call: already-in-flight is non-retryable, so no duplicate is launched.
+      expect(reviewerRun).toHaveBeenCalledTimes(1)
+
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    })
+
+    it('does NOT retry a run-failed started:false (a genuine pre-push failure, not a race)', async () => {
+      vi.useFakeTimers()
+      const reviewerRun = vi
+        .fn()
+        .mockResolvedValueOnce({ started: false, reason: 'run-failed' })
+        .mockResolvedValueOnce({ started: true })
+      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'Analysis complete'
+      })
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
+      await vi.runAllTimersAsync()
+
+      expect(reviewerRun).toHaveBeenCalledTimes(1)
+
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    })
+
+    it('stops retrying a persistent not-found auto-review at the attempt cap', async () => {
+      // A retryable reason that never resolves (e.g. session genuinely gone): retries must be bounded.
+      vi.useFakeTimers()
+      const reviewerRun = vi.fn().mockResolvedValue({ started: false, reason: 'not-found' })
+      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'Analysis complete'
+      })
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
+      await vi.runAllTimersAsync()
+
+      // AUTO_REVIEW_START_ATTEMPTS attempts, then it gives up.
+      expect(reviewerRun).toHaveBeenCalledTimes(4)
+
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    })
+
+    it('retries an idempotency-check-failed auto-review (main failed closed on a transient lookup)', async () => {
+      vi.useFakeTimers()
+      const reviewerRun = vi
+        .fn()
+        .mockResolvedValueOnce({ started: false, reason: 'idempotency-check-failed' }) // lookup threw
+        .mockResolvedValueOnce({ started: true }) // lookup recovered, no prior review → starts
+      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'Analysis complete'
+      })
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
+      await vi.runAllTimersAsync()
+
+      expect(reviewerRun).toHaveBeenCalledTimes(2)
+
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    })
+
+    it('retries a load-failed auto-review (transient store read failure)', async () => {
+      vi.useFakeTimers()
+      const reviewerRun = vi
+        .fn()
+        .mockResolvedValueOnce({ started: false, reason: 'load-failed' }) // store read blipped
+        .mockResolvedValueOnce({ started: true }) // succeeds on retry
+      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'Analysis complete'
+      })
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
+      await vi.runAllTimersAsync()
+
+      expect(reviewerRun).toHaveBeenCalledTimes(2)
+
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    })
+
+    it('stops retrying once main reports already-reviewed (another entry handled the turn)', async () => {
+      // The retry-window race, resolved by main (not a renderer store check): attempt 0 gets not-found
+      // and waits; during the delay another entry starts AND completes a review, releasing the in-flight
+      // lock. Attempt 1 reaches main, which now sees an existing review for this turn and returns
+      // already-reviewed (non-retryable) — so no duplicate review is launched.
+      vi.useFakeTimers()
+      const reviewerRun = vi
+        .fn()
+        .mockResolvedValueOnce({ started: false, reason: 'not-found' })
+        .mockResolvedValueOnce({ started: false, reason: 'already-reviewed' })
+        .mockResolvedValue({ started: true }) // would be a DUPLICATE if wrongly retried again
+      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'Analysis complete'
+      })
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
+      await vi.runAllTimersAsync()
+
+      // Stopped at already-reviewed on attempt 1 — no third (duplicate) call.
+      expect(reviewerRun).toHaveBeenCalledTimes(2)
+
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    })
+
+    it('tags auto-review requests with origin auto so main can enforce per-turn idempotency', async () => {
+      const reviewerRun = vi.fn().mockResolvedValue({ started: true })
+      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'Analysis complete'
+      })
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(reviewerRun).toHaveBeenCalledWith(expect.objectContaining({ origin: 'auto' }))
+
+      vi.unstubAllGlobals()
+    })
   })
 
   it('records finalize failures and retries when an artifact event is replayed', async () => {

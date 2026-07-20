@@ -80,6 +80,15 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true })
 })
 
+describe('MAX_IMAGE_PAYLOAD_BYTES', () => {
+  it('stays under the 5MB per-image provider limit after base64 growth', () => {
+    // Anthropic and OpenCode cap a single image near 5MB of base64; base64 inflates raw bytes ~4/3.
+    // Guards against raising the raw cap back to a value whose encoded form exceeds the provider limit.
+    const base64Bytes = Math.ceil(MAX_IMAGE_PAYLOAD_BYTES / 3) * 4
+    expect(base64Bytes).toBeLessThanOrEqual(5 * 1024 * 1024)
+  })
+})
+
 describe('buildImageContentData', () => {
   it('passes small images through untouched as raw base64', async () => {
     const filePath = join(root, 'small.png')

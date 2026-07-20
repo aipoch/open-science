@@ -12,7 +12,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { cn, formatByteSize } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
-import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { useSessionStore } from '@/stores/session-store'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type {
@@ -30,6 +30,7 @@ import {
 import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
 import { createPreviewFileItem } from './preview-file-item'
 import type { MessageArtifact } from './preview-file-item'
+import { FilePreviewDialog } from './FilePreviewDialog'
 import { getPreviewThumbnailReadEncoding } from './preview-support'
 import { createKeyedRequestReader } from './project-file-preview-queue'
 import { isUnavailableFileError, FILE_MISSING_TAG } from './previews/preview-errors'
@@ -718,11 +719,12 @@ const ProjectFilesViewContent = ({
   previewReader: ProjectFilePreviewReader
 }): React.JSX.Element => {
   const allSessions = useSessionStore((state) => state.sessions)
-  const upsertAndActivateItem = usePreviewWorkbenchStore((state) => state.upsertAndActivateItem)
   const [collapsedSectionIds, setCollapsedSectionIds] = useState<Set<string>>(() => new Set())
   const [selectedFilterId, setSelectedFilterId] = useState('all')
   const [selectedSessionFallback, setSelectedSessionFallback] = useState<ProjectFilesFilterOption>()
   const [allVisibleItemLimits, setAllVisibleItemLimits] = useState<Record<string, number>>({})
+  // Files-tab previews are transient dialog state; opening a file must not create a workbench tab.
+  const [dialogItem, setDialogItem] = useState<PreviewFileItem | undefined>(undefined)
   const handleIndexChanged = useCallback(
     (event: ProjectFilesChangedEvent): void => {
       const currentSessions = useSessionStore.getState().sessions
@@ -989,14 +991,17 @@ const ProjectFilesViewContent = ({
   }
 
   const previewFile = (file: ProjectFileItem): void => {
-    upsertAndActivateItem(
+    // Keep the indexed file identity and source so the dialog uses the same bounded preview IPC path.
+    setDialogItem(
       createPreviewFileItem({
         id: file.id,
         sessionId: file.sessionId,
         path: file.path,
         name: file.name,
         mimeType: file.mimeType,
-        source: file.source === 'upload' ? 'upload' : undefined
+        source: file.source === 'upload' ? 'upload' : undefined,
+        size: file.size,
+        mtimeMs: file.mtimeMs
       })
     )
   }
@@ -1195,6 +1200,7 @@ const ProjectFilesViewContent = ({
           </section>
         ) : null}
       </div>
+      <FilePreviewDialog item={dialogItem} onClose={() => setDialogItem(undefined)} />
     </div>
   )
 }

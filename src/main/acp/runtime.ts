@@ -358,9 +358,11 @@ class AcpRuntime {
   private artifactSessionSequence = 0
   private artifactRunSequence = 0
   private notebookSessionSequence = 0
-  // The in-flight turn's artifact run, tracked so app-side tools (e.g. molecule preview) can attach a
-  // generated file to the current run. Set while a prompt is active, cleared in the prompt's finally.
-  private activeArtifactRun: { sessionId: string; run: ActiveArtifactRun } | undefined
+  // The in-flight artifact run keyed by app session id, so app-side tools (e.g. molecule preview)
+  // attach a generated file to the run of the session that triggered the call. Parallel sessions each
+  // keep their own entry — a single global field would let one session's turn capture another's write.
+  // An entry is set while that session's prompt is active and cleared in the prompt's finally.
+  private readonly activeArtifactRuns = new Map<string, ActiveArtifactRun>()
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
   constructor(private readonly options: AcpRuntimeOptions) {
@@ -431,6 +433,13 @@ class AcpRuntime {
       projectName: this.resolveSessionProjectName(sessionId),
       sessionId
     }))
+  }
+
+  // Run ids of turns currently in flight, from live in-memory state (not the persisted current-run
+  // handoff, which survives a crash). The artifact orphan scan uses this to exclude files a running
+  // turn is still writing, while a crashed run — absent here — correctly surfaces as orphaned.
+  getActiveArtifactRunIds(): string[] {
+    return Array.from(this.activeArtifactRuns.values(), (run) => run.runId)
   }
 
   // Resolves an application profile against per-session ACP capabilities and applies the real Agent
@@ -1295,9 +1304,11 @@ class AcpRuntime {
     try {
       // Create a fresh run context before prompting so MCP writes can be attributed to this turn.
       artifactRun = await this.activateArtifactRun(request.sessionId)
-      this.activeArtifactRun = artifactRun
-        ? { sessionId: request.sessionId, run: artifactRun }
-        : undefined
+      if (artifactRun) {
+        this.activeArtifactRuns.set(request.sessionId, artifactRun)
+      } else {
+        this.activeArtifactRuns.delete(request.sessionId)
+      }
       // Prepend a short steering nudge naming the picked skills. It goes only into the content sent to
       // the agent; the user-facing message event keeps the original text (which already shows /Name).
       // Framework-neutral delivery of the system-prompt guidance: Claude carries it in session _meta so
@@ -1405,8 +1416,8 @@ class AcpRuntime {
       // lock and the renderer starts the replay, this stale finally must not delete the replay's in-flight
       // lock (which would reopen same-session sends and misreport prompt-in-flight) or clear its active
       // artifact run. Identity/token comparisons scope each clear to the turn that still owns the state.
-      if (this.activeArtifactRun?.run === artifactRun) {
-        this.activeArtifactRun = undefined
+      if (artifactRun && this.activeArtifactRuns.get(request.sessionId) === artifactRun) {
+        this.activeArtifactRuns.delete(request.sessionId)
       }
       if (this.currentPromptTurnBySession.get(request.sessionId) === promptTurn) {
         const cancelTimer = this.cancelTimers.get(request.sessionId)
@@ -2275,20 +2286,26 @@ class AcpRuntime {
   // Writes an inline file into the in-flight turn's pending artifact run so it attaches to the resulting
   // message and surfaces to the renderer like any generated artifact. Used by app-side connector tools
   // (e.g. molecule preview). Throws when no assistant turn is active (e.g. a user-run notebook cell).
-  async writeArtifactForCurrentRun(input: {
-    filename: string
-    content: string
-    mimeType?: string
-  }): Promise<ArtifactFile> {
-    const active = this.activeArtifactRun
-    if (!active || !this.artifactRepository) {
+  async writeArtifactForCurrentRun(
+    sessionId: string,
+    input: {
+      filename: string
+      content: string
+      mimeType?: string
+    }
+  ): Promise<ArtifactFile> {
+    // Attribute the write to the run of the session that triggered it, resolved from the caller's
+    // session id — never a global "current" run, so a parallel session's in-flight turn cannot capture
+    // this file. Fail closed when the session has no active run.
+    const run = sessionId ? this.activeArtifactRuns.get(sessionId) : undefined
+    if (!run || !this.artifactRepository) {
       throw new Error('No active assistant turn to attach a generated file to.')
     }
 
     return this.artifactRepository.writePendingFile({
-      projectName: this.resolveSessionProjectName(active.sessionId),
-      sessionId: active.run.artifactSessionId,
-      runId: active.run.runId,
+      projectName: this.resolveSessionProjectName(sessionId),
+      sessionId: run.artifactSessionId,
+      runId: run.runId,
       filename: input.filename,
       mimeType: input.mimeType,
       source: { kind: 'inline', content: input.content, encoding: 'utf8' }

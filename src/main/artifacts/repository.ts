@@ -24,10 +24,17 @@ import type {
   WritePendingArtifactFileRequest
 } from '../../shared/artifacts'
 import { readBoundedManagedFilePreview } from '../managed-file-preview'
+import { createLogger } from '../logger'
+
+const log = createLogger('artifacts:repository')
 
 const ARTIFACTS_DIR = 'artifacts'
 const PENDING_DIR = '.pending'
 const METADATA_DIR = '.metadata'
+// Per-run markers recording which app session + message a finalized run moved into, keyed by run id.
+const RUNS_DIR = '.runs'
+// Handoff file (directly under a session's .pending) naming the in-flight turn's run id for MCP writes.
+const CURRENT_RUN_FILE = 'current-run.json'
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 type ArtifactMetadata = {
@@ -179,7 +186,7 @@ const getArtifactCurrentRunFilePath = (
     getProjectArtifactDir(storageRoot, projectName),
     assertSafePathSegment(sessionId),
     PENDING_DIR,
-    'current-run.json'
+    CURRENT_RUN_FILE
   )
 
 // Owns app-managed artifact paths so callers never concatenate user-controlled segments.
@@ -249,6 +256,10 @@ class ArtifactRepository {
     const messageDir = this.getMessageDir(projectName, sessionId, messageId)
     const entries = await this.readFileEntries(pendingDir)
 
+    // Record where this run finalized so a stale `.pending/<run>` path recovers to this exact message,
+    // not the newest same-named file in the session. Written on every finalize (idempotent).
+    await this.writeRunMarker(projectName, sourceSessionId, runId, { sessionId, messageId })
+
     if (entries.length === 0) {
       // A repeated finalize may find files already moved; recover metadata and return the final state.
       await this.recoverMovedArtifactMetadata(pendingDir, messageDir)
@@ -317,6 +328,137 @@ class ArtifactRepository {
     )
   }
 
+  // Re-finalizes artifacts a crash left in `.pending` after the in-memory run claim was lost: the
+  // session JSON persisted a `.pending/<run>/<file>` path, but the pending->message move never ran. Only
+  // the artifactSessionId + runId segments are read from each path; the pending directory is rebuilt
+  // from the storage root, so a corrupt stored path cannot point the move outside managed storage.
+  // Idempotent — finalizeRunArtifacts tolerates files already moved. Returns the message's final files.
+  async reconcilePendingArtifactPaths(request: {
+    projectName: string
+    sessionId: string
+    messageId: string
+    pendingPaths: string[]
+  }): Promise<ArtifactFile[]> {
+    const runs = new Map<string, { artifactSessionId: string; runId: string }>()
+
+    for (const pendingPath of request.pendingPaths) {
+      const parsed = this.parsePendingPath(pendingPath)
+      if (parsed) runs.set(`${parsed.artifactSessionId}/${parsed.runId}`, parsed)
+    }
+
+    for (const { artifactSessionId, runId } of runs.values()) {
+      await this.finalizeRunArtifacts({
+        projectName: request.projectName,
+        sessionId: request.sessionId,
+        sourceSessionId: artifactSessionId,
+        runId,
+        messageId: request.messageId
+      })
+    }
+
+    return this.listMessageFiles({
+      projectName: request.projectName,
+      sessionId: request.sessionId,
+      messageId: request.messageId
+    })
+  }
+
+  // Extracts the artifact session id and run id from a `.../<artifactSessionId>/.pending/<runId>/<file>`
+  // path. Returns undefined when the path is not a pending path or the segments are unsafe.
+  private parsePendingPath(
+    pendingPath: string
+  ): { artifactSessionId: string; runId: string } | undefined {
+    if (typeof pendingPath !== 'string' || pendingPath.length === 0) return undefined
+
+    const runDir = dirname(pendingPath)
+    const runId = basename(runDir)
+    const pendingDir = dirname(runDir)
+    if (basename(pendingDir) !== PENDING_DIR) return undefined
+
+    const artifactSessionId = basename(dirname(pendingDir))
+    if (!SAFE_SEGMENT_PATTERN.test(runId) || !SAFE_SEGMENT_PATTERN.test(artifactSessionId)) {
+      return undefined
+    }
+
+    return { artifactSessionId, runId }
+  }
+
+  // Enumerates every artifact on disk for one project, across all sessions — finalized files under
+  // message directories, plus files a crashed turn left behind in `.pending/<run>/` with no owning
+  // message (which startup reconciliation cannot claim). Skips sidecar metadata and the current-run
+  // handoff. Used to surface orphaned artifacts whose owning session/message no longer exists, so a
+  // delete or a mid-turn crash never strands files that the user was promised would remain.
+  //
+  // `activeRunIds` are the runs of turns the caller knows are IN FLIGHT right now (from live runtime
+  // state, not the persisted current-run.json handoff — that file survives a crash and would then hide
+  // the crashed run's files forever). Their pending files are still being written, so they are excluded
+  // from the orphan list; every other pending run is a crashed/ownerless run and is surfaced.
+  async listProjectArtifacts(
+    projectName: string,
+    activeRunIds: ReadonlySet<string> = new Set()
+  ): Promise<ArtifactFile[]> {
+    const project = assertSafePathSegment(projectName)
+    const projectDir = getProjectArtifactDir(this.storageRoot, project)
+    const files: ArtifactFile[] = []
+
+    // Session and message dirs use safe segments; the pattern also skips the `.pending`/`.metadata`
+    // dot-directories, so only real session/message directories are traversed here.
+    for (const sessionId of await this.readSubdirectoryNames(projectDir)) {
+      if (!SAFE_SEGMENT_PATTERN.test(sessionId)) continue
+      const sessionDir = join(projectDir, sessionId)
+
+      for (const messageId of await this.readSubdirectoryNames(sessionDir)) {
+        if (!SAFE_SEGMENT_PATTERN.test(messageId)) continue
+        const messageDir = join(sessionDir, messageId)
+
+        for (const entry of await this.readFileEntries(messageDir)) {
+          const metadata = await this.readArtifactMetadata(messageDir, entry.name)
+
+          files.push(
+            await this.createArtifactFile({
+              projectName: project,
+              sessionId,
+              messageId,
+              filename: entry.name,
+              filePath: join(messageDir, entry.name),
+              mimeType: metadata.mimeType
+            })
+          )
+        }
+      }
+
+      // Ownerless pending files: a turn that crashed before the renderer attached its artifacts leaves
+      // files here with no message to reconcile against, so surface them rather than hide them forever.
+      // Only `.pending/<run>/` subdirectories hold artifacts; the `current-run.json` handoff is a plain
+      // file and is skipped by the subdirectory walk. A run the caller reports as in-flight is skipped
+      // (its files are mid-write and will finalize into a message shortly); a crashed run is NOT in that
+      // live set, so its leftover files correctly surface as orphans.
+      const pendingDir = join(sessionDir, PENDING_DIR)
+      for (const runId of await this.readSubdirectoryNames(pendingDir)) {
+        if (!SAFE_SEGMENT_PATTERN.test(runId)) continue
+        if (activeRunIds.has(runId)) continue
+        const runDir = join(pendingDir, runId)
+
+        for (const entry of await this.readFileEntries(runDir)) {
+          const metadata = await this.readArtifactMetadata(runDir, entry.name)
+
+          files.push(
+            await this.createArtifactFile({
+              projectName: project,
+              sessionId,
+              runId,
+              filename: entry.name,
+              filePath: join(runDir, entry.name),
+              mimeType: metadata.mimeType
+            })
+          )
+        }
+      }
+    }
+
+    return files
+  }
+
   // Resolves a renderer-provided artifact path only after canonical root and symlink checks pass.
   async resolveManagedFilePath(request: OpenArtifactFileRequest): Promise<string> {
     if (
@@ -359,28 +501,53 @@ class ArtifactRepository {
   }
 
   // Given a now-missing `.pending/<run>/<file>` artifact path, finds the same file after finalize moved
-  // it into a sibling message directory (`<session>/<messageId>/<file>`). Returns the newest match, or
-  // undefined when the path is not a pending path or no finalized copy exists. Path safety is still
-  // enforced by resolveManagedFilePath's root check on the returned path.
+  // it, using ONLY the run marker written at finalize (`.runs/<run>.json`), which pins the exact app
+  // session + message the run produced. An unmarked run is never recovered by guessing among same-named
+  // files (that could cross-resolve to a different run's file); returns undefined instead. Also returns
+  // undefined when the path is not a pending path or the marker's target no longer exists. Path safety
+  // is still enforced by resolveManagedFilePath's root check on the returned path.
   private async recoverFinalizedPendingPath(requestedPath: string): Promise<string | undefined> {
-    const pendingDir = dirname(dirname(requestedPath)) // <session>/.pending
+    // requestedPath = <project>/<sourceSessionId>/.pending/<runId>/<file>
+    const runDir = dirname(requestedPath)
+    const runId = basename(runDir)
+    const pendingDir = dirname(runDir)
     if (basename(pendingDir) !== PENDING_DIR) return undefined
-    const sessionDir = dirname(pendingDir)
+    const sourceSessionDir = dirname(pendingDir)
     const filename = basename(requestedPath)
 
-    const entries = await readdir(sessionDir, { withFileTypes: true }).catch(() => null)
-    if (!entries) return undefined
+    // Marker path: resolve directly from the source-session dir the stale path already points into.
+    const markerResult = SAFE_SEGMENT_PATTERN.test(runId)
+      ? await this.readRunMarker(join(sourceSessionDir, RUNS_DIR, `${runId}.json`))
+      : { present: false }
 
-    const matches: Array<{ path: string; mtimeMs: number }> = []
-    for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name === PENDING_DIR || entry.name === METADATA_DIR)
-        continue
-      const candidate = join(sessionDir, entry.name, filename)
+    // A marker file exists (the run WAS marked). Resolve ONLY to its pinned run→message target and
+    // never fall back to another run's same-named file. A missing target (artifact deleted) or a
+    // corrupt/unreadable marker both yield undefined — guessing here is the cross-run mis-read to avoid.
+    if (markerResult.present) {
+      if (!markerResult.marker) {
+        log.warn('artifact recovery skipped: run marker present but unreadable', { requestedPath })
+        return undefined
+      }
+      const projectDir = dirname(sourceSessionDir)
+      const candidate = join(
+        projectDir,
+        markerResult.marker.sessionId,
+        markerResult.marker.messageId,
+        filename
+      )
       const candidateStat = await stat(candidate).catch(() => undefined)
-      if (candidateStat?.isFile()) matches.push({ path: candidate, mtimeMs: candidateStat.mtimeMs })
+      return candidateStat?.isFile() ? candidate : undefined
     }
-    matches.sort((left, right) => right.mtimeMs - left.mtimeMs)
-    return matches[0]?.path
+
+    // No marker at all. This is a legacy artifact (finalized before markers existed) OR one whose
+    // best-effort marker write failed — the two are indistinguishable on disk. A same-name scan is
+    // therefore unsafe even with a single candidate: if the run's own file was deleted and a different
+    // run left an identically-named file, that lone candidate would be the WRONG run's file. So we do
+    // not guess at all — recovery of an unmarked stale pending path returns undefined (a real 404). New
+    // artifacts always carry a marker; the only loss is best-effort recovery of pre-marker legacy files,
+    // whose finalized paths are already what a reloaded session persists (it doesn't hold pending paths).
+    log.warn('artifact recovery skipped: stale pending path has no run marker', { requestedPath })
+    return undefined
   }
 
   // Reads a small text preview from a managed artifact without exposing arbitrary filesystem reads.
@@ -391,6 +558,78 @@ class ArtifactRepository {
     return readBoundedManagedFilePreview(filePath, request, 'Invalid artifact preview encoding.')
   }
 
+  // Resolves the per-run marker path under the source (artifact) session, keyed by run id — the same
+  // scope a stale pending path carries, so recovery can find it without knowing the app session id.
+  private getRunMarkerPath(projectName: string, sourceSessionId: string, runId: string): string {
+    return join(
+      getProjectArtifactDir(this.storageRoot, projectName),
+      sourceSessionId,
+      RUNS_DIR,
+      `${runId}.json`
+    )
+  }
+
+  // Persists the app session + message a run finalized into. Written atomically (temp + rename) so a
+  // crash mid-write never leaves a half-written marker that would later read as corrupt. Best-effort: a
+  // failure must not fail the finalize itself — recovery then treats the run as unmarked and only
+  // recovers a stale path when the same-name match is unambiguous (never guessing across runs).
+  private async writeRunMarker(
+    projectName: string,
+    sourceSessionId: string,
+    runId: string,
+    marker: { sessionId: string; messageId: string }
+  ): Promise<void> {
+    const markerPath = this.getRunMarkerPath(projectName, sourceSessionId, runId)
+    const temporaryPath = `${markerPath}.${Date.now()}-${randomUUID()}.tmp`
+    try {
+      await mkdir(dirname(markerPath), { recursive: true })
+      await writeFile(temporaryPath, `${JSON.stringify(marker)}\n`, 'utf8')
+      await rename(temporaryPath, markerPath)
+    } catch {
+      // Non-fatal: the run still finalized; an unmarked run just isn't recoverable via stale pending
+      // path. Remove any temp left behind so a failed write never litters the `.runs` dir (matches the
+      // atomic-write cleanup elsewhere in this repository).
+      await rm(temporaryPath, { force: true }).catch(() => undefined)
+    }
+  }
+
+  // Reads a run marker, distinguishing three states so recovery can act safely:
+  //   { present: false }            — no marker file (legacy artifact, or a marker write that failed).
+  //   { present: true }             — a marker file exists but is unreadable/corrupt/invalid.
+  //   { present: true, marker }     — a valid marker pinning the run's app session + message.
+  // The present-but-invalid case must NOT fall back to a same-name scan: the run WAS marked, so a
+  // damaged marker means "cannot resolve", not "guess among other runs' files".
+  private async readRunMarker(
+    markerPath: string
+  ): Promise<{ present: boolean; marker?: { sessionId: string; messageId: string } }> {
+    let raw: string
+    try {
+      raw = await readFile(markerPath, 'utf8')
+    } catch (error) {
+      if (isMissingFileError(error)) return { present: false }
+      // Present but unreadable (e.g. permissions): treat as a damaged marker, not absent.
+      return { present: true }
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (
+        typeof parsed === 'object' &&
+        parsed !== null &&
+        typeof (parsed as { sessionId?: unknown }).sessionId === 'string' &&
+        typeof (parsed as { messageId?: unknown }).messageId === 'string'
+      ) {
+        const { sessionId, messageId } = parsed as { sessionId: string; messageId: string }
+        if (SAFE_SEGMENT_PATTERN.test(sessionId) && SAFE_SEGMENT_PATTERN.test(messageId)) {
+          return { present: true, marker: { sessionId, messageId } }
+        }
+      }
+      return { present: true }
+    } catch {
+      return { present: true }
+    }
+  }
+
   // Builds the temporary directory for files generated during one active assistant turn.
   private getPendingRunDir(projectName: string, sessionId: string, runId: string): string {
     return join(getProjectArtifactDir(this.storageRoot, projectName), sessionId, PENDING_DIR, runId)
@@ -399,6 +638,18 @@ class ArtifactRepository {
   // Builds the durable directory displayed under one completed assistant message.
   private getMessageDir(projectName: string, sessionId: string, messageId: string): string {
     return join(getProjectArtifactDir(this.storageRoot, projectName), sessionId, messageId)
+  }
+
+  // Reads only direct subdirectory names, returning an empty list when the directory does not exist.
+  private async readSubdirectoryNames(directory: string): Promise<string[]> {
+    try {
+      const entries = await readdir(directory, { withFileTypes: true })
+
+      return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)
+    } catch (error) {
+      if (isMissingFileError(error)) return []
+      throw error
+    }
   }
 
   // Reads only direct files, returning an empty list when an artifact directory does not exist yet.

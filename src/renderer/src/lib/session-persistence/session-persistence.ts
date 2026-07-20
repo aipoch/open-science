@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 
+import type { ArtifactFile, ReconcilePendingArtifactsRequest } from '../../../../shared/artifacts'
 import type {
   DeleteSessionRequest,
   LoadAllSessionsResult,
@@ -14,6 +15,59 @@ type SessionPersistenceApi = {
   saveSession: (session: PersistedChatSession) => Promise<void>
   deleteSession: (request: DeleteSessionRequest) => Promise<void>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
+}
+
+// The one artifact command startup reconciliation needs; kept narrow so it is trivial to fake in tests.
+type ArtifactReconcileApi = {
+  reconcilePendingArtifacts: (request: ReconcilePendingArtifactsRequest) => Promise<ArtifactFile[]>
+}
+
+// A crash between persisting a pending artifact reference and finalizing it strands the file in
+// `.pending/<run>/`. The path segment is stable across OSes, so detect it structurally.
+const isPendingArtifactPath = (path: string | undefined): path is string =>
+  typeof path === 'string' && path.split(/[\\/]/).includes('.pending')
+
+// Re-finalizes artifacts a prior crash left in `.pending` after the in-memory finalize claim was lost.
+// For each hydrated message still referencing a pending path, ask the main process to complete the
+// move (idempotent) and replace the message's stale references with the finalized files. Runs once at
+// startup after the store saver is subscribed, so each replacement is persisted. Per-message failures
+// are isolated and never block the rest; an empty result leaves references untouched so a file still
+// readable at its pending path is never dropped.
+const reconcilePendingArtifacts = async (api: ArtifactReconcileApi): Promise<void> => {
+  for (const session of useSessionStore.getState().sessions) {
+    if (session.isPending || !session.projectId) continue
+
+    const artifactsById = new Map(
+      (session.artifacts ?? []).map((artifact) => [artifact.id, artifact])
+    )
+
+    for (const message of session.messages) {
+      const pendingPaths = (message.artifactIds ?? [])
+        .map((id) => artifactsById.get(id)?.path)
+        .filter(isPendingArtifactPath)
+
+      if (pendingPaths.length === 0) continue
+
+      try {
+        const finalized = await api.reconcilePendingArtifacts({
+          projectName: session.projectId,
+          sessionId: session.id,
+          messageId: message.id,
+          pendingPaths
+        })
+
+        if (finalized.length > 0) {
+          useSessionStore.getState().replaceMessageArtifacts({
+            sessionId: session.id,
+            messageId: message.id,
+            artifacts: finalized
+          })
+        }
+      } catch (error) {
+        reportPersistenceError(error)
+      }
+    }
+  }
 }
 
 type SessionStoreSnapshot = {
@@ -127,6 +181,11 @@ const useSessionPersistence = (): boolean => {
       unsubscribe = useSessionStore.subscribe((state) => {
         void save(state).catch(reportPersistenceError)
       })
+
+      // Recover any artifacts a prior crash left in `.pending`; runs after the saver subscribes so the
+      // finalized references are persisted. Fire-and-forget: it must not delay the workspace becoming
+      // interactive, and failures are already reported per message.
+      void reconcilePendingArtifacts(window.api.artifacts)
     }
 
     void startPersistence()
@@ -140,5 +199,5 @@ const useSessionPersistence = (): boolean => {
   return isReady
 }
 
-export { createStoreSaver, loadPersistedSessions, useSessionPersistence }
-export type { SessionPersistenceApi }
+export { createStoreSaver, loadPersistedSessions, reconcilePendingArtifacts, useSessionPersistence }
+export type { ArtifactReconcileApi, SessionPersistenceApi }

@@ -1,15 +1,14 @@
 import { X } from 'lucide-react'
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
 
-import { Button } from '@/components/ui/button'
 import { ResizablePanel } from '@/components/ui/resizable'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import type { PreviewFileItem, PreviewItem } from '@/stores/preview-workbench-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
-import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
+import { FilePreviewDialog } from './FilePreviewDialog'
+import { MiddleEllipsisFileName, PreviewFileSurface } from './PreviewFileSurface'
 import { PreviewFileContent } from './previews/PreviewFileContent'
 import { PreviewToolContent } from './previews/PreviewToolContent'
 
@@ -41,26 +40,6 @@ const PreviewActiveContent = ({
 
 const previewTabClassName =
   'group flex h-8 max-w-[160px] shrink-0 items-center gap-1 rounded-md pl-2 pr-1 text-[12px] transition-colors'
-
-// Keeps the identifying tail and extension visible while the flexible prefix owns the ellipsis.
-const MiddleEllipsisFileName = ({ name }: { name: string }): React.JSX.Element => {
-  const extensionIndex = name.lastIndexOf('.')
-  const extensionLength = extensionIndex > 0 ? name.length - extensionIndex : 0
-  const trailingLength = Math.min(name.length, Math.max(extensionLength + 10, 18))
-  const splitIndex = Math.max(1, name.length - trailingLength)
-
-  return (
-    <span className="flex min-w-0 max-w-full flex-1 items-center overflow-hidden whitespace-nowrap">
-      <span className="min-w-0 truncate">{name.slice(0, splitIndex)}</span>
-      <span
-        data-testid="preview-title-tail"
-        className="min-w-0 max-w-[65%] shrink overflow-hidden text-ellipsis [direction:rtl] [unicode-bidi:plaintext]"
-      >
-        {name.slice(splitIndex)}
-      </span>
-    </span>
-  )
-}
 
 const getPreviewTabId = (itemId: string): string => `preview-tab-${encodeURIComponent(itemId)}`
 const getPreviewPanelId = (itemId: string): string => `preview-panel-${encodeURIComponent(itemId)}`
@@ -193,53 +172,44 @@ const PreviewTabBar = ({
   )
 }
 
-// The compact card header centralizes the active preview's identity and file-level actions.
-const PreviewCardHeader = ({
+// Keep dialog state local to the active file panel. While the dialog owns the preview, unmount the
+// compact renderer so large files are not acquired and rendered twice at the same time.
+const PreviewFilePanel = ({
   item,
+  contentKey,
   onClose
 }: {
   item: PreviewFileItem
+  contentKey: string
   onClose: (id: string) => void
-}): React.JSX.Element => (
-  <header
-    data-testid="preview-card-header"
-    className="flex h-8 shrink-0 items-center gap-1 border-b border-border-300/50 px-2"
-  >
-    <TooltipProvider delayDuration={300}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="min-w-0 flex-1 text-[12px] font-medium text-text-000">
-            <MiddleEllipsisFileName name={item.name} />
-          </span>
-        </TooltipTrigger>
-        <TooltipContent>{item.title}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-    <ManagedFileDownloadButton
-      source={item.source ?? 'artifact'}
-      path={item.path}
-      suggestedName={item.name}
-      className="bg-transparent shadow-none"
-    />
-    <TooltipProvider delayDuration={200}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            className="text-text-100 hover:text-text-000"
-            aria-label={`Close preview of ${item.title}`}
-            onClick={() => onClose(item.id)}
-          >
-            <X aria-hidden="true" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>Close preview</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  </header>
-)
+}): React.JSX.Element => {
+  const [isFullScreenOpen, setIsFullScreenOpen] = useState(false)
+
+  return (
+    <>
+      <section
+        data-testid="preview-card"
+        role="tabpanel"
+        id={getPreviewPanelId(item.id)}
+        aria-labelledby={getPreviewTabId(item.id)}
+        tabIndex={0}
+        className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-md bg-bg-000 shadow-card"
+      >
+        <PreviewFileSurface
+          item={item}
+          contentKey={contentKey}
+          renderContent={!isFullScreenOpen}
+          onClose={() => onClose(item.id)}
+          onOpenFullScreen={() => setIsFullScreenOpen(true)}
+        />
+      </section>
+      <FilePreviewDialog
+        item={isFullScreenOpen ? item : undefined}
+        onClose={() => setIsFullScreenOpen(false)}
+      />
+    </>
+  )
+}
 
 // Right-side workbench: a tab strip over every previewed file, plus content for the active tab.
 const PreviewPanel = ({
@@ -312,20 +282,12 @@ const PreviewPanel = ({
             }
 
             return item.type === 'file' ? (
-              <section
+              <PreviewFilePanel
                 key={item.id}
-                data-testid="preview-card"
-                role="tabpanel"
-                id={getPreviewPanelId(item.id)}
-                aria-labelledby={getPreviewTabId(item.id)}
-                tabIndex={0}
-                className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-md bg-bg-000 shadow-card"
-              >
-                <PreviewCardHeader item={item} onClose={removeItem} />
-                <div className="min-h-0 flex-1 overflow-y-auto bg-bg-000">
-                  <PreviewActiveContent key={activeContentKey} item={item} />
-                </div>
-              </section>
+                item={item}
+                contentKey={activeContentKey}
+                onClose={removeItem}
+              />
             ) : (
               <section
                 key={item.id}

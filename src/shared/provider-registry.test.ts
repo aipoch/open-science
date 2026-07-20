@@ -98,6 +98,24 @@ describe('provider registry', () => {
     expect(resolveVendorModelsUrl('kimi')).toBe('https://api.moonshot.cn/v1/models')
   })
 
+  it('routes StepFun through all three APIs, per region, with a live model list', () => {
+    expect(resolveVendorApiEndpoints('stepfun')).toEqual(['anthropic', 'openai', 'responses'])
+    expect(vendorHasRegions('stepfun')).toBe(true)
+    // Global (.ai) is the first region and the fallback for an unknown region.
+    expect(resolveVendorBaseUrl('stepfun')).toBe('https://api.stepfun.ai')
+    expect(resolveVendorOpenAiBaseUrl('stepfun')).toBe('https://api.stepfun.ai/v1')
+    expect(resolveVendorModelsUrl('stepfun')).toBe('https://api.stepfun.ai/v1/models')
+    expect(resolveVendorApiKeyUrl('stepfun')).toBe('https://platform.stepfun.ai/interface-key')
+    // China (.com) console.
+    expect(resolveVendorBaseUrl('stepfun', 'china')).toBe('https://api.stepfun.com')
+    expect(resolveVendorOpenAiBaseUrl('stepfun', 'china')).toBe('https://api.stepfun.com/v1')
+    expect(resolveVendorModelsUrl('stepfun', 'china')).toBe('https://api.stepfun.com/v1/models')
+    expect(resolveVendorApiKeyUrl('stepfun', 'china')).toBe(
+      'https://platform.stepfun.com/interface-key'
+    )
+    expect(defaultVendorModel('stepfun')).toBe('step-3.7-flash')
+  })
+
   it('resolves the key-console URL, preferring the selected region', () => {
     // Single-endpoint vendor: the vendor-level URL.
     expect(resolveVendorApiKeyUrl('deepseek')).toBe('https://platform.deepseek.com/api_keys')
@@ -172,6 +190,11 @@ describe('provider registry', () => {
     it('returns false for Xiaomi MIMO models (no vision support)', () => {
       expect(isVendorModelMultimodal('xiaomimimo', 'mimo-v2.5-pro')).toBe(false)
       expect(isVendorModelMultimodal('xiaomimimo', 'mimo-v2.5')).toBe(false)
+    })
+
+    it('returns true only for the StepFun multimodal flash model', () => {
+      expect(isVendorModelMultimodal('stepfun', 'step-3.7-flash')).toBe(true)
+      expect(isVendorModelMultimodal('stepfun', 'step-3.5-flash')).toBe(false)
     })
 
     it('returns true for OpenRouter vision-capable models', () => {

@@ -1,4 +1,5 @@
 import { useReviewStore } from '@/stores/review-store'
+import { useNavigationStore } from '@/stores/navigation-store'
 import type { PreviewToolItem } from '@/stores/preview-workbench-store'
 
 import { NotebookPreview } from '../NotebookPreview'
@@ -34,7 +35,12 @@ export const PreviewToolContent = ({
 }: {
   item: PreviewToolItem
 }): React.JSX.Element | null => {
-  if (item.toolKind === 'files') return <ProjectFilesView />
+  const activeProjectId = useNavigationStore((state) => state.activeProjectId)
+
+  // Remount the Files tool per project so its transient dialog cannot outlive the project it opened.
+  if (item.toolKind === 'files') {
+    return <ProjectFilesView key={activeProjectId ?? 'no-active-project'} />
+  }
 
   if (item.toolKind === 'reviewer') return <SessionReviewerContent item={item} />
 

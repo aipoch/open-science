@@ -15,7 +15,12 @@ type NotebookLocalRpcServerOptions = {
   token?: string
   host?: string
   connectorService?: {
-    call(server: string, method: string, args: Record<string, unknown>): Promise<unknown>
+    call(
+      server: string,
+      method: string,
+      args: Record<string, unknown>,
+      context?: { sessionId?: string }
+    ): Promise<unknown>
   }
 }
 
@@ -151,13 +156,16 @@ class NotebookLocalRpcServer {
 
   // Maps the narrow RPC method names to strongly-typed runtime service calls.
   private async dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
-    // mcpCall is not session-scoped, so it bypasses assertSessionParams below.
+    // mcpCall carries no runtime routing fields, so it bypasses assertSessionParams below. It does
+    // forward the caller's session id (already alias-resolved above) as call context so a local tool
+    // handler can attribute side effects to the session that invoked it.
     if (method === 'mcpCall') {
       if (!this.connectorService) throw new Error('Connector service is not configured.')
       const server = typeof params.server === 'string' ? params.server : ''
       const toolMethod = typeof params.method === 'string' ? params.method : ''
       const args = isRecord(params.args) ? params.args : {}
-      return this.connectorService.call(server, toolMethod, args)
+      const sessionId = typeof params.sessionId === 'string' ? params.sessionId : undefined
+      return this.connectorService.call(server, toolMethod, args, { sessionId })
     }
 
     assertSessionParams(params)
