@@ -31,6 +31,19 @@ describe('isTextLikeAttachment', () => {
     expect(isTextLikeAttachment('reads.bam')).toBe(false)
     expect(isTextLikeAttachment('noext')).toBe(false)
   })
+
+  it('lets a concrete non-text MIME override a text-looking extension', () => {
+    // A gzipped FASTQ keeps a .fastq name but is binary — the explicit MIME must win.
+    expect(isTextLikeAttachment('reads.fastq', 'application/gzip')).toBe(false)
+    expect(isTextLikeAttachment('data.csv', 'application/x-parquet')).toBe(false)
+    expect(isTextLikeAttachment('sheet.csv', 'application/vnd.ms-excel')).toBe(false)
+  })
+
+  it('falls back to the extension only for a missing or generic MIME', () => {
+    expect(isTextLikeAttachment('data.csv', 'application/octet-stream')).toBe(true)
+    expect(isTextLikeAttachment('data.csv', 'binary/octet-stream')).toBe(true)
+    expect(isTextLikeAttachment('archive.zip', 'application/octet-stream')).toBe(false)
+  })
 })
 
 describe('isTabularAttachment', () => {

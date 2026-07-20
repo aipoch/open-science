@@ -1037,6 +1037,61 @@ describe('ACP runtime session management', () => {
     )
   })
 
+  it('sends an oversized text upload as a bounded preview + resource_link, never the full contents', async () => {
+    const root = await createTemporaryRoot()
+    const uploadRepository = new UploadRepository(root)
+    // A >512 KB CSV: a unique marker after the preview window must never reach the prompt.
+    const header = 'id,name,value\n'
+    const filler = Array.from({ length: 60_000 }, (_, i) => `${i},row,${i}`).join('\n')
+    const tailMarker = '\nSENTINEL_PAST_PREVIEW_WINDOW'
+    const csvBody = `${header}${filler}${tailMarker}`
+    expect(Buffer.byteLength(csvBody, 'utf8')).toBeGreaterThan(512 * 1024)
+    const stagedAttachments = await uploadRepository.stageFiles({
+      files: [
+        { name: 'big.csv', mimeType: 'text/csv', content: Buffer.from(csvBody).toString('base64') }
+      ]
+    })
+    const process = new FakeAgentProcess()
+    const receivedPrompts: ContentBlock[][] = []
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: ({ prompt }) => {
+        receivedPrompts.push(prompt)
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      uploads: { repository: uploadRepository }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'analyze this table',
+      attachments: stagedAttachments
+    })
+
+    expect(receivedPrompts).toHaveLength(1)
+    const [prompt] = receivedPrompts
+    // Order is preserved: user text, then the file's preview notice, then its link.
+    expect(prompt[0]).toEqual({ type: 'text', text: 'analyze this table' })
+    const notice = prompt[1] as Extract<ContentBlock, { type: 'text' }>
+    expect(notice.type).toBe('text')
+    expect(notice.text).toContain('big.csv')
+    expect(notice.text).toContain('too large to include in full')
+    expect(notice.text).toContain('id,name,value')
+    expect(prompt[2]).toMatchObject({
+      type: 'resource_link',
+      name: 'big.csv',
+      mimeType: 'text/csv',
+      uri: expect.stringContaining('/uploads/default-project/remote-session-1/big.csv')
+    })
+    // The full contents are never inlined: no `resource` block, and the past-preview marker never ships.
+    expect(prompt.some((block) => block.type === 'resource')).toBe(false)
+    expect(JSON.stringify(prompt)).not.toContain('SENTINEL_PAST_PREVIEW_WINDOW')
+  })
+
   it('adopts a fresh agent session under the same app id on a context reset', async () => {
     const process = new FakeAgentProcess()
     const receivedPrompts: ContentBlock[][] = []
@@ -1471,6 +1526,55 @@ describe('ACP runtime session management', () => {
       'Notebook tool instructions (only applies when using open-science-notebook tools)'
     )
     expect(fakeAgent.prompts[0].text).not.toContain('<open_science_artifact_instructions>')
+  })
+
+  it('delivers the large-data-file guidance to Claude session metadata on create and resume', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'], { supportsResume: true })
+    // No artifacts/notebook configured: the large-file guidance is unconditional, unlike the MCP-gated
+    // artifact/notebook appends, so it must still ride the Claude system-prompt preset.
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework
+    })
+
+    // Resume a different id than the created one so the runtime performs a real session/resume (an
+    // already-attached id short-circuits), mirroring the artifact-guidance create+resume coverage.
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.resumeSession({ sessionId: 'remote-session-2', cwd: '/workspace' })
+
+    expect(fakeAgent.newSessions[0]._meta).toMatchObject({
+      systemPrompt: {
+        preset: 'claude_code',
+        append: expect.stringContaining('open_science_large_file_instructions')
+      }
+    })
+    expect(fakeAgent.resumedSessions[0]._meta).toMatchObject({
+      systemPrompt: {
+        append: expect.stringContaining('open_science_large_file_instructions')
+      }
+    })
+  })
+
+  it('delivers the large-data-file guidance to opencode as a prompt prefix', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['oc-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'hello opencode' })
+
+    // opencode has no system-prompt preset, so the guidance rides the prompt prefix ahead of user text.
+    expect(fakeAgent.newSessions[0]._meta).toBeUndefined()
+    expect(fakeAgent.prompts[0].text).toContain('open_science_large_file_instructions')
+    expect(fakeAgent.prompts[0].text).toContain('hello opencode')
   })
 
   it('serves artifact/notebook MCP over the http host for an http-only framework', async () => {

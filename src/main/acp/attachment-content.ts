@@ -80,10 +80,21 @@ const fileExtension = (name: string): string => {
   return dot >= 0 ? name.slice(dot + 1).toLowerCase() : ''
 }
 
-// True when the file can be read as UTF-8 text — by MIME (text/*, JSON) or by a known text extension.
+// Generic/opaque MIME values that carry no real format signal, so the extension is the better guide.
+// (Browsers/OSes emit application/octet-stream for unrecognized types, including plain-text data files.)
+const GENERIC_MIME_TYPES = new Set(['application/octet-stream', 'binary/octet-stream'])
+
+// True when the file can be read as UTF-8 text. An explicit text MIME wins; an explicit *non-text*,
+// non-generic MIME (e.g. application/gzip, image/png) loses outright so a gzipped `.fastq` is never
+// treated as text. Only a missing or generic MIME defers to the known-text extension list.
 export const isTextLikeAttachment = (name: string, mimeType?: string): boolean => {
   if (mimeType?.startsWith('text/') || mimeType === 'application/json') return true
   if (mimeType === 'application/xml' || mimeType === 'application/x-ndjson') return true
+
+  const normalizedMime = mimeType?.trim().toLowerCase()
+
+  // A concrete non-text MIME is authoritative — do not second-guess it from the extension.
+  if (normalizedMime && !GENERIC_MIME_TYPES.has(normalizedMime)) return false
 
   return TEXT_LIKE_EXTENSIONS.has(fileExtension(name))
 }
