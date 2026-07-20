@@ -51,9 +51,19 @@ export type OfficialVendor = {
   // the Codex Responses->Chat bridge. Ships with the app so such models are greyed in the picker
   // rather than user-tested. Absent/empty ⇒ every listed model is bridge-compatible.
   bridgeUnsupportedModels?: readonly string[]
-  // Models that support image input (multimodal vision capabilities). Absent/empty ⇒ no models support
-  // images. When present, only listed model ids accept image attachments; others are text-only.
-  multimodalModels?: readonly string[]
+  // Describes which of this vendor's models accept image input (multimodal vision). Absent ⇒ the vendor
+  // has no vision models. This must cover live-fetched ids too — a vendor that refreshes its catalog can
+  // surface a vision model not in the bundled `models` array — so it is a rule, not a static id list:
+  //   - allMultimodal: true       — every model this vendor serves supports vision (e.g. Claude, GPT-5+)
+  //   - multimodalModelPattern    — a RegExp matched against the model id (e.g. GLM's `v` vision variants)
+  //   - multimodalModels          — an explicit id list, for catalogs where vision is an unpredictable
+  //                                 subset (e.g. OpenRouter's cross-vendor slugs)
+  // Precedence when resolving support: allMultimodal → pattern → explicit list.
+  multimodal?: {
+    allMultimodal?: boolean
+    multimodalModelPattern?: RegExp
+    multimodalModels?: readonly string[]
+  }
   // Single-endpoint vendors set `baseUrl`; multi-region vendors set `regions` instead (never both).
   // For dual-endpoint vendors, `baseUrl` is the Anthropic /v1/messages route and `openaiBaseUrl` is the
   // separate OpenAI /v1/chat/completions root. Set both only for a vendor whose apiEndpoints include
@@ -80,15 +90,8 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     // The API exposes a broader mixed catalog (embeddings, image, and audio models); keep the coding
     // catalog curated here instead of importing every id from /v1/models.
     models: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini'],
-    // All GPT-5+ models support vision
-    multimodalModels: [
-      'gpt-5.6-sol',
-      'gpt-5.6-terra',
-      'gpt-5.6-luna',
-      'gpt-5.5',
-      'gpt-5.4',
-      'gpt-5.4-mini'
-    ]
+    // The curated coding catalog is all GPT-5+, which is vision-capable across the board.
+    multimodal: { allMultimodal: true }
   },
   {
     id: 'anthropic',
@@ -103,13 +106,9 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       'claude-sonnet-5',
       'claude-haiku-4-5-20251001'
     ],
-    // All Claude models support vision
-    multimodalModels: [
-      'claude-opus-4-8',
-      'claude-opus-4-8[1m]',
-      'claude-sonnet-5',
-      'claude-haiku-4-5-20251001'
-    ]
+    // Every current Claude model is vision-capable, including any surfaced by the live model-list
+    // refresh above — so this is a blanket rule, not the four bundled ids.
+    multimodal: { allMultimodal: true }
   },
   {
     id: 'deepseek',
@@ -123,9 +122,8 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     openaiBaseUrl: 'https://api.deepseek.com/v1',
     apiKeyUrl: 'https://platform.deepseek.com/api_keys',
     modelsListUrl: 'https://api.deepseek.com/v1/models',
-    models: ['deepseek-v4-pro', 'deepseek-v4-pro[1m]', 'deepseek-v4-flash'],
-    // DeepSeek v4 models do not support vision yet (text-only)
-    multimodalModels: []
+    models: ['deepseek-v4-pro', 'deepseek-v4-pro[1m]', 'deepseek-v4-flash']
+    // DeepSeek's chat models are text-only, so no `multimodal` rule (image input stays disabled).
   },
   {
     id: 'zhipu',
@@ -151,8 +149,9 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       }
     ],
     models: ['glm-5.2', 'glm-5.1', 'glm-5', 'glm-5v-turbo', 'glm-5-turbo'],
-    // Only the 'v' variants support vision (glm-5v-turbo has multimodal capabilities)
-    multimodalModels: ['glm-5v-turbo']
+    // GLM marks vision variants with a `v` after the major version (e.g. glm-5v-turbo); the pattern
+    // also covers future `Nv` ids the live refresh may surface.
+    multimodal: { multimodalModelPattern: /glm-\d+v/i }
   },
   {
     id: 'minimax',
@@ -171,9 +170,8 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         apiKeyUrl: 'https://platform.minimaxi.com/user-center/basic-information/interface-key'
       }
     ],
-    models: ['MiniMax-M3', 'MiniMax-M3[1m]', 'MiniMax-M2.7', 'MiniMax-M2.5'],
-    // MiniMax models do not support vision yet (text-only)
-    multimodalModels: []
+    models: ['MiniMax-M3', 'MiniMax-M3[1m]', 'MiniMax-M2.7', 'MiniMax-M2.5']
+    // MiniMax's chat models are text-only, so no `multimodal` rule (image input stays disabled).
   },
   {
     id: 'kimi',
@@ -187,8 +185,8 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     apiKeyUrl: 'https://platform.kimi.com/console',
     modelsListUrl: 'https://api.moonshot.cn/v1/models',
     models: ['kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6', 'kimi-k2.5'],
-    // Kimi models support vision starting from k3
-    multimodalModels: ['kimi-k3']
+    // Vision arrives with the k3 generation; older k2.x chat models are text-only.
+    multimodal: { multimodalModels: ['kimi-k3'] }
   },
   {
     id: 'kimiforcode',
@@ -202,8 +200,8 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     openaiBaseUrl: 'https://api.kimi.com/coding/v1',
     apiKeyUrl: 'https://www.kimi.com/code/docs',
     models: ['kimi-k3', 'kimi-for-coding', 'kimi-for-coding-highspeed'],
-    // Only k3 supports vision in the coding plan
-    multimodalModels: ['kimi-k3']
+    // Only the k3 model in this plan is vision-capable; the coding-tuned ids are text-only.
+    multimodal: { multimodalModels: ['kimi-k3'] }
   },
   {
     id: 'xiaomimimo',
@@ -215,9 +213,8 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     openaiBaseUrl: 'https://api.xiaomimimo.com/v1',
     apiKeyUrl: 'https://platform.xiaomimimo.com/console/api-keys',
     modelsListUrl: 'https://api.xiaomimimo.com/v1/models',
-    models: ['mimo-v2.5-pro', 'mimo-v2.5'],
-    // Xiaomi MIMO models do not support vision yet (text-only)
-    multimodalModels: []
+    models: ['mimo-v2.5-pro', 'mimo-v2.5']
+    // Xiaomi MiMo's chat models are text-only, so no `multimodal` rule (image input stays disabled).
   },
   // OpenRouter is an aggregation gateway (many vendors behind one key), so it sits last in the picker.
   {
@@ -255,25 +252,29 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       'moonshotai/kimi-k3',
       'qwen/qwen3.7-max'
     ],
-    // Most models on OpenRouter support vision (Claude, GPT-5+, Gemini, Grok)
-    multimodalModels: [
-      'anthropic/claude-opus-4.8',
-      'anthropic/claude-sonnet-5',
-      'anthropic/claude-haiku-4.5',
-      'openai/gpt-5.6-terra-pro',
-      'openai/gpt-5.6-terra',
-      'openai/gpt-5.6-sol-pro',
-      'openai/gpt-5.6-sol',
-      'openai/gpt-5.6-luna-pro',
-      'openai/gpt-5.6-luna',
-      'openai/gpt-5.5-pro',
-      'openai/gpt-5.5',
-      'google/gemini-3.1-pro-preview',
-      'google/gemini-3.5-flash',
-      'x-ai/grok-4.5',
-      'moonshotai/kimi-k3',
-      'qwen/qwen3.7-max'
-    ]
+    // OpenRouter's catalog is curated (no live refresh), and vision support is an unpredictable subset
+    // across vendors — so it is an explicit id list rather than a blanket rule or pattern. The
+    // text-only members (gpt-5.3-codex, deepseek-v4-pro, glm-5.2) are intentionally omitted.
+    multimodal: {
+      multimodalModels: [
+        'anthropic/claude-opus-4.8',
+        'anthropic/claude-sonnet-5',
+        'anthropic/claude-haiku-4.5',
+        'openai/gpt-5.6-terra-pro',
+        'openai/gpt-5.6-terra',
+        'openai/gpt-5.6-sol-pro',
+        'openai/gpt-5.6-sol',
+        'openai/gpt-5.6-luna-pro',
+        'openai/gpt-5.6-luna',
+        'openai/gpt-5.5-pro',
+        'openai/gpt-5.5',
+        'google/gemini-3.1-pro-preview',
+        'google/gemini-3.5-flash',
+        'x-ai/grok-4.5',
+        'moonshotai/kimi-k3',
+        'qwen/qwen3.7-max'
+      ]
+    }
   }
 ]
 
@@ -395,17 +396,22 @@ export const isModelBridgeSupported = (
 export const vendorHasRegions = (id: OfficialVendorId): boolean =>
   (VENDORS_BY_ID.get(id)?.regions?.length ?? 0) > 0
 
-// Checks whether a specific model from an official vendor supports image input (multimodal vision).
-// Returns false for unknown vendors, unknown models, or models not in the vendor's multimodalModels list.
+// Whether a specific model from an official vendor accepts image input (multimodal vision). Resolves
+// the vendor's `multimodal` rule with allMultimodal → pattern → explicit-list precedence, so it works
+// for live-fetched ids too (a blanket vendor like Claude returns true for any model, not just the
+// bundled four). Returns false for an unknown/absent vendor, an empty model id, or a vendor with no
+// `multimodal` rule at all.
 export const isVendorModelMultimodal = (
   vendorId: OfficialVendorId,
   modelId: string | undefined
 ): boolean => {
   if (!modelId) return false
 
-  const vendor = VENDORS_BY_ID.get(vendorId)
-  if (!vendor) return false
+  const rule = VENDORS_BY_ID.get(vendorId)?.multimodal
+  if (!rule) return false
 
-  const multimodalModels = vendor.multimodalModels ?? []
-  return multimodalModels.includes(modelId)
+  if (rule.allMultimodal) return true
+  if (rule.multimodalModelPattern?.test(modelId)) return true
+
+  return rule.multimodalModels?.includes(modelId) ?? false
 }

@@ -1014,6 +1014,118 @@ describe('SettingsService: official vendors', () => {
     expect(result.message).toMatch(/no model-list endpoint/i)
   })
 
+  // The provider view's supportsImageInput drives whether the composer accepts image attachments.
+  // These cover every branch of SettingsService.providerSupportsImageInput end to end: the type
+  // branches, the official default-model fallback, active-model switching, and live-fetched models.
+  describe('supportsImageInput in the provider view', () => {
+    it('is always true for a claude-default provider', async () => {
+      const service = createService()
+      const created = (
+        await service.upsertProvider({ type: 'claude-default', name: 'Local Claude' })
+      ).providers[0]
+
+      expect(created.supportsImageInput).toBe(true)
+    })
+
+    it('reflects the custom provider flag (true only when explicitly enabled)', async () => {
+      const service = createService()
+
+      const withImagesSnapshot = await service.upsertProvider({
+        type: 'custom',
+        name: 'Vision gateway',
+        baseUrl: 'https://g/v1',
+        model: 'm',
+        key: 'k',
+        supportsImageInput: true
+      })
+      const withImages = withImagesSnapshot.providers.at(-1)
+      expect(withImages?.supportsImageInput).toBe(true)
+
+      const textOnlySnapshot = await service.upsertProvider({
+        type: 'custom',
+        name: 'Text gateway',
+        baseUrl: 'https://t/v1',
+        model: 'm',
+        key: 'k'
+      })
+      const textOnly = textOnlySnapshot.providers.find((p) => p.name === 'Text gateway')
+      expect(textOnly?.supportsImageInput).toBe(false)
+    })
+
+    it('uses the vendor default model when the provider is not the active one', async () => {
+      const service = createService()
+
+      // Claude's whole catalog is vision-capable, so its default model reports true.
+      const claudeSnapshot = await service.upsertProvider({
+        type: 'official',
+        name: 'Claude',
+        vendorId: 'anthropic',
+        key: 'k'
+      })
+      const claude = claudeSnapshot.providers.find((p) => p.vendorId === 'anthropic')
+      expect(claude?.supportsImageInput).toBe(true)
+
+      // DeepSeek's default model is text-only.
+      const deepseekSnapshot = await service.upsertProvider({
+        type: 'official',
+        name: 'DeepSeek',
+        vendorId: 'deepseek',
+        key: 'k'
+      })
+      const deepseek = deepseekSnapshot.providers.find((p) => p.vendorId === 'deepseek')
+      expect(deepseek?.supportsImageInput).toBe(false)
+    })
+
+    it('tracks the active model for a vendor with mixed vision support (GLM)', async () => {
+      const service = createService()
+      const created = (
+        await service.upsertProvider({ type: 'official', name: 'GLM', vendorId: 'zhipu', key: 'k' })
+      ).providers[0]
+
+      // The vision variant flips the active provider's view to true.
+      let view = (await service.setActiveProvider(created.id, 'glm-5v-turbo')).providers.find(
+        (provider) => provider.id === created.id
+      )
+      expect(view?.supportsImageInput).toBe(true)
+
+      // Switching to a text-only model flips it back to false.
+      view = (await service.setActiveProvider(created.id, 'glm-5.2')).providers.find(
+        (provider) => provider.id === created.id
+      )
+      expect(view?.supportsImageInput).toBe(false)
+    })
+
+    it('honors live-fetched Claude models the bundled catalog does not list', async () => {
+      const service = createService()
+      // A refresh surfaces a Claude id not shipped in the registry; it must still count as vision.
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          status: 200,
+          json: () => Promise.resolve({ data: [{ id: 'claude-opus-5-unreleased' }] })
+        })
+      )
+
+      const created = (
+        await service.upsertProvider({
+          type: 'official',
+          name: 'Claude',
+          vendorId: 'anthropic',
+          key: 'k'
+        })
+      ).providers[0]
+
+      await service.refreshProviderModels({ providerId: created.id })
+      // Activate the fetched model, then read the active provider's view.
+      const view = (
+        await service.setActiveProvider(created.id, 'claude-opus-5-unreleased')
+      ).providers.find((provider) => provider.id === created.id)
+
+      expect(view?.models).toEqual(['claude-opus-5-unreleased'])
+      expect(view?.supportsImageInput).toBe(true)
+    })
+  })
+
   it('uses a basic Chat Completions probe outside Codex', async () => {
     const service = createService()
     const fetchMock = vi.fn().mockResolvedValue({ status: 200 })
