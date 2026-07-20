@@ -110,7 +110,7 @@ describe('logger: errorLogFields', () => {
     selfReferential.cause = selfReferential
 
     const fields = errorLogFields(selfReferential)
-    expect(fields.cause).toBe('[circular cause]')
+    expect(fields.cause).toBe('[circular]')
 
     // The whole point: the final log line must survive JSON.stringify with the error + context intact,
     // rather than collapsing to the circular fallback and dropping everything.
@@ -118,7 +118,7 @@ describe('logger: errorLogFields', () => {
       formatLine('error', 'acp', 'failed', { ...fields, framework: 'claude-code' })
     ) as { data: { error: string; cause: string; framework: string } }
     expect(parsed.data.error).toBe('loop')
-    expect(parsed.data.cause).toBe('[circular cause]')
+    expect(parsed.data.cause).toBe('[circular]')
     expect(parsed.data.framework).toBe('claude-code')
   })
 
@@ -130,8 +130,69 @@ describe('logger: errorLogFields', () => {
 
     const fields = errorLogFields(a) as { cause: { error: string; cause: string } }
     expect(fields.cause.error).toBe('b')
-    expect(fields.cause.cause).toBe('[circular cause]')
+    expect(fields.cause.cause).toBe('[circular]')
     expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('breaks a cycle in a non-Error (plain object) cause', () => {
+    const cyclic: Record<string, unknown> = { detail: 'provider blew up' }
+    cyclic.self = cyclic
+    const wrapper = Object.assign(new Error('request failed'), { cause: cyclic })
+
+    const fields = errorLogFields(wrapper) as { cause: { detail: string; self: string } }
+    expect(fields.cause.detail).toBe('provider blew up')
+    expect(fields.cause.self).toBe('[circular]')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', { ...fields, ctx: 1 }))).not.toThrow()
+  })
+
+  it('unwraps an Error nested inside a non-Error cause instead of dropping it to {}', () => {
+    const inner = new Error('inner boom')
+    const wrapper = Object.assign(new Error('outer'), { cause: { nested: inner } })
+
+    const fields = errorLogFields(wrapper) as {
+      cause: { nested: { error: string; stack?: string } }
+    }
+    expect(fields.cause.nested.error).toBe('inner boom')
+    expect(typeof fields.cause.nested.stack).toBe('string')
+  })
+
+  it('breaks a cycle inside RequestError.data so the whole record still serializes', () => {
+    const data: Record<string, unknown> = { details: 'rate limited' }
+    data.loop = data
+    const requestError = Object.assign(new Error('Internal error'), { code: -32603, data })
+
+    const fields = errorLogFields(requestError) as {
+      data: { details: string; loop: string }
+    }
+    expect(fields.data.details).toBe('rate limited')
+    expect(fields.data.loop).toBe('[circular]')
+
+    const parsed = JSON.parse(
+      formatLine('error', 'acp', 'failed', { ...fields, framework: 'opencode' })
+    ) as { data: { error: string; framework: string } }
+    expect(parsed.data.error).toBe('Internal error')
+    expect(parsed.data.framework).toBe('opencode')
+  })
+
+  it('breaks a cycle in a directly-thrown plain object', () => {
+    const thrown: Record<string, unknown> = { message: 'weird throw', code: 7 }
+    thrown.self = thrown
+
+    const fields = errorLogFields(thrown) as { error: string; code: number; self: string }
+    expect(fields.error).toBe('weird throw')
+    expect(fields.code).toBe(7)
+    expect(fields.self).toBe('[circular]')
+    expect(() => JSON.parse(formatLine('warn', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('keeps sibling (non-cyclic) shared references, flagging only true back-references', () => {
+    const shared = { id: 1 }
+    const thrown = { a: shared, b: shared }
+
+    const fields = errorLogFields(thrown) as { a: { id: number }; b: { id: number } }
+    // A diamond is not a cycle: both positions keep the value.
+    expect(fields.a).toEqual({ id: 1 })
+    expect(fields.b).toEqual({ id: 1 })
   })
 
   it('keeps a thrown plain object’s own fields instead of "[object Object]"', () => {

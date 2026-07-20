@@ -50,43 +50,81 @@ const toSerializable = (value: unknown): unknown => {
 // or inconsistently present, so a spread wouldn't reliably pick them up.
 const ERROR_DETAIL_KEYS = ['name', 'code', 'data', 'errno', 'syscall', 'path'] as const
 
+// Marker substituted for a value that points back to one of its own ancestors, so the sanitized output
+// is always acyclic (and therefore always JSON-serializable).
+const CIRCULAR_MARKER = '[circular]'
+
+// Recursively converts any value into a JSON-safe, acyclic structure. `seen` holds the *ancestor path*
+// only (entries are removed on the way back up), so a value referenced twice in sibling positions is
+// kept both times — only a real back-reference to an ancestor becomes the marker. Error instances are
+// unwrapped at every depth (their fields are non-enumerable, so a nested Error would otherwise serialize
+// to `{}`); bigint/function/symbol are stringified since JSON.stringify cannot represent them.
+const toLogSafe = (value: unknown, seen: Set<object>): unknown => {
+  if (typeof value === 'bigint') return `${value}n`
+  if (typeof value === 'function') return `[function ${value.name || 'anonymous'}]`
+  if (typeof value === 'symbol') return value.toString()
+  if (value === null || typeof value !== 'object') return value
+  if (value instanceof Date) return value.toISOString()
+
+  if (seen.has(value)) return CIRCULAR_MARKER
+  seen.add(value)
+  try {
+    if (value instanceof Error) return formatError(value, seen)
+    if (Array.isArray(value)) return value.map((item) => toLogSafe(item, seen))
+
+    const out: Record<string, unknown> = {}
+    for (const [key, item] of Object.entries(value)) out[key] = toLogSafe(item, seen)
+
+    return out
+  } finally {
+    seen.delete(value)
+  }
+}
+
+// Formats one Error into a flat, JSON-safe record: message under `error`, plus stack, the common
+// diagnostic detail keys, and a (recursively sanitized) cause. The caller must have already added
+// `error` to `seen`, so a cause that points back to it becomes the circular marker rather than recursing.
+const formatError = (error: Error, seen: Set<object>): Record<string, unknown> => {
+  const fields: Record<string, unknown> = { error: error.message, stack: error.stack }
+  const own = error as unknown as Record<string, unknown>
+
+  for (const key of ERROR_DETAIL_KEYS) {
+    if (own[key] !== undefined) fields[key] = toLogSafe(own[key], seen)
+  }
+
+  const cause = (error as { cause?: unknown }).cause
+  if (cause !== undefined) fields.cause = toLogSafe(cause, seen)
+
+  return fields
+}
+
 // Expands an unknown thrown value into a log-safe record for nesting inside a larger context object.
 // toSerializable only unwraps a *top-level* Error; an Error nested inside `{ error, ...ctx }` serializes
 // to `{}` because its fields are non-enumerable — losing the message, stack, and (worse) the code/data
 // that name the real cause. Spread the result into the log context so all of it survives:
 //   log.error('connect failed', { ...errorLogFields(err), framework })
-// The cause chain is followed into plain objects, and a `seen` set breaks any cycle (a self-referential
-// or mutually-referential cause) with a marker string — leaving a raw Error in the output would rewrap
-// the cycle and make the *whole* record unserializable, dropping the error and its context entirely.
-const errorLogFields = (
-  error: unknown,
-  seen: Set<unknown> = new Set()
-): Record<string, unknown> => {
+// The result is guaranteed acyclic and JSON-serializable: every branch runs through toLogSafe, which
+// unwraps nested Errors at any depth and replaces any cycle — in a cause chain, in RequestError.data, or
+// in a directly-thrown object — with a marker, so formatLine can never fall back to `[unserializable]`
+// and drop the whole record.
+const errorLogFields = (error: unknown): Record<string, unknown> => {
+  const seen = new Set<object>()
+
   if (error instanceof Error) {
     seen.add(error)
-    const fields: Record<string, unknown> = { error: error.message, stack: error.stack }
 
-    const own = error as unknown as Record<string, unknown>
-    for (const key of ERROR_DETAIL_KEYS) {
-      if (own[key] !== undefined) fields[key] = own[key]
-    }
-
-    const cause = (error as { cause?: unknown }).cause
-    if (cause instanceof Error) {
-      fields.cause = seen.has(cause) ? '[circular cause]' : errorLogFields(cause, seen)
-    } else if (cause !== undefined) {
-      fields.cause = cause
-    }
-
-    return fields
+    return formatError(error, seen)
   }
 
   // A thrown non-Error object (e.g. a JSON-RPC error `{ code, message, data }`): keep its own fields
   // rather than collapsing to "[object Object]" the way String() would.
   if (error !== null && typeof error === 'object') {
     const record = error as Record<string, unknown>
+    seen.add(record)
+    const safe: Record<string, unknown> = {}
+    for (const [key, item] of Object.entries(record)) safe[key] = toLogSafe(item, seen)
 
-    return { error: typeof record.message === 'string' ? record.message : '[object]', ...record }
+    return { error: typeof record.message === 'string' ? record.message : '[object]', ...safe }
   }
 
   return { error: String(error) }

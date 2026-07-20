@@ -3754,6 +3754,86 @@ describe('ACP runtime — connect failure logging', () => {
       false
     )
   })
+
+  it('labels a real-backend spawn failure with the resolved (switched) framework, not the old one', async () => {
+    errorLogSpy.mockClear()
+    // The runtime defaults to claude-code; this reconnect resolves a *different* backend whose real
+    // framework.spawn() throws. spawnAgentProcess sets this.framework to opencode before spawning, so
+    // the failure must be attributed to opencode — the backend actually launched — via the spawn tag,
+    // exercising the real resolveBackend + framework switch + framework.spawn() path (no injected spawn).
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: {
+          ...opencodeFramework,
+          spawn: () => {
+            throw new Error('spawn opencode ENOENT')
+          }
+        },
+        executablePath: '/bin/opencode',
+        env: {}
+      })
+    })
+
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(/opencode ENOENT/)
+
+    const call = errorLogSpy.mock.calls.find(([message]) => message === 'agent connection failed')
+    expect(call).toBeDefined()
+    const data = call?.[1] as { error: string; framework: string }
+    expect(data.error).toBe('spawn opencode ENOENT')
+    expect(data.framework).toBe('opencode')
+  })
+
+  it('logs "agent connection abandoned" when a real async resolveBackend is superseded by a public disconnect()', async () => {
+    warnLogSpy.mockClear()
+    errorLogSpy.mockClear()
+    const process = new FakeAgentProcess()
+    process.pid = 3434
+    let releaseBackend: () => void = () => undefined
+    const backendGate = new Promise<void>((resolvePromise) => {
+      releaseBackend = resolvePromise
+    })
+
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      // A genuinely async backend resolution: it parks until the test has superseded the connect via the
+      // public disconnect() API, then returns a real framework whose spawn yields the fake process.
+      resolveBackend: async () => {
+        await backendGate
+
+        return {
+          framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+          executablePath: '/bin/agent',
+          env: {}
+        }
+      }
+    })
+
+    const createPromise = runtime.createSession({ cwd: '/workspace' })
+    // Overlapping teardown while the first connect is still awaiting its backend: bumps the generation
+    // through the real disconnect path, so the parked connect must abandon once it resumes.
+    await runtime.disconnect()
+    releaseBackend()
+
+    await expect(createPromise).rejects.toThrow(/superseded|shutting down/i)
+
+    // The overlapping disconnect bumps the generation, so the parked connect is abandoned once it
+    // resumes (here at the pre-spawn generation assertion — the real overlapping-connect timing). The
+    // key guarantees: it logs as *abandoned* (a warning), carries the target cwd + framework, and does
+    // NOT also raise the error-level "failed" record.
+    const abandoned = warnLogSpy.mock.calls.find(
+      ([message]) => message === 'agent connection abandoned (superseded or shutting down)'
+    )
+    expect(abandoned).toBeDefined()
+    const data = abandoned?.[1] as { cwd: string; framework: string }
+    expect(data.cwd).toBe(resolve('/workspace'))
+    expect(data.framework).toBe('claude-code')
+    expect(errorLogSpy.mock.calls.some(([message]) => message === 'agent connection failed')).toBe(
+      false
+    )
+  })
 })
 
 describe('ACP runtime — session-creation and spawn diagnostics', () => {

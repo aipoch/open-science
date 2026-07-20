@@ -235,6 +235,28 @@ const errorMessage = (error: unknown): string => {
   return String(error)
 }
 
+// Carries the framework a failed spawn targeted, so connectFresh can label the failure with the backend
+// it actually tried to launch even when the spawn threw before returning a process.
+const SPAWN_FRAMEWORK_KEY = 'spawnFramework'
+
+const taggedSpawnError = (error: unknown, framework: AgentFramework['id']): unknown => {
+  if (error instanceof Error) {
+    ;(error as unknown as Record<string, unknown>)[SPAWN_FRAMEWORK_KEY] = framework
+
+    return error
+  }
+
+  return error
+}
+
+const spawnErrorFramework = (error: unknown): AgentFramework['id'] | undefined => {
+  if (error === null || typeof error !== 'object') return undefined
+
+  const value = (error as Record<string, unknown>)[SPAWN_FRAMEWORK_KEY]
+
+  return typeof value === 'string' ? (value as AgentFramework['id']) : undefined
+}
+
 const log = createLogger('acp')
 
 // Detects an agent-side resume failure that means the session cannot be reattached, so the thread
@@ -532,10 +554,10 @@ class AcpRuntime {
     // failure path — including "superseded during spawn", where the process is deliberately never
     // assigned to this.agentProcess.
     let agentProcess: ChildProcessWithoutNullStreams | undefined
-    // The framework THIS connect spawned under. spawnAgentProcess sets this.framework to the resolved
-    // backend, but a concurrent supersede can then reassign it while the old child is torn down — so the
-    // catch must log the value bound to this spawn, not the mutable this.framework.id, to avoid pairing
-    // an old PID with a new backend. Seeded with the current value in case spawn itself throws first.
+    // The framework THIS connect spawned under, bound atomically to the spawn (spawnAgentProcess returns
+    // it alongside the process, and tags a spawn-throw with it) rather than re-read from the mutable
+    // this.framework, which an overlapping reconnect can move before the failure log is written. Seeded
+    // with the current value in case we throw before spawning at all (e.g. a pre-spawn teardown failure).
     let spawnedFramework = this.framework.id
 
     try {
@@ -549,8 +571,9 @@ class AcpRuntime {
       this.setStatus('connecting')
       log.info('connecting agent', { cwd: this.cwd, generation })
 
-      agentProcess = await this.spawnAgentProcess()
-      spawnedFramework = this.framework.id
+      const spawned = await this.spawnAgentProcess()
+      agentProcess = spawned.process
+      spawnedFramework = spawned.framework
 
       // spawnAgentProcess resolves the provider config asynchronously, so the connection may have been
       // torn down or superseded during the spawn: a quit latched shuttingDown, or any teardown/reconnect
@@ -645,12 +668,13 @@ class AcpRuntime {
     } catch (error) {
       // Shared process context so both the abandoned and the failed paths name the child — including the
       // superseded-during-spawn case, where the local `agentProcess` holds the child this.agentProcess
-      // never received.
+      // never received. A spawn-throw carries the framework it targeted (the process never returned to
+      // update spawnedFramework), so prefer that tag when present.
       const processFields = {
         cwd,
         generation,
         currentGeneration: this.connectionGeneration,
-        framework: spawnedFramework,
+        framework: spawnErrorFramework(error) ?? spawnedFramework,
         shuttingDown: this.shuttingDown,
         agentProcessPid: agentProcess?.pid,
         agentProcessKilled: agentProcess?.killed
@@ -1242,10 +1266,15 @@ class AcpRuntime {
   }
 
   // Creates the agent process, preferring an injected spawner (tests) and otherwise resolving the
-  // active agent backend so each reconnect uses the current framework + up-to-date credentials.
-  private async spawnAgentProcess(): Promise<ChildProcessWithoutNullStreams> {
+  // active agent backend so each reconnect uses the current framework + up-to-date credentials. Returns
+  // the child paired with the framework it was spawned under so the caller labels lifecycle/failure logs
+  // atomically — never by re-reading the mutable this.framework, which an overlapping reconnect can move.
+  private async spawnAgentProcess(): Promise<{
+    process: ChildProcessWithoutNullStreams
+    framework: AgentFramework['id']
+  }> {
     if (this.spawnAgent) {
-      return this.spawnAgent()
+      return { process: this.spawnAgent(), framework: this.framework.id }
     }
 
     const backend = this.options.resolveBackend ? await this.options.resolveBackend() : undefined
@@ -1276,18 +1305,26 @@ class AcpRuntime {
       envKeys: Object.keys(backend.env ?? {})
     })
 
-    const process = this.framework.spawn({
-      executablePath: backend.executablePath,
-      env: backend.env,
-      args: backend.args ?? []
-    })
+    let process: ChildProcessWithoutNullStreams
+    try {
+      process = this.framework.spawn({
+        executablePath: backend.executablePath,
+        env: backend.env,
+        args: backend.args ?? []
+      })
+    } catch (error) {
+      // Tag the failure with the framework this spawn targeted: the connect-level catch would otherwise
+      // fall back to this.framework.id, which is already this backend but could be moved by an
+      // overlapping reconnect before the log is written.
+      throw taggedSpawnError(error, backend.framework.id)
+    }
 
     log.info('agent process spawned', {
       framework: backend.framework.id,
       pid: process.pid
     })
 
-    return process
+    return { process, framework: backend.framework.id }
   }
 
   // Sends one prompt turn to the targeted session and streams updates until stop.
