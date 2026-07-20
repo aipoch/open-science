@@ -84,7 +84,9 @@ describe('provider endpoint compatibility', () => {
     for (const type of ['codex-shared', 'codex-isolated'] as const) {
       expect(isProviderUsableByFramework({ type, apiEndpoints: ['responses'] }, codex)).toBe(true)
       expect(isProviderUsableByFramework({ type, apiEndpoints: ['responses'] }, claude)).toBe(false)
-      expect(isProviderUsableByFramework({ type, apiEndpoints: ['responses'] }, opencode)).toBe(false)
+      expect(isProviderUsableByFramework({ type, apiEndpoints: ['responses'] }, opencode)).toBe(
+        false
+      )
     }
   })
 })

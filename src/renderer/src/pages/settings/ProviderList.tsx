@@ -91,16 +91,12 @@ const ProviderList = ({
     )
   }
 
-  const codexProviders = providers.filter((provider) =>
-    isCodexSubscriptionProvider(provider.type)
-  )
+  const codexProviders = providers.filter((provider) => isCodexSubscriptionProvider(provider.type))
   const selectedCodexProvider =
     codexProviders.find((provider) => provider.id === activeProviderId) ?? codexProviders[0]
   const displayedProviders = [
     ...providers.filter((provider) => !isCodexSubscriptionProvider(provider.type)),
-    ...(selectedCodexProvider
-      ? [{ ...selectedCodexProvider, name: 'Codex subscription' }]
-      : [])
+    ...(selectedCodexProvider ? [{ ...selectedCodexProvider, name: 'Codex subscription' }] : [])
   ]
 
   return (

@@ -129,10 +129,9 @@ describe('ProviderForm field switching', () => {
   })
 
   it('chooses the Codex authentication mode inside the single provider form', () => {
-    render(
-      createEmptyProviderFormValue({ type: 'codex-shared', name: 'Codex subscription' }),
-      { showCodexSubscriptions: true }
-    )
+    render(createEmptyProviderFormValue({ type: 'codex-shared', name: 'Codex subscription' }), {
+      showCodexSubscriptions: true
+    })
 
     const trigger = container.querySelector('[aria-label="Codex authentication"]')
     expect(trigger).not.toBeNull()

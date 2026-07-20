@@ -25,9 +25,7 @@ export const isCodexSubscriptionProvider = (
   type: ProviderType
 ): type is 'codex-shared' | 'codex-isolated' => type === 'codex-shared' || type === 'codex-isolated'
 
-export const codexSubscriptionProviderIdentity = (
-  _type: 'codex-shared' | 'codex-isolated'
-): { id: string; name: string } => ({
+export const codexSubscriptionProviderIdentity = (): { id: string; name: string } => ({
   id: CODEX_SUBSCRIPTION_PROVIDER_ID,
   name: 'Codex subscription'
 })

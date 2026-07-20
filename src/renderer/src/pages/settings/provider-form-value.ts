@@ -119,7 +119,7 @@ export const PROVIDER_KINDS: ProviderKind[] = [
 // seeds its default region + model; switching away clears vendor-only fields.
 export const providerKindPatch = (key: string): Partial<ProviderFormValue> => {
   if (key === 'codex-subscription') {
-    const identity = codexSubscriptionProviderIdentity('codex-shared')
+    const identity = codexSubscriptionProviderIdentity()
     return {
       type: 'codex-shared',
       name: identity.name,
