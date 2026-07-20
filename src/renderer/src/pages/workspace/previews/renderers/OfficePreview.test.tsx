@@ -85,6 +85,7 @@ describe('OfficePreviewRenderer', () => {
       extension: 'docx',
       name: 'report.docx',
       container: expect.any(HTMLDivElement),
+      scrollContainer: expect.any(HTMLDivElement),
       signal: expect.any(AbortSignal)
     })
     expect(mocks.render.mock.calls[0][0]).not.toHaveProperty('path')

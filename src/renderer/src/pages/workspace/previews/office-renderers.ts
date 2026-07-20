@@ -7,6 +7,7 @@ type RenderOfficeFileOptions = {
   extension: OfficeFileExtension
   name: string
   container: HTMLDivElement
+  scrollContainer?: HTMLElement
   signal: AbortSignal
 }
 
@@ -103,6 +104,106 @@ const installDocxFit = (container: HTMLElement, wrapper: HTMLElement): OfficeRen
     wrapper.style.removeProperty(DOCX_SCALE_PROPERTY)
     wrapper.style.removeProperty('align-items')
     style.remove()
+  }
+}
+
+type PptxViewerDimensions = {
+  slideWidth: number
+  slideHeight: number
+}
+
+type PptxFitMetrics = {
+  scale: number
+  displayWidth: number
+  displayHeight: number
+}
+
+const PPTX_FALLBACK_WIDTH = 960
+
+const getPptxFitMetrics = (
+  container: HTMLElement,
+  viewer: PptxViewerDimensions
+): PptxFitMetrics | undefined => {
+  const availableWidth = container.clientWidth
+  const { slideWidth, slideHeight } = viewer
+  if (
+    !Number.isFinite(availableWidth) ||
+    availableWidth <= 0 ||
+    !Number.isFinite(slideWidth) ||
+    slideWidth <= 0 ||
+    !Number.isFinite(slideHeight) ||
+    slideHeight <= 0
+  ) {
+    return undefined
+  }
+
+  const scale = availableWidth / slideWidth
+  return {
+    scale,
+    displayWidth: slideWidth * scale,
+    displayHeight: slideHeight * scale
+  }
+}
+
+const applyPptxSlideFit = (slide: HTMLElement, metrics: PptxFitMetrics): void => {
+  const wrapper = slide.parentElement
+  if (!wrapper) return
+
+  wrapper.style.width = `${metrics.displayWidth}px`
+  wrapper.style.height = `${metrics.displayHeight}px`
+  slide.style.transform = `scale(${metrics.scale})`
+  slide.style.transformOrigin = 'top left'
+}
+
+// Updates the vendor-owned slide wrappers without rebuilding parsed presentation content.
+const applyPptxFit = (
+  container: HTMLElement,
+  viewer: PptxViewerDimensions
+): PptxFitMetrics | undefined => {
+  const metrics = getPptxFitMetrics(container, viewer)
+  if (!metrics) return undefined
+
+  for (const item of container.querySelectorAll<HTMLElement>('[data-slide-index]')) {
+    const wrapper = item.firstElementChild
+    if (!(wrapper instanceof HTMLElement)) continue
+
+    wrapper.style.width = `${metrics.displayWidth}px`
+    wrapper.style.height = `${metrics.displayHeight}px`
+    const slide = wrapper.firstElementChild
+    if (slide instanceof HTMLElement) applyPptxSlideFit(slide, metrics)
+  }
+
+  return metrics
+}
+
+// Coalesces panel drag updates to one in-place fit per animation frame.
+const installPptxFit = (
+  container: HTMLElement,
+  viewer: PptxViewerDimensions,
+  onFit: (metrics: PptxFitMetrics) => void
+): OfficeRenderCleanup => {
+  const view = container.ownerDocument.defaultView
+  const applyFit = (): void => {
+    const metrics = applyPptxFit(container, viewer)
+    if (metrics) onFit(metrics)
+  }
+  applyFit()
+
+  let animationFrame: number | undefined
+  const scheduleFit = (): void => {
+    if (!view || animationFrame !== undefined) return
+    animationFrame = view.requestAnimationFrame(() => {
+      animationFrame = undefined
+      applyFit()
+    })
+  }
+  const ResizeObserverCtor = view?.ResizeObserver
+  const resizeObserver = ResizeObserverCtor ? new ResizeObserverCtor(scheduleFit) : undefined
+  resizeObserver?.observe(container)
+
+  return () => {
+    resizeObserver?.disconnect()
+    if (animationFrame !== undefined) view?.cancelAnimationFrame(animationFrame)
   }
 }
 
@@ -325,6 +426,7 @@ export const renderOfficeFile = async ({
   extension,
   name,
   container,
+  scrollContainer,
   signal
 }: RenderOfficeFileOptions): Promise<OfficeRenderCleanup> => {
   if (extension === 'docx') {
@@ -496,14 +598,30 @@ export const renderOfficeFile = async ({
 
   // Construct explicitly so a failed open still leaves an instance that can be destroyed.
   const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import('@aiden0z/pptx-renderer')
+  let viewerDimensions: PptxViewerDimensions | undefined
+  let currentFit: PptxFitMetrics | undefined
   const viewer = new PptxViewer(container, {
+    // A fixed width disables the vendor's resize path, which clears and rebuilds every slide.
+    width: container.clientWidth || PPTX_FALLBACK_WIDTH,
     zipLimits: RECOMMENDED_ZIP_LIMITS,
     lazySlides: true,
     lazyMedia: true,
-    scrollContainer: container,
-    pdfjs: false
+    scrollContainer: scrollContainer ?? container,
+    pdfjs: false,
+    // Windowed slides can mount after a resize, so apply the latest fit before their next paint.
+    onSlideRendered: (_index, element) => {
+      const metrics = viewerDimensions ? getPptxFitMetrics(container, viewerDimensions) : currentFit
+      if (!metrics) return
+
+      currentFit = metrics
+      applyPptxSlideFit(element, metrics)
+    }
   })
+  viewerDimensions = viewer
+  let disposeFit: OfficeRenderCleanup | undefined
   const destroyViewer = (): void => {
+    disposeFit?.()
+    disposeFit = undefined
     try {
       viewer.destroy()
     } finally {
@@ -518,6 +636,9 @@ export const renderOfficeFile = async ({
       lazySlides: true,
       lazyMedia: true,
       signal
+    })
+    disposeFit = installPptxFit(container, viewer, (metrics) => {
+      currentFit = metrics
     })
   } catch (error) {
     try {

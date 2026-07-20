@@ -25,6 +25,8 @@ vi.mock('@aiden0z/pptx-renderer', () => {
 
     open = mocks.openPptx
     destroy = mocks.destroyPptx
+    slideWidth = 960
+    slideHeight = 540
 
     constructor(container: HTMLElement, options: unknown) {
       mocks.constructPptx(container, options)
@@ -594,6 +596,7 @@ describe('renderOfficeFile', () => {
 
   it('renders PPTX with upstream ZIP limits and lazy windowing', async () => {
     mocks.openPptx.mockResolvedValue(undefined)
+    Object.defineProperty(container, 'clientWidth', { configurable: true, value: 800 })
 
     const cleanup = await renderOfficeFile({
       bytes,
@@ -604,11 +607,13 @@ describe('renderOfficeFile', () => {
     })
 
     expect(mocks.constructPptx).toHaveBeenCalledWith(container, {
+      width: 800,
       zipLimits: mocks.zipLimits,
       lazySlides: true,
       lazyMedia: true,
       scrollContainer: container,
-      pdfjs: false
+      pdfjs: false,
+      onSlideRendered: expect.any(Function)
     })
     expect(mocks.openPptx).toHaveBeenCalledWith(expect.any(ArrayBuffer), {
       renderMode: 'list',
@@ -621,6 +626,145 @@ describe('renderOfficeFile', () => {
     await cleanup()
     expect(mocks.destroyPptx).toHaveBeenCalledOnce()
     expect(container.childNodes).toHaveLength(0)
+  })
+
+  it('uses the provided Office scroll container for windowed PPTX mounting', async () => {
+    const scrollContainer = document.createElement('div')
+    mocks.openPptx.mockResolvedValue(undefined)
+
+    const cleanup = await renderOfficeFile({
+      bytes,
+      extension: 'pptx',
+      name: 'scrollable-slides.pptx',
+      container,
+      scrollContainer,
+      signal
+    })
+
+    expect(mocks.constructPptx).toHaveBeenCalledWith(
+      container,
+      expect.objectContaining({ scrollContainer })
+    )
+    expect(mocks.constructPptx.mock.calls[0]?.[1].scrollContainer).toBe(scrollContainer)
+
+    await cleanup()
+  })
+
+  it('fits PPTX slides in place while the preview panel is resized', async () => {
+    let containerWidth = 800
+    let resizeCallback: ResizeObserverCallback | undefined
+    const disconnect = vi.fn()
+    class TestResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallback = callback
+      }
+
+      observe = vi.fn()
+      disconnect = disconnect
+    }
+    vi.stubGlobal('ResizeObserver', TestResizeObserver)
+
+    const scheduledFrames = new Map<number, FrameRequestCallback>()
+    let nextFrame = 1
+    const requestAnimationFrame = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        const frame = nextFrame++
+        scheduledFrames.set(frame, callback)
+        return frame
+      })
+    const cancelAnimationFrame = vi
+      .spyOn(window, 'cancelAnimationFrame')
+      .mockImplementation((frame) => {
+        scheduledFrames.delete(frame)
+      })
+    Object.defineProperty(container, 'clientWidth', {
+      configurable: true,
+      get: () => containerWidth
+    })
+
+    let initialItem: HTMLDivElement | undefined
+    let initialWrapper: HTMLDivElement | undefined
+    let initialSlide: HTMLDivElement | undefined
+    mocks.openPptx.mockImplementation(async () => {
+      initialItem = document.createElement('div')
+      initialItem.dataset.slideIndex = '0'
+      initialWrapper = document.createElement('div')
+      initialSlide = document.createElement('div')
+      initialWrapper.appendChild(initialSlide)
+      initialItem.appendChild(initialWrapper)
+      container.appendChild(initialItem)
+    })
+
+    const cleanup = await renderOfficeFile({
+      bytes,
+      extension: 'pptx',
+      name: 'responsive-slides.pptx',
+      container,
+      signal
+    })
+
+    expect(initialWrapper?.style.width).toBe('800px')
+    expect(initialWrapper?.style.height).toBe('450px')
+    expect(initialSlide?.style.transform).toBe('scale(0.8333333333333334)')
+
+    containerWidth = 480
+    resizeCallback?.([], {} as ResizeObserver)
+    resizeCallback?.([], {} as ResizeObserver)
+
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(1)
+    expect(initialWrapper?.style.width).toBe('800px')
+    const [resizeFrame, resizeTask] = Array.from(scheduledFrames.entries())[0] ?? []
+    expect(resizeTask).toBeDefined()
+    scheduledFrames.delete(resizeFrame)
+    resizeTask?.(0)
+
+    expect(mocks.openPptx).toHaveBeenCalledOnce()
+    expect(container.querySelector('[data-slide-index="0"]')).toBe(initialItem)
+    expect(initialWrapper?.style.width).toBe('480px')
+    expect(initialWrapper?.style.height).toBe('270px')
+    expect(initialSlide?.style.transform).toBe('scale(0.5)')
+
+    // Windowed slides mounted after a resize must use the current scale before the next paint.
+    const lateItem = document.createElement('div')
+    lateItem.dataset.slideIndex = '1'
+    const lateWrapper = document.createElement('div')
+    const lateSlide = document.createElement('div')
+    lateWrapper.appendChild(lateSlide)
+    lateItem.appendChild(lateWrapper)
+    container.appendChild(lateItem)
+    const viewerOptions = mocks.constructPptx.mock.calls[0]?.[1] as {
+      onSlideRendered?: (index: number, element: HTMLElement) => void
+    }
+    viewerOptions.onSlideRendered?.(1, lateSlide)
+
+    expect(lateWrapper.style.width).toBe('480px')
+    expect(lateWrapper.style.height).toBe('270px')
+    expect(lateSlide.style.transform).toBe('scale(0.5)')
+
+    containerWidth = 360
+    resizeCallback?.([], {} as ResizeObserver)
+    expect(scheduledFrames.size).toBe(1)
+
+    const pendingItem = document.createElement('div')
+    pendingItem.dataset.slideIndex = '2'
+    const pendingWrapper = document.createElement('div')
+    const pendingSlide = document.createElement('div')
+    pendingWrapper.appendChild(pendingSlide)
+    pendingItem.appendChild(pendingWrapper)
+    container.appendChild(pendingItem)
+    viewerOptions.onSlideRendered?.(2, pendingSlide)
+
+    expect(pendingWrapper.style.width).toBe('360px')
+    expect(pendingWrapper.style.height).toBe('202.5px')
+    expect(pendingSlide.style.transform).toBe('scale(0.375)')
+
+    await cleanup()
+
+    expect(disconnect).toHaveBeenCalledOnce()
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(2)
+    expect(scheduledFrames.size).toBe(0)
+    expect(mocks.destroyPptx).toHaveBeenCalledOnce()
   })
 
   it('destroys a PPTX viewer when opening the presentation fails', async () => {

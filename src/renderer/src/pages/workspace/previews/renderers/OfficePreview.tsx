@@ -116,6 +116,7 @@ export const OfficePreviewContent = ({
         extension,
         name: item.name,
         container: renderTarget,
+        scrollContainer: container,
         signal: controller.signal
       })
 
