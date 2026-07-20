@@ -127,6 +127,14 @@ export class CodexAuthController {
     }
   }
 
+  // One subscription provider prefers the user's existing Codex CLI login. The app-owned profile
+  // is checked only when that shared profile is unavailable, so a normal Codex sign-in is never
+  // shadowed by an older isolated login.
+  async getPreferredStatus(): Promise<CodexAuthStatus> {
+    const shared = await this.getStatus('shared')
+    return shared.authenticated ? shared : this.getStatus('isolated')
+  }
+
   async loginIsolated(): Promise<CodexAuthStatus> {
     if (this.activeLogin) {
       return {
@@ -195,7 +203,7 @@ export class CodexAuthController {
 
 export type CodexAuthControllerPort = Pick<
   CodexAuthController,
-  'getStatus' | 'loginIsolated' | 'cancelLogin' | 'logoutIsolated'
+  'getStatus' | 'getPreferredStatus' | 'loginIsolated' | 'cancelLogin' | 'logoutIsolated'
 >
 
 export const openCodexAuthSession = async ({
