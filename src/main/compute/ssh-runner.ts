@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { homedir, platform } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -47,8 +47,16 @@ export interface SshRunner {
 // bundle. Windows does not support ControlMaster so this returns an empty array there.
 const controlMasterArgs = (alias: string): string[] => {
   if (platform() === 'win32') return []
-  // Use a per-alias socket under ~/.ssh/ctrl/ so multiple hosts don't share a socket.
-  const socketPath = join(homedir(), '.ssh', 'ctrl', `%r@%h:%p.${alias}`)
+  // Use a per-alias socket under ~/.ssh/ctrl/ so multiple hosts don't share a socket. ssh does not
+  // create the ControlPath parent directory itself, so ensure it exists (mode 0700 like ~/.ssh) —
+  // otherwise the control socket bind fails with "unix_listener: cannot bind ... No such file".
+  const ctrlDir = join(homedir(), '.ssh', 'ctrl')
+  try {
+    mkdirSync(ctrlDir, { recursive: true, mode: 0o700 })
+  } catch {
+    // Best-effort: if we can't create it, ssh will surface the bind error as before.
+  }
+  const socketPath = join(ctrlDir, `%r@%h:%p.${alias}`)
   return ['-o', `ControlMaster=auto`, '-o', `ControlPath=${socketPath}`, '-o', `ControlPersist=60`]
 }
 
