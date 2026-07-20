@@ -23,7 +23,7 @@ import type {
   TurnScope
 } from '../../shared/reviewer'
 import type { ReviewRepository } from './repository'
-import { resolveTurnScope } from './scope'
+import { resolveTurnScopeWithArtifactDigests } from './artifact-digest'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { ReviewerMcpServer } from './mcp-server'
 import { buildReviewerHostPythonBootstrap, ReviewerHostServer } from './host-sdk'
@@ -606,8 +606,8 @@ const runScopedReview = async (options: {
     return { ...errorReview, checks: [] }
   }
 
-  // Resolve the correction turn's scope.
-  const scope = resolveTurnScope(session, turnMessageId)
+  // Resolve the correction turn's scope, pinning each artifact to a digest of its current bytes.
+  const scope = await resolveTurnScopeWithArtifactDigests(session, turnMessageId, artifactStorageRoot)
 
   // Create a new Review row sharing the originalTurnMessageId (not the correction turn's id),
   // so all iterations are grouped under the same original turn.
@@ -782,7 +782,7 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
     return withFindings
   }
 
-  const scope = resolveTurnScope(session, turnMessageId)
+  const scope = await resolveTurnScopeWithArtifactDigests(session, turnMessageId, artifactStorageRoot)
 
   // Step 2: create the Review row (lifecycle='running') immediately so the renderer shows a spinner.
   let review = await reviewRepository.createReview({

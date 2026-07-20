@@ -130,6 +130,30 @@ describe('resolveTurnScope', () => {
     expect(editedUserHash).toBe(baseUserHash)
   })
 
+  it('folds an artifact content digest into the block hash so external edits invalidate it', () => {
+    const withV1 = resolveTurnScope(buildSession(), 'a1', new Map([['art-1', 'sha256:aaa']]))
+    const withV1Again = resolveTurnScope(buildSession(), 'a1', new Map([['art-1', 'sha256:aaa']]))
+    const withV2 = resolveTurnScope(buildSession(), 'a1', new Map([['art-1', 'sha256:bbb']]))
+
+    const hashOf = (scope: ReturnType<typeof resolveTurnScope>): string | undefined =>
+      scope.blocks.find((block) => block.sourceId === 'a1')?.contentHash
+
+    // Same digest → same hash; a changed digest (external byte edit) → different hash.
+    expect(hashOf(withV1Again)).toBe(hashOf(withV1))
+    expect(hashOf(withV2)).not.toBe(hashOf(withV1))
+  })
+
+  it('does not change hashes of messages without artifacts when digests are supplied', () => {
+    const withoutDigests = resolveTurnScope(buildSession(), 'a1')
+    const withDigests = resolveTurnScope(buildSession(), 'a1', new Map([['art-1', 'sha256:aaa']]))
+
+    // u1 has no artifacts, so its hash is identical with or without a digest map — existing locators
+    // on artifact-free blocks stay valid across this change.
+    const u1 = (scope: ReturnType<typeof resolveTurnScope>): string | undefined =>
+      scope.blocks.find((block) => block.sourceId === 'u1')?.contentHash
+    expect(u1(withDigests)).toBe(u1(withoutDigests))
+  })
+
   it('returns an empty scope for an unknown turn message id', () => {
     const scope = resolveTurnScope(buildSession(), 'does-not-exist')
 
