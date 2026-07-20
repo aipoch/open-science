@@ -332,8 +332,6 @@
     [data-streamdown='mermaid'],
     [data-streamdown='mermaid-block'],
     [data-streamdown='table-wrapper'],
-    [data-streamdown='table'],
-    [data-streamdown='table'] > div,
     [data-streamdown='image-wrapper'],
     [data-streamdown='link'],
     img,
@@ -341,7 +339,6 @@
     li,
     blockquote,
     pre,
-    table,
     .katex-display
   ) {
     @apply max-w-full;
@@ -669,11 +666,13 @@
     }
 
     &:where(table) {
-      @apply w-full border-collapse text-[12px];
+      /* Overrides Streamdown's own `w-full` utility on the table element: size columns
+         to content and let the wrapper scroll horizontally instead of squeezing cells. */
+      @apply w-max! min-w-full border-collapse text-[12px];
 
       :where(th),
       :where(td) {
-        @apply border border-border-200 bg-bg-000 px-2 py-1.5 text-left align-top;
+        @apply max-w-[20rem] border border-border-200 bg-bg-000 px-2 py-1.5 text-left align-top break-words;
       }
 
       :where(th) {
@@ -700,7 +699,7 @@
       }
     }
 
-    &:where(p, li, td, th, blockquote) {
+    &:where(p, li, blockquote) {
       @apply break-words;
       overflow-wrap: anywhere;
     }
