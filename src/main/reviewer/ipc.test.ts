@@ -77,7 +77,8 @@ beforeEach(() => {
   })
   broadcastToRenderers.mockClear()
   sessionLoadAll.mockReset()
-  sessionLoadAll.mockResolvedValue({ sessions: [] })
+  // Default: the requested session exists, so triggerReview proceeds to runReview.
+  sessionLoadAll.mockResolvedValue({ sessions: [{ id: 'session-1' }] })
 })
 
 describe('reviewer IPC handlers', () => {
@@ -166,6 +167,22 @@ describe('reviewer IPC handlers', () => {
     const result = await runHandler?.({}, { ...createRequest(), turnMessageId: 'message-1' })
 
     // No fabricated error review, no broadcast — just started:false, so the caller can retry the turn.
+    expect(result).toEqual({ started: false })
+    expect(runReview).not.toHaveBeenCalled()
+    expect(broadcastToRenderers).not.toHaveBeenCalled()
+  })
+
+  it('returns started:false without calling runReview when the session id is gone', async () => {
+    // loadAll succeeds but the session was deleted between the card render and the click. Falling
+    // through to runReview would create a non-retriable error card that replaces the stale card the
+    // user was re-running; instead we bail with started:false so the existing card + Re-run survive.
+    sessionLoadAll.mockReset()
+    sessionLoadAll.mockResolvedValue({ sessions: [{ id: 'a-different-session' }] })
+    registerReviewerIpcHandlers({ acpRuntime })
+
+    const runHandler = handlers.get(REVIEWER_IPC.RUN)
+    const result = await runHandler?.({}, createRequest())
+
     expect(result).toEqual({ started: false })
     expect(runReview).not.toHaveBeenCalled()
     expect(broadcastToRenderers).not.toHaveBeenCalled()

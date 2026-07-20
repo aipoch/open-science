@@ -234,6 +234,24 @@ describe('review store', () => {
     vi.unstubAllGlobals()
   })
 
+  it('a load that recomputed not-stale clears an existing outdated flag', async () => {
+    // The other half of three-state merging: an explicit false (a load that successfully recomputed
+    // and found the review is no longer outdated) must CLEAR a known stale=true, not just inherit it.
+    useReviewStore
+      .getState()
+      .handleReviewUpdate({ review: makeReview({ id: 'review-1', updatedAt: 1_000, stale: true }) })
+
+    const recomputedNotStale = [makeReview({ id: 'review-1', updatedAt: 2_000, stale: false })]
+    const getForSession = vi.fn().mockResolvedValue(recomputedNotStale)
+    vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
+
+    await useReviewStore.getState().loadReviewsForSession('session-1')
+
+    const stored = useReviewStore.getState().getReviewsForSession('session-1')
+    expect(stored[0]?.stale).toBe(false)
+    vi.unstubAllGlobals()
+  })
+
   it('dedupes concurrent loads for the same session', async () => {
     let resolveLoad: ((value: ReviewWithChecks[]) => void) | undefined
     const getForSession = vi.fn().mockReturnValue(

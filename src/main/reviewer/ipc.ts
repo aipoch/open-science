@@ -152,6 +152,17 @@ const registerReviewerIpcHandlers = (
       return { started: false }
     }
 
+    // Session load succeeded but the id is gone (deleted between the card render and the click).
+    // Bail out exactly like the load-failure path: release the lock and report started:false with NO
+    // Review row. Falling through to runReview would create a non-retriable error card that replaces
+    // the (stale) card the user was trying to re-run, and an earlier turn has no composer entry to
+    // recover from — so the turn would be stuck. started:false keeps the existing card and its Re-run.
+    if (!session) {
+      inFlightReviewKeys.delete(inFlightKey)
+      log.warn('review start failed: session not found', { sessionId, turnMessageId })
+      return { started: false }
+    }
+
     log.info('review triggered', { sessionId, turnMessageId })
 
     // Resolve `started` only once the running Review row has actually been created and pushed
