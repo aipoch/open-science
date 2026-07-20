@@ -181,9 +181,32 @@ const registerReviewerIpcHandlers = (
           fixLoopAbortSignal: abortController.signal
         })
       } catch (error) {
-        log.error('runReview threw unexpectedly', {
+        // A failure BEFORE runReview (e.g. loading the session throws) produces no Review row and thus
+        // no lifecycle update — so a renderer that started this run (e.g. the ReviewerCard "Re-run"
+        // latch) would wait forever. Broadcast a synthetic error review for the turn so the renderer
+        // unlatches and shows the failure; a later successful load replaces it with the real state.
+        const message = error instanceof Error ? error.message : String(error)
+        log.error('review start failed before runReview', {
           sessionId,
-          error: error instanceof Error ? error.message : String(error)
+          turnMessageId,
+          error: message
+        })
+        broadcastReviewUpdate({
+          review: {
+            id: `review-start-error-${Date.now()}`,
+            projectId,
+            sessionId,
+            turnMessageId,
+            scope: { turnMessageId, blocks: [], artifactVersionIds: [] },
+            lifecycle: 'error',
+            outcome: null,
+            errorMessage: message,
+            model: model ?? '',
+            reviewerLog: [],
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            checks: []
+          }
         })
       } finally {
         inFlightReviewKeys.delete(inFlightKey)

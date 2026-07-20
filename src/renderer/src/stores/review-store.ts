@@ -30,10 +30,15 @@ const upsertReview = (
   return [updated, ...without].sort((a, b) => b.createdAt - a.createdAt)
 }
 
-// Merges a freshly-loaded snapshot into the existing list without letting a slow load overwrite newer
-// state. A focus-triggered load reads a DB snapshot and then does slow scope hashing; meanwhile a push
-// (e.g. a review completing) can update the store. So per review id, keep whichever has the newer
-// updatedAt, and preserve any existing review the snapshot didn't include (a just-created one).
+// Merges a freshly-loaded snapshot into the existing list. A focus-triggered load reads a DB snapshot
+// and then does slow scope hashing; meanwhile a push (e.g. a fix-loop resolving a finding) can update
+// the store. A load carries two kinds of information that must be merged differently:
+//   - review/finding DATA: authoritative only when strictly newer than what's in the store. Fix-loop
+//     finding updates bump Review.updatedAt, so a stale load is strictly older and must NOT overwrite.
+//   - the `stale` flag: freshly computed against current bytes on THIS load, so it always applies (even
+//     when the load isn't newer — that's how a focus reload surfaces an edit to an otherwise-unchanged
+//     review). Applying it never reverts finding data; it only sets the flag on the retained review.
+// New reviews the snapshot didn't include (a just-created one) are preserved.
 const mergeLoadedReviews = (
   existing: ReviewWithChecks[],
   loaded: ReviewWithChecks[]
@@ -41,7 +46,11 @@ const mergeLoadedReviews = (
   const byId = new Map(existing.map((review) => [review.id, review]))
   for (const review of loaded) {
     const current = byId.get(review.id)
-    if (!current || review.updatedAt >= current.updatedAt) byId.set(review.id, review)
+    if (!current || review.updatedAt > current.updatedAt) {
+      byId.set(review.id, review)
+    } else if (current.stale !== review.stale) {
+      byId.set(review.id, { ...current, stale: review.stale })
+    }
   }
   return [...byId.values()].sort((a, b) => b.createdAt - a.createdAt)
 }

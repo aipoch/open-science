@@ -148,6 +148,38 @@ describe('review store', () => {
     vi.unstubAllGlobals()
   })
 
+  it('keeps pushed finding data on an equal-timestamp load but still applies the load stale flag', async () => {
+    // A fix loop resolved a finding and pushed it. A focus-load, mid-flight, holds the OLDER snapshot
+    // (finding still open) at the SAME updatedAt (the concerning case) but freshly computed stale=true.
+    const resolvedCheck = makeCheck({ id: 'c1', resolution: 'resolved' })
+    const pushed = makeReview({
+      id: 'review-1',
+      updatedAt: 1_000,
+      checks: [resolvedCheck],
+      stale: false
+    })
+    useReviewStore.getState().handleReviewUpdate({ review: pushed })
+
+    const staleSnapshot = [
+      makeReview({
+        id: 'review-1',
+        updatedAt: 1_000,
+        checks: [makeCheck({ id: 'c1', resolution: 'open' })],
+        stale: true
+      })
+    ]
+    const getForSession = vi.fn().mockResolvedValue(staleSnapshot)
+    vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
+
+    await useReviewStore.getState().loadReviewsForSession('session-1')
+
+    const stored = useReviewStore.getState().getReviewsForSession('session-1')
+    // Finding data is NOT reverted (still resolved), but the freshly-computed stale flag is applied.
+    expect(stored[0]?.checks[0]?.resolution).toBe('resolved')
+    expect(stored[0]?.stale).toBe(true)
+    vi.unstubAllGlobals()
+  })
+
   it('does not let a stale load overwrite a newer review delivered by a push', async () => {
     // A push completes the review while a slow focus-load is mid-flight holding an older snapshot.
     useReviewStore.getState().handleReviewUpdate({

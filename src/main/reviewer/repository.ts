@@ -159,6 +159,7 @@ class ReviewRepository {
         sortIndex: check.sortIndex ?? index
       }))
     })
+    await this.touchReview(reviewId)
   }
 
   /**
@@ -216,6 +217,7 @@ class ReviewRepository {
       where: { reviewId, status: { in: ['warn', 'fail'] } },
       data: { resolution }
     })
+    await this.touchReview(reviewId)
   }
 
   // Updates the resolution for a single claim (by exact match) under a review.
@@ -230,6 +232,7 @@ class ReviewRepository {
       where: { reviewId, claim, status: { in: ['warn', 'fail'] } },
       data: { resolution }
     })
+    await this.touchReview(reviewId)
   }
 
   // Increments reflagCount by 1 for all checks under a review whose claim matches the given string
@@ -245,6 +248,16 @@ class ReviewRepository {
       SET "reflagCount" = "reflagCount" + 1
       WHERE "reviewId" = ${reviewId} AND "claim" = ${claim}
     `
+    await this.touchReview(reviewId)
+  }
+
+  // Bumps the parent Review's updatedAt after a finding-only mutation. Prisma's @updatedAt tracks
+  // Review-row writes, not writes to child Finding rows, so without this a fix-loop resolution/reflag
+  // change would leave updatedAt stale — and a slow focus-load could then overwrite the newer pushed
+  // finding state (equal timestamps). Bumping it makes updatedAt a reliable freshness/version signal.
+  private async touchReview(reviewId: string): Promise<void> {
+    const client = await this.getClient()
+    await client.review.update({ where: { id: reviewId }, data: { updatedAt: new Date() } })
   }
 
   // Test/diagnostic helper: total check rows, used to assert no orphans survive a cascade delete.
