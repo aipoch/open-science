@@ -10,7 +10,12 @@ import { useSessionStore } from '@/stores/session-store'
 // list: orphan recovery is additive, so a scan error must never blank out the session-derived library.
 export const useProjectArtifactFiles = (projectId: string | undefined): ArtifactFile[] => {
   const sessions = useSessionStore((state) => state.sessions)
-  const [diskArtifacts, setDiskArtifacts] = useState<ArtifactFile[]>([])
+  // Tag the loaded scan with the project it belongs to so a not-yet-refreshed result from the previous
+  // project is never returned for the current one.
+  const [scan, setScan] = useState<{ projectId: string | undefined; files: ArtifactFile[] }>({
+    projectId: undefined,
+    files: []
+  })
 
   // A stable signature of the project's session ids: changes on create/delete, not on every keystroke.
   const sessionSignature = sessions
@@ -36,7 +41,7 @@ export const useProjectArtifactFiles = (projectId: string | undefined): Artifact
     }
 
     void load().then((files) => {
-      if (!cancelled) setDiskArtifacts(files)
+      if (!cancelled) setScan({ projectId, files })
     })
 
     return () => {
@@ -44,5 +49,8 @@ export const useProjectArtifactFiles = (projectId: string | undefined): Artifact
     }
   }, [projectId, sessionSignature])
 
-  return diskArtifacts
+  // Until the scan for the CURRENT project resolves, return [] rather than the previous project's
+  // files — otherwise, on a project switch, they would briefly surface as this project's "Orphaned"
+  // artifacts in the Files panel and the @ picker, and could even be selected.
+  return scan.projectId === projectId ? scan.files : []
 }
