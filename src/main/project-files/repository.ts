@@ -45,6 +45,10 @@ type IndexedFileInput = {
   sortAtMs: bigint
 }
 
+type IndexedFileCandidate = Omit<IndexedFileInput, 'storageKey' | 'sizeBytes' | 'mtimeMs'> & {
+  path: string
+}
+
 type FileCursor = {
   version: 1
   kind: 'uploads' | 'sessionArtifacts'
@@ -63,8 +67,7 @@ type GroupCursor = {
 }
 
 type ManagedFileSoftDeleteToken = string
-
-class ManagedFileSyncIncompleteError extends Error {}
+type ManagedFileSyncOptions = { force?: boolean }
 
 // Owns the query-optimized DB projection used by Files while leaving file bytes under the existing
 // managed roots. Session JSON remains authoritative; this index is repairable derived state.
@@ -84,7 +87,10 @@ class ManagedFileIndexRepository {
    * committed atomically. The returned sources drive narrow renderer invalidations. Any failure is
    * remembered in memory so overview cannot claim that the index is complete before a later retry.
    */
-  async syncSession(session: PersistedChatSession): Promise<ProjectFileSource[]> {
+  async syncSession(
+    session: PersistedChatSession,
+    options: ManagedFileSyncOptions = {}
+  ): Promise<ProjectFileSource[]> {
     const revision = normalizeRevision(session.filesRevision)
     try {
       const client = await this.getClient()
@@ -92,12 +98,18 @@ class ManagedFileIndexRepository {
         where: { projectId_sessionId: { projectId: session.projectId, sessionId: session.id } }
       })
 
-      if (currentSync?.filesRevision === revision && currentSync.deletedAt === null) {
+      if (
+        !options.force &&
+        currentSync?.filesRevision === revision &&
+        currentSync.deletedAt === null
+      ) {
         this.incompleteSessions.delete(sessionKey(session.projectId, session.id))
         return []
       }
 
-      const files = await this.extractSessionFiles(session)
+      const extraction = await this.extractSessionFiles(session)
+      const { files } = extraction
+      const hasIncompleteFiles = extraction.errors.length > 0
       const now = new Date()
 
       const changedSources = await client.$transaction(async (tx) => {
@@ -185,7 +197,20 @@ class ManagedFileIndexRepository {
           acceptedFiles.push(file)
         }
 
-        const transactionChangedSources = getChangedSources(existingRows, acceptedFiles)
+        // A partial scan cannot prove that an existing row was removed from the session. Preserve the
+        // last readable projection while still committing newly readable files from this attempt.
+        const preservedRows = hasIncompleteFiles
+          ? existingRows.filter((row) => row.deletedAt === null && !retainedSeqs.has(row.seq))
+          : []
+        for (const row of preservedRows) {
+          retainedSeqs.add(row.seq)
+          retainedSources.set(row.seq, row.source as ProjectFileSource)
+        }
+
+        const transactionChangedSources = getChangedSources(existingRows, [
+          ...acceptedFiles,
+          ...preservedRows
+        ])
 
         await tx.managedFile.updateMany({
           where: {
@@ -210,14 +235,16 @@ class ManagedFileIndexRepository {
           create: {
             projectId: session.projectId,
             sessionId: session.id,
-            filesRevision: hasActiveCollision ? RETRYABLE_COLLISION_REVISION : revision,
+            filesRevision:
+              hasActiveCollision || hasIncompleteFiles ? RETRYABLE_COLLISION_REVISION : revision,
             groupSortAtMs,
             artifactCount,
             uploadCount,
             syncedAt: now
           },
           update: {
-            filesRevision: hasActiveCollision ? RETRYABLE_COLLISION_REVISION : revision,
+            filesRevision:
+              hasActiveCollision || hasIncompleteFiles ? RETRYABLE_COLLISION_REVISION : revision,
             groupSortAtMs,
             artifactCount,
             uploadCount,
@@ -230,7 +257,12 @@ class ManagedFileIndexRepository {
         return transactionChangedSources
       })
 
-      this.incompleteSessions.delete(sessionKey(session.projectId, session.id))
+      const key = sessionKey(session.projectId, session.id)
+      if (hasIncompleteFiles) {
+        this.incompleteSessions.set(key, extraction.errors.join('; '))
+      } else {
+        this.incompleteSessions.delete(key)
+      }
       return changedSources
     } catch (error) {
       this.incompleteSessions.set(sessionKey(session.projectId, session.id), describeError(error))
@@ -258,7 +290,8 @@ class ManagedFileIndexRepository {
         data: { deletedAt, deleteOperationId: token }
       })
     ])
-    this.incompleteSessions.delete(sessionKey(projectId, sessionId))
+    // Keep completeness markers through this reversible phase. A complete reconciliation clears the
+    // marker after durable JSON deletion; compensation therefore retains the original index state.
     return token
   }
 
@@ -299,9 +332,8 @@ class ManagedFileIndexRepository {
         data: { deletedAt, deleteOperationId: token }
       })
     ])
-    for (const key of this.incompleteSessions.keys()) {
-      if (key.startsWith(`${projectId}:`)) this.incompleteSessions.delete(key)
-    }
+    // Project markers remain until deletion is durable, so a failed directory removal can restore the
+    // rows without incorrectly upgrading a partial projection to complete.
     return token
   }
 
@@ -518,9 +550,22 @@ class ManagedFileIndexRepository {
 
   // Extracts finalized uploads and managed artifacts from authoritative session JSON. Identity is
   // deduplicated first by source id and then by storage key to normalize legacy duplicate metadata.
-  private async extractSessionFiles(session: PersistedChatSession): Promise<IndexedFileInput[]> {
+  private async extractSessionFiles(
+    session: PersistedChatSession
+  ): Promise<{ files: IndexedFileInput[]; errors: string[] }> {
     const files: IndexedFileInput[] = []
+    const errors: string[] = []
     const artifactMessageIds = new Map<string, string>()
+    // File failures are isolated so one stale legacy reference cannot block every readable file in
+    // the session. The caller keeps the ledger retryable and exposes the partial state in overview.
+    const collectFile = async (candidate: IndexedFileCandidate): Promise<void> => {
+      try {
+        const file = await this.toIndexedFile(candidate)
+        if (file) files.push(file)
+      } catch (error) {
+        errors.push(describeError(error))
+      }
+    }
 
     for (const message of session.messages) {
       for (const artifactId of message.artifactIds ?? []) {
@@ -530,7 +575,7 @@ class ManagedFileIndexRepository {
       if (message.role !== 'user') continue
       for (const upload of message.uploads ?? []) {
         if (upload.sessionId === PENDING_UPLOAD_SESSION_ID) continue
-        const file = await this.toIndexedFile({
+        await collectFile({
           source: 'upload',
           sourceFileId: upload.id,
           projectId: session.projectId,
@@ -541,13 +586,17 @@ class ManagedFileIndexRepository {
           mimeType: upload.mimeType,
           sortAtMs: BigInt(message.updatedAt || message.createdAt)
         })
-        if (file) files.push(file)
       }
     }
 
     for (const artifact of session.artifacts ?? []) {
       if (artifact.kind !== 'managed-file' || isPendingArtifactPath(artifact.path)) continue
-      const file = await this.toIndexedFile({
+      const artifactSortAtMs = artifact.mtimeMs ?? session.updatedAt
+      if (!Number.isFinite(artifactSortAtMs)) {
+        errors.push('Managed artifact modification time must be finite.')
+        continue
+      }
+      await collectFile({
         source: 'artifact',
         sourceFileId: artifact.id,
         projectId: session.projectId,
@@ -556,19 +605,22 @@ class ManagedFileIndexRepository {
         displayName: artifact.name || basename(artifact.path),
         path: artifact.path,
         mimeType: artifact.mimeType,
-        sortAtMs: BigInt(artifact.mtimeMs ?? session.updatedAt)
+        // Filesystem mtimes can include fractional milliseconds; the DB keyset stores integer millis.
+        sortAtMs: BigInt(Math.trunc(artifactSortAtMs))
       })
-      if (file) files.push(file)
     }
 
     const filesById = new Map(
       files.map((file) => [fileIdentity(file.source, file.sourceFileId), file])
     )
-    return [
-      ...new Map(
-        [...filesById.values()].map((file) => [fileIdentity(file.source, file.storageKey), file])
-      ).values()
-    ]
+    return {
+      files: [
+        ...new Map(
+          [...filesById.values()].map((file) => [fileIdentity(file.source, file.storageKey), file])
+        ).values()
+      ],
+      errors
+    }
   }
 
   /**
@@ -578,17 +630,7 @@ class ManagedFileIndexRepository {
    * absolute-path, traversal, and symlink escape cases. Missing or unreadable managed files make the
    * session sync incomplete so the previous projection remains visible and the revision is retried.
    */
-  private async toIndexedFile(input: {
-    source: ProjectFileSource
-    sourceFileId: string
-    projectId: string
-    sessionId: string
-    messageId?: string
-    displayName: string
-    path: string
-    mimeType?: string
-    sortAtMs: bigint
-  }): Promise<IndexedFileInput | undefined> {
+  private async toIndexedFile(input: IndexedFileCandidate): Promise<IndexedFileInput | undefined> {
     const managedRoot = resolve(
       this.dataRoot,
       input.source === 'artifact' ? ARTIFACTS_DIR : UPLOADS_DIR
@@ -612,7 +654,7 @@ class ManagedFileIndexRepository {
         realpath(requestedPath)
       ])
     } catch (error) {
-      throw new ManagedFileSyncIncompleteError(
+      throw new Error(
         `Managed ${input.source} file is not currently readable: ${describeError(error)}`
       )
     }
@@ -628,7 +670,7 @@ class ManagedFileIndexRepository {
 
     const fileStat = await stat(canonicalPath)
     if (!fileStat.isFile()) {
-      throw new ManagedFileSyncIncompleteError(`Managed ${input.source} path is not a file.`)
+      throw new Error(`Managed ${input.source} path is not a file.`)
     }
 
     return {
@@ -674,42 +716,34 @@ const requireIdentifier = (value: string, field: string): void => {
 
 const sessionKey = (projectId: string, sessionId: string): string => `${projectId}:${sessionId}`
 
+// Serializes only renderer-visible metadata. Normalizing nullable Prisma values and optional session
+// values to null keeps persisted rows and desired inputs comparable through one shared projection.
+const getFileProjectionKey = (file: ManagedFile | IndexedFileInput): string =>
+  JSON.stringify([
+    file.sourceFileId,
+    file.messageId ?? null,
+    file.displayName,
+    file.storageKey,
+    file.mimeType ?? null,
+    file.sizeBytes.toString(),
+    file.mtimeMs?.toString() ?? null,
+    file.sortAtMs.toString()
+  ])
+
 // Compares normalized metadata rather than row identity so renderer events are emitted only when a
 // source's visible projection changed; DB timestamps and sequence values do not cause false refreshes.
 const getChangedSources = (
   existingRows: ManagedFile[],
-  desiredFiles: IndexedFileInput[]
+  desiredFiles: Array<ManagedFile | IndexedFileInput>
 ): ProjectFileSource[] =>
   (['artifact', 'upload'] as const).filter((source) => {
     const existingProjection = existingRows
       .filter((row) => row.source === source && row.deletedAt === null)
-      .map((row) =>
-        JSON.stringify([
-          row.sourceFileId,
-          row.messageId,
-          row.displayName,
-          row.storageKey,
-          row.mimeType,
-          row.sizeBytes.toString(),
-          row.mtimeMs?.toString() ?? null,
-          row.sortAtMs.toString()
-        ])
-      )
+      .map(getFileProjectionKey)
       .sort()
     const desiredProjection = desiredFiles
       .filter((file) => file.source === source)
-      .map((file) =>
-        JSON.stringify([
-          file.sourceFileId,
-          file.messageId ?? null,
-          file.displayName,
-          file.storageKey,
-          file.mimeType ?? null,
-          file.sizeBytes.toString(),
-          file.mtimeMs?.toString() ?? null,
-          file.sortAtMs.toString()
-        ])
-      )
+      .map(getFileProjectionKey)
       .sort()
 
     return JSON.stringify(existingProjection) !== JSON.stringify(desiredProjection)
@@ -835,11 +869,7 @@ const toProjectFileItem = (row: ManagedFile, dataRoot: string): ProjectFileItem 
   sortAtMs: toSafeNumber(row.sortAtMs, 'sort time')
 })
 
-export {
-  createManagedFileIndexRepository,
-  ManagedFileIndexRepository,
-  ManagedFileSyncIncompleteError
-}
+export { createManagedFileIndexRepository, ManagedFileIndexRepository }
 export type {
   ManagedFileSoftDeleteToken,
   ProjectFilesClient,

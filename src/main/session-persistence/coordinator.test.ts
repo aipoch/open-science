@@ -280,7 +280,7 @@ describe('SessionPersistenceCoordinator', () => {
     })
   })
 
-  it('syncs the complete scan before repair clears the global reconciliation marker', async () => {
+  it('force-syncs the complete scan before repair clears the global reconciliation marker', async () => {
     const targetSession = createSession()
     const otherSession = createSession({ id: 'session-2', projectId: 'project-2' })
     const repository = createSessionRepository({
@@ -299,8 +299,8 @@ describe('SessionPersistenceCoordinator', () => {
     await repairProjectFiles.call(coordinator, 'project-1')
 
     expect(fileIndex.syncSession).toHaveBeenCalledTimes(4)
-    expect(fileIndex.syncSession).toHaveBeenCalledWith(targetSession)
-    expect(fileIndex.syncSession).toHaveBeenCalledWith(otherSession)
+    expect(fileIndex.syncSession).toHaveBeenCalledWith(targetSession, { force: true })
+    expect(fileIndex.syncSession).toHaveBeenCalledWith(otherSession, { force: true })
     expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledWith([targetSession, otherSession])
     expect(onFilesChanged).toHaveBeenCalledWith({
       projectId: 'project-1',

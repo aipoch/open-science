@@ -827,6 +827,35 @@ const ProjectFilesViewContent = ({
   const selectedSessionIsLoaded = selectedSessionId
     ? index.groups.items.some((group) => group.sessionId === selectedSessionId)
     : false
+
+  useEffect(() => {
+    if (!selectedSessionId || selectedSessionStillExists || selectedSessionIsLoaded) return
+
+    const sessionPage = index.artifactsBySession[selectedSessionId]
+    const groupsSettled = index.groups.isLoaded && !index.groups.isLoading && !index.groups.error
+    const sessionPageSettled = sessionPage?.isLoaded && !sessionPage.isLoading && !sessionPage.error
+    if (!groupsSettled || !sessionPageSettled || sessionPage.totalCount > 0) return
+
+    let canceled = false
+    // A DB-only session can remain in the selected fallback after reset. Clear it only after both the
+    // refreshed group headers and its independent file page confirm that no artifact rows remain.
+    void Promise.resolve().then(() => {
+      if (canceled) return
+      setSelectedFilterId('all')
+      setSelectedSessionFallback(undefined)
+    })
+
+    return () => {
+      canceled = true
+    }
+  }, [
+    index.artifactsBySession,
+    index.groups,
+    selectedSessionId,
+    selectedSessionIsLoaded,
+    selectedSessionStillExists
+  ])
+
   const effectiveFilterId =
     filterOptions.some((option) => option.id === selectedFilterId) &&
     (!selectedSessionId ||

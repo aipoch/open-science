@@ -19,6 +19,7 @@ type PreviewDeletion = {
 // Persists deletion intent so a crash cannot strand an absent project with active session data. The
 // same sticky recovery gate is shared by project CRUD, session persistence, and Files queries.
 class ProjectDeletionCoordinator {
+  private operationQueue: Promise<void> = Promise.resolve()
   private recoveryPromise: Promise<void> | undefined
   private isRecoveryComplete = false
 
@@ -28,28 +29,34 @@ class ProjectDeletionCoordinator {
     private readonly preview: PreviewDeletion
   ) {}
 
-  // Waits for older recovery work, publishes this deletion as the new gate, and keeps the gate
-  // incomplete on failure so the next caller retries persisted intents instead of bypassing them.
-  async deleteProject(projectId: string): Promise<void> {
-    await this.recoverPendingDeletions()
-    const deletion = this.runDeletion(projectId)
-    this.isRecoveryComplete = false
-    this.recoveryPromise = deletion
-
-    try {
-      await deletion
-      this.isRecoveryComplete = true
-    } catch (error) {
+  // Enqueues before yielding so two callers in the same event-loop turn cannot publish competing
+  // recovery promises. The queue tail swallows failures only to keep later recovery work runnable.
+  deleteProject(projectId: string): Promise<void> {
+    const deletion = this.operationQueue.then(async () => {
+      await this.recoverPendingDeletionsNow()
       this.isRecoveryComplete = false
-      throw error
-    } finally {
-      if (this.recoveryPromise === deletion) this.recoveryPromise = undefined
-    }
+      try {
+        await this.runDeletion(projectId)
+        this.isRecoveryComplete = true
+      } catch (error) {
+        this.isRecoveryComplete = false
+        throw error
+      }
+    })
+    this.operationQueue = deletion.catch(() => undefined)
+    return deletion
   }
 
-  // Deduplicates concurrent startup/IPC recovery callers. Completion is sticky until a new deletion
-  // begins, avoiding repeated intent scans on every ordinary query.
+  // Every read/recovery gate waits for the full deletion queue that existed when it was called.
+  // Newly requested deletions enqueue synchronously, so later callers cannot bypass active work.
   async recoverPendingDeletions(): Promise<void> {
+    await this.operationQueue
+    return this.recoverPendingDeletionsNow()
+  }
+
+  // Deduplicates concurrent intent scans. Completion remains sticky until queued deletion work starts,
+  // avoiding a database scan on every ordinary project, session, or Files request.
+  private async recoverPendingDeletionsNow(): Promise<void> {
     if (this.recoveryPromise) return this.recoveryPromise
     if (this.isRecoveryComplete) return
 

@@ -19,7 +19,10 @@ type SessionMutationRepository = {
 }
 
 type SessionFileIndex = {
-  syncSession(session: PersistedChatSession): Promise<ProjectFileSource[]>
+  syncSession(
+    session: PersistedChatSession,
+    options?: { force?: boolean }
+  ): Promise<ProjectFileSource[]>
   softDeleteSession(projectId: string, sessionId: string): Promise<ManagedFileSoftDeleteToken>
   restoreSession(
     projectId: string,
@@ -173,7 +176,7 @@ class SessionPersistenceCoordinator {
       const syncErrors = new Map<string, unknown>()
       for (const session of scan.result.sessions) {
         try {
-          await this.fileIndex.syncSession(session)
+          await this.fileIndex.syncSession(session, { force: true })
         } catch (error) {
           syncErrors.set(sessionKey(session.projectId, session.id), error)
         }
@@ -192,7 +195,7 @@ class SessionPersistenceCoordinator {
         for (const session of scan.result.sessions) {
           const key = sessionKey(session.projectId, session.id)
           try {
-            await this.fileIndex.syncSession(session)
+            await this.fileIndex.syncSession(session, { force: true })
             syncErrors.delete(key)
           } catch (error) {
             syncErrors.set(key, error)

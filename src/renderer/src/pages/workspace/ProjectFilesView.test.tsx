@@ -1190,6 +1190,74 @@ describe('ProjectFilesView', () => {
     ).toContain('Artifacts')
   })
 
+  it('clears an unhydrated session filter after reset confirms its index rows are gone', async () => {
+    await renderView([])
+    let hasOrphanGroup = true
+    const orphanFile: ProjectFileItem = {
+      id: 'orphan-artifact',
+      source: 'artifact',
+      sourceFileId: 'orphan-artifact',
+      projectId: 'default',
+      sessionId: 'orphan-session',
+      name: 'orphan.txt',
+      path: '/artifacts/orphan.txt',
+      size: 10,
+      sortAtMs: 10
+    }
+    vi.mocked(window.api.projectFiles.getOverview).mockImplementation(async () => ({
+      totalCount: hasOrphanGroup ? 1 : 0,
+      uploadCount: 0,
+      artifactCount: hasOrphanGroup ? 1 : 0,
+      artifactGroupCount: hasOrphanGroup ? 1 : 0,
+      isIndexComplete: true
+    }))
+    vi.mocked(window.api.projectFiles.listArtifactGroups).mockImplementation(async () => ({
+      items: hasOrphanGroup ? [{ sessionId: 'orphan-session', artifactCount: 1 }] : [],
+      totalCount: hasOrphanGroup ? 1 : 0
+    }))
+    vi.mocked(window.api.projectFiles.listFiles).mockImplementation(async (request) => ({
+      items: hasOrphanGroup && request.collection.kind === 'sessionArtifacts' ? [orphanFile] : [],
+      totalCount: hasOrphanGroup && request.collection.kind === 'sessionArtifacts' ? 1 : 0
+    }))
+
+    await act(async () => {
+      projectFilesChangedListener?.({
+        projectId: 'default',
+        sources: ['artifact'],
+        kind: 'reset'
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    await act(async () => {
+      clickDropdownTrigger(
+        container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')
+      )
+    })
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[data-filter-id="session:orphan-session"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(container.textContent).toContain('orphan.txt')
+
+    hasOrphanGroup = false
+    await act(async () => {
+      projectFilesChangedListener?.({
+        projectId: 'default',
+        sources: ['artifact'],
+        kind: 'reset'
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')?.textContent
+    ).toContain('Artifacts')
+    expect(container.textContent).not.toContain('Session orphan-s')
+  })
+
   it('resets filter and scroll position when the active project changes', async () => {
     await renderView([
       createSession({

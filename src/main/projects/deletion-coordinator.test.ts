@@ -97,6 +97,37 @@ describe('ProjectDeletionCoordinator', () => {
     await Promise.all([deletion, recovery])
     expect(recoveryFinished).toBe(true)
   })
+
+  it('keeps recovery blocked until every concurrently requested deletion finishes', async () => {
+    const firstGate = createDeferred<void>()
+    const secondGate = createDeferred<void>()
+    const sessions = {
+      deleteProjectSessions: vi.fn(async (projectId: string) => {
+        await (projectId === 'project-1' ? firstGate.promise : secondGate.promise)
+      })
+    }
+    const coordinator = new ProjectDeletionCoordinator(createProjects(), sessions, {
+      delete: vi.fn().mockResolvedValue(undefined)
+    })
+    await coordinator.recoverPendingDeletions()
+
+    const firstDeletion = coordinator.deleteProject('project-1')
+    const secondDeletion = coordinator.deleteProject('project-2')
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    let recoveryFinished = false
+    const recovery = coordinator.recoverPendingDeletions().then(() => {
+      recoveryFinished = true
+    })
+    secondGate.resolve(undefined)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(recoveryFinished).toBe(false)
+
+    firstGate.resolve(undefined)
+    await Promise.all([firstDeletion, secondDeletion, recovery])
+    expect(recoveryFinished).toBe(true)
+  })
 })
 
 const createProjects = (): ProjectDeletionRepository => ({

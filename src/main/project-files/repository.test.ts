@@ -435,6 +435,61 @@ describe('ManagedFileIndexRepository', () => {
     expect((await repository.getOverview(PROJECT_ID)).totalCount).toBe(1)
   })
 
+  it('preserves incomplete state when session and project deletion are compensated', async () => {
+    const sessionMissingPath = join(
+      storageRoot,
+      'artifacts',
+      'default-project',
+      SESSION_ID,
+      'message-1',
+      'missing-session.txt'
+    )
+    await repository.syncSession(
+      createSession({
+        artifacts: [
+          {
+            id: 'missing-session',
+            kind: 'managed-file',
+            path: sessionMissingPath,
+            name: 'missing-session.txt'
+          }
+        ]
+      })
+    )
+    expect((await repository.getOverview(PROJECT_ID)).isIndexComplete).toBe(false)
+
+    const sessionToken = await repository.softDeleteSession(PROJECT_ID, SESSION_ID)
+    await repository.restoreSession(PROJECT_ID, SESSION_ID, sessionToken)
+    expect((await repository.getOverview(PROJECT_ID)).isIndexComplete).toBe(false)
+
+    const projectSessionId = 'session-2'
+    const projectMissingPath = join(
+      storageRoot,
+      'artifacts',
+      'default-project',
+      projectSessionId,
+      'message-1',
+      'missing-project.txt'
+    )
+    await repository.syncSession(
+      createSession({
+        id: projectSessionId,
+        artifacts: [
+          {
+            id: 'missing-project',
+            kind: 'managed-file',
+            path: projectMissingPath,
+            name: 'missing-project.txt'
+          }
+        ]
+      })
+    )
+
+    const projectToken = await repository.softDeleteProject(PROJECT_ID)
+    await repository.restoreProject(PROJECT_ID, projectToken)
+    expect((await repository.getOverview(PROJECT_ID)).isIndexComplete).toBe(false)
+  })
+
   it('does not revive stale file rows when a session deletion is compensated', async () => {
     const oldPath = join(
       storageRoot,
@@ -523,6 +578,62 @@ describe('ManagedFileIndexRepository', () => {
       limit: 24
     })
     expect(page.items[0].sortAtMs).toBe(900)
+  })
+
+  it('indexes artifacts whose filesystem modification time has fractional milliseconds', async () => {
+    const artifactPath = join(
+      storageRoot,
+      'artifacts',
+      'default-project',
+      SESSION_ID,
+      'message-1',
+      'result.txt'
+    )
+    await writeManagedFile(artifactPath, 'result')
+
+    await repository.syncSession(
+      createSession({
+        artifacts: [
+          {
+            id: 'artifact-1',
+            kind: 'managed-file',
+            path: artifactPath,
+            name: 'result.txt',
+            mtimeMs: 1_784_516_769_248.2927
+          }
+        ]
+      })
+    )
+
+    const page = await repository.listFiles({
+      projectId: PROJECT_ID,
+      collection: { kind: 'sessionArtifacts', sessionId: SESSION_ID },
+      limit: 24
+    })
+    expect(page.items[0].sortAtMs).toBe(1_784_516_769_248)
+  })
+
+  it('force rebuilds missing rows even when the revision ledger matches', async () => {
+    const artifactPath = join(
+      storageRoot,
+      'artifacts',
+      'default-project',
+      SESSION_ID,
+      'message-1',
+      'result.txt'
+    )
+    await writeManagedFile(artifactPath, 'result')
+    const session = createSession({
+      artifacts: [
+        { id: 'artifact-1', kind: 'managed-file', path: artifactPath, name: 'result.txt' }
+      ]
+    })
+    await repository.syncSession(session)
+    await client.managedFile.deleteMany({ where: { projectId: PROJECT_ID } })
+
+    await repository.syncSession(session, { force: true })
+
+    await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({ totalCount: 1 })
   })
 
   it('keeps artifact group ordering stable when only uploads change', async () => {
@@ -669,7 +780,68 @@ describe('ManagedFileIndexRepository', () => {
     )
   })
 
-  it('keeps the previous projection and reports incomplete until a missing file can be indexed', async () => {
+  it('indexes readable files while retrying an unreadable file from the same session', async () => {
+    const uploadPath = join(storageRoot, 'uploads', 'default-project', SESSION_ID, 'input.csv')
+    const missingArtifactPath = join(
+      storageRoot,
+      'artifacts',
+      'default-project',
+      SESSION_ID,
+      'message-1',
+      'later.txt'
+    )
+    await writeManagedFile(uploadPath, 'a,b')
+    const session = createSession({
+      messages: [
+        {
+          id: 'message-user',
+          role: 'user',
+          content: 'Analyze',
+          status: 'complete',
+          eventIds: [],
+          uploads: [
+            {
+              id: 'upload-1',
+              sessionId: SESSION_ID,
+              name: 'input.csv',
+              originalName: 'input.csv',
+              path: uploadPath,
+              size: 3
+            }
+          ],
+          createdAt: 100,
+          updatedAt: 200
+        }
+      ],
+      artifacts: [
+        {
+          id: 'artifact-later',
+          kind: 'managed-file',
+          path: missingArtifactPath,
+          name: 'later.txt'
+        }
+      ]
+    })
+
+    await expect(repository.syncSession(session)).resolves.toEqual(['upload'])
+    await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+      totalCount: 1,
+      uploadCount: 1,
+      artifactCount: 0,
+      isIndexComplete: false
+    })
+
+    await writeManagedFile(missingArtifactPath, 'ready')
+    await expect(repository.syncSession(session)).resolves.toEqual(['artifact'])
+    await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+      totalCount: 2,
+      uploadCount: 1,
+      artifactCount: 1,
+      isIndexComplete: true
+    })
+  })
+
+  it('reports incomplete until a missing file can be indexed', async () => {
     const missingPath = join(
       storageRoot,
       'artifacts',
@@ -684,7 +856,7 @@ describe('ManagedFileIndexRepository', () => {
       ]
     })
 
-    await expect(repository.syncSession(session)).rejects.toThrow(/not currently readable/i)
+    await expect(repository.syncSession(session)).resolves.toEqual([])
     expect((await repository.getOverview(PROJECT_ID)).isIndexComplete).toBe(false)
     expect((await repository.getOverview(PROJECT_ID)).totalCount).toBe(0)
 
@@ -787,7 +959,7 @@ describe('ManagedFileIndexRepository', () => {
           ]
         })
       )
-    ).rejects.toThrow(/not currently readable/i)
+    ).resolves.toEqual([])
     await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
       isIndexComplete: false
     })
