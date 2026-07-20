@@ -236,8 +236,8 @@ describe('ProviderList', () => {
 
     expect(container.textContent).toContain('Managed by Codex CLI')
     expect(buttonByLabel('Check Codex login')).toBeDefined()
-    expect(buttonByLabel('Edit')).toBeUndefined()
-    expect(buttonByLabel('Delete')).toBeUndefined()
+    expect(buttonByLabel('Edit')).toBeDefined()
+    expect(buttonByLabel('Delete')).toBeDefined()
     expect(buttonByLabel('Sign out')).toBeUndefined()
   })
 
@@ -261,8 +261,8 @@ describe('ProviderList', () => {
     renderList([isolated], undefined, undefined, { onCancel, onLogout })
     act(() => buttonByLabel('Sign out')?.click())
     expect(onLogout).toHaveBeenCalledOnce()
-    expect(buttonByLabel('Edit')).toBeUndefined()
-    expect(buttonByLabel('Delete')).toBeUndefined()
+    expect(buttonByLabel('Edit')).toBeDefined()
+    expect(buttonByLabel('Delete')).toBeDefined()
   })
 
   it('renders an empty state with no providers', () => {

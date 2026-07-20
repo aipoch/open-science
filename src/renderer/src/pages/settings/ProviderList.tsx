@@ -240,24 +240,20 @@ const ProviderList = ({
                       className="border border-border text-foreground"
                     />
                   ) : null}
-                  {!isCodexSubscription ? (
-                    <>
-                      <SettingsIconAction
-                        label="Edit"
-                        icon={Pencil}
-                        onClick={() => onEdit(provider)}
-                        className="border border-border text-foreground"
-                      />
-                      <SettingsIconAction
-                        label="Delete"
-                        icon={Trash2}
-                        onClick={() => onDelete(provider)}
-                        disabled={!canDelete}
-                        className="border border-border"
-                        danger
-                      />
-                    </>
-                  ) : null}
+                  <SettingsIconAction
+                    label="Edit"
+                    icon={Pencil}
+                    onClick={() => onEdit(provider)}
+                    className="border border-border text-foreground"
+                  />
+                  <SettingsIconAction
+                    label="Delete"
+                    icon={Trash2}
+                    onClick={() => onDelete(provider)}
+                    disabled={!canDelete}
+                    className="border border-border"
+                    danger
+                  />
                 </div>
               </div>
             </li>
