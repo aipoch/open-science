@@ -43,6 +43,18 @@ class ArtifactRunRegistry {
     return claim
   }
 
+  // Run ids of claims registered but not yet finalized — files that have been emitted to the renderer
+  // and are awaiting its finalize call. The orphan scan must exclude these (a normal file mid-handoff,
+  // not an orphan) in addition to prompt-in-flight runs, since a run leaves the runtime's active set at
+  // stop, before the renderer finalizes. In-memory only, so a crash clears them and they resurface.
+  getUnfinalizedRunIds(): string[] {
+    const runIds: string[] = []
+    for (const claim of this.claims.values()) {
+      if (!claim.finalizedMessageId) runIds.push(claim.runId)
+    }
+    return runIds
+  }
+
   // Records the message that consumed a claim so finalize retries remain idempotent.
   markFinalized(claimId: string, messageId: string): void {
     const claim = this.resolve(claimId)

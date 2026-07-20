@@ -68,6 +68,12 @@ const createArtifactHandlers = (
     dependencies.openPath ?? ((filePath: string): Promise<string> => shell.openPath(filePath))
   const getActiveArtifactRunIds = dependencies.getActiveArtifactRunIds ?? ((): string[] => [])
 
+  // A pending run must be treated as in-flight (not orphaned) for its whole lifecycle: while the prompt
+  // runs (getActiveArtifactRunIds), AND after stop while its claim awaits the renderer's finalize call
+  // (runRegistry unfinalized claims) — the run leaves the runtime's active set at stop, before finalize.
+  const inFlightRunIds = (): Set<string> =>
+    new Set([...getActiveArtifactRunIds(), ...runRegistry.getUnfinalizedRunIds()])
+
   return {
     finalizeRunArtifacts: (request) =>
       withDataRootWrite(() =>
@@ -76,7 +82,7 @@ const createArtifactHandlers = (
         )
       ),
     listProjectFiles: (request) =>
-      repository.listProjectArtifacts(request.projectName, new Set(getActiveArtifactRunIds())),
+      repository.listProjectArtifacts(request.projectName, inFlightRunIds()),
     reconcilePendingArtifacts: (request) =>
       withDataRootWrite(() => repository.reconcilePendingArtifactPaths(request)),
     openFile: async (request) => {
