@@ -164,6 +164,11 @@ jobs:
         run: |
           name=micromamba
           [ "${{ matrix.subdir }}" = "win-64" ] && name=micromamba.exe
+          # Pass the pinned version explicitly so the intent is visible in CI. Read it from the single
+          # source of truth (scripts/micromamba-versions.json) to avoid drifting from the digests the
+          # script verifies against.
+          export MICROMAMBA_VERSION=$(node -p "require('./scripts/micromamba-versions.json').version")
+          echo "using pinned micromamba $MICROMAMBA_VERSION"
           node scripts/fetch-micromamba.mjs "${{ matrix.subdir }}" \
             "resources/bin/${{ matrix.bin_os }}/${{ matrix.bin_arch }}/$name"
 

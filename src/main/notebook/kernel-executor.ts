@@ -225,7 +225,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
   // In-flight process-tree teardowns, keyed by the process key of the proc being reaped. A dropped
   // proc's tree is killed asynchronously; ensureProc awaits any pending teardown for a key before
   // spawning its replacement, so two live process trees for the SAME (kind, env) never briefly coexist.
-  private readonly pendingTeardowns = new Map<ProcessKey, Promise<unknown>>()
+  // Each promise resolves to the teardown's ProcessTreeKillResult (killChildTracked stores killChild's
+  // result), so shutdown() can fold its reaped outcome into the overall reaped guarantee.
+  private readonly pendingTeardowns = new Map<ProcessKey, Promise<ProcessTreeKillResult>>()
   // One temp dir the loops write captured figures into; created lazily, reused, removed on shutdown.
   private figuresDir: string | undefined
   private readonly pythonLoopPath: string
@@ -304,13 +306,25 @@ class NotebookKernelExecutor implements NotebookExecutor {
       this.rejectPending(proc, new Error('Notebook kernel was shut down.'))
       proc.readline.close()
     }
-    const results = await Promise.all(procs.map((proc) => this.killChild(proc.child)))
+    // A hard-timeout/idle/identity-change drop moves its tree kill into pendingTeardowns and removes
+    // the proc from `procs`, so a teardown started just before shutdown is invisible to the loop above.
+    // Snapshot and await those too: a still-dying old tree must not let the reaped result greenlight the
+    // update-install uninstall while it still holds an interpreter file handle.
+    const pending = Array.from(this.pendingTeardowns.values())
+    const [results, pendingResults] = await Promise.all([
+      Promise.all(procs.map((proc) => this.killChild(proc.child))),
+      Promise.all(pending)
+    ])
 
     if (this.figuresDir) {
       await rm(this.figuresDir, { recursive: true, force: true }).catch(() => {})
       this.figuresDir = undefined
     }
-    return { reaped: results.every((result) => result.reaped) }
+    // Reaped only when every current proc AND every outstanding teardown reaped its whole tree.
+    return {
+      reaped:
+        results.every((result) => result.reaped) && pendingResults.every((result) => result.reaped)
+    }
   }
 
   // Tears down all loops so the next execute() lazily respawns a clean process per language.

@@ -710,6 +710,52 @@ describe('NotebookKernelExecutor spawn env', () => {
   })
 })
 
+// -- shutdown() reaped guarantee vs. in-flight teardowns (the Windows update-install gate). ----------
+
+type PendingTeardownsInternals = {
+  pendingTeardowns: Map<string, Promise<{ reaped: boolean }>>
+}
+
+describe('NotebookKernelExecutor shutdown reaping', () => {
+  it('awaits an outstanding pending teardown and reports reaped:false while its tree is still dying', async () => {
+    // A hard-timeout/idle drop moved its tree kill into pendingTeardowns and removed the proc from the
+    // map, so shutdown()'s per-proc loop never sees it. shutdown() must still await that teardown: the
+    // update-install gate relies on reaped:true meaning EVERY interpreter file handle was released.
+    const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE })
+    const internals = executor as unknown as PendingTeardownsInternals
+
+    let settle!: (result: { reaped: boolean }) => void
+    const teardown = new Promise<{ reaped: boolean }>((resolve) => {
+      settle = resolve
+    })
+    internals.pendingTeardowns.set('python:default-python', teardown)
+
+    // shutdown() must not resolve while the old tree is still being reaped.
+    let resolved = false
+    const shutdownPromise = executor.shutdown().then((result) => {
+      resolved = true
+      return result
+    })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(resolved).toBe(false)
+
+    // The old tree could not be cleanly reaped (a lingering handle): shutdown must report reaped:false.
+    settle({ reaped: false })
+    const result = await shutdownPromise
+    expect(resolved).toBe(true)
+    expect(result.reaped).toBe(false)
+  })
+
+  it('reports reaped:true only once every pending teardown reaped its whole tree', async () => {
+    const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE })
+    const internals = executor as unknown as PendingTeardownsInternals
+    internals.pendingTeardowns.set('python:default-python', Promise.resolve({ reaped: true }))
+
+    const result = await executor.shutdown()
+    expect(result.reaped).toBe(true)
+  })
+})
+
 // -- Repl kind end-to-end against the real repl_loop.js under the test's node (process.execPath). ----
 
 const REPL_LOOP = join(__dirname, '../../../resources/notebook/repl_loop.js')

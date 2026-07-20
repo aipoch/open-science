@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { RuntimeOperationJournal, type RuntimeOperationRecord } from './operation-journal'
 import {
-  defaultIsOperationChildAlive,
+  defaultOperationChildLiveness,
   reconcileInterruptedOperations,
   type OperationRecoveryDeps
 } from './operation-recovery'
@@ -31,11 +31,12 @@ const record = (over: Partial<RuntimeOperationRecord> = {}): RuntimeOperationRec
 })
 
 const makeDeps = (over: Partial<OperationRecoveryDeps> = {}): OperationRecoveryDeps => ({
-  isOperationChildAlive: vi.fn().mockResolvedValue(false),
+  operationChildLiveness: vi.fn().mockResolvedValue('dead'),
   terminateOperationChild: vi.fn().mockResolvedValue(undefined),
   cleanStaging: vi.fn().mockResolvedValue(undefined),
   verifyOrRebuildEnv: vi.fn().mockResolvedValue(undefined),
   markRepairRequired: vi.fn().mockResolvedValue(undefined),
+  blockUnknownChildTarget: vi.fn().mockResolvedValue(undefined),
   ...over
 })
 
@@ -72,7 +73,7 @@ describe('reconcileInterruptedOperations', () => {
     await journal.begin(record({ kind: 'download', childPid: 4242, targetPath: '/rt/.incoming-a' }))
     const order: string[] = []
     const deps = makeDeps({
-      isOperationChildAlive: vi.fn().mockResolvedValue(true),
+      operationChildLiveness: vi.fn().mockResolvedValue('alive'),
       terminateOperationChild: vi.fn().mockImplementation(async () => {
         order.push('kill')
       }),
@@ -96,9 +97,42 @@ describe('reconcileInterruptedOperations', () => {
 
     await reconcileInterruptedOperations(journal, deps)
 
-    expect(deps.isOperationChildAlive).not.toHaveBeenCalled()
+    expect(deps.operationChildLiveness).not.toHaveBeenCalled()
     expect(deps.terminateOperationChild).not.toHaveBeenCalled()
     expect(deps.verifyOrRebuildEnv).toHaveBeenCalledTimes(1)
+  })
+
+  it('on unknown liveness: BLOCKS the target, retains the journal, never cleans under a maybe-live writer', async () => {
+    const journal = await newJournal()
+    const rec = record({
+      operationId: 'op-1',
+      kind: 'materialize',
+      runtimeId: 'default-python',
+      childPid: 4242,
+      targetPath: '/rt/envs/default-python'
+    })
+    await journal.begin(rec)
+    const actions: string[] = []
+    const blocked: string[] = []
+    const deps = makeDeps({
+      operationChildLiveness: vi.fn().mockResolvedValue('unknown'),
+      blockUnknownChildTarget: vi.fn(async (r) => {
+        blocked.push(r.runtimeId)
+      }),
+      onReconciled: (_r, action) => actions.push(action)
+    })
+
+    const reconciled = await reconcileInterruptedOperations(journal, deps)
+
+    // Not reconciled, not killed, not cleaned/rebuilt — but the target IS blocked so a fresh op can't
+    // race a possible survivor after the barrier opens, and the journal entry survives for a later boot.
+    expect(reconciled).toEqual([])
+    expect(deps.terminateOperationChild).not.toHaveBeenCalled()
+    expect(deps.cleanStaging).not.toHaveBeenCalled()
+    expect(deps.verifyOrRebuildEnv).not.toHaveBeenCalled()
+    expect(blocked).toEqual(['default-python'])
+    expect(actions).toEqual(['skipped-child-unknown'])
+    expect((await journal.pending()).map((r) => r.operationId)).toEqual(['op-1'])
   })
 
   it('leaves a failed op in the journal (retried next startup) without blocking the others', async () => {
@@ -117,24 +151,43 @@ describe('reconcileInterruptedOperations', () => {
   })
 })
 
-describe('defaultIsOperationChildAlive (pid-reuse guard)', () => {
-  it('reports a record with no childPid as not alive', async () => {
-    expect(await defaultIsOperationChildAlive(record({ childPid: undefined }))).toBe(false)
+describe('defaultOperationChildLiveness (tri-state pid-reuse guard)', () => {
+  it('reports a record with no childPid as dead', async () => {
+    expect(await defaultOperationChildLiveness(record({ childPid: undefined }))).toBe('dead')
   })
 
-  it('reports a dead pid as not alive', async () => {
+  it('reports a gone pid as dead', async () => {
     // A pid that (essentially) never exists; process.kill(pid, 0) throws ESRCH.
-    expect(await defaultIsOperationChildAlive(record({ childPid: 2_147_483_646 }))).toBe(false)
+    expect(await defaultOperationChildLiveness(record({ childPid: 2_147_483_646 }))).toBe('dead')
   })
 
-  it.skipIf(process.platform === 'win32')(
-    'treats a live pid whose start time is far from childStartedAt as REUSED (not our child)',
-    async () => {
-      // This test process is alive, but we claim our child started in 1970 — ps will show a recent
-      // start, so the guard must reject it rather than let recovery kill an unrelated process.
-      expect(
-        await defaultIsOperationChildAlive(record({ childPid: process.pid, childStartedAt: 0 }))
-      ).toBe(false)
-    }
-  )
+  it('reports a live pid with no recorded start time as unknown (cannot rule out reuse)', async () => {
+    // The old boolean check returned alive here and would SIGKILL it; tri-state refuses to guess.
+    expect(
+      await defaultOperationChildLiveness(
+        record({ childPid: process.pid, childStartedAt: undefined })
+      )
+    ).toBe('unknown')
+  })
+
+  // Whether THIS environment can actually verify a pid's start time via `ps`. It can't on Windows (no
+  // ps) and can't in a locked-down sandbox where `ps -o etime` is denied ("operation not permitted") —
+  // in both, defaultOperationChildLiveness must return 'unknown' rather than guess. We probe it directly
+  // (a live pid whose recorded start time is "now" resolves 'alive' only when ps works) so the assertion
+  // below tracks the real capability instead of assuming it from process.platform. Keeps the test green
+  // on Windows AND in a ps-restricted sandbox, per the repo's sandbox-safe test rule.
+  const canVerifyPidStartTime = async (): Promise<boolean> =>
+    (await defaultOperationChildLiveness(
+      record({ childPid: process.pid, childStartedAt: Date.now() })
+    )) === 'alive'
+
+  it('classifies a live pid whose start time is far from childStartedAt as REUSED when ps is available, else unknown', async () => {
+    // This process is alive but we claim its child started in 1970. When ps can read the real (recent)
+    // start time, the guard rejects the reused pid as 'dead' (never SIGKILLs an unrelated process). When
+    // ps is unavailable/denied, it cannot verify identity and must fail safe to 'unknown'.
+    const expected = (await canVerifyPidStartTime()) ? 'dead' : 'unknown'
+    expect(
+      await defaultOperationChildLiveness(record({ childPid: process.pid, childStartedAt: 0 }))
+    ).toBe(expected)
+  })
 })

@@ -13,7 +13,8 @@ import {
   pythonBin,
   rBin,
   readRReadyMarker,
-  readReadyMarker
+  readReadyMarker,
+  writeReadyMarker
 } from './runtime-paths'
 import {
   BASE_PYTHON_PACKAGES,
@@ -27,6 +28,12 @@ import {
   type ProvisionerDeps
 } from './provisioner'
 import { envsLockDir } from './runtime-relocation'
+import { withExclusiveCacheLock } from './pkgs-cache-lock'
+import {
+  operationJournalPath,
+  RuntimeOperationJournal,
+  type RuntimeOperationRecord
+} from './operation-journal'
 
 const makeRoot = (): string => mkdtempSync(join(tmpdir(), 'os-prov-'))
 
@@ -273,6 +280,45 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
 
     await expect(provisioner.provisionPython(() => {})).rejects.toThrow(/extracting package/)
   })
+
+  it('wires the spawned micromamba child pid into the materialize journal, then clears it on completion', async () => {
+    const root = makeRoot()
+    const prefix = envPrefix(root, DEFAULT_PY_ENV)
+    // Snapshot the journal exactly while the child is "alive": inside runArgv, after onChild fires,
+    // read operation-journal.json from disk — the same on-disk record startup recovery would reconcile.
+    let recordDuringCreate: RuntimeOperationRecord | undefined
+    const deps = makeDeps(root, {
+      runArgv: async (_argv, _signal, onChild) => {
+        // Mimic runMicromamba reporting its spawned child's pid.
+        onChild?.(4242)
+        // The provisioner's onChild does a fire-and-forget journal.update, so poll the on-disk journal
+        // until the pid lands (still "during" the create, before we materialize the bin below).
+        const journal = RuntimeOperationJournal.forPath(operationJournalPath(root))
+        await vi.waitFor(async () => {
+          const found = (await journal.pending()).find((r) => r.kind === 'materialize')
+          expect(found?.childPid).toBe(4242)
+          recordDuringCreate = found
+        })
+        // Still materialize the interpreter bin so verify() passes and materialize reaches complete().
+        const bin = pythonBin(prefix)
+        mkdirSync(join(bin, '..'), { recursive: true })
+        writeFileSync(bin, 'x')
+      }
+    })
+
+    await new DefaultRuntimeProvisioner(deps).provisionPython(() => {})
+
+    // During the create the journal held the materialize record with the child pid threaded in.
+    expect(recordDuringCreate).toMatchObject({
+      kind: 'materialize',
+      runtimeId: DEFAULT_PY_ENV,
+      targetPath: prefix,
+      childPid: 4242
+    })
+    // journal.complete() cleared the entry once the prefix settled — nothing left in flight.
+    const after = await RuntimeOperationJournal.forPath(operationJournalPath(root)).pending()
+    expect(after).toEqual([])
+  })
 })
 
 describe('DefaultRuntimeProvisioner.provisionR', () => {
@@ -431,6 +477,79 @@ describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
     await provisioner.createNamedEnvironment('r-stats', 'r')
 
     expect(argvs[0]).toEqual(expect.arrayContaining(['r-base', 'r-jsonlite']))
+  })
+
+  it('holds the shared pkgs cache lock, so a concurrent exclusive repair cannot run mid-create', async () => {
+    // Regression (F7): named-env create extracts into the shared pkgs cache but did not take the lock,
+    // so a corrupt-cache repair (cache-exclusive) could delete an incomplete extraction it was
+    // producing. The create must hold the shared lock across its runArgv.
+    const root = makeRoot()
+    const order: string[] = []
+    const { deps } = makeNamedEnvDeps(root, {
+      runArgv: async (argv) => {
+        order.push('create-start')
+        await new Promise((r) => setTimeout(r, 10))
+        const idx = argv.indexOf('--prefix')
+        const bin = pythonBin(argv[idx + 1])
+        mkdirSync(join(bin, '..'), { recursive: true })
+        writeFileSync(bin, 'x')
+        order.push('create-end')
+      }
+    })
+    const provisioner = new DefaultRuntimeProvisioner(deps)
+
+    // Kick off the create, then immediately request the cache EXCLUSIVE on the same root.
+    const create = provisioner.createNamedEnvironment('my-analysis', 'python', ['numpy'])
+    const exclusive = withExclusiveCacheLock(root, async () => {
+      order.push('repair')
+    })
+    await Promise.all([create, exclusive])
+
+    // The exclusive repair waited for the create to fully release the shared lock — it never
+    // interleaved between create-start and create-end.
+    expect(order).toEqual(['create-start', 'create-end', 'repair'])
+  })
+})
+
+describe('DefaultRuntimeProvisioner.upgradeIfNeeded (shared pkgs cache lock)', () => {
+  it('holds the shared pkgs cache lock across the bundle upgrade, so a concurrent exclusive repair cannot run mid-upgrade', async () => {
+    // Regression: upgradeFromBundle installs the published lock into the SHARED pkgs cache, so it must
+    // hold the shared lock — otherwise a corrupt-cache repair (cache-exclusive) could delete an
+    // incomplete extraction it is producing. Unlike create, the shared lock is taken AFTER fetchBundle,
+    // so we wait until the install actually starts (lock held) before racing the exclusive.
+    const root = makeRoot()
+    // An older-but-healthy python marker makes upgradeIfNeeded run upgradeFromBundle (R stays lazy, so
+    // only the python env is upgraded here).
+    writeReadyMarker(root, DEFAULT_ENV_VERSION - 1, 't1')
+    const order: string[] = []
+    let lockHeld!: () => void
+    const held = new Promise<void>((resolve) => {
+      lockHeld = resolve
+    })
+    const deps = makeDeps(root, {
+      runArgv: async (argv) => {
+        order.push('upgrade-start')
+        lockHeld() // runArgv runs inside the shared lock -> the lock is now held
+        await new Promise((r) => setTimeout(r, 10))
+        const pIdx = argv.findIndex((a) => a === '--prefix' || a === '-p')
+        const bin = pythonBin(argv[pIdx + 1])
+        mkdirSync(join(bin, '..'), { recursive: true })
+        writeFileSync(bin, 'x')
+        order.push('upgrade-end')
+      }
+    })
+
+    // Start the upgrade, wait until its install holds the shared lock, then request the cache EXCLUSIVE.
+    const upgrade = new DefaultRuntimeProvisioner(deps).upgradeIfNeeded(() => {})
+    await held
+    const exclusive = withExclusiveCacheLock(root, async () => {
+      order.push('repair')
+    })
+    await Promise.all([upgrade, exclusive])
+
+    // The exclusive repair waited for the upgrade to release the shared lock — it never interleaved
+    // between upgrade-start and upgrade-end.
+    expect(order).toEqual(['upgrade-start', 'upgrade-end', 'repair'])
   })
 })
 
@@ -615,5 +734,37 @@ describe('DefaultRuntimeProvisioner.restoreRelocatedEnvs', () => {
 
     expect(existsSync(join(envsLockDir(root), `${DEFAULT_PY_ENV}.lock`))).toBe(true)
     expect(readReadyMarker(root)).toBeUndefined()
+  })
+
+  it('holds the shared pkgs cache lock for its per-env recreate, so a concurrent exclusive repair cannot run mid-restore', async () => {
+    // Regression: the offline recreate extracts into the SHARED pkgs cache, so it must hold the shared
+    // lock — otherwise a corrupt-cache repair (cache-exclusive) could delete an incomplete extraction
+    // it is producing. The lock is taken synchronously per env, so we can race the exclusive right after
+    // kicking off restore (mirroring the createNamedEnvironment lock test).
+    const root = makeRoot()
+    writeLock(root, DEFAULT_PY_ENV)
+    const order: string[] = []
+    const deps = makeDeps(root, {
+      runArgv: async (argv) => {
+        order.push('restore-start')
+        await new Promise((r) => setTimeout(r, 10))
+        const pIdx = argv.findIndex((a) => a === '-p' || a === '--prefix')
+        const bin = pythonBin(argv[pIdx + 1])
+        mkdirSync(join(bin, '..'), { recursive: true })
+        writeFileSync(bin, 'x')
+        order.push('restore-end')
+      }
+    })
+
+    // Kick off the restore, then immediately request the cache EXCLUSIVE on the same root.
+    const restore = new DefaultRuntimeProvisioner(deps).restoreRelocatedEnvs(() => {})
+    const exclusive = withExclusiveCacheLock(root, async () => {
+      order.push('repair')
+    })
+    await Promise.all([restore, exclusive])
+
+    // The exclusive repair waited for the recreate to release the shared lock — it never interleaved
+    // between restore-start and restore-end.
+    expect(order).toEqual(['restore-start', 'restore-end', 'repair'])
   })
 })

@@ -115,4 +115,28 @@ describe('RuntimeOperationJournal', () => {
     // The persisted file is valid JSON (no torn write) with all 8 records.
     expect(JSON.parse(await readFile(path, 'utf8'))).toHaveLength(8)
   })
+
+  it('forPath() returns the one shared instance per path so callers share a save queue', async () => {
+    const path = await journalPath()
+    const a = RuntimeOperationJournal.forPath(path)
+    const b = RuntimeOperationJournal.forPath(path)
+    expect(a).toBe(b)
+    expect(RuntimeOperationJournal.forPath(await journalPath())).not.toBe(a)
+  })
+
+  it('begins from separate forPath() callers on one path never lose an entry', async () => {
+    const path = await journalPath()
+    // Mimics the real callers (download / materialize / install) each resolving a journal for the same
+    // path and beginning concurrently. With per-instance `new` their private queues would read the same
+    // stale journal and clobber each other; the shared forPath() queue serializes them.
+    await Promise.all(
+      Array.from({ length: 8 }, (_v, i) =>
+        RuntimeOperationJournal.forPath(path).begin(
+          record({ operationId: `op-${i}`, runtimeId: `rt-${i}` })
+        )
+      )
+    )
+    expect(await RuntimeOperationJournal.forPath(path).pending()).toHaveLength(8)
+    expect(JSON.parse(await readFile(path, 'utf8'))).toHaveLength(8)
+  })
 })

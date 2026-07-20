@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { PROD_SESSION_DIR_NAME } from '../session-persistence/repository'
 import type { NotebookLanguage } from '../../shared/notebook'
 import { caBundleEnv, installArgv, resolveMicromamba } from './micromamba'
+import { withSharedCacheLock } from './pkgs-cache-lock'
 import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
@@ -31,6 +32,13 @@ export type InstallRequest = {
   // notebook tool call). Lets managePackages consult THIS session's runtime binding so an install into
   // a bound external env is gated on that env's per-env install authorization. Absent -> managed path.
   sessionId?: string
+  // workspaceCwd/projectName travel on every notebook RPC call too (the local RPC requires
+  // workspaceCwd; mcp-server injects both). managePackages uses them to ensureSession() — loading and
+  // rehydrating persisted runtime bindings — BEFORE resolving the binding, so the FIRST install after
+  // an app restart (session not yet in memory) still sees the persisted binding instead of silently
+  // targeting the default env.
+  workspaceCwd?: string
+  projectName?: string
 }
 // method records which installer actually ran: conda (micromamba), pip, or cran (R install.packages
 // fallback) — useful to verify the path taken, especially when conda falls back.
@@ -203,6 +211,13 @@ export async function installPackages(
   const root = runtimeRoot(storageRoot)
   const channels = condaInstallChannels(deps.condaChannel ?? DEFAULT_CONDA_CHANNEL, req.channels)
   const prefix = envPrefix(root, envName)
+  // micromamba install/remove extract into and mutate the SHARED pkgs cache (<root>/runtime/pkgs), so
+  // they must hold the shared cache lock — otherwise a concurrent corrupt-cache repair (which takes the
+  // cache EXCLUSIVE and removes incomplete extractions) could delete a package dir mid-install. pip and
+  // CRAN write only into the env prefix, so they use `run` directly, unlocked. Keyed by `root` — the
+  // same key materialize/create/upgrade use — so every cache writer serializes against repair.
+  const runConda: InstallSpawn = (command, args) =>
+    withSharedCacheLock(root, () => run(command, args))
 
   // External (BYO) runtime: install with the selected interpreter's OWN pip — never the bundled
   // micromamba against a foreign env, and never the app-managed prefix. Handled FIRST (above the
@@ -291,7 +306,7 @@ export async function installPackages(
   }
 
   if (req.operation === 'uninstall') {
-    return uninstallPackages(req, deps, run, root, prefix)
+    return uninstallPackages(req, deps, run, runConda, root, prefix)
   }
 
   if (req.language === 'python') {
@@ -312,7 +327,7 @@ export async function installPackages(
     const mm = deps.micromamba ?? resolveMicromamba()
     if (!mm) return { ok: false, needsRestart: false, log: '', error: 'micromamba not found.' }
     const argv = installArgv(mm, root, prefix, channels, req.packages, isDefaultEnv)
-    const result = await run(argv[0], argv.slice(1))
+    const result = await runConda(argv[0], argv.slice(1))
     return {
       ok: result.code === 0,
       needsRestart: false,
@@ -330,7 +345,7 @@ export async function installPackages(
 
   const condaPkgs = rCondaNames(req.packages)
   const argv = installArgv(mm, root, prefix, channels, condaPkgs, isDefaultEnv)
-  const conda = await run(argv[0], argv.slice(1))
+  const conda = await runConda(argv[0], argv.slice(1))
   if (conda.code === 0) {
     return { ok: true, needsRestart: true, log: mergeLog(conda), method: 'conda', prefix }
   }
@@ -378,6 +393,9 @@ async function uninstallPackages(
   req: InstallRequest,
   deps: Partial<InstallDeps>,
   run: InstallSpawn,
+  // Cache-locked spawner for micromamba remove (mutates the shared pkgs cache); pip uninstall stays on
+  // `run` (env-prefix only). See the runConda note in installPackages.
+  runConda: InstallSpawn,
   root: string,
   prefix: string
 ): Promise<InstallResult> {
@@ -398,7 +416,7 @@ async function uninstallPackages(
     const mm = deps.micromamba ?? resolveMicromamba()
     if (!mm) return { ok: false, needsRestart: false, log: '', error: 'micromamba not found.' }
     const argv = removeArgv(mm, root, prefix, req.packages)
-    const result = await run(argv[0], argv.slice(1))
+    const result = await runConda(argv[0], argv.slice(1))
     return {
       ok: result.code === 0,
       needsRestart: false,
@@ -419,7 +437,7 @@ async function uninstallPackages(
 
   const condaPkgs = rCondaNames(req.packages)
   const argv = removeArgv(mm, root, prefix, condaPkgs)
-  const conda = await run(argv[0], argv.slice(1))
+  const conda = await runConda(argv[0], argv.slice(1))
   if (conda.code === 0) {
     return { ok: true, needsRestart: true, log: mergeLog(conda), method: 'conda', prefix }
   }

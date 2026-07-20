@@ -71,7 +71,7 @@ import type {
 import { isEnvEnabled } from '../../shared/notebook-runtime'
 import { discoverInterpreters, defaultDiscoveryDeps, rscriptFor } from './environment-discovery'
 import { operationJournalPath, RuntimeOperationJournal } from './operation-journal'
-import { reconcileInterruptedOperations, defaultIsOperationChildAlive } from './operation-recovery'
+import { reconcileInterruptedOperations, defaultOperationChildLiveness } from './operation-recovery'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 
 // Locale fallback when no explicit locale is injected (see shared/mirror.ts: non-CN locales resolve
@@ -1267,15 +1267,26 @@ class NotebookRuntimeService {
       // An ENABLED external binding runs the user's own interpreter directly.
       resolvedInterpreter = binding.resolvedInterpreter
     } else {
-      // No binding, or an app-managed binding: build the default env from the offline bundle on first
-      // use (R is lazy) before dispatching, so the agent doesn't hit "still being prepared" and go
-      // create its own env. No-op for named envs and for an already-materialized default.
+      // No binding, or an app-managed MANAGED binding (default or an agent-created named env): build the
+      // default env from the offline bundle on first use (R is lazy) before dispatching, so the agent
+      // doesn't hit "still being prepared" and go create its own env. No-op for named envs and for an
+      // already-materialized default.
       try {
         // No silent fallback (same guarantee as the binding path above): if the app-managed default is
         // explicitly DISABLED, refuse rather than provision + run it. Otherwise disabling the last
         // runtime in Settings would leave "no available runtime" showing there while notebook_execute
         // still ran the disabled default.
-        if (await this.isDefaultEnvDisabled(cell.language, session.runtimeRoot)) {
+        //
+        // But ONLY gate on the default's enablement when this run actually targets the default env. A
+        // managed binding to an agent-created NAMED env (my-analysis) also lands here (no
+        // resolvedInterpreter), and its `env` is that named env — disabling `default-python` must not
+        // block it. The named env has its own enablement, checked where it is disabled/revoked (the
+        // status branch above), so here we guard the default only.
+        const isDefaultEnvRun = env === this.defaultEnvNameFor(cell.language)
+        if (
+          isDefaultEnvRun &&
+          (await this.isDefaultEnvDisabled(cell.language, session.runtimeRoot))
+        ) {
           throw new Error(
             `No enabled ${cell.language} runtime: the app-managed default is disabled and no runtime ` +
               'is bound. Enable a runtime in Settings → Runtimes, or bind one with ' +
@@ -1718,13 +1729,31 @@ class NotebookRuntimeService {
     // Install target env comes from the SESSION BINDING (v4: no per-call environment argument). A
     // managed binding installs into its conda env by name; an external binding pips into the user's own
     // interpreter; no session context -> the language default env.
-    const bindingSession = request.sessionId ? this.sessions.get(request.sessionId) : undefined
+    //
+    // ensureSession() (not a bare sessions.get) so the FIRST manage_packages after an app restart loads
+    // the session and REHYDRATES its persisted runtime bindings before we read them — otherwise the
+    // session isn't in memory yet, the binding reads as undefined, and the install silently targets the
+    // default env (bypassing a bound named/external/unavailable runtime and its install-authorization,
+    // while pinnedRequest below would then guarantee the wrong target). Mirrors execute(), which already
+    // ensureSession()s. Falls back to the bare lookup only when workspaceCwd is absent (a direct/legacy
+    // caller that never carried session context — its request can't identify a session to load anyway).
+    const bindingSession =
+      request.sessionId && request.workspaceCwd
+        ? await this.ensureSession({
+            sessionId: request.sessionId,
+            workspaceCwd: request.workspaceCwd,
+            projectName: request.projectName
+          })
+        : request.sessionId
+          ? this.sessions.get(request.sessionId)
+          : undefined
     const binding = bindingSession
       ? bindingSession.runtimeBindings.get(request.language)
       : undefined
     const envName = bindingSession
       ? this.resolveRunEnv(bindingSession, request.language)
       : resolveEnvName(request.language, undefined)
+    const runtimeRoot = getRuntimeRoot(this.options.dataRoot)
 
     // Gate the install on that binding. An EXTERNAL binding is read-only unless the user turned on
     // "Allow package install" for THAT runtime in Settings (per-env installAuthorized) — then pip
@@ -1785,15 +1814,50 @@ class NotebookRuntimeService {
       // Install directly into the user's own interpreter (pip). No app-owned overlay: the user
       // explicitly authorized installing into their own environment.
       interpreter = binding.resolvedInterpreter
+    } else if (binding) {
+      // A MANAGED binding (app-managed default or an agent-created named env). Same no-silent-fallback
+      // guarantee as execute() and the external path: a disabled/unavailable managed binding refuses the
+      // install rather than quietly installing into a different env. repair-required stays installable —
+      // completing the install is how the user clears it. Without this, disabling a managed runtime
+      // blocked execution but still let manage_packages install into it (the gate was external-only).
+      const blocked =
+        (binding.status ?? 'active') !== 'active' && binding.reason !== 'repair-required'
+      if (blocked) {
+        return {
+          ok: false,
+          needsRestart: false,
+          log: '',
+          error:
+            `RUNTIME_BINDING_UNAVAILABLE: the bound ${request.language} runtime is ${binding.status}` +
+            (binding.reason ? ` (${binding.reason})` : '') +
+            '. Switch to another runtime (list_notebook_runtimes → notebook_switch_runtime) before ' +
+            'installing packages.'
+        }
+      }
+    } else if (envName === this.defaultEnvNameFor(request.language)) {
+      // No binding and the target is the app-managed default: refuse if that default is disabled, so
+      // manage_packages can't provision + install into a runtime the user turned off in Settings
+      // (mirrors execute()'s disabled-default gate). A managed named env is never reached here (it always
+      // has a binding), so this only guards the default.
+      if (await this.isDefaultEnvDisabled(request.language, runtimeRoot)) {
+        return {
+          ok: false,
+          needsRestart: false,
+          log: '',
+          error:
+            `No enabled ${request.language} runtime: the app-managed default is disabled and no ` +
+            'runtime is bound. Enable a runtime in Settings → Runtimes, or bind one with ' +
+            'list_notebook_runtimes then notebook_bind_runtime, before installing packages.'
+        }
+      }
     }
 
     // Journal the install so a process death mid-install (killed conda/pip, half-applied packages) is
     // reconciled at next startup by flagging this runtime repair-required — an interrupted install is
     // never silently assumed to have succeeded. runtimeId is the bound runtime's identity (its envId)
     // so recovery flags exactly this env. Best-effort journal I/O; cleared in the finally on completion.
-    const runtimeRoot = getRuntimeRoot(this.options.dataRoot)
     const repairRuntimeId = binding?.runtimeId ?? envName
-    const journal = new RuntimeOperationJournal(operationJournalPath(runtimeRoot))
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
     const operationId = randomUUID()
     await journal
       .begin({
@@ -1805,10 +1869,16 @@ class NotebookRuntimeService {
         targetPath: envPrefix(runtimeRoot, envName)
       })
       .catch(() => undefined)
+    // The install target is the binding-resolved envName — NOT request.environment. v4 dropped the
+    // per-call environment argument, but the package manager still reads req.environment (and the local
+    // RPC forwards the raw request), so an old/direct caller could otherwise install into a DIFFERENT
+    // env than the one whose lock, journal target, and repair flag we resolved above. Pin it here so all
+    // four agree.
+    const pinnedRequest = { ...request, environment: envName }
     let result: InstallResult
     try {
       result = await this.envLock.withInstall(envName, () =>
-        this.installPackagesImpl(request, {
+        this.installPackagesImpl(pinnedRequest, {
           storageRoot: this.options.dataRoot,
           condaChannel: mirror.condaChannel,
           pypiIndex: mirror.pypiIndex,
@@ -1861,6 +1931,9 @@ class NotebookRuntimeService {
           throw new Error('Creating an environment requires a language of "python" or "r".')
         }
         const language = request.language
+        // Let startup recovery finish before creating a prefix: its cleanup/verify must not race a
+        // fresh create writing into <root>/envs (same barrier materialize/install use).
+        await this.ensureRecovered()
         // Serialize create against installs / other env ops on the same env (design D4 / review A).
         return this.envLock.withInstall(name, async () => {
           await manager.createNamedEnvironment(name, language, request.packages)
@@ -1886,6 +1959,9 @@ class NotebookRuntimeService {
               'wait for the run to finish before removing it.'
           )
         }
+        // Let startup recovery finish before rm -rf'ing a prefix, same barrier create uses: recovery's
+        // verify/rebuild of an interrupted op could otherwise race this delete on the same prefix.
+        await this.ensureRecovered()
         // Serialize the rm -rf against a concurrent install into the same env (design D4 / review A).
         return this.envLock.withInstall(name, async () => ({
           environments: manager.removeEnvironment(name)
@@ -1941,17 +2017,19 @@ class NotebookRuntimeService {
 
   // Awaited by materialize/install before they touch a prefix, so startup recovery has finished
   // reconciling (cleaning staging, verifying prefixes, flagging repair) before new work begins. A no-op
-  // once recovery has settled, and when recovery was never kicked off (e.g. tests).
-  private async ensureRecovered(): Promise<void> {
+  // once recovery has settled, and when recovery was never kicked off (e.g. tests). Public so the
+  // startup env gate and UI provision/repair handlers can share the SAME barrier (they touch prefixes
+  // too, not just materialize/install).
+  async ensureRecovered(): Promise<void> {
     if (this.recoveryComplete) await this.recoveryComplete
   }
 
   private async runRecovery(): Promise<void> {
-    const journal = new RuntimeOperationJournal(
+    const journal = RuntimeOperationJournal.forPath(
       operationJournalPath(getRuntimeRoot(this.options.dataRoot))
     )
     await reconcileInterruptedOperations(journal, {
-      isOperationChildAlive: defaultIsOperationChildAlive,
+      operationChildLiveness: defaultOperationChildLiveness,
       terminateOperationChild: async (record) => {
         if (record.childPid === undefined) return
         try {
@@ -1976,6 +2054,23 @@ class NotebookRuntimeService {
       // so a bound session refuses it (no silent success). The flag is cleared when a fresh install of
       // that runtime completes (managePackages), which is how the user repairs it.
       markRepairRequired: async (record) => {
+        if (record.runtimeId)
+          addRepairRequired(getRuntimeRoot(this.options.dataRoot), record.runtimeId)
+      },
+      // liveness 'unknown' (couldn't confirm the child died — e.g. Windows with a recorded start time):
+      // flag the operation's runtime repair-required so it stays UNAVAILABLE even after the recovery
+      // barrier opens. A possibly-live orphan may still be writing this prefix, so execution/install/
+      // materialize on it must refuse until a later startup can reconcile (pid gone/verifiable) and a
+      // successful re-run clears the flag — rather than racing the survivor.
+      //
+      // This meaningfully blocks the ENV-mutating kinds (materialize/upgrade/install), whose runtimeId
+      // is an env/interpreter id that isRepairRequired() checks at bind + default-run resolution. A
+      // 'download' op's runtimeId is a PACK id (never bound), so the flag is inert for it — but a
+      // download needs no such block: each fetch stages into its own unique mkdtemp('.incoming-') dir
+      // and commits by atomic rename, so an orphaned download's staging can't corrupt a fresh fetch, and
+      // a later startup reaps the leftover. So keying on runtimeId is correct for every case that can
+      // actually be raced.
+      blockUnknownChildTarget: async (record) => {
         if (record.runtimeId)
           addRepairRequired(getRuntimeRoot(this.options.dataRoot), record.runtimeId)
       }

@@ -66,6 +66,41 @@ describe('createNotebookEnvHandlers', () => {
     expect(provisioner.repair).toHaveBeenCalledWith('r', expect.any(Function))
   })
 
+  it('UI provision awaits recovery BEFORE touching a prefix (barrier)', async () => {
+    // A UI-triggered provision must wait for crash recovery to finish reconciling, or recovery's prefix
+    // cleanup could race the rebuild the user just started.
+    const order: string[] = []
+    const provisioner = fakeProvisioner({
+      provisionPython: vi.fn().mockImplementation(async () => {
+        order.push('provision')
+      })
+    })
+    const waitForRecovery = vi.fn().mockImplementation(async () => {
+      await Promise.resolve()
+      order.push('recovery')
+    })
+    const handlers = createNotebookEnvHandlers(provisioner, waitForRecovery)
+    await handlers.provision('python', () => {})
+    expect(waitForRecovery).toHaveBeenCalledOnce()
+    expect(order).toEqual(['recovery', 'provision'])
+  })
+
+  it('UI repair awaits recovery BEFORE touching a prefix (barrier)', async () => {
+    const order: string[] = []
+    const provisioner = fakeProvisioner({
+      repair: vi.fn().mockImplementation(async () => {
+        order.push('repair')
+      })
+    })
+    const waitForRecovery = vi.fn().mockImplementation(async () => {
+      await Promise.resolve()
+      order.push('recovery')
+    })
+    const handlers = createNotebookEnvHandlers(provisioner, waitForRecovery)
+    await handlers.repair('python', () => {})
+    expect(order).toEqual(['recovery', 'repair'])
+  })
+
   it('serializes concurrent provisioning calls so a second call does not start a conflicting run', async () => {
     let resolveFirst: (() => void) | undefined
     const started: string[] = []
@@ -245,5 +280,42 @@ describe('runStartupGate', () => {
     expect(broadcast).toHaveBeenCalledWith(
       expect.objectContaining({ phase: 'error', message: expect.stringContaining('boom') })
     )
+  })
+
+  it('awaits recovery BEFORE touching any prefix (restore/upgrade/repair)', async () => {
+    // The barrier must resolve before the gate's first prefix op, or recovery's cleanup could race a
+    // rebuild. Use an existing-but-stale marker so the gate would call upgradeIfNeeded, and assert
+    // recovery settled first.
+    const { writeReadyMarker, envPrefix, pythonBin, DEFAULT_PY_ENV } =
+      await import('./runtime-paths')
+    const dir = mkdtempSync(join(tmpdir(), 'os-gate-barrier-'))
+    const bin = pythonBin(envPrefix(dir, DEFAULT_PY_ENV))
+    mkdirSync(join(bin, '..'), { recursive: true })
+    writeFileSync(bin, 'x')
+    writeReadyMarker(dir, 0, 't')
+
+    const order: string[] = []
+    const provisioner = fakeProvisioner({
+      restoreRelocatedEnvs: vi.fn().mockImplementation(async () => {
+        order.push('restore')
+      }),
+      upgradeIfNeeded: vi.fn().mockImplementation(async () => {
+        order.push('upgrade')
+      })
+    })
+    let recovered = false
+    const waitForRecovery = vi.fn().mockImplementation(async () => {
+      await Promise.resolve()
+      recovered = true
+      order.push('recovery')
+    })
+
+    await runStartupGate(provisioner, dir, () => {}, waitForRecovery)
+
+    expect(waitForRecovery).toHaveBeenCalledOnce()
+    // Recovery ran, and it ran before ANY provisioner prefix op.
+    expect(recovered).toBe(true)
+    expect(order[0]).toBe('recovery')
+    expect(order).toEqual(['recovery', 'restore', 'upgrade'])
   })
 })

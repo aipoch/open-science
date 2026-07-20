@@ -364,8 +364,21 @@ const registerIpcHandlers = async ({
     // the UI surfaces "runtime unavailable" rather than crashing startup or dropping the IPC handlers.
     console.error('Notebook environment provisioning unavailable:', error)
   }
-  // Always register the handlers (serialized is undefined when the provisioner could not be built).
-  registerNotebookEnvIpcHandlers(serialized, provisioningRoot)
+  // Crash recovery (WS13): reconcile any runtime operation the previous process left in flight (orphan
+  // download staging, a half-built prefix, an interrupted install). Kicked off HERE — before the env
+  // IPC gate below — so recoverInterruptedOperations() publishes its barrier synchronously and every
+  // prefix-touching path (the startup gate's restore/upgrade/repair, UI provision/repair, named-env
+  // create, on-demand materialize, install) can await it and never race recovery's cleanup/delete.
+  // Fire-and-forget so a slow/failed recovery never blocks IPC registration; the barrier itself is what
+  // actually orders the prefix work.
+  void notebookService
+    .recoverInterruptedOperations()
+    .catch((error) => console.error('Notebook operation recovery failed:', error))
+  const waitForRecovery = (): Promise<void> => notebookService.ensureRecovered()
+
+  // Always register the handlers (serialized is undefined when the provisioner could not be built). The
+  // recovery barrier is threaded in so the startup gate and UI provision/repair await recovery first.
+  registerNotebookEnvIpcHandlers(serialized, provisioningRoot, waitForRecovery)
   if (provisioner && serialized) {
     // Back the notebook service's manage_environments tool with the same provisioner that owns the env
     // gate (it is a DefaultRuntimeProvisioner, which implements createNamedEnvironment/listEnvironments/
@@ -376,13 +389,6 @@ const registerIpcHandlers = async ({
     // a redundant named env.
     notebookService.setDefaultEnvProvisioner(serialized, broadcastNotebookEnvProgress)
   }
-
-  // Crash recovery (WS13): reconcile any runtime operation the previous process left in flight (orphan
-  // download staging, etc.). Fire-and-forget so a slow/failed recovery never blocks IPC registration or
-  // startup; it runs before any user/agent-triggered fetch.
-  void notebookService
-    .recoverInterruptedOperations()
-    .catch((error) => console.error('Notebook operation recovery failed:', error))
 
   // Registered after the acp/notebook handlers exist: migration needs to interrupt both runtimes.
   registerStorageIpcHandlers({

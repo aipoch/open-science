@@ -25,6 +25,9 @@ vi.mock('../../stores/settings-store', () => {
       platform: 'darwin',
       architecture: 'arm64',
       ready: true,
+      // Must match `agentFrameworkId` below, or `environmentReady` stays false (the wizard ignores a
+      // check whose framework doesn't match the selected one). The Continue-gate tests rely on this.
+      agentFrameworkId: 'claude-code',
       canAutoInstall: false,
       recommendedRegistry: undefined,
       claude: { found: true, path: '/x', version: '2.1.0' },
@@ -130,5 +133,46 @@ describe('OnboardingWizard env provisioning', () => {
     expect(container.querySelector('[data-testid="onboarding-env-progress"]')).toBeNull()
     const card = container.querySelector('[aria-label="Notebook runtime"]')
     expect(card?.textContent).toContain('Preparing Python environment')
+  })
+
+  // The Continue button on the first (environment) step. Selected by its label so the test tracks the
+  // real control the user clicks, not an internal handle.
+  const continueButton = (): HTMLButtonElement | undefined =>
+    Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent?.trim() === 'Continue'
+    ) as HTMLButtonElement | undefined
+
+  it('gates Continue while a runtime setup is in flight (envProvisioning), then enables it when idle', async () => {
+    // A user-started provision must finish (or be cancelled) before leaving onboarding — continuing
+    // mid-create would strand a half-built env. The button must be DISABLED while provisioning even
+    // though the environment checks otherwise pass. Guards OnboardingWizard.tsx:766.
+    useNotebookEnvStore.setState({
+      status: { pythonReady: false, rReady: false, version: 3, provisioning: true },
+      scope: 'python',
+      progress: { phase: 'materialize', message: 'Preparing Python environment…', progress: 0.3 }
+    })
+    const { OnboardingWizard } = await import('./OnboardingWizard')
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+    // Flush the RuntimeChoiceCard's async effects.
+    await act(async () => {})
+    await act(async () => {})
+
+    const provisioning = continueButton()
+    expect(provisioning).toBeDefined()
+    // environmentReady is true (checks pass + framework matches), so ONLY envProvisioning disables it.
+    expect(provisioning?.disabled).toBe(true)
+    // The footer explains why the user can't continue yet.
+    expect(container.textContent).toContain('Setting up the notebook runtime')
+
+    // Once the provision settles (idle), the same otherwise-ready state re-enables Continue.
+    await act(async () => {
+      useNotebookEnvStore.setState({
+        status: { pythonReady: true, rReady: false, version: 3, provisioning: false }
+      })
+    })
+    await act(async () => {})
+    expect(continueButton()?.disabled).toBe(false)
   })
 })

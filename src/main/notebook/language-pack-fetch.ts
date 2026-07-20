@@ -204,7 +204,7 @@ export const createFetchBundleAdapter =
     // a journal entry whose targetPath is this .incoming-* dir; startup recovery removes the orphan.
     // Cleared in the finally on every normal completion/failure (the staging is gone by then), so only
     // a killed process leaves it behind. Best-effort — journal I/O never fails the fetch.
-    const journal = new RuntimeOperationJournal(operationJournalPath(root))
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(root))
     const operationId = randomUUID()
     await journal
       .begin({

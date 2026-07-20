@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
@@ -29,16 +30,40 @@ export type RuntimeOperationRecord = {
   childStartedAt?: number
 }
 
+// One shared journal instance per journal path, so every caller (download / materialize / install)
+// serializes through the SAME save queue. Without this, each caller constructing its own instance for
+// the same path would keep a private queue: concurrent begin()s would read the same stale journal,
+// write over each other, and (before the temp-name hardening) could even collide on a temp file so one
+// rename hit ENOENT — silently dropping an in-flight operation from recovery. Keyed by the resolved
+// journal path; all runtime journals for one storage root live in the main process, so an in-process
+// registry is sufficient (a second OS process would need a real file lock, but nothing spawns one).
+const journalRegistry = new Map<string, RuntimeOperationJournal>()
+
 // Durable, crash-recoverable journal of in-flight runtime operations for one app storage root. Writes
 // are atomic (temp file + rename) and serialized through a save queue so concurrent begins/completions
 // can never race a torn file; a missing or corrupt journal reads as empty (best-effort). The consumer
 // persists intent with begin() BEFORE performing an operation and calls complete() only after it has
 // committed, so pending() on the next startup is exactly the set of operations that were interrupted.
+//
+// Obtain instances via RuntimeOperationJournal.forPath(path) — never `new` directly — so all callers on
+// the same path share the one queue that makes the serialization guarantee hold.
 export class RuntimeOperationJournal {
   private saveQueue: Promise<void> = Promise.resolve()
   private saveSequence = 0
 
+  // The shared instance for a journal path. Returns the same object for the same path so every
+  // begin/update/complete across the app funnels through a single save queue.
+  static forPath(journalPath: string): RuntimeOperationJournal {
+    let instance = journalRegistry.get(journalPath)
+    if (!instance) {
+      instance = new RuntimeOperationJournal(journalPath)
+      journalRegistry.set(journalPath, instance)
+    }
+    return instance
+  }
+
   // journalPath: absolute path to the journal file (e.g. <runtimeRoot>/operation-journal.json).
+  // Prefer forPath() — a direct construction opts out of the shared-queue serialization guarantee.
   constructor(private readonly journalPath: string) {}
 
   // The operations currently recorded as in-flight (empty when the journal is missing or corrupt).
@@ -98,7 +123,10 @@ export class RuntimeOperationJournal {
   private async write(records: RuntimeOperationRecord[]): Promise<void> {
     await mkdir(dirname(this.journalPath), { recursive: true })
     this.saveSequence += 1
-    const temporaryPath = `${this.journalPath}.${Date.now()}-${this.saveSequence}.tmp`
+    // Globally-unique temp name: pid + a random uuid + a per-instance sequence, so even two writers
+    // that ever end up on the same path (misuse, or a stray direct construction) can't collide on a
+    // temp file and have one's rename hit ENOENT because the other already renamed it away.
+    const temporaryPath = `${this.journalPath}.${process.pid}-${randomUUID()}-${this.saveSequence}.tmp`
     await writeFile(temporaryPath, `${JSON.stringify(records, null, 2)}\n`, 'utf8')
     await rename(temporaryPath, this.journalPath)
   }

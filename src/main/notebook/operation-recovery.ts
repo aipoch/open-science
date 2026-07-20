@@ -5,12 +5,20 @@ import type { RuntimeOperationJournal, RuntimeOperationRecord } from './operatio
 // Injected side-effects for reconciling ONE interrupted runtime operation, so the startup-recovery
 // orchestration is unit-tested without real processes, filesystem, or provisioner. See
 // notebook-runtime-crash-recovery.
+// Tri-state liveness of an operation's recorded child (micromamba/pip/R):
+//   - 'alive'   : positively confirmed the recorded pid is STILL our original child → kill it, then reconcile.
+//   - 'dead'    : positively confirmed gone / not ours (ESRCH/EPERM, or a reused pid) → safe to reconcile.
+//   - 'unknown' : could NOT determine (no `ps`, Windows, unparsable output) → a survivor MIGHT still be
+//                 writing, so we must NOT clean staging / a prefix; skip and leave the journal entry for a
+//                 later startup instead of destroying data under a possibly-live writer.
+// Collapsing 'unknown' into 'dead' (the old boolean) is exactly the bug: it cleaned live processes' dirs.
+export type OperationChildLiveness = 'alive' | 'dead' | 'unknown'
+
 export type OperationRecoveryDeps = {
-  // Whether the operation's recorded child (micromamba/pip/R) is STILL alive — so recovery never
-  // cleans staging or a prefix out from under a survived orphan writer. Best-effort; callers pass a
-  // platform check (see defaultIsOperationChildAlive).
-  isOperationChildAlive: (record: RuntimeOperationRecord) => Promise<boolean>
-  // Kills a surviving orphan child before reconciling. Only called when isOperationChildAlive is true.
+  // Best-effort liveness of the operation's recorded child, as the tri-state above. Callers pass a
+  // platform check (see defaultOperationChildLiveness).
+  operationChildLiveness: (record: RuntimeOperationRecord) => Promise<OperationChildLiveness>
+  // Kills a surviving orphan child before reconciling. Only called when liveness is 'alive'.
   terminateOperationChild: (record: RuntimeOperationRecord) => Promise<void>
   // download: delete the partial ".incoming-*" staging dir (targetPath) so the next fetch starts clean.
   cleanStaging: (record: RuntimeOperationRecord) => Promise<void>
@@ -20,12 +28,24 @@ export type OperationRecoveryDeps = {
   // external install: mark the runtime repair-required — an interrupted pip into the user's own env
   // may be half-applied; do NOT assume success and do NOT auto-retry (the user decides).
   markRepairRequired: (record: RuntimeOperationRecord) => Promise<void>
+  // liveness 'unknown': we couldn't confirm the child died, so we neither kill nor reconcile it — but a
+  // survivor might still be writing this operation's prefix. BLOCK that runtime/prefix (persistently, so
+  // it survives the barrier releasing) until a later startup can reconcile it, instead of letting a
+  // fresh materialize/install/repair proceed onto a possibly-live target. Without this, retaining the
+  // journal entry only helps the NEXT boot; THIS session would still race the orphan once recovery
+  // "completes" and the barrier opens.
+  blockUnknownChildTarget: (record: RuntimeOperationRecord) => Promise<void>
   // Observed reconcile outcome per record (telemetry/tests). action is the branch taken.
   onReconciled?: (record: RuntimeOperationRecord, action: RecoveryAction) => void
 }
 
 export type RecoveryAction =
-  'clean-staging' | 'verify-or-rebuild' | 'repair-required' | 'noop' | 'skipped-child-alive'
+  | 'clean-staging'
+  | 'verify-or-rebuild'
+  | 'repair-required'
+  | 'noop'
+  // Liveness was 'unknown' — a survivor might still be writing, so the entry is left for a later startup.
+  | 'skipped-child-unknown'
 
 // Reconciles every interrupted operation the journal recorded, run ONCE at startup. For each record:
 // if a child from the dead parent survived, kill it first (never reconcile under a live writer), then
@@ -41,7 +61,19 @@ export const reconcileInterruptedOperations = async (
 
   for (const record of pending) {
     try {
-      if (record.childPid !== undefined && (await deps.isOperationChildAlive(record))) {
+      const liveness =
+        record.childPid === undefined ? 'dead' : await deps.operationChildLiveness(record)
+      if (liveness === 'unknown') {
+        // We can't tell whether the recorded child survived (no `ps` / Windows / unparsable). A live
+        // orphan might still be writing staging or the prefix, so do NOT reconcile (which would delete
+        // it out from under the writer). BLOCK the target runtime/prefix so a fresh op can't race the
+        // possible survivor once the recovery barrier opens, and leave the journal entry so a later
+        // startup — when the pid is gone or verifiable — reconciles it. Never destroy data on a guess.
+        await deps.blockUnknownChildTarget(record)
+        deps.onReconciled?.(record, 'skipped-child-unknown')
+        continue
+      }
+      if (liveness === 'alive') {
         // A live orphan from the previous process is still writing — kill it, THEN reconcile so we
         // never clean staging / verify a prefix while it is mid-write.
         await deps.terminateOperationChild(record)
@@ -115,32 +147,40 @@ const posixProcessStartMs = (pid: number): Promise<number | undefined> =>
     })
   })
 
-// A live pid that started more than this far from the recorded childStartedAt is treated as a DIFFERENT
-// process (pid reuse), not our orphan — so recovery never SIGKILLs an unrelated process.
-const PID_REUSE_TOLERANCE_MS = 60_000
+// A live pid whose start time differs from the recorded childStartedAt by more than this is treated as
+// a DIFFERENT process now holding a REUSED pid, not our orphan. Kept tight (was 60s): `ps -o etime`
+// resolves to whole seconds and there is only a few ms between spawning the child and recording
+// childStartedAt, so our own child's start time lands within a couple of seconds. A wide window let a
+// pid reused shortly after our child exited masquerade as ours. Wide enough to absorb etime rounding +
+// spawn latency, tight enough that a quickly-reused pid falls outside it and is classified 'dead'.
+const PID_REUSE_TOLERANCE_MS = 10_000
 
-// Liveness check with a fail-CLOSED pid-reuse guard. Recovery uses a `true` result to SIGKILL the pid,
-// so we only return true when we can POSITIVELY confirm the live pid is the SAME process we spawned:
-//   - No pid, or the pid is gone / not ours to signal (ESRCH/EPERM) → false.
+// Tri-state liveness with a fail-SAFE pid-reuse guard. 'alive' means recovery will SIGKILL the pid, so
+// we only report 'alive' when we can POSITIVELY confirm the live pid is the SAME process we spawned.
+// When we genuinely cannot tell, we report 'unknown' — recovery then SKIPS the op (leaves the journal
+// entry) rather than either killing an unrelated process or cleaning a dir a survivor may still write:
+//   - No pid, or the pid is gone / not ours to signal (ESRCH/EPERM) → 'dead' (safe to reconcile).
 //   - childStartedAt recorded (the normal case): confirm via `ps` that the pid's start time matches.
-//     If we can't verify — no `ps` (Windows), ps failed, or unparsable output — return FALSE rather
-//     than risk SIGKILLing an unrelated process that happens to now hold that pid.
-//   - childStartedAt absent (legacy record with no start-time): existence alone (best we can do).
-export const defaultIsOperationChildAlive = async (
+//       within tolerance → 'alive'; clearly different → 'dead' (pid reused, not ours);
+//       can't verify (no `ps`, Windows, ps failed / unparsable) → 'unknown'.
+//   - childStartedAt absent (legacy record, no start-time) with a LIVE pid: we can't rule out reuse, so
+//     'unknown' rather than assuming it is our child (old code returned alive and would kill it).
+export const defaultOperationChildLiveness = async (
   record: RuntimeOperationRecord
-): Promise<boolean> => {
-  if (record.childPid === undefined) return false
+): Promise<OperationChildLiveness> => {
+  if (record.childPid === undefined) return 'dead'
   try {
     process.kill(record.childPid, 0)
   } catch {
-    // ESRCH = gone; EPERM = owned by another user, so not our child. Either way, do not kill it.
-    return false
+    // ESRCH = gone; EPERM = owned by another user, so not our child. Either way, nothing of ours to
+    // kill and no writer of ours to protect → safe to reconcile.
+    return 'dead'
   }
-  // No recorded start time (legacy): can't guard against reuse, fall back to existence.
-  if (record.childStartedAt === undefined) return true
-  // Recorded start time but no way to verify it (Windows has no ps here) — fail closed.
-  if (process.platform === 'win32') return false
+  // Live pid but no recorded start time (legacy): can't guard against reuse — don't guess it's ours.
+  if (record.childStartedAt === undefined) return 'unknown'
+  // Live pid, recorded start time, but no way to verify it (Windows has no ps here) — can't confirm.
+  if (process.platform === 'win32') return 'unknown'
   const startedMs = await posixProcessStartMs(record.childPid)
-  if (startedMs === undefined) return false // couldn't read/parse the start time — fail closed
-  return Math.abs(startedMs - record.childStartedAt) <= PID_REUSE_TOLERANCE_MS
+  if (startedMs === undefined) return 'unknown' // couldn't read/parse the start time — can't confirm
+  return Math.abs(startedMs - record.childStartedAt) <= PID_REUSE_TOLERANCE_MS ? 'alive' : 'dead'
 }

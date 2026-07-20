@@ -52,13 +52,24 @@ export const serializeProvisioner = (provisioner: RuntimeProvisioner): RuntimePr
   }
 }
 
-export const createNotebookEnvHandlers = (provisioner: RuntimeProvisioner): NotebookEnvHandlers => {
+export const createNotebookEnvHandlers = (
+  provisioner: RuntimeProvisioner,
+  // Awaited before a UI-triggered provision/repair so recovery's prefix cleanup can't race a rebuild
+  // the user just kicked off. Optional so existing behavior tests construct handlers unchanged.
+  waitForRecovery?: () => Promise<void>
+): NotebookEnvHandlers => {
   const serialized = serializeProvisioner(provisioner)
+  const afterRecovery = async (run: () => Promise<void>): Promise<void> => {
+    if (waitForRecovery) await waitForRecovery()
+    await run()
+  }
   return {
     status: () => serialized.status(),
     provision: (lang, onProgress) =>
-      lang === 'r' ? serialized.provisionR(onProgress) : serialized.provisionPython(onProgress),
-    repair: (lang, onProgress) => serialized.repair(lang, onProgress),
+      afterRecovery(() =>
+        lang === 'r' ? serialized.provisionR(onProgress) : serialized.provisionPython(onProgress)
+      ),
+    repair: (lang, onProgress) => afterRecovery(() => serialized.repair(lang, onProgress)),
     cancel: () => serialized.cancel()
   }
 }
@@ -70,9 +81,16 @@ export const createNotebookEnvHandlers = (provisioner: RuntimeProvisioner): Note
 export const runStartupGate = async (
   provisioner: RuntimeProvisioner,
   root: string,
-  broadcast: (p: ProvisionProgress) => void
+  broadcast: (p: ProvisionProgress) => void,
+  // Awaited BEFORE any prefix-touching maintenance (restore/upgrade/repair) so crash recovery has
+  // finished reconciling first. Otherwise recovery could delete a prefix this gate is mid-rebuild on
+  // (or vice-versa). Optional: when unset (tests) the gate runs as before.
+  waitForRecovery?: () => Promise<void>
 ): Promise<void> => {
   try {
+    // Let crash recovery settle before touching any prefix — its cleanup/verify must not race the
+    // restore/upgrade/repair below.
+    if (waitForRecovery) await waitForRecovery()
     // Rebuild any envs a data-root relocation left as offline locks BEFORE planning: a restored
     // default-python stamps the ready marker, so the plan below then reads 'ready' instead of
     // re-provisioning the pristine defaults (which would drop the user's relocated packages).
@@ -145,10 +163,16 @@ const createUnavailableHandlers = (): NotebookEnvHandlers => ({
 // unavailable stubs and skip the startup gate instead.
 export const registerNotebookEnvIpcHandlers = (
   provisioner: RuntimeProvisioner | undefined,
-  root: string
+  root: string,
+  // Awaited before the startup gate and any UI provision/repair touches a prefix, so crash recovery
+  // (kicked off in the caller BEFORE this registration) finishes reconciling first. Optional so the
+  // "no provisioner" path and existing tests keep their signatures.
+  waitForRecovery?: () => Promise<void>
 ): void => {
   const serialized = provisioner ? serializeProvisioner(provisioner) : undefined
-  const handlers = serialized ? createNotebookEnvHandlers(serialized) : createUnavailableHandlers()
+  const handlers = serialized
+    ? createNotebookEnvHandlers(serialized, waitForRecovery)
+    : createUnavailableHandlers()
   ipcMain.handle('notebook-env:status', () => handlers.status())
   ipcMain.handle('notebook-env:provision', (_event, lang: NotebookLanguage) =>
     handlers.provision(lang, broadcastNotebookEnvProgress)
@@ -159,5 +183,6 @@ export const registerNotebookEnvIpcHandlers = (
   // Synchronous best-effort abort of an in-flight provision; returns immediately (the aborted run
   // settles on its own and broadcasts its terminal progress).
   ipcMain.handle('notebook-env:cancel', () => handlers.cancel())
-  if (serialized) void runStartupGate(serialized, root, broadcastNotebookEnvProgress)
+  if (serialized)
+    void runStartupGate(serialized, root, broadcastNotebookEnvProgress, waitForRecovery)
 }

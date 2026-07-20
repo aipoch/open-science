@@ -80,6 +80,11 @@ jobs:
         run: |
           bin="$RUNNER_TEMP/micromamba"
           [ "${{ matrix.runner_subdir }}" = "win-64" ] && bin="$bin.exe"
+          # Pass the pinned version explicitly so the intent is visible in CI. Read it from the single
+          # source of truth (scripts/micromamba-versions.json) to avoid drifting from the digests the
+          # script verifies against.
+          export MICROMAMBA_VERSION=$(node -p "require('./scripts/micromamba-versions.json').version")
+          echo "using pinned micromamba $MICROMAMBA_VERSION"
           node scripts/fetch-micromamba.mjs "${{ matrix.runner_subdir }}" "$bin"
           echo "MICROMAMBA_BIN=$bin" >> "$GITHUB_ENV"
 

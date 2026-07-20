@@ -281,8 +281,12 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
         }
         onProgress({ phase: 'restore', message: `Restoring ${name}…`, progress: 0.5 })
         try {
-          await this.deps.runArgv(
-            createFromLockArgv(this.deps.mm, this.deps.root, prefix, join(dir, file))
+          // Shared pkgs cache lock: this rebuild-from-lock extracts into the shared cache, so a
+          // concurrent corrupt-cache repair (cache-exclusive) can't delete an incomplete extraction.
+          await withSharedCacheLock(this.deps.root, () =>
+            this.deps.runArgv(
+              createFromLockArgv(this.deps.mm, this.deps.root, prefix, join(dir, file))
+            )
           )
           const bin = existsSync(pythonBin(prefix)) ? pythonBin(prefix) : rBin(prefix)
           await this.deps.verify(bin)
@@ -318,11 +322,16 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     const base = language === 'python' ? BASE_PYTHON_PACKAGES : BASE_R_PACKAGES
     const pkgs = [...new Set([...base, ...packages])]
     const prefix = envPrefix(this.deps.root, name)
-    // Clear a half-built prefix from an interrupted prior create so micromamba doesn't abort on it.
-    this.clearNonCondaPrefix(prefix)
-    await this.deps.runArgv(
-      createFromPackagesArgv(this.deps.mm, this.deps.root, prefix, [this.deps.channel], pkgs)
-    )
+    // Take the shared pkgs cache lock for the whole prefix cleanup + create: this create extracts into
+    // the SHARED cache, so a concurrent corrupt-cache repair (which takes the cache EXCLUSIVE and deletes
+    // incomplete extractions) must not run mid-create and delete a package dir we are still producing.
+    await withSharedCacheLock(this.deps.root, async () => {
+      // Clear a half-built prefix from an interrupted prior create so micromamba doesn't abort on it.
+      this.clearNonCondaPrefix(prefix)
+      await this.deps.runArgv(
+        createFromPackagesArgv(this.deps.mm, this.deps.root, prefix, [this.deps.channel], pkgs)
+      )
+    })
     const bin = language === 'python' ? pythonBin(prefix) : rBin(prefix)
     await this.deps.verify(bin)
     return {
@@ -406,9 +415,13 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     }
     const prefix = envPrefix(this.deps.root, spec.name)
     const bin = spec.language === 'python' ? pythonBin(prefix) : rBin(prefix)
-    await this.deps.runArgv(
-      installFromLockArgv(this.deps.mm, this.deps.root, prefix, bundle.lockPath),
-      this.abort?.signal
+    // Shared pkgs cache lock: this install extracts into the shared cache, so a concurrent corrupt-cache
+    // repair (cache-exclusive) must not delete an incomplete extraction mid-upgrade.
+    await withSharedCacheLock(this.deps.root, () =>
+      this.deps.runArgv(
+        installFromLockArgv(this.deps.mm, this.deps.root, prefix, bundle.lockPath),
+        this.abort?.signal
+      )
     )
     await this.deps.verify(bin)
   }
@@ -472,7 +485,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // Journal the create so a process death mid-materialize is reconciled at next startup (the env
     // prefix is verified and, if incomplete, removed so it rebuilds). Best-effort — journal I/O never
     // fails the materialize. Cleared in the finally once verify succeeds/fails and the prefix is settled.
-    const journal = new RuntimeOperationJournal(operationJournalPath(this.deps.root))
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(this.deps.root))
     const operationId = randomUUID()
     await journal
       .begin({

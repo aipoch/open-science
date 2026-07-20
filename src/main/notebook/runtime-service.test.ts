@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -1825,7 +1825,10 @@ describe('notebook runtime service', () => {
 
       expect(result).toBe(scriptedResult)
       expect(calls).toHaveLength(1)
-      expect(calls[0][0]).toBe(request)
+      // The service forwards the request with the install target PINNED to the binding-resolved env
+      // (default-python here), so it is a copy of the original fields plus `environment`, not the same
+      // object reference (the service pins the install target to the binding-resolved env).
+      expect(calls[0][0]).toEqual({ ...request, environment: DEFAULT_PY_ENV })
       // The configured pypiIndex overrides the CN region default entirely (effectiveMirror semantics):
       // a configured field wins outright, so condaChannel/cranMirror stay unset rather than CN defaults.
       expect(calls[0][1]).toMatchObject({
@@ -2240,6 +2243,110 @@ describe('notebook runtime service', () => {
       expect(removeResult.environments.map((env) => env.name)).toEqual(['default-python'])
     })
 
+    it('named-env create awaits crash recovery before writing a prefix (barrier)', async () => {
+      // create writes into <root>/envs, so it must wait for startup recovery to finish reconciling —
+      // otherwise recovery's cleanup/verify could race the fresh create. Seed an interrupted op so
+      // recovery has real async work, kick it off, then create WITHOUT awaiting recovery and assert the
+      // create only runs after recovery settled.
+      const root = await createStorageRoot()
+      const runtimeRoot = join(root, 'runtime')
+      const staging = join(runtimeRoot, 'packs', '.incoming-crashed')
+      await mkdir(staging, { recursive: true })
+      const journal = new RuntimeOperationJournal(operationJournalPath(runtimeRoot))
+      await journal.begin({
+        operationId: 'd',
+        kind: 'download',
+        runtimeId: 'python-3.12',
+        phase: 'fetch',
+        startedAt: 100,
+        targetPath: staging
+      })
+
+      let recoveryDone = false
+      const order: string[] = []
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        environmentManager: {
+          createNamedEnvironment: async (name, language) => {
+            // The observable check: recovery MUST have settled before create touches the prefix.
+            order.push(recoveryDone ? 'create-after-recovery' : 'create-before-recovery')
+            return { name, language, ready: true, isDefault: false }
+          },
+          listEnvironments: () => [],
+          removeEnvironment: () => []
+        }
+      })
+
+      // Kick off recovery (do NOT await) and mark when it settles, then immediately create.
+      const recovery = service.recoverInterruptedOperations().then(() => {
+        recoveryDone = true
+        order.push('recovery-done')
+      })
+      await service.manageEnvironments({
+        action: 'create',
+        language: 'python',
+        name: 'my-analysis'
+      })
+      await recovery
+
+      expect(order).toEqual(['recovery-done', 'create-after-recovery'])
+    })
+
+    it('named-env remove awaits crash recovery before rm -rf a prefix (barrier)', async () => {
+      // remove rm -rf's a prefix, so — like create — it must wait for recovery to finish reconciling, or
+      // recovery's verify/rebuild could race the delete. Seed an interrupted op for real async recovery
+      // work, kick recovery off, remove WITHOUT awaiting it, and assert the delete ran only after
+      // recovery settled.
+      const root = await createStorageRoot()
+      const runtimeRoot = join(root, 'runtime')
+      const staging = join(runtimeRoot, 'packs', '.incoming-crashed')
+      await mkdir(staging, { recursive: true })
+      const journal = new RuntimeOperationJournal(operationJournalPath(runtimeRoot))
+      await journal.begin({
+        operationId: 'd',
+        kind: 'download',
+        runtimeId: 'python-3.12',
+        phase: 'fetch',
+        startedAt: 100,
+        targetPath: staging
+      })
+
+      let recoveryDone = false
+      const order: string[] = []
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        environmentManager: {
+          createNamedEnvironment: async (name, language) => ({
+            name,
+            language,
+            ready: true,
+            isDefault: false
+          }),
+          listEnvironments: () => [],
+          removeEnvironment: () => {
+            order.push(recoveryDone ? 'remove-after-recovery' : 'remove-before-recovery')
+            return []
+          }
+        }
+      })
+
+      const recovery = service.recoverInterruptedOperations().then(() => {
+        recoveryDone = true
+        order.push('recovery-done')
+      })
+      // 'my-analysis' is agent-created provenance, so it passes the remove guard.
+      await service.manageEnvironments({ action: 'remove', name: 'my-analysis' })
+      await recovery
+
+      expect(order).toEqual(['recovery-done', 'remove-after-recovery'])
+    })
+
     it('refuses to remove an environment that is in use by a live kernel', async () => {
       const root = await createStorageRoot()
       const removed: string[] = []
@@ -2603,6 +2710,54 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(summary.text.traceback).toMatch(/No enabled python runtime/i)
   })
 
+  it('runs a bound enabled NAMED env even when the app-managed default is disabled', async () => {
+    // Regression: disabling default-python must not block a session already bound to an enabled
+    // agent-created env. The run resolves to the named env (not the default), so the disabled-default
+    // gate must not fire.
+    const root = await createStorageRoot()
+    const executions: NotebookExecutionRequest[] = []
+    const namedPyId = join(root, 'runtime', 'envs', 'my-analysis', 'bin', 'python')
+    const defaultPyId = pythonBin(envPrefix(getRuntimeRoot(root), DEFAULT_PY_ENV))
+    const namedEnv: DiscoveredInterpreter = {
+      language: 'python',
+      provenance: 'agent-created',
+      envId: namedPyId,
+      interpreterPath: namedPyId,
+      label: 'my-analysis',
+      condaEnv: 'my-analysis',
+      version: '3.12',
+      runnable: true
+    }
+    const provisionPython = vi.fn(async () => undefined)
+    const service = bindingService(root, {
+      discovered: [managedPy, namedEnv],
+      // Default OFF, named env ON.
+      enablement: { enabled: { [defaultPyId]: false, [namedPyId]: true }, installAuthorized: {} },
+      executions
+    })
+    service.setDefaultEnvProvisioner({ provisionPython, provisionR: async () => undefined })
+
+    await service.bindRuntime({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      runtimeId: namedPyId
+    })
+
+    const summary = await service.execute({
+      sessionId: 's',
+      workspaceCwd: root,
+      code: '1',
+      language: 'python'
+    })
+    // The run succeeds against the named env; the disabled default never gates it.
+    expect(summary.status).toBe('completed')
+    expect(executions).toHaveLength(1)
+    expect(executions[0].environment).toBe('my-analysis')
+    // A managed named env is not the default, so the on-demand default provision never runs.
+    expect(provisionPython).not.toHaveBeenCalled()
+  })
+
   it('binds an enabled external runtime and runs the user interpreter without touching the managed default', async () => {
     const root = await createStorageRoot()
     const executions: NotebookExecutionRequest[] = []
@@ -2816,6 +2971,130 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(result.ok).toBe(false)
     expect(result.error).toMatch(/not authorized/)
     expect(installRan).toBe(false)
+  })
+
+  it('refuses installing into a MANAGED (agent-created) binding that has been revoked/disabled (unified gate)', async () => {
+    // Regression: the manage_packages gate was external-only, so a disabled MANAGED runtime still
+    // installed. This binds a genuinely MANAGED runtime (an agent-created named env — source 'managed',
+    // NOT the user-own/external branch), revokes it, and asserts the install is refused by the managed
+    // gate (an earlier version bound userPyA, which is provenance user-own and only exercised the
+    // external branch, so it never covered the managed gate).
+    const root = await createStorageRoot()
+    let installRan = false
+    const namedPyId = join(root, 'runtime', 'envs', 'my-analysis', 'bin', 'python')
+    const namedEnv: DiscoveredInterpreter = {
+      language: 'python',
+      provenance: 'agent-created',
+      envId: namedPyId,
+      interpreterPath: namedPyId,
+      label: 'my-analysis',
+      condaEnv: 'my-analysis',
+      version: '3.12',
+      runnable: true
+    }
+    const service = bindingService(root, {
+      discovered: [managedPy, namedEnv],
+      enablement: { enabled: { [namedPyId]: true }, installAuthorized: {} },
+      installPackagesImpl: async () => {
+        installRan = true
+        return { ok: true, needsRestart: false, log: '' }
+      }
+    })
+    // Bind the MANAGED named env, then disable+revoke it -> the binding is kept but unavailable.
+    const bound = await service.bindRuntime({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      runtimeId: namedPyId
+    })
+    // Guard the regression: this MUST be the managed branch, not external, or the test is vacuous.
+    expect(bound.bound.source).toBe('managed')
+    await service.revokeRuntime('python', namedPyId)
+
+    const result = await service.managePackages({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      packages: ['numpy']
+    })
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/RUNTIME_BINDING_UNAVAILABLE/)
+    expect(installRan).toBe(false)
+  })
+
+  it('pins the install target to the binding env, ignoring a stale request.environment', async () => {
+    // Regression: package-manager re-derived the env from request.environment and the local RPC forwards
+    // the raw request, so a stale/mismatched environment could install into a DIFFERENT env than the one
+    // whose lock/journal/repair the service resolved. The service now overrides it with the binding env.
+    const root = await createStorageRoot()
+    const captured: Array<string | undefined> = []
+    const service = bindingService(root, {
+      discovered: [managedPy, userPyA],
+      enablement: { enabled: { [userPyA.envId]: true }, installAuthorized: {} },
+      installPackagesImpl: async (request) => {
+        captured.push(request.environment)
+        return { ok: true, needsRestart: false, log: '' }
+      }
+    })
+    // No binding -> managed default. A caller passing a bogus environment must not redirect the install.
+    const result = await service.managePackages({
+      sessionId: 's',
+      language: 'python',
+      packages: ['numpy'],
+      environment: 'some-other-env'
+    } as InstallRequestForTest)
+    expect(result.ok).toBe(true)
+    // The forwarded request carries the binding-resolved default env, not the caller's stale value.
+    expect(captured[0]).toBe(DEFAULT_PY_ENV)
+  })
+
+  it('honors a PERSISTED binding on the first manage_packages after a restart (fresh service)', async () => {
+    // Regression: managePackages resolved the session with a bare sessions.get, so the FIRST install
+    // after an app restart (session not yet in memory) saw no binding and silently installed into the
+    // default env — bypassing the bound runtime + its install authorization. It now ensureSession()s
+    // first, rehydrating the persisted binding.
+    const root = await createStorageRoot()
+    // Service A: bind an external, install-authorized runtime and persist it to run.json.
+    const serviceA = bindingService(root, {
+      discovered: [managedPy, userPyA],
+      enablement: {
+        enabled: { [userPyA.envId]: true },
+        installAuthorized: { [userPyA.envId]: true }
+      }
+    })
+    await serviceA.bindRuntime({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      runtimeId: userPyA.envId
+    })
+
+    // Service B: a fresh process (no in-memory session). Its FIRST call is manage_packages — it must
+    // load the session, rehydrate the persisted external binding, and pip into the user's OWN
+    // interpreter, NOT micromamba into the default managed prefix.
+    const captured: Array<{ interpreter?: string; environment?: string }> = []
+    const serviceB = bindingService(root, {
+      discovered: [managedPy, userPyA],
+      enablement: {
+        enabled: { [userPyA.envId]: true },
+        installAuthorized: { [userPyA.envId]: true }
+      },
+      installPackagesImpl: async (request, deps) => {
+        captured.push({ interpreter: deps?.interpreter?.command, environment: request.environment })
+        return { ok: true, needsRestart: false, log: '' }
+      }
+    })
+
+    const result = await serviceB.managePackages({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      packages: ['numpy']
+    })
+    expect(result.ok).toBe(true)
+    // Installed into the user's own interpreter (external pip), proving the persisted binding was
+    // honored — not the managed default prefix.
+    expect(captured[0]?.interpreter).toBe(userPyA.interpreterPath)
   })
 
   it('revokes a disabled runtime from a bound session so execution rejects (no silent fallback)', async () => {
@@ -3144,4 +3423,112 @@ describe('v4 runtime bindings & agent tools', () => {
     await service.manageEnvironments({ action: 'remove', name: 'my-analysis' })
     expect(removed).toEqual(['my-analysis'])
   })
+
+  // End-to-end wiring of setManualInterpretersResolver: a Settings-added interpreter is folded into the
+  // service's REAL default discovery (NOT an injected discoverRuntimes), so it becomes discoverable,
+  // enable-able, and bindable — and survives a restart (a fresh service with the same resolver still
+  // resolves it active, not 'missing'). Exercises the actual manualInterpretersResolver seam with a real
+  // executable interpreter so the version probe + runnability classification run for real. POSIX-only:
+  // it relies on a chmod-executable shell shim, which Windows can't run as `<path> --version`.
+  it.skipIf(process.platform === 'win32')(
+    'discovers, binds, and (across a restart) keeps a manual interpreter added via setManualInterpretersResolver',
+    async () => {
+      // Real discovery is exercised (no injected discoverRuntimes): it enumerates PATH + conda roots and
+      // probes every real interpreter's `--version`, and it runs on each list/bind/execute/restart call —
+      // so this legitimately needs far more than the default 5s budget on a machine with many envs.
+      const root = await createStorageRoot()
+
+      // A real, runnable Python shim OUTSIDE runtime/envs (so discovery classifies it 'user-own'): it
+      // answers `--version` with a Python-3 string, which is exactly what the default probe validates.
+      const manualDir = await mkdtemp(join(tmpdir(), 'open-science-manual-interp-'))
+      const shim = join(manualDir, 'python3')
+      await writeFile(shim, '#!/bin/sh\necho "Python 3.12.7"\n')
+      await chmod(shim, 0o755)
+      // Key everything by the canonical path — discovery's realpath-dedup makes envId the real path.
+      const manualPath = await realpath(shim)
+
+      let manualResolverCalls = 0
+      const resolver = async (language: 'python' | 'r'): Promise<string[]> => {
+        manualResolverCalls += 1
+        return language === 'python' ? [manualPath] : []
+      }
+      // A user-own interpreter defaults OFF, so it must be explicitly enabled (as toggling it on in
+      // Settings would) before it is bindable — keyed by the same envId discovery computes.
+      const enablement: RuntimeEnablement = {
+        enabled: { [manualPath]: true },
+        installAuthorized: {}
+      }
+      const executions: NotebookExecutionRequest[] = []
+      const makeService = (): NotebookRuntimeService => {
+        // NO discoverRuntimes injected: the REAL default discovery runs and must consult the manual
+        // resolver — the wiring under test. Enablement is wired so the user-own env can be enabled.
+        const service = new NotebookRuntimeService({
+          configRoot: root,
+          dataRoot: root,
+          projectName: 'default-project',
+          repository: new NotebookRunRepository(root),
+          getRuntimeEnablement: async () => enablement,
+          executorFactory: () => ({
+            execute: async (request): Promise<NotebookExecutionResult> => {
+              executions.push(request)
+              return {
+                status: 'completed',
+                stdout: '',
+                stderr: '',
+                traceback: '',
+                cwdAfter: request.cwd,
+                outputs: []
+              }
+            },
+            shutdown: async () => ({ reaped: true }),
+            terminate: async () => undefined
+          })
+        })
+        service.setManualInterpretersResolver(resolver)
+        return service
+      }
+
+      const service = makeService()
+
+      // 1) The manual interpreter surfaces through the agent-facing list (real discovery folded it in).
+      const listed = await service.listRuntimes({ sessionId: 's', workspaceCwd: root })
+      const manualListing = listed.runtimes.find((r) => r.runtimeId === manualPath)
+      expect(manualResolverCalls).toBeGreaterThan(0) // proves the resolver was consulted by discovery
+      expect(manualListing).toBeDefined()
+      expect(manualListing?.provenance).toBe('user-own')
+      expect(manualListing?.runnable).toBe(true)
+      expect(manualListing?.version).toMatch(/^3\.12\.7/)
+
+      // 2) It is bindable, and a subsequent state/execute reflects the binding + threads the interpreter.
+      const bound = await service.bindRuntime({
+        sessionId: 's',
+        workspaceCwd: root,
+        language: 'python',
+        runtimeId: manualPath
+      })
+      expect(bound.bound.source).toBe('external')
+      expect(bound.bound.runtimeId).toBe(manualPath)
+
+      const state = await service.state({ sessionId: 's', workspaceCwd: root })
+      expect(state.runtimeBindings.python?.runtimeId).toBe(manualPath)
+      expect(state.runtimeBindings.python?.status ?? 'active').toBe('active')
+
+      await service.execute({ sessionId: 's', workspaceCwd: root, code: '1', language: 'python' })
+      expect(executions.at(-1)?.resolvedInterpreter?.command).toBe(manualPath)
+
+      // 3) Restart: a FRESH service instance (same manual resolver + same on-disk repository) must still
+      // discover the interpreter and rehydrate the persisted binding as ACTIVE — never 'missing'.
+      const afterRestart = makeService()
+      const restartState = await afterRestart.state({ sessionId: 's', workspaceCwd: root })
+      expect(restartState.runtimeBindings.python?.runtimeId).toBe(manualPath)
+      expect(restartState.runtimeBindings.python?.status ?? 'active').toBe('active')
+      expect(restartState.runtimeBindings.python?.reason).toBeUndefined()
+
+      const relisted = await afterRestart.listRuntimes({ sessionId: 's', workspaceCwd: root })
+      expect(relisted.runtimes.some((r) => r.runtimeId === manualPath)).toBe(true)
+
+      await rm(manualDir, { recursive: true, force: true })
+    },
+    30_000
+  )
 })

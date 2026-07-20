@@ -10,6 +10,7 @@ vi.mock('./micromamba', async (importActual) => ({
 }))
 
 import { installPackages, type InstallSpawn, type SpawnResult } from './package-manager'
+import { withExclusiveCacheLock } from './pkgs-cache-lock'
 import {
   envPrefix,
   pipBin,
@@ -603,5 +604,85 @@ describe('installPackages default-env additive-only policy', () => {
     )
     expect(result.ok).toBe(true)
     expect(calls[0][1]).toContain('numpy==1.26.0')
+  })
+})
+
+describe('installPackages shared pkgs cache lock', () => {
+  // Regression: micromamba install/remove extract into and mutate the SHARED pkgs cache, so they must
+  // hold the shared cache lock (keyed by runtimeRoot(storageRoot)) — otherwise a concurrent corrupt-cache
+  // repair (cache-exclusive, deletes incomplete extractions) could delete a package dir mid-op. We prove
+  // it with the same ordering technique as the provisioner create test: the conda spawn holds the lock
+  // across a delay, and an exclusive holder requested meanwhile must wait until the spawn releases it.
+  it('holds the shared lock across a conda install, so a concurrent exclusive repair cannot run mid-install', async () => {
+    const order: string[] = []
+    const spawn: InstallSpawn = async () => {
+      order.push('install-start')
+      await new Promise((r) => setTimeout(r, 10))
+      order.push('install-end')
+      return ok
+    }
+
+    // Kick off the conda install (holds the shared lock synchronously), then request the cache EXCLUSIVE
+    // on the same key the source uses.
+    const install = installPackages({ language: 'python', packages: ['numpy'] }, { spawn, ...base })
+    const exclusive = withExclusiveCacheLock(runtimeRoot('/root'), async () => {
+      order.push('repair')
+    })
+    await Promise.all([install, exclusive])
+
+    expect(order).toEqual(['install-start', 'install-end', 'repair'])
+  })
+
+  it('holds the shared lock across a conda remove, so a concurrent exclusive repair cannot run mid-remove', async () => {
+    const order: string[] = []
+    const spawn: InstallSpawn = async () => {
+      order.push('remove-start')
+      await new Promise((r) => setTimeout(r, 10))
+      order.push('remove-end')
+      return ok
+    }
+
+    // Uninstall is only valid on a named env, so target one and report its bin present. micromamba
+    // remove takes the same shared lock as install.
+    const remove = installPackages(
+      {
+        language: 'python',
+        packages: ['numpy'],
+        operation: 'uninstall',
+        environment: 'my-analysis'
+      },
+      { spawn, ...base, pathExists: () => true }
+    )
+    const exclusive = withExclusiveCacheLock(runtimeRoot('/root'), async () => {
+      order.push('repair')
+    })
+    await Promise.all([remove, exclusive])
+
+    expect(order).toEqual(['remove-start', 'remove-end', 'repair'])
+  })
+
+  it('does NOT take the shared lock on a pip install (env-prefix only), so a repair can interleave', async () => {
+    // Contrast test: pip writes only into the env prefix, never the shared cache, so it uses `run`
+    // directly (unlocked). An exclusive repair requested meanwhile runs WITHOUT waiting — this both
+    // documents the intended scope and guards against over-locking pip behind the cache lock.
+    const order: string[] = []
+    const spawn: InstallSpawn = async () => {
+      order.push('pip-start')
+      await new Promise((r) => setTimeout(r, 10))
+      order.push('pip-end')
+      return ok
+    }
+
+    const install = installPackages(
+      { language: 'python', packages: ['seaborn'], usePip: true, environment: 'my-analysis' },
+      { spawn, ...base, pathExists: () => true }
+    )
+    const exclusive = withExclusiveCacheLock(runtimeRoot('/root'), async () => {
+      order.push('repair')
+    })
+    await Promise.all([install, exclusive])
+
+    // The repair interleaved (ran before pip finished) because pip never held the shared lock.
+    expect(order).toEqual(['pip-start', 'repair', 'pip-end'])
   })
 })
