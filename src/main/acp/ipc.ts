@@ -117,9 +117,14 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntime => {
     runtime.connect(request)
   )
   ipcMain.handle('acp:disconnect', () => runtime.disconnect())
-  ipcMain.handle('acp:create-session', async (_event, request: AcpCreateSessionRequest) =>
-    runtime.createSession(request)
-  )
+  ipcMain.handle('acp:create-session', async (_event, request: AcpCreateSessionRequest) => {
+    try {
+      return await runtime.createSession(request)
+    } catch (error) {
+      console.error('[acp:create-session] Error creating session:', error)
+      throw error
+    }
+  })
   ipcMain.handle('acp:resume-session', async (_event, request: AcpResumeSessionRequest) =>
     runtime.resumeSession(request)
   )

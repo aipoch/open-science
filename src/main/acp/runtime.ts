@@ -650,58 +650,71 @@ class AcpRuntime {
 
   // Creates a protocol session, injects artifact tooling, and uses the returned id as the app session id.
   async createSession(request: AcpCreateSessionRequest = {}): Promise<AcpCreateSessionResponse> {
-    const sessionCwd = resolve(request.cwd || this.cwd || this.options.defaultCwd)
-    const projectName = this.normalizeProjectName(request.projectName)
-    const connection = await this.ensureConnected(sessionCwd)
-    const artifactSessionId = this.createArtifactSessionId()
-    const notebookSessionId = this.createNotebookSessionId()
-
-    const mcpServers = await this.createMcpServers({
-      artifactSessionId,
-      notebookSessionId,
-      sessionCwd,
-      projectName
-    })
-    const session = await connection.agent
-      .buildSession({
-        cwd: sessionCwd,
-        mcpServers,
-        ...this.buildSessionMetaArg()
-      })
-      .start()
-
     try {
-      await this.configurePermissionProfile(
-        session.sessionId,
-        session,
-        normalizePermissionProfile(request.permissionProfile)
-      )
+      log.info('createSession: starting', { request })
+      const sessionCwd = resolve(request.cwd || this.cwd || this.options.defaultCwd)
+      const projectName = this.normalizeProjectName(request.projectName)
+      log.info('createSession: ensureConnected', { sessionCwd, projectName })
+      const connection = await this.ensureConnected(sessionCwd)
+      const artifactSessionId = this.createArtifactSessionId()
+      const notebookSessionId = this.createNotebookSessionId()
+
+      log.info('createSession: createMcpServers', { artifactSessionId, notebookSessionId })
+      const mcpServers = await this.createMcpServers({
+        artifactSessionId,
+        notebookSessionId,
+        sessionCwd,
+        projectName
+      })
+      log.info('createSession: buildSession', { mcpServersCount: mcpServers.length })
+      const session = await connection.agent
+        .buildSession({
+          cwd: sessionCwd,
+          mcpServers,
+          ...this.buildSessionMetaArg()
+        })
+        .start()
+
+      log.info('createSession: configurePermissionProfile', { sessionId: session.sessionId })
+      try {
+        await this.configurePermissionProfile(
+          session.sessionId,
+          session,
+          normalizePermissionProfile(request.permissionProfile)
+        )
+      } catch (error) {
+        log.error('createSession: configurePermissionProfile failed', error)
+        session.dispose()
+        throw error
+      }
+
+      log.info('createSession: applySessionModel', { sessionId: session.sessionId })
+      await this.applySessionModel(session)
+
+      this.sessions.set(session.sessionId, session)
+      this.sessionCwds.set(session.sessionId, sessionCwd)
+      this.sessionMcpServerNames.set(session.sessionId, this.mcpServerNamesOf(mcpServers))
+      this.sessionProjectNames.set(session.sessionId, projectName)
+      this.sessionFrameworks.set(session.sessionId, this.framework.id)
+      this.rememberArtifactSession(session.sessionId, artifactSessionId)
+      this.rememberNotebookSession(session.sessionId, notebookSessionId)
+      this.currentSessionId = session.sessionId
+      this.cwd = sessionCwd
+      this.pushEvent({
+        kind: 'system',
+        level: 'info',
+        sessionId: session.sessionId,
+        title: 'Session created',
+        text: sessionCwd
+      })
+      this.emitState()
+
+      log.info('createSession: completed successfully', { sessionId: session.sessionId })
+      return { sessionId: session.sessionId, cwd: sessionCwd, frameworkId: this.framework.id }
     } catch (error) {
-      session.dispose()
+      log.error('createSession: failed', error)
       throw error
     }
-
-    await this.applySessionModel(session)
-
-    this.sessions.set(session.sessionId, session)
-    this.sessionCwds.set(session.sessionId, sessionCwd)
-    this.sessionMcpServerNames.set(session.sessionId, this.mcpServerNamesOf(mcpServers))
-    this.sessionProjectNames.set(session.sessionId, projectName)
-    this.sessionFrameworks.set(session.sessionId, this.framework.id)
-    this.rememberArtifactSession(session.sessionId, artifactSessionId)
-    this.rememberNotebookSession(session.sessionId, notebookSessionId)
-    this.currentSessionId = session.sessionId
-    this.cwd = sessionCwd
-    this.pushEvent({
-      kind: 'system',
-      level: 'info',
-      sessionId: session.sessionId,
-      title: 'Session created',
-      text: sessionCwd
-    })
-    this.emitState()
-
-    return { sessionId: session.sessionId, cwd: sessionCwd, frameworkId: this.framework.id }
   }
 
   // Registers a freshly-built agent session under an app-facing id (used when adopting a conversation
