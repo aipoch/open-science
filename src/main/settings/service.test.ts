@@ -653,6 +653,32 @@ describe('SettingsService: preflight & spawn config', () => {
     })
   })
 
+  it('declares the model image capability in the resolved OpenCode backend config', async () => {
+    // resolveActiveAgentBackend honors this forced-framework env above stored settings; set it
+    // explicitly (a prior Codex test leaves it stubbed to 'codex') so this resolves OpenCode.
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'opencode')
+    await repository.setAgentFramework('opencode')
+    const service = createService(undefined, {
+      opencodeDetected: { path: '/usr/local/bin/opencode', version: '1.19.0' }
+    })
+    const provider = (
+      await service.upsertProvider({ type: 'official', name: 'Kimi', vendorId: 'kimi', key: 'k' })
+    ).providers[0]
+    await service.setActiveProvider(provider.id)
+
+    const backend = await service.resolveActiveAgentBackend()
+
+    // End-to-end guard for the whole capability chain: resolveProvider must carry supportsImageInput
+    // for the multimodal default (kimi-k3) and prepareModelConfig must surface it, so OpenCode receives
+    // the model as image-capable instead of a bare entry whose image parts it would strip. Deleting the
+    // wiring in resolveProvider or buildModelCapabilities makes this fail.
+    const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+    expect(content.provider['openai-compatible'].models['kimi-k3']).toEqual({
+      attachment: true,
+      modalities: { input: ['text', 'image'] }
+    })
+  })
+
   it('resolves a Chat Completions provider through the Codex Responses bridge', async () => {
     const localFetch = globalThis.fetch
     let upstreamRequest: Record<string, unknown> | undefined

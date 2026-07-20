@@ -926,6 +926,61 @@ describe('ACP runtime session management', () => {
     ).resolves.toBe('hello from upload')
   })
 
+  it('inlines an image attachment as pixels when the browser sent no usable MIME type', async () => {
+    const root = await createTemporaryRoot()
+    const uploadRepository = new UploadRepository(root)
+    // Some drag/drop and paste sources omit the MIME (undefined) or send a generic octet-stream; the
+    // runtime must still recognize these as images by extension and send real pixels, not a file link.
+    const stagedAttachments = await uploadRepository.stageFiles({
+      files: [
+        {
+          name: 'no-mime.png',
+          mimeType: undefined,
+          content: Buffer.from('png-a').toString('base64')
+        },
+        {
+          name: 'generic.png',
+          mimeType: 'application/octet-stream',
+          content: Buffer.from('png-b').toString('base64')
+        }
+      ]
+    })
+    const process = new FakeAgentProcess()
+    const receivedPrompts: ContentBlock[][] = []
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: ({ prompt }) => {
+        receivedPrompts.push(prompt)
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      uploads: { repository: uploadRepository }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'what is in these',
+      attachments: stagedAttachments
+    })
+
+    expect(receivedPrompts).toHaveLength(1)
+    // Both files are sent as base64 image blocks with the extension-derived canonical MIME — not the
+    // resource_link a missing/generic MIME would have produced before the fallback existed.
+    expect(receivedPrompts[0][1]).toMatchObject({
+      type: 'image',
+      mimeType: 'image/png',
+      data: Buffer.from('png-a').toString('base64')
+    })
+    expect(receivedPrompts[0][2]).toMatchObject({
+      type: 'image',
+      mimeType: 'image/png',
+      data: Buffer.from('png-b').toString('base64')
+    })
+  })
+
   it('degrades an image attachment to a resource link when replay images consume the inline budget', async () => {
     const root = await createTemporaryRoot()
     const uploadRepository = new UploadRepository(root)
