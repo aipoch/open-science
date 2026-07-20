@@ -235,6 +235,13 @@ const errorMessage = (error: unknown): string => {
   return String(error)
 }
 
+// Expands an unknown thrown value into log-safe fields. The file logger only unwraps a *top-level*
+// Error (its fields are non-enumerable); an Error nested inside a context object would otherwise
+// serialize to `{}` and lose its message + stack. Spreading these fields keeps both visible alongside
+// the surrounding diagnostic context.
+export const errorLogFields = (error: unknown): { error: string; stack?: string } =>
+  error instanceof Error ? { error: error.message, stack: error.stack } : { error: String(error) }
+
 const log = createLogger('acp')
 
 // Detects an agent-side resume failure that means the session cannot be reattached, so the thread
@@ -628,12 +635,22 @@ class AcpRuntime {
       this.setStatus('connected')
     } catch (error) {
       if (generation !== this.connectionGeneration) {
+        // Superseded (a newer reconnect bumped the generation) or shutting down: the fast-path re-throw
+        // skips the error handling below, so log here too — these late-spawn/teardown races are exactly
+        // the failures that are otherwise invisible.
+        log.warn('agent connection abandoned (superseded or shutting down)', {
+          ...errorLogFields(error),
+          generation,
+          currentGeneration: this.connectionGeneration,
+          framework: this.framework.id,
+          shuttingDown: this.shuttingDown
+        })
         throw error
       }
 
       this.error = errorMessage(error)
       log.error('agent connection failed', {
-        error,
+        ...errorLogFields(error),
         generation,
         framework: this.framework.id,
         cwd: this.cwd,
@@ -1896,7 +1913,7 @@ class AcpRuntime {
     try {
       await this.connect({ cwd })
     } catch (error) {
-      log.error('ensureConnected: connect failed', { cwd, error })
+      log.error('ensureConnected: connect failed', { cwd, ...errorLogFields(error) })
       throw error
     }
 
@@ -2527,6 +2544,11 @@ class AcpRuntime {
 
   // Captures process stderr/errors/exits and converts unexpected ones to events.
   private attachAgentProcessEvents(agentProcess: ChildProcessWithoutNullStreams): void {
+    // Bind the framework this process was spawned under now. During a reconnect the runtime's
+    // this.framework may already point at a new backend, so reading it inside the async handlers would
+    // mislabel a late stderr/exit from the old process.
+    const framework = this.framework.id
+
     agentProcess.stderr.on('data', (data: Buffer) => {
       const text = data.toString('utf8').trim()
 
@@ -2535,7 +2557,7 @@ class AcpRuntime {
       if (text) {
         log.warn('agent stderr', {
           text,
-          framework: this.framework.id,
+          framework,
           status: this.status,
           sessionCount: this.sessions.size
         })
@@ -2562,8 +2584,8 @@ class AcpRuntime {
 
     agentProcess.on('error', (error) => {
       log.error('agent process error event', {
-        error,
-        framework: this.framework.id,
+        ...errorLogFields(error),
+        framework,
         status: this.status,
         pid: agentProcess.pid
       })
@@ -2586,7 +2608,7 @@ class AcpRuntime {
       log.info('agent process exit', {
         code,
         signal,
-        framework: this.framework.id,
+        framework,
         status: this.status,
         expected: this.expectedProcessExits.has(agentProcess),
         sessionCount: this.sessions.size,

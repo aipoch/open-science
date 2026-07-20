@@ -17,7 +17,7 @@ import type {
   AcpStateSnapshot
 } from '../../shared/acp'
 import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../../shared/artifacts'
-import { AcpRuntime } from './runtime'
+import { AcpRuntime, errorLogFields } from './runtime'
 import { installAgentShutdownGuard } from './shutdown-guard'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import type { ArtifactRepository } from '../artifacts/repository'
@@ -29,6 +29,9 @@ import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import type { SettingsService } from '../settings/service'
 import type { UploadRepository } from '../uploads/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
+import { createLogger } from '../logger'
+
+const log = createLogger('acp')
 
 type AcpIpcArtifacts = {
   repository: ArtifactRepository
@@ -121,7 +124,9 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntime => {
     try {
       return await runtime.createSession(request)
     } catch (error) {
-      console.error('[acp:create-session] Error creating session:', error)
+      // Route through the file logger (rotating main.log) so the failure survives in a packaged build,
+      // not just the dev console. errorLogFields keeps the message + stack out of a `{}`.
+      log.error('acp:create-session failed', errorLogFields(error))
       throw error
     }
   })
