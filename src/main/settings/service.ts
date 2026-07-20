@@ -1926,9 +1926,13 @@ class SettingsService {
     // Custom providers: respect the user-configured supportsImageInput flag
     if (provider.type === 'custom') return provider.supportsImageInput === true
 
-    // Official vendors: check the model against the vendor's multimodalModels registry
+    // Official vendors: check the model against the vendor's multimodalModels registry. When no model
+    // is active, fall back to the vendor's default model — the exact id resolveProvider spawns — not the
+    // first of the (possibly live-refreshed) catalog, so the capability always matches the model actually
+    // sent. Otherwise a refreshed list whose first entry is text-only would strip images from a default
+    // that supports them (e.g. Kimi's default kimi-k3).
     if (provider.type === 'official' && provider.vendorId) {
-      const modelToCheck = activeModel ?? this.availableModels(provider)[0]
+      const modelToCheck = activeModel ?? defaultVendorModel(provider.vendorId)
       return isVendorModelMultimodal(provider.vendorId, modelToCheck)
     }
 

@@ -1173,6 +1173,29 @@ describe('SettingsService: image-input capability', () => {
     expect(view?.models).toEqual(['claude-opus-5-unreleased'])
     expect(view?.supportsImageInput).toBe(true)
   })
+
+  it('uses the vendor default model, not the refreshed catalog head, for the capability fallback', async () => {
+    const service = createService()
+    // A refresh reorders Kimi's catalog so a text-only id leads, while the spawned default stays kimi-k3.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        status: 200,
+        json: () => Promise.resolve({ data: [{ id: 'kimi-k2.7-code' }, { id: 'kimi-k3' }] })
+      })
+    )
+    const created = (
+      await service.upsertProvider({ type: 'official', name: 'Kimi', vendorId: 'kimi', key: 'k' })
+    ).providers[0]
+    await service.refreshProviderModels({ providerId: created.id })
+
+    // With no active model, the capability must match the model resolveProvider actually spawns — the
+    // vendor default kimi-k3 (multimodal) — not the refreshed list head kimi-k2.7-code (text-only), or
+    // OpenCode would keep stripping images from a default that supports them.
+    const view = (await service.getSettingsView()).providers.find((p) => p.id === created.id)
+    expect(view?.models[0]).toBe('kimi-k2.7-code')
+    expect(view?.supportsImageInput).toBe(true)
+  })
 })
 
 describe('SettingsService: onboarding', () => {
