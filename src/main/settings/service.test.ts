@@ -19,7 +19,8 @@ vi.mock('electron', () => ({
       return decoded.slice('cipher:'.length)
     }
   },
-  app: { getPath: () => '/home', getAppPath: () => '/home/no-such-app-root', isPackaged: false }
+  app: { getPath: () => '/home', getAppPath: () => '/home/no-such-app-root', isPackaged: false },
+  net: { fetch: vi.fn() }
 }))
 
 const { SettingsService } = await import('./service')

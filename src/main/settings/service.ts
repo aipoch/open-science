@@ -110,6 +110,7 @@ import { getConnectorTools } from '../connectors/registry'
 import { renderConnectorInstructions } from '../connectors/skill-doc'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
 import { UserSkillRepository } from '../skills/user-skill-repository'
+import { netFetch } from '../skills/net-fetch'
 import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limits'
 import { readSkillFile } from '../skills/skill-files'
 import type {
@@ -413,7 +414,7 @@ class SettingsService {
 
   // Imports a skill from a public GitHub URL (deduplicated), returning the outcome + refreshed list.
   async importSkill(request: ImportSkillRequest): Promise<ImportSkillResult> {
-    const outcome = await this.userSkills.importFromGitHub(request.url)
+    const outcome = await this.userSkills.importFromGitHub(request.url, netFetch)
 
     return { status: outcome.status, id: outcome.id, skills: await this.listSkills() }
   }
@@ -458,7 +459,7 @@ class SettingsService {
 
   // Scans a GitHub repo for importable skill directories (marking already-imported ones).
   async scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult> {
-    return { skills: await this.userSkills.scanRepo(request.repo) }
+    return { skills: await this.userSkills.scanRepo(request.repo, netFetch) }
   }
 
   // Projects a catalog skill into its renderer-safe view given the disabled set.
