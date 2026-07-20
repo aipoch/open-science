@@ -54,6 +54,14 @@ import {
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 import { matchSessionModelOption } from './session-config'
 import { describePromptError } from './prompt-error'
+import {
+  ATTACHMENT_PREVIEW_BYTES,
+  MAX_EMBEDDED_TEXT_UPLOAD_BYTES,
+  buildOversizedAttachmentNotice,
+  isTabularAttachment,
+  isTextLikeAttachment
+} from './attachment-content'
+import { readBoundedManagedFilePreview } from '../managed-file-preview'
 import { AcpPermissionBroker } from './permission-broker'
 import { isMcpToolName } from './permission-policy'
 import { applyCurrentModeUpdate } from './permission-profile-controller'
@@ -204,8 +212,18 @@ const SKILLS_READ_GUARD_SYSTEM_PROMPT_APPEND = [
   '</open_science_skill_privacy_instructions>'
 ].join('\n')
 
-// Small text uploads are embedded directly; larger files stay as links to avoid huge prompt payloads.
-const MAX_EMBEDDED_TEXT_UPLOAD_BYTES = 1024 * 1024
+// Steers the agent away from reading large attached data files in their entirety, since a single big
+// read (esp. under frameworks whose read/bash tools do not hard-cap output) can exceed the provider's
+// request-size limit and break the conversation. Framework-neutral: Claude carries it in the system
+// prompt preset, opencode as a prompt prefix.
+const LARGE_DATA_FILE_SYSTEM_PROMPT_APPEND = [
+  '<open_science_large_file_instructions>',
+  'Large attached data files (CSV, TSV, TXT, JSON, FASTA/FASTQ, VCF, and similar tabular or text data) are provided as a file reference plus a short preview, not as full inline content.',
+  'Never read, cat, or print such a file in its entirety — a single large read can exceed the request-size limit and break the conversation.',
+  'Inspect structure first (columns, row count, a few sample rows), then read only the specific line ranges, rows, or columns you need.',
+  'To analyze, filter, or aggregate over a large file, load it in the notebook (e.g. pandas) and compute there instead of reading its contents into the conversation.',
+  '</open_science_large_file_instructions>'
+].join('\n')
 
 // Converts unknown thrown values into user-visible error text.
 const errorMessage = (error: unknown): string => {
@@ -1599,20 +1617,26 @@ class AcpRuntime {
         attachments
       )
 
-      // Keep the user's text first, then append files in the same order they were added.
+      // Keep the user's text first, then append files in the same order they were added. A file may
+      // expand to several blocks (an oversized text file becomes a preview notice + a resource link);
+      // route each through appendBlock so image blocks still honor the per-request inline budget.
       for (const attachment of finalizedAttachments) {
-        const block = await this.createAttachmentContentBlock(sessionId, attachment)
-        appendBlock(
-          block,
-          this.imageOverflowResourceLink(block, attachment.originalName, attachment.size)
-        )
+        const blocks = await this.createAttachmentContentBlock(sessionId, attachment)
+        for (const block of blocks) {
+          appendBlock(
+            block,
+            this.imageOverflowResourceLink(block, attachment.originalName, attachment.size)
+          )
+        }
       }
     }
 
     // `@`-mentioned artifacts reuse the same per-type block builder as uploads, in mention order.
     for (const reference of referencedArtifacts) {
-      const block = await this.createReferencedArtifactContentBlock(sessionId, reference)
-      appendBlock(block, this.imageOverflowResourceLink(block, reference.name))
+      const blocks = await this.createReferencedArtifactContentBlock(sessionId, reference)
+      for (const block of blocks) {
+        appendBlock(block, this.imageOverflowResourceLink(block, reference.name))
+      }
     }
 
     return contentBlocks
@@ -1639,7 +1663,7 @@ class AcpRuntime {
   private async createAttachmentContentBlock(
     sessionId: string,
     attachment: UploadedAttachment
-  ): Promise<ContentBlock> {
+  ): Promise<ContentBlock[]> {
     if (!this.uploadRepository) throw new Error('Upload storage is not configured.')
 
     const filePath = await this.uploadRepository.resolveManagedUploadPath({ path: attachment.path })
@@ -1659,7 +1683,7 @@ class AcpRuntime {
   private async createReferencedArtifactContentBlock(
     sessionId: string,
     reference: ArtifactReference
-  ): Promise<ContentBlock> {
+  ): Promise<ContentBlock[]> {
     const filePath = await this.resolveReferencedArtifactPath(reference)
     const { size } = await stat(filePath)
 
@@ -1693,7 +1717,7 @@ class AcpRuntime {
     name: string
     mimeType?: string
     size: number
-  }): Promise<ContentBlock> {
+  }): Promise<ContentBlock[]> {
     const { sessionId, absolutePath, uri, name, mimeType, size } = descriptor
 
     // Images are embedded as base64 so vision-capable agents receive the actual pixels.
@@ -1712,44 +1736,66 @@ class AcpRuntime {
       const alreadyInlined = this.sessionInlineImageBytes.get(sessionId) ?? 0
 
       if (!canInlineImageInSession(alreadyInlined, data.length, this.inlineImageBudgetBytes)) {
-        return { type: 'resource_link', uri, name, title: name, mimeType, size }
+        return [{ type: 'resource_link', uri, name, title: name, mimeType, size }]
       }
 
       this.sessionInlineImageBytes.set(sessionId, alreadyInlined + data.length)
 
-      return { type: 'image', data, mimeType: outMimeType, uri }
+      return [{ type: 'image', data, mimeType: outMimeType, uri }]
     }
 
     // PDFs are never inlined as base64 (a 20MB file overflows the 32MB request limit); instead we
     // extract selectable text so the model reads readable content. Page images are a future option.
     if (this.isPdfFile(name, mimeType)) {
-      return this.createPdfContentBlock(name, absolutePath, uri)
+      return [await this.createPdfContentBlock(name, absolutePath, uri)]
     }
 
-    // Small text-like files are embedded for direct reading; oversized text falls through to a link.
-    if (
-      (mimeType?.startsWith('text/') || mimeType === 'application/json') &&
-      size <= MAX_EMBEDDED_TEXT_UPLOAD_BYTES
-    ) {
-      return {
-        type: 'resource',
-        resource: {
-          uri,
-          mimeType,
-          text: await readFile(absolutePath, 'utf8')
-        }
+    if (isTextLikeAttachment(name, mimeType)) {
+      // Small text-like files are embedded for direct reading.
+      if (size <= MAX_EMBEDDED_TEXT_UPLOAD_BYTES) {
+        return [
+          {
+            type: 'resource',
+            resource: { uri, mimeType, text: await readFile(absolutePath, 'utf8') }
+          }
+        ]
       }
+
+      // Oversized text/tabular files are never inlined — a full read is the main request-size overflow
+      // source. Send a bounded preview (structure + a few rows) plus a link so the agent reads only what
+      // it needs instead of loading the whole file into context.
+      const preview = await readBoundedManagedFilePreview(
+        absolutePath,
+        { path: absolutePath, maxBytes: ATTACHMENT_PREVIEW_BYTES, encoding: 'utf8' },
+        'Attachment preview requires UTF-8 encoding.'
+      )
+
+      return [
+        {
+          type: 'text',
+          text: buildOversizedAttachmentNotice({
+            name,
+            size,
+            preview: preview.content,
+            truncated: preview.truncated,
+            tabular: isTabularAttachment(name, mimeType)
+          })
+        },
+        { type: 'resource_link', uri, name, title: name, mimeType, size }
+      ]
     }
 
     // Binary and large files are passed as resource links so agents can decide how to fetch them.
-    return {
-      type: 'resource_link',
-      uri,
-      name,
-      title: name,
-      mimeType,
-      size
-    }
+    return [
+      {
+        type: 'resource_link',
+        uri,
+        name,
+        title: name,
+        mimeType,
+        size
+      }
+    ]
   }
 
   // Recognizes PDFs by MIME type or extension since the renderer does not always send a MIME type.
@@ -2150,6 +2196,7 @@ class AcpRuntime {
     // omit it otherwise so the agent isn't told to use tools it wasn't given.
     return [
       SKILLS_READ_GUARD_SYSTEM_PROMPT_APPEND,
+      LARGE_DATA_FILE_SYSTEM_PROMPT_APPEND,
       ...(this.artifactToolingAvailable() ? [ARTIFACT_FILE_SYSTEM_PROMPT_APPEND] : []),
       ...(this.notebookToolingAvailable() ? [NOTEBOOK_SYSTEM_PROMPT_APPEND] : [])
     ]
