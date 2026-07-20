@@ -241,6 +241,24 @@ describe('ProviderList', () => {
     expect(buttonByLabel('Sign out')).toBeUndefined()
   })
 
+  it('renders shared and isolated Codex modes as one subscription card', () => {
+    renderList([
+      provider({
+        id: 'builtin-codex-shared',
+        type: 'codex-shared',
+        name: 'Existing Codex profile'
+      }),
+      provider({
+        id: 'builtin-codex-isolated',
+        type: 'codex-isolated',
+        name: 'Open Science Codex login'
+      })
+    ])
+
+    expect(container.querySelectorAll('[data-slot="settings-list-row"]')).toHaveLength(1)
+    expect(container.textContent).toContain('Codex subscription')
+  })
+
   it('offers cancel during isolated sign-in and sign out after validation', () => {
     const onCancel = vi.fn()
     const onLogout = vi.fn()

@@ -32,6 +32,25 @@ afterEach(async () => {
 })
 
 describe('settings repository', () => {
+  it('migrates two legacy Codex subscription cards into one active-mode provider', () => {
+    const settings = sanitizeSettings({
+      activeProviderId: 'builtin-codex-isolated',
+      providers: [
+        { id: 'builtin-codex-shared', type: 'codex-shared', name: 'Existing Codex profile' },
+        { id: 'builtin-codex-isolated', type: 'codex-isolated', name: 'Open Science Codex login' }
+      ]
+    })
+
+    expect(settings.providers).toEqual([
+      expect.objectContaining({
+        id: 'builtin-codex-subscription',
+        type: 'codex-isolated',
+        name: 'Codex subscription'
+      })
+    ])
+    expect(settings.activeProviderId).toBe('builtin-codex-subscription')
+  })
+
   it('returns empty settings when nothing is stored yet', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 

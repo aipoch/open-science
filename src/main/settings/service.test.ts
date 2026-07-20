@@ -199,11 +199,6 @@ describe('SettingsService: providers', () => {
         supported: true,
         authenticated: true
       }),
-      getPreferredStatus: vi.fn().mockResolvedValue({
-        mode: 'shared',
-        supported: true,
-        authenticated: true
-      }),
       loginIsolated: vi.fn().mockResolvedValue({
         mode: 'isolated',
         supported: true,
@@ -232,11 +227,6 @@ describe('SettingsService: providers', () => {
   it('cancels isolated login and clears provider readiness on logout', async () => {
     const codexAuth: CodexAuthControllerPort = {
       getStatus: vi.fn(),
-      getPreferredStatus: vi.fn().mockResolvedValue({
-        mode: 'isolated',
-        supported: true,
-        authenticated: true
-      }),
       loginIsolated: vi.fn().mockResolvedValue({
         mode: 'isolated',
         supported: true,

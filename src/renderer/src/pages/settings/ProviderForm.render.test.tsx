@@ -128,6 +128,17 @@ describe('ProviderForm field switching', () => {
     expect(container.textContent).toContain('managed by Codex CLI')
   })
 
+  it('chooses the Codex authentication mode inside the single provider form', () => {
+    render(
+      createEmptyProviderFormValue({ type: 'codex-shared', name: 'Codex subscription' }),
+      { showCodexSubscriptions: true }
+    )
+
+    const trigger = container.querySelector('[aria-label="Codex authentication"]')
+    expect(trigger).not.toBeNull()
+    expect(trigger?.textContent).toContain('Use existing Codex profile')
+  })
+
   it('surfaces the provider-type picker with the current selection', () => {
     // The picker is a styled (non-native) control; option/selection behavior is unit-tested via
     // providerKindPatch, so here we just assert the trigger renders the current kind.

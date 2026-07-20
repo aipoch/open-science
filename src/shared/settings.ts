@@ -19,20 +19,23 @@ export type ProviderType =
 
 export const CODEX_SHARED_PROVIDER_ID = 'builtin-codex-shared'
 export const CODEX_ISOLATED_PROVIDER_ID = 'builtin-codex-isolated'
+export const CODEX_SUBSCRIPTION_PROVIDER_ID = 'builtin-codex-subscription'
 
 export const isCodexSubscriptionProvider = (
   type: ProviderType
 ): type is 'codex-shared' | 'codex-isolated' => type === 'codex-shared' || type === 'codex-isolated'
 
 export const codexSubscriptionProviderIdentity = (
-  type: 'codex-shared' | 'codex-isolated'
-): { id: string; name: string } =>
-  type === 'codex-shared'
-    ? { id: CODEX_SHARED_PROVIDER_ID, name: 'Existing Codex profile' }
-    : { id: CODEX_ISOLATED_PROVIDER_ID, name: 'Open Science Codex login' }
+  _type: 'codex-shared' | 'codex-isolated'
+): { id: string; name: string } => ({
+  id: CODEX_SUBSCRIPTION_PROVIDER_ID,
+  name: 'Codex subscription'
+})
 
 export const isCodexSubscriptionProviderId = (id: string): boolean =>
-  id === CODEX_SHARED_PROVIDER_ID || id === CODEX_ISOLATED_PROVIDER_ID
+  id === CODEX_SUBSCRIPTION_PROVIDER_ID ||
+  id === CODEX_SHARED_PROVIDER_ID ||
+  id === CODEX_ISOLATED_PROVIDER_ID
 
 // The chat API a model endpoint speaks: `anthropic` = /v1/messages, `openai` =
 // /v1/chat/completions, and `responses` = /v1/responses. Keep the two OpenAI-shaped protocols

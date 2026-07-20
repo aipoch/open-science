@@ -65,23 +65,21 @@ describe('provider-kind helpers', () => {
 
     expect(apiKeys).toContain('official:deepseek')
     expect(apiKeys).toContain('official:openai')
-    expect(codingKeys).toEqual(['codex-isolated', 'codex-shared'])
+    expect(codingKeys).toEqual(['codex-subscription'])
     expect(otherKeys).toEqual(['custom', 'claude-default'])
   })
 
-  it('uses fixed identities for Codex subscription choices', () => {
-    expect(providerKindPatch('codex-shared')).toMatchObject({
+  it('uses one provider kind while keeping the auth mode in the form value', () => {
+    expect(providerKindPatch('codex-subscription')).toMatchObject({
       type: 'codex-shared',
-      name: 'Existing Codex profile',
-      apiEndpoint: 'responses'
-    })
-    expect(providerKindPatch('codex-isolated')).toMatchObject({
-      type: 'codex-isolated',
-      name: 'Open Science Codex login',
+      name: 'Codex subscription',
       apiEndpoint: 'responses'
     })
     expect(selectedKindKey(createEmptyProviderFormValue({ type: 'codex-shared' }))).toBe(
-      'codex-shared'
+      'codex-subscription'
+    )
+    expect(selectedKindKey(createEmptyProviderFormValue({ type: 'codex-isolated' }))).toBe(
+      'codex-subscription'
     )
   })
 

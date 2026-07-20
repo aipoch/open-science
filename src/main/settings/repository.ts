@@ -9,7 +9,12 @@ import type {
   ProviderValidationFailure,
   ValidationCategory
 } from '../../shared/settings'
-import { SETTINGS_FILE_VERSION } from '../../shared/settings'
+import {
+  CODEX_SUBSCRIPTION_PROVIDER_ID,
+  SETTINGS_FILE_VERSION,
+  isCodexSubscriptionProvider,
+  isCodexSubscriptionProviderId
+} from '../../shared/settings'
 import { isOfficialVendorId } from '../../shared/provider-registry'
 import type { PackageMirror } from '../../shared/mirror'
 import type { NotebookLanguage } from '../../shared/notebook'
@@ -305,18 +310,41 @@ export const sanitizePackageMirror = (value: unknown): PackageMirror | undefined
 const sanitizeSettings = (value: unknown): StoredSettings => {
   if (!isRecord(value)) return createEmptySettings()
 
-  const providers = Array.isArray(value.providers)
+  const sanitizedProviders = Array.isArray(value.providers)
     ? value.providers
         .map(sanitizeProvider)
         .filter((provider): provider is StoredProvider => !!provider)
     : []
+  const legacyActiveProviderId = asString(value.activeProviderId)
+  const codexProviders = sanitizedProviders.filter((provider) =>
+    isCodexSubscriptionProvider(provider.type)
+  )
+  const activeCodexProvider = codexProviders.find(
+    (provider) => provider.id === legacyActiveProviderId
+  )
+  const selectedCodexProvider = activeCodexProvider ?? codexProviders[0]
+  const providers = [
+    ...sanitizedProviders.filter((provider) => !isCodexSubscriptionProvider(provider.type)),
+    ...(selectedCodexProvider
+      ? [
+          {
+            ...selectedCodexProvider,
+            id: CODEX_SUBSCRIPTION_PROVIDER_ID,
+            name: 'Codex subscription'
+          }
+        ]
+      : [])
+  ]
   const settings: StoredSettings = {
     version: SETTINGS_FILE_VERSION,
     providers
   }
   const claude = sanitizeClaudeInfo(value.claude)
   const codex = sanitizeCodexInfo(value.codex)
-  const activeProviderId = asString(value.activeProviderId)
+  const activeProviderId =
+    legacyActiveProviderId && isCodexSubscriptionProviderId(legacyActiveProviderId)
+      ? CODEX_SUBSCRIPTION_PROVIDER_ID
+      : legacyActiveProviderId
 
   if (claude) settings.claude = claude
   if (codex) settings.codex = codex

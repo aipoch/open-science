@@ -49,22 +49,6 @@ describe('createCodexAuthEnvironment', () => {
 })
 
 describe('CodexAuthController', () => {
-  it('prefers an existing shared Codex login before the isolated Open Science profile', async () => {
-    const shared = session({ status: vi.fn().mockResolvedValue({ type: 'chat-gpt' }) })
-    const isolated = session({ status: vi.fn().mockResolvedValue({ type: 'chat-gpt' }) })
-    const controller = new CodexAuthController({
-      openSession: vi.fn().mockImplementation((mode) =>
-        Promise.resolve(mode === 'shared' ? shared : isolated)
-      )
-    })
-
-    await expect(controller.getPreferredStatus()).resolves.toMatchObject({
-      mode: 'shared',
-      authenticated: true
-    })
-    expect(isolated.initialize).not.toHaveBeenCalled()
-  })
-
   it('capability-gates subscription support and never exposes the account email', async () => {
     const supported = session()
     const controller = new CodexAuthController({

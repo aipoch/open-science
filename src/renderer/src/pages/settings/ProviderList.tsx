@@ -91,10 +91,22 @@ const ProviderList = ({
     )
   }
 
+  const codexProviders = providers.filter((provider) =>
+    isCodexSubscriptionProvider(provider.type)
+  )
+  const selectedCodexProvider =
+    codexProviders.find((provider) => provider.id === activeProviderId) ?? codexProviders[0]
+  const displayedProviders = [
+    ...providers.filter((provider) => !isCodexSubscriptionProvider(provider.type)),
+    ...(selectedCodexProvider
+      ? [{ ...selectedCodexProvider, name: 'Codex subscription' }]
+      : [])
+  ]
+
   return (
     <TooltipProvider delayDuration={200}>
       <ul className="space-y-2">
-        {providers.map((provider) => {
+        {displayedProviders.map((provider) => {
           const isActiveSource = provider.id === activeProviderId
           const isBusy = provider.id === busyProviderId
           // A failed test flags the provider as unverified: it shows a warning here and is excluded
@@ -107,7 +119,7 @@ const ProviderList = ({
           const isCodexSubscription = isCodexSubscriptionProvider(provider.type)
           // The provider sourcing the selected model (and the last remaining one) can't be deleted:
           // removing it would leave no model to run, so its delete action stays disabled.
-          const canDelete = !isActiveSource && providers.length > 1
+          const canDelete = !isActiveSource && displayedProviders.length > 1
           // The chat endpoint(s) this provider speaks; defaults to Anthropic when unset (older/custom).
           const providerRoutes = providerEndpoints(provider)
           const endpoint = {
