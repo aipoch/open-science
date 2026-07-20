@@ -204,8 +204,17 @@ export type ReviewUpdateEvent = {
 //   - 'already-reviewed': an auto-origin request for a turn that already has a review. This is main's
 //     atomic per-turn idempotency verdict (checked after the in-flight key is reserved), so the turn is
 //     definitively handled — never retry. Manual re-runs bypass this and never receive it.
+//   - 'idempotency-check-failed': the auto per-turn idempotency lookup itself threw, so main cannot
+//     confirm the turn is un-reviewed. Fail-closed — start nothing — but retryable: a retry re-runs the
+//     lookup, which may succeed (and then either proceed or return already-reviewed). Never risk a
+//     duplicate by proceeding on an unverified check.
 export type ReviewRunNotStartedReason =
-  'already-in-flight' | 'not-found' | 'load-failed' | 'run-failed' | 'already-reviewed'
+  | 'already-in-flight'
+  | 'not-found'
+  | 'load-failed'
+  | 'run-failed'
+  | 'already-reviewed'
+  | 'idempotency-check-failed'
 
 // IPC: result of reviewer:run. `started` is false when the run could not begin — no Review row is
 // created in that case, so the caller (e.g. a stale-review Re-run) can release its pending state and

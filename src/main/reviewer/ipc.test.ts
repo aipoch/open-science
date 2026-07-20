@@ -264,6 +264,24 @@ describe('reviewer IPC handlers', () => {
     await vi.waitFor(() => expect(runReview).toHaveBeenCalledTimes(1))
   })
 
+  it('fails closed when the idempotency lookup throws: no run, lock released, retryable', async () => {
+    // The lookup can't confirm the turn is un-reviewed — proceeding risks a duplicate, so refuse.
+    getReviewsForSession.mockRejectedValueOnce(new Error('db read failed'))
+    registerReviewerIpcHandlers({ acpRuntime })
+
+    const runHandler = handlers.get(REVIEWER_IPC.RUN)
+    const result = await runHandler?.({}, { ...createRequest(), origin: 'auto' })
+
+    expect(result).toEqual({ started: false, reason: 'idempotency-check-failed' })
+    expect(runReview).not.toHaveBeenCalled()
+
+    // The lock must have been released: a follow-up auto request (lookup now recovered, no prior
+    // review) is not dropped as already-in-flight — it proceeds and starts.
+    const retry = await runHandler?.({}, { ...createRequest(), origin: 'auto' })
+    expect(retry).toEqual({ started: true })
+    await vi.waitFor(() => expect(runReview).toHaveBeenCalledTimes(1))
+  })
+
   it('lets a manual re-run bypass idempotency even when the turn already has a review', async () => {
     // Manual stale/error Re-run must force a fresh review — it never consults the auto-idempotency check.
     getReviewsForSession.mockResolvedValue([{ turnMessageId: 'message-1' }])

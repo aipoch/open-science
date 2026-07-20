@@ -154,13 +154,17 @@ const registerReviewerIpcHandlers = (
           return { started: false, reason: 'already-reviewed' }
         }
       } catch (error) {
-        // A review-store read failure is non-fatal here: fall through and let the normal session
-        // load + run guard correctness. Worst case is the duplicate this check would have prevented.
-        log.warn('auto-review idempotency check failed; proceeding', {
+        // Fail CLOSED: if the lookup itself threw we cannot confirm the turn is un-reviewed, and
+        // proceeding could create a second review/fix-loop for a turn that already has one — exactly the
+        // cross-entry duplicate this check exists to prevent. Release the lock and report a retryable
+        // failure so the auto path re-runs the (now hopefully recovered) check instead of duplicating.
+        inFlightReviewKeys.delete(inFlightKey)
+        log.warn('auto-review idempotency check failed; refusing to start (fail-closed)', {
           sessionId,
           turnMessageId,
           error: error instanceof Error ? error.message : String(error)
         })
+        return { started: false, reason: 'idempotency-check-failed' }
       }
     }
 

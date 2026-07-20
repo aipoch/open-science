@@ -105,7 +105,9 @@ const AUTO_REVIEW_RETRY_DELAY_MS = 400
 // deliberately (see ReviewRunNotStartedReason): retrying them risks a duplicate review or is pointless.
 const RETRYABLE_START_FAILURE_REASONS = new Set<ReviewRunNotStartedReason>([
   'not-found',
-  'load-failed'
+  'load-failed',
+  // The main-side idempotency lookup threw (fail-closed, no run started) — retry re-runs the check.
+  'idempotency-check-failed'
 ])
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))

@@ -628,6 +628,31 @@ describe('workspace runtime events', () => {
       vi.unstubAllGlobals()
     })
 
+    it('retries an idempotency-check-failed auto-review (main failed closed on a transient lookup)', async () => {
+      vi.useFakeTimers()
+      const reviewerRun = vi
+        .fn()
+        .mockResolvedValueOnce({ started: false, reason: 'idempotency-check-failed' }) // lookup threw
+        .mockResolvedValueOnce({ started: true }) // lookup recovered, no prior review → starts
+      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'Analysis complete'
+      })
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
+      await vi.runAllTimersAsync()
+
+      expect(reviewerRun).toHaveBeenCalledTimes(2)
+
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    })
+
     it('retries a load-failed auto-review (transient store read failure)', async () => {
       vi.useFakeTimers()
       const reviewerRun = vi
