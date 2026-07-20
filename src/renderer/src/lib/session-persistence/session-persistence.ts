@@ -37,7 +37,9 @@ const reconcilePendingArtifacts = async (api: ArtifactReconcileApi): Promise<voi
   for (const session of useSessionStore.getState().sessions) {
     if (session.isPending || !session.projectId) continue
 
-    const artifactsById = new Map((session.artifacts ?? []).map((artifact) => [artifact.id, artifact]))
+    const artifactsById = new Map(
+      (session.artifacts ?? []).map((artifact) => [artifact.id, artifact])
+    )
 
     for (const message of session.messages) {
       const pendingPaths = (message.artifactIds ?? [])
@@ -55,9 +57,11 @@ const reconcilePendingArtifacts = async (api: ArtifactReconcileApi): Promise<voi
         })
 
         if (finalized.length > 0) {
-          useSessionStore
-            .getState()
-            .replaceMessageArtifacts({ sessionId: session.id, messageId: message.id, artifacts: finalized })
+          useSessionStore.getState().replaceMessageArtifacts({
+            sessionId: session.id,
+            messageId: message.id,
+            artifacts: finalized
+          })
         }
       } catch (error) {
         reportPersistenceError(error)
@@ -205,10 +209,5 @@ const useSessionPersistence = (): boolean => {
   return isReady
 }
 
-export {
-  createStoreSaver,
-  loadPersistedSessions,
-  reconcilePendingArtifacts,
-  useSessionPersistence
-}
+export { createStoreSaver, loadPersistedSessions, reconcilePendingArtifacts, useSessionPersistence }
 export type { ArtifactReconcileApi, SessionPersistenceApi }

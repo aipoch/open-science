@@ -122,7 +122,9 @@ export const buildProjectFileLibrary = (
   }
 
   if (orphanedFiles.length > 0) {
-    orphanedFiles.sort((left, right) => (right.artifact.mtimeMs ?? 0) - (left.artifact.mtimeMs ?? 0))
+    orphanedFiles.sort(
+      (left, right) => (right.artifact.mtimeMs ?? 0) - (left.artifact.mtimeMs ?? 0)
+    )
     artifactGroups.push({
       sessionId: ORPHANED_ARTIFACTS_GROUP_ID,
       title: 'Orphaned',

@@ -20,21 +20,24 @@ export const useProjectArtifactFiles = (projectId: string | undefined): Artifact
     .join(',')
 
   useEffect(() => {
-    if (!projectId) {
-      setDiskArtifacts([])
-      return
-    }
-
     let cancelled = false
 
-    void window.api.artifacts
-      .listProjectFiles({ projectName: projectId })
-      .then((files) => {
-        if (!cancelled) setDiskArtifacts(files)
-      })
-      .catch(() => {
-        if (!cancelled) setDiskArtifacts([])
-      })
+    // Resolve to [] when there is no project rather than calling setState synchronously in the effect
+    // body; setState only ever runs inside this async callback. The try/catch tolerates both a missing
+    // bridge method (e.g. an older/web preload without listProjectFiles) and a scan failure, so orphan
+    // recovery never crashes the panel or composer that mounts this hook.
+    const load = async (): Promise<ArtifactFile[]> => {
+      if (!projectId) return []
+      try {
+        return await window.api.artifacts.listProjectFiles({ projectName: projectId })
+      } catch {
+        return []
+      }
+    }
+
+    void load().then((files) => {
+      if (!cancelled) setDiskArtifacts(files)
+    })
 
     return () => {
       cancelled = true

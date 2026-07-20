@@ -607,7 +607,11 @@ const runScopedReview = async (options: {
   }
 
   // Resolve the correction turn's scope, pinning each artifact to a digest of its current bytes.
-  const scope = await resolveTurnScopeWithArtifactDigests(session, turnMessageId, artifactStorageRoot)
+  const scope = await resolveTurnScopeWithArtifactDigests(
+    session,
+    turnMessageId,
+    artifactStorageRoot
+  )
 
   // Create a new Review row sharing the originalTurnMessageId (not the correction turn's id),
   // so all iterations are grouped under the same original turn.
@@ -782,7 +786,11 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
     return withFindings
   }
 
-  const scope = await resolveTurnScopeWithArtifactDigests(session, turnMessageId, artifactStorageRoot)
+  const scope = await resolveTurnScopeWithArtifactDigests(
+    session,
+    turnMessageId,
+    artifactStorageRoot
+  )
 
   // Step 2: create the Review row (lifecycle='running') immediately so the renderer shows a spinner.
   let review = await reviewRepository.createReview({

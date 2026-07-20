@@ -278,7 +278,9 @@ type OpenScienceAPI = {
     // Lists every on-disk artifact for a project so orphaned files (owning session deleted) still show.
     listProjectFiles: (request: ListProjectArtifactsRequest) => Promise<ArtifactFile[]>
     // Re-finalizes pending artifacts left behind by a crash, returning the message's finalized files.
-    reconcilePendingArtifacts: (request: ReconcilePendingArtifactsRequest) => Promise<ArtifactFile[]>
+    reconcilePendingArtifacts: (
+      request: ReconcilePendingArtifactsRequest
+    ) => Promise<ArtifactFile[]>
     // Opens only managed files after the main process verifies the path.
     openFile: (request: OpenArtifactFileRequest) => Promise<void>
     // Reads a bounded text preview from managed generated files.

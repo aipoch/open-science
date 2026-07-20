@@ -12,7 +12,9 @@ import { resolveTurnScope } from './scope'
 // still distinct from any present digest).
 const computeArtifactDigest = async (path: string): Promise<string | undefined> => {
   try {
-    return `sha256:${createHash('sha256').update(await readFile(path)).digest('hex')}`
+    return `sha256:${createHash('sha256')
+      .update(await readFile(path))
+      .digest('hex')}`
   } catch {
     try {
       const fileStat = await stat(path)

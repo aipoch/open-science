@@ -338,7 +338,9 @@ describe('artifact repository', () => {
     )
     const resolved = await repository.resolveManagedFilePath({ path: pendingPathA })
     expect(resolved).toBe(
-      await realpath(join(root, 'artifacts', 'default-project', 'session-1', 'message-a', 'report.csv'))
+      await realpath(
+        join(root, 'artifacts', 'default-project', 'session-1', 'message-a', 'report.csv')
+      )
     )
     const preview = await repository.readManagedFilePreview({ path: pendingPathA })
     expect(preview.content).toContain('run-a-content')
@@ -378,7 +380,9 @@ describe('artifact repository', () => {
     )
     const resolved = await repository.resolveManagedFilePath({ path: pendingPath })
     expect(resolved).toBe(
-      await realpath(join(root, 'artifacts', 'default-project', 'session-1', 'message-1', 'legacy.txt'))
+      await realpath(
+        join(root, 'artifacts', 'default-project', 'session-1', 'message-1', 'legacy.txt')
+      )
     )
   })
 
@@ -697,7 +701,9 @@ describe('artifact repository', () => {
       projectName: 'default-project',
       sessionId: 'app-session-1',
       messageId: 'message-1',
-      pendingPaths: [join(root, 'artifacts', 'default-project', 'app-session-1', 'message-1', 'x.txt')]
+      pendingPaths: [
+        join(root, 'artifacts', 'default-project', 'app-session-1', 'message-1', 'x.txt')
+      ]
     })
 
     expect(finalized).toEqual([])

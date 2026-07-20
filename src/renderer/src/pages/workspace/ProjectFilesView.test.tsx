@@ -132,9 +132,8 @@ describe('buildProjectFileLibrary', () => {
   })
 
   it('surfaces on-disk artifacts not referenced by any session under an Orphaned group', async () => {
-    const { buildProjectFileLibrary, ORPHANED_ARTIFACTS_GROUP_ID } = await import(
-      './project-files-library'
-    )
+    const { buildProjectFileLibrary, ORPHANED_ARTIFACTS_GROUP_ID } =
+      await import('./project-files-library')
     const liveArtifact = {
       id: 's-live:m1:live.png',
       projectName: 'proj-1',

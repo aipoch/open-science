@@ -20,10 +20,7 @@ const MOLFILE_MIME = 'chemical/x-mdl-molfile'
 // auto-opened in the preview panel by the renderer (workspace-events), so no extra IPC is needed.
 export const createMoleculePreviewHandler =
   (writer: MoleculeArtifactWriter) =>
-  async (
-    args: Record<string, unknown>,
-    context: { sessionId?: string } = {}
-  ): Promise<unknown> => {
+  async (args: Record<string, unknown>, context: { sessionId?: string } = {}): Promise<unknown> => {
     const result = await renderMoleculeStructure(args)
     if (!result.valid) return result
 

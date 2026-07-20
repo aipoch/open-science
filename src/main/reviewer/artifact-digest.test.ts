@@ -67,8 +67,9 @@ describe('resolveTurnScopeWithArtifactDigests', () => {
     await writeArtifact(storageRoot, 'a,b\n9,9\n')
     const after = await resolveTurnScopeWithArtifactDigests(session, 'a1', storageRoot)
 
-    const hashOf = (scope: Awaited<ReturnType<typeof resolveTurnScopeWithArtifactDigests>>) =>
-      scope.blocks.find((block) => block.sourceId === 'a1')?.contentHash
+    const hashOf = (
+      scope: Awaited<ReturnType<typeof resolveTurnScopeWithArtifactDigests>>
+    ): string | undefined => scope.blocks.find((block) => block.sourceId === 'a1')?.contentHash
 
     expect(hashOf(after)).not.toBe(hashOf(before))
   })
@@ -81,8 +82,9 @@ describe('resolveTurnScopeWithArtifactDigests', () => {
     const first = await resolveTurnScopeWithArtifactDigests(session, 'a1', storageRoot)
     const second = await resolveTurnScopeWithArtifactDigests(session, 'a1', storageRoot)
 
-    const hashOf = (scope: Awaited<ReturnType<typeof resolveTurnScopeWithArtifactDigests>>) =>
-      scope.blocks.find((block) => block.sourceId === 'a1')?.contentHash
+    const hashOf = (
+      scope: Awaited<ReturnType<typeof resolveTurnScopeWithArtifactDigests>>
+    ): string | undefined => scope.blocks.find((block) => block.sourceId === 'a1')?.contentHash
 
     expect(hashOf(first)).toBe(hashOf(second))
   })
