@@ -62,6 +62,14 @@ import type {
   UpdateProjectRequest
 } from '../shared/projects'
 import type {
+  ArtifactGroupPage,
+  ListArtifactGroupsRequest,
+  ListProjectFilesRequest,
+  ProjectFilesChangedEvent,
+  ProjectFilesOverview,
+  ProjectFilesPage
+} from '../shared/project-files'
+import type {
   DeleteProjectSessionsRequest,
   DeleteSessionRequest,
   LoadAllSessionsResult,
@@ -260,6 +268,13 @@ type OpenScienceAPI = {
     update: (request: UpdateProjectRequest) => Promise<Project>
     delete: (request: DeleteProjectRequest) => Promise<void>
   }
+  projectFiles: {
+    getOverview: (request: { projectId: string }) => Promise<ProjectFilesOverview>
+    listFiles: (request: ListProjectFilesRequest) => Promise<ProjectFilesPage>
+    listArtifactGroups: (request: ListArtifactGroupsRequest) => Promise<ArtifactGroupPage>
+    repairIndex: (request: { projectId: string }) => Promise<void>
+    onChanged: (listener: AcpListener<ProjectFilesChangedEvent>) => RemoveListener
+  }
   preview: {
     load: (request: LoadPreviewStateRequest) => Promise<PersistedPreviewState | null>
     save: (request: SavePreviewStateRequest) => Promise<void>
@@ -413,7 +428,7 @@ const api: OpenScienceAPI = {
     // Removes one session file.
     deleteSession: (request) =>
       ipcRenderer.invoke('sessions:delete-session', request) as Promise<void>,
-    // Removes every session under a project (used when the project is deleted).
+    // Removes all sessions for a project through the same coordinated deletion path as project CRUD.
     deleteProjectSessions: (request) =>
       ipcRenderer.invoke('sessions:delete-project-sessions', request) as Promise<void>,
     // Persists the last-open project/session pointer.
@@ -547,6 +562,22 @@ const api: OpenScienceAPI = {
     create: (request) => ipcRenderer.invoke('projects:create', request) as Promise<Project>,
     update: (request) => ipcRenderer.invoke('projects:update', request) as Promise<Project>,
     delete: (request) => ipcRenderer.invoke('projects:delete', request) as Promise<void>
+  },
+  // Files exposes metadata pages only. Thumbnail/full-preview bytes continue through the existing
+  // artifact/upload APIs after a visible item has been selected or rendered.
+  projectFiles: {
+    getOverview: (request) =>
+      ipcRenderer.invoke('project-files:get-overview', request) as Promise<ProjectFilesOverview>,
+    listFiles: (request) =>
+      ipcRenderer.invoke('project-files:list-files', request) as Promise<ProjectFilesPage>,
+    listArtifactGroups: (request) =>
+      ipcRenderer.invoke(
+        'project-files:list-artifact-groups',
+        request
+      ) as Promise<ArtifactGroupPage>,
+    repairIndex: (request) =>
+      ipcRenderer.invoke('project-files:repair-index', request) as Promise<void>,
+    onChanged: (listener) => onIpcMessage('project-files:changed', listener)
   },
   preview: {
     // Per-project preview panel state, persisted alongside projects in SQLite.

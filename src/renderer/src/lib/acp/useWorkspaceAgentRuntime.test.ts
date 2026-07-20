@@ -9,6 +9,7 @@ import {
 } from '../../stores/preview-workbench-store'
 import {
   createWorkspaceRuntimeEventProcessor,
+  deleteWorkspaceSession,
   getResumeFailureMessage,
   markRunningSessionsDisconnectedOnDrop,
   processContextOverflowRecovery,
@@ -224,6 +225,39 @@ describe('resume failure classification', () => {
     expect(message).toBe(
       'Agent session resume failed: ACP protocol version is not compatible with this client'
     )
+  })
+})
+
+describe('workspace session deletion', () => {
+  beforeEach(() => {
+    useSessionStore.setState(createInitialSessionState())
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Persist me',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+  })
+
+  it('removes the session only after runtime and durable deletion succeed', async () => {
+    const runtime = { deleteSession: vi.fn().mockResolvedValue(createSnapshot()) }
+    const persistDelete = vi.fn().mockResolvedValue(undefined)
+
+    await deleteWorkspaceSession(runtime, 'session-1', persistDelete)
+
+    expect(persistDelete).toHaveBeenCalledWith({ projectId: 'project-1', sessionId: 'session-1' })
+    expect(useSessionStore.getState().sessions).toEqual([])
+  })
+
+  it('keeps the session visible when durable deletion fails', async () => {
+    const runtime = { deleteSession: vi.fn().mockResolvedValue(createSnapshot()) }
+    const persistDelete = vi.fn().mockRejectedValue(new Error('disk locked'))
+
+    await expect(deleteWorkspaceSession(runtime, 'session-1', persistDelete)).rejects.toThrow(
+      'disk locked'
+    )
+
+    expect(useSessionStore.getState().sessions).toHaveLength(1)
   })
 })
 

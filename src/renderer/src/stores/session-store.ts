@@ -352,6 +352,57 @@ const createPersistedArtifact = (artifact: ArtifactFile): PersistedArtifact => (
   mtimeMs: artifact.mtimeMs
 })
 
+// Compare only persisted file metadata, in stable array order, before advancing filesRevision. This
+// keeps text/status-only session updates on the repository revision fast path.
+const arePersistedUploadsEqual = (
+  left: PersistedUploadedAttachment[] | undefined,
+  right: PersistedUploadedAttachment[]
+): boolean => {
+  const current = left ?? []
+  return (
+    current.length === right.length &&
+    current.every((item, index) => {
+      const next = right[index]
+      return (
+        item.id === next.id &&
+        item.sessionId === next.sessionId &&
+        item.name === next.name &&
+        item.originalName === next.originalName &&
+        item.path === next.path &&
+        item.mimeType === next.mimeType &&
+        item.size === next.size
+      )
+    })
+  )
+}
+
+const arePersistedArtifactsEqual = (
+  left: PersistedArtifact[] | undefined,
+  right: PersistedArtifact[]
+): boolean => {
+  const current = left ?? []
+  return (
+    current.length === right.length &&
+    current.every((item, index) => {
+      const next = right[index]
+      return (
+        item.id === next.id &&
+        item.kind === next.kind &&
+        item.path === next.path &&
+        item.fileUrl === next.fileUrl &&
+        item.name === next.name &&
+        item.mimeType === next.mimeType &&
+        item.size === next.size &&
+        item.mtimeMs === next.mtimeMs &&
+        item.sha256 === next.sha256
+      )
+    })
+  )
+}
+
+const areStringArraysEqual = (left: string[], right: string[]): boolean =>
+  left.length === right.length && left.every((item, index) => item === right[index])
+
 // Merges artifacts by id so replayed runtime events update paths without duplicating file cards.
 const upsertArtifacts = (
   existingArtifacts: PersistedArtifact[] | undefined,
@@ -814,26 +865,38 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         const preservedArtifacts = (session.artifacts ?? []).filter(
           (artifact) => !replacedArtifactIds.has(artifact.id)
         )
+        const nextArtifacts = upsertArtifacts(preservedArtifacts, incomingArtifacts)
+
+        if (
+          arePersistedArtifactsEqual(session.artifacts, nextArtifacts) &&
+          areStringArraysEqual(message.artifactIds ?? [], incomingArtifactIds)
+        ) {
+          return session
+        }
+
+        const now = Date.now()
 
         return {
           ...session,
-          artifacts: upsertArtifacts(preservedArtifacts, incomingArtifacts),
+          artifacts: nextArtifacts,
           messages: session.messages.map((item) =>
             item.id === messageId
               ? {
                   ...item,
                   artifactIds: incomingArtifactIds,
-                  updatedAt: Date.now()
+                  updatedAt: now
                 }
               : item
           ),
-          updatedAt: Date.now()
+          filesRevision: (session.filesRevision ?? 0) + 1,
+          updatedAt: now
         }
       })
     }))
   },
 
-  // Replaces upload references on the local user message after pending files move to the session dir.
+  // Replaces upload references after pending files move to the session directory. filesRevision is
+  // advanced only when persisted metadata actually changed, which schedules one index rescan.
   replaceMessageUploads: ({ sessionId, messageId, uploads }) => {
     if (!sessionId || !messageId) return
 
@@ -843,6 +906,13 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       sessions: state.sessions.map((session) => {
         if (session.id !== sessionId) return session
 
+        const targetMessage = session.messages.find((message) => message.id === messageId)
+        if (!targetMessage || arePersistedUploadsEqual(targetMessage.uploads, incomingUploads)) {
+          return session
+        }
+
+        const now = Date.now()
+
         return {
           ...session,
           messages: session.messages.map((message) =>
@@ -850,11 +920,12 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               ? {
                   ...message,
                   uploads: incomingUploads,
-                  updatedAt: Date.now()
+                  updatedAt: now
                 }
               : message
           ),
-          updatedAt: Date.now()
+          filesRevision: (session.filesRevision ?? 0) + 1,
+          updatedAt: now
         }
       })
     }))
@@ -1121,20 +1192,26 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }))
   },
 
-  // Drops a single message by id (used to remove a stale interrupted user turn before it is re-sent).
+  // Drops a stale interrupted turn before re-send. Removing a message advances filesRevision only if
+  // it also removes upload/artifact references from the indexed projection.
   removeMessage: (sessionId, messageId) => {
     if (!sessionId || !messageId) return
 
     set((state) => ({
-      sessions: state.sessions.map((session) =>
-        session.id === sessionId
-          ? {
-              ...session,
-              messages: session.messages.filter((message) => message.id !== messageId),
-              updatedAt: Date.now()
-            }
-          : session
-      )
+      sessions: state.sessions.map((session) => {
+        if (session.id !== sessionId) return session
+        const removedMessage = session.messages.find((message) => message.id === messageId)
+        if (!removedMessage) return session
+        const hasFiles =
+          (removedMessage.uploads?.length ?? 0) > 0 || (removedMessage.artifactIds?.length ?? 0) > 0
+
+        return {
+          ...session,
+          messages: session.messages.filter((message) => message.id !== messageId),
+          filesRevision: hasFiles ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
+          updatedAt: Date.now()
+        }
+      })
     }))
   },
 

@@ -48,7 +48,6 @@ describe('session persistence IPC handlers', () => {
 
     await handlers.deleteProjectSessions({ projectId: 'project-a' })
     expect(repository.deleteProjectSessions).toHaveBeenCalledWith('project-a')
-    // Cascade: review cleanup is attempted for the project.
     expect(reviewRepository.deleteReviewsForProject).toHaveBeenCalledWith('project-a')
 
     await handlers.saveManifest({ lastProjectId: 'project-a', lastSessionId: 'session-1' })

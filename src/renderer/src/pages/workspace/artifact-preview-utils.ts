@@ -9,6 +9,8 @@ import {
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
 export const ARTIFACT_PREVIEW_BYTES = 32768
+// Image thumbnails may require the complete encoded payload, but remain bounded to protect renderer IPC.
+export const ARTIFACT_IMAGE_PREVIEW_BYTES = 1024 * 1024
 
 export const getArtifactName = (artifact: MessageArtifact): string => artifact.name ?? artifact.path
 

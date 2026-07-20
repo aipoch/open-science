@@ -60,7 +60,14 @@ import type {
   UpdateProjectRequest
 } from '../shared/projects'
 import type {
-  DeleteProjectSessionsRequest,
+  ArtifactGroupPage,
+  ListArtifactGroupsRequest,
+  ListProjectFilesRequest,
+  ProjectFilesChangedEvent,
+  ProjectFilesOverview,
+  ProjectFilesPage
+} from '../shared/project-files'
+import type {
   DeleteSessionRequest,
   LoadAllSessionsResult,
   PersistedChatSession,
@@ -163,7 +170,6 @@ interface OpenScienceAPI {
     loadAll(): Promise<LoadAllSessionsResult>
     saveSession(session: PersistedChatSession): Promise<void>
     deleteSession(request: DeleteSessionRequest): Promise<void>
-    deleteProjectSessions(request: DeleteProjectSessionsRequest): Promise<void>
     saveManifest(request: SaveSessionManifestRequest): Promise<void>
   }
   settings: {
@@ -240,6 +246,13 @@ interface OpenScienceAPI {
     create(request: CreateProjectRequest): Promise<Project>
     update(request: UpdateProjectRequest): Promise<Project>
     delete(request: DeleteProjectRequest): Promise<void>
+  }
+  projectFiles: {
+    getOverview(request: { projectId: string }): Promise<ProjectFilesOverview>
+    listFiles(request: ListProjectFilesRequest): Promise<ProjectFilesPage>
+    listArtifactGroups(request: ListArtifactGroupsRequest): Promise<ArtifactGroupPage>
+    repairIndex(request: { projectId: string }): Promise<void>
+    onChanged(listener: AcpListener<ProjectFilesChangedEvent>): RemoveListener
   }
   preview: {
     load(request: LoadPreviewStateRequest): Promise<PersistedPreviewState | null>

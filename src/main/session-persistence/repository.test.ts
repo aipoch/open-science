@@ -148,6 +148,18 @@ describe('session persistence repository (per-session files)', () => {
     expect(remaining).toContainEqual(expect.stringMatching(/^broken\.json\.invalid-/))
   })
 
+  it('reports a complete scan when corrupt files were successfully isolated', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const projectDir = join(storageRoot!, 'sessions', 'project-a')
+    await mkdir(projectDir, { recursive: true })
+    await writeFile(join(projectDir, 'broken.json'), '{broken json', 'utf8')
+
+    const scan = await repository.loadAllWithDiagnostics()
+
+    expect(scan.result.sessions).toEqual([])
+    expect(scan.isComplete).toBe(true)
+  })
+
   it('normalizes interrupted runs and open activities on load', async () => {
     const repository = new SessionRepository(await createStorageRoot())
 
@@ -210,6 +222,21 @@ describe('session persistence repository (per-session files)', () => {
     await repository.deleteProjectSessions('project-a')
     expect((await repository.loadAll()).sessions.map((session) => session.id)).toEqual([
       'session-3'
+    ])
+  })
+
+  it('keeps a staged project deletion committed when recursive cleanup fails', async () => {
+    const root = await createStorageRoot()
+    const remove = vi.fn().mockRejectedValue(new Error('partial recursive cleanup'))
+    const repository = new SessionRepository(root, { remove })
+    await repository.saveSession(createSession({ id: 'session-1', projectId: 'project-a' }))
+    await repository.saveSession(createSession({ id: 'session-2', projectId: 'project-a' }))
+
+    await expect(repository.deleteProjectSessions('project-a')).resolves.toBeUndefined()
+    await expect(repository.loadAll()).resolves.toMatchObject({ sessions: [] })
+    expect(await readdir(join(root, 'deleted-sessions', 'project-a'))).toEqual([
+      'session-1.json',
+      'session-2.json'
     ])
   })
 

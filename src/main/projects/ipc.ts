@@ -12,12 +12,13 @@ import type {
   Project,
   UpdateProjectRequest
 } from '../../shared/projects'
-import { resolveStorageRoot } from '../storage-root'
+import type { ProjectDeletionCoordinator } from './deletion-coordinator'
 import { PreviewStateRepository } from './preview-repository'
 import { getProjectDbClient } from './prisma-client'
 import { ProjectRepository } from './repository'
 import { ReviewRepository } from '../reviewer/repository'
 import { createLogger } from '../logger'
+import { resolveStorageRoot } from '../storage-root'
 
 const log = createLogger('projects:ipc')
 
@@ -28,28 +29,6 @@ type ProjectHandlers = {
   update: (request: UpdateProjectRequest) => Promise<Project>
   delete: (id: string) => Promise<void>
 }
-
-// Adapts a repository into thin handlers so the IPC surface stays easy to unit test.
-const createProjectHandlers = (
-  repository: ProjectRepository,
-  reviewRepository: ReviewRepository
-): ProjectHandlers => ({
-  list: () => repository.list(),
-  get: (id) => repository.get(id),
-  create: (request) => repository.create(request),
-  update: (request) => repository.update(request),
-  delete: async (id) => {
-    // Delete cascade: remove reviewer rows first so no orphan reviews/findings remain.
-    // A reviewer-cleanup failure must not block the underlying project delete (fire-and-forget).
-    await reviewRepository.deleteReviewsForProject(id).catch((error: unknown) => {
-      log.warn('deleteReviewsForProject failed (non-fatal)', {
-        projectId: id,
-        error: error instanceof Error ? error.message : String(error)
-      })
-    })
-    await repository.delete(id)
-  }
-})
 
 // Production repositories backed by the SQLite database under the (dev-aware) storage root. The client is
 // passed as a provider (not a resolved promise) so a failed first initialization can be retried on the
@@ -63,13 +42,58 @@ const createDefaultPreviewStateRepository = (): PreviewStateRepository =>
 const createDefaultReviewRepository = (): ReviewRepository =>
   new ReviewRepository(() => getProjectDbClient(resolveStorageRoot()))
 
+type ProjectDeleteHandler = Pick<
+  ProjectDeletionCoordinator,
+  'deleteProject' | 'recoverPendingDeletions'
+>
+type ProjectCrudRepository = Pick<ProjectRepository, 'list' | 'get' | 'create' | 'update'>
+type ProjectReviewDeletion = Pick<ReviewRepository, 'deleteReviewsForProject'>
+
+// Adapts repository operations into thin handlers while enforcing one shared recovery gate. CRUD
+// cannot observe or mutate projects until every durable deletion intent has finished replaying.
+const createProjectHandlers = (
+  repository: ProjectCrudRepository,
+  reviewRepository: ProjectReviewDeletion,
+  deletionCoordinator: ProjectDeleteHandler
+): ProjectHandlers => ({
+  list: async () => {
+    await deletionCoordinator.recoverPendingDeletions()
+    return repository.list()
+  },
+  get: async (id) => {
+    await deletionCoordinator.recoverPendingDeletions()
+    return repository.get(id)
+  },
+  create: async (request) => {
+    await deletionCoordinator.recoverPendingDeletions()
+    return repository.create(request)
+  },
+  update: async (request) => {
+    await deletionCoordinator.recoverPendingDeletions()
+    return repository.update(request)
+  },
+  delete: async (id) => {
+    await deletionCoordinator.recoverPendingDeletions()
+    // Reviewer data is auxiliary. Log cleanup failures but never block the authoritative project,
+    // session, and managed-file deletion transaction.
+    await reviewRepository.deleteReviewsForProject(id).catch((error: unknown) => {
+      log.warn('deleteReviewsForProject failed (non-fatal)', {
+        projectId: id,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    })
+    return deletionCoordinator.deleteProject(id)
+  }
+})
+
 // Registers the renderer-callable project + per-project preview-state commands.
 const registerProjectIpcHandlers = (
-  repository = createDefaultProjectRepository(),
-  previewRepository = createDefaultPreviewStateRepository(),
-  reviewRepository = createDefaultReviewRepository()
+  repository: ProjectRepository,
+  previewRepository: PreviewStateRepository,
+  reviewRepository: ReviewRepository,
+  deletionCoordinator: ProjectDeleteHandler
 ): void => {
-  const handlers = createProjectHandlers(repository, reviewRepository)
+  const handlers = createProjectHandlers(repository, reviewRepository, deletionCoordinator)
 
   ipcMain.handle('projects:list', () => handlers.list())
   ipcMain.handle('projects:get', (_event, id: string) => handlers.get(id))
@@ -99,6 +123,7 @@ const registerProjectIpcHandlers = (
 export {
   createDefaultPreviewStateRepository,
   createDefaultProjectRepository,
+  createDefaultReviewRepository,
   createProjectHandlers,
   registerProjectIpcHandlers
 }

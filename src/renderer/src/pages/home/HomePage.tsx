@@ -188,8 +188,7 @@ const HomePage = (): React.JSX.Element => {
       })
   }
 
-  // Deletes the project, then cascades its sessions: memory is cleared (the persistence bridge removes
-  // each session file) and the now-empty project directory is removed on disk. Artifacts are kept.
+  // Main coordinates durable project/session/index cleanup; renderer state changes only after it succeeds.
   const confirmDeleteProject = (): void => {
     if (!projectToDelete) return
 
@@ -200,11 +199,9 @@ const HomePage = (): React.JSX.Element => {
     void deleteProject(projectId)
       .then(() => {
         useSessionStore.getState().removeSessionsForProject(projectId)
-        void window.api.sessions.deleteProjectSessions({ projectId })
-        void window.api.preview.delete({ projectId })
       })
       .catch(() => {
-        // Deletion failed in the DB; leave the project (and its sessions) untouched.
+        // Durable deletion failed; leave the project and in-memory sessions untouched.
       })
   }
 

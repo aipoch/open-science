@@ -116,6 +116,8 @@ export type PersistedChatSession = {
   activeRun?: PersistedActiveRun
   error?: string
   artifacts?: PersistedArtifact[]
+  // Incremented only when finalized file metadata changes; text streaming leaves it untouched.
+  filesRevision?: number
   createdAt: number
   updatedAt: number
 }
@@ -600,6 +602,10 @@ const sanitizeSession = (session: unknown): PersistedChatSession | undefined => 
   if (activeRun) sanitized.activeRun = activeRun
   if (error) sanitized.error = error
   if (artifacts.length > 0) sanitized.artifacts = artifacts
+  const filesRevision = asNumber(session.filesRevision)
+  if (filesRevision !== undefined && Number.isInteger(filesRevision) && filesRevision >= 0) {
+    sanitized.filesRevision = filesRevision
+  }
   if (activities.length > 0) sanitized.activities = activities
 
   return normalizeSessionAfterRestore(sanitized)
@@ -668,6 +674,8 @@ export type DeleteSessionRequest = {
   sessionId: string
 }
 
+// Retained for callers that explicitly remove all sessions in a project; the main-process coordinator
+// applies the same soft-delete/index invalidation path used by project deletion.
 export type DeleteProjectSessionsRequest = {
   projectId: string
 }

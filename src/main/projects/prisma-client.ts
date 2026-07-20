@@ -79,6 +79,61 @@ const FINDING_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "Finding" (
 // does not support IF NOT EXISTS on ALTER TABLE ADD COLUMN).
 const FINDING_ADD_REFLAG_COUNT_DDL = `ALTER TABLE "Finding" ADD COLUMN "reflagCount" INTEGER NOT NULL DEFAULT 0`
 
+// Runtime DDL remains idempotent for existing installations that do not run a separate migration
+// command. Prisma models provide typed access after these tables and indexes have been ensured.
+const PROJECT_DELETION_INTENT_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ProjectDeletionIntent" (
+    "projectId" TEXT NOT NULL PRIMARY KEY,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`
+
+// ManagedFile is a metadata projection only: storageKey points back into the existing managed roots,
+// while soft-delete fields keep Files queries reversible during durable session/project deletion.
+const MANAGED_FILE_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ManagedFile" (
+    "seq" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "source" TEXT NOT NULL,
+    "sourceFileId" TEXT NOT NULL,
+    "projectId" TEXT NOT NULL,
+    "sessionId" TEXT NOT NULL,
+    "messageId" TEXT,
+    "displayName" TEXT NOT NULL,
+    "storageKey" TEXT NOT NULL,
+    "mimeType" TEXT,
+    "sizeBytes" BIGINT NOT NULL,
+    "mtimeMs" BIGINT,
+    "sortAtMs" BIGINT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    "deletedAt" DATETIME,
+    "deleteOperationId" TEXT
+);`
+
+// One ledger row per session provides the filesRevision fast path, materialized source counts, and the
+// independent ordering key used by artifact-group pagination.
+const MANAGED_FILE_SESSION_SYNC_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ManagedFileSessionSync" (
+    "projectId" TEXT NOT NULL,
+    "sessionId" TEXT NOT NULL,
+    "filesRevision" INTEGER NOT NULL,
+    "groupSortAtMs" BIGINT NOT NULL,
+    "artifactCount" INTEGER NOT NULL DEFAULT 0,
+    "uploadCount" INTEGER NOT NULL DEFAULT 0,
+    "syncedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "deletedAt" DATETIME,
+    "deleteOperationId" TEXT,
+    PRIMARY KEY ("projectId", "sessionId")
+);`
+
+// Index order mirrors the three keyset queries: uploads, one session's artifacts, and session groups.
+// Project-scoped unique keys also enforce canonical ownership for legacy duplicate references.
+const MANAGED_FILE_INDEX_DDLS = [
+  `CREATE INDEX IF NOT EXISTS "ManagedFile_projectId_deletedAt_sortAtMs_seq_idx" ON "ManagedFile"("projectId", "deletedAt", "sortAtMs", "seq");`,
+  `CREATE INDEX IF NOT EXISTS "ManagedFile_projectId_source_deletedAt_sortAtMs_seq_idx" ON "ManagedFile"("projectId", "source", "deletedAt", "sortAtMs", "seq");`,
+  `CREATE INDEX IF NOT EXISTS "ManagedFile_projectId_sessionId_source_deletedAt_sortAtMs_seq_idx" ON "ManagedFile"("projectId", "sessionId", "source", "deletedAt", "sortAtMs", "seq");`,
+  `CREATE INDEX IF NOT EXISTS "ManagedFile_sessionId_deletedAt_idx" ON "ManagedFile"("sessionId", "deletedAt");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "ManagedFile_projectId_source_sourceFileId_key" ON "ManagedFile"("projectId", "source", "sourceFileId");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "ManagedFile_projectId_source_storageKey_key" ON "ManagedFile"("projectId", "source", "storageKey");`,
+  `CREATE INDEX IF NOT EXISTS "ManagedFileSessionSync_projectId_deletedAt_groupSortAtMs_sessionId_idx" ON "ManagedFileSessionSync"("projectId", "deletedAt", "groupSortAtMs", "sessionId");`
+]
+
 // Builds a client bound to the SQLite file under the given storage root. Not a singleton, so tests can
 // point separate clients at temp directories. Backslashes are normalized so the file: URL is valid on
 // Windows (Prisma's SQLite connector expects forward slashes).
@@ -106,6 +161,14 @@ const ensureProjectSchema = async (client: PrismaClient): Promise<void> => {
   // Migration guard: add reflagCount to Finding for DBs created before issue 15.
   // Catch ignores the error when the column already exists (no IF NOT EXISTS in SQLite ALTER TABLE).
   await client.$executeRawUnsafe(FINDING_ADD_REFLAG_COUNT_DDL).catch(() => undefined)
+
+  await client.$executeRawUnsafe(PROJECT_DELETION_INTENT_TABLE_DDL)
+  await client.$executeRawUnsafe(MANAGED_FILE_TABLE_DDL)
+  await client.$executeRawUnsafe(MANAGED_FILE_SESSION_SYNC_TABLE_DDL)
+
+  for (const ddl of MANAGED_FILE_INDEX_DDLS) {
+    await client.$executeRawUnsafe(ddl)
+  }
 }
 
 let clientPromise: Promise<PrismaClient> | undefined

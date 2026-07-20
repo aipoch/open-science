@@ -15,7 +15,11 @@ const createRow = (overrides: Record<string, unknown> = {}): Record<string, unkn
 // Builds a mock project delegate; each method is a spy the tests can assert against.
 const createMockClient = (
   methods: Partial<Record<'findMany' | 'findUnique' | 'create' | 'update' | 'delete', unknown>>
-): { client: ProjectClient; project: Record<string, ReturnType<typeof vi.fn>> } => {
+): {
+  client: ProjectClient
+  project: Record<string, ReturnType<typeof vi.fn>>
+  projectDeletionIntent: Record<string, ReturnType<typeof vi.fn>>
+} => {
   const project = {
     findMany: vi.fn(methods.findMany as never),
     findUnique: vi.fn(methods.findUnique as never),
@@ -24,7 +28,17 @@ const createMockClient = (
     delete: vi.fn(methods.delete as never)
   }
 
-  return { client: { project } as unknown as ProjectClient, project }
+  const projectDeletionIntent = {
+    upsert: vi.fn().mockResolvedValue(undefined),
+    deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+    findMany: vi.fn().mockResolvedValue([])
+  }
+
+  return {
+    client: { project, projectDeletionIntent } as unknown as ProjectClient,
+    project,
+    projectDeletionIntent
+  }
 }
 
 describe('project repository', () => {
@@ -96,5 +110,28 @@ describe('project repository', () => {
     await repository.delete('project-1')
 
     expect(project.delete).toHaveBeenCalledWith({ where: { id: 'project-1' } })
+  })
+
+  it('persists, lists, and clears project deletion intents', async () => {
+    const { client, projectDeletionIntent } = createMockClient({})
+    projectDeletionIntent.findMany.mockResolvedValue([{ projectId: 'project-1' }])
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    await repository.createDeletionIntent('project-1')
+    await expect(repository.listDeletionIntents()).resolves.toEqual(['project-1'])
+    await repository.deleteDeletionIntent('project-1')
+
+    expect(projectDeletionIntent.upsert).toHaveBeenCalledWith({
+      where: { projectId: 'project-1' },
+      create: { projectId: 'project-1' },
+      update: {}
+    })
+    expect(projectDeletionIntent.findMany).toHaveBeenCalledWith({
+      orderBy: { createdAt: 'asc' },
+      select: { projectId: true }
+    })
+    expect(projectDeletionIntent.deleteMany).toHaveBeenCalledWith({
+      where: { projectId: 'project-1' }
+    })
   })
 })

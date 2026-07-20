@@ -15,7 +15,7 @@ import { createLogger } from '../logger'
 
 const log = createLogger('session-persistence:ipc')
 
-type SessionPersistenceRepository = {
+type SessionPersistenceBackend = {
   loadAll: () => Promise<LoadAllSessionsResult>
   saveSession: (session: PersistedChatSession) => Promise<void>
   deleteSession: (projectId: string, sessionId: string) => Promise<void>
@@ -31,9 +31,9 @@ type SessionPersistenceHandlers = {
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
 }
 
-// Adapts the repository into small handlers that are easy to unit test.
+// Adapts the coordinator into small handlers that are easy to unit test.
 const createSessionPersistenceHandlers = (
-  repository: SessionPersistenceRepository,
+  repository: SessionPersistenceBackend,
   reviewRepository: ReviewRepository
 ): SessionPersistenceHandlers => ({
   loadAll: () => repository.loadAll(),
@@ -50,9 +50,8 @@ const createSessionPersistenceHandlers = (
     await repository.deleteSession(request.projectId, request.sessionId)
   },
   deleteProjectSessions: async (request) => {
-    // Delete cascade: remove reviewer rows first so no orphan reviews/findings remain.
-    // Uses the project-level delete (more efficient than per-session iteration).
-    // A reviewer-cleanup failure must not block the underlying session deletes.
+    // Preserve the legacy project-session command while routing storage/index mutations through the
+    // shared coordinator. Reviewer rows are auxiliary and must not block the authoritative delete.
     await reviewRepository.deleteReviewsForProject(request.projectId).catch((error: unknown) => {
       log.warn('deleteReviewsForProject failed during deleteProjectSessions (non-fatal)', {
         projectId: request.projectId,
@@ -73,7 +72,7 @@ const createDefaultReviewRepository = (): ReviewRepository =>
 
 // Registers renderer-callable persistence commands without coupling them to ACP runtime IPC.
 const registerSessionPersistenceIpcHandlers = (
-  repository = createDefaultSessionRepository(),
+  repository: SessionPersistenceBackend,
   reviewRepository = createDefaultReviewRepository()
 ): void => {
   const handlers = createSessionPersistenceHandlers(repository, reviewRepository)
@@ -100,4 +99,4 @@ export {
   createSessionPersistenceHandlers,
   registerSessionPersistenceIpcHandlers
 }
-export type { SessionPersistenceRepository }
+export type { SessionPersistenceBackend }

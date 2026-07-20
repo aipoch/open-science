@@ -53,6 +53,9 @@ type WorkspaceMessageRuntime = Pick<
   'state' | 'createSession' | 'resumeSession' | 'resetSessionContext' | 'sendPrompt'
 >
 
+type WorkspaceDeletionRuntime = Pick<ReturnType<typeof useAcpRuntime>, 'deleteSession'>
+type PersistSessionDeletion = (request: { projectId: string; sessionId: string }) => Promise<void>
+
 type RuntimeEventApplier = (event: AcpRuntimeEvent) => Promise<boolean>
 
 type WorkspaceRuntimeEventProcessor = {
@@ -721,6 +724,34 @@ const markRunningSessionsDisconnectedOnDrop = (
   }
 }
 
+// Deletes in three ordered ownership layers: agent runtime, durable JSON/DB coordinator, then renderer
+// state. A failure in either authoritative layer leaves the session visible with an actionable error.
+const deleteWorkspaceSession = async (
+  runtime: WorkspaceDeletionRuntime,
+  sessionId: string,
+  persistDeletion: PersistSessionDeletion = window.api.sessions.deleteSession
+): Promise<void> => {
+  const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
+  if (!session?.projectId) return
+
+  const snapshot = await runtime.deleteSession(sessionId)
+  if (!snapshot || snapshot.sessionIds.includes(sessionId)) {
+    useSessionStore.getState().failRun(sessionId, 'Agent session deletion failed')
+    return
+  }
+
+  try {
+    await persistDeletion({ projectId: session.projectId, sessionId })
+  } catch (error) {
+    useSessionStore
+      .getState()
+      .failRun(sessionId, `Session deletion failed: ${getErrorMessage(error)}`)
+    throw error
+  }
+
+  useSessionStore.getState().deleteSession(sessionId)
+}
+
 const useWorkspaceAgentRuntime = (): {
   actionError: string | null
   isConnecting: boolean
@@ -806,17 +837,7 @@ const useWorkspaceAgentRuntime = (): {
   // Deletes the local session only after runtime state confirms it was removed.
   const deleteRuntimeSession = useCallback(
     async (sessionId: string): Promise<void> => {
-      const snapshot = await runtime.deleteSession(sessionId)
-
-      if (!snapshot) {
-        useSessionStore.getState().failRun(sessionId, 'Agent session deletion failed')
-        return
-      }
-
-      // Preview files intentionally outlive conversations, so only the chat session is removed.
-      if (!snapshot.sessionIds.includes(sessionId)) {
-        useSessionStore.getState().deleteSession(sessionId)
-      }
+      await deleteWorkspaceSession(runtime, sessionId).catch(() => undefined)
     },
     [runtime]
   )
@@ -881,6 +902,7 @@ const useWorkspaceAgentRuntime = (): {
 export {
   createWorkspaceRuntimeEventProcessor,
   getResumeFailureMessage,
+  deleteWorkspaceSession,
   markRunningSessionsDisconnectedOnDrop,
   processContextOverflowRecovery,
   processVisibleWorkspaceRuntimeEvents,

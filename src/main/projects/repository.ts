@@ -4,7 +4,7 @@ import type { CreateProjectRequest, Project, UpdateProjectRequest } from '../../
 
 // Only the project delegate is needed; typing to this subset keeps the repository unit-testable with a
 // lightweight mock instead of a real (engine-backed) PrismaClient.
-type ProjectClient = Pick<PrismaClient, 'project'>
+type ProjectClient = Pick<PrismaClient, 'project' | 'projectDeletionIntent'>
 
 // Normalizes Prisma rows into the epoch-ms shape shared with the renderer.
 const toProject = (row: PrismaProject): Project => ({
@@ -85,6 +85,33 @@ class ProjectRepository {
     const client = await this.getClient()
 
     await client.project.delete({ where: { id } })
+  }
+
+  // Upsert makes intent creation idempotent across repeated delete commands and crash recovery.
+  async createDeletionIntent(projectId: string): Promise<void> {
+    const client = await this.getClient()
+
+    await client.projectDeletionIntent.upsert({
+      where: { projectId },
+      create: { projectId },
+      update: {}
+    })
+  }
+
+  // deleteMany treats an already-finished or rolled-back intent as successful cleanup.
+  async deleteDeletionIntent(projectId: string): Promise<void> {
+    const client = await this.getClient()
+    await client.projectDeletionIntent.deleteMany({ where: { projectId } })
+  }
+
+  // Oldest-first replay preserves the durable order in which project deletions began.
+  async listDeletionIntents(): Promise<string[]> {
+    const client = await this.getClient()
+    const rows = await client.projectDeletionIntent.findMany({
+      orderBy: { createdAt: 'asc' },
+      select: { projectId: true }
+    })
+    return rows.map((row) => row.projectId)
   }
 }
 
