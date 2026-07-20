@@ -28,6 +28,11 @@ import type {
   SaveManagedFileRequest,
   SaveManagedFileResult
 } from '../shared/file-save'
+import type {
+  ComputeHost,
+  CreateComputeHostRequest,
+  DeleteComputeHostRequest
+} from '../shared/compute'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
   AppendNotebookCodeCellRequest,
@@ -265,6 +270,15 @@ interface OpenScienceAPI {
     create(request: CreateProjectRequest): Promise<Project>
     update(request: UpdateProjectRequest): Promise<Project>
     delete(request: DeleteProjectRequest): Promise<void>
+  }
+  compute: {
+    // SSH compute host record CRUD (Compute settings tab). No credentials cross this boundary.
+    list(): Promise<ComputeHost[]>
+    get(providerId: string): Promise<ComputeHost | null>
+    create(request: CreateComputeHostRequest): Promise<ComputeHost>
+    delete(request: DeleteComputeHostRequest): Promise<void>
+    // Selectable Host aliases parsed from ~/.ssh/config (patterns / Match blocks excluded).
+    sshConfigAliases(): Promise<string[]>
   }
   preview: {
     load(request: LoadPreviewStateRequest): Promise<PersistedPreviewState | null>

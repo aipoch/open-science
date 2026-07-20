@@ -80,3 +80,26 @@ model Finding {
   reflagCount       Int     @default(0)
   review            Review  @relation(fields: [reviewId], references: [id], onDelete: Cascade)
 }
+
+// A registered remote SSH compute host (Compute settings tab). Phase 1 (issue 01) manages the record
+// only — no SSH connection is made. Pure-additive table: it references nothing and nothing references
+// it, so adding it is byte-compatible with any pre-existing DB (see prisma-client.ts runtime DDL and
+// its compatibility tests). Security: only an ssh alias + optional non-secret overrides are stored;
+// no credentials or private keys ever land here (design.md §1/§3).
+model ComputeHost {
+  id               String    @id @default(cuid())
+  providerId       String    @unique // "ssh:<alias>"
+  displayName      String
+  shape            String    @default("direct_ssh") // direct_ssh | scheduler_cluster | bridge_runner
+  sshAlias         String
+  sshOverrides     String? // JSON: { user?, port?, identityFile? } — never credentials
+  scratchRoot      String?
+  scratchPinned    Boolean   @default(false)
+  concurrencyLimit Int? // stored but not enforced in Phase 1
+  probeResult      String? // JSON probe snapshot, written by a later issue
+  detailsDoc       String    @default("") // markdown notes, <= 32768 chars
+  detailsUpdatedAt DateTime?
+  detailsUpdatedBy String? // user | agent
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}

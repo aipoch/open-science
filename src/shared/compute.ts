@@ -1,0 +1,79 @@
+// Shared compute-host types crossing the main <-> renderer IPC boundary.
+//
+// Phase 1 (issue 01) covers host record management only: the SQLite/Prisma layer owns ComputeHost
+// rows (see src/main/compute). Probe/SSH execution and approvals land in later issues. Timestamps are
+// normalized to epoch milliseconds at the repository boundary so the renderer treats them like other
+// persisted timestamps. No credentials are ever stored — only an ssh alias and optional overrides.
+
+// Host topology, inferred by probe in a later issue. Persisted so downstream issues can branch on it;
+// Phase 1 never reads it for behavior.
+export type ComputeHostShape = 'direct_ssh' | 'scheduler_cluster' | 'bridge_runner'
+
+// Optional connection overrides layered on top of ~/.ssh/config (never credentials/keys). Stored as a
+// JSON string in the DB column; parsed to this shape at the repository boundary.
+export type SshOverrides = {
+  user?: string
+  port?: number
+  identityFile?: string
+}
+
+// One GPU model + how many of it a probe found. Part of the probe snapshot, not written in Phase 1.
+export type ProbeGpu = {
+  type: string
+  count: number
+}
+
+// Structured probe snapshot (drives Connected / Probe failed chrome). Written by the probe in a later
+// issue; Phase 1 only reads it back if present.
+export type ProbeResult = {
+  ok: boolean
+  probedAt: string
+  exitCode: number | null
+  errorTail: string | null
+  os?: string
+  cpus?: number
+  memMib?: number
+  gpus?: ProbeGpu[]
+  detectedScheduler?: 'slurm' | 'pbs' | 'lsf' | 'none'
+}
+
+// Who last wrote the details doc — the user (UI edit) or the agent (compute_details, later issue).
+export type DetailsAuthor = 'user' | 'agent'
+
+// A registered SSH compute host, normalized for the renderer.
+export type ComputeHost = {
+  id: string
+  // "ssh:<alias>", unique across hosts.
+  providerId: string
+  displayName: string
+  shape: ComputeHostShape
+  sshAlias: string
+  sshOverrides: SshOverrides | undefined
+  scratchRoot: string | undefined
+  scratchPinned: boolean
+  concurrencyLimit: number | undefined
+  probeResult: ProbeResult | undefined
+  detailsDoc: string
+  detailsUpdatedAt: number | undefined
+  detailsUpdatedBy: DetailsAuthor | undefined
+  createdAt: number
+  updatedAt: number
+}
+
+// Add-form payload. displayName defaults to the alias; detailsDoc seeds the notes (author = user).
+export type CreateComputeHostRequest = {
+  sshAlias: string
+  displayName?: string
+  detailsDoc?: string
+  sshOverrides?: SshOverrides
+}
+
+export type DeleteComputeHostRequest = {
+  providerId: string
+}
+
+// Matches the UI character counter and the compute_details cap (32 KiB) in later issues.
+export const DETAILS_DOC_MAX_LENGTH = 32768
+
+// The single source of truth for the provider_id convention: "ssh:<alias>".
+export const computeProviderId = (alias: string): string => `ssh:${alias.trim()}`

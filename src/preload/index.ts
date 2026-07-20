@@ -30,6 +30,11 @@ import type {
   SaveManagedFileRequest,
   SaveManagedFileResult
 } from '../shared/file-save'
+import type {
+  ComputeHost,
+  CreateComputeHostRequest,
+  DeleteComputeHostRequest
+} from '../shared/compute'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
   AppendNotebookCodeCellRequest,
@@ -284,6 +289,16 @@ type OpenScienceAPI = {
     create: (request: CreateProjectRequest) => Promise<Project>
     update: (request: UpdateProjectRequest) => Promise<Project>
     delete: (request: DeleteProjectRequest) => Promise<void>
+  }
+  compute: {
+    // SSH compute host record CRUD (Compute settings tab). No credentials cross this boundary — only
+    // an alias + optional non-secret overrides. `sshConfigAliases` returns selectable Host aliases
+    // parsed from the user's ~/.ssh/config (patterns and Match blocks excluded).
+    list: () => Promise<ComputeHost[]>
+    get: (providerId: string) => Promise<ComputeHost | null>
+    create: (request: CreateComputeHostRequest) => Promise<ComputeHost>
+    delete: (request: DeleteComputeHostRequest) => Promise<void>
+    sshConfigAliases: () => Promise<string[]>
   }
   preview: {
     load: (request: LoadPreviewStateRequest) => Promise<PersistedPreviewState | null>
@@ -631,6 +646,15 @@ const api: OpenScienceAPI = {
     create: (request) => ipcRenderer.invoke('projects:create', request) as Promise<Project>,
     update: (request) => ipcRenderer.invoke('projects:update', request) as Promise<Project>,
     delete: (request) => ipcRenderer.invoke('projects:delete', request) as Promise<void>
+  },
+  compute: {
+    // SSH compute host record CRUD, backed by the same SQLite/Prisma layer as projects.
+    list: () => ipcRenderer.invoke('compute:list') as Promise<ComputeHost[]>,
+    get: (providerId) =>
+      ipcRenderer.invoke('compute:get', providerId) as Promise<ComputeHost | null>,
+    create: (request) => ipcRenderer.invoke('compute:create', request) as Promise<ComputeHost>,
+    delete: (request) => ipcRenderer.invoke('compute:delete', request) as Promise<void>,
+    sshConfigAliases: () => ipcRenderer.invoke('compute:ssh-config-aliases') as Promise<string[]>
   },
   preview: {
     // Per-project preview panel state, persisted alongside projects in SQLite.

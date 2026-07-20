@@ -6,6 +6,7 @@ import { app, ipcMain } from 'electron'
 import { createDefaultNotebookRuntimeService, registerAcpIpcHandlers } from './acp/ipc'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
+import { registerComputeIpcHandlers } from './compute/ipc'
 import { wireConnectorReload } from './connector-reload'
 import { ApprovalBroker } from './connectors/approval-broker'
 import { toCustomMcpConfig, selectEnabledCustomServers } from './connectors/custom-mcp-bootstrap'
@@ -421,6 +422,9 @@ const registerIpcHandlers = async ({
     uploadRepository.deleteSessionUploads(sessionId)
   )
   registerProjectIpcHandlers(projectRepository, previewStateRepository)
+  // Compute settings: SSH host record CRUD + ~/.ssh/config alias listing (issue 01). Backed by the
+  // same SQLite client as projects/reviewer; no SSH connection is made in this phase.
+  registerComputeIpcHandlers()
   // Wire the reviewer backend into the app lifecycle: installs ipcMain.handle('reviewer:run', ...)
   // and 'reviewer:get-for-session' so the renderer's fire-and-forget reviewer calls resolve to
   // real handlers instead of no-ops. Passing the already-constructed AcpRuntime so the reviewer

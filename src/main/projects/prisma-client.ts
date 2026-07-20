@@ -79,6 +79,34 @@ const FINDING_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "Finding" (
 // does not support IF NOT EXISTS on ALTER TABLE ADD COLUMN).
 const FINDING_ADD_REFLAG_COUNT_DDL = `ALTER TABLE "Finding" ADD COLUMN "reflagCount" INTEGER NOT NULL DEFAULT 0`
 
+// Compute settings: one row per registered SSH compute host (Compute tab, issue 01). Pure-additive
+// table — it references nothing and nothing references it, so this CREATE runs safely against any
+// pre-existing DB. The DDL is byte-identical to what `prisma migrate diff` generates for the
+// ComputeHost model (verified in prisma-client.test.ts), keeping the runtime schema compatible with
+// the generated client without shipping the migrate engine. Security: only an ssh alias + optional
+// non-secret overrides are stored here; no credentials or keys (design.md §1/§3).
+const COMPUTE_HOST_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ComputeHost" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "providerId" TEXT NOT NULL,
+    "displayName" TEXT NOT NULL,
+    "shape" TEXT NOT NULL DEFAULT 'direct_ssh',
+    "sshAlias" TEXT NOT NULL,
+    "sshOverrides" TEXT,
+    "scratchRoot" TEXT,
+    "scratchPinned" BOOLEAN NOT NULL DEFAULT false,
+    "concurrencyLimit" INTEGER,
+    "probeResult" TEXT,
+    "detailsDoc" TEXT NOT NULL DEFAULT '',
+    "detailsUpdatedAt" DATETIME,
+    "detailsUpdatedBy" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL
+);`
+
+// The unique index Prisma expects for @unique providerId. Created separately (matching the migrate
+// output) and guarded with IF NOT EXISTS so re-running ensure is idempotent.
+const COMPUTE_HOST_PROVIDER_ID_INDEX_DDL = `CREATE UNIQUE INDEX IF NOT EXISTS "ComputeHost_providerId_key" ON "ComputeHost"("providerId")`
+
 // Builds a client bound to the SQLite file under the given storage root. Not a singleton, so tests can
 // point separate clients at temp directories. Backslashes are normalized so the file: URL is valid on
 // Windows (Prisma's SQLite connector expects forward slashes).
@@ -106,6 +134,11 @@ const ensureProjectSchema = async (client: PrismaClient): Promise<void> => {
   // Migration guard: add reflagCount to Finding for DBs created before issue 15.
   // Catch ignores the error when the column already exists (no IF NOT EXISTS in SQLite ALTER TABLE).
   await client.$executeRawUnsafe(FINDING_ADD_REFLAG_COUNT_DDL).catch(() => undefined)
+
+  // Compute hosts (issue 01): pure-additive table + its unique index. Both use IF NOT EXISTS so they
+  // are safe to (re)run on any existing DB without disturbing the reviewer/project tables above.
+  await client.$executeRawUnsafe(COMPUTE_HOST_TABLE_DDL)
+  await client.$executeRawUnsafe(COMPUTE_HOST_PROVIDER_ID_INDEX_DDL)
 }
 
 let clientPromise: Promise<PrismaClient> | undefined

@@ -10,7 +10,8 @@ import {
   Settings2,
   SlidersHorizontal,
   TerminalSquare,
-  X
+  X,
+  Zap
 } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 import { useEffect, useState } from 'react'
@@ -24,6 +25,7 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useComputeStore } from '@/stores/compute-store'
 import { ModelFrameworkCompatibilityAlert } from './ModelFrameworkCompatibilityAlert'
 import { ClaudeInstallCard } from './ClaudeInstallCard'
 import { ClaudeStatusCard } from './ClaudeStatusCard'
@@ -38,6 +40,9 @@ import { ConnectorsPanel, type ConnectorsView } from './ConnectorsPanel'
 import { ConnectorDetailView } from './ConnectorDetailView'
 import { ConnectorAddForm } from './ConnectorAddForm'
 import { ConnectorsNavIcon } from './connector-icons'
+import { ComputePanel, type ComputeView } from './ComputePanel'
+import { ComputeAddForm } from './ComputeAddForm'
+import { ComputeHostDetail } from './ComputeHostDetail'
 import { resolveVendorModelsUrl } from '../../../../shared/provider-registry'
 import { ActiveModelSelect } from './ActiveModelSelect'
 import { ProviderForm } from './ProviderForm'
@@ -92,7 +97,7 @@ const toUpsertRequest = (
 // Left-nav panels, grouped in the sidebar. "Capabilities" holds agent extensions (Skills); "Workspace"
 // holds environment/config (Model manages Claude + providers, General holds app settings incl. logs).
 type SettingsPanelId =
-  'model' | 'skills' | 'connectors' | 'general' | 'storage' | 'network' | 'runtimes'
+  'model' | 'skills' | 'connectors' | 'compute' | 'general' | 'storage' | 'network' | 'runtimes'
 
 type SettingsPanel = {
   id: SettingsPanelId
@@ -106,6 +111,7 @@ const SETTINGS_GROUPS: ReadonlyArray<{ label: string; panels: ReadonlyArray<Sett
     panels: [
       { id: 'skills', label: 'Skills', Icon: ScrollText },
       { id: 'connectors', label: 'Connectors', Icon: ConnectorsNavIcon },
+      { id: 'compute', label: 'Compute', Icon: Zap },
       { id: 'network', label: 'Network', Icon: Globe }
     ]
   },
@@ -137,6 +143,7 @@ type NavLocation = {
   model: ModelView
   connectors?: ConnectorsView
   network?: NetworkView
+  compute?: ComputeView
 }
 
 const INITIAL_LOCATION: NavLocation = {
@@ -144,7 +151,8 @@ const INITIAL_LOCATION: NavLocation = {
   skills: { kind: 'list' },
   model: { kind: 'list' },
   connectors: { kind: 'list' },
-  network: { kind: 'list' }
+  network: { kind: 'list' },
+  compute: { kind: 'list' }
 }
 
 // App-level model settings surface. Reuses the onboarding cards/form; manages providers (CRUD +
@@ -197,6 +205,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const skills = useSettingsStore((state) => state.skills)
   const connectors = useSettingsStore((state) => state.connectors)
   const customServers = useSettingsStore((state) => state.customServers)
+  const computeHosts = useComputeStore((state) => state.hosts)
   const [formValue, setFormValue] = useState<ProviderFormValue>(() =>
     createEmptyProviderFormValue()
   )
@@ -272,6 +281,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const modelView = currentLocation.model
   const connectorsView: ConnectorsView = currentLocation.connectors ?? { kind: 'list' }
   const networkView: NetworkView = currentLocation.network ?? { kind: 'list' }
+  const computeView: ComputeView = currentLocation.compute ?? { kind: 'list' }
   const canGoBack = historyIndex > 0
   const canGoForward = historyIndex < history.length - 1
 
@@ -279,6 +289,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const navigate = (location: NavLocation): void => {
     const nextConnectors = location.connectors ?? { kind: 'list' }
     const nextNetwork = location.network ?? { kind: 'list' }
+    const nextCompute = location.compute ?? { kind: 'list' }
     if (
       location.panel === activePanel &&
       location.skills.kind === skillsView.kind &&
@@ -290,7 +301,10 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
       nextConnectors.kind === connectorsView.kind &&
       ('id' in nextConnectors ? nextConnectors.id : undefined) ===
         ('id' in connectorsView ? connectorsView.id : undefined) &&
-      nextNetwork.kind === networkView.kind
+      nextNetwork.kind === networkView.kind &&
+      nextCompute.kind === computeView.kind &&
+      ('providerId' in nextCompute ? nextCompute.providerId : undefined) ===
+        ('providerId' in computeView ? computeView.providerId : undefined)
     ) {
       return
     }
@@ -315,6 +329,16 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
       model: modelView,
       connectors: connectorsView,
       network
+    })
+
+  // Navigates within the compute panel (list/add/detail) as a history entry.
+  const navigateCompute = (compute: ComputeView): void =>
+    navigate({
+      panel: 'compute',
+      skills: skillsView,
+      model: modelView,
+      connectors: connectorsView,
+      compute
     })
 
   // Shared header breadcrumb for a drilled-in sub-view (null when on a panel's list, so the plain
@@ -379,6 +403,24 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
           skills: currentLocation.skills,
           model: currentLocation.model,
           connectors: { kind: 'list' }
+        },
+        leaf
+      }
+    }
+    if (activePanel === 'compute' && computeView.kind !== 'list') {
+      const leaf =
+        computeView.kind === 'add'
+          ? 'Add SSH host'
+          : (computeHosts.find((host) => host.providerId === computeView.providerId)?.displayName ??
+            computeView.providerId)
+      return {
+        rootLabel: 'Compute',
+        rootTo: {
+          panel: 'compute',
+          skills: currentLocation.skills,
+          model: currentLocation.model,
+          connectors: currentLocation.connectors,
+          compute: { kind: 'list' }
         },
         leaf
       }
@@ -720,6 +762,20 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                     />
                   ) : (
                     <ConnectorsPanel onNavigate={navigateConnectors} />
+                  )
+                ) : activePanel === 'compute' ? (
+                  computeView.kind === 'add' ? (
+                    <ComputeAddForm
+                      onCreated={(providerId) => navigateCompute({ kind: 'detail', providerId })}
+                      onCancel={() => navigateCompute({ kind: 'list' })}
+                    />
+                  ) : computeView.kind === 'detail' ? (
+                    <ComputeHostDetail
+                      providerId={computeView.providerId}
+                      onRemoved={() => navigateCompute({ kind: 'list' })}
+                    />
+                  ) : (
+                    <ComputePanel onNavigate={navigateCompute} />
                   )
                 ) : activePanel === 'storage' ? (
                   <StoragePanel />
