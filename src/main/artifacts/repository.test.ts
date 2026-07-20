@@ -509,6 +509,59 @@ describe('artifact repository', () => {
     expect(files.map((file) => file.name)).toEqual(['alpha.txt', 'zeta.txt'])
   })
 
+  it('lists finalized artifacts across all sessions and excludes pending files', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+
+    // Two sessions each finalize a file into a message directory.
+    await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      filename: 'alpha.txt',
+      source: createInlineSource('a')
+    })
+    await repository.finalizeRunArtifacts({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      messageId: 'message-1'
+    })
+    await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'session-2',
+      runId: 'run-2',
+      filename: 'beta.txt',
+      source: createInlineSource('b')
+    })
+    await repository.finalizeRunArtifacts({
+      projectName: 'default-project',
+      sessionId: 'session-2',
+      runId: 'run-2',
+      messageId: 'message-2'
+    })
+    // A never-finalized pending file must not be listed as a project artifact.
+    await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'run-3',
+      filename: 'draft.txt',
+      source: createInlineSource('d')
+    })
+
+    const files = await repository.listProjectArtifacts('default-project')
+
+    expect(files.map((file) => file.name).sort()).toEqual(['alpha.txt', 'beta.txt'])
+    expect(files.map((file) => file.sessionId).sort()).toEqual(['session-1', 'session-2'])
+  })
+
+  it('returns an empty list when a project has no artifacts on disk', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+
+    await expect(repository.listProjectArtifacts('default-project')).resolves.toEqual([])
+  })
+
   it('derives the project artifact directory from the app storage root', () => {
     // Build the expectation with join() so the separator matches the host the test runs on.
     expect(getProjectArtifactDir('/Users/example/.open-science', 'default-project')).toBe(

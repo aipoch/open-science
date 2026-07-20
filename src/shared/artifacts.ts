@@ -101,6 +101,12 @@ export type ListMessageArtifactsRequest = {
   messageId: string
 }
 
+// Renderer request to enumerate every finalized artifact on disk for one project, so the file library
+// can surface files whose owning session was deleted (the project name matches the durable project id).
+export type ListProjectArtifactsRequest = {
+  projectName: string
+}
+
 // Internal repository list request after the app has resolved the logical project bucket.
 export type ListProjectMessageArtifactsRequest = ListMessageArtifactsRequest & {
   projectName: string

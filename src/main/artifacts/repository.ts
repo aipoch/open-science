@@ -317,6 +317,46 @@ class ArtifactRepository {
     )
   }
 
+  // Enumerates every finalized artifact on disk for one project, across all sessions and messages —
+  // including sessions whose metadata has since been deleted. Skips pending runs and sidecar metadata.
+  // Used to surface orphaned artifacts whose owning session no longer exists, so deleting a session or
+  // project never strands files that the user was promised would remain in the project.
+  async listProjectArtifacts(projectName: string): Promise<ArtifactFile[]> {
+    const project = assertSafePathSegment(projectName)
+    const projectDir = getProjectArtifactDir(this.storageRoot, project)
+    const files: ArtifactFile[] = []
+
+    // Session and message dirs use safe segments; the pattern also skips the `.pending`/`.metadata`
+    // dot-directories, so only real session/message directories are traversed.
+    for (const sessionId of await this.readSubdirectoryNames(projectDir)) {
+      if (!SAFE_SEGMENT_PATTERN.test(sessionId)) continue
+      const sessionDir = join(projectDir, sessionId)
+
+      for (const messageId of await this.readSubdirectoryNames(sessionDir)) {
+        if (!SAFE_SEGMENT_PATTERN.test(messageId)) continue
+        const messageDir = join(sessionDir, messageId)
+        const entries = await this.readFileEntries(messageDir)
+
+        for (const entry of entries) {
+          const metadata = await this.readArtifactMetadata(messageDir, entry.name)
+
+          files.push(
+            await this.createArtifactFile({
+              projectName: project,
+              sessionId,
+              messageId,
+              filename: entry.name,
+              filePath: join(messageDir, entry.name),
+              mimeType: metadata.mimeType
+            })
+          )
+        }
+      }
+    }
+
+    return files
+  }
+
   // Resolves a renderer-provided artifact path only after canonical root and symlink checks pass.
   async resolveManagedFilePath(request: OpenArtifactFileRequest): Promise<string> {
     if (
@@ -399,6 +439,18 @@ class ArtifactRepository {
   // Builds the durable directory displayed under one completed assistant message.
   private getMessageDir(projectName: string, sessionId: string, messageId: string): string {
     return join(getProjectArtifactDir(this.storageRoot, projectName), sessionId, messageId)
+  }
+
+  // Reads only direct subdirectory names, returning an empty list when the directory does not exist.
+  private async readSubdirectoryNames(directory: string): Promise<string[]> {
+    try {
+      const entries = await readdir(directory, { withFileTypes: true })
+
+      return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)
+    } catch (error) {
+      if (isMissingFileError(error)) return []
+      throw error
+    }
   }
 
   // Reads only direct files, returning an empty list when an artifact directory does not exist yet.

@@ -17,6 +17,7 @@ import type {
   ArtifactFile,
   ArtifactPreviewResult,
   FinalizeRunArtifactsRequest,
+  ListProjectArtifactsRequest,
   OpenArtifactFileRequest,
   ReadArtifactPreviewRequest
 } from '../shared/artifacts'
@@ -253,6 +254,7 @@ interface OpenScienceAPI {
   }
   artifacts: {
     finalizeRunArtifacts(request: FinalizeRunArtifactsRequest): Promise<ArtifactFile[]>
+    listProjectFiles(request: ListProjectArtifactsRequest): Promise<ArtifactFile[]>
     openFile(request: OpenArtifactFileRequest): Promise<void>
     readPreview(request: ReadArtifactPreviewRequest): Promise<ArtifactPreviewResult>
   }

@@ -3,6 +3,7 @@ import { ipcMain, shell } from 'electron'
 import type { ArtifactFile, ArtifactPreviewResult } from '../../shared/artifacts'
 import type {
   FinalizeRunArtifactsRequest,
+  ListProjectArtifactsRequest,
   OpenArtifactFileRequest,
   ReadArtifactPreviewRequest
 } from '../../shared/artifacts'
@@ -13,6 +14,7 @@ import { ArtifactRunRegistry } from './run-registry'
 
 type ArtifactHandlers = {
   finalizeRunArtifacts: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
+  listProjectFiles: (request: ListProjectArtifactsRequest) => Promise<ArtifactFile[]>
   openFile: (request: OpenArtifactFileRequest) => Promise<void>
   readPreview: (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
 }
@@ -67,6 +69,7 @@ const createArtifactHandlers = (
           finalizeRunArtifacts(repository, runRegistry, request)
         )
       ),
+    listProjectFiles: (request) => repository.listProjectArtifacts(request.projectName),
     openFile: async (request) => {
       // Resolve through the repository first so shell.openPath never sees unmanaged locations.
       const filePath = await repository.resolveManagedFilePath(request)
@@ -129,6 +132,9 @@ const registerArtifactIpcHandlers = (
 
   ipcMain.handle('artifacts:finalize-run', (_event, request: FinalizeRunArtifactsRequest) =>
     handlers.finalizeRunArtifacts(request)
+  )
+  ipcMain.handle('artifacts:list-project-files', (_event, request: ListProjectArtifactsRequest) =>
+    handlers.listProjectFiles(request)
   )
   ipcMain.handle('artifacts:open-file', (_event, request: OpenArtifactFileRequest) =>
     handlers.openFile(request)

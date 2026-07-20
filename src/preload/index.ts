@@ -19,6 +19,7 @@ import type {
   ArtifactFile,
   ArtifactPreviewResult,
   FinalizeRunArtifactsRequest,
+  ListProjectArtifactsRequest,
   OpenArtifactFileRequest,
   ReadArtifactPreviewRequest
 } from '../shared/artifacts'
@@ -273,6 +274,8 @@ type OpenScienceAPI = {
   artifacts: {
     // Finalizes files produced during one runtime event after the renderer has selected a message.
     finalizeRunArtifacts: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
+    // Lists every on-disk artifact for a project so orphaned files (owning session deleted) still show.
+    listProjectFiles: (request: ListProjectArtifactsRequest) => Promise<ArtifactFile[]>
     // Opens only managed files after the main process verifies the path.
     openFile: (request: OpenArtifactFileRequest) => Promise<void>
     // Reads a bounded text preview from managed generated files.
@@ -569,6 +572,9 @@ const api: OpenScienceAPI = {
     // Keep generated file movement in the main process where filesystem trust checks live.
     finalizeRunArtifacts: (request) =>
       ipcRenderer.invoke('artifacts:finalize-run', request) as Promise<ArtifactFile[]>,
+    // Lists every on-disk artifact for a project so orphaned files (owning session deleted) still show.
+    listProjectFiles: (request) =>
+      ipcRenderer.invoke('artifacts:list-project-files', request) as Promise<ArtifactFile[]>,
     openFile: (request) => ipcRenderer.invoke('artifacts:open-file', request) as Promise<void>,
     // Keep preview reads on the same managed-file trust path as opening files.
     readPreview: (request) =>

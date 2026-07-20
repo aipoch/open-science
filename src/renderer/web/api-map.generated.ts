@@ -13,6 +13,7 @@ export const WEB_INVOKE_CHANNELS = {
   'acp.sendPrompt': 'acp:send-prompt',
   'acp.setPermissionProfile': 'acp:set-permission-profile',
   'artifacts.finalizeRunArtifacts': 'artifacts:finalize-run',
+  'artifacts.listProjectFiles': 'artifacts:list-project-files',
   'artifacts.openFile': 'artifacts:open-file',
   'artifacts.readPreview': 'artifacts:read-preview',
   'cli.getStatus': 'cli:get-status',
