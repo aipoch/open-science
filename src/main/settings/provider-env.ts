@@ -19,6 +19,9 @@ export type ResolvedProvider = {
   // Which chat APIs the endpoint speaks; opencode uses this to pick anthropic vs openai-compatible.
   // Absent ⇒ ['anthropic'].
   apiEndpoints?: readonly ChatApiEndpoint[]
+  // Whether the active model accepts image input. opencode strips image parts for a custom/registered
+  // model whose config does not declare vision, so this is surfaced into its per-model capabilities.
+  supportsImageInput?: boolean
 }
 
 export type ProviderEnvOptions = {

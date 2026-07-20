@@ -1985,7 +1985,8 @@ class SettingsService {
         openaiBaseUrl: resolveVendorOpenAiBaseUrl(provider.vendorId, provider.region),
         model: modelOverride ?? defaultVendorModel(provider.vendorId),
         key,
-        apiEndpoints: this.resolveProviderApiEndpoints(provider)
+        apiEndpoints: this.resolveProviderApiEndpoints(provider),
+        supportsImageInput: this.providerSupportsImageInput(provider, modelOverride)
       }
     }
 
@@ -1994,7 +1995,8 @@ class SettingsService {
       baseUrl: provider.baseUrl,
       model: modelOverride ?? provider.model,
       key,
-      apiEndpoints: this.resolveProviderApiEndpoints(provider)
+      apiEndpoints: this.resolveProviderApiEndpoints(provider),
+      supportsImageInput: this.providerSupportsImageInput(provider, modelOverride)
     }
   }
 

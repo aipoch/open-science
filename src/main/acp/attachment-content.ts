@@ -128,6 +128,34 @@ export const isTabularAttachment = (name: string, mimeType?: string): boolean =>
   return TABULAR_EXTENSIONS.has(fileExtension(name))
 }
 
+// Raster image extensions that vision-capable agents can read as pixels, mapped to the MIME type to
+// inline them as. SVG is deliberately absent: it is vector/text, not a raster type the providers accept
+// as image content. Matches the accepted set in ACP_MESSAGE_IMAGE_MIME_TYPES.
+const IMAGE_EXTENSION_MIME = new Map<string, string>([
+  ['png', 'image/png'],
+  ['jpg', 'image/jpeg'],
+  ['jpeg', 'image/jpeg'],
+  ['gif', 'image/gif'],
+  ['webp', 'image/webp'],
+  ['avif', 'image/avif']
+])
+
+// The image MIME type to inline a file as, or undefined when it is not a supported raster image. A
+// concrete image/* MIME wins; a missing or generic MIME (browsers omit it for some drag/drop and paste
+// sources) falls back to the file extension — so a `.png` upload is still sent as pixels rather than a
+// bare file link the model can only reach by writing code. A concrete non-image MIME is authoritative.
+export const imageAttachmentMimeType = (name: string, mimeType?: string): string | undefined => {
+  const essence = mimeEssence(mimeType)
+
+  if (essence && essence.startsWith('image/')) {
+    return essence === 'image/svg+xml' ? undefined : essence
+  }
+
+  if (essence && !GENERIC_MIME_TYPES.has(essence)) return undefined
+
+  return IMAGE_EXTENSION_MIME.get(fileExtension(name))
+}
+
 // Human-readable byte size for the notice (binary units, one decimal past KB).
 export const formatBytes = (bytes: number): string => {
   if (bytes < 1024) return `${bytes} B`

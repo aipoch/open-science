@@ -114,6 +114,14 @@ const resolveOpencodeEndpoint = (
   return { bareModel, providerId, npm, baseURL }
 }
 
+// The opencode per-model capability block. opencode strips image parts before calling the provider for
+// any model whose config does not declare vision — custom and freshly-registered models default to
+// text-only — so a base64 image sent over ACP silently never reaches the provider. A multimodal model
+// must therefore advertise both the attachment capability and an image input modality. Empty (text-only)
+// otherwise, so a non-vision model is never told it can accept images.
+const buildModelCapabilities = (provider: ResolvedProvider): Record<string, unknown> =>
+  provider.supportsImageInput ? { attachment: true, modalities: { input: ['text', 'image'] } } : {}
+
 // The app-authoritative config layer (model + provider block + permission policy) passed verbatim to
 // opencode via OPENCODE_CONFIG_CONTENT, which opencode deep-merges ABOVE both the app-owned global config
 // and any project config. Pinning the provider/model/baseURL here (not just permission) means a
@@ -133,7 +141,7 @@ const buildAppConfigContent = (provider: ResolvedProvider): Record<string, unkno
           ...(baseURL ? { baseURL } : {}),
           ...(provider.key ? { apiKey: `{env:${OPENCODE_API_KEY_ENV}}` } : {})
         },
-        ...(bareModel ? { models: { [bareModel]: {} } } : {})
+        ...(bareModel ? { models: { [bareModel]: buildModelCapabilities(provider) } } : {})
       }
     }
   }
@@ -188,8 +196,11 @@ const buildOpencodeConfig = (
           // so the decrypted key is never persisted to opencode.json (see prepareModelConfig).
           ...(provider.key ? { apiKey: `{env:${OPENCODE_API_KEY_ENV}}` } : {})
         },
-        // Register the model so opencode treats a non-catalog id as a real, selectable model.
-        ...(bareModel ? { models: { ...baseModels, [bareModel]: {} } } : {})
+        // Register the model so opencode treats a non-catalog id as a real, selectable model, declaring
+        // its image capability when the active model is multimodal (else opencode strips image parts).
+        ...(bareModel
+          ? { models: { ...baseModels, [bareModel]: buildModelCapabilities(provider) } }
+          : {})
       }
     }
   }

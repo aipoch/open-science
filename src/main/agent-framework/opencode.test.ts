@@ -129,6 +129,25 @@ describe('opencodeFramework.prepareModelConfig', () => {
     expect(config.env?.OPENCODE_CONFIG_CONTENT).not.toContain('"k"')
   })
 
+  it('declares image capability in the pinned layer for a multimodal model', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      {
+        type: 'custom',
+        baseUrl: 'https://gw/v1',
+        model: 'kimi-k3',
+        key: 'k',
+        apiEndpoints: ['openai'],
+        supportsImageInput: true
+      },
+      { storageRoot: '/data', executablePath: '/bin/opencode' }
+    )
+
+    const content = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+    expect(content.provider['openai-compatible'].models).toEqual({
+      'kimi-k3': { attachment: true, modalities: { input: ['text', 'image'] } }
+    })
+  })
+
   it('mirrors the config file provider/model in the OPENCODE_CONFIG_CONTENT layer (no divergence)', () => {
     const config = opencodeFramework.prepareModelConfig(
       {
@@ -315,6 +334,40 @@ describe('buildOpencodeConfig', () => {
       })
     )
     expect(both.model).toBe('openai-compatible/m')
+  })
+
+  it('declares image capability on the model when it supports image input', () => {
+    // opencode strips image parts for a registered model that does not advertise vision, so a
+    // multimodal model must carry the attachment capability and an image input modality.
+    const config = JSON.parse(
+      buildOpencodeConfig({
+        type: 'custom',
+        baseUrl: 'https://gw/v1',
+        model: 'kimi-k3',
+        key: 'k',
+        apiEndpoints: ['openai'],
+        supportsImageInput: true
+      })
+    )
+
+    expect(config.provider['openai-compatible'].models).toEqual({
+      'kimi-k3': { attachment: true, modalities: { input: ['text', 'image'] } }
+    })
+  })
+
+  it('leaves a text-only model without image capability', () => {
+    const config = JSON.parse(
+      buildOpencodeConfig({
+        type: 'custom',
+        baseUrl: 'https://gw/v1',
+        model: 'deepseek-v4-flash',
+        key: 'k',
+        apiEndpoints: ['openai'],
+        supportsImageInput: false
+      })
+    )
+
+    expect(config.provider['openai-compatible'].models).toEqual({ 'deepseek-v4-flash': {} })
   })
 
   it('uses the OpenAI base for a dual-endpoint vendor, not its Anthropic base (DeepSeek)', () => {

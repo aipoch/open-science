@@ -4,6 +4,7 @@ import {
   MAX_EMBEDDED_TEXT_UPLOAD_BYTES,
   buildOversizedAttachmentNotice,
   formatBytes,
+  imageAttachmentMimeType,
   isTabularAttachment,
   isTextLikeAttachment
 } from './attachment-content'
@@ -60,6 +61,38 @@ describe('isTextLikeAttachment', () => {
     expect(isTextLikeAttachment('mol.sdf', 'chemical/x-mdl-sdfile')).toBe(true)
     // A compressed payload stays binary even with a text-looking name.
     expect(isTextLikeAttachment('reads.fastq', 'application/gzip')).toBe(false)
+  })
+})
+
+describe('imageAttachmentMimeType', () => {
+  it('resolves a concrete image MIME type', () => {
+    expect(imageAttachmentMimeType('x', 'image/png')).toBe('image/png')
+    expect(imageAttachmentMimeType('x', 'image/jpeg')).toBe('image/jpeg')
+    expect(imageAttachmentMimeType('x', 'IMAGE/WEBP')).toBe('image/webp')
+    expect(imageAttachmentMimeType('x', 'image/gif; foo=bar')).toBe('image/gif')
+  })
+
+  it('falls back to the extension when the MIME is missing or generic', () => {
+    // The reported bug: a screenshot dropped/pasted with no browser MIME must still be sent as pixels.
+    expect(imageAttachmentMimeType('image.png')).toBe('image/png')
+    expect(imageAttachmentMimeType('photo.JPG')).toBe('image/jpeg')
+    expect(imageAttachmentMimeType('shot.jpeg', 'application/octet-stream')).toBe('image/jpeg')
+    expect(imageAttachmentMimeType('anim.gif', 'binary/octet-stream')).toBe('image/gif')
+    expect(imageAttachmentMimeType('pic.webp')).toBe('image/webp')
+    expect(imageAttachmentMimeType('pic.avif')).toBe('image/avif')
+  })
+
+  it('lets a concrete non-image MIME stay authoritative', () => {
+    expect(imageAttachmentMimeType('image.png', 'application/pdf')).toBeUndefined()
+    expect(imageAttachmentMimeType('sheet.csv', 'text/csv')).toBeUndefined()
+  })
+
+  it('excludes SVG and unknown or non-image extensions', () => {
+    expect(imageAttachmentMimeType('logo.svg', 'image/svg+xml')).toBeUndefined()
+    expect(imageAttachmentMimeType('logo.svg')).toBeUndefined()
+    expect(imageAttachmentMimeType('archive.zip')).toBeUndefined()
+    expect(imageAttachmentMimeType('noext')).toBeUndefined()
+    expect(imageAttachmentMimeType('data.csv', 'application/octet-stream')).toBeUndefined()
   })
 })
 
