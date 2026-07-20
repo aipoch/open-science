@@ -154,69 +154,79 @@ const registerReviewerIpcHandlers = (
 
     log.info('review triggered', { sessionId, turnMessageId })
 
-    // Run in the background; the review's lifecycle reaches the renderer via reviewer:updated events.
-    void (async () => {
-      try {
-        // Create an AbortController for this review's fix loop. The controller is registered
-        // before runReview starts so the abort-fix-loop handler can find it immediately.
-        const abortController = new AbortController()
-        const effectiveMainSessionId = mainSessionId ?? sessionId
-
-        await runReview({
-          sessionId,
-          turnMessageId,
-          scopeTurnMessageId,
-          projectId,
-          mainSessionId,
-          model: model ?? '',
-          getSession: () => session,
-          reviewRepository,
-          acpRuntime: options.acpRuntime,
-          // Artifacts live under the relocatable data root; DB/sessions stay on the config root.
-          artifactStorageRoot: dataRoot,
-          onReviewUpdate: (review: ReviewWithChecks) => {
-            broadcastReviewUpdate({ review })
-          },
-          // Before the correction prompt is sent, suppress the next auto-review for the main
-          // session so the [Auditor] correction turn's stop event does not re-trigger a review.
-          onCorrectionPrompt: () => {
-            if (mainSessionId) {
-              broadcastSuppressNextAutoReview(mainSessionId)
-            }
-          },
-          // If the correction turn fails to send, its stop never arrives — clear the suppression so
-          // the session's next real turn still gets auto-reviewed.
-          onCorrectionFailed: () => {
-            if (mainSessionId) {
-              broadcastSuppressNextAutoReview(mainSessionId, true)
-            }
-          },
-          // Broadcast fix-loop lifecycle events and register/deregister the abort controller.
-          onFixLoopStart: () => {
-            fixLoopAbortControllers.set(effectiveMainSessionId, abortController)
-            broadcastFixLoopStart(effectiveMainSessionId)
-          },
-          onFixLoopEnd: () => {
-            fixLoopAbortControllers.delete(effectiveMainSessionId)
-            broadcastFixLoopEnd(effectiveMainSessionId)
-          },
-          fixLoopAbortSignal: abortController.signal
-        })
-      } catch (error) {
-        // runReview never throws for expected failures (it records lifecycle='error' and broadcasts a
-        // real Review row). An unexpected throw here is logged; the review row, if any, carries the
-        // error state to the renderer.
-        log.error('runReview threw unexpectedly', {
-          sessionId,
-          turnMessageId,
-          error: error instanceof Error ? error.message : String(error)
-        })
-      } finally {
-        inFlightReviewKeys.delete(inFlightKey)
+    // Resolve `started` only once the running Review row has actually been created and pushed
+    // (runReview's onStarted). If runReview fails BEFORE that (scope resolution or the DB insert), it
+    // settles without onStarted → started:false, so the caller (Re-run) stays retriable. The full
+    // review (reviewer session + fix loop) continues in the background regardless.
+    return await new Promise<ReviewRunResult>((resolveStart) => {
+      let settled = false
+      const settle = (started: boolean): void => {
+        if (settled) return
+        settled = true
+        resolveStart({ started })
       }
-    })()
 
-    return { started: true }
+      // Create an AbortController for this review's fix loop. The controller is registered
+      // before runReview starts so the abort-fix-loop handler can find it immediately.
+      const abortController = new AbortController()
+      const effectiveMainSessionId = mainSessionId ?? sessionId
+
+      void runReview({
+        sessionId,
+        turnMessageId,
+        scopeTurnMessageId,
+        projectId,
+        mainSessionId,
+        model: model ?? '',
+        getSession: () => session,
+        reviewRepository,
+        acpRuntime: options.acpRuntime,
+        // Artifacts live under the relocatable data root; DB/sessions stay on the config root.
+        artifactStorageRoot: dataRoot,
+        onStarted: () => settle(true),
+        onReviewUpdate: (review: ReviewWithChecks) => {
+          broadcastReviewUpdate({ review })
+        },
+        // Before the correction prompt is sent, suppress the next auto-review for the main
+        // session so the [Auditor] correction turn's stop event does not re-trigger a review.
+        onCorrectionPrompt: () => {
+          if (mainSessionId) {
+            broadcastSuppressNextAutoReview(mainSessionId)
+          }
+        },
+        // If the correction turn fails to send, its stop never arrives — clear the suppression so
+        // the session's next real turn still gets auto-reviewed.
+        onCorrectionFailed: () => {
+          if (mainSessionId) {
+            broadcastSuppressNextAutoReview(mainSessionId, true)
+          }
+        },
+        // Broadcast fix-loop lifecycle events and register/deregister the abort controller.
+        onFixLoopStart: () => {
+          fixLoopAbortControllers.set(effectiveMainSessionId, abortController)
+          broadcastFixLoopStart(effectiveMainSessionId)
+        },
+        onFixLoopEnd: () => {
+          fixLoopAbortControllers.delete(effectiveMainSessionId)
+          broadcastFixLoopEnd(effectiveMainSessionId)
+        },
+        fixLoopAbortSignal: abortController.signal
+      })
+        .catch((error: unknown) => {
+          // runReview records expected failures as lifecycle='error' itself; an unexpected throw here
+          // (e.g. the createReview insert failed before onStarted) is logged and reported as not-started.
+          log.error('runReview threw unexpectedly', {
+            sessionId,
+            turnMessageId,
+            error: error instanceof Error ? error.message : String(error)
+          })
+        })
+        .finally(() => {
+          // If the run ended without ever signalling onStarted, no review actually began.
+          settle(false)
+          inFlightReviewKeys.delete(inFlightKey)
+        })
+    })
   }
 
   return { triggerReview }

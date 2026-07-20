@@ -202,6 +202,38 @@ describe('review store', () => {
     vi.unstubAllGlobals()
   })
 
+  it('a plain push inherits the current outdated flag instead of dropping it', async () => {
+    // The review is flagged stale (a load computed it). A later push (e.g. a fix-loop finding change)
+    // carries no stale value — it must not silently clear the known outdated marker.
+    useReviewStore
+      .getState()
+      .handleReviewUpdate({ review: makeReview({ id: 'review-1', stale: true }) })
+
+    useReviewStore.getState().handleReviewUpdate({
+      review: makeReview({ id: 'review-1', checks: [makeCheck()], stale: undefined })
+    })
+
+    expect(useReviewStore.getState().getReviewsForSession('session-1')[0]?.stale).toBe(true)
+  })
+
+  it('a newer load that failed to recompute staleness keeps the existing outdated flag', async () => {
+    useReviewStore
+      .getState()
+      .handleReviewUpdate({ review: makeReview({ id: 'review-1', updatedAt: 1_000, stale: true }) })
+
+    // Newer payload, but stale could not be recomputed (undefined) — must inherit the current true.
+    const newerButUncomputed = [makeReview({ id: 'review-1', updatedAt: 2_000, stale: undefined })]
+    const getForSession = vi.fn().mockResolvedValue(newerButUncomputed)
+    vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
+
+    await useReviewStore.getState().loadReviewsForSession('session-1')
+
+    const stored = useReviewStore.getState().getReviewsForSession('session-1')
+    expect(stored[0]?.updatedAt).toBe(2_000)
+    expect(stored[0]?.stale).toBe(true)
+    vi.unstubAllGlobals()
+  })
+
   it('dedupes concurrent loads for the same session', async () => {
     let resolveLoad: ((value: ReviewWithChecks[]) => void) | undefined
     const getForSession = vi.fn().mockReturnValue(

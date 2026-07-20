@@ -41,6 +41,10 @@ export type RunReviewOptions = {
   // review). The scope is resolved from this turn; the row is still grouped under turnMessageId.
   // Defaults to turnMessageId.
   scopeTurnMessageId?: string
+  // Called once the running Review row has been created and pushed — i.e. the review is confirmed to
+  // have started. A failure before this point (scope resolution, the DB insert) throws without calling
+  // it, so the caller can report started:false and leave the turn retriable.
+  onStarted?: () => void
   // The project this session belongs to.
   projectId: string
   // Used to resolve the session's persisted data for turn-scope resolution.
@@ -760,6 +764,7 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
     artifactStorageRoot,
     model = '',
     onReviewUpdate,
+    onStarted,
     mainSessionId,
     onCorrectionPrompt,
     onCorrectionFailed,
@@ -811,6 +816,10 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
 
   const initialWithFindings: ReviewWithChecks = { ...review, checks: [] }
   onReviewUpdate?.(initialWithFindings)
+  // The running row now exists and has been pushed to the renderer — this is the point a caller can
+  // treat the review as genuinely "started". Anything that failed before here (scope resolution, the
+  // createReview insert) threw instead, so `started` is never reported for a run that never appeared.
+  onStarted?.()
 
   log.info('review created', { reviewId: review.id, blocks: scope.blocks.length })
 

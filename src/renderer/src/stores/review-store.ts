@@ -21,13 +21,19 @@ type ReviewStore = ReviewStoreData & {
   getReviewForTurn: (sessionId: string, turnMessageId: string) => ReviewWithChecks | undefined
 }
 
-// Inserts or replaces a review in the list by id, keeping the list in createdAt desc order.
+// Inserts or replaces a review in the list by id, keeping the list in createdAt desc order. `stale` is
+// transient (never sent by a push and only computed on load), so a same-id update that doesn't carry an
+// explicit stale result inherits the current one — otherwise a plain reviewer:updated push would drop a
+// known "outdated" flag. An explicit false (a load that computed not-stale) still wins via ??.
 const upsertReview = (
   reviews: ReviewWithChecks[],
   updated: ReviewWithChecks
 ): ReviewWithChecks[] => {
+  const current = reviews.find((r) => r.id === updated.id)
+  const merged =
+    current && updated.stale === undefined ? { ...updated, stale: current.stale } : updated
   const without = reviews.filter((r) => r.id !== updated.id)
-  return [updated, ...without].sort((a, b) => b.createdAt - a.createdAt)
+  return [merged, ...without].sort((a, b) => b.createdAt - a.createdAt)
 }
 
 // Merges a freshly-loaded snapshot into the existing list. A focus-triggered load reads a DB snapshot
@@ -47,14 +53,17 @@ const mergeLoadedReviews = (
   const byId = new Map(existing.map((review) => [review.id, review]))
   for (const review of loaded) {
     const current = byId.get(review.id)
-    if (!current || review.updatedAt > current.updatedAt) {
+    if (!current) {
       byId.set(review.id, review)
-    } else if (review.stale !== undefined && review.stale !== current.stale) {
-      // Apply the load's staleness only when it was actually COMPUTED (an explicit boolean). A load
-      // that failed to recompute (session/scope error) leaves stale undefined; using it would wrongly
-      // clear a known outdated flag, re-presenting a stale verdict as valid.
-      byId.set(review.id, { ...current, stale: review.stale })
+      continue
     }
+    // `stale` is only meaningful when this load actually COMPUTED it (an explicit boolean); a load that
+    // failed to recompute leaves it undefined and must inherit the current flag — otherwise it would
+    // clear a known outdated marker. This holds on BOTH branches, so even a newer payload with a failed
+    // recompute keeps the existing stale rather than replacing it with undefined.
+    const stale = review.stale ?? current.stale
+    const base = review.updatedAt > current.updatedAt ? review : current
+    byId.set(review.id, base.stale === stale ? base : { ...base, stale })
   }
   return [...byId.values()].sort((a, b) => b.createdAt - a.createdAt)
 }

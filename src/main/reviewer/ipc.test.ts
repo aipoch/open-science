@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ReviewRunRequest } from '../../shared/reviewer'
 import { REVIEWER_IPC } from '../../shared/reviewer'
@@ -67,9 +67,21 @@ const createRequest = (): ReviewRunRequest => ({
   projectId: 'project-1'
 })
 
+// Default: a review that "starts" (signals onStarted so triggerReview resolves started:true) and
+// completes immediately. Individual tests override runReview for held/failed runs.
+beforeEach(() => {
+  runReview.mockReset()
+  runReview.mockImplementation((opts?: { onStarted?: () => void }) => {
+    opts?.onStarted?.()
+    return Promise.resolve(undefined)
+  })
+  broadcastToRenderers.mockClear()
+  sessionLoadAll.mockReset()
+  sessionLoadAll.mockResolvedValue({ sessions: [] })
+})
+
 describe('reviewer IPC handlers', () => {
   it('runs reviews with artifacts rooted at the data root, not the config root', async () => {
-    runReview.mockClear()
     registerReviewerIpcHandlers({ acpRuntime })
 
     const runHandler = handlers.get(REVIEWER_IPC.RUN)
@@ -143,14 +155,9 @@ describe('reviewer IPC handlers', () => {
     resolveRun?.()
     await Promise.resolve()
     expect(runReview).toHaveBeenCalledTimes(1)
-
-    runReview.mockReset()
-    runReview.mockResolvedValue(undefined)
   })
 
   it('returns started:false without a review row or broadcast when the session load fails', async () => {
-    runReview.mockClear()
-    broadcastToRenderers.mockClear()
     // The pre-runReview session load throws (e.g. DB/FS unavailable).
     sessionLoadAll.mockRejectedValueOnce(new Error('session store unavailable'))
     registerReviewerIpcHandlers({ acpRuntime })
@@ -162,8 +169,18 @@ describe('reviewer IPC handlers', () => {
     expect(result).toEqual({ started: false })
     expect(runReview).not.toHaveBeenCalled()
     expect(broadcastToRenderers).not.toHaveBeenCalled()
+  })
 
-    sessionLoadAll.mockResolvedValue({ sessions: [] })
+  it('returns started:false when runReview fails before signalling onStarted', async () => {
+    // e.g. scope resolution or the createReview insert throws before the running row is pushed.
+    runReview.mockReset()
+    runReview.mockRejectedValueOnce(new Error('createReview failed'))
+    registerReviewerIpcHandlers({ acpRuntime })
+
+    const runHandler = handlers.get(REVIEWER_IPC.RUN)
+    const result = await runHandler?.({}, createRequest())
+
+    expect(result).toEqual({ started: false })
   })
 
   it('returns started:true when a review begins', async () => {
