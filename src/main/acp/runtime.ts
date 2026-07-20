@@ -32,6 +32,7 @@ import type {
   AcpSetPermissionProfileRequest,
   AcpStateSnapshot
 } from '../../shared/acp'
+import { getAcpRuntimeEventImage, MAX_ACP_SESSION_IMAGE_BYTES } from '../../shared/acp'
 import {
   DEFAULT_PERMISSION_PROFILE,
   normalizePermissionProfile,
@@ -53,6 +54,15 @@ import {
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 import { matchSessionModelOption } from './session-config'
 import { describePromptError } from './prompt-error'
+import {
+  ATTACHMENT_PREVIEW_BYTES,
+  MAX_EMBEDDED_TEXT_UPLOAD_BYTES,
+  buildOversizedAttachmentNotice,
+  imageAttachmentMimeType,
+  isTabularAttachment,
+  isTextLikeAttachment
+} from './attachment-content'
+import { readBoundedManagedFilePreview } from '../managed-file-preview'
 import { AcpPermissionBroker } from './permission-broker'
 import { isMcpToolName } from './permission-policy'
 import { applyCurrentModeUpdate } from './permission-profile-controller'
@@ -72,6 +82,7 @@ import {
   type NotebookRpcConnection
 } from '../notebook/mcp-server'
 import { getNotebookSessionRoot } from '../notebook/repository'
+import { codexStorageDir } from '../agent-framework/codex'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { withDataRootWrite } from '../storage/migration-state'
 import { opencodeStorageDir } from '../agent-framework/opencode'
@@ -82,8 +93,11 @@ import { isMediaOverflowError } from '../../shared/media-overflow'
 import {
   buildImageContentData,
   canInlineImageInSession,
+  consumeInlineImageBudget,
   extractPdfText,
-  MAX_SESSION_INLINE_IMAGE_BYTES
+  ImageContentError,
+  MAX_SESSION_INLINE_IMAGE_BYTES,
+  type InlineImageBudget
 } from '../uploads/attachment-media'
 
 type AcpRuntimeCallbacks = {
@@ -114,6 +128,7 @@ type AcpRuntimeOptions = {
   // Bounds the network-bound reconnect+resume so Resume always resolves; the fast attached-session
   // path is never timed. Injectable timer mirrors the approval broker so tests stay deterministic.
   resumeTimeoutMs?: number
+  cancelTimeoutMs?: number
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   clearTimer?: (handle: ReturnType<typeof setTimeout>) => void
   // Per-session cumulative inlined-image budget in base64 bytes. Defaults to MAX_SESSION_INLINE_IMAGE_BYTES;
@@ -198,8 +213,18 @@ const SKILLS_READ_GUARD_SYSTEM_PROMPT_APPEND = [
   '</open_science_skill_privacy_instructions>'
 ].join('\n')
 
-// Small text uploads are embedded directly; larger files stay as links to avoid huge prompt payloads.
-const MAX_EMBEDDED_TEXT_UPLOAD_BYTES = 1024 * 1024
+// Steers the agent away from reading large attached data files in their entirety, since a single big
+// read (esp. under frameworks whose read/bash tools do not hard-cap output) can exceed the provider's
+// request-size limit and break the conversation. Framework-neutral: Claude carries it in the system
+// prompt preset, opencode as a prompt prefix.
+const LARGE_DATA_FILE_SYSTEM_PROMPT_APPEND = [
+  '<open_science_large_file_instructions>',
+  'Large attached data files (CSV, TSV, TXT, JSON, FASTA/FASTQ, VCF, and similar tabular or text data) are provided as a file reference plus a short preview, not as full inline content.',
+  'Never read, cat, or print such a file in its entirety — a single large read can exceed the request-size limit and break the conversation.',
+  'Inspect structure first (columns, row count, a few sample rows), then read only the specific line ranges, rows, or columns you need.',
+  'To analyze, filter, or aggregate over a large file, load it in the notebook (e.g. pandas) and compute there instead of reading its contents into the conversation.',
+  '</open_science_large_file_instructions>'
+].join('\n')
 
 // Converts unknown thrown values into user-visible error text.
 const errorMessage = (error: unknown): string => {
@@ -221,13 +246,19 @@ const log = createLogger('acp')
 const isUnresumableSessionError = (error: unknown): boolean => {
   if (typeof error !== 'object' || error === null) return false
 
-  const candidate = error as { code?: number; message?: string }
+  const candidate = error as { code?: number; message?: string; data?: { details?: unknown } }
   const message = candidate.message ?? ''
 
+  if (candidate.code === -32002 || /resource not found|session not found/i.test(message))
+    return true
+
+  // Some restarted agents return a bare JSON-RPC Internal error for a lost session. Treat only that
+  // exact detail-free shape as unresumable; richer -32603 errors carry the real auth/MCP/provider
+  // failure in data.details and must propagate rather than being hidden by a fresh-session fallback.
   return (
-    candidate.code === -32002 ||
-    candidate.code === -32603 ||
-    /resource not found|internal error/i.test(message)
+    candidate.code === -32603 &&
+    /^internal error\.?$/i.test(message.trim()) &&
+    candidate.data?.details === undefined
   )
 }
 
@@ -251,6 +282,7 @@ class AcpRuntime {
   private connectionGeneration = 0
   private currentSessionId: string | undefined
   private supportsSessionClose = false
+  private supportsSessionDelete = false
   private supportsSessionResume = false
   private readonly sessions = new Map<string, ActiveSession>()
   private readonly sessionCwds = new Map<string, string>()
@@ -296,14 +328,24 @@ class AcpRuntime {
   // Mutable: refreshed from resolveBackend on each connect so a framework switch applies on reconnect.
   private framework: AgentFramework
   private readonly mcpHttpHost: AgentMcpHttpHost | undefined
+  // A Chat Completions provider uses the local Responses bridge. The app-owned notebook MCP has an
+  // explicit namespaced bridge mapping; other app MCP tools still require native Responses.
+  private nativeMcpEnabled = true
+  private bridgeMcpAliasesEnabled = false
   // Model to apply per session via the ACP model configOption (opencode); undefined for env-driven
   // frameworks (Claude). Refreshed from the resolved backend on each connect.
   private pendingSessionModel: string | undefined
+  // One-shot ACP authentication material resolved alongside the spawn config. It is cleared after
+  // initialize so the decrypted key is not retained by the runtime longer than necessary.
+  private pendingAuthentication: ResolvedAgentBackend['authentication']
+  private pendingProviderConfiguration: ResolvedAgentBackend['providerConfiguration']
   // Bounded resume network timeout + injectable timers (defaults to real setTimeout/clearTimeout).
   private readonly resumeTimeoutMs: number
+  private readonly cancelTimeoutMs: number
   private readonly inlineImageBudgetBytes: number
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void
+  private readonly cancelTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly artifactOptions: AcpRuntimeArtifactOptions | undefined
   private readonly notebookOptions: AcpRuntimeNotebookOptions | undefined
   private readonly artifactRepository: ArtifactRepository | undefined
@@ -329,6 +371,7 @@ class AcpRuntime {
     this.framework = options.framework ?? claudeCodeFramework
     this.mcpHttpHost = options.mcpHttpHost
     this.resumeTimeoutMs = options.resumeTimeoutMs ?? 30_000
+    this.cancelTimeoutMs = options.cancelTimeoutMs ?? 5_000
     this.inlineImageBudgetBytes = options.inlineImageBudgetBytes ?? MAX_SESSION_INLINE_IMAGE_BYTES
     this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
     this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle))
@@ -541,7 +584,20 @@ class AcpRuntime {
           plan: {}
         }
       })
+      if (this.pendingAuthentication) {
+        const authentication = this.pendingAuthentication
+        this.pendingAuthentication = undefined
+        await this.connection.agent.request(acp.methods.agent.authenticate, authentication)
+      }
+      if (this.pendingProviderConfiguration) {
+        const providerConfiguration = this.pendingProviderConfiguration
+        this.pendingProviderConfiguration = undefined
+        await this.connection.agent.request(acp.methods.agent.providers.set, providerConfiguration)
+      }
       this.supportsSessionClose = Boolean(initResult.agentCapabilities?.sessionCapabilities?.close)
+      this.supportsSessionDelete = Boolean(
+        initResult.agentCapabilities?.sessionCapabilities?.delete
+      )
       this.supportsSessionResume = Boolean(
         initResult.agentCapabilities?.sessionCapabilities?.resume
       )
@@ -550,6 +606,7 @@ class AcpRuntime {
       log.info('agent initialized', {
         protocolVersion: initResult.protocolVersion,
         supportsSessionClose: this.supportsSessionClose,
+        supportsSessionDelete: this.supportsSessionDelete,
         supportsSessionResume: this.supportsSessionResume
       })
 
@@ -635,7 +692,7 @@ class AcpRuntime {
     })
     this.emitState()
 
-    return { sessionId: session.sessionId, cwd: sessionCwd }
+    return { sessionId: session.sessionId, cwd: sessionCwd, frameworkId: this.framework.id }
   }
 
   // Registers a freshly-built agent session under an app-facing id (used when adopting a conversation
@@ -688,7 +745,7 @@ class AcpRuntime {
       this.sessionProjectNames.set(request.sessionId, projectName)
       this.emitState()
 
-      return { sessionId: request.sessionId, cwd: sessionCwd }
+      return { sessionId: request.sessionId, cwd: sessionCwd, frameworkId: this.framework.id }
     }
 
     // The reconnect + session/resume handshake spawns a fresh agent and is network-bound, so it is
@@ -769,16 +826,12 @@ class AcpRuntime {
     projectName: string
   ): Promise<AcpCreateSessionResponse> {
     const connection = await this.ensureConnected(sessionCwd)
-    // Resume is optional in ACP, so fail early when the agent did not advertise it.
-    if (!this.supportsSessionResume) {
-      throw new Error('ACP agent does not support session resume.')
-    }
-
     // A session created under a different framework can never be resumed by the current agent — each
     // framework keeps its own session store, so the request is guaranteed to fail and only makes the
     // agent log a scary internal error. Skip straight to adopting a fresh session (context still
     // resets, so the caller replays the transcript) when we know it last ran under another framework.
-    const priorFramework = this.sessionFrameworks.get(request.sessionId)
+    const priorFramework =
+      this.sessionFrameworks.get(request.sessionId) ?? request.previousFrameworkId
 
     if (priorFramework && priorFramework !== this.framework.id) {
       log.info('skipping cross-framework resume; adopting a fresh session', {
@@ -788,6 +841,12 @@ class AcpRuntime {
       })
 
       return this.adoptFreshSession(connection, request, sessionCwd, projectName)
+    }
+
+    // Resume is optional in ACP. A cross-framework session was handled above and can always be
+    // adopted fresh; same-framework sessions require the advertised resume capability.
+    if (!this.supportsSessionResume) {
+      throw new Error('ACP agent does not support session resume.')
     }
 
     // Resumed sessions already have stable ids, so the artifact session mirrors the runtime session id.
@@ -855,7 +914,7 @@ class AcpRuntime {
     })
     this.emitState()
 
-    return { sessionId: request.sessionId, cwd: sessionCwd }
+    return { sessionId: request.sessionId, cwd: sessionCwd, frameworkId: this.framework.id }
   }
 
   // Builds a brand-new agent session under the SAME app id when a resume cannot reattach the original
@@ -903,7 +962,12 @@ class AcpRuntime {
     )
     this.emitState()
 
-    return { sessionId: request.sessionId, cwd: sessionCwd, contextReset: true }
+    return {
+      sessionId: request.sessionId,
+      cwd: sessionCwd,
+      frameworkId: this.framework.id,
+      contextReset: true
+    }
   }
 
   // Changes approval behavior only while the conversation is idle. Applying the ACP mode before the
@@ -1042,7 +1106,10 @@ class AcpRuntime {
   }
 
   private async disconnectCurrent(emitClosedStatus = true): Promise<AcpStateSnapshot> {
+    for (const timer of this.cancelTimers.values()) this.clearTimer(timer)
+    this.cancelTimers.clear()
     this.permissionBroker.cancelAll()
+    this.reviewerSessionIds.clear()
     this.promptInFlightSessionIds.clear()
 
     for (const session of this.sessions.values()) {
@@ -1062,6 +1129,7 @@ class AcpRuntime {
     this.agentToAppSessionId.clear()
     this.currentSessionId = undefined
     this.supportsSessionClose = false
+    this.supportsSessionDelete = false
     this.supportsSessionResume = false
     this.connection?.close()
     this.connection = undefined
@@ -1131,7 +1199,13 @@ class AcpRuntime {
     // Adopt the framework this reconnect resolved so session meta, permission mapping, and the spawn
     // itself all agree with the current selection.
     this.framework = backend.framework
+    this.nativeMcpEnabled =
+      backend.framework.id !== 'codex' || backend.providerConfiguration === undefined
+    this.bridgeMcpAliasesEnabled =
+      backend.framework.id === 'codex' && backend.providerConfiguration !== undefined
     this.pendingSessionModel = backend.sessionModel
+    this.pendingAuthentication = backend.authentication
+    this.pendingProviderConfiguration = backend.providerConfiguration
 
     // Surfaces which backend + model this connect uses, so a fallback to the framework's own default
     // model (e.g. opencode with no app model to inject) is diagnosable in the log rather than silent.
@@ -1184,12 +1258,17 @@ class AcpRuntime {
         this.skillsHooks.setTurnForced(forced)
         didForceReload = true
         await this.disconnect(false)
-        await this.resumeSession({
+        const reloadResume = await this.resumeSession({
           sessionId: request.sessionId,
           cwd: sessionCwd,
           projectName,
           permissionProfile
         })
+        if (reloadResume.contextReset) {
+          request.historyPreamble = request.resumeFallback?.historyPreamble
+          request.historyAttachments = request.resumeFallback?.historyAttachments
+          request.historyImages = request.resumeFallback?.historyImages
+        }
 
         const reloaded = this.sessions.get(request.sessionId)
         if (!reloaded) {
@@ -1330,6 +1409,9 @@ class AcpRuntime {
         this.activeArtifactRun = undefined
       }
       if (this.currentPromptTurnBySession.get(request.sessionId) === promptTurn) {
+        const cancelTimer = this.cancelTimers.get(request.sessionId)
+        if (cancelTimer) this.clearTimer(cancelTimer)
+        this.cancelTimers.delete(request.sessionId)
         this.currentPromptTurnBySession.delete(request.sessionId)
         this.promptInFlightSessionIds.delete(request.sessionId)
       }
@@ -1351,9 +1433,32 @@ class AcpRuntime {
     const activeSession = this.sessions.get(request.sessionId)
 
     if (this.connection && activeSession) {
-      await this.connection.agent.notify(acp.methods.agent.session.cancel, {
-        sessionId: activeSession.sessionId
-      })
+      const priorTimer = this.cancelTimers.get(request.sessionId)
+      if (priorTimer) this.clearTimer(priorTimer)
+      this.cancelTimers.set(
+        request.sessionId,
+        this.setTimer(() => {
+          if (!this.promptInFlightSessionIds.has(request.sessionId)) return
+          this.pushEvent({
+            kind: 'error',
+            level: 'error',
+            sessionId: request.sessionId,
+            title: 'Prompt cancellation timed out',
+            text: 'The agent did not stop, so its process was stopped and will restart on the next prompt.'
+          })
+          void this.disconnect()
+        }, this.cancelTimeoutMs)
+      )
+      try {
+        await this.connection.agent.notify(acp.methods.agent.session.cancel, {
+          sessionId: activeSession.sessionId
+        })
+      } catch (error) {
+        const timer = this.cancelTimers.get(request.sessionId)
+        if (timer) this.clearTimer(timer)
+        this.cancelTimers.delete(request.sessionId)
+        throw error
+      }
       this.permissionBroker.cancelForSession(request.sessionId)
       this.pushEvent({
         kind: 'system',
@@ -1374,7 +1479,11 @@ class AcpRuntime {
     if (session) {
       // Talk to the agent using its own session id: for an adopted session the underlying
       // agent id (session.sessionId) differs from the app-facing request.sessionId.
-      if (this.connection && this.supportsSessionClose) {
+      if (this.connection && this.supportsSessionDelete) {
+        await this.connection.agent.request(acp.methods.agent.session.delete, {
+          sessionId: session.sessionId
+        })
+      } else if (this.connection && this.supportsSessionClose) {
         await this.connection.agent.request(acp.methods.agent.session.close, {
           sessionId: session.sessionId
         })
@@ -1395,6 +1504,9 @@ class AcpRuntime {
     // deleting a session that was never re-adopted under the new framework would leak that entry —
     // later misleading the cross-framework-resume check. These deletes are no-ops when the id is absent.
     this.permissionBroker.cancelForSession(request.sessionId)
+    const cancelTimer = this.cancelTimers.get(request.sessionId)
+    if (cancelTimer) this.clearTimer(cancelTimer)
+    this.cancelTimers.delete(request.sessionId)
     // Drop this session's http MCP host registrations (no-op when no host / stdio framework).
     this.unregisterHttpMcpSession(request.sessionId)
     this.sessions.delete(request.sessionId)
@@ -1459,14 +1571,43 @@ class AcpRuntime {
     sessionId: string,
     request: AcpPromptRequest
   ): Promise<string | ContentBlock[]> {
-    const attachments = request.attachments ?? []
+    const attachments = [...(request.historyAttachments ?? []), ...(request.attachments ?? [])]
     const referencedArtifacts = request.referencedArtifacts ?? []
 
-    if (attachments.length === 0 && referencedArtifacts.length === 0) return request.text
+    if (
+      attachments.length === 0 &&
+      referencedArtifacts.length === 0 &&
+      (request.historyImages?.length ?? 0) === 0
+    )
+      return request.text
 
     const contentBlocks: ContentBlock[] = request.text.trim()
       ? [{ type: 'text', text: request.text }]
       : []
+    let imageBudget: InlineImageBudget = { imageCount: 0, base64Bytes: 0 }
+    const appendBlock = (block: ContentBlock, overflowFallback?: ContentBlock): void => {
+      if (block.type === 'image') {
+        try {
+          imageBudget = consumeInlineImageBudget(imageBudget, {
+            data: block.data,
+            mimeType: block.mimeType
+          })
+        } catch (error) {
+          if (error instanceof ImageContentError && error.code === 'IMAGE_TOTAL_BUDGET_EXCEEDED') {
+            if (overflowFallback) contentBlocks.push(overflowFallback)
+            return
+          }
+          throw error
+        }
+      }
+      contentBlocks.push(block)
+    }
+    for (const image of request.historyImages ?? []) {
+      appendBlock({ type: 'image', data: image.data, mimeType: image.mimeType })
+    }
+    if ((request.historyImages?.length ?? 0) > 0) {
+      this.sessionInlineImageBytes.set(sessionId, imageBudget.base64Bytes)
+    }
 
     // Staged uploads own the durable session id here, so finalize before turning them into blocks.
     if (attachments.length > 0) {
@@ -1477,28 +1618,57 @@ class AcpRuntime {
         attachments
       )
 
-      // Keep the user's text first, then append files in the same order they were added.
+      // Keep the user's text first, then append files in the same order they were added. A file may
+      // expand to several blocks (an oversized text file becomes a preview notice + a resource link);
+      // route each through appendBlock so image blocks still honor the per-request inline budget.
       for (const attachment of finalizedAttachments) {
-        contentBlocks.push(await this.createAttachmentContentBlock(sessionId, attachment))
+        const blocks = await this.createAttachmentContentBlock(sessionId, attachment)
+        for (const block of blocks) {
+          appendBlock(
+            block,
+            this.imageOverflowResourceLink(block, attachment.originalName, attachment.size)
+          )
+        }
       }
     }
 
     // `@`-mentioned artifacts reuse the same per-type block builder as uploads, in mention order.
     for (const reference of referencedArtifacts) {
-      contentBlocks.push(await this.createReferencedArtifactContentBlock(sessionId, reference))
+      const blocks = await this.createReferencedArtifactContentBlock(sessionId, reference)
+      for (const block of blocks) {
+        appendBlock(block, this.imageOverflowResourceLink(block, reference.name))
+      }
     }
 
     return contentBlocks
+  }
+
+  private imageOverflowResourceLink(
+    block: ContentBlock,
+    name: string,
+    size?: number
+  ): ContentBlock | undefined {
+    if (block.type !== 'image' || !block.uri) return undefined
+
+    return {
+      type: 'resource_link',
+      uri: block.uri,
+      name,
+      title: name,
+      mimeType: block.mimeType,
+      size
+    }
   }
 
   // Converts one managed upload into the richest ACP content block that is safe for its type.
   private async createAttachmentContentBlock(
     sessionId: string,
     attachment: UploadedAttachment
-  ): Promise<ContentBlock> {
+  ): Promise<ContentBlock[]> {
     if (!this.uploadRepository) throw new Error('Upload storage is not configured.')
 
     const filePath = await this.uploadRepository.resolveManagedUploadPath({ path: attachment.path })
+    const { size } = await stat(filePath)
 
     return this.buildFileContentBlock({
       sessionId,
@@ -1506,7 +1676,7 @@ class AcpRuntime {
       uri: pathToFileURL(filePath).href,
       name: attachment.originalName || attachment.name,
       mimeType: attachment.mimeType,
-      size: attachment.size
+      size
     })
   }
 
@@ -1514,7 +1684,7 @@ class AcpRuntime {
   private async createReferencedArtifactContentBlock(
     sessionId: string,
     reference: ArtifactReference
-  ): Promise<ContentBlock> {
+  ): Promise<ContentBlock[]> {
     const filePath = await this.resolveReferencedArtifactPath(reference)
     const { size } = await stat(filePath)
 
@@ -1548,15 +1718,19 @@ class AcpRuntime {
     name: string
     mimeType?: string
     size: number
-  }): Promise<ContentBlock> {
+  }): Promise<ContentBlock[]> {
     const { sessionId, absolutePath, uri, name, mimeType, size } = descriptor
 
     // Images are embedded as base64 so vision-capable agents receive the actual pixels.
-    // Large images are downscaled/re-encoded first so one file cannot overflow the request.
-    if (mimeType?.startsWith('image/')) {
+    // Large images are downscaled/re-encoded first so one file cannot overflow the request. Detection
+    // falls back to the file extension so a `.png` with a missing/generic MIME (some drag/drop and paste
+    // sources omit it) is still inlined as pixels instead of degrading to a bare file link.
+    const imageMimeType = imageAttachmentMimeType(name, mimeType)
+
+    if (imageMimeType) {
       const { data, mimeType: outMimeType } = await buildImageContentData(
         absolutePath,
-        mimeType,
+        imageMimeType,
         size
       )
 
@@ -1567,44 +1741,66 @@ class AcpRuntime {
       const alreadyInlined = this.sessionInlineImageBytes.get(sessionId) ?? 0
 
       if (!canInlineImageInSession(alreadyInlined, data.length, this.inlineImageBudgetBytes)) {
-        return { type: 'resource_link', uri, name, title: name, mimeType, size }
+        return [{ type: 'resource_link', uri, name, title: name, mimeType: imageMimeType, size }]
       }
 
       this.sessionInlineImageBytes.set(sessionId, alreadyInlined + data.length)
 
-      return { type: 'image', data, mimeType: outMimeType, uri }
+      return [{ type: 'image', data, mimeType: outMimeType, uri }]
     }
 
     // PDFs are never inlined as base64 (a 20MB file overflows the 32MB request limit); instead we
     // extract selectable text so the model reads readable content. Page images are a future option.
     if (this.isPdfFile(name, mimeType)) {
-      return this.createPdfContentBlock(name, absolutePath, uri)
+      return [await this.createPdfContentBlock(name, absolutePath, uri)]
     }
 
-    // Small text-like files are embedded for direct reading; oversized text falls through to a link.
-    if (
-      (mimeType?.startsWith('text/') || mimeType === 'application/json') &&
-      size <= MAX_EMBEDDED_TEXT_UPLOAD_BYTES
-    ) {
-      return {
-        type: 'resource',
-        resource: {
-          uri,
-          mimeType,
-          text: await readFile(absolutePath, 'utf8')
-        }
+    if (isTextLikeAttachment(name, mimeType)) {
+      // Small text-like files are embedded for direct reading.
+      if (size <= MAX_EMBEDDED_TEXT_UPLOAD_BYTES) {
+        return [
+          {
+            type: 'resource',
+            resource: { uri, mimeType, text: await readFile(absolutePath, 'utf8') }
+          }
+        ]
       }
+
+      // Oversized text/tabular files are never inlined — a full read is the main request-size overflow
+      // source. Send a bounded preview (structure + a few rows) plus a link so the agent reads only what
+      // it needs instead of loading the whole file into context.
+      const preview = await readBoundedManagedFilePreview(
+        absolutePath,
+        { path: absolutePath, maxBytes: ATTACHMENT_PREVIEW_BYTES, encoding: 'utf8' },
+        'Attachment preview requires UTF-8 encoding.'
+      )
+
+      return [
+        {
+          type: 'text',
+          text: buildOversizedAttachmentNotice({
+            name,
+            size,
+            preview: preview.content,
+            truncated: preview.truncated,
+            tabular: isTabularAttachment(name, mimeType)
+          })
+        },
+        { type: 'resource_link', uri, name, title: name, mimeType, size }
+      ]
     }
 
     // Binary and large files are passed as resource links so agents can decide how to fetch them.
-    return {
-      type: 'resource_link',
-      uri,
-      name,
-      title: name,
-      mimeType,
-      size
-    }
+    return [
+      {
+        type: 'resource_link',
+        uri,
+        name,
+        title: name,
+        mimeType,
+        size
+      }
+    ]
   }
 
   // Recognizes PDFs by MIME type or extension since the renderer does not always send a MIME type.
@@ -1693,16 +1889,14 @@ class AcpRuntime {
     return sessionCwd
   }
 
-  // App-owned directories the agent's Read tool must never read: both frameworks' config dirs hold the
-  // materialized skill files (+ opencode.json/auth), whose bundled/MCP contents must not be surfaced
-  // into the conversation. Both are guarded regardless of the active framework so a switch leaves no
-  // gap and the cost is a couple of extra prefix checks.
+  // App-owned directories the agent's Read tool must never read: framework config dirs hold
+  // materialized skills plus provider/auth configuration whose contents must not be surfaced.
   private protectedReadRoots(): string[] {
     if (!this.artifactOptions) return []
 
     const root = this.artifactOptions.configRoot
 
-    return [getAppClaudeConfigDir(root), opencodeStorageDir(root)]
+    return [getAppClaudeConfigDir(root), opencodeStorageDir(root), codexStorageDir(root)]
   }
 
   // Creates an app-owned artifact session id so new ACP sessions never decide their storage directory.
@@ -1859,17 +2053,24 @@ class AcpRuntime {
     sessionCwd: string
     projectName: string
   }): Promise<McpServer[]> {
+    // Bridge-backed Codex receives the app-owned notebook schemas as namespaced Chat aliases while the
+    // actual tool remains attached here as MCP. Codex therefore keeps ownership of dispatch, approval,
+    // and execution. The artifact server stays gated on native Responses; non-bridge sessions get both.
+    const artifactEnabled = this.nativeMcpEnabled || this.bridgeMcpAliasesEnabled
+
     // The artifact/notebook servers are stdio. A framework that only accepts http/sse MCP (opencode)
     // gets them over the http host when one is wired; without a host it gets none so a basic turn still
     // runs instead of failing on an unsupported stdio server config.
     const servers = this.framework.acceptsStdioMcp
       ? [
-          ...this.createArtifactMcpServers(
-            artifactSessionId,
-            notebookSessionId,
-            sessionCwd,
-            projectName
-          ),
+          ...(artifactEnabled
+            ? this.createArtifactMcpServers(
+                artifactSessionId,
+                notebookSessionId,
+                sessionCwd,
+                projectName
+              )
+            : []),
           ...(await this.createNotebookMcpServers(notebookSessionId, sessionCwd, projectName))
         ]
       : await this.createHttpMcpServers(
@@ -1878,6 +2079,12 @@ class AcpRuntime {
           sessionCwd,
           projectName
         )
+
+    if (!artifactEnabled) {
+      log.info(
+        'artifact MCP server disabled for Responses bridge; notebook server kept for host.mcp'
+      )
+    }
 
     // Log the MCP server launch specs (command/url, no secrets) — a bad command/entry path or an
     // unstarted host can make the agent stall while it waits on an MCP server that never responds.
@@ -1966,22 +2173,37 @@ class AcpRuntime {
   // — skills are materialized whenever the app runs), plus artifact/notebook tooling instructions when
   // those services are wired. The active framework decides how these are delivered (Claude's preset
   // append vs opencode's prompt prefix).
-  // Whether artifact/notebook MCP tooling reaches the agent this run: either the framework takes stdio
-  // MCP directly (Claude) or an http host is wired to serve it (opencode). Drives both the MCP configs
-  // and whether their system-prompt guidance is sent.
-  private mcpToolingAvailable(): boolean {
+  // Whether the local MCP transport can carry app tooling at all: the framework takes stdio MCP
+  // directly (Claude, Codex) or an http host is wired (opencode). Must match createMcpServers so the
+  // guidance is only sent for tools actually wired.
+  private mcpTransportAvailable(): boolean {
     return this.framework.acceptsStdioMcp || Boolean(this.mcpHttpHost)
   }
 
-  private getSystemPromptAppends(): string[] {
-    // Artifact/notebook guidance names MCP tools that only exist when that tooling is actually wired for
-    // this framework; omit it otherwise so the agent isn't told to use tools it wasn't given.
-    const toolsAvailable = this.mcpToolingAvailable()
+  // Notebook tooling is wired even for bridge-backed Codex (see createMcpServers), so its guidance is
+  // gated only on the transport + notebook config, not on full native MCP.
+  private notebookToolingAvailable(): boolean {
+    return this.mcpTransportAvailable() && Boolean(this.notebookOptions)
+  }
 
+  // The artifact write tool is only wired when full native MCP is enabled (off for the bridge), so its
+  // guidance follows that flag.
+  private artifactToolingAvailable(): boolean {
+    return (
+      (this.nativeMcpEnabled || this.bridgeMcpAliasesEnabled) &&
+      this.mcpTransportAvailable() &&
+      Boolean(this.artifactOptions)
+    )
+  }
+
+  private getSystemPromptAppends(): string[] {
+    // Each append names MCP tools that only exist when that tooling is actually wired for this session;
+    // omit it otherwise so the agent isn't told to use tools it wasn't given.
     return [
       SKILLS_READ_GUARD_SYSTEM_PROMPT_APPEND,
-      ...(toolsAvailable && this.artifactOptions ? [ARTIFACT_FILE_SYSTEM_PROMPT_APPEND] : []),
-      ...(toolsAvailable && this.notebookOptions ? [NOTEBOOK_SYSTEM_PROMPT_APPEND] : [])
+      LARGE_DATA_FILE_SYSTEM_PROMPT_APPEND,
+      ...(this.artifactToolingAvailable() ? [ARTIFACT_FILE_SYSTEM_PROMPT_APPEND] : []),
+      ...(this.notebookToolingAvailable() ? [NOTEBOOK_SYSTEM_PROMPT_APPEND] : [])
     ]
   }
 
@@ -2307,7 +2529,15 @@ class AcpRuntime {
 
   // Clears local state after the protocol connection closes unexpectedly.
   private handleConnectionClosed(): void {
+    const orphanedProcess = this.agentProcess
+    if (orphanedProcess) {
+      this.expectedProcessExits.add(orphanedProcess)
+      void terminateProcessTree(orphanedProcess, undefined, log)
+    }
+    for (const timer of this.cancelTimers.values()) this.clearTimer(timer)
+    this.cancelTimers.clear()
     this.permissionBroker.cancelAll()
+    this.reviewerSessionIds.clear()
     this.sessions.clear()
     this.sessionCwds.clear()
     this.sessionInlineImageBytes.clear()
@@ -2320,6 +2550,7 @@ class AcpRuntime {
     this.agentToAppSessionId.clear()
     this.currentSessionId = undefined
     this.supportsSessionClose = false
+    this.supportsSessionDelete = false
     this.connection = undefined
     this.agentProcess = undefined
     this.promptInFlightSessionIds.clear()
@@ -2336,6 +2567,23 @@ class AcpRuntime {
   private pushEvent(
     event: Omit<AcpRuntimeEvent, 'id' | 'timestamp'> & Partial<AcpRuntimeEvent>
   ): void {
+    let image = event.image
+    let raw = event.raw
+    let text = event.text
+    if (image && event.sessionId) {
+      const retainedBytes = this.events
+        .filter((candidate) => candidate.sessionId === event.sessionId)
+        .reduce(
+          (total, candidate) => total + (getAcpRuntimeEventImage(candidate)?.byteLength ?? 0),
+          0
+        )
+      if (retainedBytes + image.byteLength > MAX_ACP_SESSION_IMAGE_BYTES) {
+        image = undefined
+        raw = undefined
+        text = 'Agent image omitted because the session image budget was reached.'
+      }
+    }
+
     const runtimeEvent: AcpRuntimeEvent = {
       id: event.id ?? this.nextEventId(),
       timestamp: event.timestamp ?? Date.now(),
@@ -2345,7 +2593,8 @@ class AcpRuntime {
       sessionId: event.sessionId,
       messageId: event.messageId,
       role: event.role,
-      text: event.text,
+      text,
+      image,
       title: event.title,
       status: event.status,
       toolCallId: event.toolCallId,
@@ -2357,7 +2606,7 @@ class AcpRuntime {
       artifactSessionId: event.artifactSessionId,
       artifactClaimId: event.artifactClaimId,
       artifacts: event.artifacts,
-      raw: event.raw
+      raw
     }
 
     this.events = [...this.events, runtimeEvent].slice(-MAX_EVENTS)

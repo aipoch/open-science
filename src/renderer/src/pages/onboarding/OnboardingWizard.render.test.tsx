@@ -81,7 +81,9 @@ beforeEach(() => {
     ...createInitialSettingsState(),
     checkEnvironment: vi.fn().mockResolvedValue(undefined),
     detectClaude: vi.fn().mockResolvedValue({ found: false }),
+    detectCodex: vi.fn().mockResolvedValue(undefined),
     installClaude: vi.fn().mockResolvedValue({ installId: 'i', ok: true }),
+    installCodex: vi.fn().mockResolvedValue({ installId: 'i', ok: true }),
     completeOnboarding: vi.fn().mockResolvedValue(undefined),
     saveAndActivateProvider: vi
       .fn()
@@ -117,14 +119,15 @@ afterEach(() => {
 })
 
 describe('OnboardingWizard', () => {
-  it('offers an agent-framework choice and switches on selection', async () => {
+  it('offers all three agent frameworks and switches to Codex on selection', async () => {
     const setAgentFramework = vi.fn().mockResolvedValue(undefined)
     const checkEnvironment = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: [
         { id: 'claude-code', displayName: 'Claude Code', supportsSkills: true },
-        { id: 'opencode', displayName: 'OpenCode', supportsSkills: true }
+        { id: 'opencode', displayName: 'OpenCode', supportsSkills: true },
+        { id: 'codex', displayName: 'Codex', supportsSkills: true }
       ],
       setAgentFramework,
       checkEnvironment,
@@ -136,14 +139,14 @@ describe('OnboardingWizard', () => {
     })
 
     const radios = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
-    expect(radios.map((r) => r.textContent)).toEqual(['Claude Code', 'OpenCode'])
+    expect(radios.map((r) => r.textContent)).toEqual(['Claude Code', 'OpenCode', 'Codex'])
     expect(radios[0].getAttribute('aria-checked')).toBe('true')
 
     await act(async () => {
-      radios[1].click()
+      radios[2].click()
     })
 
-    expect(setAgentFramework).toHaveBeenCalledWith('opencode')
+    expect(setAgentFramework).toHaveBeenCalledWith('codex')
     expect(checkEnvironment).toHaveBeenCalled()
   })
 
@@ -176,6 +179,7 @@ describe('OnboardingWizard', () => {
       preflight: {
         claudeReady: true,
         opencodeReady: false,
+        codexReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: true,
         activeProviderReady: false
@@ -205,6 +209,7 @@ describe('OnboardingWizard', () => {
       preflight: {
         claudeReady: false,
         opencodeReady: false,
+        codexReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: false,
         activeProviderReady: false
@@ -233,6 +238,7 @@ describe('OnboardingWizard', () => {
       preflight: {
         claudeReady: true,
         opencodeReady: false,
+        codexReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: true,
         activeProviderReady: false
@@ -267,6 +273,7 @@ describe('OnboardingWizard', () => {
       preflight: {
         claudeReady: false,
         opencodeReady: false,
+        codexReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: false,
         activeProviderReady: false
@@ -304,6 +311,7 @@ describe('OnboardingWizard', () => {
       preflight: {
         claudeReady: true,
         opencodeReady: false,
+        codexReady: false,
         agentFrameworkId: 'opencode',
         agentReady: false,
         activeProviderReady: false
@@ -336,9 +344,115 @@ describe('OnboardingWizard', () => {
     expect(installClaude).not.toHaveBeenCalled()
   })
 
+  it('uses Codex detection and the managed Codex installer in manual setup', async () => {
+    const detectCodex = vi.fn().mockResolvedValue(undefined)
+    const checkEnvironment = vi.fn().mockResolvedValue(undefined)
+    const installCodex = vi.fn().mockResolvedValue({ installId: 'codex-i', ok: true })
+    const installClaude = vi.fn().mockResolvedValue({ installId: 'claude-i', ok: true })
+    const installOpencode = vi.fn().mockResolvedValue({ installId: 'opencode-i', ok: true })
+    useSettingsStore.setState({
+      agentFrameworkId: 'codex',
+      codex: {},
+      preflight: {
+        claudeReady: true,
+        opencodeReady: true,
+        codexReady: false,
+        agentFrameworkId: 'codex',
+        agentReady: false,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(false),
+      detectCodex,
+      checkEnvironment,
+      installCodex,
+      installClaude,
+      installOpencode
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+    await clickButton(/manual setup/i)
+
+    expect(container.textContent).toContain('Codex not detected')
+    expect(container.textContent).not.toContain('ChatGPT')
+    const source = container.querySelector<HTMLButtonElement>('[aria-label="Install source"]')
+    expect(source?.getAttribute('role')).toBe('combobox')
+    expect(source?.textContent).toContain('App-managed download (recommended)')
+    expect(container.textContent).not.toContain('Official install')
+
+    await clickButton(/re-detect/i)
+    expect(detectCodex).toHaveBeenCalledOnce()
+    expect(checkEnvironment).toHaveBeenCalledOnce()
+
+    await clickButton(/install with one click/i)
+    expect(installCodex).toHaveBeenCalledWith('managed')
+    expect(installClaude).not.toHaveBeenCalled()
+    expect(installOpencode).not.toHaveBeenCalled()
+  })
+
+  it('routes automatic Codex installation through installCodex', async () => {
+    const installCodex = vi.fn().mockResolvedValue({ installId: 'codex-i', ok: true })
+    const checkEnvironment = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      agentFrameworkId: 'codex',
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        codexReady: false,
+        agentFrameworkId: 'codex',
+        agentReady: false,
+        activeProviderReady: false
+      },
+      environmentCheck: { ...environment(false), agentFrameworkId: 'codex' },
+      installCodex,
+      checkEnvironment
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+    await clickButton(/install missing runtime/i)
+
+    expect(installCodex).toHaveBeenCalledWith('managed')
+    expect(checkEnvironment).toHaveBeenCalledOnce()
+  })
+
+  it('prefills the API-key OpenAI Responses provider for Codex', async () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'codex',
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        codexReady: true,
+        agentFrameworkId: 'codex',
+        agentReady: true,
+        activeProviderReady: false
+      },
+      environmentCheck: { ...environment(true), agentFrameworkId: 'codex' }
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+    await clickButton(/^continue$/i)
+
+    expect(container.querySelector('[aria-label="Provider type"]')?.textContent).toContain('OpenAI')
+    expect(container.querySelector('[aria-label="Base URL"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Model"]')).toBeNull()
+    expect(container.querySelector('[aria-label="API format"]')).toBeNull()
+    expect(container.textContent).toContain('gpt-5.6-sol')
+    expect(container.textContent).not.toContain('ChatGPT')
+  })
+
   const twoFrameworks = [
     { id: 'claude-code' as const, displayName: 'Claude Code', supportsSkills: true },
     { id: 'opencode' as const, displayName: 'OpenCode', supportsSkills: true }
+  ]
+
+  const threeFrameworks = [
+    ...twoFrameworks,
+    { id: 'codex' as const, displayName: 'Codex', supportsSkills: true }
   ]
 
   it('auto-selects OpenCode when Claude is not installed but OpenCode is', async () => {
@@ -351,6 +465,7 @@ describe('OnboardingWizard', () => {
       preflight: {
         claudeReady: false,
         opencodeReady: true,
+        codexReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: false,
         activeProviderReady: false
@@ -365,6 +480,30 @@ describe('OnboardingWizard', () => {
     expect(setAgentFramework).toHaveBeenCalledWith('opencode')
   })
 
+  it('auto-selects Codex when it is the only installed runtime', async () => {
+    const setAgentFramework = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: threeFrameworks,
+      setAgentFramework,
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        codexReady: true,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(false)
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+
+    expect(setAgentFramework).toHaveBeenCalledWith('codex')
+  })
+
   it('prefers Claude and does not auto-switch when Claude is installed', async () => {
     const setAgentFramework = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({
@@ -375,6 +514,7 @@ describe('OnboardingWizard', () => {
       preflight: {
         claudeReady: true,
         opencodeReady: true,
+        codexReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: true,
         activeProviderReady: false
@@ -399,6 +539,7 @@ describe('OnboardingWizard', () => {
       preflight: {
         claudeReady: false,
         opencodeReady: true,
+        codexReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: false,
         activeProviderReady: false
@@ -421,6 +562,7 @@ describe('OnboardingWizard', () => {
       preflight: {
         claudeReady: true,
         opencodeReady: false,
+        codexReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: true,
         activeProviderReady: false
@@ -459,6 +601,7 @@ describe('OnboardingWizard', () => {
       preflight: {
         claudeReady: false,
         opencodeReady: false,
+        codexReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: false,
         activeProviderReady: false
@@ -483,14 +626,15 @@ describe('OnboardingWizard', () => {
     await act(async () => releaseSwitch?.())
   })
 
-  it('disables the framework toggle while a runtime probe is in flight', async () => {
+  it('disables all framework choices while Codex detection is in flight', async () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
-      agentFrameworks: twoFrameworks,
-      isDetectingOpencode: true,
+      agentFrameworks: threeFrameworks,
+      isDetectingCodex: true,
       preflight: {
         claudeReady: false,
         opencodeReady: false,
+        codexReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: false,
         activeProviderReady: false
@@ -503,7 +647,7 @@ describe('OnboardingWizard', () => {
     })
 
     const radios = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
-    expect(radios).toHaveLength(2)
+    expect(radios).toHaveLength(3)
     expect(radios.every((radio) => radio.disabled)).toBe(true)
   })
 
@@ -515,6 +659,7 @@ describe('OnboardingWizard', () => {
       preflight: {
         claudeReady: false,
         opencodeReady: false,
+        codexReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: false,
         activeProviderReady: false
@@ -543,6 +688,7 @@ describe('OnboardingWizard', () => {
         preflight: {
           claudeReady: true,
           opencodeReady: false,
+          codexReady: false,
           agentFrameworkId: 'claude-code',
           agentReady: true,
           activeProviderReady: false
@@ -555,6 +701,7 @@ describe('OnboardingWizard', () => {
       preflight: {
         claudeReady: false,
         opencodeReady: false,
+        codexReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: false,
         activeProviderReady: false
@@ -589,6 +736,7 @@ describe('OnboardingWizard', () => {
       preflight: {
         claudeReady: false,
         opencodeReady: false,
+        codexReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: false,
         activeProviderReady: false
@@ -614,6 +762,7 @@ describe('OnboardingWizard', () => {
       preflight: {
         claudeReady: false,
         opencodeReady: false,
+        codexReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: false,
         activeProviderReady: true
@@ -637,6 +786,7 @@ describe('OnboardingWizard', () => {
       preflight: {
         claudeReady: true,
         opencodeReady: false,
+        codexReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: true,
         activeProviderReady: true
@@ -663,6 +813,7 @@ describe('OnboardingWizard', () => {
       preflight: {
         claudeReady: true,
         opencodeReady: false,
+        codexReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: true,
         activeProviderReady: false
@@ -703,6 +854,7 @@ describe('OnboardingWizard', () => {
         preflight: {
           claudeReady: true,
           opencodeReady: false,
+          codexReady: false,
           agentFrameworkId: 'claude-code',
           agentReady: true,
           activeProviderReady: false

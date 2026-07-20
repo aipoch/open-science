@@ -75,6 +75,29 @@ describe('agent loading message state', () => {
     expect(shouldShowAgentLoadingMessage(session)).toBe(false)
   })
 
+  it('hides loading once an image-only agent response arrives', async () => {
+    const { shouldShowAgentLoadingMessage } = await loadAgentLoadingMessageModule()
+    const session = createSession({
+      activeRun: {
+        promptMessageId: 'prompt-1',
+        startedAt: 1710000000100
+      },
+      messages: [
+        createMessage({ id: 'prompt-1' }),
+        createMessage({
+          id: 'reply-1',
+          role: 'agent',
+          content: '',
+          status: 'streaming',
+          responseToMessageId: 'prompt-1',
+          images: [{ id: 'event-image', mimeType: 'image/png', data: 'AQID', byteLength: 3 }]
+        })
+      ]
+    })
+
+    expect(shouldShowAgentLoadingMessage(session)).toBe(false)
+  })
+
   it('ignores previous replies when a follow-up prompt starts a new run', async () => {
     const { shouldShowAgentLoadingMessage } = await loadAgentLoadingMessageModule()
     const session = createSession({

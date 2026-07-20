@@ -1,4 +1,8 @@
-import type { AgentFrameworkId, Preflight } from '../../shared/settings'
+import {
+  providerValidationFailed,
+  type AgentFrameworkId,
+  type Preflight
+} from '../../shared/settings'
 import type { StoredProvider, StoredSettings } from './types'
 
 // Pure computation of the startup gates from stored settings plus a couple of injected checks.
@@ -10,6 +14,8 @@ export type PreflightInput = {
   claudePathExists: boolean
   // Whether the recorded opencode executable still exists (same light re-check).
   opencodePathExists: boolean
+  // Whether the recorded codex-acp adapter still reports a version.
+  codexPathExists: boolean
   // The selected framework, resolved (default applied) by the caller.
   agentFrameworkId: AgentFrameworkId
   // Whether a provider's credentials are usable (claude-default is always true; custom must decrypt).
@@ -26,13 +32,20 @@ const computePreflight = ({
   settings,
   claudePathExists,
   opencodePathExists,
+  codexPathExists,
   agentFrameworkId,
   isProviderKeyUsable,
   activeProviderCompatible
 }: PreflightInput): Preflight => {
   const claudeReady = Boolean(settings.claude?.resolvedPath) && claudePathExists
   const opencodeReady = Boolean(settings.opencodePath) && opencodePathExists
-  const agentReady = agentFrameworkId === 'opencode' ? opencodeReady : claudeReady
+  const codexReady = Boolean(settings.codex?.resolvedPath) && codexPathExists
+  const readyByFramework: Record<AgentFrameworkId, boolean> = {
+    'claude-code': claudeReady,
+    opencode: opencodeReady,
+    codex: codexReady
+  }
+  const agentReady = readyByFramework[agentFrameworkId]
 
   const activeProvider = settings.activeProviderId
     ? settings.providers.find((provider) => provider.id === settings.activeProviderId)
@@ -43,11 +56,19 @@ const computePreflight = ({
   const activeProviderReady = Boolean(
     activeProvider &&
     activeProvider.lastValidatedAt !== undefined &&
+    !providerValidationFailed(activeProvider) &&
     isProviderKeyUsable(activeProvider) &&
     activeProviderCompatible
   )
 
-  return { claudeReady, opencodeReady, agentFrameworkId, agentReady, activeProviderReady }
+  return {
+    claudeReady,
+    opencodeReady,
+    codexReady,
+    agentFrameworkId,
+    agentReady,
+    activeProviderReady
+  }
 }
 
 export { computePreflight }

@@ -859,7 +859,8 @@ describe('resuming an interrupted session on demand', () => {
       'session-1',
       '/workspace/project',
       'default-project',
-      expect.any(String)
+      expect.any(String),
+      undefined
     )
     expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
     expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
@@ -984,6 +985,9 @@ describe('resuming an interrupted session on demand', () => {
       undefined,
       undefined,
       // A same-framework interrupted resume does not reset context, so no history preamble is replayed.
+      undefined,
+      undefined,
+      undefined,
       undefined
     )
 
@@ -1171,6 +1175,46 @@ describe('resuming an interrupted session on demand', () => {
     await flushRuntimeTasks()
 
     expect(runtime.sendPrompt.mock.calls[0]?.[5]).toBeUndefined()
+  })
+
+  it('blocks image replay after switching to a model without image input', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Inspect this image',
+      cwd: '/workspace/project',
+      projectId: 'default-project'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-image-1',
+      eventId: 'image-event-1',
+      image: { mimeType: 'image/png', data: 'aGVsbG8=', byteLength: 5 }
+    })
+    useSessionStore.getState().finishRun('session-1')
+    const runtime = {
+      state: createSnapshot([]),
+      createSession: vi.fn(),
+      resumeSession: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        contextReset: true,
+        frameworkId: 'codex'
+      }),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'continue',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      supportsImageInput: false
+    })
+
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0].error).toContain('does not support image input')
+    expect(useSessionStore.getState().sessions[0].agentFrameworkId).toBe('codex')
   })
 
   it('reconnects without re-sending when the last turn was already answered', async () => {

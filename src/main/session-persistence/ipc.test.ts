@@ -34,7 +34,12 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn().mockResolvedValue(undefined)
     }
     const reviewRepository = createMockReviewRepository()
-    const handlers = createSessionPersistenceHandlers(repository, reviewRepository)
+    const deleteSessionUploads = vi.fn().mockResolvedValue(undefined)
+    const handlers = createSessionPersistenceHandlers(
+      repository,
+      reviewRepository,
+      deleteSessionUploads
+    )
 
     await expect(handlers.loadAll()).resolves.toBe(loadResult)
 
@@ -43,11 +48,14 @@ describe('session persistence IPC handlers', () => {
 
     await handlers.deleteSession({ projectId: 'project-a', sessionId: 'session-1' })
     expect(repository.deleteSession).toHaveBeenCalledWith('project-a', 'session-1')
+    expect(deleteSessionUploads).toHaveBeenCalledWith('session-1')
     // Cascade: review cleanup is attempted before the session delete.
     expect(reviewRepository.deleteReviewsForSession).toHaveBeenCalledWith('session-1')
 
     await handlers.deleteProjectSessions({ projectId: 'project-a' })
     expect(repository.deleteProjectSessions).toHaveBeenCalledWith('project-a')
+    expect(deleteSessionUploads).toHaveBeenCalledTimes(2)
+    // Cascade: review cleanup is attempted for the project.
     expect(reviewRepository.deleteReviewsForProject).toHaveBeenCalledWith('project-a')
 
     await handlers.saveManifest({ lastProjectId: 'project-a', lastSessionId: 'session-1' })
@@ -55,5 +63,32 @@ describe('session persistence IPC handlers', () => {
       lastProjectId: 'project-a',
       lastSessionId: 'session-1'
     })
+  })
+
+  it('keeps session deletion consistent when repository or upload cleanup fails', async () => {
+    const repository = {
+      loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
+      saveSession: vi.fn().mockResolvedValue(undefined),
+      deleteSession: vi.fn().mockRejectedValueOnce(new Error('repository failed')),
+      deleteProjectSessions: vi.fn().mockResolvedValue(undefined),
+      saveManifest: vi.fn().mockResolvedValue(undefined)
+    }
+    const deleteSessionUploads = vi.fn().mockRejectedValue(new Error('cleanup failed'))
+    const handlers = createSessionPersistenceHandlers(
+      repository,
+      createMockReviewRepository(),
+      deleteSessionUploads
+    )
+
+    await expect(
+      handlers.deleteSession({ projectId: 'project-a', sessionId: 'session-1' })
+    ).rejects.toThrow('repository failed')
+    expect(deleteSessionUploads).not.toHaveBeenCalled()
+
+    repository.deleteSession.mockResolvedValueOnce(undefined)
+    await expect(
+      handlers.deleteSession({ projectId: 'project-a', sessionId: 'session-1' })
+    ).resolves.toBeUndefined()
+    expect(deleteSessionUploads).toHaveBeenCalledWith('session-1')
   })
 })

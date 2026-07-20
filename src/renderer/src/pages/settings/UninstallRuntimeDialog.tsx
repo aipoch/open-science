@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 
 type UninstallRuntimeDialogProps = {
   // The framework whose app-managed runtime is being removed; null keeps the dialog closed.
-  framework: 'claude' | 'opencode' | null
+  framework: 'claude' | 'opencode' | 'codex' | null
   isUninstalling: boolean
   onCancel: () => void
   onConfirm: () => void
@@ -16,9 +16,10 @@ const cancelButtonClassName =
 const confirmButtonClassName =
   'border-transparent bg-danger-000 text-white hover:bg-danger-000/90 hover:text-white'
 
-const DISPLAY_NAME: Record<'claude' | 'opencode', string> = {
+const DISPLAY_NAME: Record<'claude' | 'opencode' | 'codex', string> = {
   claude: 'Claude',
-  opencode: 'OpenCode'
+  opencode: 'OpenCode',
+  codex: 'Codex'
 }
 
 // Confirms removal of an app-managed agent runtime. Only the copy the app downloaded into its own data

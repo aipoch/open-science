@@ -313,6 +313,52 @@ describe('session store', () => {
     expect(session.activeRun).toBeUndefined()
   })
 
+  it('merges image-only and text chunks into the same agent message', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Draw the result'
+    })
+
+    const imageChunk = useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-image',
+      image: { mimeType: 'image/png', data: 'AQID', byteLength: 3 }
+    })
+    const textChunk = useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-text',
+      content: 'Generated chart'
+    })
+
+    expect(textChunk?.messageId).toBe(imageChunk?.messageId)
+    expect(useSessionStore.getState().sessions[0].messages[1]).toMatchObject({
+      content: 'Generated chart',
+      eventIds: ['event-image', 'event-text'],
+      images: [{ id: 'event-image', mimeType: 'image/png', data: 'AQID', byteLength: 3 }]
+    })
+  })
+
+  it('keeps live agent messages within the persisted image count boundary', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Draw variants'
+    })
+
+    for (let index = 0; index < 6; index += 1) {
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'assistant-message-1',
+        eventId: `event-image-${index}`,
+        image: { mimeType: 'image/png', data: 'AQID', byteLength: 3 }
+      })
+    }
+
+    expect(useSessionStore.getState().sessions[0].messages[1].images).toHaveLength(4)
+    expect(useSessionStore.getState().sessions[0].messages[1].eventIds).toHaveLength(6)
+  })
+
   it('ignores duplicate streamed event ids for the same agent message', () => {
     const result = useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
@@ -1335,12 +1381,14 @@ describe('session store', () => {
     it('markResumed clears the interrupted state so the composer is usable', () => {
       hydrateInterrupted()
 
-      useSessionStore.getState().markResumed('resumable-session')
+      useSessionStore.getState().markResumed('resumable-session', 'codex')
       const session = useSessionStore.getState().sessions[0]
 
       expect(session.interrupted).toBeUndefined()
       expect(session.error).toBeUndefined()
       expect(session.status).toBe('idle')
+      expect(session.agentFrameworkId).toBe('codex')
+      expect(toPersistedSession(session).agentFrameworkId).toBe('codex')
     })
 
     it('markDisconnected flags a live drop and settles the half-streamed reply, keeping the user turn', () => {

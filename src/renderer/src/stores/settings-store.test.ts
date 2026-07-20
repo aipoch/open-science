@@ -21,6 +21,10 @@ type SettingsApi = {
   checkEnvironment: ReturnType<typeof vi.fn>
   detectClaude: ReturnType<typeof vi.fn>
   detectOpencode: ReturnType<typeof vi.fn>
+  detectCodex: ReturnType<typeof vi.fn>
+  installCodex: ReturnType<typeof vi.fn>
+  uninstallCodex: ReturnType<typeof vi.fn>
+  onInstallLog: ReturnType<typeof vi.fn>
   setAgentFramework: ReturnType<typeof vi.fn>
   upsertProvider: ReturnType<typeof vi.fn>
   validateProvider: ReturnType<typeof vi.fn>
@@ -59,8 +63,10 @@ const snapshot = (providers: SettingsSnapshot['providers']): SettingsSnapshot =>
   agentFrameworkId: 'claude-code',
   agentFrameworks: [{ id: 'claude-code', displayName: 'Claude Code', supportsSkills: true }],
   opencode: {},
+  codex: {},
   claudeManaged: false,
-  opencodeManaged: false
+  opencodeManaged: false,
+  codexManaged: false
 })
 
 const providerView = (id: string): SettingsSnapshot['providers'][number] => ({
@@ -69,6 +75,7 @@ const providerView = (id: string): SettingsSnapshot['providers'][number] => ({
   name: 'Gateway',
   model: 'claude-sonnet-4-5',
   models: ['claude-sonnet-4-5'],
+  supportsImageInput: false,
   hasKey: true,
   needsKey: false
 })
@@ -100,6 +107,17 @@ beforeEach(() => {
       callLog.push('detectOpencode')
       return Promise.resolve({ ...snapshot([]), agentFrameworkId: 'opencode' })
     }),
+    detectCodex: vi.fn().mockImplementation(() => {
+      callLog.push('detectCodex')
+      return Promise.resolve({
+        ...snapshot([]),
+        agentFrameworkId: 'codex',
+        codex: { resolvedPath: '/bin/codex-acp', version: '1.1.4' }
+      })
+    }),
+    installCodex: vi.fn().mockResolvedValue({ installId: 'codex-1', ok: true }),
+    uninstallCodex: vi.fn().mockResolvedValue(snapshot([])),
+    onInstallLog: vi.fn().mockReturnValue(vi.fn()),
     setAgentFramework: vi.fn().mockImplementation((request: { id: string }) => {
       callLog.push(`setFramework:${request.id}`)
       return Promise.resolve({ ...snapshot([]), agentFrameworkId: request.id })
@@ -185,11 +203,11 @@ describe('settings store: saveAndActivateProvider', () => {
     expect(useSettingsStore.getState().activeProviderId).toBe('p_new')
   })
 
-  it('does not activate when validation fails', async () => {
+  it('activates even when validation fails (probe is advisory, not a gate)', async () => {
     api.upsertProvider.mockResolvedValue(snapshot([providerView('p_new')]))
     api.validateProvider.mockResolvedValue({
       ok: false,
-      category: 'auth'
+      category: 'network'
     } as ValidateProviderResult)
 
     const result = await useSettingsStore.getState().saveAndActivateProvider({
@@ -200,8 +218,9 @@ describe('settings store: saveAndActivateProvider', () => {
     })
 
     expect(result.validation.ok).toBe(false)
-    expect(api.setActiveProvider).not.toHaveBeenCalled()
-    // The failed provider is kept (flagged as unverified), not rolled back.
+    // A failed probe no longer blocks activation — the provider is configured in and can be tested
+    // live; it is still kept (flagged as unverified), not rolled back.
+    expect(api.setActiveProvider).toHaveBeenCalledWith({ id: 'p_new' })
     expect(api.deleteProvider).not.toHaveBeenCalled()
   })
 
@@ -581,6 +600,7 @@ describe('selectProviderModelOptions', () => {
         name: 'GLM',
         vendorId: 'zhipu',
         models: ['glm-5.2', 'glm-4.7'],
+        supportsImageInput: false,
         hasKey: true,
         needsKey: false
       }
@@ -612,6 +632,7 @@ describe('selectProviderModelOptions', () => {
         name: 'GW',
         model: 'm',
         models: ['m'],
+        supportsImageInput: false,
         hasKey: true,
         needsKey: false
       },
@@ -620,6 +641,7 @@ describe('selectProviderModelOptions', () => {
         type: 'claude-default',
         name: 'Local',
         models: [],
+        supportsImageInput: false,
         hasKey: false,
         needsKey: false
       }
@@ -640,6 +662,7 @@ describe('selectProviderModelOptions', () => {
         name: 'Good',
         model: 'm',
         models: ['m'],
+        supportsImageInput: false,
         hasKey: true,
         needsKey: false,
         lastValidatedAt: 200
@@ -650,6 +673,7 @@ describe('selectProviderModelOptions', () => {
         name: 'Broken',
         model: 'm',
         models: ['m'],
+        supportsImageInput: false,
         hasKey: true,
         needsKey: false,
         lastValidationFailure: { at: 300, category: 'auth' }
@@ -960,5 +984,33 @@ describe('settings store: setAgentFramework', () => {
 
     expect(api.detectClaude).toHaveBeenCalled()
     expect(api.detectOpencode).not.toHaveBeenCalled()
+  })
+
+  it('switches to Codex and live-detects its adapter', async () => {
+    await useSettingsStore.getState().setAgentFramework('codex')
+
+    expect(callLog).toEqual(['setFramework:codex', 'detectCodex'])
+    expect(useSettingsStore.getState()).toMatchObject({
+      agentFrameworkId: 'codex',
+      codex: { resolvedPath: '/bin/codex-acp', version: '1.1.4' },
+      isDetectingCodex: false
+    })
+  })
+
+  it('installs and uninstalls Codex through the shared runtime lifecycle', async () => {
+    api.getSettings.mockResolvedValue({
+      ...snapshot([]),
+      codex: { resolvedPath: '/data/codex-acp/dist/index.js', version: '1.1.4' },
+      codexManaged: true
+    })
+    api.uninstallCodex.mockResolvedValue(snapshot([]))
+
+    await useSettingsStore.getState().installCodex()
+    expect(api.installCodex).toHaveBeenCalledWith({ source: 'managed' })
+    expect(useSettingsStore.getState().codexManaged).toBe(true)
+
+    await useSettingsStore.getState().uninstallCodex()
+    expect(api.uninstallCodex).toHaveBeenCalledOnce()
+    expect(useSettingsStore.getState().codex).toEqual({})
   })
 })

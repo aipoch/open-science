@@ -25,10 +25,13 @@ type FakeSettingsService = Record<
   | 'checkEnvironment'
   | 'detectClaude'
   | 'detectOpencode'
+  | 'detectCodex'
   | 'installClaude'
   | 'installOpencode'
+  | 'installCodex'
   | 'uninstallClaude'
   | 'uninstallOpencode'
+  | 'uninstallCodex'
   | 'setAgentFramework'
   | 'upsertProvider'
   | 'deleteProvider'
@@ -41,7 +44,8 @@ type FakeSettingsService = Record<
   | 'createSkill'
   | 'updateSkill'
   | 'deleteSkill'
-  | 'importSkillZipBatch',
+  | 'importSkillZipBatch'
+  | 'setConnectorEnabled',
   ReturnType<typeof vi.fn>
 >
 
@@ -55,12 +59,17 @@ const createFakeService = (): FakeSettingsService => ({
   detectOpencode: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], agentFrameworkId: 'opencode' }),
+  detectCodex: vi.fn().mockResolvedValue({ codex: {}, providers: [], agentFrameworkId: 'codex' }),
   installClaude: vi.fn().mockResolvedValue({ installId: 'i', ok: true }),
   installOpencode: vi.fn().mockResolvedValue({ installId: 'oc', ok: true }),
+  installCodex: vi.fn().mockResolvedValue({ installId: 'cx', ok: true }),
   uninstallClaude: vi
     .fn()
     .mockResolvedValue({ snapshot: { claude: {}, providers: [] }, activeBackendAffected: true }),
   uninstallOpencode: vi
+    .fn()
+    .mockResolvedValue({ snapshot: { claude: {}, providers: [] }, activeBackendAffected: true }),
+  uninstallCodex: vi
     .fn()
     .mockResolvedValue({ snapshot: { claude: {}, providers: [] }, activeBackendAffected: true }),
   setAgentFramework: vi
@@ -85,7 +94,8 @@ const createFakeService = (): FakeSettingsService => ({
   createSkill: vi.fn().mockResolvedValue([]),
   updateSkill: vi.fn().mockResolvedValue([]),
   deleteSkill: vi.fn().mockResolvedValue([]),
-  importSkillZipBatch: vi.fn().mockResolvedValue({ results: [], skills: [] })
+  importSkillZipBatch: vi.fn().mockResolvedValue({ results: [], skills: [] }),
+  setConnectorEnabled: vi.fn().mockResolvedValue({ connectors: [] })
 })
 
 // Adapts the spy bag into the SettingsService shape the registration function expects.
@@ -142,6 +152,20 @@ describe('settings IPC handlers', () => {
     expect(service.markOnboardingComplete).toHaveBeenCalledTimes(1)
   })
 
+  it('fires onConnectorsChanged after a connector is toggled', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const onConnectorsChanged = vi.fn()
+    registerSettingsIpcHandlers({ service: asService(service), onConnectorsChanged })
+
+    await invoke('settings:set-connector-enabled', { id: 'biomart', enabled: false })
+
+    // The callback is what drives ipc.ts's refresh-then-reload chain (reload runs in a .finally so it
+    // fires even if the refresh rejects — see connector-skill-reload.finally.test.ts).
+    expect(service.setConnectorEnabled).toHaveBeenCalledWith({ id: 'biomart', enabled: false })
+    expect(onConnectorsChanged).toHaveBeenCalledOnce()
+  })
+
   it('drops the agent connection when the active provider changes', async () => {
     handlers.clear()
     const service = createFakeService()
@@ -151,6 +175,18 @@ describe('settings IPC handlers', () => {
     await invoke('settings:set-active-provider', { id: 'p1' })
 
     expect(service.setActiveProvider).toHaveBeenCalledWith('p1', undefined)
+    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+  })
+
+  it('drops the agent connection when the active provider is deleted', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    service.getSettingsView.mockResolvedValue({ activeProviderId: 'p1', providers: [] })
+    const onActiveProviderChanged = vi.fn()
+    registerSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+
+    await invoke('settings:delete-provider', { id: 'p1' })
+
     expect(onActiveProviderChanged).toHaveBeenCalledOnce()
   })
 
@@ -302,6 +338,26 @@ describe('settings IPC handlers', () => {
     ]) {
       expect(handlers.has(channel)).toBe(true)
     }
+  })
+
+  it('routes Codex detection, installation, and uninstall through the service', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const onActiveProviderChanged = vi.fn()
+    registerSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+
+    expect(handlers.has('settings:detect-codex')).toBe(true)
+    expect(handlers.has('settings:install-codex')).toBe(true)
+    expect(handlers.has('settings:uninstall-codex')).toBe(true)
+
+    await invoke('settings:detect-codex')
+    await invoke('settings:install-codex', { source: 'managed' })
+    await invoke('settings:uninstall-codex')
+
+    expect(service.detectCodex).toHaveBeenCalledOnce()
+    expect(service.installCodex).toHaveBeenCalledWith({ source: 'managed' }, expect.any(Function))
+    expect(service.uninstallCodex).toHaveBeenCalledOnce()
+    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
   })
 
   it('routes detect-opencode to the service and forwards its snapshot', async () => {

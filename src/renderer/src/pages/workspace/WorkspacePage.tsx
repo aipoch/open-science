@@ -112,6 +112,11 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
   const goHome = useNavigationStore((state) => state.goHome)
   const openSettings = useSettingsStore((state) => state.openSettings)
+  const activeProviderId = useSettingsStore((state) => state.activeProviderId)
+  const supportsImageInput = useSettingsStore(
+    (state) =>
+      state.providers.find((provider) => provider.id === activeProviderId)?.supportsImageInput
+  )
   const scopedProjectId = activeProjectId ?? ''
   const activeProject = useProjectStore((state) =>
     state.projects.find((project) => project.id === scopedProjectId)
@@ -514,6 +519,10 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   // Converts selected or pasted files into app-managed uploads before they appear in the composer.
   const stageAttachmentFiles = (files: File[]): void => {
     if (!canEditDraft || files.length === 0) return
+    if (files.some((file) => file.type.startsWith('image/')) && supportsImageInput !== true) {
+      setAttachmentError('The selected model is not configured for image input.')
+      return
+    }
 
     // Enforce the size and count limits up front so rejected files are never read or uploaded.
     const { accepted, error } = planComposerAttachmentIntake(files, attachments.length)
@@ -559,6 +568,13 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   // ConversationPanel owns preventDefault and passes the skills picked as inline chips.
   const sendCurrentMessage = (forcedSkillIds: string[]): void => {
     if (!canSendMessage) return
+    if (
+      supportsImageInput !== true &&
+      attachments.some((attachment) => attachment.mimeType?.startsWith('image/'))
+    ) {
+      setAttachmentError('The selected model is not configured for image input.')
+      return
+    }
 
     const doc = draftDoc
     const attachmentsForSend = attachments

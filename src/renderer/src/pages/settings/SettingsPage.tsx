@@ -25,6 +25,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { ModelFrameworkCompatibilityAlert } from './ModelFrameworkCompatibilityAlert'
 import { ClaudeInstallCard } from './ClaudeInstallCard'
 import { ClaudeStatusCard } from './ClaudeStatusCard'
+import { CodexStatusCard } from './CodexStatusCard'
 import { OpencodeStatusCard } from './OpencodeStatusCard'
 import { GeneralPanel } from './GeneralPanel'
 import { StoragePanel } from './StoragePanel'
@@ -62,7 +63,8 @@ const toFormValue = (provider: ProviderView): ProviderFormValue =>
     name: provider.name,
     baseUrl: provider.baseUrl ?? '',
     model: provider.model ?? '',
-    apiType: provider.apiType ?? 'anthropic',
+    apiEndpoint: provider.apiEndpoints?.[0] ?? 'anthropic',
+    supportsImageInput: provider.supportsImageInput,
     vendorId: provider.vendorId,
     region: provider.region
   })
@@ -76,7 +78,8 @@ const toUpsertRequest = (
   name: value.name,
   baseUrl: value.baseUrl,
   model: value.model,
-  apiType: value.apiType,
+  apiEndpoints: [value.apiEndpoint],
+  supportsImageInput: value.supportsImageInput,
   vendorId: value.vendorId,
   region: value.region,
   key: value.key || undefined
@@ -147,6 +150,10 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const isDetectingOpencode = useSettingsStore((state) => state.isDetectingOpencode)
   const detectOpencode = useSettingsStore((state) => state.detectOpencode)
   const installOpencode = useSettingsStore((state) => state.installOpencode)
+  const codex = useSettingsStore((state) => state.codex)
+  const isDetectingCodex = useSettingsStore((state) => state.isDetectingCodex)
+  const detectCodex = useSettingsStore((state) => state.detectCodex)
+  const installCodex = useSettingsStore((state) => state.installCodex)
   const isInstalling = useSettingsStore((state) => state.isInstalling)
   const installLogs = useSettingsStore((state) => state.installLogs)
   const installProgress = useSettingsStore((state) => state.installProgress)
@@ -155,8 +162,10 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const claudeManaged = useSettingsStore((state) => state.claudeManaged)
   const opencodeManaged = useSettingsStore((state) => state.opencodeManaged)
+  const codexManaged = useSettingsStore((state) => state.codexManaged)
   const uninstallClaude = useSettingsStore((state) => state.uninstallClaude)
   const uninstallOpencode = useSettingsStore((state) => state.uninstallOpencode)
+  const uninstallCodex = useSettingsStore((state) => state.uninstallCodex)
   const load = useSettingsStore((state) => state.load)
   const detectClaude = useSettingsStore((state) => state.detectClaude)
   const installClaude = useSettingsStore((state) => state.installClaude)
@@ -183,7 +192,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const [isRefreshingModels, setIsRefreshingModels] = useState(false)
   // The app-managed runtime pending an uninstall confirmation (null = dialog closed), plus the in-flight
   // flag so the dialog and status cards can show progress and stay locked during removal.
-  const [pendingUninstall, setPendingUninstall] = useState<'claude' | 'opencode' | null>(null)
+  const [pendingUninstall, setPendingUninstall] = useState<'claude' | 'opencode' | 'codex' | null>(
+    null
+  )
   const [isUninstalling, setIsUninstalling] = useState(false)
   // The framework the user picked (via a card) but hasn't confirmed switching to yet.
   const [pendingSwitch, setPendingSwitch] = useState<AgentFrameworkId | null>(null)
@@ -234,6 +245,14 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
       void detectOpencode()
     }
   }, [open, agentFrameworkId, opencode?.resolvedPath, isDetectingOpencode, detectOpencode])
+
+  // Codex detection probes the ACP adapter and its paired native runtime. Keep it lazy so opening
+  // settings for another framework does not spawn an unnecessary process.
+  useEffect(() => {
+    if (open && agentFrameworkId === 'codex' && !codex?.resolvedPath && !isDetectingCodex) {
+      void detectCodex()
+    }
+  }, [open, agentFrameworkId, codex?.resolvedPath, isDetectingCodex, detectCodex])
 
   const currentLocation = history[historyIndex]
   const activePanel = currentLocation.panel
@@ -389,11 +408,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
     setIsUninstalling(true)
 
     try {
-      if (pendingUninstall === 'claude') {
-        await uninstallClaude()
-      } else {
-        await uninstallOpencode()
-      }
+      if (pendingUninstall === 'claude') await uninstallClaude()
+      else if (pendingUninstall === 'opencode') await uninstallOpencode()
+      else await uninstallCodex()
 
       setPendingUninstall(null)
     } finally {
@@ -673,12 +690,11 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                 ) : isProviderFormOpen ? (
                   // Add/edit provider is a secondary page reached via the shared back/forward arrows.
                   <div className="p-5">
-                    {/* Keys are stored with OS encryption; warn (as onboarding does) when the keychain
-                      is unavailable so the reduced-protection fallback is never a silent surprise. */}
+                    {/* Secret writes fail closed when the OS keychain is unavailable. */}
                     {!encryptionAvailable ? (
                       <p className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-                        Secure key storage is unavailable on this machine. Your key will be stored
-                        with reduced protection.
+                        Secure key storage is unavailable. API keys cannot be saved until the system
+                        keychain is unlocked or authorized.
                       </p>
                     ) : null}
                     <ProviderForm
@@ -722,7 +738,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                   <div className="space-y-5 p-5">
                     <ModelFrameworkCompatibilityAlert />
 
-                    {/* The two runtime cards double as the framework selector: pick a card to make it
+                    {/* The runtime cards double as the framework selector: pick a card to make it
                         the active backend (confirmed, since it starts a fresh session). Both are always
                         shown so either app-managed runtime can be detected, installed, or uninstalled —
                         but the active runtime can't be uninstalled (switch to the other one first). */}
@@ -780,6 +796,24 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                           managed={opencodeManaged}
                           isUninstalling={isUninstalling && pendingUninstall === 'opencode'}
                           onUninstall={() => setPendingUninstall('opencode')}
+                        />
+                        <CodexStatusCard
+                          codex={codex}
+                          codexReady={preflight.codexReady}
+                          isDetecting={isDetectingCodex}
+                          onDetect={() => void detectCodex()}
+                          isInstalling={isInstalling}
+                          installLogs={installLogs}
+                          installProgress={installProgress}
+                          installError={installError}
+                          npmAvailable={npmAvailable}
+                          onInstall={(source) => void installCodex(source)}
+                          active={agentFrameworkId === 'codex'}
+                          onSelect={() => requestSwitch('codex')}
+                          selectDisabled={isInstalling || isUninstalling}
+                          managed={codexManaged}
+                          isUninstalling={isUninstalling && pendingUninstall === 'codex'}
+                          onUninstall={() => setPendingUninstall('codex')}
                         />
                         {activeFramework && !activeFramework.supportsSkills ? (
                           <p className="text-xs text-muted-foreground">

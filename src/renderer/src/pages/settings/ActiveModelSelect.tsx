@@ -12,6 +12,7 @@ import {
   useSettingsStore
 } from '@/stores/settings-store'
 import { isProviderUsableByFramework } from '../../../../shared/settings'
+import { isModelBridgeSupported } from '../../../../shared/provider-registry'
 import { ProviderKindIcon } from './provider-icons'
 import { providerKindKey } from './provider-form-value'
 
@@ -36,11 +37,12 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
 
   // A provider is selectable only when it can actually drive the current framework (endpoint + type;
   // a Local Claude provider is Claude-only).
-  const isCompatible = (provider: (typeof providers)[number]): boolean =>
+  const isCompatible = (provider: (typeof providers)[number], model: string): boolean =>
     isProviderUsableByFramework(
-      { apiType: provider.apiType ?? 'anthropic', type: provider.type },
+      { apiEndpoints: provider.apiEndpoints, type: provider.type },
       { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
-    )
+    ) &&
+    (agentFrameworkId !== 'codex' || isModelBridgeSupported(provider, model))
 
   const activeKeyModel = activeModel ?? ''
   const current = options.find(
@@ -82,7 +84,9 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
       </SelectTrigger>
       <SelectContent>
         {groups.map((group) => {
-          const compatible = isCompatible(group.provider)
+          const compatible = group.options.some((option) =>
+            isCompatible(group.provider, option.model)
+          )
 
           return (
             <SelectGroup key={group.provider.id}>
@@ -94,21 +98,24 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
                   </span>
                 )}
               </SelectLabel>
-              {group.options.map((option) => (
-                <SelectItem
-                  key={`${option.providerId}${SEP}${option.model}`}
-                  value={`${option.providerId}${SEP}${option.model}`}
-                  disabled={!compatible}
-                  icon={
-                    <ProviderKindIcon
-                      kindKey={providerKindKey(option.providerType, option.vendorId)}
-                      className="size-4"
-                    />
-                  }
-                >
-                  {option.model || option.providerName}
-                </SelectItem>
-              ))}
+              {group.options.map((option) => {
+                const optionCompatible = isCompatible(group.provider, option.model)
+                return (
+                  <SelectItem
+                    key={`${option.providerId}${SEP}${option.model}`}
+                    value={`${option.providerId}${SEP}${option.model}`}
+                    disabled={!optionCompatible}
+                    icon={
+                      <ProviderKindIcon
+                        kindKey={providerKindKey(option.providerType, option.vendorId)}
+                        className="size-4"
+                      />
+                    }
+                  >
+                    {option.model || option.providerName}
+                  </SelectItem>
+                )
+              })}
             </SelectGroup>
           )
         })}

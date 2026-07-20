@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
+import { MAX_ACP_SESSION_IMAGE_BYTES } from './acp'
+
 import {
   normalizeSessionFile,
+  sanitizeMessageImages,
   sanitizeToolActivity,
   type PersistedChatSession
 } from './session-persistence'
@@ -20,6 +23,91 @@ const createSessionWithActivity = (activity: unknown): Record<string, unknown> =
 
 const getRestoredActivities = (session: unknown): PersistedChatSession['activities'] =>
   normalizeSessionFile(session)?.activities
+
+describe('message image persistence', () => {
+  it('keeps only bounded raster images with recomputed byte metadata', () => {
+    const images = sanitizeMessageImages([
+      { id: 'image-1', mimeType: 'image/png', data: 'AQID', byteLength: 999 },
+      { id: 'image-svg', mimeType: 'image/svg+xml', data: 'PHN2Zz4=' },
+      { id: 'image-bad', mimeType: 'image/jpeg', data: 'not base64!' }
+    ])
+
+    expect(images).toEqual([{ id: 'image-1', mimeType: 'image/png', data: 'AQID', byteLength: 3 }])
+  })
+
+  it('caps the number of persisted images in one message', () => {
+    const images = sanitizeMessageImages(
+      Array.from({ length: 6 }, (_, index) => ({
+        id: `image-${index}`,
+        mimeType: 'image/webp',
+        data: 'AQID'
+      }))
+    )
+
+    expect(images).toHaveLength(4)
+    expect(images?.map((image) => image.id)).toEqual(['image-0', 'image-1', 'image-2', 'image-3'])
+  })
+
+  it('round-trips valid message images and drops invalid persisted data', () => {
+    const restored = normalizeSessionFile({
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Images',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'agent',
+          content: '',
+          status: 'complete',
+          eventIds: ['event-1'],
+          images: [
+            { id: 'event-1', mimeType: 'image/png', data: 'AQID' },
+            { id: 'event-2', mimeType: 'text/html', data: 'AQID' }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 1
+    })
+
+    expect(restored?.messages[0].images).toEqual([
+      { id: 'event-1', mimeType: 'image/png', data: 'AQID', byteLength: 3 }
+    ])
+  })
+
+  it('applies the aggregate session image budget while restoring legacy files', () => {
+    const data = 'A'.repeat(4 * 1024 * 1024)
+    const bytesPerImage = (data.length * 3) / 4
+    const messageCount = MAX_ACP_SESSION_IMAGE_BYTES / bytesPerImage + 1
+    const restored = normalizeSessionFile({
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Images',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: Array.from({ length: messageCount }, (_, index) => ({
+        id: `message-${index}`,
+        role: 'agent',
+        content: '',
+        images: [{ id: `image-${index}`, mimeType: 'image/png', data }],
+        createdAt: index,
+        updatedAt: index
+      })),
+      createdAt: 1,
+      updatedAt: 1
+    })
+
+    const restoredImages = restored?.messages.flatMap((message) => message.images ?? []) ?? []
+    expect(restoredImages).toHaveLength(MAX_ACP_SESSION_IMAGE_BYTES / bytesPerImage)
+    expect(restoredImages.reduce((total, image) => total + image.byteLength, 0)).toBe(
+      MAX_ACP_SESSION_IMAGE_BYTES
+    )
+  })
+})
 
 describe('sanitizeToolActivity', () => {
   it('keeps identity fields and known text/diff content', () => {

@@ -32,6 +32,12 @@ const FRAMEWORKS: AgentFrameworkView[] = [
     displayName: 'OpenCode',
     supportsSkills: true,
     supportedApiTypes: ['anthropic', 'openai']
+  },
+  {
+    id: 'codex',
+    displayName: 'Codex',
+    supportsSkills: true,
+    supportedApiTypes: ['responses']
   }
 ]
 
@@ -40,6 +46,7 @@ const provider = (overrides: Partial<ProviderView>): ProviderView => ({
   type: 'custom',
   name: 'Gateway',
   models: ['m'],
+  supportsImageInput: false,
   hasKey: true,
   needsKey: false,
   ...overrides
@@ -128,7 +135,9 @@ describe('ActiveModelSelect', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: FRAMEWORKS,
-      providers: [provider({ id: 'p1', name: 'Gateway', apiType: 'anthropic', models: ['m1'] })],
+      providers: [
+        provider({ id: 'p1', name: 'Gateway', apiEndpoints: ['anthropic'], models: ['m1'] })
+      ],
       setActiveProvider
     })
     render()
@@ -145,7 +154,12 @@ describe('ActiveModelSelect', () => {
       agentFrameworkId: 'claude-code',
       agentFrameworks: FRAMEWORKS,
       providers: [
-        provider({ id: 'p1', name: 'DeepSeek', apiType: 'openai', models: ['deepseek-chat'] })
+        provider({
+          id: 'p1',
+          name: 'DeepSeek',
+          apiEndpoints: ['openai'],
+          models: ['deepseek-chat']
+        })
       ],
       setActiveProvider: vi.fn().mockResolvedValue(undefined)
     })
@@ -165,7 +179,9 @@ describe('ActiveModelSelect', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'opencode',
       agentFrameworks: FRAMEWORKS,
-      providers: [provider({ id: 'p1', name: 'DeepSeek', apiType: 'openai', models: ['ds-1'] })],
+      providers: [
+        provider({ id: 'p1', name: 'DeepSeek', apiEndpoints: ['openai'], models: ['ds-1'] })
+      ],
       setActiveProvider: vi.fn().mockResolvedValue(undefined)
     })
     render()
@@ -177,13 +193,40 @@ describe('ActiveModelSelect', () => {
     expect(option?.getAttribute('data-disabled')).toBeNull()
   })
 
+  it('keeps every Chat provider model selectable under Codex (bridge support is static)', () => {
+    // A custom provider has no vendorId, so isModelBridgeSupported is always true — every model of a
+    // bridge-compatible Chat provider is selectable under Codex without a per-model runtime probe.
+    useSettingsStore.setState({
+      agentFrameworkId: 'codex',
+      agentFrameworks: FRAMEWORKS,
+      providers: [
+        provider({
+          id: 'p1',
+          name: 'DeepSeek',
+          apiEndpoints: ['openai'],
+          models: ['ds-a', 'ds-b']
+        })
+      ]
+    })
+    render()
+    openSelect()
+
+    expect(optionByText('ds-a')?.getAttribute('data-disabled')).toBeNull()
+    expect(optionByText('ds-b')?.getAttribute('data-disabled')).toBeNull()
+  })
+
   it('groups each provider under its own name and lists every catalog model', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'opencode',
       agentFrameworks: FRAMEWORKS,
       providers: [
-        provider({ id: 'p1', name: 'Anthropic', apiType: 'anthropic', models: ['opus', 'sonnet'] }),
-        provider({ id: 'p2', name: 'OpenAI', apiType: 'openai', models: ['gpt'] })
+        provider({
+          id: 'p1',
+          name: 'Anthropic',
+          apiEndpoints: ['anthropic'],
+          models: ['opus', 'sonnet']
+        }),
+        provider({ id: 'p2', name: 'OpenAI', apiEndpoints: ['openai'], models: ['gpt'] })
       ],
       setActiveProvider: vi.fn().mockResolvedValue(undefined)
     })

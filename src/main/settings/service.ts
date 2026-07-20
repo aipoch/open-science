@@ -1,9 +1,11 @@
 import { execFile } from 'node:child_process'
-import { access, mkdir, readdir, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, readdir, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
+
+import { z } from 'zod'
 
 import type {
   ClaudeDetectResult,
@@ -21,10 +23,11 @@ import type {
   DeleteSkillRequest,
   EnvironmentCheckResult,
   InstallClaudeRequest,
+  InstallCodexRequest,
   InstallOpencodeRequest,
+  ChatApiEndpoint,
   NcbiCredentialsView,
   Preflight,
-  ProviderApiType,
   ProviderDraft,
   ProviderView,
   RefreshProviderModelsRequest,
@@ -56,8 +59,10 @@ import { isProviderUsableByFramework } from '../../shared/settings'
 import {
   defaultVendorModel,
   getOfficialVendor,
+  isModelBridgeSupported,
   isOfficialVendorId,
-  resolveVendorApiType,
+  isVendorModelMultimodal,
+  resolveVendorApiEndpoints,
   resolveVendorBaseUrl,
   resolveVendorModelsUrl,
   resolveVendorOpenAiBaseUrl
@@ -77,6 +82,13 @@ import {
   type OpencodeDetectDeps
 } from './opencode-detect'
 import {
+  detectCodex,
+  parseVersion as parseCodexVersion,
+  runAcpInitializeSmoke,
+  type CodexDetectDeps
+} from './codex-detect'
+import { openAiCompletionsBase } from './base-url'
+import {
   installManagedOpencode,
   isManagedOpencodePath,
   managedOpencodeDir,
@@ -84,10 +96,19 @@ import {
   type InstallManagedOpencodeOptions
 } from './managed-opencode'
 import { opencodeConfigDir } from '../agent-framework/opencode'
+import { codexStorageDir } from '../agent-framework/codex'
 import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import { provisionAppClaudeConfigDir } from './claude-config-provision'
-import { detectNpmAvailable, runInstallWithFallback } from './claude-install'
+import { detectNpmAvailable, runInstallWithFallback, type InstallTarget } from './claude-install'
 import { OPENCODE_INSTALL_TARGET } from './opencode-install'
+import {
+  installManagedCodex,
+  managedCodexAdapterEntry,
+  managedCodexBinary,
+  uninstallManagedCodex,
+  type InstallManagedCodexOptions,
+  type ManagedCodexInstallOutcome
+} from './managed-codex'
 import { runEnvironmentCheck } from './environment-check'
 import {
   DEFAULT_REGISTRIES,
@@ -103,17 +124,27 @@ import { applyLocalClaudeAuth, defaultUserClaudeDir } from './local-claude-auth'
 import { computePreflight } from './preflight'
 import { listProviderModels } from './list-models'
 import { buildProviderEnv, getAppClaudeConfigDir, type ResolvedProvider } from './provider-env'
+import {
+  ResponsesBridge,
+  type ResponsesBridgeConnection,
+  type ResponsesBridgeNamespacedTool
+} from './responses-bridge'
 import { SettingsRepository } from './repository'
 import { sanitizeCustomMcpServer } from './repository'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import { getConnectorTools } from '../connectors/registry'
-import { renderConnectorInstructions } from '../connectors/skill-doc'
+import { renderConnectorInstructions, renderSkillDoc } from '../connectors/skill-doc'
+import { syncConnectorSkillDocs } from '../connectors/provision'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
 import { UserSkillRepository } from '../skills/user-skill-repository'
+import { netFetch } from '../skills/net-fetch'
 import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limits'
 import { readSkillFile } from '../skills/skill-files'
+import { NOTEBOOK_MCP_SERVER_NAME, NOTEBOOK_RPC_TOOLS } from '../notebook/mcp-server'
+import { ARTIFACT_MCP_SERVER_NAME, writeArtifactFileToolSchema } from '../artifacts/mcp-server'
 import type {
   StoredConnectors,
+  StoredCodexInfo,
   StoredCustomMcpServer,
   StoredProvider,
   StoredSettings
@@ -124,6 +155,49 @@ const execFileAsync = promisify(execFile)
 
 // Hard ceiling for the claude-default probe so a stuck local claude can never hang the wizard.
 const CLAUDE_PROBE_TIMEOUT_MS = 20_000
+const CODEX_INSTALL_TARGET: InstallTarget = {
+  npmPackage: '@agentclientprotocol/codex-acp',
+  // Codex exposes no supported shell installer; InstallCodexRequest cannot select this branch.
+  scriptUnix: ''
+}
+
+// Codex exposes local MCP tools as namespaced Responses functions. Chat Completions has no namespace
+// field, so the bridge receives the app-owned notebook schemas and aliases them for the upstream.
+const CODEX_NOTEBOOK_TOOL_NAMESPACE = `mcp__${NOTEBOOK_MCP_SERVER_NAME.replace(
+  /[^a-zA-Z0-9_]/g,
+  '_'
+)}`
+const CODEX_BRIDGE_NOTEBOOK_TOOLS: ResponsesBridgeNamespacedTool[] = NOTEBOOK_RPC_TOOLS.map(
+  (tool) => ({
+    namespace: CODEX_NOTEBOOK_TOOL_NAMESPACE,
+    name: tool.name,
+    description:
+      tool.name === 'notebook_execute'
+        ? `${tool.description} For Open Science data connectors, the Python code MUST call host.mcp(server, method, arguments). Never use requests, urllib, httpx, curl, or a raw upstream API for connector data; those bypass app permissions, credentials, and rate limits. Codex MCP resource-list tools are not connector discovery.`
+        : tool.description,
+    parameters: z.toJSONSchema(z.object(tool.inputSchema), {
+      target: 'draft-7'
+    }) as ResponsesBridgeNamespacedTool['parameters']
+  })
+)
+const CODEX_ARTIFACT_TOOL_NAMESPACE = `mcp__${ARTIFACT_MCP_SERVER_NAME.replace(
+  /[^a-zA-Z0-9_]/g,
+  '_'
+)}`
+const CODEX_BRIDGE_ARTIFACT_TOOLS: ResponsesBridgeNamespacedTool[] = [
+  {
+    namespace: CODEX_ARTIFACT_TOOL_NAMESPACE,
+    name: 'write_artifact_file',
+    description:
+      'Attach a generated image, chart, report, data export, or archive to the current Open Science response. The file must already exist before using a localPath source.',
+    parameters: z.toJSONSchema(z.object(writeArtifactFileToolSchema), {
+      target: 'draft-7'
+    }) as ResponsesBridgeNamespacedTool['parameters']
+  }
+]
+
+const isManagedCodexPath = (adapterPath: string, storageRoot: string): boolean =>
+  adapterPath === managedCodexAdapterEntry(storageRoot)
 
 type ExecuteClaudeProbe = (executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>
 
@@ -136,6 +210,24 @@ const executeClaudeProbe: ExecuteClaudeProbe = async (executablePath, env) => {
     shell: process.platform === 'win32',
     windowsHide: true
   })
+}
+
+const runCodexAdapterVersion = async (
+  adapterPath: string,
+  fallback: (path: string) => Promise<string | undefined>
+): Promise<string | undefined> => {
+  if (!/\.[cm]?js$/i.test(adapterPath)) return fallback(adapterPath)
+
+  try {
+    const { stdout } = await execFileAsync(process.execPath, [adapterPath, '--version'], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', NO_BROWSER: '1' },
+      timeout: 5_000,
+      windowsHide: true
+    })
+    return stdout
+  } catch {
+    return undefined
+  }
 }
 
 // Detects a child-process timeout (SIGTERM kill or ETIMEDOUT) so the probe can report it distinctly.
@@ -169,6 +261,7 @@ export type SettingsServiceOptions = {
   storageRoot?: string
   detectDeps?: ClaudeDetectDeps
   opencodeDetectDeps?: OpencodeDetectDeps
+  codexDetectDeps?: CodexDetectDeps
   // The machine's own Claude config dir, read to reuse its login for the "local" provider. Injectable
   // so tests don't touch the real ~/.claude.
   userClaudeDir?: string
@@ -186,6 +279,9 @@ export type SettingsServiceOptions = {
   installManagedOpencodeImpl?: (
     options: InstallManagedOpencodeOptions
   ) => Promise<ManagedInstallOutcome>
+  installManagedCodexImpl?: (
+    options: InstallManagedCodexOptions
+  ) => Promise<ManagedCodexInstallOutcome>
 }
 
 // Orchestrates the settings units (repository + crypto + detect/install + validate) behind one
@@ -196,6 +292,7 @@ class SettingsService {
   private readonly storageRoot: string
   private readonly detectDeps: ClaudeDetectDeps
   private readonly opencodeDetectDeps: OpencodeDetectDeps
+  private readonly codexDetectDeps: CodexDetectDeps
   private readonly userClaudeDir: string
   private readonly skillRegistry: SkillRegistry
   private readonly userSkills: UserSkillRepository
@@ -206,7 +303,12 @@ class SettingsService {
   private readonly installManagedOpencodeImpl: (
     options: InstallManagedOpencodeOptions
   ) => Promise<ManagedInstallOutcome>
+  private readonly installManagedCodexImpl: (
+    options: InstallManagedCodexOptions
+  ) => Promise<ManagedCodexInstallOutcome>
+  private responsesBridge: ResponsesBridge | undefined
   private providerSequence = 0
+  private readonly providerValidationGenerations = new Map<string, number>()
   // Skills force-loaded for the current turn: subtracted from the stored disabled set at spawn time so
   // a picked-but-disabled skill materializes for this prompt only, without mutating stored settings.
   private turnForcedSkillIds = new Set<string>()
@@ -228,36 +330,65 @@ class SettingsService {
       ...baseOpencodeDetectDeps,
       extraDirs: [...(baseOpencodeDetectDeps.extraDirs ?? []), managedOpencodeDir(this.storageRoot)]
     }
+    const managedAdapterPath = managedCodexAdapterEntry(this.storageRoot)
+    const managedNativePath = managedCodexBinary(this.storageRoot)
+    this.codexDetectDeps = options.codexDetectDeps ?? {
+      env: baseOpencodeDetectDeps.env,
+      homePath: baseOpencodeDetectDeps.homePath,
+      platform: baseOpencodeDetectDeps.platform,
+      isRunnable: baseOpencodeDetectDeps.isExecutable,
+      getAdapterVersion: (path) => runCodexAdapterVersion(path, baseOpencodeDetectDeps.getVersion),
+      getCodexVersion: baseOpencodeDetectDeps.getVersion,
+      smokeInitialize: runAcpInitializeSmoke(baseOpencodeDetectDeps.platform),
+      resolveNpmBinDirs: baseOpencodeDetectDeps.resolveNpmBinDirs,
+      extraDirs: [dirname(managedAdapterPath)],
+      managedAdapterPath,
+      managedCodexPath: managedNativePath
+    }
     this.userClaudeDir = options.userClaudeDir ?? defaultUserClaudeDir()
     this.skillRegistry = options.skillRegistry ?? new SkillRegistry()
     this.userSkills = options.userSkills ?? new UserSkillRepository(this.storageRoot)
     this.executeClaudeProbe = options.executeClaudeProbe ?? executeClaudeProbe
     this.installManagedClaudeImpl = options.installManagedClaudeImpl ?? installManagedClaude
     this.installManagedOpencodeImpl = options.installManagedOpencodeImpl ?? installManagedOpencode
+    this.installManagedCodexImpl = options.installManagedCodexImpl ?? installManagedCodex
   }
 
   // Returns the raw stored settings document (unmasked), for main-process bootstrap needs (e.g. priming
   // the data-root cache) that shouldn't go through the renderer-safe view.
   async getStoredSettings(): Promise<StoredSettings> {
-    return this.repository.getSettings()
+    return this.migrateLegacyKeyRefs(await this.repository.getSettings())
   }
 
   // Returns the renderer-safe (masked) snapshot of settings.
   async getSettingsView(): Promise<SettingsSnapshot> {
-    const settings = await this.repository.getSettings()
+    const settings = await this.migrateLegacyKeyRefs(await this.repository.getSettings())
 
     return {
       claude: settings.claude ?? {},
       opencode: { resolvedPath: settings.opencodePath, version: settings.opencodeVersion },
+      codex: {
+        resolvedPath: settings.codex?.resolvedPath,
+        version: settings.codex?.version,
+        nativeVersion: settings.codex?.nativeVersion
+      },
       claudeManaged: settings.claude?.resolvedPath
         ? isManagedClaudePath(settings.claude.resolvedPath, this.storageRoot)
         : false,
       opencodeManaged: settings.opencodePath
         ? isManagedOpencodePath(settings.opencodePath, this.storageRoot)
         : false,
+      codexManaged: settings.codex?.resolvedPath
+        ? isManagedCodexPath(settings.codex.resolvedPath, this.storageRoot)
+        : false,
       activeProviderId: settings.activeProviderId,
       activeModel: settings.activeModel,
-      providers: settings.providers.map((provider) => this.toProviderView(provider)),
+      providers: settings.providers.map((provider) =>
+        this.toProviderView(
+          provider,
+          provider.id === settings.activeProviderId ? settings.activeModel : undefined
+        )
+      ),
       agentFrameworkId: settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
       agentFrameworks: listAgentFrameworks().map((framework) => ({
         id: framework.id,
@@ -267,6 +398,30 @@ class SettingsService {
       })),
       onboardingCompletedAt: settings.onboardingCompletedAt
     }
+  }
+
+  private async migrateLegacyKeyRefs(settings: StoredSettings): Promise<StoredSettings> {
+    if (!isEncryptionAvailable()) return settings
+    let changed = false
+
+    for (const provider of settings.providers) {
+      if (!provider.keyRef?.startsWith('plain:')) continue
+      const key = tryDecryptKey(provider.keyRef)
+      if (!key) continue
+      await this.repository.upsertProvider({ ...provider, keyRef: encryptKey(key) })
+      changed = true
+    }
+
+    const ncbiRef = settings.connectors?.ncbiApiKeyRef
+    if (ncbiRef?.startsWith('plain:')) {
+      const key = tryDecryptKey(ncbiRef)
+      if (key) {
+        await this.repository.setNcbiCredentials(settings.connectors?.contactEmail, encryptKey(key))
+        changed = true
+      }
+    }
+
+    return changed ? this.repository.getSettings() : settings
   }
 
   // Selects the agent backend to drive; the caller reconnects so the choice applies to the next spawn.
@@ -292,6 +447,24 @@ class SettingsService {
       if (cached && !(await this.pathExists(cached))) {
         await this.repository.clearOpencodeInfo()
       }
+    }
+
+    return this.getSettingsView()
+  }
+
+  async detectCodex(): Promise<SettingsSnapshot> {
+    const detected = await detectCodex(this.codexDetectDeps)
+
+    if (detected) {
+      await this.repository.setCodexInfo({
+        resolvedPath: detected.adapterPath,
+        version: detected.adapterVersion,
+        nativePath: detected.managedCodexPath,
+        nativeVersion: detected.managedCodexVersion
+      })
+    } else {
+      const cached = (await this.repository.getSettings()).codex?.resolvedPath
+      if (cached && !(await this.pathExists(cached))) await this.repository.clearCodexInfo()
     }
 
     return this.getSettingsView()
@@ -413,7 +586,7 @@ class SettingsService {
 
   // Imports a skill from a public GitHub URL (deduplicated), returning the outcome + refreshed list.
   async importSkill(request: ImportSkillRequest): Promise<ImportSkillResult> {
-    const outcome = await this.userSkills.importFromGitHub(request.url)
+    const outcome = await this.userSkills.importFromGitHub(request.url, netFetch)
 
     return { status: outcome.status, id: outcome.id, skills: await this.listSkills() }
   }
@@ -458,7 +631,7 @@ class SettingsService {
 
   // Scans a GitHub repo for importable skill directories (marking already-imported ones).
   async scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult> {
-    return { skills: await this.userSkills.scanRepo(request.repo) }
+    return { skills: await this.userSkills.scanRepo(request.repo, netFetch) }
   }
 
   // Projects a catalog skill into its renderer-safe view given the disabled set.
@@ -488,25 +661,35 @@ class SettingsService {
     const opencodePathExists = settings.opencodePath
       ? (await this.opencodeDetectDeps.getVersion(settings.opencodePath)) !== undefined
       : false
+    const codexPathExists = (await this.probeCodexRuntime(settings.codex)) !== undefined
 
     const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
     const framework = getAgentFramework(agentFrameworkId)
     const activeProvider = settings.activeProviderId
       ? settings.providers.find((provider) => provider.id === settings.activeProviderId)
       : undefined
-    // Resolve compatibility here where the vendor registry is available (official apiType) and pass the
-    // boolean into the pure preflight computation.
+    // Resolve compatibility here where the vendor registry is available (official endpoints + the
+    // static bridge-support marks) and pass the boolean into the pure preflight computation.
+    const activeEndpoints = activeProvider
+      ? this.resolveProviderApiEndpoints(activeProvider)
+      : undefined
     const activeProviderCompatible = activeProvider
       ? isProviderUsableByFramework(
-          { apiType: this.resolveProviderApiType(activeProvider), type: activeProvider.type },
+          { apiEndpoints: activeEndpoints, type: activeProvider.type },
           framework
-        )
+        ) &&
+        (framework.id !== 'codex' ||
+          isModelBridgeSupported(
+            activeProvider,
+            this.resolveActiveModel(activeProvider, settings.activeModel)
+          ))
       : false
 
     return computePreflight({
       settings,
       claudePathExists,
       opencodePathExists,
+      codexPathExists,
       agentFrameworkId,
       isProviderKeyUsable: (provider) => this.isProviderKeyUsable(provider),
       activeProviderCompatible
@@ -522,9 +705,10 @@ class SettingsService {
 
     // Detect every framework's runtime so onboarding can show them side by side; only the selected
     // one's readiness gates Continue (enforced inside runEnvironmentCheck).
-    const [claudeRuntime, opencodeRuntime] = await Promise.all([
+    const [claudeRuntime, opencodeRuntime, codexRuntime] = await Promise.all([
       this.resolveClaudeRuntime(settings),
-      this.resolveOpencodeRuntime(settings)
+      this.resolveOpencodeRuntime(settings),
+      this.resolveCodexRuntime(settings)
     ])
 
     return runEnvironmentCheck({
@@ -540,6 +724,11 @@ class SettingsService {
           id: 'opencode',
           label: getAgentFramework('opencode').displayName,
           runtime: opencodeRuntime
+        },
+        {
+          id: 'codex',
+          label: getAgentFramework('codex').displayName,
+          runtime: codexRuntime
         }
       ],
       encryptionAvailable: this.isEncryptionAvailable()
@@ -601,6 +790,53 @@ class SettingsService {
     }
 
     return { found: false }
+  }
+
+  private async resolveCodexRuntime(settings: StoredSettings): Promise<ClaudeDetectResult> {
+    const cached = settings.codex
+
+    const cachedVersions = await this.probeCodexRuntime(cached)
+    if (cached?.resolvedPath && cachedVersions) {
+      await this.repository.setCodexInfo({ ...cached, ...cachedVersions })
+      return {
+        found: true,
+        path: cached.resolvedPath,
+        version: cachedVersions.version
+      }
+    }
+
+    const detected = await detectCodex(this.codexDetectDeps)
+    if (!detected) {
+      if (cached?.resolvedPath && !(await this.pathExists(cached.resolvedPath))) {
+        await this.repository.clearCodexInfo()
+      }
+      return { found: false }
+    }
+
+    await this.repository.setCodexInfo({
+      resolvedPath: detected.adapterPath,
+      version: detected.adapterVersion,
+      nativePath: detected.managedCodexPath,
+      nativeVersion: detected.managedCodexVersion
+    })
+    return { found: true, path: detected.adapterPath, version: detected.adapterVersion }
+  }
+
+  private async probeCodexRuntime(
+    codex: StoredCodexInfo | undefined
+  ): Promise<Pick<StoredCodexInfo, 'version' | 'nativeVersion'> | undefined> {
+    if (!codex?.resolvedPath) return undefined
+
+    const adapterOutput = await this.codexDetectDeps.getAdapterVersion(codex.resolvedPath)
+    const version = adapterOutput ? parseCodexVersion(adapterOutput) : undefined
+    if (!version) return undefined
+
+    if (!isManagedCodexPath(codex.resolvedPath, this.storageRoot)) return { version }
+    if (!codex.nativePath) return undefined
+
+    const nativeOutput = await this.codexDetectDeps.getCodexVersion(codex.nativePath)
+    const nativeVersion = nativeOutput ? parseCodexVersion(nativeOutput) : undefined
+    return nativeVersion ? { version, nativeVersion } : undefined
   }
 
   // Detects claude and persists the resolved path/version for later spawns.
@@ -712,6 +948,49 @@ class SettingsService {
     return result
   }
 
+  async installCodex(
+    request: InstallCodexRequest,
+    onEvent: (event: ClaudeInstallEvent) => void
+  ): Promise<ClaudeInstallResult> {
+    this.providerSequence += 1
+    const installId = `install-codex-${Date.now()}-${this.providerSequence}`
+
+    if (request.source === 'managed') {
+      const outcome = await this.installManagedCodexImpl({
+        installId,
+        onEvent,
+        dataRoot: this.storageRoot
+      })
+
+      if (
+        outcome.result.ok &&
+        outcome.adapterPath &&
+        outcome.adapterVersion &&
+        outcome.codexPath &&
+        outcome.codexVersion
+      ) {
+        await this.repository.setCodexInfo({
+          resolvedPath: outcome.adapterPath,
+          version: outcome.adapterVersion,
+          nativePath: outcome.codexPath,
+          nativeVersion: outcome.codexVersion
+        })
+      }
+
+      return outcome.result
+    }
+
+    const result = await runInstallWithFallback({
+      source: request.source,
+      installId,
+      onEvent,
+      installTarget: CODEX_INSTALL_TARGET
+    })
+    if (result.ok) await this.detectCodex()
+
+    return result
+  }
+
   // Uninstalls the app-managed Claude runtime. Only an install we own (a binary inside the app's data
   // dir) is removed; a PATH/npm Claude we merely detected is left untouched (a no-op that just returns
   // the current snapshot). When Claude was the active framework, the active backend auto-switches to
@@ -756,6 +1035,24 @@ class SettingsService {
     return { snapshot: await this.getSettingsView(), activeBackendAffected: wasActive }
   }
 
+  async uninstallCodex(): Promise<UninstallResult> {
+    const settings = await this.repository.getSettings()
+    const resolvedPath = settings.codex?.resolvedPath
+    const wasActive = (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID) === 'codex'
+
+    // Exact app-owned adapter entry is the authority: never delete a PATH/npm global installation.
+    if (!resolvedPath || !isManagedCodexPath(resolvedPath, this.storageRoot)) {
+      return { snapshot: await this.getSettingsView(), activeBackendAffected: false }
+    }
+
+    await uninstallManagedCodex(this.storageRoot)
+    await this.repository.clearCodexInfo()
+    await this.detectCodex()
+    await this.autoSwitchAwayFrom('codex')
+
+    return { snapshot: await this.getSettingsView(), activeBackendAffected: wasActive }
+  }
+
   // After a framework's runtime is uninstalled, if it was the active backend and the other framework
   // has a *ready* runtime, switch the active framework to it so sessions keep a working agent. Readiness
   // means the binary reports `--version`, matching the preflight gate's rule — not merely that a file
@@ -769,19 +1066,29 @@ class SettingsService {
 
     if (active !== uninstalled) return
 
-    const other: AgentFrameworkId = uninstalled === 'claude-code' ? 'opencode' : 'claude-code'
-    const otherPath =
-      other === 'claude-code' ? settings.claude?.resolvedPath : settings.opencodePath
+    const candidates: AgentFrameworkId[] = ['claude-code', 'opencode', 'codex']
 
-    if (!otherPath) return
+    for (const candidate of candidates) {
+      if (candidate === uninstalled) continue
 
-    const version =
-      other === 'claude-code'
-        ? await this.detectDeps.getVersion(otherPath)
-        : await this.opencodeDetectDeps.getVersion(otherPath)
+      const path =
+        candidate === 'claude-code'
+          ? settings.claude?.resolvedPath
+          : candidate === 'opencode'
+            ? settings.opencodePath
+            : settings.codex?.resolvedPath
+      if (!path) continue
 
-    if (version) {
-      await this.repository.setAgentFramework(other)
+      const version =
+        candidate === 'claude-code'
+          ? await this.detectDeps.getVersion(path)
+          : candidate === 'opencode'
+            ? await this.opencodeDetectDeps.getVersion(path)
+            : await this.codexDetectDeps.getAdapterVersion(path)
+      if (version) {
+        await this.repository.setAgentFramework(candidate)
+        return
+      }
     }
   }
 
@@ -877,11 +1184,19 @@ class SettingsService {
       if (!model) throw new Error('Model is required for a custom provider.')
       if (!carryKey()) throw new Error('API key is required for a custom provider.')
 
+      const apiEndpoints = request.apiEndpoints ?? existing?.apiEndpoints ?? ['anthropic']
+
       provider.baseUrl = baseUrl
       provider.model = model
-      // Which chat API this gateway speaks (drives per-framework availability); defaults to anthropic.
-      provider.apiType = request.apiType ?? existing?.apiType ?? 'anthropic'
-      credentialsChanged = Boolean(request.key)
+      provider.supportsImageInput =
+        request.supportsImageInput ?? existing?.supportsImageInput ?? false
+      // Which chat APIs this gateway speaks (drives per-framework availability); defaults to anthropic.
+      provider.apiEndpoints = apiEndpoints
+      credentialsChanged =
+        Boolean(request.key) ||
+        provider.baseUrl !== existing?.baseUrl ||
+        provider.model !== existing?.model ||
+        provider.apiEndpoints.join(',') !== (existing?.apiEndpoints ?? []).join(',')
     } else {
       // claude-default: optional model override, no credentials of its own.
       const model = request.model?.trim() || existing?.model
@@ -932,6 +1247,16 @@ class SettingsService {
       return { ok: false, category: 'unknown', message: 'No provider to validate.' }
     }
 
+    const validationGeneration = resolved.storedId
+      ? (this.providerValidationGenerations.get(resolved.storedId) ?? 0) + 1
+      : undefined
+    if (resolved.storedId && validationGeneration !== undefined) {
+      this.providerValidationGenerations.set(resolved.storedId, validationGeneration)
+    }
+
+    // A provider test is a connectivity/key check on the provider's first model — it confirms the key
+    // and endpoint work, nothing more. Per-model Codex bridge compatibility is a static registry mark
+    // (bridgeUnsupportedModels), not a runtime probe, so there is no per-model capability to stamp.
     const result = await validateProvider(resolved.provider, {
       runClaudeProbe:
         resolved.provider.type === 'claude-default'
@@ -940,15 +1265,30 @@ class SettingsService {
     })
 
     if (resolved.storedId) {
-      const stored = settings.providers.find((provider) => provider.id === resolved.storedId)!
+      if (this.providerValidationGenerations.get(resolved.storedId) !== validationGeneration) {
+        return result
+      }
+      const latestSettings = await this.repository.getSettings()
+      const stored = latestSettings.providers.find((provider) => provider.id === resolved.storedId)
+      if (!stored) return result
+      const latestResolved = this.resolveProvider(
+        stored,
+        latestSettings.activeProviderId === stored.id ? latestSettings.activeModel : undefined
+      )
+      if (!this.sameValidationTarget(resolved.provider, latestResolved)) return result
 
       // Success stamps the validated time and clears any prior failure. A failure keeps the provider
       // but records why, so the list can flag it and the model pickers exclude it until it passes.
       await this.repository.upsertProvider(
         result.ok
-          ? { ...stored, lastValidatedAt: Date.now(), lastValidationFailure: undefined }
+          ? {
+              ...stored,
+              lastValidatedAt: Date.now(),
+              lastValidationFailure: undefined
+            }
           : {
               ...stored,
+              lastValidatedAt: undefined,
               lastValidationFailure: {
                 at: Date.now(),
                 category: result.category,
@@ -1012,20 +1352,71 @@ class SettingsService {
   // Undefined when no connector has ever been configured.
   async getConnectors(): Promise<StoredConnectors | undefined> {
     const settings = await this.repository.getSettings()
+    const connectors = settings.connectors
+    if (!connectors?.customMcpServers) return connectors
 
-    return settings.connectors
+    const resolvedServers: StoredCustomMcpServer[] = []
+    for (const stored of connectors.customMcpServers) {
+      let secured = stored
+      // Migrate pre-encryption settings on first read. The renderer never receives the resolved secrets.
+      if ((stored.env || stored.headers) && isEncryptionAvailable()) {
+        secured = {
+          ...stored,
+          ...(stored.env ? { envRefs: this.encryptSecretRecord(stored.env) } : {}),
+          ...(stored.headers ? { headerRefs: this.encryptSecretRecord(stored.headers) } : {}),
+          env: undefined,
+          headers: undefined
+        }
+        await this.repository.updateCustomServer(stored.id, secured)
+      }
+
+      resolvedServers.push({
+        ...secured,
+        env: secured.envRefs ? this.decryptSecretRecord(secured.envRefs) : secured.env,
+        headers: secured.headerRefs ? this.decryptSecretRecord(secured.headerRefs) : secured.headers
+      })
+    }
+
+    return { ...connectors, customMcpServers: resolvedServers }
+  }
+
+  private encryptSecretRecord(values: Record<string, string>): Record<string, string> {
+    return Object.fromEntries(
+      Object.entries(values).map(([name, value]) => [name, encryptKey(value)])
+    )
+  }
+
+  private decryptSecretRecord(
+    refs: Record<string, string> | undefined
+  ): Record<string, string> | undefined {
+    if (!refs) return undefined
+    const values = Object.entries(refs).flatMap(([name, ref]) => {
+      const value = tryDecryptKey(ref)
+      return value === undefined ? [] : [[name, value] as const]
+    })
+    return values.length > 0 ? Object.fromEntries(values) : undefined
   }
 
   // Materializes the enabled skill set into opencode's isolated config dir (same skills/<name>/SKILL.md
   // layout Claude uses), so opencode's native skill tool discovers them. A turn-forced skill overrides
   // its disabled state, mirroring the Claude provisioning path.
-  private async materializeOpencodeSkills(settings: StoredSettings): Promise<void> {
+  private async materializeAgentSkills(
+    settings: StoredSettings,
+    configRoot: string
+  ): Promise<void> {
     const disabled = new Set(
       (settings.disabledSkillIds ?? []).filter((id) => !this.turnForcedSkillIds.has(id))
     )
     const enabled = (await this.skillCatalog()).filter((skill) => !disabled.has(skill.id))
 
-    await new ClaudeCodeSkillMaterializer().sync(opencodeConfigDir(this.storageRoot), enabled)
+    await new ClaudeCodeSkillMaterializer().sync(configRoot, enabled)
+
+    // Connector skill docs (which instruct the agent to reach a service ONLY via `host.mcp` from the
+    // notebook kernel) are otherwise synced only into the Claude config dir. Non-Claude frameworks
+    // (Codex, opencode) read skills from their own home, so without this they never get connector
+    // guidance and fall back to ad-hoc calls (e.g. curl). Materialize them into this framework's dir too.
+    const connectors = await this.getConnectors()
+    await syncConnectorSkillDocs(join(configRoot, 'skills'), this.enabledConnectorIds(connectors))
   }
 
   // Bundled connectors the user hasn't turned off (default-on), for opencode instruction delivery.
@@ -1167,10 +1558,12 @@ class SettingsService {
       ...(request.description?.trim() ? { description: request.description.trim() } : {}),
       ...(request.command?.trim() ? { command: request.command.trim() } : {}),
       ...(request.args && request.args.length > 0 ? { args: request.args } : {}),
-      ...(request.env && Object.keys(request.env).length > 0 ? { env: request.env } : {}),
+      ...(request.env && Object.keys(request.env).length > 0
+        ? { envRefs: this.encryptSecretRecord(request.env) }
+        : {}),
       ...(request.url?.trim() ? { url: request.url.trim() } : {}),
       ...(request.headers && Object.keys(request.headers).length > 0
-        ? { headers: request.headers }
+        ? { headerRefs: this.encryptSecretRecord(request.headers) }
         : {})
     }
     const server = sanitizeCustomMcpServer(candidate)
@@ -1207,8 +1600,14 @@ class SettingsService {
 
     if (!existing) throw new Error(`Unknown custom connector: ${request.id}`)
 
-    const env = request.env ?? existing.env
-    const headers = request.headers ?? existing.headers
+    const envRefs = request.env ? this.encryptSecretRecord(request.env) : existing.envRefs
+    const headerRefs = request.headers
+      ? this.encryptSecretRecord(request.headers)
+      : existing.headerRefs
+    // Preserve legacy plaintext only when the caller leaves it untouched and safeStorage is still
+    // unavailable. A later getConnectors() call migrates it as soon as encryption becomes available.
+    const legacyEnv = request.env === undefined ? existing.env : undefined
+    const legacyHeaders = request.headers === undefined ? existing.headers : undefined
     const merged: StoredCustomMcpServer = {
       id: existing.id,
       name: existing.name,
@@ -1218,9 +1617,11 @@ class SettingsService {
       ...(request.description?.trim() ? { description: request.description.trim() } : {}),
       ...(request.command?.trim() ? { command: request.command.trim() } : {}),
       ...(request.args && request.args.length > 0 ? { args: request.args } : {}),
-      ...(env && Object.keys(env).length > 0 ? { env } : {}),
+      ...(envRefs && Object.keys(envRefs).length > 0 ? { envRefs } : {}),
+      ...(legacyEnv && Object.keys(legacyEnv).length > 0 ? { env: legacyEnv } : {}),
       ...(request.url?.trim() ? { url: request.url.trim() } : {}),
-      ...(headers && Object.keys(headers).length > 0 ? { headers } : {})
+      ...(headerRefs && Object.keys(headerRefs).length > 0 ? { headerRefs } : {}),
+      ...(legacyHeaders && Object.keys(legacyHeaders).length > 0 ? { headers: legacyHeaders } : {})
     }
     const server = sanitizeCustomMcpServer(merged)
 
@@ -1306,7 +1707,7 @@ class SettingsService {
     const settings = await this.repository.getSettings()
     const forced = process.env.OPEN_SCIENCE_AGENT_FRAMEWORK
     const frameworkId: AgentFrameworkId =
-      forced === 'opencode' || forced === 'claude-code'
+      forced === 'opencode' || forced === 'claude-code' || forced === 'codex'
         ? forced
         : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
     const framework = getAgentFramework(frameworkId)
@@ -1324,7 +1725,10 @@ class SettingsService {
 
     if (
       !isProviderUsableByFramework(
-        { apiType: this.resolveProviderApiType(activeProvider), type: activeProvider.type },
+        {
+          apiEndpoints: this.resolveProviderApiEndpoints(activeProvider),
+          type: activeProvider.type
+        },
         framework
       )
     ) {
@@ -1333,25 +1737,49 @@ class SettingsService {
       )
     }
 
+    if (
+      framework.id === 'codex' &&
+      !isModelBridgeSupported(
+        activeProvider,
+        this.resolveActiveModel(activeProvider, settings.activeModel)
+      )
+    ) {
+      throw new Error(
+        'The active model is not supported over the Codex Chat Completions bridge. Pick another model in Settings → Model.'
+      )
+    }
+
     if (framework.id === 'claude-code') {
+      await this.disableResponsesBridge()
       // Unchanged Claude path: skills provisioning + Anthropic-shaped env + local-auth handling.
       const { envOverrides, executablePath } = await this.resolveActiveSpawnConfig()
 
       return { framework, executablePath, env: envOverrides }
     }
 
-    // opencode maps the provider onto its own isolated config; the adapter writes it before spawn, and
-    // the enabled skill set is materialized into opencode's config dir (its native skill tool discovers
-    // them on-demand, same SKILL.md layout as Claude).
-    await this.materializeOpencodeSkills(settings)
-    const executablePath = await this.resolveOpencodeExecutable(settings.opencodePath)
+    const executablePath =
+      framework.id === 'codex'
+        ? await this.resolveCodexExecutable(settings.codex?.resolvedPath)
+        : await this.resolveOpencodeExecutable(settings.opencodePath)
+    const skillsRoot =
+      framework.id === 'codex'
+        ? codexStorageDir(this.storageRoot)
+        : opencodeConfigDir(this.storageRoot)
+    await this.materializeAgentSkills(settings, skillsRoot)
     const provider = this.resolveProvider(activeProvider, settings.activeModel)
+    const needsResponsesBridge =
+      framework.id === 'codex' && (provider.apiEndpoints?.includes('openai') ?? false)
+    const enabledConnectorIds = this.enabledConnectorIds(settings.connectors)
+    const responsesBridge = needsResponsesBridge
+      ? await this.ensureResponsesBridge(provider, enabledConnectorIds)
+      : await this.disableResponsesBridge()
     const modelConfig = framework.prepareModelConfig(provider, {
       storageRoot: this.storageRoot,
       executablePath,
+      responsesBridge,
       // Connector conventions + tools, so opencode uses host.mcp instead of raw HTTP (it has no skill
       // docs like Claude). Enabled bundled connectors only.
-      instructions: renderConnectorInstructions(this.enabledConnectorIds(settings.connectors))
+      instructions: renderConnectorInstructions(enabledConnectorIds)
     })
     await this.writeAgentConfigFiles(modelConfig.configFiles)
 
@@ -1360,10 +1788,57 @@ class SettingsService {
     return {
       framework,
       executablePath,
-      env: modelConfig.env ?? {},
+      env: {
+        ...(modelConfig.env ?? {}),
+        ...(framework.id === 'codex' && settings.codex?.nativePath
+          ? { CODEX_PATH: settings.codex.nativePath }
+          : {})
+      },
       args: modelConfig.args,
-      sessionModel: provider.model
+      sessionModel: modelConfig.sessionModel ?? provider.model,
+      authentication: modelConfig.authentication,
+      providerConfiguration: modelConfig.providerConfiguration
     }
+  }
+
+  private async ensureResponsesBridge(
+    provider: ResolvedProvider,
+    enabledConnectorIds: string[]
+  ): Promise<ResponsesBridgeConnection> {
+    // Resolve to the OpenAI base the bridge appends `/chat/completions` to: an official vendor's exact
+    // versioned base, or a custom gateway root normalized to `<root>/v1`.
+    const targetBaseUrl = openAiCompletionsBase(provider)
+    if (!targetBaseUrl) throw new Error('The Chat Completions provider has no base URL.')
+
+    const target = {
+      baseUrl: targetBaseUrl,
+      key: provider.key,
+      model: provider.model,
+      namespacedTools: [...CODEX_BRIDGE_NOTEBOOK_TOOLS, ...CODEX_BRIDGE_ARTIFACT_TOOLS],
+      connectorInstructions: enabledConnectorIds.map((id) => {
+        const metadata = CONNECTOR_CATALOG.find((connector) => connector.id === id)
+        return {
+          id,
+          aliases: metadata
+            ? [metadata.displayName, ...(metadata.aliases ?? []), ...metadata.sources]
+            : [],
+          content: renderSkillDoc(id)
+        }
+      })
+    }
+    if (!this.responsesBridge) {
+      this.responsesBridge = new ResponsesBridge(target)
+    } else {
+      this.responsesBridge.setTarget(target)
+    }
+
+    return this.responsesBridge.start()
+  }
+
+  private async disableResponsesBridge(): Promise<undefined> {
+    if (this.responsesBridge) await this.responsesBridge.close()
+    this.responsesBridge = undefined
+    return undefined
   }
 
   // Locates the opencode binary: an explicitly stored path wins, else a best-effort PATH lookup.
@@ -1384,28 +1859,42 @@ class SettingsService {
     return detected.resolvedPath
   }
 
+  private async resolveCodexExecutable(storedPath: string | undefined): Promise<string> {
+    if (storedPath && (await this.pathExists(storedPath))) return storedPath
+
+    const detected = await detectCodex(this.codexDetectDeps)
+    if (!detected) {
+      throw new Error('codex-acp executable not found. Install Codex in settings.')
+    }
+
+    return detected.adapterPath
+  }
+
   // Writes a framework's generated config files (e.g. opencode.json) to disk ahead of spawn.
   private async writeAgentConfigFiles(
-    files: { path: string; content: string }[] | undefined
+    files: { path: string; content: string; mode?: number }[] | undefined
   ): Promise<void> {
     for (const file of files ?? []) {
       await mkdir(dirname(file.path), { recursive: true })
-      await writeFile(file.path, file.content, 'utf8')
+      await writeFile(file.path, file.content, { encoding: 'utf8', mode: file.mode })
+      if (file.mode !== undefined) await chmod(file.path, file.mode)
     }
   }
 
-  // The chat API a provider speaks: official providers come from the registry, custom gateways from
-  // their stored/drafted apiType, everything else defaults to Anthropic /v1/messages.
-  private resolveProviderApiType(provider: StoredProvider): ProviderApiType {
+  // The chat APIs a provider speaks: official providers come from the registry, custom gateways from
+  // their stored/drafted endpoints, everything else defaults to Anthropic /v1/messages.
+  private resolveProviderApiEndpoints(provider: StoredProvider): ChatApiEndpoint[] {
     if (provider.type === 'official' && provider.vendorId) {
-      return resolveVendorApiType(provider.vendorId)
+      return resolveVendorApiEndpoints(provider.vendorId)
     }
 
-    return provider.apiType ?? 'anthropic'
+    return provider.apiEndpoints && provider.apiEndpoints.length > 0
+      ? [...provider.apiEndpoints]
+      : ['anthropic']
   }
 
   // Maps a stored provider to its masked renderer view, flagging custom keys that no longer decrypt.
-  private toProviderView(provider: StoredProvider): ProviderView {
+  private toProviderView(provider: StoredProvider, activeModel?: string): ProviderView {
     const hasKey = Boolean(provider.keyRef)
     // custom and official both require a decryptable key; claude-default carries none.
     const needsKey =
@@ -1415,9 +1904,10 @@ class SettingsService {
       id: provider.id,
       type: provider.type,
       name: provider.name,
-      apiType: this.resolveProviderApiType(provider),
+      apiEndpoints: this.resolveProviderApiEndpoints(provider),
       baseUrl: provider.baseUrl,
       model: provider.model,
+      supportsImageInput: this.providerSupportsImageInput(provider, activeModel),
       vendorId: provider.vendorId,
       region: provider.region,
       models: this.availableModels(provider),
@@ -1427,6 +1917,26 @@ class SettingsService {
       lastValidatedAt: provider.lastValidatedAt,
       lastValidationFailure: provider.lastValidationFailure
     }
+  }
+
+  private providerSupportsImageInput(provider: StoredProvider, activeModel?: string): boolean {
+    // claude-default always supports images (uses the user's Claude login, which has vision models)
+    if (provider.type === 'claude-default') return true
+
+    // Custom providers: respect the user-configured supportsImageInput flag
+    if (provider.type === 'custom') return provider.supportsImageInput === true
+
+    // Official vendors: check the model against the vendor's multimodalModels registry. When no model
+    // is active, fall back to the vendor's default model — the exact id resolveProvider spawns — not the
+    // first of the (possibly live-refreshed) catalog, so the capability always matches the model actually
+    // sent. Otherwise a refreshed list whose first entry is text-only would strip images from a default
+    // that supports them (e.g. Kimi's default kimi-k3).
+    if (provider.type === 'official' && provider.vendorId) {
+      const modelToCheck = activeModel ?? defaultVendorModel(provider.vendorId)
+      return isVendorModelMultimodal(provider.vendorId, modelToCheck)
+    }
+
+    return false
   }
 
   // Credentials usable: claude-default always; custom/official need a key that still decrypts.
@@ -1479,7 +1989,8 @@ class SettingsService {
         openaiBaseUrl: resolveVendorOpenAiBaseUrl(provider.vendorId, provider.region),
         model: modelOverride ?? defaultVendorModel(provider.vendorId),
         key,
-        apiType: this.resolveProviderApiType(provider)
+        apiEndpoints: this.resolveProviderApiEndpoints(provider),
+        supportsImageInput: this.providerSupportsImageInput(provider, modelOverride)
       }
     }
 
@@ -1488,7 +1999,8 @@ class SettingsService {
       baseUrl: provider.baseUrl,
       model: modelOverride ?? provider.model,
       key,
-      apiType: this.resolveProviderApiType(provider)
+      apiEndpoints: this.resolveProviderApiEndpoints(provider),
+      supportsImageInput: this.providerSupportsImageInput(provider, modelOverride)
     }
   }
 
@@ -1502,8 +2014,8 @@ class SettingsService {
         openaiBaseUrl: resolveVendorOpenAiBaseUrl(draft.vendorId, draft.region),
         model: draft.model ?? defaultVendorModel(draft.vendorId),
         key: draft.key,
-        // Official vendors declare their own endpoint; a custom draft carries the user's choice.
-        apiType: resolveVendorApiType(draft.vendorId)
+        // Official vendors declare their own endpoints; a custom draft carries the user's choice.
+        apiEndpoints: resolveVendorApiEndpoints(draft.vendorId)
       }
     }
 
@@ -1512,7 +2024,7 @@ class SettingsService {
       baseUrl: draft.baseUrl,
       model: draft.model,
       key: draft.key,
-      apiType: draft.apiType ?? 'anthropic'
+      apiEndpoints: draft.apiEndpoints ?? ['anthropic']
     }
   }
 
@@ -1524,7 +2036,15 @@ class SettingsService {
     if (request.providerId) {
       const stored = settings.providers.find((provider) => provider.id === request.providerId)
 
-      return stored ? { provider: this.resolveProvider(stored), storedId: stored.id } : undefined
+      return stored
+        ? {
+            provider: this.resolveProvider(
+              stored,
+              settings.activeProviderId === stored.id ? settings.activeModel : undefined
+            ),
+            storedId: stored.id
+          }
+        : undefined
     }
 
     if (request.draft) {
@@ -1532,6 +2052,17 @@ class SettingsService {
     }
 
     return undefined
+  }
+
+  private sameValidationTarget(left: ResolvedProvider, right: ResolvedProvider): boolean {
+    return (
+      left.type === right.type &&
+      left.baseUrl === right.baseUrl &&
+      left.openaiBaseUrl === right.openaiBaseUrl &&
+      left.model === right.model &&
+      left.key === right.key &&
+      (left.apiEndpoints ?? []).join(',') === (right.apiEndpoints ?? []).join(',')
+    )
   }
 
   // One-shot `claude -p "ok"` probe for claude-default validation, using the isolated/default env. A

@@ -92,6 +92,49 @@ describe('workspace runtime events', () => {
     })
   })
 
+  it('applies assistant image events without creating placeholder text', async () => {
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-image',
+        role: 'assistant',
+        messageId: 'assistant-message-1',
+        image: { mimeType: 'image/png', data: 'AQID', byteLength: 3 }
+      })
+    )
+
+    expect(useSessionStore.getState().sessions[0].messages[1]).toMatchObject({
+      role: 'agent',
+      content: '',
+      images: [{ id: 'event-image', mimeType: 'image/png', data: 'AQID', byteLength: 3 }]
+    })
+  })
+
+  it('restores image data from the existing runtime raw projection and removes its sentinel', async () => {
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-image',
+        role: 'assistant',
+        messageId: 'assistant-message-1',
+        text: '[open-science:acp-message-image]',
+        raw: {
+          update: {
+            content: {
+              type: 'image',
+              mimeType: 'image/png',
+              data: 'AQID',
+              byteLength: 3
+            }
+          }
+        }
+      })
+    )
+
+    expect(useSessionStore.getState().sessions[0].messages[1]).toMatchObject({
+      content: '',
+      images: [{ id: 'event-image', mimeType: 'image/png', data: 'AQID', byteLength: 3 }]
+    })
+  })
+
   it('finishes and fails runs from stop and error events', async () => {
     await applyWorkspaceRuntimeEvent(
       createEvent({

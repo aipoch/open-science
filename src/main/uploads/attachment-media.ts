@@ -8,7 +8,11 @@ import { pathToFileURL } from 'node:url'
 export const MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024
 
 // Anthropic rejects a single image whose payload exceeds 5MB; stay comfortably under it.
-const MAX_IMAGE_PAYLOAD_BYTES = 4.5 * 1024 * 1024
+export const MAX_IMAGE_PAYLOAD_BYTES = 4.5 * 1024 * 1024
+
+// Base64 image data shares the request with prompts and tools. Keep 8MB of a typical 32MB request
+// available for that non-image content even when the composer accepts its maximum attachment count.
+export const MAX_INLINE_IMAGE_TOTAL_BASE64_BYTES = 24 * 1024 * 1024
 
 // Anthropic downscales images past 1568px on the long edge anyway, so this is a lossless-of-info cap.
 const MAX_IMAGE_LONG_EDGE = 1568
@@ -38,14 +42,84 @@ export type ImageContentData = {
   mimeType: string
 }
 
+export type InlineImageBudget = {
+  imageCount: number
+  base64Bytes: number
+}
+
+export type ImageContentErrorCode =
+  | 'IMAGE_DECODE_FAILED'
+  | 'IMAGE_PROCESSING_FAILED'
+  | 'IMAGE_PAYLOAD_TOO_LARGE'
+  | 'IMAGE_TOTAL_BUDGET_EXCEEDED'
+
+type ImageContentErrorDetails = {
+  sourceBytes?: number
+  payloadBytes?: number
+  usedBytes?: number
+  limitBytes?: number
+  imageCount?: number
+  cause?: unknown
+}
+
+export class ImageContentError extends Error {
+  readonly code: ImageContentErrorCode
+  readonly sourceBytes?: number
+  readonly payloadBytes?: number
+  readonly usedBytes?: number
+  readonly limitBytes?: number
+  readonly imageCount?: number
+
+  constructor(
+    code: ImageContentErrorCode,
+    message: string,
+    details: ImageContentErrorDetails = {}
+  ) {
+    super(message, { cause: details.cause })
+    this.name = 'ImageContentError'
+    this.code = code
+    this.sourceBytes = details.sourceBytes
+    this.payloadBytes = details.payloadBytes
+    this.usedBytes = details.usedBytes
+    this.limitBytes = details.limitBytes
+    this.imageCount = details.imageCount
+  }
+}
+
 export type PdfTextResult = {
   text: string
   pageCount: number
   truncated: boolean
 }
 
+// Accounts for the bytes that will actually be inserted into JSON rather than the decoded image
+// size. Callers can fold this over prepared image blocks before dispatching a multimodal prompt.
+export const consumeInlineImageBudget = (
+  current: InlineImageBudget,
+  image: ImageContentData
+): InlineImageBudget => {
+  const imageCount = current.imageCount + 1
+  const payloadBytes = Buffer.byteLength(image.data, 'ascii')
+  const usedBytes = current.base64Bytes + payloadBytes
+  if (usedBytes > MAX_INLINE_IMAGE_TOTAL_BASE64_BYTES) {
+    throw new ImageContentError(
+      'IMAGE_TOTAL_BUDGET_EXCEEDED',
+      `Inline image data requires ${usedBytes} bytes, exceeding the ${MAX_INLINE_IMAGE_TOTAL_BASE64_BYTES}-byte request budget.`,
+      {
+        payloadBytes,
+        usedBytes,
+        limitBytes: MAX_INLINE_IMAGE_TOTAL_BASE64_BYTES,
+        imageCount
+      }
+    )
+  }
+
+  return { imageCount, base64Bytes: usedBytes }
+}
+
 // Builds the base64 payload for an image content block, downscaling oversized images first.
-// Small images and anything we cannot decode fall back to the raw bytes so behavior is unchanged.
+// Small images pass through unchanged. Oversized images must be decoded and reduced below the hard
+// payload limit; returning their original bytes would allow a 50MB upload to escape this boundary.
 export const buildImageContentData = async (
   filePath: string,
   mimeType: string | undefined,
@@ -57,13 +131,27 @@ export const buildImageContentData = async (
     return { data: (await readFile(filePath)).toString('base64'), mimeType: fallbackMimeType }
   }
 
+  let nativeImage: (typeof import('electron'))['nativeImage']
   try {
-    const { nativeImage } = await import('electron')
+    const electron = await import('electron')
+    nativeImage = electron.nativeImage
+  } catch (error) {
+    throw new ImageContentError(
+      'IMAGE_PROCESSING_FAILED',
+      `Image processing is unavailable for an oversized ${size}-byte image.`,
+      { sourceBytes: size, limitBytes: MAX_IMAGE_PAYLOAD_BYTES, cause: error }
+    )
+  }
+
+  try {
     const image = nativeImage.createFromPath(filePath)
 
-    // A non-decodable or empty image cannot be compressed; send the original and let the API judge it.
     if (image.isEmpty()) {
-      return { data: (await readFile(filePath)).toString('base64'), mimeType: fallbackMimeType }
+      throw new ImageContentError(
+        'IMAGE_DECODE_FAILED',
+        `Could not decode oversized ${size}-byte image for safe inlining.`,
+        { sourceBytes: size, limitBytes: MAX_IMAGE_PAYLOAD_BYTES }
+      )
     }
 
     const { width, height } = image.getSize()
@@ -93,10 +181,27 @@ export const buildImageContentData = async (
       buffer = smaller.toJPEG(65)
     }
 
+    if (buffer.byteLength > MAX_IMAGE_PAYLOAD_BYTES) {
+      throw new ImageContentError(
+        'IMAGE_PAYLOAD_TOO_LARGE',
+        `Processed image is ${buffer.byteLength} bytes, exceeding the ${MAX_IMAGE_PAYLOAD_BYTES}-byte inline limit.`,
+        {
+          sourceBytes: size,
+          payloadBytes: buffer.byteLength,
+          limitBytes: MAX_IMAGE_PAYLOAD_BYTES
+        }
+      )
+    }
+
     return { data: buffer.toString('base64'), mimeType: outMimeType }
-  } catch {
-    // If image processing is unavailable (e.g. no Electron runtime), fall back to the raw bytes.
-    return { data: (await readFile(filePath)).toString('base64'), mimeType: fallbackMimeType }
+  } catch (error) {
+    if (error instanceof ImageContentError) throw error
+
+    throw new ImageContentError(
+      'IMAGE_PROCESSING_FAILED',
+      `Failed to safely process oversized ${size}-byte image.`,
+      { sourceBytes: size, limitBytes: MAX_IMAGE_PAYLOAD_BYTES, cause: error }
+    )
   }
 }
 

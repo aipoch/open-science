@@ -13,6 +13,7 @@ import type {
 import { findPythonCommand, type PythonCommand } from '../notebook/python-command'
 import { getManagedPlatform } from './managed-claude'
 import { detectAvx2, resolveOpencodePlatform } from './managed-opencode'
+import { resolveManagedCodexPlatform } from './managed-codex'
 
 const REGISTRY_URLS: Record<ManagedClaudeRegistry, string> = {
   npmjs: 'https://registry.npmjs.org',
@@ -27,7 +28,8 @@ const REGISTRY_LABELS: Record<ManagedClaudeRegistry, string> = {
 // The npm package path probed per framework to gauge registry reachability for its managed install.
 const REGISTRY_PROBE_PATHS: Record<AgentFrameworkId, string> = {
   'claude-code': '/@anthropic-ai%2fclaude-code/latest',
-  opencode: '/opencode-ai/latest'
+  opencode: '/opencode-ai/latest',
+  codex: '/@agentclientprotocol%2fcodex-acp/latest'
 }
 const REGISTRY_PROBE_TIMEOUT_MS = 5_000
 
@@ -149,7 +151,11 @@ const runEnvironmentCheck = async ({
   // Claude's, so an arch opencode has no package for isn't reported as auto-installable (and vice versa).
   const resolveManagedPlatform =
     deps.resolveManagedPlatform ??
-    (() => (agentFrameworkId === 'opencode' ? resolveOpencodePlatform() : getManagedPlatform()))
+    (() => {
+      if (agentFrameworkId === 'opencode') return resolveOpencodePlatform()
+      if (agentFrameworkId === 'codex') return resolveManagedCodexPlatform()
+      return getManagedPlatform()
+    })
   const findPython = deps.findPython ?? findPythonCommand
   const probeRegistry = deps.probeRegistry ?? probeRegistryReachability
   const detectAvx2Cap = deps.detectAvx2 ?? detectAvx2
@@ -266,7 +272,7 @@ const runEnvironmentCheck = async ({
         status: 'warning',
         summary: 'The operating-system credential vault is unavailable.',
         detail:
-          'Unlock or authorize the system keychain when possible. Setup can continue with reduced key protection.'
+          'Unlock or authorize the system keychain before saving API keys. Keyless runtimes can continue setup.'
       }
 
   const pythonCheck: EnvironmentCheckItem = python

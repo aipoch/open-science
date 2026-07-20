@@ -18,6 +18,9 @@ export interface UpdateStrategy {
   getStatus(): UpdateStatus
   check(): Promise<UpdateStatus>
   download(): Promise<UpdateStatus>
+  // Aborts an in-flight download, stops network activity, and returns the reset status (back to
+  // 'available' when a download was running). A no-op when nothing is downloading.
+  cancel(): Promise<UpdateStatus>
   // Applies a ready update: open the installer (mac) or quitAndInstall (win/linux).
   apply(): Promise<UpdateStatus>
   // Optional: inject the pre-install backend-shutdown gate. Only the in-place strategy uses it; the

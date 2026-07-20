@@ -52,27 +52,15 @@ describe('crypto', () => {
     expect(tryDecryptKey('enc:' + Buffer.from('garbage').toString('base64'))).toBeUndefined()
   })
 
-  // When the OS keychain is unavailable, the wrapper must not throw: it stores a reduced-protection
-  // base64 ref (the behavior the onboarding/settings UI already promises) so key storage keeps working.
-  it('falls back to a plain: ref when encryption is unavailable, still round-tripping', () => {
+  it('fails closed instead of writing a reversible ref when encryption is unavailable', () => {
     keychain.available = false
 
-    const keyRef = encryptKey('sk-secret-value')
-
-    expect(keyRef.startsWith('plain:')).toBe(true)
-    expect(keyRef).not.toContain('sk-secret-value') // base64, not raw plaintext
-    expect(decryptKey(keyRef)).toBe('sk-secret-value')
-    expect(tryDecryptKey(keyRef)).toBe('sk-secret-value')
+    expect(() => encryptKey('sk-secret-value')).toThrow(/secure credential storage is unavailable/i)
   })
 
-  // A key stored while degraded must stay readable even after the keychain comes back (and vice
-  // versa), so a self-describing prefix — not the current keychain state — decides the codec.
-  it('decrypts a plain: ref regardless of whether encryption is currently available', () => {
-    keychain.available = false
-    const degradedRef = encryptKey('sk-degraded')
-
-    keychain.available = true
-    expect(tryDecryptKey(degradedRef)).toBe('sk-degraded')
+  it('still reads a legacy plain: ref so it can be migrated after upgrade', () => {
+    const legacyRef = `plain:${Buffer.from('sk-degraded').toString('base64')}`
+    expect(tryDecryptKey(legacyRef)).toBe('sk-degraded')
   })
 
   it('masks long keys as prefix…suffix and short keys as bullets', () => {

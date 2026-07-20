@@ -14,47 +14,64 @@ export const SETTINGS_FILE_VERSION = 2
 // model catalog from the registry), or reuses the local claude auth.
 export type ProviderType = 'custom' | 'claude-default' | 'official'
 
-// The chat API a model endpoint speaks: `anthropic` = /v1/messages, `openai` = /v1/chat/completions.
-// A framework supports a set of these; a provider offers one or `both`.
-export type ChatApiEndpoint = 'anthropic' | 'openai'
-export type ProviderApiType = ChatApiEndpoint | 'both'
+// The chat API a model endpoint speaks: `anthropic` = /v1/messages, `openai` =
+// /v1/chat/completions, and `responses` = /v1/responses. Keep the two OpenAI-shaped protocols
+// distinct: Codex requires Responses and reaches a Chat Completions provider only through its bridge.
+// A provider advertises the explicit set of endpoints it serves; a framework supports a set too.
+export type ChatApiEndpoint = 'anthropic' | 'openai' | 'responses'
 
-// The concrete endpoint(s) a provider offers.
-export const providerEndpoints = (apiType: ProviderApiType): ChatApiEndpoint[] =>
-  apiType === 'both' ? ['anthropic', 'openai'] : [apiType]
+// The endpoints a provider offers. Absent/empty ⇒ treat as ['anthropic'] (every legacy provider, and
+// the migration target for the removed 'both' apiType, which mapped to ['anthropic','openai']).
+export const providerEndpoints = (provider: {
+  apiEndpoints?: readonly ChatApiEndpoint[]
+}): ChatApiEndpoint[] =>
+  provider.apiEndpoints && provider.apiEndpoints.length > 0
+    ? [...provider.apiEndpoints]
+    : ['anthropic']
 
-// A provider's endpoint is usable by a framework only when they share at least one endpoint.
+// A provider's endpoints are compatible with a framework only when they share at least one endpoint.
+// Codex's Responses-compatible bridge is a separate local gateway: it does not change the provider's
+// endpoints, but it makes Chat Completions providers usable through an explicit translation path.
 export const isProviderCompatibleWith = (
-  apiType: ProviderApiType,
+  endpoints: readonly ChatApiEndpoint[],
   frameworkEndpoints: readonly ChatApiEndpoint[]
-): boolean => providerEndpoints(apiType).some((endpoint) => frameworkEndpoints.includes(endpoint))
+): boolean => endpoints.some((endpoint) => frameworkEndpoints.includes(endpoint))
 
 // Whether a provider can actually drive a given framework. Two axes: endpoint compatibility (above),
 // AND provider-type — a `claude-default` provider reuses the machine's own Claude login (Claude-specific
 // OAuth/config), which no other framework can consume, so it is only usable by Claude Code regardless
 // of endpoint. Enforced both in the renderer gates and main-side (preflight + spawn).
 export const isProviderUsableByFramework = (
-  provider: { apiType: ProviderApiType; type: ProviderType },
+  provider: { apiEndpoints?: readonly ChatApiEndpoint[]; type: ProviderType },
   framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
 ): boolean => {
   if (provider.type === 'claude-default' && framework.id !== 'claude-code') return false
 
-  return isProviderCompatibleWith(provider.apiType, framework.supportedApiTypes)
+  const endpoints = providerEndpoints(provider)
+
+  if (
+    framework.id === 'codex' &&
+    framework.supportedApiTypes.includes('responses') &&
+    endpoints.includes('openai')
+  ) {
+    return true
+  }
+
+  return isProviderCompatibleWith(endpoints, framework.supportedApiTypes)
 }
 
 // The endpoint to actually use for a (provider, framework) pair. When both sides support OpenAI
 // /v1/chat/completions it wins (per product decision); otherwise the shared Anthropic endpoint; else
 // undefined when the pair is incompatible.
 export const preferredEndpoint = (
-  apiType: ProviderApiType,
+  endpoints: readonly ChatApiEndpoint[],
   frameworkEndpoints: readonly ChatApiEndpoint[]
 ): ChatApiEndpoint | undefined => {
-  const shared = providerEndpoints(apiType).filter((endpoint) =>
-    frameworkEndpoints.includes(endpoint)
-  )
+  const shared = endpoints.filter((endpoint) => frameworkEndpoints.includes(endpoint))
 
   if (shared.length === 0) return undefined
 
+  if (shared.includes('responses')) return 'responses'
   return shared.includes('openai') ? 'openai' : 'anthropic'
 }
 
@@ -68,6 +85,14 @@ export type ClaudeInfo = {
 export type OpencodeInfo = {
   resolvedPath?: string
   version?: string
+}
+
+// Detected codex-acp adapter metadata. App-managed installs also report the paired native Codex
+// version; its executable path stays main-process-only.
+export type CodexInfo = {
+  resolvedPath?: string
+  version?: string
+  nativeVersion?: string
 }
 
 // Result of probing the machine for a runnable claude executable.
@@ -91,11 +116,12 @@ export type ProviderView = {
   id: string
   type: ProviderType
   name: string
-  // Which chat API this provider's endpoint speaks; drives per-framework availability. Absent ⇒
-  // treat as 'anthropic' (every existing provider).
-  apiType?: ProviderApiType
+  // Which chat APIs this provider's endpoint speaks; drives per-framework availability. Absent ⇒
+  // treat as ['anthropic'] (every legacy provider).
+  apiEndpoints?: ChatApiEndpoint[]
   baseUrl?: string
   model?: string
+  supportsImageInput: boolean
   // Set for official-vendor providers: which vendor and (where applicable) which regional endpoint.
   vendorId?: OfficialVendorId
   region?: string
@@ -108,6 +134,8 @@ export type ProviderView = {
   hasKey: boolean
   // True when a stored key could not be decrypted and must be re-entered before use.
   needsKey: boolean
+  // Timestamp of the last successful connectivity/key check (a single ping on the provider's first
+  // model). Codex per-model bridge compatibility is NOT a runtime probe — it's a static registry mark.
   lastValidatedAt?: number
   // Present when the most recent validation failed and no later one has succeeded. Drives the
   // "unverified" warning in the provider list.
@@ -127,7 +155,7 @@ export const providerValidationFailed = (provider: {
 
 // The agent backends the app can drive over ACP. Persisted settings and the UI reference these ids;
 // the main-process AgentFramework registry is keyed by the same union.
-export type AgentFrameworkId = 'claude-code' | 'opencode'
+export type AgentFrameworkId = 'claude-code' | 'opencode' | 'codex'
 
 // Renderer-facing descriptor for one selectable agent framework (built from the main registry).
 export type AgentFrameworkView = {
@@ -145,6 +173,8 @@ export type SettingsSnapshot = {
   claude: ClaudeInfo
   // Detected opencode executable, for the framework-aware detection card.
   opencode: OpencodeInfo
+  // Detected codex-acp adapter and its paired native Codex runtime.
+  codex: CodexInfo
   activeProviderId?: string
   // The active model within the active provider. For custom/claude-default this mirrors the provider's
   // own model; for official providers it's the chosen catalog entry. Undefined until a provider exists.
@@ -158,6 +188,7 @@ export type SettingsSnapshot = {
   // is never removed. Derived each read from the resolved path, never persisted.
   claudeManaged: boolean
   opencodeManaged: boolean
+  codexManaged: boolean
   // Timestamp of first-run onboarding completion; undefined until it finishes at least once.
   onboardingCompletedAt?: number
 }
@@ -172,7 +203,8 @@ export type SetAgentFrameworkRequest = {
 export type Preflight = {
   claudeReady: boolean
   opencodeReady: boolean
-  // Readiness of the selected agent framework (claudeReady or opencodeReady), plus which one it is.
+  codexReady: boolean
+  // Readiness of the selected agent framework, plus which one it is.
   agentFrameworkId: AgentFrameworkId
   agentReady: boolean
   activeProviderReady: boolean
@@ -185,9 +217,10 @@ export type ProviderDraft = {
   name?: string
   baseUrl?: string
   model?: string
-  // Which chat API a custom gateway speaks (form selector). Official providers take it from the
-  // registry; omitted defaults to 'anthropic'.
-  apiType?: ProviderApiType
+  supportsImageInput?: boolean
+  // Which chat APIs a custom gateway speaks (form selector). Official providers take it from the
+  // registry; omitted defaults to ['anthropic'].
+  apiEndpoints?: ChatApiEndpoint[]
   // Set when type is 'official': the chosen vendor and (where applicable) region. Base URL and model
   // catalog then come from the registry rather than the draft's baseUrl.
   vendorId?: OfficialVendorId
@@ -335,6 +368,30 @@ export type InstallOpencodeRequest = {
   source: ClaudeInstallSource
 }
 
+export type CodexInstallSource = Exclude<ClaudeInstallSource, 'official-script'>
+
+// Codex supports only an app-managed bundle or the upstream npm-global adapter. Authentication is
+// always provider API-key based; ChatGPT/local Codex login is intentionally absent.
+export type InstallCodexRequest = {
+  source: CodexInstallSource
+}
+
+export const getCodexInstallSources = (): ClaudeInstallSourceInfo[] => [
+  {
+    id: 'managed',
+    label: 'App-managed download (recommended)',
+    displayCommand: '',
+    requiresNpm: false,
+    description: 'Downloads a self-contained Codex ACP runtime — no Node.js or npm required.'
+  },
+  {
+    id: 'npm',
+    label: 'npm (global install)',
+    displayCommand: 'npm i -g @agentclientprotocol/codex-acp',
+    requiresNpm: true
+  }
+]
+
 // The ordered OpenCode install sources for a host platform, mirroring getClaudeInstallSources. The
 // app-managed native-binary download leads (works on every OS, including native Windows). npm follows
 // (`npm i -g opencode-ai`). The shell installer (`curl … | bash`) is offered only off Windows —
@@ -415,8 +472,8 @@ export type NpmAvailability = {
   available: boolean
 }
 
-// Automatic first-run environment inspection. Warnings are intentionally non-blocking (for example,
-// OS keychain encryption may be unavailable while the app can still operate with reduced protection).
+// Automatic first-run environment inspection. Warnings are non-blocking; failures identify setup
+// requirements that prevent a supported configuration, such as unavailable secure credential storage.
 export type EnvironmentCheckId =
   | 'system'
   | 'storage'

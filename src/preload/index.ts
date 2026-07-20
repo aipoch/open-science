@@ -83,6 +83,7 @@ import type {
   DeleteProviderRequest,
   EnvironmentCheckResult,
   InstallClaudeRequest,
+  InstallCodexRequest,
   InstallOpencodeRequest,
   Preflight,
   RefreshProviderModelsRequest,
@@ -199,10 +200,13 @@ type OpenScienceAPI = {
     checkEnvironment: () => Promise<EnvironmentCheckResult>
     detectClaude: () => Promise<ClaudeDetectResult>
     detectOpencode: () => Promise<SettingsSnapshot>
+    detectCodex: () => Promise<SettingsSnapshot>
     installClaude: (request: InstallClaudeRequest) => Promise<ClaudeInstallResult>
     installOpencode: (request: InstallOpencodeRequest) => Promise<ClaudeInstallResult>
+    installCodex: (request: InstallCodexRequest) => Promise<ClaudeInstallResult>
     uninstallClaude: () => Promise<SettingsSnapshot>
     uninstallOpencode: () => Promise<SettingsSnapshot>
+    uninstallCodex: () => Promise<SettingsSnapshot>
     upsertProvider: (request: UpsertProviderRequest) => Promise<SettingsSnapshot>
     deleteProvider: (request: DeleteProviderRequest) => Promise<SettingsSnapshot>
     setActiveProvider: (request: SetActiveProviderRequest) => Promise<SettingsSnapshot>
@@ -257,6 +261,7 @@ type OpenScienceAPI = {
     getStatus: () => Promise<UpdateStatus>
     check: () => Promise<UpdateStatus>
     download: () => Promise<UpdateStatus>
+    cancel: () => Promise<UpdateStatus>
     apply: () => Promise<UpdateStatus>
     onStatus: (listener: (status: UpdateStatus) => void) => RemoveListener
     onProgress: (listener: (percent: number) => void) => RemoveListener
@@ -447,14 +452,19 @@ const api: OpenScienceAPI = {
     detectClaude: () => ipcRenderer.invoke('settings:detect-claude') as Promise<ClaudeDetectResult>,
     detectOpencode: () =>
       ipcRenderer.invoke('settings:detect-opencode') as Promise<SettingsSnapshot>,
+    detectCodex: () => ipcRenderer.invoke('settings:detect-codex') as Promise<SettingsSnapshot>,
     installClaude: (request) =>
       ipcRenderer.invoke('settings:install-claude', request) as Promise<ClaudeInstallResult>,
     installOpencode: (request) =>
       ipcRenderer.invoke('settings:install-opencode', request) as Promise<ClaudeInstallResult>,
+    installCodex: (request: InstallCodexRequest) =>
+      ipcRenderer.invoke('settings:install-codex', request) as Promise<ClaudeInstallResult>,
     uninstallClaude: () =>
       ipcRenderer.invoke('settings:uninstall-claude') as Promise<SettingsSnapshot>,
     uninstallOpencode: () =>
       ipcRenderer.invoke('settings:uninstall-opencode') as Promise<SettingsSnapshot>,
+    uninstallCodex: () =>
+      ipcRenderer.invoke('settings:uninstall-codex') as Promise<SettingsSnapshot>,
     upsertProvider: (request) =>
       ipcRenderer.invoke('settings:upsert-provider', request) as Promise<SettingsSnapshot>,
     deleteProvider: (request) =>
@@ -551,6 +561,7 @@ const api: OpenScienceAPI = {
     getStatus: () => ipcRenderer.invoke('update:get-status') as Promise<UpdateStatus>,
     check: () => ipcRenderer.invoke('update:check') as Promise<UpdateStatus>,
     download: () => ipcRenderer.invoke('update:download') as Promise<UpdateStatus>,
+    cancel: () => ipcRenderer.invoke('update:cancel') as Promise<UpdateStatus>,
     apply: () => ipcRenderer.invoke('update:apply') as Promise<UpdateStatus>,
     onStatus: (listener) => onIpcMessage('update:status', listener),
     onProgress: (listener) => onIpcMessage('update:progress', listener)

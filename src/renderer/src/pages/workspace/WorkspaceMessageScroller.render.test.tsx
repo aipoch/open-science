@@ -844,6 +844,28 @@ describe('WorkspaceMessageScroller loading render', () => {
   })
 })
 
+describe('WorkspaceMessageScroller agent images', () => {
+  it('renders bounded ACP message images as data URLs alongside text', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        messages: [
+          createMessage({
+            id: 'reply-1',
+            role: 'agent',
+            content: 'Generated chart',
+            images: [{ id: 'event-image', mimeType: 'image/png', data: 'AQID', byteLength: 3 }]
+          })
+        ]
+      })
+    )
+
+    expect(html).toContain('Generated chart')
+    expect(html).toContain('src="data:image/png;base64,AQID"')
+    expect(html).toContain('alt="Agent-generated image 1"')
+  })
+})
+
 describe('WorkspaceMessageScroller tool detail rows', () => {
   it('renders execute tool activities collapsed by default', async () => {
     const html = await renderScroller(

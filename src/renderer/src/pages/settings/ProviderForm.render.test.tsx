@@ -47,6 +47,47 @@ describe('ProviderForm field switching', () => {
     expect(container.querySelector('[aria-label="Auth style"]')).toBeNull()
   })
 
+  it('shows OpenAI as an official provider with a model catalog', () => {
+    render(
+      createEmptyProviderFormValue({
+        type: 'official',
+        name: 'OpenAI',
+        vendorId: 'openai',
+        apiEndpoint: 'responses'
+      })
+    )
+
+    expect(container.querySelector('[aria-label="Provider type"]')?.textContent).toContain('OpenAI')
+    expect(container.querySelector('[aria-label="Base URL"]')).toBeNull()
+    expect(container.querySelector('[aria-label="API format"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Model"]')).toBeNull()
+    expect(container.textContent).toContain('gpt-5.6-sol')
+    expect(container.querySelector<HTMLAnchorElement>('a')?.href).toBe(
+      'https://platform.openai.com/api-keys'
+    )
+  })
+
+  it('allows a custom gateway to select the Responses endpoint', () => {
+    render(
+      createEmptyProviderFormValue({
+        type: 'custom',
+        baseUrl: 'https://gateway.example/v1',
+        model: 'custom-responses-model',
+        apiEndpoint: 'responses'
+      })
+    )
+
+    expect(container.querySelector('[aria-label="API format"]')?.textContent).toContain(
+      '/v1/responses'
+    )
+    expect(container.querySelector<HTMLInputElement>('[aria-label="Base URL"]')?.value).toBe(
+      'https://gateway.example/v1'
+    )
+    expect(container.querySelector<HTMLInputElement>('[aria-label="Model"]')?.value).toBe(
+      'custom-responses-model'
+    )
+  })
+
   it('hides gateway/key fields for a local-claude provider', () => {
     render(createEmptyProviderFormValue({ type: 'claude-default' }))
 
@@ -135,7 +176,7 @@ describe('ProviderForm field switching', () => {
 
     await act(async () => helpButtons[0]?.focus())
     expect(document.body.textContent).toContain(
-      'Base URL, key, and model for an Anthropic or OpenAI-compatible endpoint'
+      'Base URL, key, and model for a Messages or Chat Completions endpoint'
     )
 
     await act(async () => helpButtons[1]?.focus())
@@ -177,7 +218,7 @@ describe('ProviderForm field switching', () => {
     expect(document.body.textContent).toContain("Reuse this machine's Claude login")
   })
 
-  it('describes encrypted and reduced-protection storage accurately', () => {
+  it('describes encrypted and unavailable storage accurately', () => {
     expect(getApiKeySecurityCopy(true)).toEqual({
       title: 'Your key stays private.',
       description:
@@ -186,7 +227,7 @@ describe('ProviderForm field switching', () => {
     expect(getApiKeySecurityCopy(false)).toEqual({
       title: 'Secure storage is unavailable.',
       description:
-        'It is stored only on this device and never uploaded to Open Science. OS secure storage is unavailable, so it has reduced local protection and is sent only to the selected provider when you make a request.'
+        'Open Science will not save API keys until the operating-system credential vault is available. Unlock or authorize the system keychain, then retry.'
     })
   })
 

@@ -58,6 +58,35 @@ describe('downloadInstaller', () => {
     expect(existsSync(target)).toBe(false)
   })
 
+  it('aborts the download and cleans up the partial file when the signal fires', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'upd-'))
+    const target = join(dir, 'z.dmg')
+    const controller = new AbortController()
+    // Mimic real fetch: emit one chunk, then error the stream when the abort signal fires so the
+    // reader's next read rejects.
+    const fetchImpl = ((_url: unknown, init?: { signal?: AbortSignal }) => {
+      const body = new ReadableStream({
+        start(streamController) {
+          streamController.enqueue(new Uint8Array([1, 2, 3]))
+          init?.signal?.addEventListener('abort', () =>
+            streamController.error(new DOMException('The user aborted a request.', 'AbortError'))
+          )
+        }
+      })
+      return Promise.resolve(new Response(body, { status: 200 }))
+    }) as unknown as typeof fetch
+
+    const promise = downloadInstaller(
+      { url: 'https://cdn/z.dmg', size: 100, sha256: 'irrelevant' },
+      target,
+      { fetchImpl, signal: controller.signal }
+    )
+    controller.abort()
+
+    await expect(promise).rejects.toThrow()
+    expect(existsSync(target)).toBe(false)
+  })
+
   it('rejects and cleans up the partial file on a mid-stream error', async () => {
     dir = await mkdtemp(join(tmpdir(), 'upd-'))
     const target = join(dir, 'y.dmg')

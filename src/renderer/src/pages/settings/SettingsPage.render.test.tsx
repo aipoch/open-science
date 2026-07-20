@@ -17,6 +17,7 @@ const installApi = (): void => {
       getSettings: vi.fn().mockResolvedValue({
         claude: {},
         opencode: {},
+        codex: {},
         providers: [],
         agentFrameworkId: 'claude-code',
         agentFrameworks: [{ id: 'claude-code', displayName: 'Claude Code', supportsSkills: true }]
@@ -24,6 +25,15 @@ const installApi = (): void => {
       detectOpencode: vi.fn().mockResolvedValue({
         claude: {},
         opencode: {},
+        codex: {},
+        providers: [],
+        agentFrameworkId: 'claude-code',
+        agentFrameworks: [{ id: 'claude-code', displayName: 'Claude Code', supportsSkills: true }]
+      }),
+      detectCodex: vi.fn().mockResolvedValue({
+        claude: {},
+        opencode: {},
+        codex: {},
         providers: [],
         agentFrameworkId: 'claude-code',
         agentFrameworks: [{ id: 'claude-code', displayName: 'Claude Code', supportsSkills: true }]
@@ -115,6 +125,7 @@ describe('SettingsPage layout', () => {
           baseUrl: 'https://gateway.test/v1',
           model: 'test-model',
           models: ['test-model'],
+          supportsImageInput: false,
           maskedKey: 'sk-a…wxyz',
           hasKey: true,
           needsKey: false,
@@ -340,7 +351,7 @@ describe('SettingsPage layout', () => {
     expect(useSettingsStore.getState().pendingSkillId).toBeUndefined()
   })
 
-  it('warns about reduced-protection storage in the provider form when encryption is unavailable', async () => {
+  it('blocks key storage in the provider form when encryption is unavailable', async () => {
     // The store loads encryptionAvailable from this call when the dialog opens.
     ;(
       window as unknown as {
@@ -355,8 +366,8 @@ describe('SettingsPage layout', () => {
       await Promise.resolve()
     })
 
-    // No warning on the provider list itself…
-    expect(document.body.textContent).not.toContain('reduced protection')
+    // No secure-storage error appears on the provider list itself.
+    expect(document.body.textContent).not.toContain('Secure key storage is unavailable')
 
     const addProvider = Array.from(
       document.body.querySelectorAll<HTMLButtonElement>('button')
@@ -365,9 +376,9 @@ describe('SettingsPage layout', () => {
       addProvider?.click()
     })
 
-    // …but the Add provider sub-page warns before the user saves a key.
+    // The Add provider sub-page explains that secret writes fail closed.
     expect(document.body.textContent).toContain('Secure key storage is unavailable')
-    expect(document.body.textContent).toContain('reduced protection')
+    expect(document.body.textContent).toContain('API keys cannot be saved')
   })
 
   it('does not render when closed', () => {
@@ -562,5 +573,110 @@ describe('SettingsPage uninstall confirmation', () => {
       findButton(dialog!, 'Switch')?.click()
     })
     expect(setAgentFramework).toHaveBeenCalledWith({ id: 'opencode' })
+  })
+})
+
+describe('SettingsPage Codex framework', () => {
+  const frameworks = [
+    { id: 'claude-code', displayName: 'Claude Code', supportsSkills: true },
+    { id: 'opencode', displayName: 'OpenCode', supportsSkills: true },
+    {
+      id: 'codex',
+      displayName: 'Codex',
+      supportsSkills: true,
+      supportedApiTypes: ['responses']
+    }
+  ]
+
+  it('offers Codex as a selectable framework behind the switch confirmation', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    const snapshot = {
+      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      opencode: {},
+      codex: {
+        resolvedPath: '/data/codex-managed/adapter/dist/index.js',
+        version: '1.1.4',
+        nativeVersion: '0.144.6'
+      },
+      providers: [],
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: frameworks,
+      claudeManaged: true,
+      opencodeManaged: false,
+      codexManaged: true
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue(snapshot)
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      claudeReady: true,
+      opencodeReady: false,
+      codexReady: true,
+      agentFrameworkId: 'claude-code',
+      agentReady: true,
+      activeProviderReady: false
+    })
+    const setAgentFramework = vi.fn().mockResolvedValue({
+      ...snapshot,
+      agentFrameworkId: 'codex'
+    })
+    api.settings.setAgentFramework = setAgentFramework
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+
+    const codexRadio = document.body.querySelector<HTMLButtonElement>('[aria-label="Use Codex"]')
+    expect(codexRadio).not.toBeNull()
+    expect(document.body.textContent).toContain('Adapter version')
+    expect(document.body.textContent).toContain('Native Codex version')
+
+    await act(async () => codexRadio?.click())
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    expect(dialog?.textContent).toContain('Switch to Codex?')
+
+    const confirm = Array.from(dialog?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Switch'
+    )
+    await act(async () => confirm?.click())
+    expect(setAgentFramework).toHaveBeenCalledWith({ id: 'codex' })
+  })
+
+  it('routes the default app-managed install action to installCodex', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    api.settings.getSettings = vi.fn().mockResolvedValue({
+      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
+      codex: {},
+      providers: [],
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: frameworks,
+      claudeManaged: true,
+      opencodeManaged: false,
+      codexManaged: false
+    })
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      claudeReady: true,
+      opencodeReady: true,
+      codexReady: false,
+      agentFrameworkId: 'claude-code',
+      agentReady: true,
+      activeProviderReady: false
+    })
+    const installCodex = vi
+      .fn()
+      .mockResolvedValue({ installId: 'codex-test', ok: false, error: 'stopped for test' })
+    api.settings.installCodex = installCodex
+    api.settings.onInstallLog = vi.fn().mockReturnValue(() => undefined)
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+
+    const install = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Install with one click'
+    )
+    expect(install).toBeDefined()
+    await act(async () => install?.click())
+
+    expect(installCodex).toHaveBeenCalledWith({ source: 'managed' })
   })
 })

@@ -151,6 +151,11 @@ class UploadRepository {
     }
   }
 
+  async deleteSessionUploads(sessionId: string): Promise<void> {
+    const directory = this.getSessionUploadDir(assertSafePathSegment(sessionId))
+    await rm(directory, { recursive: true, force: true })
+  }
+
   // Resolves a renderer-provided upload path only after root and symlink checks pass.
   async resolveManagedUploadPath(request: DeleteUploadRequest): Promise<string> {
     if (
@@ -200,7 +205,7 @@ class UploadRepository {
 
       assertPathInsideRoot(await realpath(targetDir), resolvedFilePath)
 
-      return attachment
+      return { ...attachment, size: (await stat(resolvedFilePath)).size }
     }
 
     if (attachment.sessionId !== PENDING_UPLOAD_SESSION_ID) {

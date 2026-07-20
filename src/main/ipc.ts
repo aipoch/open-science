@@ -6,6 +6,7 @@ import { ipcMain } from 'electron'
 import { createDefaultNotebookRuntimeService, registerAcpIpcHandlers } from './acp/ipc'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
+import { wireConnectorReload } from './connector-reload'
 import { ApprovalBroker } from './connectors/approval-broker'
 import { toCustomMcpConfig, selectEnabledCustomServers } from './connectors/custom-mcp-bootstrap'
 import { McpClientManager } from './connectors/mcp-client-manager'
@@ -189,9 +190,34 @@ const registerIpcHandlers = async ({
     (event) => broadcastToRenderers('project-files:changed', event)
   )
   const reviewRepository = createDefaultReviewRepository()
+  const projectDeletionLog = createLogger('projects:deletion')
+  // Project deletion bypasses the session IPC handler, so keep upload cleanup on this authoritative
+  // path as well. Cleanup is best-effort after the session/index delete, matching session IPC semantics.
+  const projectSessionDeletion = {
+    deleteProjectSessions: async (projectId: string): Promise<void> => {
+      const sessions = (await sessionPersistenceCoordinator.loadAll()).sessions.filter(
+        (session) => session.projectId === projectId
+      )
+      await sessionPersistenceCoordinator.deleteProjectSessions(projectId)
+      await Promise.all(
+        sessions.map((session) =>
+          uploadRepository.deleteSessionUploads(session.id).catch((error: unknown) => {
+            projectDeletionLog.warn(
+              'deleteSessionUploads failed after project delete (non-fatal)',
+              {
+                projectId,
+                sessionId: session.id,
+                error: error instanceof Error ? error.message : String(error)
+              }
+            )
+          })
+        )
+      )
+    }
+  }
   const projectDeletionCoordinator = new ProjectDeletionCoordinator(
     projectRepository,
-    sessionPersistenceCoordinator,
+    projectSessionDeletion,
     previewStateRepository
   )
   const sessionPersistenceBackend: SessionPersistenceBackend = {
@@ -313,15 +339,21 @@ const registerIpcHandlers = async ({
     onActiveProviderChanged: () => void runtime.requestProviderReconnect(),
     onSkillsChanged: () => void runtime.requestSkillsReload(),
     // Re-sync bundled + custom skill docs and refresh the in-memory snapshot the connector
-    // service reads, so a connector/tool/credential change takes effect without an app restart.
+    // service reads, then request a skills reload. The reload respawns the agent on next idle so a
+    // non-Claude framework (Codex, opencode) — whose connector docs are materialized into its own
+    // home at spawn — picks up the change too, not just the Claude config dir.
     onConnectorsChanged: () =>
-      void refreshConnectorSkillDocs(
-        settingsService,
-        resolveStorageRoot(),
-        mcpClientManager,
-        (connectors) => {
-          connectorsSnapshot = connectors
-        }
+      void wireConnectorReload(
+        () =>
+          refreshConnectorSkillDocs(
+            settingsService,
+            resolveStorageRoot(),
+            mcpClientManager,
+            (connectors) => {
+              connectorsSnapshot = connectors
+            }
+          ),
+        () => void runtime.requestSkillsReload()
       )
   })
   registerNotebookIpcHandlers(notebookService)
@@ -336,7 +368,9 @@ const registerIpcHandlers = async ({
   })
   registerArtifactIpcHandlers(artifactRepository, artifactRunRegistry)
   registerUploadIpcHandlers(uploadRepository)
-  registerSessionPersistenceIpcHandlers(sessionPersistenceBackend, reviewRepository)
+  registerSessionPersistenceIpcHandlers(sessionPersistenceBackend, reviewRepository, (sessionId) =>
+    uploadRepository.deleteSessionUploads(sessionId)
+  )
   registerProjectFilesIpcHandlers(
     projectFilesRepository,
     sessionPersistenceCoordinator,

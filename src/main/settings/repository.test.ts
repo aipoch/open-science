@@ -69,6 +69,28 @@ describe('settings repository', () => {
     expect(settings.opencodeVersion).toBe('1.18.3')
   })
 
+  it('persists the Codex adapter and paired native runtime across a sanitized read', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    await repository.setAgentFramework('codex')
+    await repository.setCodexInfo({
+      resolvedPath: '/data/codex-acp/dist/index.js',
+      version: '1.1.4',
+      nativePath: '/data/codex-acp/vendor/codex',
+      nativeVersion: '0.144.6'
+    })
+
+    expect(await repository.getSettings()).toMatchObject({
+      agentFrameworkId: 'codex',
+      codex: {
+        resolvedPath: '/data/codex-acp/dist/index.js',
+        version: '1.1.4',
+        nativePath: '/data/codex-acp/vendor/codex',
+        nativeVersion: '0.144.6'
+      }
+    })
+  })
+
   it('replaces a provider in place on upsert by id', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 
@@ -349,7 +371,7 @@ describe('settings repository: v2 official providers & activeModel migration', (
         version: 2,
         providers: [
           { id: 'ok', type: 'official', name: 'DeepSeek', vendorId: 'deepseek', keyRef: 'enc:x' },
-          { id: 'bad1', type: 'official', name: 'Bogus', vendorId: 'openai', keyRef: 'enc:x' },
+          { id: 'bad1', type: 'official', name: 'Bogus', vendorId: 'unknown', keyRef: 'enc:x' },
           { id: 'bad2', type: 'official', name: 'No vendor', keyRef: 'enc:x' }
         ]
       }),

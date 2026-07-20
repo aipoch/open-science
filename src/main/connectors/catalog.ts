@@ -3,6 +3,8 @@ import type { ConnectorGroup } from '../../shared/settings'
 export type ConnectorMeta = {
   id: string
   displayName: string
+  // User-facing/source aliases used by the bridge's deterministic per-turn router.
+  aliases?: string[]
   description: string
   // Trigger-style summary ("Use when …") that drives automatic skill discovery — the agent matches a
   // plain user question against this without the user naming the connector. Keep it query-oriented.
@@ -51,6 +53,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'pubmed',
     displayName: 'PubMed',
+    aliases: ['NCBI literature', 'PMC', 'Europe PMC'],
     description:
       'Biomedical literature via NCBI E-utilities, the PMC ID Converter and Europe PMC — search, metadata, related articles, citation lookup, ID conversion, full text and copyright.',
     useWhen:
@@ -63,6 +66,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'genes',
     displayName: 'Genes & Ontologies',
+    aliases: ['MyGene', 'mygene.info', 'UniProt', 'gene information', 'gene annotation'],
     description:
       'Gene/protein identity and ontology terms — mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways.',
     useWhen:
@@ -85,6 +89,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'variants',
     displayName: 'Variants',
+    aliases: ['gnomAD', 'ClinVar', 'dbSNP', 'genetic variant'],
     description:
       'Human genetic variants — gnomAD population frequencies/constraint, ClinVar records/search (direct NCBI), dbSNP, structural and mitochondrial variants.',
     useWhen:
@@ -108,6 +113,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'clinical_genomics',
     displayName: 'Clinical Genomics',
+    aliases: ['ClinGen', 'CIViC', 'Open Targets'],
     description:
       'Clinical genomics knowledge bases: ClinGen curations, CIViC clinical evidence, and the Open Targets Platform.',
     useWhen:

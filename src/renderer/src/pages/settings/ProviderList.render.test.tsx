@@ -27,6 +27,7 @@ const provider = (overrides: Partial<ProviderView> = {}): ProviderView => ({
   baseUrl: 'https://g/v1',
   model: 'claude-sonnet-4-5',
   models: ['claude-sonnet-4-5'],
+  supportsImageInput: false,
   maskedKey: 'sk-a…wxyz',
   hasKey: true,
   needsKey: false,
@@ -220,7 +221,7 @@ describe('ProviderList', () => {
   })
 
   it('badges the chat endpoint a provider speaks, defaulting to Anthropic when unset', () => {
-    renderList([provider({ apiType: undefined })])
+    renderList([provider({ apiEndpoints: undefined })])
 
     const badge = container.querySelector('[aria-label="Speaks the /v1/messages endpoint"]')
     expect(badge).not.toBeNull()
@@ -230,15 +231,23 @@ describe('ProviderList', () => {
   })
 
   it('badges an OpenAI-compatible provider distinctly', () => {
-    renderList([provider({ apiType: 'openai' })])
+    renderList([provider({ apiEndpoints: ['openai'] })])
 
     const badge = container.querySelector('[aria-label="Speaks the /v1/chat/completions endpoint"]')
     expect(badge).not.toBeNull()
     expect(badge?.textContent).toContain('/v1/chat/completions')
   })
 
+  it('badges a Responses provider distinctly', () => {
+    renderList([provider({ apiEndpoints: ['responses'] })])
+
+    const badge = container.querySelector('[aria-label="Speaks the /v1/responses endpoint"]')
+    expect(badge).not.toBeNull()
+    expect(badge?.textContent).toContain('/v1/responses')
+  })
+
   it('badges a dual-endpoint provider with both routes', () => {
-    renderList([provider({ apiType: 'both' })])
+    renderList([provider({ apiEndpoints: ['anthropic', 'openai'] })])
 
     expect(container.textContent).toContain('/v1/messages · /v1/chat/completions')
   })

@@ -3,7 +3,7 @@ type ApiKeySecurityCopy = {
   description: string
 }
 
-// Keeps the security promise aligned with the actual safeStorage and reduced-protection paths.
+// Keeps the security promise aligned with the fail-closed safeStorage boundary.
 const getApiKeySecurityCopy = (encryptionAvailable: boolean): ApiKeySecurityCopy =>
   encryptionAvailable
     ? {
@@ -14,7 +14,7 @@ const getApiKeySecurityCopy = (encryptionAvailable: boolean): ApiKeySecurityCopy
     : {
         title: 'Secure storage is unavailable.',
         description:
-          'It is stored only on this device and never uploaded to Open Science. OS secure storage is unavailable, so it has reduced local protection and is sent only to the selected provider when you make a request.'
+          'Open Science will not save API keys until the operating-system credential vault is available. Unlock or authorize the system keychain, then retry.'
       }
 
 export { getApiKeySecurityCopy }
