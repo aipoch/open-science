@@ -195,6 +195,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const refreshProviderModels = useSettingsStore((state) => state.refreshProviderModels)
   const pendingSkillId = useSettingsStore((state) => state.pendingSkillId)
   const consumePendingSkill = useSettingsStore((state) => state.consumePendingSkill)
+  const pendingComputePanel = useSettingsStore((state) => state.pendingComputePanel)
 
   // Settings navigation history (browser-like back/forward). Panel switches and drill-downs push a
   // new location; the active panel and open sub-views are derived from the current entry.
@@ -249,6 +250,24 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
     setSeededSkillId(undefined)
   }
 
+  // When opened from the Files panel "Add SSH host…" link, seed the history straight to the Compute
+  // panel. Follows the same derive-state-during-render pattern as pendingSkillId.
+  const [seededComputePanel, setSeededComputePanel] = useState(false)
+  if (open && pendingComputePanel && !seededComputePanel) {
+    setSeededComputePanel(true)
+    setHistory([{ ...INITIAL_LOCATION, panel: 'compute', compute: { kind: 'list' } }])
+    setHistoryIndex(0)
+  }
+  if (!open && seededComputePanel) {
+    setSeededComputePanel(false)
+  }
+
+  // Clear the store's pending compute panel flag after it has been applied.
+  useEffect(() => {
+    if (pendingComputePanel) {
+      useSettingsStore.setState({ pendingComputePanel: undefined })
+    }
+  }, [pendingComputePanel])
   // Clear the store's pending flag after it has been applied, so a later normal open starts fresh.
   useEffect(() => {
     if (pendingSkillId !== undefined) consumePendingSkill()

@@ -1,4 +1,4 @@
-import { Check, ChevronDown, File, Folder, Paperclip } from 'lucide-react'
+import { Check, ChevronDown, File, Folder, Paperclip, Plus, Server } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import {
@@ -7,6 +7,7 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
@@ -14,6 +15,8 @@ import { cn, formatByteSize } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { useSessionStore } from '@/stores/session-store'
+import { useComputeStore } from '@/stores/compute-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 
 import { ArtifactPreview } from './artifact-preview'
@@ -36,6 +39,7 @@ import { getPreviewThumbnailReadEncoding } from './preview-support'
 import { getPreviewFileReader } from './previews/preview-file-reader'
 import { useNearViewport } from './previews/useNearViewport'
 import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
+import { FileBrowserModal } from '../settings/FileBrowserModal'
 
 type ProjectFilesFilterOption = {
   id: string
@@ -339,45 +343,97 @@ const ProjectFilesFilterMenu = ({
   label,
   options,
   selectedOptionId,
-  onSelect
+  onSelect,
+  onBrowseRemoteHost
 }: {
   label: string
   options: ProjectFilesFilterOption[]
   selectedOptionId: string
   onSelect: (optionId: string) => void
-}): React.JSX.Element => (
-  <DropdownMenu>
-    <DropdownMenuTrigger asChild>
-      <Button
-        type="button"
-        variant="outline"
-        className="max-w-[220px] gap-1.5"
-        aria-label="Filter project files"
-      >
-        <File className="size-3.5 shrink-0 text-text-300" strokeWidth={1.8} aria-hidden="true" />
-        <span className="min-w-0 truncate">{label}</span>
-        <ChevronDown
-          className="size-3.5 shrink-0 text-text-300"
-          strokeWidth={2}
-          aria-hidden="true"
-        />
-      </Button>
-    </DropdownMenuTrigger>
-    <DropdownMenuContent align="start" className="w-[320px]">
-      <DropdownMenuLabel>Artifacts</DropdownMenuLabel>
-      <DropdownMenuGroup>
-        {options.map((option) => (
-          <FilterMenuItem
-            key={option.id}
-            option={option}
-            isSelected={option.id === selectedOptionId}
-            onSelect={onSelect}
+  onBrowseRemoteHost: (providerId: string) => void
+}): React.JSX.Element => {
+  const hosts = useComputeStore((state) => state.hosts)
+  const openSettingsToCompute = useSettingsStore((state) => state.openSettingsToCompute)
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          className="max-w-[220px] gap-1.5"
+          aria-label="Filter project files"
+        >
+          <File className="size-3.5 shrink-0 text-text-300" strokeWidth={1.8} aria-hidden="true" />
+          <span className="min-w-0 truncate">{label}</span>
+          <ChevronDown
+            className="size-3.5 shrink-0 text-text-300"
+            strokeWidth={2}
+            aria-hidden="true"
           />
-        ))}
-      </DropdownMenuGroup>
-    </DropdownMenuContent>
-  </DropdownMenu>
-)
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-[320px]">
+        <DropdownMenuLabel>Artifacts</DropdownMenuLabel>
+        <DropdownMenuGroup>
+          {options.map((option) => (
+            <FilterMenuItem
+              key={option.id}
+              option={option}
+              isSelected={option.id === selectedOptionId}
+              onSelect={onSelect}
+            />
+          ))}
+        </DropdownMenuGroup>
+
+        {/* REMOTE section: SSH compute hosts */}
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel>REMOTE</DropdownMenuLabel>
+        <DropdownMenuGroup>
+          {hosts.map((host) => {
+            const reachable = host.probeResult?.ok === true
+            return (
+              <DropdownMenuItem
+                key={host.providerId}
+                disabled={!reachable}
+                onSelect={() => {
+                  if (reachable) onBrowseRemoteHost(host.providerId)
+                }}
+                className={cn('gap-2', !reachable && 'opacity-50 cursor-not-allowed')}
+              >
+                {/* Online status dot */}
+                <span
+                  className={cn(
+                    'size-1.5 shrink-0 rounded-full',
+                    reachable ? 'bg-emerald-400' : 'bg-muted-foreground/40'
+                  )}
+                  aria-hidden="true"
+                />
+                <Server
+                  className="size-4 shrink-0 text-text-300"
+                  strokeWidth={1.8}
+                  aria-hidden="true"
+                />
+                <span className="min-w-0 flex-1 truncate">{host.displayName}</span>
+                {!reachable && (
+                  <span className="shrink-0 text-[11px] text-text-300">Host unreachable</span>
+                )}
+              </DropdownMenuItem>
+            )
+          })}
+          {/* Add SSH host → opens Settings > Compute */}
+          <DropdownMenuItem
+            className="gap-2 text-muted-foreground"
+            onSelect={() => openSettingsToCompute()}
+          >
+            <Plus className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+            <span>Add SSH host…</span>
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
 
 const ProjectFilesView = (): React.JSX.Element => {
   const allSessions = useSessionStore((state) => state.sessions)
@@ -386,6 +442,9 @@ const ProjectFilesView = (): React.JSX.Element => {
   const [selectedFilterId, setSelectedFilterId] = useState('all')
   // Files-tab previews are transient dialog state rather than workbench tabs.
   const [dialogItem, setDialogItem] = useState<PreviewFileItem | undefined>(undefined)
+
+  // Remote file browser modal state — set to a providerId when a REMOTE host is selected.
+  const [browseProviderId, setBrowseProviderId] = useState<string | undefined>(undefined)
 
   // Only the active project's sessions contribute files, so the library never mixes projects.
   const sessions = useMemo(
@@ -488,6 +547,7 @@ const ProjectFilesView = (): React.JSX.Element => {
           options={filterOptions}
           selectedOptionId={effectiveFilterId}
           onSelect={selectFilter}
+          onBrowseRemoteHost={(providerId) => setBrowseProviderId(providerId)}
         />
         <div className="text-[11px] text-text-300">{visibleFileCount} files</div>
       </div>
@@ -570,6 +630,13 @@ const ProjectFilesView = (): React.JSX.Element => {
         ) : null}
       </div>
       <FilePreviewDialog item={dialogItem} onClose={() => setDialogItem(undefined)} />
+
+      {/* Remote file browser modal — opened when a REMOTE host is selected from the source dropdown */}
+      <FileBrowserModal
+        open={browseProviderId !== undefined}
+        onClose={() => setBrowseProviderId(undefined)}
+        initialProviderId={browseProviderId}
+      />
     </div>
   )
 }
