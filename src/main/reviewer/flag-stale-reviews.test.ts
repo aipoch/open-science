@@ -133,4 +133,20 @@ describe('flagStaleReviews', () => {
 
     expect(result.stale).toBeUndefined()
   })
+
+  it('recomputes against scope.turnMessageId, so a fix-loop review is not falsely stale', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'flag-stale-'))
+    const session = buildSession()
+    await writeArtifact(storageRoot, 'a,b\n1,2\n')
+
+    // A fix-loop re-review: its SCOPE is the correction turn (a1), but the row is grouped under the
+    // ORIGINAL turn id (u1). Recomputing with review.turnMessageId (u1) would resolve a different turn
+    // and always mismatch; recomputing with scope.turnMessageId (a1) correctly matches when unchanged.
+    const scope = await resolveTurnScopeWithArtifactDigests(session, 'a1', storageRoot)
+    const fixLoopReview = buildReview(scope, { turnMessageId: 'u1' })
+
+    const [result] = await flagStaleReviews([fixLoopReview], session, storageRoot)
+
+    expect(result.stale).toBeUndefined()
+  })
 })

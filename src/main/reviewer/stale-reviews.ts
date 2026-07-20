@@ -17,19 +17,34 @@ export const flagStaleReviews = async (
   if (reviews.length === 0 || !session) return reviews
   const currentSession = session
 
-  return Promise.all(
-    reviews.map(async (review) => {
-      if (review.lifecycle !== 'complete') return review
-      try {
-        const current = await resolveTurnScopeWithArtifactDigests(
-          currentSession,
-          review.turnMessageId,
-          artifactStorageRoot
-        )
-        return isTurnScopeStale(review.scope, current) ? { ...review, stale: true } : review
-      } catch {
-        return review
-      }
-    })
-  )
+  // Sequential across reviews: resolveTurnScopeWithArtifactDigests already bounds concurrency *within*
+  // one scope, but a Promise.all here would multiply that by the number of reviews and could exhaust
+  // file descriptors on a session with a long review history (then fail-open, hiding staleness).
+  const flagged: ReviewWithChecks[] = []
+  for (const review of reviews) {
+    flagged.push(await flagOne(review, currentSession, artifactStorageRoot))
+  }
+  return flagged
+}
+
+// Recomputes one review's scope and returns it marked stale when it no longer matches.
+const flagOne = async (
+  review: ReviewWithChecks,
+  session: PersistedChatSession,
+  artifactStorageRoot: string
+): Promise<ReviewWithChecks> => {
+  if (review.lifecycle !== 'complete') return review
+  try {
+    // Recompute against the turn the stored scope was actually resolved for, not review.turnMessageId:
+    // a fix-loop re-review is grouped under the ORIGINAL turn id but its scope belongs to the correction
+    // turn, so using review.turnMessageId would resolve a different turn and mark it stale every time.
+    const current = await resolveTurnScopeWithArtifactDigests(
+      session,
+      review.scope.turnMessageId,
+      artifactStorageRoot
+    )
+    return isTurnScopeStale(review.scope, current) ? { ...review, stale: true } : review
+  } catch {
+    return review
+  }
 }
