@@ -31,6 +31,8 @@ import type {
   SaveManagedFileResult
 } from '../shared/file-save'
 import type {
+  ComputeApprovalDecision,
+  ComputeApprovalRequest,
   ComputeHost,
   CreateComputeHostRequest,
   DeleteComputeHostRequest,
@@ -688,7 +690,13 @@ const api: OpenScienceAPI = {
     scratchSet: (providerId, path) =>
       ipcRenderer.invoke('compute:scratch:set', providerId, path) as Promise<void>,
     concurrencySet: (providerId, limit) =>
-      ipcRenderer.invoke('compute:concurrency:set', providerId, limit) as Promise<void>
+      ipcRenderer.invoke('compute:concurrency:set', providerId, limit) as Promise<void>,
+    // Fires when a compute call needs user approval (runs before any SSH is made).
+    onApprovalRequest: (listener: (request: ComputeApprovalRequest) => void) =>
+      onIpcMessage<ComputeApprovalRequest>('compute:approval-request', listener),
+    // Renderer sends back the user's decision (once / conversation / project / deny).
+    respondApproval: (request: { id: string; decision: ComputeApprovalDecision }) =>
+      ipcRenderer.invoke('compute:approval-respond', request) as Promise<void>
   },
   preview: {
     // Per-project preview panel state, persisted alongside projects in SQLite.

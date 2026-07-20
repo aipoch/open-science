@@ -96,6 +96,11 @@ export type ComputeCallError = {
   retry_after_user_action: boolean
 }
 
+// The three approval scopes available in the compute approval card. 'deny' is the negative outcome.
+// No 'global' scope per design.md §6 — deliberately omitted.
+export type ComputeApprovalScope = 'once' | 'conversation' | 'project'
+export type ComputeApprovalDecision = ComputeApprovalScope | 'deny'
+
 // Approval request broadcast from main to the renderer for a compute:call_command invocation.
 // provider_name is the human-readable display name; shape is the host topology string.
 export type ComputeApprovalRequest = {

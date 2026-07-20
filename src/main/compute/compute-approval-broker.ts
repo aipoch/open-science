@@ -1,8 +1,18 @@
-import type { ComputeApprovalRequest } from '../../shared/compute'
+import type { ComputeApprovalRequest, ComputeApprovalDecision } from '../../shared/compute'
 
-// The compute approval decision. Only 'once' and 'deny' are supported in this issue (Phase 1);
-// 'conversation' and 'project' scopes are added in issue 05.
-export type ComputeApprovalDecision = 'once' | 'deny'
+// Re-export so callers that import from this module don't have to reference shared/compute directly.
+export type { ComputeApprovalDecision }
+
+// Context passed with each approval request so the broker can check and record grants.
+export type ComputeApprovalContext = {
+  // Unique identifier for the current session (process lifetime). Used as the key for
+  // conversation-scope in-memory grants. A new process → no conversation grants.
+  sessionId: string
+  // Project identifier used for project-scope persistent grants.
+  projectId: string
+  // The compute operation being approved (e.g. 'call_command').
+  operation: string
+}
 
 type ComputeApprovalBrokerDeps = {
   // Pushes a pending approval request to the renderer.
@@ -14,12 +24,32 @@ type ComputeApprovalBrokerDeps = {
   // Injectable timer for tests.
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   clearTimer?: (handle: ReturnType<typeof setTimeout>) => void
+  // Optional: check whether a project-scope grant exists for (projectId, operation, providerId).
+  // Return true → skip the approval card with 'project' decision.
+  checkProjectGrant?: (grant: {
+    projectId: string
+    operation: string
+    providerId: string
+  }) => Promise<boolean>
+  // Optional: persist a new project-scope grant.
+  saveProjectGrant?: (grant: {
+    projectId: string
+    operation: string
+    providerId: string
+  }) => Promise<void>
 }
 
 // Bridges the main-process compute gate to the renderer approval card. Holds the call_command
 // open (a Promise) while the user decides; auto-denies after timeoutMs to prevent indefinite hangs.
 // Follows the same promise + broadcast + IPC-respond pattern as ApprovalBroker in connectors.
-// Phase 1 supports only Once/deny; issue 05 extends with conversation/project scope.
+//
+// Issue 05 extends the issue-04 base with three approval scopes (design.md §6):
+//   - 'once':         no memory; card shown every time
+//   - 'conversation': in-memory grants map per (sessionId, operation, providerId); cleared on restart
+//   - 'project':      persisted via settings JSON per (projectId, operation, providerId)
+//
+// Use request() for legacy callers that do not supply context (only 'once'/'deny' can result).
+// Use requestWithContext() to enable grant memory.
 export class ComputeApprovalBroker {
   private readonly pending = new Map<
     string,
@@ -28,6 +58,10 @@ export class ComputeApprovalBroker {
       timer: ReturnType<typeof setTimeout>
     }
   >()
+
+  // Conversation-scope in-memory grants. Key = `${sessionId}:${operation}:${providerId}`.
+  // Scoped to this broker instance (= one app session). A restart creates a new broker → no grants.
+  private readonly conversationGrants = new Set<string>()
 
   private readonly timeoutMs: number
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
@@ -40,6 +74,7 @@ export class ComputeApprovalBroker {
   }
 
   // Broadcasts an approval request and resolves once the renderer responds (or the timeout denies).
+  // Does NOT check grants — use requestWithContext for that.
   request(info: Omit<ComputeApprovalRequest, 'id'>): Promise<ComputeApprovalDecision> {
     const id = this.deps.generateId()
 
@@ -48,6 +83,38 @@ export class ComputeApprovalBroker {
       this.pending.set(id, { resolve, timer })
       this.deps.broadcast({ id, ...info })
     })
+  }
+
+  // Like request(), but checks conversation and project grants first. If a grant matches, resolves
+  // immediately without broadcasting. When the user responds with a scope that has memory, records it.
+  async requestWithContext(
+    info: Omit<ComputeApprovalRequest, 'id'>,
+    ctx: ComputeApprovalContext
+  ): Promise<ComputeApprovalDecision> {
+    const { sessionId, projectId, operation } = ctx
+    const providerId = info.provider_id
+
+    // ── project grant check (persistent) ──────────────────────────────────────────
+    if (this.deps.checkProjectGrant) {
+      const hasProject = await this.deps.checkProjectGrant({ projectId, operation, providerId })
+      if (hasProject) return 'project'
+    }
+
+    // ── conversation grant check (session in-memory) ───────────────────────────────
+    const convKey = `${sessionId}:${operation}:${providerId}`
+    if (this.conversationGrants.has(convKey)) return 'conversation'
+
+    // ── no grant — show approval card ─────────────────────────────────────────────
+    const decision = await this.request(info)
+
+    // Record grant if applicable.
+    if (decision === 'conversation') {
+      this.conversationGrants.add(convKey)
+    } else if (decision === 'project' && this.deps.saveProjectGrant) {
+      await this.deps.saveProjectGrant({ projectId, operation, providerId })
+    }
+
+    return decision
   }
 
   // Called from the IPC handler when the renderer responds. Unknown ids are ignored.

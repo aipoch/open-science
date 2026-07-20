@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { BrowserWindow, ipcMain } from 'electron'
 
 import type {
+  ComputeApprovalDecision,
   ComputeHost,
   ComputeApprovalRequest,
   CreateComputeHostRequest,
@@ -12,6 +13,7 @@ import type {
 } from '../../shared/compute'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { resolveStorageRoot } from '../storage-root'
+import { SettingsRepository } from '../settings/repository'
 import { ComputeApprovalBroker } from './compute-approval-broker'
 import { ComputeService } from './compute-service'
 import { ComputeHostRepository } from './repository'
@@ -49,8 +51,9 @@ type ComputeHandlers = {
   concurrencySet: (providerId: string, limit: number) => Promise<void>
   // The compute service instance, exposed so the notebook RPC server can wire computeCall.
   computeService: ComputeService
-  // Responds to a pending approval request from the renderer.
-  approvalRespond: (id: string, decision: 'once' | 'deny') => void
+  // Responds to a pending approval request from the renderer. Decision now includes
+  // 'conversation' and 'project' scopes in addition to 'once' and 'deny' (issue 05).
+  approvalRespond: (id: string, decision: ComputeApprovalDecision) => void
 }
 
 // Optional callback injected into createComputeHandlers so create/delete can re-sync the skill doc
@@ -63,7 +66,8 @@ const createComputeHandlers = (
   listSshAliases: () => Promise<string[]> = readSshConfigHostAliases,
   injectedService?: ComputeService,
   injectedBroker?: ComputeApprovalBroker,
-  onSkillDocSync?: SkillDocSyncer
+  onSkillDocSync?: SkillDocSyncer,
+  settingsRepository?: SettingsRepository
 ): ComputeHandlers => {
   // The broadcast function sends approval requests to all renderer windows. In tests, callers
   // inject a fake broker so this function is never called directly.
@@ -76,7 +80,14 @@ const createComputeHandlers = (
         for (const win of BrowserWindow.getAllWindows()) {
           win.webContents.send('compute:approval-request', request)
         }
-      }
+      },
+      // Wire project-scope grant persistence through the settings repository (issue 05).
+      checkProjectGrant: settingsRepository
+        ? (grant) => settingsRepository.hasComputeGrant(grant)
+        : undefined,
+      saveProjectGrant: settingsRepository
+        ? (grant) => settingsRepository.addComputeGrant(grant).then(() => undefined)
+        : undefined
     })
 
   const service = injectedService ?? new ComputeService(new SystemSshRunner(), repository, broker)
@@ -130,15 +141,19 @@ const registerComputeIpcHandlers = (
   const storageRoot = resolveStorageRoot()
   const skillsDir = join(getAppClaudeConfigDir(storageRoot), 'skills')
 
-  // Skill doc syncer: writes remote-compute-ssh/SKILL.md with the current host list.
+  // Skill doc syncer: writes remote-compute-ssh/SKILL.md with the current host list (issue 06).
   const skillDocSyncer: SkillDocSyncer = (hosts) => syncComputeSkillDoc(skillsDir, hosts)
+
+  // Share the settings repository with the broker so project grants are persisted (issue 05).
+  const settingsRepo = new SettingsRepository(storageRoot)
 
   const handlers = createComputeHandlers(
     repository,
     undefined,
     undefined,
     undefined,
-    skillDocSyncer
+    skillDocSyncer,
+    settingsRepo
   )
 
   // Write the initial skill doc at startup so agents see the host list from the first session.
@@ -173,10 +188,11 @@ const registerComputeIpcHandlers = (
   ipcMain.handle('compute:concurrency:set', (_event, providerId: string, limit: number) =>
     handlers.concurrencySet(providerId, limit)
   )
-  // Renderer responds to an in-flight approval card (issue 04).
+  // Renderer responds to an in-flight approval card (issue 04/05). Decision now carries the
+  // chosen scope: 'once' | 'conversation' | 'project' | 'deny'.
   ipcMain.handle(
     'compute:approval-respond',
-    (_event, request: { id: string; decision: 'once' | 'deny' }) => {
+    (_event, request: { id: string; decision: ComputeApprovalDecision }) => {
       handlers.approvalRespond(request.id, request.decision)
     }
   )

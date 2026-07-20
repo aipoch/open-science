@@ -28,7 +28,8 @@ type NotebookLocalRpcServerOptions = {
       cmd: string,
       intent: string,
       loginShell?: boolean,
-      timeoutSeconds?: number
+      timeoutSeconds?: number,
+      context?: { sessionId: string; projectId: string }
     ): Promise<unknown>
     list(): Promise<unknown>
     getDetails(providerId: string): Promise<unknown>
@@ -199,13 +200,19 @@ class NotebookLocalRpcServer {
         const loginShell = typeof params.login_shell === 'boolean' ? params.login_shell : true
         const timeoutSeconds =
           typeof params.timeout_seconds === 'number' ? params.timeout_seconds : undefined
+        // Optional session/project context for grant-scope approval memory (issue 05).
+        // When absent, callCommand falls back to the legacy 'once'-only behaviour.
+        const sessionId = typeof params.session_id === 'string' ? params.session_id : undefined
+        const projectId = typeof params.project_id === 'string' ? params.project_id : undefined
+        const context = sessionId && projectId ? { sessionId, projectId } : undefined
         try {
           return await this.computeService.callCommand(
             providerId,
             cmd,
             intent,
             loginShell,
-            timeoutSeconds
+            timeoutSeconds,
+            context
           )
         } catch (err) {
           // Re-throw compute call errors as structured error objects so the Python shim can

@@ -338,8 +338,10 @@ export class ComputeService {
 
   // Executes a short remote command on the SSH host, preceded by an approval gate (design.md §6).
   //
-  // The approval card is shown BEFORE any SSH connection is made. Only 'once' and 'deny' are
-  // supported in this issue; issue 05 adds 'conversation' and 'project' scopes.
+  // When sessionId and projectId are supplied, grant memory is checked and recorded:
+  //   - conversation: session in-memory grant (no card on repeat calls in the same session)
+  //   - project: persisted to settings JSON (no card for that project after first approval)
+  //   - once: no memory — card shown every time
   //
   // call_command does NOT count against the concurrent job limit (design.md §5).
   //
@@ -350,7 +352,8 @@ export class ComputeService {
     cmd: string,
     intent: string,
     loginShell = true,
-    timeoutSeconds?: number
+    timeoutSeconds?: number,
+    context?: { sessionId: string; projectId: string }
   ): Promise<ExecResult> {
     const host = await this.repository.get(providerId)
     if (!host) {
@@ -365,14 +368,24 @@ export class ComputeService {
     const commandPreview =
       cmd.length > COMMAND_PREVIEW_MAX_LEN ? `${cmd.slice(0, COMMAND_PREVIEW_MAX_LEN)}…` : cmd
 
-    const decision = await this.approvalBroker.request({
+    const approvalInfo = {
       provider_id: host.providerId,
       provider_name: host.displayName,
       shape: host.shape,
       intent,
       command_preview: commandPreview,
       command_full: cmd
-    })
+    }
+
+    // Use grant-aware requestWithContext when session/project context is available (issue 05).
+    // Fall back to legacy request() otherwise (keeps backward compatibility).
+    const decision = context
+      ? await this.approvalBroker.requestWithContext(approvalInfo, {
+          sessionId: context.sessionId,
+          projectId: context.projectId,
+          operation: 'call_command'
+        })
+      : await this.approvalBroker.request(approvalInfo)
 
     if (decision === 'deny') {
       const err = new Error(

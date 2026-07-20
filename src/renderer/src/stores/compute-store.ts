@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 
 import type {
+  ComputeApprovalDecision,
+  ComputeApprovalRequest,
   ComputeHost,
   CreateComputeHostRequest,
   DeleteComputeHostRequest,
@@ -15,6 +17,8 @@ type ComputeStoreData = {
   sshAliases: string[]
   // Tracks which hosts are currently being probed so the UI can show a Probing... state.
   probingIds: Set<string>
+  // Pending compute approval requests, oldest first. Answered one at a time.
+  pendingApprovals: ComputeApprovalRequest[]
 }
 
 type ComputeStore = ComputeStoreData & {
@@ -30,6 +34,10 @@ type ComputeStore = ComputeStoreData & {
   setScratch: (providerId: string, path: string) => Promise<void>
   // Sets the concurrent job limit (1..500). Phase 1 stores but does not enforce.
   setConcurrency: (providerId: string, limit: number) => Promise<void>
+  // Queues an incoming approval request (from the main-process compute gate).
+  enqueueApproval: (request: ComputeApprovalRequest) => void
+  // Sends the user's approval decision back to main and removes the request from the queue.
+  respondApproval: (id: string, decision: ComputeApprovalDecision) => Promise<void>
 }
 
 // Surfaces DB/IPC failures as a short message instead of a silent empty list.
@@ -45,7 +53,8 @@ export const createInitialComputeState = (): ComputeStoreData => ({
   isLoaded: false,
   loadError: undefined,
   sshAliases: [],
-  probingIds: new Set()
+  probingIds: new Set(),
+  pendingApprovals: []
 })
 
 // Renderer cache of the SQLite-backed compute host list; the DB remains the source of truth.
@@ -160,5 +169,18 @@ export const useComputeStore = create<ComputeStore>((set) => ({
         hosts: state.hosts.map((h) => (h.providerId === providerId ? updatedHost : h))
       }))
     }
+  },
+
+  // Queues an incoming compute approval request (pushed from main before each SSH call).
+  enqueueApproval: (request) => {
+    set((state) => ({ pendingApprovals: [...state.pendingApprovals, request] }))
+  },
+
+  // Sends the user's scoped decision back to main and removes the head request from the queue.
+  respondApproval: async (id, decision) => {
+    await window.api.compute.respondApproval({ id, decision })
+    set((state) => ({
+      pendingApprovals: state.pendingApprovals.filter((r) => r.id !== id)
+    }))
   }
 }))

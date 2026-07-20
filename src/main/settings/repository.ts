@@ -16,6 +16,7 @@ import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import {
   createEmptySettings,
+  type StoredComputeGrant,
   type StoredConnectors,
   type StoredCodexInfo,
   type StoredCustomMcpServer,
@@ -249,6 +250,16 @@ export const sanitizeCustomMcpServer = (value: unknown): StoredCustomMcpServer |
   return server
 }
 
+// Rebuilds one compute grant, dropping records with missing required string fields.
+const sanitizeComputeGrant = (value: unknown): StoredComputeGrant | undefined => {
+  if (!isRecord(value)) return undefined
+  const projectId = asString(value.projectId)
+  const operation = asString(value.operation)
+  const providerId = asString(value.providerId)
+  if (!projectId || !operation || !providerId) return undefined
+  return { projectId, operation, providerId }
+}
+
 // Rebuilds the connectors block from allowed fields only.
 export const sanitizeConnectors = (value: unknown): StoredConnectors | undefined => {
   if (!isRecord(value)) return undefined
@@ -417,6 +428,18 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
 
   if (notebookManualInterpreters) {
     settings.notebookManualInterpreters = notebookManualInterpreters
+  }
+
+  // Persist project-scope compute grants. Unknown/corrupt entries are dropped; well-formed ones
+  // are preserved. Empty array is omitted (same as absent).
+  const computeGrants = Array.isArray(value.computeGrants)
+    ? value.computeGrants
+        .map(sanitizeComputeGrant)
+        .filter((g): g is StoredComputeGrant => g !== undefined)
+    : undefined
+
+  if (computeGrants && computeGrants.length > 0) {
+    settings.computeGrants = computeGrants
   }
 
   return settings
@@ -866,6 +889,33 @@ class SettingsRepository {
       fn(connectors)
       return { ...settings, connectors }
     })
+  }
+
+  // Adds a project-scope compute grant if one with the same key does not already exist.
+  // Deduplicates so repeated calls are idempotent. Grant key = (projectId, operation, providerId).
+  async addComputeGrant(grant: StoredComputeGrant): Promise<StoredSettings> {
+    return this.mutate((settings) => {
+      const existing = settings.computeGrants ?? []
+      const alreadyPresent = existing.some(
+        (g) =>
+          g.projectId === grant.projectId &&
+          g.operation === grant.operation &&
+          g.providerId === grant.providerId
+      )
+      if (alreadyPresent) return settings
+      return { ...settings, computeGrants: [...existing, grant] }
+    })
+  }
+
+  // Returns true when a project-scope grant matching (projectId, operation, providerId) exists.
+  async hasComputeGrant(grant: StoredComputeGrant): Promise<boolean> {
+    const settings = await this.getSettings()
+    return (settings.computeGrants ?? []).some(
+      (g) =>
+        g.projectId === grant.projectId &&
+        g.operation === grant.operation &&
+        g.providerId === grant.providerId
+    )
   }
 
   // Serializes a read-modify-write cycle so concurrent callers cannot clobber each other.

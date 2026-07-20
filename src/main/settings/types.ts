@@ -140,6 +140,18 @@ export type StoredSettings = {
   // Pinned bookmark folders for the remote file browser, keyed by provider_id.
   // Each value is an ordered array of absolute paths the user has pinned via Go-to.
   computeBookmarks?: Record<string, string[]>
+  // Persisted project-scope compute approval grants (design.md §6). Each grant means
+  // calls matching (projectId, operation, providerId) skip the approval card for that project.
+  // Conversation-scope grants are session-only (in-memory broker) and are NOT stored here.
+  computeGrants?: StoredComputeGrant[]
+}
+
+// A single project-scope compute approval grant. The key is the triple (projectId, operation, providerId).
+// Stored in settings.json rather than the DB so it does not require a schema migration.
+export type StoredComputeGrant = {
+  projectId: string
+  operation: string
+  providerId: string
 }
 
 // Canonical empty settings used for a first run or an unreadable file.
