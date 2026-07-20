@@ -14,9 +14,10 @@ export type OfficialVendorId =
   | 'anthropic'
   | 'deepseek'
   | 'zhipu'
-  | 'minimax'
   | 'kimi'
   | 'kimiforcode'
+  | 'minimax'
+  | 'stepfun'
   | 'xiaomimimo'
   | 'openrouter'
 
@@ -154,26 +155,6 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     multimodal: { multimodalModelPattern: /glm-\d+v/i }
   },
   {
-    id: 'minimax',
-    label: 'MiniMax',
-    regions: [
-      {
-        id: 'global',
-        label: 'Global',
-        baseUrl: 'https://api.minimax.io/anthropic',
-        apiKeyUrl: 'https://platform.minimax.io/user-center/basic-information/interface-key'
-      },
-      {
-        id: 'china',
-        label: 'China',
-        baseUrl: 'https://api.minimaxi.com/anthropic',
-        apiKeyUrl: 'https://platform.minimaxi.com/user-center/basic-information/interface-key'
-      }
-    ],
-    models: ['MiniMax-M3', 'MiniMax-M3[1m]', 'MiniMax-M2.7', 'MiniMax-M2.5']
-    // MiniMax's chat models are text-only, so no `multimodal` rule (image input stays disabled).
-  },
-  {
     id: 'kimi',
     label: 'Kimi (Moonshot)',
     // Moonshot serves both routes on one host: Anthropic /v1/messages under `/anthropic` and the
@@ -202,6 +183,57 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     models: ['kimi-k3', 'kimi-for-coding', 'kimi-for-coding-highspeed'],
     // Only the k3 model in this plan is vision-capable; the coding-tuned ids are text-only.
     multimodal: { multimodalModels: ['kimi-k3'] }
+  },
+  {
+    id: 'minimax',
+    label: 'MiniMax',
+    regions: [
+      {
+        id: 'global',
+        label: 'Global',
+        baseUrl: 'https://api.minimax.io/anthropic',
+        apiKeyUrl: 'https://platform.minimax.io/user-center/basic-information/interface-key'
+      },
+      {
+        id: 'china',
+        label: 'China',
+        baseUrl: 'https://api.minimaxi.com/anthropic',
+        apiKeyUrl: 'https://platform.minimaxi.com/user-center/basic-information/interface-key'
+      }
+    ],
+    models: ['MiniMax-M3', 'MiniMax-M3[1m]', 'MiniMax-M2.7', 'MiniMax-M2.5']
+    // MiniMax's chat models are text-only, so no `multimodal` rule (image input stays disabled).
+  },
+  {
+    id: 'stepfun',
+    label: 'StepFun',
+    // StepFun serves all three routes on one host per region — Anthropic /v1/messages, the
+    // OpenAI-compatible /v1/chat/completions, and OpenAI Responses /v1/responses — from an overseas
+    // console (.ai) and a mainland-China one (.com). `baseUrl` is the bare root (the Anthropic client
+    // appends /v1/messages); `openaiBaseUrl` is the /v1 base clients append /chat/completions to, and
+    // the Responses probe derives /v1/responses from it.
+    apiEndpoints: ['anthropic', 'openai', 'responses'],
+    regions: [
+      {
+        id: 'global',
+        label: 'Global',
+        baseUrl: 'https://api.stepfun.ai',
+        openaiBaseUrl: 'https://api.stepfun.ai/v1',
+        apiKeyUrl: 'https://platform.stepfun.ai/interface-key',
+        modelsListUrl: 'https://api.stepfun.ai/v1/models'
+      },
+      {
+        id: 'china',
+        label: 'China',
+        baseUrl: 'https://api.stepfun.com',
+        openaiBaseUrl: 'https://api.stepfun.com/v1',
+        apiKeyUrl: 'https://platform.stepfun.com/interface-key',
+        modelsListUrl: 'https://api.stepfun.com/v1/models'
+      }
+    ],
+    models: ['step-3.7-flash', 'step-3.5-flash'],
+    // step-3.7-flash is multimodal (vision); step-3.5-flash is text-only.
+    multimodal: { multimodalModels: ['step-3.7-flash'] }
   },
   {
     id: 'xiaomimimo',
