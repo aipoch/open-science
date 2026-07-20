@@ -79,6 +79,10 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private readonly createCancellationToken: () => MinimalCancellationToken
   // The token for the current download, held so cancel() can abort it. Cleared once download() settles.
   private downloadToken?: MinimalCancellationToken
+  // The current download()'s lifecycle promise, resolved only after the underlying downloadUpdate has
+  // fully settled. A retry awaits this so it never reuses electron-updater's still-live downloadPromise
+  // (which ignores a fresh token — see AppUpdater.downloadUpdate) or races an aborted download's cleanup.
+  private downloadLifecycle?: Promise<void>
   private status: UpdateStatus
   // In-flight manifest notes fetch for the current update, awaited by check() so the returned
   // status reflects the hydrated notes.
@@ -182,31 +186,51 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   }
 
   async download(): Promise<UpdateStatus> {
-    // A download is already in flight; ignore repeat clicks / concurrent renderers. Starting a second
-    // would overwrite downloadToken and orphan the first download (cancel() could no longer stop it).
+    // An active download is in flight; ignore repeat clicks / concurrent renderers. Starting a second
+    // would overwrite downloadToken and orphan the first (cancel() could no longer stop it). This guard
+    // and the token claim below are synchronous so a racing download()/cancel() sees a consistent slot.
     if (this.downloadToken) return this.status
-    this.setStatus({ ...this.status, state: 'downloading', progress: 0 })
+
+    // A just-cancelled download may still be settling: cancel() returns before electron-updater's
+    // underlying downloadPromise rejects. downloadUpdate() reuses that live promise and ignores a fresh
+    // token while it exists (see AppUpdater.downloadUpdate), so a retry must first drain it. Capture it
+    // and await it INSIDE the new lifecycle — awaiting here (before claiming the token) would defer a
+    // microtask and let a concurrent download() slip past the guard.
+    const previous = this.downloadLifecycle
     const token = this.createCancellationToken()
     this.downloadToken = token
-    try {
-      await this.updater.downloadUpdate(token)
-    } catch (error) {
-      // A user cancel rejects downloadUpdate too; don't surface it as an error. cancel() has already
-      // reset the status to 'available', so leave it untouched here.
-      if (!token.cancelled) {
-        this.setStatus({
-          state: 'error',
-          error: error instanceof Error ? error.message : 'Download failed'
-        })
+    this.setStatus({ ...this.status, state: 'downloading', progress: 0 })
+
+    const lifecycle = (async () => {
+      try {
+        // Let the prior cancelled download's promise clear (and its cleanup finish) before starting.
+        if (previous) await previous
+        // A cancel() during the drain means never start this download.
+        if (token.cancelled) return
+        await this.updater.downloadUpdate(token)
+      } catch (error) {
+        // A user cancel rejects downloadUpdate too; don't surface it as an error. cancel() has already
+        // reset the status to 'available', so leave it untouched here.
+        if (!token.cancelled) {
+          this.setStatus({
+            state: 'error',
+            error: error instanceof Error ? error.message : 'Download failed'
+          })
+        }
+      } finally {
+        if (this.downloadToken === token) this.downloadToken = undefined
       }
-    } finally {
-      if (this.downloadToken === token) this.downloadToken = undefined
-    }
+    })()
+    this.downloadLifecycle = lifecycle
+    await lifecycle
+    if (this.downloadLifecycle === lifecycle) this.downloadLifecycle = undefined
     return this.status
   }
 
   // Aborts the in-flight electron-updater download by cancelling its token and resets the status to
-  // 'available' so the UI leaves the downloading state. No-op when nothing is downloading.
+  // 'available' so the UI leaves the downloading state. Does not clear downloadLifecycle: the next
+  // download() awaits it so it never reuses the still-settling (cancelled) downloadPromise. No-op when
+  // nothing is downloading.
   async cancel(): Promise<UpdateStatus> {
     this.downloadToken?.cancel()
     this.downloadToken = undefined

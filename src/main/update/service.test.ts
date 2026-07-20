@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -244,30 +244,35 @@ describe('UpdateService.download', () => {
     await first
   })
 
-  it('supports cancel followed by an immediate retry to completion', async () => {
+  it('a retry to the SAME path waits for the cancelled download to fully settle before starting', async () => {
+    // Same target for both attempts: the cancelled download's deferred rm(targetPath) would delete the
+    // retry's freshly written installer unless the retry first drains that download's cleanup. Proven
+    // deterministically by holding the first download open and asserting the retry starts NO second
+    // fetch until it is released — a naive retry fetches immediately and later loses its file to the rm.
     dir = await mkdtemp(join(tmpdir(), 'svc-'))
-    const target1 = join(dir, 'installer-1.dmg')
-    const target2 = join(dir, 'installer-2.dmg')
+    const target = join(dir, 'installer.dmg')
     const body = Buffer.from('installer-bytes')
     const manifestForCheck = downloadManifest(
       body.byteLength,
       createHash('sha256').update(body).digest('hex')
     )
-    let installerCall = 0
+    let installerFetches = 0
     let onFirstFetch: (() => void) | undefined
+    let errorFirstStream: (() => void) | undefined
     const firstFetched = new Promise<void>((resolve) => (onFirstFetch = resolve))
-    const fetchImpl = ((input: unknown, init?: { signal?: AbortSignal }) => {
+    const fetchImpl = ((input: unknown) => {
       if (String(input).endsWith('version.json')) {
         return Promise.resolve(jsonResponse(manifestForCheck))
       }
-      installerCall += 1
-      if (installerCall === 1) {
+      installerFetches += 1
+      if (installerFetches === 1) {
+        // Hangs after one chunk until we explicitly error it, so the first download (and its rm) only
+        // completes when the test decides — the drain point the retry must respect.
         const hanging = new ReadableStream({
           start(controller) {
             controller.enqueue(new Uint8Array([1, 2, 3]))
-            init?.signal?.addEventListener('abort', () =>
+            errorFirstStream = () =>
               controller.error(new DOMException('The user aborted a request.', 'AbortError'))
-            )
           }
         })
         onFirstFetch?.()
@@ -275,7 +280,6 @@ describe('UpdateService.download', () => {
       }
       return Promise.resolve(new Response(body, { status: 200 }))
     }) as unknown as typeof fetch
-    let saveCall = 0
     const service = new UpdateService({
       fetchImpl,
       platform: 'darwin',
@@ -283,7 +287,7 @@ describe('UpdateService.download', () => {
       currentVersion: '0.2.0',
       manifestUrl: 'https://statics.aipoch.com/version.json',
       broadcast: vi.fn(),
-      promptSavePath: () => Promise.resolve(saveCall++ === 0 ? target1 : target2)
+      promptSavePath: () => Promise.resolve(target)
     })
 
     await service.check()
@@ -292,10 +296,20 @@ describe('UpdateService.download', () => {
     const cancelled = await service.cancel()
     expect(cancelled.state).toBe('available')
 
-    const retry = await service.download()
-    expect(retry.state).toBe('ready')
-    expect(retry.localPath).toBe(target2)
-    expect(existsSync(target2)).toBe(true)
+    // Kick off the retry while the cancelled download is still settling.
+    const retry = service.download()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    // The retry must be draining the cancelled download, not racing it: no second fetch yet.
+    expect(installerFetches).toBe(1)
+
+    // Release the first download so it errors and runs its rm cleanup; only now may the retry proceed.
+    errorFirstStream?.()
+    const status = await retry
+    expect(status.state).toBe('ready')
+    expect(installerFetches).toBe(2)
+    // The retry's file, written after the cancelled download's rm, must survive.
+    expect(existsSync(target)).toBe(true)
+    expect(await readFile(target)).toEqual(body)
 
     const firstFinal = await first
     expect(firstFinal.error).toBeUndefined()

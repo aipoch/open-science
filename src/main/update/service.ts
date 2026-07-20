@@ -47,6 +47,10 @@ export class UpdateService implements UpdateStrategy {
   private status: UpdateStatus
   // Aborts the in-flight installer download; held so cancel() can stop it. Cleared once download settles.
   private downloadAbort?: AbortController
+  // The current download()'s lifecycle promise, resolved only after downloadInstaller has fully settled
+  // (including its partial-file rm cleanup on abort). A retry awaits this so an aborted download's
+  // deferred rm can't delete a same-path retry's freshly written installer.
+  private downloadLifecycle?: Promise<void>
   private readonly fetchImpl?: typeof fetch
   private readonly platform: NodeJS.Platform
   private readonly arch: string
@@ -129,8 +133,13 @@ export class UpdateService implements UpdateStrategy {
   }
 
   async download(): Promise<UpdateStatus> {
-    // A download is already in flight; ignore repeat clicks / concurrent renderers. Starting a second
-    // would overwrite downloadAbort and orphan the first download (cancel() could no longer stop it).
+    // An active download is in flight; ignore repeat clicks / concurrent renderers immediately. Starting
+    // a second would overwrite downloadAbort and orphan the first (cancel() could no longer stop it).
+    if (this.downloadAbort) return this.status
+    // A just-cancelled download may still be settling (cancel() returns before downloadInstaller's abort
+    // cleanup — its partial-file rm — finishes). Wait it out so an aborted download can't delete a
+    // same-path retry's freshly written file, then re-check the guard.
+    await this.downloadLifecycle
     if (this.downloadAbort) return this.status
 
     const { download } = this.status
@@ -155,35 +164,37 @@ export class UpdateService implements UpdateStrategy {
     const abort = new AbortController()
     this.downloadAbort = abort
 
-    // Ask where to save (platform-aware). A dialog cancel — or a cancel() during the prompt — leaves
-    // the status untouched (stays 'available') and releases the slot.
-    const targetPath = await this.promptSavePath(installerFileName(download.url))
-    if (!targetPath || abort.signal.aborted) {
-      if (this.downloadAbort === abort) this.downloadAbort = undefined
-      return this.status
-    }
+    const lifecycle = (async () => {
+      // Ask where to save (platform-aware). A dialog cancel — or a cancel() during the prompt — leaves
+      // the status untouched (stays 'available').
+      const targetPath = await this.promptSavePath(installerFileName(download.url))
+      if (!targetPath || abort.signal.aborted) return
 
-    this.setStatus({ ...this.status, state: 'downloading', progress: 0 })
-    try {
-      const localPath = await downloadInstaller(download, targetPath, {
-        fetchImpl: this.fetchImpl,
-        onProgress: (percent) => this.broadcast('update:progress', percent),
-        signal: abort.signal
-      })
-      this.setStatus({ ...this.status, state: 'ready', progress: 100, localPath })
-    } catch (error) {
-      // A user cancel aborts the fetch, which rejects here; cancel() has already reset the status to
-      // 'available', so don't overwrite it with an error.
-      if (!abort.signal.aborted) {
-        this.setStatus({
-          ...this.status,
-          state: 'error',
-          error: error instanceof Error ? error.message : 'Download failed'
+      this.setStatus({ ...this.status, state: 'downloading', progress: 0 })
+      try {
+        const localPath = await downloadInstaller(download, targetPath, {
+          fetchImpl: this.fetchImpl,
+          onProgress: (percent) => this.broadcast('update:progress', percent),
+          signal: abort.signal
         })
+        this.setStatus({ ...this.status, state: 'ready', progress: 100, localPath })
+      } catch (error) {
+        // A user cancel aborts the fetch, which rejects here; cancel() has already reset the status to
+        // 'available', so don't overwrite it with an error.
+        if (!abort.signal.aborted) {
+          this.setStatus({
+            ...this.status,
+            state: 'error',
+            error: error instanceof Error ? error.message : 'Download failed'
+          })
+        }
       }
-    } finally {
+    })().finally(() => {
       if (this.downloadAbort === abort) this.downloadAbort = undefined
-    }
+    })
+    this.downloadLifecycle = lifecycle
+    await lifecycle
+    if (this.downloadLifecycle === lifecycle) this.downloadLifecycle = undefined
     return this.status
   }
 

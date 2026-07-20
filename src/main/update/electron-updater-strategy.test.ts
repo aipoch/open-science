@@ -17,17 +17,33 @@ vi.mock('electron-updater', () => ({
   }
 }))
 
-// Minimal fake of electron-updater's autoUpdater: an EventEmitter plus the methods/flags we drive.
+type FakeToken = { cancelled: boolean; cancel(): void }
+
+// Faithful fake of electron-updater's autoUpdater. Critically, downloadUpdate models AppUpdater's real
+// re-entrancy (out/AppUpdater.js): while a download is in progress it returns the SAME live
+// downloadPromise and IGNORES the passed token; the promise is only cleared in a finally after the
+// underlying download settles. This is what makes a naive "release the slot in cancel()" retry reuse
+// the cancelled download instead of starting a fresh one.
 class FakeUpdater extends EventEmitter {
   autoDownload = true
   autoInstallOnAppQuit = true
+  // The download body each call runs. Default: emit progress + downloaded and resolve. Tests override
+  // it to hang, to inspect the token, or to count real starts.
+  runDownload: (token?: FakeToken) => Promise<void> = async () => {
+    this.emit('download-progress', { percent: 42 })
+    this.emit('update-downloaded', { version: '0.3.0' })
+  }
+  private downloadPromise: Promise<void> | null = null
   checkForUpdates = vi.fn(async () => {
     this.emit('checking-for-update')
     this.emit('update-available', { version: '0.3.0', releaseNotes: 'notes' })
   })
-  downloadUpdate = vi.fn(async () => {
-    this.emit('download-progress', { percent: 42 })
-    this.emit('update-downloaded', { version: '0.3.0' })
+  downloadUpdate = vi.fn((token?: FakeToken): Promise<void> => {
+    if (this.downloadPromise != null) return this.downloadPromise
+    this.downloadPromise = this.runDownload(token).finally(() => {
+      this.downloadPromise = null
+    })
+    return this.downloadPromise
   })
   quitAndInstall = vi.fn()
 }
@@ -87,13 +103,13 @@ describe('ElectronUpdaterStrategy', () => {
   it('cancel aborts an in-flight download and resets the status to available', async () => {
     const updater = new FakeUpdater()
     let release: (() => void) | undefined
-    let seenToken: { cancelled: boolean } | undefined
+    let seenToken: FakeToken | undefined
     // Hang the download until released, then mimic electron-updater rejecting a cancelled download.
-    updater.downloadUpdate = vi.fn(async (token?: { cancelled: boolean }) => {
+    updater.runDownload = async (token) => {
       seenToken = token
       await new Promise<void>((resolve) => (release = resolve))
       if (token?.cancelled) throw new Error('cancelled')
-    })
+    }
     const strategy = new ElectronUpdaterStrategy({
       updater,
       currentVersion: '0.2.0',
@@ -130,10 +146,12 @@ describe('ElectronUpdaterStrategy', () => {
   it('ignores a second download() while one is already in flight', async () => {
     const updater = new FakeUpdater()
     let release: (() => void) | undefined
-    updater.downloadUpdate = vi.fn(async () => {
+    let starts = 0
+    updater.runDownload = async () => {
+      starts += 1
       await new Promise<void>((resolve) => (release = resolve))
       updater.emit('update-downloaded', { version: '0.3.0' })
-    })
+    }
     const strategy = new ElectronUpdaterStrategy({
       updater,
       currentVersion: '0.2.0',
@@ -144,27 +162,31 @@ describe('ElectronUpdaterStrategy', () => {
 
     const first = strategy.download()
     const second = strategy.download()
-    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
+    expect(starts).toBe(1)
 
     release?.()
     await Promise.all([first, second])
+    expect(starts).toBe(1)
     expect(strategy.getStatus().state).toBe('ready')
   })
 
   it('supports cancel followed by an immediate retry to completion', async () => {
     const updater = new FakeUpdater()
-    let calls = 0
+    let starts = 0
     let release: (() => void) | undefined
-    updater.downloadUpdate = vi.fn(async (token?: { cancelled: boolean }) => {
-      calls += 1
-      if (calls === 1) {
+    // Models the real AppUpdater: the first (cancelled) download stays live until released; the retry
+    // must NOT reuse it. Only a strategy that drains the old lifecycle before retrying lets the fake's
+    // downloadPromise clear so downloadUpdate starts a genuine second download.
+    updater.runDownload = async (token) => {
+      starts += 1
+      if (starts === 1) {
         await new Promise<void>((resolve) => (release = resolve))
         if (token?.cancelled) throw new Error('cancelled')
       } else {
         updater.emit('download-progress', { percent: 55 })
         updater.emit('update-downloaded', { version: '0.3.0' })
       }
-    })
+    }
     const strategy = new ElectronUpdaterStrategy({
       updater,
       currentVersion: '0.2.0',
@@ -177,13 +199,13 @@ describe('ElectronUpdaterStrategy', () => {
     const cancelled = await strategy.cancel()
     expect(cancelled.state).toBe('available')
 
-    // Immediate retry: the token slot is free, so a fresh download starts and completes.
+    // Release the cancelled download so its live promise settles and clears, unblocking the retry's
+    // drain. A real retry then starts a second, genuine download that completes.
+    release?.()
     const retry = await strategy.download()
     expect(retry.state).toBe('ready')
-    expect(updater.downloadUpdate).toHaveBeenCalledTimes(2)
+    expect(starts).toBe(2)
 
-    // The first (cancelled) attempt settling later must not surface an error.
-    release?.()
     const firstFinal = await first
     expect(firstFinal.error).toBeUndefined()
   })
