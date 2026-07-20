@@ -5,6 +5,7 @@ import { createPreviewFileItem } from '../../pages/workspace/preview-file-item'
 import { getPreviewFormatForFile } from '../../pages/workspace/preview-support'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
 import { isMediaOverflowError } from '../../../../shared/media-overflow'
+import { useReviewStore } from '../../stores/review-store'
 import { useSessionStore } from '../../stores/session-store'
 import { useSettingsStore } from '../../stores/settings-store'
 import { createRuntimeStreamId, isAssistantRuntimeChatMessageEvent } from './chat-events'
@@ -140,7 +141,17 @@ const triggerAutoReview = async (sessionId: string): Promise<void> => {
     // produce (the session may not be flushed to disk yet). An already-in-flight turn is already being
     // reviewed, so retrying it would launch a duplicate review/fix-loop once the lock releases — treat
     // it (and any non-retryable/absent reason, or a bridge that returns nothing) as done immediately.
+    //
+    // The per-call reason only describes ONE call, so it can't make the whole retry task idempotent:
+    // during the delay another entry (manual, another renderer, another auto trigger) can start AND
+    // complete a review for this turn, releasing main's in-flight lock before our next attempt — which
+    // would then start a SECOND review without ever seeing already-in-flight. Guard every attempt with
+    // the review store: once any review exists for this turn (its running row has been pushed), the
+    // turn is handled and we stop. Combined with main's synchronous in-flight lock (which serializes
+    // truly-simultaneous starts into already-in-flight), this closes the retry-window duplicate.
     for (let attempt = 0; attempt < AUTO_REVIEW_START_ATTEMPTS; attempt++) {
+      if (useReviewStore.getState().getReviewForTurn(sessionId, request.turnMessageId)) return
+
       const result = await window.api.reviewer.run(request)
       if (result?.started !== false) return
       if (!result.reason || !RETRYABLE_START_FAILURE_REASONS.has(result.reason)) return

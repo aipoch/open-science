@@ -6,7 +6,9 @@ import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
 } from '../../stores/preview-workbench-store'
+import { createInitialReviewState, useReviewStore } from '../../stores/review-store'
 import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
+import type { ReviewWithChecks } from '../../../../shared/reviewer'
 import {
   applyWorkspaceRuntimeEvent,
   assembleReviewRunRequest,
@@ -59,6 +61,8 @@ describe('workspace runtime events', () => {
     vi.setSystemTime(new Date('2026-07-04T08:00:00.000Z'))
     useSessionStore.setState(createInitialSessionState())
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    // The auto-review idempotency guard reads the review store; start every test with it empty.
+    useReviewStore.setState(createInitialReviewState())
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
       content: 'Summarize this'
@@ -623,6 +627,80 @@ describe('workspace runtime events', () => {
 
       // AUTO_REVIEW_START_ATTEMPTS attempts, then it gives up.
       expect(reviewerRun).toHaveBeenCalledTimes(4)
+
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    })
+
+    it('retries a load-failed auto-review (transient store read failure)', async () => {
+      vi.useFakeTimers()
+      const reviewerRun = vi
+        .fn()
+        .mockResolvedValueOnce({ started: false, reason: 'load-failed' }) // store read blipped
+        .mockResolvedValueOnce({ started: true }) // succeeds on retry
+      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'Analysis complete'
+      })
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
+      await vi.runAllTimersAsync()
+
+      expect(reviewerRun).toHaveBeenCalledTimes(2)
+
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    })
+
+    it('aborts a pending retry when another entry starts the review during the wait window', async () => {
+      // The retry-window duplicate: attempt 0 gets not-found (retryable) and enters the delay. During
+      // it, a manual/other-renderer/other-auto entry starts AND completes a review for this turn, so
+      // main's in-flight lock is already released by the next attempt. The store-backed idempotency
+      // guard must see the pushed review and NOT fire a second reviewer.run.
+      vi.useFakeTimers()
+      const reviewerRun = vi.fn().mockResolvedValue({ started: false, reason: 'not-found' })
+      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'Analysis complete'
+      })
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
+      // Let attempt 0 run + schedule the 400ms delay (without firing it yet).
+      await vi.advanceTimersByTimeAsync(0)
+      expect(reviewerRun).toHaveBeenCalledTimes(1)
+
+      // Another entry started & completed the review for this exact turn during the wait.
+      const turnMessageId = reviewerRun.mock.calls[0]![0]!.turnMessageId as string
+      useReviewStore.getState().handleReviewUpdate({
+        review: {
+          id: 'other-entry-review',
+          projectId: 'project-1',
+          sessionId: 'transport-session-1',
+          turnMessageId,
+          scope: { turnMessageId, blocks: [], artifactVersionIds: [] },
+          lifecycle: 'complete',
+          outcome: 'pass',
+          model: '',
+          reviewerLog: [],
+          createdAt: 1,
+          updatedAt: 1,
+          checks: []
+        } satisfies ReviewWithChecks
+      })
+
+      // Drive the delay → the next attempt's guard sees the review and bails without a second run.
+      await vi.runAllTimersAsync()
+      expect(reviewerRun).toHaveBeenCalledTimes(1)
 
       vi.useRealTimers()
       vi.unstubAllGlobals()
