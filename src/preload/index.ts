@@ -131,7 +131,12 @@ import type {
   StageUploadFilesRequest,
   UploadedAttachment
 } from '../shared/uploads'
-import type { ReviewWithChecks, ReviewRunRequest, ReviewUpdateEvent } from '../shared/reviewer'
+import type {
+  ReviewWithChecks,
+  ReviewRunRequest,
+  ReviewRunResult,
+  ReviewUpdateEvent
+} from '../shared/reviewer'
 import { REVIEWER_IPC } from '../shared/reviewer'
 import { subscribeCloseActivePane, WINDOW_CLOSE_CHANNEL } from '../shared/window-controls'
 
@@ -355,7 +360,7 @@ type OpenScienceAPI = {
     onProgress: (listener: AcpListener<MigrationProgress>) => RemoveListener
   }
   reviewer: {
-    run: (request: ReviewRunRequest) => Promise<void>
+    run: (request: ReviewRunRequest) => Promise<ReviewRunResult>
     getForSession: (sessionId: string) => Promise<ReviewWithChecks[]>
     onUpdated: (listener: AcpListener<ReviewUpdateEvent>) => RemoveListener
     onSuppressNextAutoReview: (
@@ -667,7 +672,7 @@ const api: OpenScienceAPI = {
   },
   reviewer: {
     run: (request: ReviewRunRequest) =>
-      ipcRenderer.invoke(REVIEWER_IPC.RUN, request) as Promise<void>,
+      ipcRenderer.invoke(REVIEWER_IPC.RUN, request) as Promise<ReviewRunResult>,
     getForSession: (sessionId: string) =>
       ipcRenderer.invoke(REVIEWER_IPC.GET_FOR_SESSION, sessionId) as Promise<ReviewWithChecks[]>,
     onUpdated: (listener) => onIpcMessage(REVIEWER_IPC.UPDATED, listener),

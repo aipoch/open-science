@@ -226,9 +226,13 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     if (isReviewing) return true
     const reviews = state.reviewsBySession[activeSessionId]
     if (reviews) {
-      // Newest-first, so find() returns the most recent review for the last turn.
+      // Newest-first, so find() returns the most recent review for the last turn. Only a fresh,
+      // completed verdict blocks a new review; a stale one (turn changed) or an errored one must stay
+      // retriable so the user isn't stuck without any review entry point.
       const lastTurnReview = reviews.find((r) => r.turnMessageId === lastAgentMessage.id)
-      if (lastTurnReview && !lastTurnReview.stale) return true
+      if (lastTurnReview && lastTurnReview.lifecycle === 'complete' && !lastTurnReview.stale) {
+        return true
+      }
     }
     return false
   })

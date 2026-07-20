@@ -99,7 +99,8 @@ describe('flagStaleReviews', () => {
 
     const [result] = await flagStaleReviews([review], session, storageRoot)
 
-    expect(result.stale).toBeUndefined()
+    // Computed-not-stale is an explicit false (distinct from "couldn't compute" = undefined).
+    expect(result.stale).toBe(false)
   })
 
   it('never flags a running or errored review (no verdict to invalidate)', async () => {
@@ -147,6 +148,7 @@ describe('flagStaleReviews', () => {
 
     const [result] = await flagStaleReviews([fixLoopReview], session, storageRoot)
 
-    expect(result.stale).toBeUndefined()
+    // Correctly resolves the correction turn (a1) and finds it unchanged → explicit not-stale.
+    expect(result.stale).toBe(false)
   })
 })

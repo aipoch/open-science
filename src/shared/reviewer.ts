@@ -184,6 +184,13 @@ export type ReviewUpdateEvent = {
   review: ReviewWithChecks
 }
 
+// IPC: result of reviewer:run. `started` is false when the run could not begin (the session couldn't
+// be loaded, or a run for this turn was already in flight) — no Review row is created in that case, so
+// the caller (e.g. a stale-review Re-run) can release its pending state and leave the turn retriable.
+export type ReviewRunResult = {
+  started: boolean
+}
+
 // Navigation intent emitted when the user clicks "Go to transcript" on a warn/fail check.
 // checkId and locator are optional: omitting them opens the Session reviewer page without
 // highlighting a specific check (used when navigating from a pass review).

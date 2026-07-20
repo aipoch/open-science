@@ -4,7 +4,12 @@
 
 import { ipcMain } from 'electron'
 
-import type { ReviewWithChecks, ReviewRunRequest, ReviewUpdateEvent } from '../../shared/reviewer'
+import type {
+  ReviewWithChecks,
+  ReviewRunRequest,
+  ReviewRunResult,
+  ReviewUpdateEvent
+} from '../../shared/reviewer'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { REVIEWER_IPC } from '../../shared/reviewer'
 import { createLogger } from '../logger'
@@ -66,7 +71,7 @@ type ReviewerIpcOptions = {
 const registerReviewerIpcHandlers = (
   options: ReviewerIpcOptions
 ): {
-  triggerReview: (request: ReviewRunRequest) => void
+  triggerReview: (request: ReviewRunRequest) => Promise<ReviewRunResult>
 } => {
   const storageRoot = options.storageRoot ?? resolveStorageRoot()
   const dataRoot = options.dataRoot ?? resolveDataRoot()
@@ -84,9 +89,7 @@ const registerReviewerIpcHandlers = (
 
   // reviewer:run — trigger a review for a completed turn. Fire-and-forget: the renderer does
   // not await this; it receives reviewer:updated events as the lifecycle progresses.
-  ipcMain.handle(REVIEWER_IPC.RUN, (_event, request: ReviewRunRequest) => {
-    triggerReview(request)
-  })
+  ipcMain.handle(REVIEWER_IPC.RUN, (_event, request: ReviewRunRequest) => triggerReview(request))
 
   // reviewer:get-for-session — load persisted reviews for a session at startup, flagging any whose
   // audited turn has since changed (e.g. an artifact was edited after the review completed) so the UI
@@ -115,26 +118,45 @@ const registerReviewerIpcHandlers = (
     }
   })
 
-  const triggerReview = (request: ReviewRunRequest): void => {
+  // Returns whether a review actually STARTED. The session is loaded up front (not in the background)
+  // so a load failure — or an already-in-flight run for this turn — is reported as started:false with
+  // NO Review row created. That lets a caller (e.g. the ReviewerCard "Re-run") release its pending
+  // state and leave the turn retriable, instead of us fabricating a non-retriable error review.
+  const triggerReview = async (request: ReviewRunRequest): Promise<ReviewRunResult> => {
     const { sessionId, turnMessageId, scopeTurnMessageId, projectId, mainSessionId, model } =
       request
 
-    // Drop a duplicate run for a turn already being reviewed (double-click / multiple stale cards).
+    // Reserve the turn SYNCHRONOUSLY (before any await) so a double-click / multiple stale cards can't
+    // both pass the guard before the key is set. Released on the start-failure paths and, on success,
+    // in the background run's finally.
     const inFlightKey = `${sessionId}:${turnMessageId}`
     if (inFlightReviewKeys.has(inFlightKey)) {
       log.info('review skipped: already in flight for this turn', { sessionId, turnMessageId })
-      return
+      return { started: false }
     }
     inFlightReviewKeys.add(inFlightKey)
 
+    let session: PersistedChatSession | undefined
+    try {
+      const { sessions } = await sessionRepository.loadAll()
+      session = sessions.find((s) => s.id === sessionId)
+    } catch (error) {
+      // No Review row exists to update, so surface the failure only as started:false — the renderer
+      // keeps the (stale) card and its Re-run affordance so the user can try again.
+      inFlightReviewKeys.delete(inFlightKey)
+      log.error('review start failed: could not load session', {
+        sessionId,
+        turnMessageId,
+        error: error instanceof Error ? error.message : String(error)
+      })
+      return { started: false }
+    }
+
     log.info('review triggered', { sessionId, turnMessageId })
 
-    // Load the session from disk in the background so the orchestrator has the full session JSON.
+    // Run in the background; the review's lifecycle reaches the renderer via reviewer:updated events.
     void (async () => {
       try {
-        const { sessions } = await sessionRepository.loadAll()
-        const session = sessions.find((s) => s.id === sessionId)
-
         // Create an AbortController for this review's fix loop. The controller is registered
         // before runReview starts so the abort-fix-loop handler can find it immediately.
         const abortController = new AbortController()
@@ -181,37 +203,20 @@ const registerReviewerIpcHandlers = (
           fixLoopAbortSignal: abortController.signal
         })
       } catch (error) {
-        // A failure BEFORE runReview (e.g. loading the session throws) produces no Review row and thus
-        // no lifecycle update — so a renderer that started this run (e.g. the ReviewerCard "Re-run"
-        // latch) would wait forever. Broadcast a synthetic error review for the turn so the renderer
-        // unlatches and shows the failure; a later successful load replaces it with the real state.
-        const message = error instanceof Error ? error.message : String(error)
-        log.error('review start failed before runReview', {
+        // runReview never throws for expected failures (it records lifecycle='error' and broadcasts a
+        // real Review row). An unexpected throw here is logged; the review row, if any, carries the
+        // error state to the renderer.
+        log.error('runReview threw unexpectedly', {
           sessionId,
           turnMessageId,
-          error: message
-        })
-        broadcastReviewUpdate({
-          review: {
-            id: `review-start-error-${Date.now()}`,
-            projectId,
-            sessionId,
-            turnMessageId,
-            scope: { turnMessageId, blocks: [], artifactVersionIds: [] },
-            lifecycle: 'error',
-            outcome: null,
-            errorMessage: message,
-            model: model ?? '',
-            reviewerLog: [],
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-            checks: []
-          }
+          error: error instanceof Error ? error.message : String(error)
         })
       } finally {
         inFlightReviewKeys.delete(inFlightKey)
       }
     })()
+
+    return { started: true }
   }
 
   return { triggerReview }

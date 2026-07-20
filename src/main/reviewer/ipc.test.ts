@@ -148,27 +148,32 @@ describe('reviewer IPC handlers', () => {
     runReview.mockResolvedValue(undefined)
   })
 
-  it('broadcasts an error review when the session load fails before runReview starts', async () => {
+  it('returns started:false without a review row or broadcast when the session load fails', async () => {
     runReview.mockClear()
     broadcastToRenderers.mockClear()
-    // The pre-runReview session load throws (e.g. DB/FS unavailable) — no Review row is ever created.
+    // The pre-runReview session load throws (e.g. DB/FS unavailable).
     sessionLoadAll.mockRejectedValueOnce(new Error('session store unavailable'))
     registerReviewerIpcHandlers({ acpRuntime })
 
     const runHandler = handlers.get(REVIEWER_IPC.RUN)
-    runHandler?.({}, { ...createRequest(), turnMessageId: 'message-1' })
+    const result = await runHandler?.({}, { ...createRequest(), turnMessageId: 'message-1' })
 
-    // An error review-update is broadcast so the renderer can unlatch (Re-run) and show the failure.
-    await vi.waitFor(() => expect(broadcastToRenderers).toHaveBeenCalledTimes(1))
-    const [channel, payload] = broadcastToRenderers.mock.calls[0] as [
-      string,
-      { review: { lifecycle: string; turnMessageId: string } }
-    ]
-    expect(channel).toBe(REVIEWER_IPC.UPDATED)
-    expect(payload.review.lifecycle).toBe('error')
-    expect(payload.review.turnMessageId).toBe('message-1')
+    // No fabricated error review, no broadcast — just started:false, so the caller can retry the turn.
+    expect(result).toEqual({ started: false })
     expect(runReview).not.toHaveBeenCalled()
+    expect(broadcastToRenderers).not.toHaveBeenCalled()
 
     sessionLoadAll.mockResolvedValue({ sessions: [] })
+  })
+
+  it('returns started:true when a review begins', async () => {
+    runReview.mockClear()
+    registerReviewerIpcHandlers({ acpRuntime })
+
+    const runHandler = handlers.get(REVIEWER_IPC.RUN)
+    const result = await runHandler?.({}, createRequest())
+
+    expect(result).toEqual({ started: true })
+    await vi.waitFor(() => expect(runReview).toHaveBeenCalledTimes(1))
   })
 })

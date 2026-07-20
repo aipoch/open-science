@@ -35,9 +35,10 @@ const upsertReview = (
 // the store. A load carries two kinds of information that must be merged differently:
 //   - review/finding DATA: authoritative only when strictly newer than what's in the store. Fix-loop
 //     finding updates bump Review.updatedAt, so a stale load is strictly older and must NOT overwrite.
-//   - the `stale` flag: freshly computed against current bytes on THIS load, so it always applies (even
-//     when the load isn't newer — that's how a focus reload surfaces an edit to an otherwise-unchanged
-//     review). Applying it never reverts finding data; it only sets the flag on the retained review.
+//   - the `stale` flag: applied whenever the load actually COMPUTED it (an explicit boolean), even when
+//     the load isn't newer — that's how a focus reload surfaces an edit to an otherwise-unchanged
+//     review, and it only sets the flag on the retained review (never reverts finding data). A load that
+//     could NOT compute staleness leaves it undefined; that is ignored so it can't clear a known flag.
 // New reviews the snapshot didn't include (a just-created one) are preserved.
 const mergeLoadedReviews = (
   existing: ReviewWithChecks[],
@@ -48,7 +49,10 @@ const mergeLoadedReviews = (
     const current = byId.get(review.id)
     if (!current || review.updatedAt > current.updatedAt) {
       byId.set(review.id, review)
-    } else if (current.stale !== review.stale) {
+    } else if (review.stale !== undefined && review.stale !== current.stale) {
+      // Apply the load's staleness only when it was actually COMPUTED (an explicit boolean). A load
+      // that failed to recompute (session/scope error) leaves stale undefined; using it would wrongly
+      // clear a known outdated flag, re-presenting a stale verdict as valid.
       byId.set(review.id, { ...current, stale: review.stale })
     }
   }

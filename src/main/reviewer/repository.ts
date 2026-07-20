@@ -22,10 +22,18 @@ type FindingSeverity = CheckStatus
 // Only the review/finding delegates are needed; typing to this subset keeps the repository unit-testable
 // with a lightweight mock instead of a real (engine-backed) PrismaClient.
 // $executeRaw is also included for the incrementReflagCount atomic update (issue 15).
-type ReviewClient = Pick<PrismaClient, 'review' | 'finding' | '$executeRaw'>
+type ReviewClient = Pick<PrismaClient, 'review' | 'finding' | '$executeRaw' | '$transaction'>
 
 // Resolves the Prisma client on demand so a failed initialization is not held forever (see projects/repository.ts).
 type ReviewClientProvider = () => Promise<ReviewClient>
+
+// Bumps a Review's updatedAt within the caller's transaction. Prisma's @updatedAt tracks writes to the
+// Review row, not to child Finding rows, so a finding-only mutation (resolution/reflag) would otherwise
+// leave updatedAt stale — and a slow focus-load could then overwrite newer pushed finding state at an
+// equal timestamp. Run inside the same transaction as the finding write so the two commit atomically.
+const touchReview = async (tx: Pick<PrismaClient, 'review'>, reviewId: string): Promise<void> => {
+  await tx.review.update({ where: { id: reviewId }, data: { updatedAt: new Date() } })
+}
 
 // JSON columns are parsed defensively: a corrupt value degrades to the given fallback rather than
 // throwing, so one bad row cannot break loading a whole session's reviews.
@@ -147,19 +155,21 @@ class ReviewRepository {
 
     const client = await this.getClient()
 
-    await client.finding.createMany({
-      data: checks.map((check, index) => ({
-        reviewId,
-        status: check.status,
-        resolution: check.resolution ?? 'open',
-        claim: check.claim,
-        evidence: check.evidence,
-        locator: JSON.stringify(check.locator ?? {}),
-        artifactVersionId: check.artifactVersionId ?? null,
-        sortIndex: check.sortIndex ?? index
-      }))
+    await client.$transaction(async (tx) => {
+      await tx.finding.createMany({
+        data: checks.map((check, index) => ({
+          reviewId,
+          status: check.status,
+          resolution: check.resolution ?? 'open',
+          claim: check.claim,
+          evidence: check.evidence,
+          locator: JSON.stringify(check.locator ?? {}),
+          artifactVersionId: check.artifactVersionId ?? null,
+          sortIndex: check.sortIndex ?? index
+        }))
+      })
+      await touchReview(tx, reviewId)
     })
-    await this.touchReview(reviewId)
   }
 
   /**
@@ -213,11 +223,15 @@ class ReviewRepository {
   // since resolution is meaningless for them (see design.md §4.2).
   async updateFindingResolutions(reviewId: string, resolution: FindingResolution): Promise<void> {
     const client = await this.getClient()
-    await client.finding.updateMany({
-      where: { reviewId, status: { in: ['warn', 'fail'] } },
-      data: { resolution }
+    // One transaction so the finding change and the version bump commit together (or not at all): a
+    // partial write leaving new findings under a stale updatedAt would let a focus-load keep old data.
+    await client.$transaction(async (tx) => {
+      await tx.finding.updateMany({
+        where: { reviewId, status: { in: ['warn', 'fail'] } },
+        data: { resolution }
+      })
+      await touchReview(tx, reviewId)
     })
-    await this.touchReview(reviewId)
   }
 
   // Updates the resolution for a single claim (by exact match) under a review.
@@ -228,11 +242,13 @@ class ReviewRepository {
     resolution: FindingResolution
   ): Promise<void> {
     const client = await this.getClient()
-    await client.finding.updateMany({
-      where: { reviewId, claim, status: { in: ['warn', 'fail'] } },
-      data: { resolution }
+    await client.$transaction(async (tx) => {
+      await tx.finding.updateMany({
+        where: { reviewId, claim, status: { in: ['warn', 'fail'] } },
+        data: { resolution }
+      })
+      await touchReview(tx, reviewId)
     })
-    await this.touchReview(reviewId)
   }
 
   // Increments reflagCount by 1 for all checks under a review whose claim matches the given string
@@ -240,24 +256,17 @@ class ReviewRepository {
   // over-correction. Leaves checks with a different claim untouched.
   async incrementReflagCount(reviewId: string, claim: string): Promise<void> {
     const client = await this.getClient()
-    // Use the $executeRaw tagged template because Prisma does not support a column += 1 increment
-    // in updateMany. The query is safe: reviewId and claim are bound as positional parameters by the
-    // tagged template (not string-interpolated), so this is not $executeRawUnsafe.
-    await client.$executeRaw`
-      UPDATE "Finding"
-      SET "reflagCount" = "reflagCount" + 1
-      WHERE "reviewId" = ${reviewId} AND "claim" = ${claim}
-    `
-    await this.touchReview(reviewId)
-  }
-
-  // Bumps the parent Review's updatedAt after a finding-only mutation. Prisma's @updatedAt tracks
-  // Review-row writes, not writes to child Finding rows, so without this a fix-loop resolution/reflag
-  // change would leave updatedAt stale — and a slow focus-load could then overwrite the newer pushed
-  // finding state (equal timestamps). Bumping it makes updatedAt a reliable freshness/version signal.
-  private async touchReview(reviewId: string): Promise<void> {
-    const client = await this.getClient()
-    await client.review.update({ where: { id: reviewId }, data: { updatedAt: new Date() } })
+    await client.$transaction(async (tx) => {
+      // Use the $executeRaw tagged template because Prisma does not support a column += 1 increment
+      // in updateMany. The query is safe: reviewId and claim are bound as positional parameters by the
+      // tagged template (not string-interpolated), so this is not $executeRawUnsafe.
+      await tx.$executeRaw`
+        UPDATE "Finding"
+        SET "reflagCount" = "reflagCount" + 1
+        WHERE "reviewId" = ${reviewId} AND "claim" = ${claim}
+      `
+      await touchReview(tx, reviewId)
+    })
   }
 
   // Test/diagnostic helper: total check rows, used to assert no orphans survive a cascade delete.

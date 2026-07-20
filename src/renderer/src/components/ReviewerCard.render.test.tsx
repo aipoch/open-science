@@ -917,7 +917,7 @@ describe('ReviewerCard — stale review', () => {
 
   it('offers a Re-run button on a stale review that fires onRerun with the review', async () => {
     const review = makeReview({ outcome: 'pass', checks: [], stale: true })
-    const onRerun = vi.fn()
+    const onRerun = vi.fn().mockResolvedValue(true)
     await act(async () => {
       root.render(<ReviewerCard review={review} onRerun={onRerun} />)
     })
@@ -946,7 +946,7 @@ describe('ReviewerCard — stale review', () => {
 
   it('disables the Re-run button after the first click so a double-click fires once', async () => {
     const review = makeReview({ outcome: 'pass', checks: [], stale: true })
-    const onRerun = vi.fn()
+    const onRerun = vi.fn().mockResolvedValue(true)
     await act(async () => {
       root.render(<ReviewerCard review={review} onRerun={onRerun} />)
     })
@@ -966,5 +966,26 @@ describe('ReviewerCard — stale review', () => {
 
     expect(onRerun).toHaveBeenCalledTimes(1)
     expect(rerunButton.disabled).toBe(true)
+  })
+
+  it('re-enables the Re-run button when no review actually started', async () => {
+    const review = makeReview({ outcome: 'pass', checks: [], stale: true })
+    // The run could not begin (e.g. session load failed) → resolves false.
+    const onRerun = vi.fn().mockResolvedValue(false)
+    await act(async () => {
+      root.render(<ReviewerCard review={review} onRerun={onRerun} />)
+    })
+
+    const notice = container.querySelector('[data-testid="reviewer-stale-notice"]')
+    const rerunButton = [...notice!.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('Re-run')
+    ) as HTMLButtonElement
+
+    await act(async () => {
+      rerunButton.click()
+    })
+
+    // Latch released: the button is usable again and the notice/turn stays retriable.
+    expect(rerunButton.disabled).toBe(false)
   })
 })

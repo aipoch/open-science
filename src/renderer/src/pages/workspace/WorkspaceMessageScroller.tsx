@@ -260,15 +260,20 @@ const WorkspaceMessageScroller = ({
   // grouped under review.turnMessageId (so a fix-loop review refreshes in place), but the audited
   // content is review.scope.turnMessageId — the turn whose bytes actually changed. Fire-and-forget:
   // a fresh review supersedes the stale one via reviewer:updated; concurrent runs are deduped in main.
-  const handleRerunReview = (review: ReviewWithChecks): void => {
-    void window.api.reviewer.run({
-      sessionId: review.sessionId,
-      turnMessageId: review.turnMessageId,
-      scopeTurnMessageId: review.scope.turnMessageId,
-      projectId: review.projectId,
-      mainSessionId: review.sessionId,
-      model: useSettingsStore.getState().activeModel
-    })
+  const handleRerunReview = async (review: ReviewWithChecks): Promise<boolean> => {
+    try {
+      const result = await window.api.reviewer.run({
+        sessionId: review.sessionId,
+        turnMessageId: review.turnMessageId,
+        scopeTurnMessageId: review.scope.turnMessageId,
+        projectId: review.projectId,
+        mainSessionId: review.sessionId,
+        model: useSettingsStore.getState().activeModel
+      })
+      return result?.started ?? false
+    } catch {
+      return false
+    }
   }
 
   return (

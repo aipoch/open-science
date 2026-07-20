@@ -21,8 +21,10 @@ type ReviewerCardProps = {
   className?: string
   // Called when the user clicks "Go to transcript" on any item card.
   onGoToTranscript?: (intent: GoToTranscriptIntent) => void
-  // Called when the user asks to re-run a stale review (its turn changed after it ran).
-  onRerun?: (review: ReviewWithChecks) => void
+  // Called when the user asks to re-run a stale review (its turn changed after it ran). Resolves to
+  // whether a review actually started; a false result (e.g. session load failed) releases the button
+  // latch so the turn stays retriable.
+  onRerun?: (review: ReviewWithChecks) => Promise<boolean>
 }
 
 // Status badge styles (pass/warn/fail).
@@ -299,7 +301,11 @@ export const ReviewerCard = ({
               className="shrink-0 rounded border border-amber-300 px-2 py-0.5 text-[11px] text-amber-800 hover:bg-amber-100 transition-colors disabled:cursor-default disabled:opacity-50"
               onClick={() => {
                 setRerunRequested(true)
-                onRerun(review)
+                // Release the latch if no review actually started (e.g. the session couldn't load), so
+                // the button stays usable; on success the running-review push clears it via updatedAt.
+                void onRerun(review).then((started) => {
+                  if (!started) setRerunRequested(false)
+                })
               }}
             >
               {rerunRequested ? 'Re-running…' : 'Re-run review'}

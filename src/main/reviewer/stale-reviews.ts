@@ -27,7 +27,11 @@ export const flagStaleReviews = async (
   return flagged
 }
 
-// Recomputes one review's scope and returns it marked stale when it no longer matches.
+// Recomputes one review's scope and returns it with a DEFINITIVE stale flag (true/false) on success.
+// On failure — or for a non-complete review that has no verdict to invalidate — it leaves `stale`
+// untouched (typically undefined), which the renderer merge treats as "not computed" and therefore
+// must NOT use to clear an existing outdated flag. This is why success always sets an explicit boolean:
+// only an explicit value distinguishes "computed not-stale" from "couldn't compute".
 const flagOne = async (
   review: ReviewWithChecks,
   session: PersistedChatSession,
@@ -43,7 +47,7 @@ const flagOne = async (
       review.scope.turnMessageId,
       artifactStorageRoot
     )
-    return isTurnScopeStale(review.scope, current) ? { ...review, stale: true } : review
+    return { ...review, stale: isTurnScopeStale(review.scope, current) }
   } catch {
     return review
   }
