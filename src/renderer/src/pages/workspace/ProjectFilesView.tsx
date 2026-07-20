@@ -725,6 +725,16 @@ const ProjectFilesViewContent = ({
   const [allVisibleItemLimits, setAllVisibleItemLimits] = useState<Record<string, number>>({})
   const handleIndexChanged = useCallback(
     (event: ProjectFilesChangedEvent): void => {
+      const currentSessions = useSessionStore.getState().sessions
+      const changedSession = event.sessionId
+        ? currentSessions.find(
+            (session) => session.projectId === activeProjectId && session.id === event.sessionId
+          )
+        : undefined
+      const changedSessionHasArtifacts = (changedSession?.artifacts ?? []).some(
+        (artifact) => artifact.kind === 'managed-file' && Boolean(artifact.path)
+      )
+
       if (
         event.kind === 'delete' &&
         event.sessionId &&
@@ -732,9 +742,21 @@ const ProjectFilesViewContent = ({
       ) {
         setSelectedFilterId('all')
         setSelectedSessionFallback(undefined)
+      } else if (
+        event.kind === 'upsert' &&
+        event.sources.includes('artifact') &&
+        event.sessionId &&
+        changedSession &&
+        selectedFilterId === `session:${event.sessionId}` &&
+        !changedSessionHasArtifacts
+      ) {
+        // Removing the final artifact is a session upsert, so clear a selected session only after the
+        // authoritative renderer session confirms that no managed artifact references remain.
+        setSelectedFilterId('all')
+        setSelectedSessionFallback(undefined)
       }
     },
-    [selectedFilterId]
+    [activeProjectId, selectedFilterId]
   )
   const index = useProjectFilesIndex(activeProjectId, handleIndexChanged)
   const sessionTitleById = useMemo(

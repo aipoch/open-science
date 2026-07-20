@@ -1049,6 +1049,63 @@ describe('ProjectFilesView', () => {
     expect(container.textContent).not.toContain('file-1.png')
   })
 
+  it('returns to All when the selected session loses its final artifact', async () => {
+    await renderView([
+      createSession({
+        messages: [createMessage({ role: 'agent', artifactIds: ['artifact-1'] })],
+        artifacts: [
+          {
+            id: 'artifact-1',
+            kind: 'managed-file',
+            path: '/workspace/result.png',
+            fileUrl: 'file:///workspace/result.png',
+            name: 'result.png',
+            mimeType: 'image/png',
+            size: 1024,
+            mtimeMs: 1710000002000
+          }
+        ]
+      })
+    ])
+
+    await act(async () => {
+      clickDropdownTrigger(
+        container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')
+      )
+    })
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[data-filter-id="session:session-1"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+    expect(container.textContent).toContain('result.png')
+
+    const { useSessionStore } = await import('@/stores/session-store')
+    await act(async () => {
+      useSessionStore.getState().replaceMessageArtifacts({
+        sessionId: 'session-1',
+        messageId: 'message-1',
+        artifacts: []
+      })
+      projectFilesChangedListener?.({
+        projectId: 'default',
+        sessionId: 'session-1',
+        sources: ['artifact'],
+        kind: 'upsert'
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')?.textContent
+    ).toContain('Artifacts')
+    expect(container.textContent).not.toContain('Analysis session')
+    expect(container.textContent).toContain('No files yet')
+  })
+
   it('allows filtering a DB group whose session title is not hydrated', async () => {
     await renderView([])
     vi.mocked(window.api.projectFiles.getOverview).mockResolvedValue({

@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
 import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
-import { ManagedFileIndexRepository } from './repository'
+import { createManagedFileIndexRepository, ManagedFileIndexRepository } from './repository'
 
 const PROJECT_ID = 'project-a'
 const SESSION_ID = 'session-a'
@@ -164,6 +164,57 @@ describe('ManagedFileIndexRepository', () => {
       totalCount: 1,
       nextCursor: undefined
     })
+  })
+
+  it('keeps the SQLite config root separate from the relocatable data root', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'open-science-project-files-data-'))
+    const getClientForRoot = vi.fn(async (root: string) => {
+      expect(root).toBe(storageRoot)
+      return client
+    })
+    const dataRepository = createManagedFileIndexRepository(getClientForRoot, storageRoot, dataRoot)
+    const artifactPath = join(
+      dataRoot,
+      'artifacts',
+      'default-project',
+      SESSION_ID,
+      'message-1',
+      'result.txt'
+    )
+
+    try {
+      await writeManagedFile(artifactPath, 'result')
+
+      await expect(
+        dataRepository.syncSession(
+          createSession({
+            artifacts: [
+              {
+                id: 'artifact-data-root',
+                kind: 'managed-file',
+                path: artifactPath,
+                name: 'result.txt'
+              }
+            ]
+          })
+        )
+      ).resolves.toEqual(['artifact'])
+      await expect(dataRepository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+        totalCount: 1,
+        artifactCount: 1,
+        isIndexComplete: true
+      })
+      await expect(
+        dataRepository.listFiles({
+          projectId: PROJECT_ID,
+          collection: { kind: 'sessionArtifacts', sessionId: SESSION_ID },
+          limit: 20
+        })
+      ).resolves.toMatchObject({ items: [expect.objectContaining({ path: artifactPath })] })
+      expect(getClientForRoot).toHaveBeenCalledWith(storageRoot)
+    } finally {
+      await rm(dataRoot, { recursive: true, force: true })
+    }
   })
 
   it('keeps an active cross-session storage collision on the existing canonical row', async () => {

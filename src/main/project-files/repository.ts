@@ -29,6 +29,7 @@ type ProjectFilesClient = Pick<
   'managedFile' | 'managedFileSessionSync' | '$transaction'
 >
 type ProjectFilesClientProvider = () => Promise<ProjectFilesClient>
+type ProjectFilesClientFactory = (configRoot: string) => Promise<ProjectFilesClient>
 
 type IndexedFileInput = {
   source: ProjectFileSource
@@ -73,7 +74,7 @@ class ManagedFileIndexRepository {
 
   constructor(
     private readonly getClient: ProjectFilesClientProvider,
-    private readonly storageRoot: string
+    private readonly dataRoot: string
   ) {}
 
   /**
@@ -444,7 +445,7 @@ class ManagedFileIndexRepository {
     const lastRow = pageRows.at(-1)
 
     return {
-      items: pageRows.map((row) => toProjectFileItem(row, this.storageRoot)),
+      items: pageRows.map((row) => toProjectFileItem(row, this.dataRoot)),
       totalCount,
       nextCursor:
         rows.length > limit && lastRow
@@ -589,7 +590,7 @@ class ManagedFileIndexRepository {
     sortAtMs: bigint
   }): Promise<IndexedFileInput | undefined> {
     const managedRoot = resolve(
-      this.storageRoot,
+      this.dataRoot,
       input.source === 'artifact' ? ARTIFACTS_DIR : UPLOADS_DIR
     )
     const requestedPath = resolve(input.path)
@@ -637,9 +638,9 @@ class ManagedFileIndexRepository {
       sessionId: input.sessionId,
       messageId: input.messageId,
       displayName: input.displayName,
-      // Canonical paths are only for trust checks. Persist the logical path relative to the configured
-      // root so macOS /var -> /private/var aliases never introduce `..` segments into storageKey.
-      storageKey: relative(this.storageRoot, requestedPath).split(sep).join('/'),
+      // Canonical paths are only for trust checks. Persist the logical path relative to the data root so
+      // macOS /var -> /private/var aliases never introduce `..` segments into storageKey.
+      storageKey: relative(this.dataRoot, requestedPath).split(sep).join('/'),
       mimeType: input.mimeType,
       sizeBytes: BigInt(fileStat.size),
       mtimeMs: BigInt(Math.trunc(fileStat.mtimeMs)),
@@ -647,6 +648,15 @@ class ManagedFileIndexRepository {
     }
   }
 }
+
+// Builds the index with the SQLite client rooted at the fixed config directory while resolving
+// managed file bytes from the separately relocatable data directory.
+const createManagedFileIndexRepository = (
+  getClientForRoot: ProjectFilesClientFactory,
+  configRoot: string,
+  dataRoot: string
+): ManagedFileIndexRepository =>
+  new ManagedFileIndexRepository(() => getClientForRoot(configRoot), dataRoot)
 
 const normalizeRevision = (revision: number | undefined): number =>
   Number.isInteger(revision) && (revision ?? 0) >= 0 ? (revision ?? 0) : 0
@@ -810,7 +820,7 @@ const toSafeNumber = (value: bigint, field: string): number => {
 
 // Reconstructs an absolute managed path only after a storageKey has been produced by trusted indexing.
 // Bigint fields are range-checked before crossing Electron IPC, which serializes the numeric DTO.
-const toProjectFileItem = (row: ManagedFile, storageRoot: string): ProjectFileItem => ({
+const toProjectFileItem = (row: ManagedFile, dataRoot: string): ProjectFileItem => ({
   id: row.source === 'upload' ? `upload:${row.sourceFileId}` : row.sourceFileId,
   source: row.source as ProjectFileSource,
   sourceFileId: row.sourceFileId,
@@ -818,12 +828,21 @@ const toProjectFileItem = (row: ManagedFile, storageRoot: string): ProjectFileIt
   sessionId: row.sessionId,
   messageId: row.messageId ?? undefined,
   name: row.displayName,
-  path: join(storageRoot, ...row.storageKey.split('/')),
+  path: join(dataRoot, ...row.storageKey.split('/')),
   mimeType: row.mimeType ?? undefined,
   size: toSafeNumber(row.sizeBytes, 'size'),
   mtimeMs: row.mtimeMs === null ? undefined : toSafeNumber(row.mtimeMs, 'mtime'),
   sortAtMs: toSafeNumber(row.sortAtMs, 'sort time')
 })
 
-export { ManagedFileIndexRepository, ManagedFileSyncIncompleteError }
-export type { ManagedFileSoftDeleteToken, ProjectFilesClient, ProjectFilesClientProvider }
+export {
+  createManagedFileIndexRepository,
+  ManagedFileIndexRepository,
+  ManagedFileSyncIncompleteError
+}
+export type {
+  ManagedFileSoftDeleteToken,
+  ProjectFilesClient,
+  ProjectFilesClientFactory,
+  ProjectFilesClientProvider
+}

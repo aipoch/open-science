@@ -37,7 +37,7 @@ import {
   registerSessionPersistenceIpcHandlers
 } from './session-persistence/ipc'
 import { registerProjectFilesIpcHandlers } from './project-files/ipc'
-import { ManagedFileIndexRepository } from './project-files/repository'
+import { createManagedFileIndexRepository } from './project-files/repository'
 import { ProjectDeletionCoordinator } from './projects/deletion-coordinator'
 import { getProjectDbClient } from './projects/prisma-client'
 import { SessionPersistenceCoordinator } from './session-persistence/coordinator'
@@ -177,10 +177,11 @@ const registerIpcHandlers = async ({
 
   // Construct one storage/index/deletion graph for every related IPC surface. Sharing these instances
   // is essential: separate coordinators would have independent queues and recovery gates.
-  const storageRoot = resolveStorageRoot()
-  const projectFilesRepository = new ManagedFileIndexRepository(
-    () => getProjectDbClient(storageRoot),
-    storageRoot
+  const configRoot = resolveStorageRoot()
+  const projectFilesRepository = createManagedFileIndexRepository(
+    getProjectDbClient,
+    configRoot,
+    resolveDataRoot()
   )
   const sessionPersistenceCoordinator = new SessionPersistenceCoordinator(
     sessionRepository,
