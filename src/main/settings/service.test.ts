@@ -1,5 +1,5 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, join, normalize } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execPath } from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -653,6 +653,32 @@ describe('SettingsService: preflight & spawn config', () => {
     })
   })
 
+  it('declares the model image capability in the resolved OpenCode backend config', async () => {
+    // resolveActiveAgentBackend honors this forced-framework env above stored settings; set it
+    // explicitly (a prior Codex test leaves it stubbed to 'codex') so this resolves OpenCode.
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'opencode')
+    await repository.setAgentFramework('opencode')
+    const service = createService(undefined, {
+      opencodeDetected: { path: '/usr/local/bin/opencode', version: '1.19.0' }
+    })
+    const provider = (
+      await service.upsertProvider({ type: 'official', name: 'Kimi', vendorId: 'kimi', key: 'k' })
+    ).providers[0]
+    await service.setActiveProvider(provider.id)
+
+    const backend = await service.resolveActiveAgentBackend()
+
+    // End-to-end guard for the whole capability chain: resolveProvider must carry supportsImageInput
+    // for the multimodal default (kimi-k3) and prepareModelConfig must surface it, so OpenCode receives
+    // the model as image-capable instead of a bare entry whose image parts it would strip. Deleting the
+    // wiring in resolveProvider or buildModelCapabilities makes this fail.
+    const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+    expect(content.provider['openai-compatible'].models['kimi-k3']).toEqual({
+      attachment: true,
+      modalities: { input: ['text', 'image'] }
+    })
+  })
+
   it('resolves a Chat Completions provider through the Codex Responses bridge', async () => {
     const localFetch = globalThis.fetch
     let upstreamRequest: Record<string, unknown> | undefined
@@ -1173,6 +1199,29 @@ describe('SettingsService: image-input capability', () => {
     expect(view?.models).toEqual(['claude-opus-5-unreleased'])
     expect(view?.supportsImageInput).toBe(true)
   })
+
+  it('uses the vendor default model, not the refreshed catalog head, for the capability fallback', async () => {
+    const service = createService()
+    // A refresh reorders Kimi's catalog so a text-only id leads, while the spawned default stays kimi-k3.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        status: 200,
+        json: () => Promise.resolve({ data: [{ id: 'kimi-k2.7-code' }, { id: 'kimi-k3' }] })
+      })
+    )
+    const created = (
+      await service.upsertProvider({ type: 'official', name: 'Kimi', vendorId: 'kimi', key: 'k' })
+    ).providers[0]
+    await service.refreshProviderModels({ providerId: created.id })
+
+    // With no active model, the capability must match the model resolveProvider actually spawns — the
+    // vendor default kimi-k3 (multimodal) — not the refreshed list head kimi-k2.7-code (text-only), or
+    // OpenCode would keep stripping images from a default that supports them.
+    const view = (await service.getSettingsView()).providers.find((p) => p.id === created.id)
+    expect(view?.models[0]).toBe('kimi-k2.7-code')
+    expect(view?.supportsImageInput).toBe(true)
+  })
 })
 
 describe('SettingsService: onboarding', () => {
@@ -1199,10 +1248,14 @@ describe('SettingsService: onboarding', () => {
   it('persists a new dataRoot across a fresh read', async () => {
     const service = createService()
 
-    await service.setDataRoot('/mnt/new-data')
+    // The repository canonicalizes dataRoot to the host separator on read (for samePath comparisons),
+    // so build the fixture the same way — a bare POSIX literal comes back with backslashes on Windows
+    // and would fail the round-trip.
+    const dataRoot = normalize('/mnt/new-data')
+    await service.setDataRoot(dataRoot)
 
     const settings = await service.getStoredSettings()
-    expect(settings.dataRoot).toBe('/mnt/new-data')
+    expect(settings.dataRoot).toBe(dataRoot)
   })
 })
 
@@ -1363,7 +1416,10 @@ describe('SettingsService: skills', () => {
       codexDetectDeps: {
         env: { PATH: dirname(adapterPath) },
         homePath: '/home',
-        platform: 'linux',
+        // Detection walks PATH with the host's path rules; this test's adapterPath/PATH are real
+        // on-disk host paths, so mock the host platform (a fixed 'linux' shreds a Windows drive letter
+        // like C:\… when splitting PATH on ':' , so detection would never match the file it created).
+        platform: process.platform,
         isRunnable: (path) => Promise.resolve(path === adapterPath),
         getAdapterVersion: () => Promise.resolve('codex-acp 1.1.4'),
         getCodexVersion: () => Promise.resolve(undefined),

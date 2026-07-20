@@ -58,6 +58,7 @@ import {
   ATTACHMENT_PREVIEW_BYTES,
   MAX_EMBEDDED_TEXT_UPLOAD_BYTES,
   buildOversizedAttachmentNotice,
+  imageAttachmentMimeType,
   isTabularAttachment,
   isTextLikeAttachment
 } from './attachment-content'
@@ -1721,11 +1722,15 @@ class AcpRuntime {
     const { sessionId, absolutePath, uri, name, mimeType, size } = descriptor
 
     // Images are embedded as base64 so vision-capable agents receive the actual pixels.
-    // Large images are downscaled/re-encoded first so one file cannot overflow the request.
-    if (mimeType?.startsWith('image/')) {
+    // Large images are downscaled/re-encoded first so one file cannot overflow the request. Detection
+    // falls back to the file extension so a `.png` with a missing/generic MIME (some drag/drop and paste
+    // sources omit it) is still inlined as pixels instead of degrading to a bare file link.
+    const imageMimeType = imageAttachmentMimeType(name, mimeType)
+
+    if (imageMimeType) {
       const { data, mimeType: outMimeType } = await buildImageContentData(
         absolutePath,
-        mimeType,
+        imageMimeType,
         size
       )
 
@@ -1736,7 +1741,7 @@ class AcpRuntime {
       const alreadyInlined = this.sessionInlineImageBytes.get(sessionId) ?? 0
 
       if (!canInlineImageInSession(alreadyInlined, data.length, this.inlineImageBudgetBytes)) {
-        return [{ type: 'resource_link', uri, name, title: name, mimeType, size }]
+        return [{ type: 'resource_link', uri, name, title: name, mimeType: imageMimeType, size }]
       }
 
       this.sessionInlineImageBytes.set(sessionId, alreadyInlined + data.length)
