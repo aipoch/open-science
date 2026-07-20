@@ -22,6 +22,7 @@ import type {
   UpsertProviderRequest
 } from '../../../../shared/settings'
 import { isProviderUsableByFramework } from '../../../../shared/settings'
+import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import { DataRootWarning } from '@/components/DataRootWarning'
 import { ClaudeInstallCard } from '../settings/ClaudeInstallCard'
@@ -29,6 +30,7 @@ import { ClaudeStatusCard } from '../settings/ClaudeStatusCard'
 import { CodexStatusCard } from '../settings/CodexStatusCard'
 import { OpencodeStatusCard } from '../settings/OpencodeStatusCard'
 import { EnvironmentSetupCard } from './EnvironmentSetupCard'
+import { RuntimeChoiceCard } from './RuntimeChoiceCard'
 import { ProviderForm } from '../settings/ProviderForm'
 import {
   createEmptyProviderFormValue,
@@ -155,6 +157,13 @@ const OnboardingWizard = (): React.JSX.Element => {
   const isRecovery = onboardingCompletedAt !== undefined
   // First-time setup always starts on the visible environment summary, even when every check has
   // already passed. The user explicitly continues to model configuration after reviewing it.
+
+  const envInit = useNotebookEnvStore((s) => s.init)
+  // A notebook runtime setup the user started must finish (or be cancelled) before leaving onboarding —
+  // continuing mid-create would strand a half-built env, so it gates Continue below.
+  const envProvisioning = useNotebookEnvStore((s) => s.status.provisioning)
+  const didKickEnv = useRef(false)
+
   const [step, setStep] = useState<WizardStep>('claude')
   const [environmentMode, setEnvironmentMode] = useState<EnvironmentMode>('automatic')
   // The framework switcher stays collapsed once the selected agent is ready; the user reveals it with
@@ -222,6 +231,15 @@ const OnboardingWizard = (): React.JSX.Element => {
       void checkEnvironment()
     }
   }, [environmentCheck, environmentCheckError, isCheckingEnvironment, checkEnvironment])
+
+  // Detect-only: hydrate the env store so its status/progress row reflects the real managed-python
+  // state, but do NOT auto-provision here. A fresh env is built lazily on first notebook use; an
+  // explicit choose/download step comes later. Guarded so re-renders don't refire it.
+  useEffect(() => {
+    if (didKickEnv.current) return
+    didKickEnv.current = true
+    void envInit()
+  }, [envInit])
 
   // Onboarding always creates a provider, so required fields must be filled before it can continue.
   const formErrors = getProviderFormErrors(formValue)
@@ -559,6 +577,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                         id="automatic-environment-panel"
                         role="tabpanel"
                         aria-labelledby="automatic-environment-tab"
+                        className="space-y-5"
                       >
                         <EnvironmentSetupCard
                           environment={environmentCheck}
@@ -572,6 +591,8 @@ const OnboardingWizard = (): React.JSX.Element => {
                           onCheck={() => void handleEnvironmentCheck()}
                           onInstall={() => void handleInstall('managed')}
                         />
+                        {/* Optional, non-blocking: let first-run users pick their own Python. */}
+                        {!isRecovery ? <RuntimeChoiceCard /> : null}
                       </div>
                     ) : (
                       <div
@@ -716,9 +737,11 @@ const OnboardingWizard = (): React.JSX.Element => {
                 </CardContent>
                 <CardFooter className="mt-auto items-center justify-between gap-4 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
                   <p className="text-xs leading-5 text-text-100">
-                    {environmentReady
-                      ? 'All required environment checks passed.'
-                      : 'Complete every required item above to continue.'}
+                    {envProvisioning
+                      ? 'Setting up the notebook runtime — wait for it to finish, or cancel it, to continue.'
+                      : environmentReady
+                        ? 'All required environment checks passed.'
+                        : 'Complete every required item above to continue.'}
                   </p>
                   <Button
                     type="button"
@@ -738,7 +761,9 @@ const OnboardingWizard = (): React.JSX.Element => {
                         setStep('provider')
                       }
                     }}
-                    disabled={!environmentReady}
+                    // Also blocked while a user-started runtime setup is in flight: leaving mid-create
+                    // would strand a half-built env (the user can cancel it from the card to proceed).
+                    disabled={!environmentReady || envProvisioning}
                     className="px-4"
                   >
                     {isRecovery ? 'Return to Open Science' : 'Continue'}

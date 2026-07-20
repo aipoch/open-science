@@ -238,7 +238,153 @@ describe('workspace tool activity details', () => {
     )
   })
 
-  it('summarizes an artifact-write MCP tool without echoing file content', () => {
+  it('renders a repl_execute run as Agent SDK JavaScript code plus its echoed result', () => {
+    const runSummary = {
+      status: 'completed',
+      kernelKind: 'repl',
+      stdout: '',
+      stderr: '',
+      traceback: '',
+      outputs: [{ type: 'display', data: { 'text/plain': '{ pmids: [ "1", "2" ] }' } }]
+    }
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__repl_execute',
+      toolKind: 'other',
+      rawInput: { code: 'const r = await host.mcp.pubmed.search({}); r' },
+      toolContent: [
+        { type: 'content', content: { type: 'text', text: JSON.stringify(runSummary) } }
+      ]
+    })
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.displayName).toBe('Agent SDK')
+    expect(details?.sections[0]).toMatchObject({
+      kind: 'code',
+      label: 'Code',
+      language: 'javascript',
+      text: 'const r = await host.mcp.pubmed.search({}); r'
+    })
+    // The echoed value lives in a display output (not stdout); it must still surface as the result.
+    expect(details?.sections[1]).toMatchObject({ label: 'Output', collapsible: true })
+    expect(details?.sections[1]?.kind === 'code' && details.sections[1].text).toContain('pmids')
+  })
+
+  it('reads top-level stdout for a repl_execute control-plane result', () => {
+    const runSummary = {
+      status: 'completed',
+      kernelKind: 'repl',
+      stdout: '{\n  "pmids": ["1"]\n}\n',
+      outputs: []
+    }
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__repl_execute',
+      toolKind: 'other',
+      rawInput: { code: 'console.log(JSON.stringify(x))' },
+      toolContent: [
+        { type: 'content', content: { type: 'text', text: JSON.stringify(runSummary) } }
+      ]
+    })
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.sections[1]?.kind === 'code' && details.sections[1].text).toContain('"pmids"')
+  })
+
+  it('renders a bash_execute run as a Shell command plus output', () => {
+    const runSummary = {
+      status: 'completed',
+      kernelKind: 'bash',
+      stdout: 'file.txt\n',
+      stderr: '',
+      exitCode: 0,
+      outputs: []
+    }
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__bash_execute',
+      toolKind: 'other',
+      rawInput: { command: 'ls' },
+      toolContent: [
+        { type: 'content', content: { type: 'text', text: JSON.stringify(runSummary) } }
+      ]
+    })
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.displayName).toBe('Shell')
+    expect(details?.sections[0]).toMatchObject({ label: 'Command', language: 'bash', text: 'ls' })
+    expect(details?.sections[1]?.kind === 'code' && details.sections[1].text).toContain('file.txt')
+  })
+
+  it('summarizes a manage_packages install with method and a cleaned log, not raw JSON', () => {
+    const result = {
+      ok: true,
+      needsRestart: false,
+      method: 'cran',
+      log: 'trying URL ...\n\n\n\ndownloaded 1.1 MB\n'
+    }
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__manage_packages',
+      toolKind: 'other',
+      rawInput: { language: 'r', packages: ['jsonlite'] },
+      toolContent: [{ type: 'content', content: { type: 'text', text: JSON.stringify(result) } }]
+    })
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.displayName).toBe('Manage packages')
+    expect(details?.subtitle).toBe('jsonlite')
+    expect(details?.metaLabel).toBe('cran')
+
+    const logSection = details?.sections.find(
+      (section) => section.kind === 'code' && section.label === 'Log'
+    )
+
+    expect(logSection?.kind === 'code' && logSection.collapsible).toBe(true)
+    // The raw { ok, method, ... } envelope must not be dumped; the cleaned install log shows instead.
+    expect(logSection?.kind === 'code' && logSection.text).not.toContain('"ok"')
+    expect(logSection?.kind === 'code' && logSection.text).toContain('downloaded 1.1 MB')
+  })
+
+  it('shows the manage_packages command and install location, not just the log', () => {
+    const result = {
+      ok: true,
+      needsRestart: false,
+      method: 'conda',
+      prefix: '/Users/x/OpenScience/runtime/envs/analysis',
+      log: 'done'
+    }
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__manage_packages',
+      toolKind: 'other',
+      rawInput: { language: 'python', packages: ['numpy', 'pandas'], environment: 'analysis' },
+      toolContent: [{ type: 'content', content: { type: 'text', text: JSON.stringify(result) } }]
+    })
+    const details = buildToolActivityDetails(activity)
+
+    const commandSection = details?.sections.find(
+      (section) => section.kind === 'code' && section.label === 'Command'
+    )
+    expect(commandSection?.kind === 'code' && commandSection.text).toContain(
+      'manage_packages(language="python", packages=["numpy", "pandas"], environment="analysis")'
+    )
+    // The concrete env-scoped install location is surfaced (the "where is it installed" ask).
+    expect(commandSection?.kind === 'code' && commandSection.text).toContain(
+      'installs into  /Users/x/OpenScience/runtime/envs/analysis'
+    )
+  })
+
+  it('flags a manage_packages result that needs a restart', () => {
+    const result = { ok: true, needsRestart: true, method: 'conda', log: 'done' }
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__manage_packages',
+      toolKind: 'other',
+      rawInput: { language: 'python', packages: ['numpy', 'pandas'] },
+      toolContent: [{ type: 'content', content: { type: 'text', text: JSON.stringify(result) } }]
+    })
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.subtitle).toBe('numpy, pandas')
+    expect(details?.metaLabel).toBe('conda · restart needed')
+  })
+
+  it('renders an image artifact-write result as an inline preview section', () => {
     const activity = createActivity({
       providerToolName: 'write_artifact_file',
       toolKind: 'other',
@@ -275,11 +421,58 @@ describe('workspace tool activity details', () => {
 
     const section = details?.sections[0]
 
+    expect(section).toMatchObject({
+      kind: 'image',
+      label: 'Output',
+      path: '/files/report.png',
+      mimeType: 'image/png',
+      name: 'report.png',
+      sizeLabel: '2 KB'
+    })
+  })
+
+  it('summarizes a non-image artifact-write MCP tool without echoing file content', () => {
+    const activity = createActivity({
+      providerToolName: 'write_artifact_file',
+      toolKind: 'other',
+      title: 'Write artifact file',
+      rawInput: {
+        filename: 'report.csv',
+        mimeType: 'text/csv',
+        content: 'a,b\n1,2',
+        encoding: 'utf8'
+      },
+      toolContent: [
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: JSON.stringify({
+              artifact: {
+                name: 'report.csv',
+                path: '/files/report.csv',
+                mimeType: 'text/csv',
+                size: 2048
+              }
+            })
+          }
+        }
+      ]
+    })
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.displayName).toBe('Write file')
+    expect(details?.subtitle).toBe('report.csv')
+    expect(details?.metaLabel).toBe('2 KB')
+    expect(details?.sections).toHaveLength(1)
+
+    const section = details?.sections[0]
+
     expect(section?.kind).toBe('code')
-    expect(section?.kind === 'code' && section.text).toContain('report.png')
-    expect(section?.kind === 'code' && section.text).toContain('/files/report.png')
-    // The raw (base64) file content must never be dumped into the transcript.
-    expect(section?.kind === 'code' && section.text).not.toContain('QUJDREVG')
+    expect(section?.kind === 'code' && section.text).toContain('report.csv')
+    expect(section?.kind === 'code' && section.text).toContain('/files/report.csv')
+    // The raw file content must never be dumped into the transcript.
+    expect(section?.kind === 'code' && section.text).not.toContain('a,b')
   })
 
   it('matches the artifact-write tool by name even when MCP-namespaced', () => {
