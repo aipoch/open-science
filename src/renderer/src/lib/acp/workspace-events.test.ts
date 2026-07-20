@@ -521,6 +521,58 @@ describe('workspace runtime events', () => {
 
       vi.unstubAllGlobals()
     })
+
+    it('retries a started:false auto-review so a not-yet-persisted new session still gets reviewed', async () => {
+      // A brand-new session persists via an async queue; the first stop can beat the flush, so main's
+      // disk load reports started:false. The auto path must retry, not silently drop the first review.
+      vi.useFakeTimers()
+      const reviewerRun = vi
+        .fn()
+        .mockResolvedValueOnce({ started: false }) // session not on disk yet
+        .mockResolvedValueOnce({ started: true }) // flushed by the time the retry runs
+      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'Analysis complete'
+      })
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
+      // Drive the retry delay + the fire-and-forget promise chain to completion.
+      await vi.runAllTimersAsync()
+
+      expect(reviewerRun).toHaveBeenCalledTimes(2)
+
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    })
+
+    it('stops retrying a persistently started:false auto-review at the attempt cap', async () => {
+      // Genuine deletion / persistent dedup: retries must be bounded, never an infinite loop.
+      vi.useFakeTimers()
+      const reviewerRun = vi.fn().mockResolvedValue({ started: false })
+      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'Analysis complete'
+      })
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
+      await vi.runAllTimersAsync()
+
+      // AUTO_REVIEW_START_ATTEMPTS attempts, then it gives up.
+      expect(reviewerRun).toHaveBeenCalledTimes(4)
+
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    })
   })
 
   it('records finalize failures and retries when an artifact event is replayed', async () => {

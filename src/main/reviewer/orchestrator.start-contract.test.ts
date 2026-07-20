@@ -19,14 +19,14 @@ vi.mock('./host-sdk', () => ({
     start = vi.fn().mockResolvedValue({ endpoint: 'http://127.0.0.1:0', token: 'tok' })
     stop = vi.fn().mockResolvedValue(undefined)
   },
-  buildReviewerHostPythonBootstrap: () => ''
+  buildReviewerHostPythonBootstrap: (): string => ''
 }))
 
 vi.mock('./mcp-server', () => ({
   ReviewerMcpServer: class {
     start = vi.fn().mockResolvedValue(undefined)
     stop = vi.fn().mockResolvedValue(undefined)
-    toAcpMcpServerConfig = () => ({})
+    toAcpMcpServerConfig = (): Record<string, never> => ({})
   }
 }))
 

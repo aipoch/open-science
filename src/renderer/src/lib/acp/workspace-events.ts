@@ -92,6 +92,16 @@ const assembleReviewRunRequest = (sessionId: string): ReviewRunRequest | undefin
   }
 }
 
+// Bounded retry for a started:false auto-review. A brand-new session is persisted through an async
+// queue, but this fires the instant the first turn stops — so main's disk load can momentarily miss
+// the session and report started:false. Since main treats not-found as "release the lock, no row",
+// a retry is safe: it either catches the now-flushed session, hits a genuine dedup/deletion (stays
+// false, we give up), or succeeds. Without it, the first turn of a new session is silently un-reviewed.
+const AUTO_REVIEW_START_ATTEMPTS = 4
+const AUTO_REVIEW_RETRY_DELAY_MS = 400
+
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
 // Triggers a background auto-review for the just-completed turn when autoReviewEnabled is on. The
 // default is off, so a session is auto-reviewed only when the switch was explicitly turned on. Uses
 // the shared assembleReviewRunRequest helper so the auto and manual paths pick the same turn and
@@ -118,7 +128,14 @@ const triggerAutoReview = async (sessionId: string): Promise<void> => {
 
     if (!request) return
 
-    await window.api.reviewer.run(request)
+    // Retry a started:false a bounded number of times so a not-yet-persisted new session's first
+    // turn isn't silently skipped. Anything other than an explicit false (started:true, or a bridge
+    // that doesn't report a result) is treated as done on the first attempt.
+    for (let attempt = 0; attempt < AUTO_REVIEW_START_ATTEMPTS; attempt++) {
+      const result = await window.api.reviewer.run(request)
+      if (result?.started !== false) return
+      if (attempt < AUTO_REVIEW_START_ATTEMPTS - 1) await delay(AUTO_REVIEW_RETRY_DELAY_MS)
+    }
   } catch {
     // Reviewer errors must never surface to the main session.
   }

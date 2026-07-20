@@ -188,6 +188,27 @@ describe('reviewer IPC handlers', () => {
     expect(broadcastToRenderers).not.toHaveBeenCalled()
   })
 
+  it('releases the in-flight lock on a not-found start so a retry after the session appears starts', async () => {
+    // Models the persistence race: the first load misses the not-yet-flushed session (started:false),
+    // the retry sees it. The retry starting proves the not-found bail released the dedup lock (a stuck
+    // lock would drop the retry as "already in flight").
+    sessionLoadAll.mockReset()
+    sessionLoadAll
+      .mockResolvedValueOnce({ sessions: [] })
+      .mockResolvedValue({ sessions: [{ id: 'session-1' }] })
+    registerReviewerIpcHandlers({ acpRuntime })
+
+    const runHandler = handlers.get(REVIEWER_IPC.RUN)
+
+    const first = await runHandler?.({}, createRequest())
+    expect(first).toEqual({ started: false })
+    expect(runReview).not.toHaveBeenCalled()
+
+    const second = await runHandler?.({}, createRequest())
+    expect(second).toEqual({ started: true })
+    expect(runReview).toHaveBeenCalledTimes(1)
+  })
+
   it('returns started:false when runReview fails before signalling onStarted', async () => {
     // e.g. scope resolution or the createReview insert throws before the running row is pushed.
     runReview.mockReset()
