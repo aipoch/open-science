@@ -108,6 +108,9 @@ export type PersistedChatSession = {
   status: PersistedSessionStatus
   // Per-conversation approval posture. Older session files omit it and safely restore to Ask.
   permissionProfile?: PermissionProfileId
+  // Per-conversation auto-review toggle. Absent (older files) or non-true is treated as disabled;
+  // only an explicit true enables it.
+  autoReviewEnabled?: boolean
   messages: PersistedChatMessage[]
   activities?: PersistedToolActivity[]
   activeRun?: PersistedActiveRun
@@ -582,6 +585,9 @@ const sanitizeSession = (session: unknown): PersistedChatSession | undefined => 
       session.permissionProfile === undefined
         ? DEFAULT_PERMISSION_PROFILE
         : normalizePermissionProfile(session.permissionProfile),
+    // Auto-review defaults off: a missing or non-boolean value restores as disabled, and only an
+    // explicit true turns it on.
+    autoReviewEnabled: session.autoReviewEnabled === true ? true : false,
     messages: Array.isArray(session.messages)
       ? session.messages.map(sanitizeMessage).filter((item): item is PersistedChatMessage => !!item)
       : [],

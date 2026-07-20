@@ -158,4 +158,38 @@ describe('SkillMentionPopup', () => {
     act(() => third.click())
     expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 'imp' }))
   })
+
+  it('ranks a name match above a description-only match', () => {
+    act(() => {
+      root.render(<SkillMentionPopup query="literature" onSelect={vi.fn()} onClose={vi.fn()} />)
+    })
+
+    // "literature" hits Literature Review by name and Imported Helper only by description.
+    const rendered = options()
+    expect(rendered).toHaveLength(2)
+    expect(rendered[0].textContent).toContain('Literature Review')
+    expect(rendered[1].textContent).toContain('Imported Helper')
+  })
+
+  it('matches a fuzzy subsequence that a plain substring would miss', () => {
+    act(() => {
+      root.render(<SkillMentionPopup query="pmpnn" onSelect={vi.fn()} onClose={vi.fn()} />)
+    })
+
+    // "pmpnn" is not a substring of "ProteinMPNN" but is an ordered subsequence of it.
+    const rendered = options()
+    expect(rendered).toHaveLength(1)
+    expect(rendered[0].textContent).toContain('ProteinMPNN')
+  })
+
+  it('highlights the matched characters in the name', () => {
+    act(() => {
+      root.render(<SkillMentionPopup query="lit" onSelect={vi.fn()} onClose={vi.fn()} />)
+    })
+
+    // The name match renders the matched run inside a <mark>; description-only matches do not.
+    const marks = Array.from(document.body.querySelectorAll('mark'))
+    expect(marks).toHaveLength(1)
+    expect(marks[0].textContent?.toLowerCase()).toBe('lit')
+  })
 })

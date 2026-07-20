@@ -97,6 +97,13 @@ describe('WorkspacePage notebook entry hydration', () => {
       preview: {
         load: vi.fn(() => Promise.resolve(undefined)),
         save: vi.fn(() => Promise.resolve())
+      },
+      reviewer: {
+        onUpdated: vi.fn(() => vi.fn()),
+        onSuppressNextAutoReview: vi.fn(() => vi.fn()),
+        onFixLoopStart: vi.fn(() => vi.fn()),
+        onFixLoopEnd: vi.fn(() => vi.fn()),
+        abortFixLoop: vi.fn(() => Promise.resolve())
       }
     } as never
     container = document.createElement('div')

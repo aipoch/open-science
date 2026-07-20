@@ -39,7 +39,7 @@ describe('notebook local RPC server', () => {
           outputs: [],
           workingFiles: []
         }),
-        shutdown: async () => undefined
+        shutdown: async () => ({ reaped: true })
       })
     })
     const server = new NotebookLocalRpcServer(service, { token: 'secret-token' })
@@ -106,7 +106,7 @@ describe('notebook local RPC server', () => {
           outputs: [],
           workingFiles: []
         }),
-        shutdown: async () => undefined
+        shutdown: async () => ({ reaped: true })
       })
     })
     const server = new NotebookLocalRpcServer(service, { token: 'secret-token' })

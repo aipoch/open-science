@@ -43,6 +43,34 @@ describe('validate: request construction', () => {
       /invalid base url/i
     )
   })
+
+  it('builds a /v1/chat/completions probe (no anthropic-version) for an OpenAI provider', () => {
+    const request = buildValidationRequest({
+      type: 'custom',
+      baseUrl: 'https://gateway.example.com',
+      model: 'gpt-x',
+      key: 'test-token',
+      apiType: 'openai'
+    })
+
+    expect(request.url).toBe('https://gateway.example.com/v1/chat/completions')
+    expect(request.headers.authorization).toBe('Bearer test-token')
+    expect(request.headers['anthropic-version']).toBeUndefined()
+    expect(JSON.parse(request.body)).toMatchObject({ model: 'gpt-x', max_tokens: 1 })
+  })
+
+  it('uses the OpenAI endpoint for a both-capable provider and never doubles /v1', () => {
+    const request = buildValidationRequest({
+      type: 'custom',
+      baseUrl: 'https://gateway.example.com/v1',
+      model: 'm',
+      key: 'k',
+      apiType: 'both'
+    })
+
+    // preferredEndpoint(both) → openai, so the probe hits chat/completions once.
+    expect(request.url).toBe('https://gateway.example.com/v1/chat/completions')
+  })
 })
 
 describe('validate: classification', () => {

@@ -50,11 +50,21 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      # Checkout first (before downloading artifacts): the mac-feed merge step runs a repo script, and
+      # actions/checkout cleans the working dir, which would wipe a pre-downloaded artifacts/.
+      - name: Checkout (for the mac-feed merge script)
+        uses: actions/checkout@v7
+
       - name: Download all build artifacts
         uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true # flatten every platform's files into one directory
+
+      # Merge the two per-arch mac feeds (from notarize-mac) into the single latest-mac.yml the
+      # installed app polls (default `latest` channel). No-ops if the mac feeds are absent.
+      - name: Merge mac update feed
+        run: node scripts/merge-mac-feed.mjs artifacts
 
       # One SHA256SUMS.txt covering all installers so users can verify downloads.
       - name: Generate checksums
@@ -84,9 +94,10 @@ jobs:
 
       # Attach user-facing artifacts + checksums: installers (dmg/exe/AppImage/deb) and portable
       # zips (mac + win), plus the electron-updater feed files so the mirror-to-website job can
-      # republish them to the CDN feed: win/linux latest.yml + latest-linux.yml, and the per-arch mac
-      # feeds arm64-mac.yml + x64-mac.yml (distinct names -> no collision; regenerated post-staple in
-      # notarize-mac.yml). Blockmaps are win/linux only (mac does full-zip updates in v1).
+      # republish them to the CDN feed: win/linux latest.yml + latest-linux.yml, and the mac feeds.
+      # `*-mac.yml` covers the merged latest-mac.yml (the file the app polls) plus the per-arch
+      # arm64/x64-mac.yml intermediates it was built from. Blockmaps are win/linux only (mac does
+      # full-zip updates in v1).
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:

@@ -105,6 +105,32 @@ describe('claude-install: command construction', () => {
   })
 })
 
+describe('claude-install: custom install target (opencode)', () => {
+  const opencodeTarget = {
+    npmPackage: 'opencode-ai',
+    scriptUnix: 'curl -fsSL https://opencode.ai/install | bash'
+  }
+
+  it('installs the target npm package', () => {
+    const spec = getInstallSpawnSpec('npm', 'linux', undefined, opencodeTarget)
+
+    expect(spec.args).toEqual(['i', '-g', 'opencode-ai'])
+  })
+
+  it('pipes the target unix script through bash', () => {
+    const spec = getInstallSpawnSpec('official-script', 'linux', undefined, opencodeTarget)
+
+    expect(spec.command).toBe('bash')
+    expect(spec.args.at(-1)).toContain('curl -fsSL https://opencode.ai/install | bash')
+  })
+
+  it('throws for a script install on Windows when the target has no PowerShell installer', () => {
+    expect(() =>
+      getInstallSpawnSpec('official-script', 'win32', undefined, opencodeTarget)
+    ).toThrow(/No Windows install script/)
+  })
+})
+
 describe('claude-install: region-block detection', () => {
   it('flags piped-HTML region-block output', () => {
     expect(isRegionBlockedOutput('<!DOCTYPE html><html>App unavailable in region</html>')).toBe(

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { delimiter } from 'node:path'
 import { createInterface, type Interface } from 'node:readline'
 
+import { terminateProcessTree, type ProcessTreeKillResult } from '../process-tree'
 import { resolvePythonCommand } from './python-command'
 import type {
   NotebookExecutionRequest,
@@ -265,6 +266,10 @@ class NotebookPythonExecutor implements NotebookExecutor {
   private currentCwd: string | undefined
   private passthroughStdout: string[] = []
   private passthroughStderr: string[] = []
+  // In-flight tree-kills started by a hard timeout, which drops the interpreter from reuse BEFORE
+  // reaping it. shutdown() awaits these so a quit landing right after a timeout cannot app.exit before
+  // the kill (notably Windows taskkill /T) has finished tearing the tree down.
+  private terminations = new Set<Promise<ProcessTreeKillResult>>()
 
   // Leading args (e.g. the Windows `py` launcher's `-3`) prepended before the bridge invocation.
   private baseArgs: string[] = []
@@ -289,7 +294,17 @@ class NotebookPythonExecutor implements NotebookExecutor {
           if (this.pending?.id === id) {
             this.pending = undefined
           }
-          if (!child.killed) child.kill()
+          // Hard timeout: drop the interpreter from reuse BEFORE tree-killing it. On Windows taskkill
+          // does not set Node's child.killed, so ensureStarted()'s `!this.child.killed` check would
+          // otherwise hand the next cell a process that is already being torn down. Clearing
+          // this.child/readline forces the next execute() to spawn a fresh interpreter. tree-kill so a
+          // grandchild the interpreter spawned can't be orphaned.
+          if (this.child === child) {
+            this.readline?.close()
+            this.readline = undefined
+            this.child = undefined
+          }
+          this.trackTermination(child)
           reject(
             new NotebookExecutionTimeoutError(
               `Notebook execution timed out after ${request.timeoutMs ?? 120_000}ms.`
@@ -320,8 +335,19 @@ class NotebookPythonExecutor implements NotebookExecutor {
     }
   }
 
-  // Stops the interpreter and rejects any caller waiting for an execution result.
-  async shutdown(): Promise<void> {
+  // Fire-and-forget a tree-kill while keeping its promise so shutdown() can await it. Used on the hard
+  // timeout path, which drops the interpreter from reuse before reaping it.
+  private trackTermination(child: ChildProcessWithoutNullStreams): void {
+    const termination = terminateProcessTree(child).finally(() => {
+      this.terminations.delete(termination)
+    })
+    this.terminations.add(termination)
+  }
+
+  // Stops the interpreter and rejects any caller waiting for an execution result. Returns { reaped }:
+  // true only when the interpreter tree was cleanly reaped (and any in-flight timeout kill settled),
+  // so the update-install gate can tell a released-handles teardown from a degraded one.
+  async shutdown(): Promise<ProcessTreeKillResult> {
     if (this.pending) {
       const pending = this.pending
 
@@ -336,6 +362,8 @@ class NotebookPythonExecutor implements NotebookExecutor {
     const child = this.child
     this.child = undefined
 
+    let reaped = true
+
     if (child && !child.killed) {
       // Wait for the OS to actually reap the process before returning. On Windows the file handles
       // the interpreter holds under the cwd/runtime/data dirs are released only once it has fully
@@ -346,13 +374,39 @@ class NotebookPythonExecutor implements NotebookExecutor {
         child.once('close', () => resolve())
       })
 
-      child.kill()
+      // Tree-kill (Windows taskkill /T reaps grandchildren) then wait for the real exit so the cwd/
+      // runtime/data file handles are released before a caller deletes those dirs.
+      const result = await terminateProcessTree(child)
+      reaped = result.reaped
       await Promise.race([exited, delay(SHUTDOWN_EXIT_GRACE_MS)])
+    }
+
+    // A hard timeout may have already dropped an interpreter and started tree-killing it before this
+    // shutdown ran; await that kill too so quit never exits ahead of an in-flight taskkill /T. A kill
+    // that has not settled within the grace leaves reaped unconfirmed (false).
+    if (this.terminations.size > 0) {
+      const settled = await Promise.race([
+        Promise.allSettled([...this.terminations]).then((results) => ({
+          timedOut: false,
+          results
+        })),
+        delay(SHUTDOWN_EXIT_GRACE_MS).then(() => ({ timedOut: true, results: [] }))
+      ])
+
+      if (settled.timedOut) {
+        reaped = false
+      } else {
+        for (const outcome of settled.results) {
+          reaped = reaped && outcome.status === 'fulfilled' && outcome.value.reaped
+        }
+      }
     }
 
     this.currentCwd = undefined
     this.passthroughStdout = []
     this.passthroughStderr = []
+
+    return { reaped }
   }
 
   // Starts the bridge lazily and reuses it until the child exits or is killed.
@@ -404,6 +458,10 @@ class NotebookPythonExecutor implements NotebookExecutor {
     this.readline = createInterface({ input: child.stdout })
     this.readline.on('line', (line) => this.handleLine(line))
     child.stderr.on('data', (data: Buffer) => {
+      // Ignore a superseded child: a hard timeout may have dropped it and spawned a replacement, whose
+      // run must not be failed by the dying interpreter's late stderr.
+      if (this.child !== child) return
+
       const text = data.toString('utf8')
 
       if (!text.trim()) return
@@ -417,6 +475,9 @@ class NotebookPythonExecutor implements NotebookExecutor {
       this.rejectPending(new Error(text.trim()))
     })
     child.on('exit', () => {
+      // Ignore a superseded child's exit: after a hard timeout drops this interpreter and spawns a
+      // replacement, clobbering this.child or rejecting here would kill the new interpreter's run.
+      if (this.child !== child) return
       this.child = undefined
 
       // Unexpected exits are reported to the pending execution instead of being swallowed.

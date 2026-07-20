@@ -75,6 +75,17 @@ const spawnClaudeAgentAcp = ({
   // On Windows, a `claude.cmd` shim can't be spawned by the SDK without a shell (spawn EINVAL); resolve
   // it to the underlying cli.js so the SDK runs it via node. Native/Unix executables pass through.
   const resolvedExecutablePath = resolveClaudeExecutableForSpawn(executablePath)
+
+  // A win32 path still ending in .cmd/.bat here could not be resolved to the cli.js/.exe it wraps, so
+  // the SDK's shell-less spawn below will fail with `spawn EINVAL` (surfacing as an opaque
+  // acp:create-session "internal error"). Warn with the paths (no secrets) so the cause is actionable.
+  if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(resolvedExecutablePath)) {
+    log.warn('claude executable is an unresolved .cmd/.bat shim; spawn will likely fail (EINVAL)', {
+      executablePath: resolvedExecutablePath,
+      hint: 'Re-run Claude detection, or install the app-managed native binary in settings.'
+    })
+  }
+
   const env = buildAgentSpawnEnv(
     augmentedPathEnv(process.env),
     envOverrides,
@@ -100,14 +111,17 @@ const spawnClaudeAgentAcp = ({
     baseUrl: env.ANTHROPIC_BASE_URL,
     model: env.ANTHROPIC_MODEL,
     configDir: env.CLAUDE_CONFIG_DIR,
-    // Proxy presence only (never the values): a Finder-launched packaged app inherits no login shell, so
-    // these being false is the usual cause of in-app network failures (curl/WebFetch) while the terminal works.
-    hasHttpProxy: Boolean(env.http_proxy || env.HTTP_PROXY),
-    hasHttpsProxy: Boolean(env.https_proxy || env.HTTPS_PROXY),
-    hasAllProxy: Boolean(env.all_proxy || env.ALL_PROXY),
-    hasNoProxy: Boolean(env.no_proxy || env.NO_PROXY),
-    // PATH is not secret; provider credentials are never logged.
-    path: env.PATH
+    // Proxy presence only (never the values): a Finder-launched packaged app inherits no login shell,
+    // so no proxy being set is the usual cause of in-app network failures while the terminal works.
+    // Collapsed to one flag to keep the line readable; PATH stays out of the routine line.
+    proxied: Boolean(
+      env.http_proxy ||
+      env.HTTP_PROXY ||
+      env.https_proxy ||
+      env.HTTPS_PROXY ||
+      env.all_proxy ||
+      env.ALL_PROXY
+    )
   })
 
   const child = spawn(process.execPath, [entryPath], {

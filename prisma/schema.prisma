@@ -1,9 +1,10 @@
 // Prisma schema for the project data layer.
 //
-// Scope (per plan docs/project-session-storage-plan.md): the SQLite DB holds ONLY Project entities.
-// Sessions, messages, and artifacts stay on disk (see src/shared/session-persistence.ts) and are NOT
-// modeled here. At runtime the datasource url is supplied programmatically (see prisma-client.ts) so
-// the DB lives under the app storage root; DATABASE_URL here only serves the Prisma CLI.
+// Scope (per plan docs/project-session-storage-plan.md): the SQLite DB holds project-scoped relational
+// data — Project, its preview state, and reviewer results (Review/Finding). Sessions, messages, and
+// artifacts stay on disk (see src/shared/session-persistence.ts) and are NOT modeled here. At runtime
+// the datasource url is supplied programmatically (see prisma-client.ts) so the DB lives under the app
+// storage root; DATABASE_URL here only serves the Prisma CLI.
 
 generator client {
   provider = "prisma-client-js"
@@ -36,4 +37,46 @@ model ProjectPreviewState {
   activeItemId String?
   items        String   @default("[]")
   updatedAt    DateTime @updatedAt
+}
+
+// One reviewer pass over a single completed turn. See src/main/reviewer/repository.ts. Checks live in
+// a child table (Finding); the review carries the turn scope (JSON), the task lifecycle, and the outcome.
+// Created at runtime via CREATE TABLE IF NOT EXISTS (see src/main/projects/prisma-client.ts), not migrate.
+//
+// v2 (issue 12): removed `summary` and `checks` JSON columns; all checks (pass/warn/fail) now live
+// as rows in the Finding table.
+// v3 (issue 13): replaced `reasoning` (self-authored prose) with `reviewerLog` (captured action stream
+// as JSON array of ReviewerLogEntry). submit_findings no longer accepts `reasoning`.
+model Review {
+  id            String    @id @default(cuid())
+  projectId     String
+  sessionId     String
+  turnMessageId String
+  scope         String    @default("{}")
+  lifecycle     String    @default("running")
+  outcome       String?
+  errorMessage  String?
+  model         String    @default("")
+  reviewerLog   String    @default("[]")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  findings      Finding[]
+}
+
+// A unified check row — replaces both the old warn/fail-only Finding and the pass-only ReviewCheck
+// JSON blob on Review. status is 'pass'|'warn'|'fail'. locator is optional (pass checks may omit it).
+// resolution is meaningful only for warn/fail checks. Cascade-deleted with its Review.
+// reflagCount (issue 15): number of times this claim was re-flagged in a Phase 3 fix loop; defaults to 0.
+model Finding {
+  id                String  @id @default(cuid())
+  reviewId          String
+  status            String  @default("pass")
+  resolution        String  @default("open")
+  claim             String  @default("")
+  evidence          String  @default("")
+  locator           String  @default("{}")
+  artifactVersionId String?
+  sortIndex         Int     @default(0)
+  reflagCount       Int     @default(0)
+  review            Review  @relation(fields: [reviewId], references: [id], onDelete: Cascade)
 }

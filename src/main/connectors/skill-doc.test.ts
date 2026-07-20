@@ -1,5 +1,24 @@
 import { describe, it, expect } from 'vitest'
-import { renderSkillDoc, renderCustomSkillDoc } from './skill-doc'
+import { renderConnectorInstructions, renderSkillDoc, renderCustomSkillDoc } from './skill-doc'
+
+describe('renderConnectorInstructions', () => {
+  it('emits the host.mcp conventions once and each enabled connector, for opencode', () => {
+    const md = renderConnectorInstructions(['chemistry'])
+
+    expect(md).toContain('host.mcp(')
+    // The "do not reimplement with raw HTTP" rule is what steers opencode away from raw requests.
+    expect(md).toMatch(/urllib|requests|httpx|fetch/)
+    expect(md).toContain('## chemistry')
+    expect(md).toContain('chemistry / pubchem_get_compounds')
+    // Conventions appear once, not per connector.
+    expect(md.match(/Reach this service ONLY via/g)?.length ?? 0).toBe(1)
+  })
+
+  it('returns empty string when no connectors are enabled', () => {
+    expect(renderConnectorInstructions([])).toBe('')
+    expect(renderConnectorInstructions(['nope'])).toBe('')
+  })
+})
 
 describe('renderSkillDoc', () => {
   it('renders frontmatter, conventions, and each tool', () => {
@@ -48,7 +67,7 @@ describe('renderSkillDoc', () => {
   it('falls back to a schema-built call example for tools without an authored example', () => {
     // Custom MCP servers ship no `example`, so the doc must still render a concrete, copyable call.
     const md = renderCustomSkillDoc(
-      { name: 'acme', description: 'Use when you need acme tools.' },
+      { id: 'acme-id', name: 'acme', description: 'Use when you need acme tools.' },
       [
         {
           name: 'do_thing',
@@ -65,7 +84,7 @@ describe('renderSkillDoc', () => {
   it('renders a no-arg tool without a third argument (never a literal ...)', () => {
     // A literal `...` as the args positional reaches the bridge as Ellipsis and raises; a no-arg tool
     // must render as host.mcp(server, method) so the example is copy-runnable.
-    const md = renderCustomSkillDoc({ name: 'acme' }, [
+    const md = renderCustomSkillDoc({ id: 'acme-id', name: 'acme' }, [
       { name: 'ping', inputSchema: { type: 'object', properties: {} } }
     ])
     expect(md).toContain('result = host.mcp("acme", "ping")')
@@ -94,7 +113,7 @@ describe('renderSkillDoc', () => {
   it('gives custom MCP servers the same reuse guidance', () => {
     // renderCustomSkillDoc shares the CONVENTIONS block, so the fix must reach custom servers too.
     const md = renderCustomSkillDoc(
-      { name: 'acme', description: 'Use when you need acme tools.' },
+      { id: 'acme-id', name: 'acme', description: 'Use when you need acme tools.' },
       [{ name: 'do_thing', inputSchema: { type: 'object', properties: { q: { type: 'string' } } } }]
     )
     expect(md).toContain('persistent')

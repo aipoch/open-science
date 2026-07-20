@@ -1,4 +1,4 @@
-import type { ProviderType } from '../../../../shared/settings'
+import type { ProviderApiType, ProviderType } from '../../../../shared/settings'
 import {
   OFFICIAL_VENDORS,
   getOfficialVendor,
@@ -12,6 +12,9 @@ export type ProviderFormValue = {
   name: string
   baseUrl: string
   model: string
+  // Which chat API a custom gateway speaks; drives which agent frameworks can use it. Defaults to
+  // 'anthropic'. Only meaningful for custom providers (official providers take it from the registry).
+  apiType: ProviderApiType
   // Set when type is 'official': the chosen vendor and (for multi-region vendors) the endpoint. Base
   // URL and the model catalog then come from the registry rather than these free-text fields.
   vendorId?: OfficialVendorId
@@ -28,6 +31,7 @@ export const createEmptyProviderFormValue = (
   name: '',
   baseUrl: '',
   model: '',
+  apiType: 'anthropic',
   key: '',
   ...overrides
 })
@@ -87,7 +91,7 @@ export const PROVIDER_KINDS: ProviderKind[] = [
   {
     key: 'custom',
     label: 'Custom Gateway',
-    description: 'Anthropic /v1/messages-compatible base URL, key, and model',
+    description: 'Base URL, key, and model for an Anthropic or OpenAI-compatible endpoint',
     group: 'other'
   },
   {

@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-import { BrowserWindow, ipcMain } from 'electron'
+import { ipcMain } from 'electron'
 
 import { createDefaultNotebookRuntimeService, registerAcpIpcHandlers } from './acp/ipc'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
@@ -14,8 +14,11 @@ import { ALL_CONNECTOR_IDS } from './connectors/registry'
 import { ConnectorService } from './connectors/service'
 import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './connectors/provision'
 import { registerFileSaveHandlers } from './file-save'
+import { registerCliInstallIpcHandlers } from './cli-install/ipc'
 import { registerGithubIpcHandlers } from './github-ipc'
+import { BackendShutdownCoordinator, UPDATE_SHUTDOWN_BUDGET_MS } from './lifecycle-shutdown'
 import { registerLogsIpcHandlers } from './logs-ipc'
+import { registerWindowIpcHandlers } from './window-ipc'
 import { createLogger } from './logger'
 import { registerManagedPreviewIpcHandlers } from './managed-preview-ipc'
 import { registerManagedPreviewProtocol } from './managed-preview-protocol'
@@ -27,6 +30,7 @@ import {
   createDefaultProjectRepository,
   registerProjectIpcHandlers
 } from './projects/ipc'
+import { registerReviewerIpcHandlers } from './reviewer/ipc'
 import {
   createDefaultSessionRepository,
   registerSessionPersistenceIpcHandlers
@@ -48,6 +52,7 @@ import {
 import { registerUpdateIpcHandlers } from './update/ipc'
 import { startUpdateScheduler } from './update/scheduler'
 import { createDefaultUploadRepository, registerUploadIpcHandlers } from './uploads/ipc'
+import { broadcastToRenderers } from './renderer-broadcast'
 
 type IpcRegistrationOptions = {
   mainEntryPath: string
@@ -97,7 +102,13 @@ const refreshConnectorSkillDocs = async (
 }
 
 // Registers every main-process IPC surface used by the renderer.
-const registerIpcHandlers = async ({ mainEntryPath }: IpcRegistrationOptions): Promise<void> => {
+const registerIpcHandlers = async ({
+  mainEntryPath
+}: IpcRegistrationOptions): Promise<{
+  runtime: ReturnType<typeof registerAcpIpcHandlers>
+  notebook: ReturnType<typeof createDefaultNotebookRuntimeService>
+  shutdownCoordinator: BackendShutdownCoordinator
+}> => {
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const settingsService = createDefaultSettingsService()
   const storedSettings = await settingsService.getStoredSettings()
@@ -144,12 +155,17 @@ const registerIpcHandlers = async ({ mainEntryPath }: IpcRegistrationOptions): P
   const artifactRunRegistry = new ArtifactRunRegistry()
   // Share one upload repository so composer staging, prompt finalization, and previews agree.
   const uploadRepository = createDefaultUploadRepository()
+  // One source-neutral resolver keeps previews and user-requested exports on identical trust checks.
+  const resolveManagedFilePath = (
+    source: 'artifact' | 'upload',
+    request: { path: string }
+  ): Promise<string> =>
+    source === 'artifact'
+      ? artifactRepository.resolveManagedFilePath(request)
+      : uploadRepository.resolveManagedUploadPath(request)
   // One registry owns short-lived capability URLs for both managed artifact repositories.
   const previewResources = new ManagedPreviewResources({
-    resolvePath: (source, request) =>
-      source === 'artifact'
-        ? artifactRepository.resolveManagedFilePath(request)
-        : uploadRepository.resolveManagedUploadPath(request)
+    resolvePath: resolveManagedFilePath
   })
   const notebookService = createDefaultNotebookRuntimeService()
 
@@ -165,9 +181,7 @@ const registerIpcHandlers = async ({ mainEntryPath }: IpcRegistrationOptions): P
   const approvalBroker = new ApprovalBroker({
     generateId: () => randomUUID(),
     broadcast: (request) => {
-      for (const window of BrowserWindow.getAllWindows()) {
-        if (!window.isDestroyed()) window.webContents.send('connectors:approval-request', request)
-      }
+      broadcastToRenderers('connectors:approval-request', request)
     }
   })
   // Late-bound app runtime for connector tools that attach a generated file to the current turn. The
@@ -212,9 +226,11 @@ const registerIpcHandlers = async ({ mainEntryPath }: IpcRegistrationOptions): P
     }
   )
 
-  registerFileSaveHandlers()
+  registerFileSaveHandlers({ resolveManagedFilePath })
   registerLogsIpcHandlers()
   registerGithubIpcHandlers()
+  registerCliInstallIpcHandlers()
+  registerWindowIpcHandlers()
   const updateService = registerUpdateIpcHandlers()
   startUpdateScheduler(updateService)
   const runtime = registerAcpIpcHandlers({
@@ -226,6 +242,20 @@ const registerIpcHandlers = async ({ mainEntryPath }: IpcRegistrationOptions): P
     settingsService
   })
   runtimeRef.current = runtime
+  // Single shared teardown owner for both the before-quit handler (index.ts) and the pre-update-install
+  // gate. Built here because it needs the runtime, which does not exist when update IPC is registered
+  // above — so the gate is injected via a late-bound closure rather than at strategy construction.
+  const shutdownCoordinator = new BackendShutdownCoordinator({
+    runtime,
+    notebook: notebookService,
+    log: createLogger('shutdown')
+  })
+  // Reap the agent + kernel trees before an in-place install so the NSIS uninstall step never hits files
+  // still locked by a background child. Non-latching, so a refused (degraded) install leaves the app
+  // usable. No-op on the manifest fallback strategy, which does not implement setInstallGate.
+  updateService.setInstallGate?.(() =>
+    shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS)
+  )
   // Switching the active provider takes effect on the next reconnect. Defer that reconnect until any
   // in-flight prompt finishes so switching never interrupts a running turn; the shared config dir keeps
   // the conversation's context across the switch.
@@ -259,6 +289,15 @@ const registerIpcHandlers = async ({ mainEntryPath }: IpcRegistrationOptions): P
   registerUploadIpcHandlers(uploadRepository)
   registerSessionPersistenceIpcHandlers(sessionRepository)
   registerProjectIpcHandlers(projectRepository, previewStateRepository)
+  // Wire the reviewer backend into the app lifecycle: installs ipcMain.handle('reviewer:run', ...)
+  // and 'reviewer:get-for-session' so the renderer's fire-and-forget reviewer calls resolve to
+  // real handlers instead of no-ops. Passing the already-constructed AcpRuntime so the reviewer
+  // can spawn sessions under the same agent connection.
+  registerReviewerIpcHandlers({ acpRuntime: runtime })
+
+  // Return the long-lived backend handles so the app lifecycle (before-quit) can shut them down
+  // cleanly on quit — the agent process tree and every notebook kernel.
+  return { runtime, notebook: notebookService, shutdownCoordinator }
 }
 
 export { registerIpcHandlers }

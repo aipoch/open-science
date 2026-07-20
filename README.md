@@ -1,35 +1,39 @@
 # Open Science
 
-**An open-source, model-agnostic AI workbench for scientific discovery.**
-
-[![Download](https://img.shields.io/badge/⬇%20Download%20the%20App-Latest%20Release-2f9e44?style=for-the-badge)](https://github.com/aipoch/open-science/releases/latest)
+[![Download](https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=for-the-badge&logo=github)](https://github.com/aipoch/open-science/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/aipoch/open-science?style=for-the-badge&color=4dabf7)](https://github.com/aipoch/open-science/releases/latest)
 [![License](https://img.shields.io/badge/License-Apache--2.0-4dabf7?style=for-the-badge)](LICENSE)
-![Status](https://img.shields.io/badge/Status-Early%20Preview-ff9f43?style=for-the-badge)
+![Status](https://img.shields.io/badge/Status-Actively%20Developed-ff9f43?style=for-the-badge)
 [![Discussions](https://img.shields.io/badge/Discussions-Welcome-9775fa?style=for-the-badge)](https://github.com/aipoch/open-science/discussions)
-[![Follow on X](https://img.shields.io/badge/Follow%20on%20X-%40aipoch__ai-212529?style=for-the-badge&logo=x&logoColor=white)](https://x.com/aipoch_ai)
 [![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/85dKfuGM9)
+[![YouTube](https://img.shields.io/badge/YouTube-AIPOCH_AI-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://www.youtube.com/@AIPOCH_AI)
+[![Follow on X](https://img.shields.io/badge/Follow%20on%20X-%40aipoch__ai-212529?style=for-the-badge&logo=x&logoColor=white)](https://x.com/aipoch_ai)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-AIPOCH-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/company/pochai)
 
-> ### 🔓 Science is not a privilege.
->
-> It shouldn't require a subscription tier, a supported billing region, or one company's approval to put AI to work on real research. Peer review doesn't check your credit card. A hypothesis doesn't care what currency your lab is funded in. Knowledge has always advanced by being shared, checked, and rebuilt in the open — the tools that now sit at the center of that process are the last thing that should be locked behind a paywall. **That belief is the entire reason this project exists**, and it's non-negotiable as the project grows.
+**An open-source, model-agnostic AI workbench for scientific discovery.** Open Science is a local desktop application for researchers. Create a project, describe a task in plain language, and let the agent read files, run code, search the web, call scientific data connectors, and return reports, tables, figures, and an inspectable activity history in one workspace.
 
-**📣 We're building this in public.** Follow the architecture take shape and join the debates as they happen — 🐦 **[@aipoch_ai on X](https://x.com/aipoch_ai)** and 💬 **[our Discord](https://discord.gg/85dKfuGM9)** are where it's actually discussed, before it ever lands in a doc like this one.
+> ⭐ **Star the repo:** If this project has been helpful, we'd greatly appreciate a star on GitHub. Starring the repository encourages continued development. It only takes a second, but it has a meaningful impact on the project.
 
-> This is an early-preview, actively-developed project. The core "plan → execute → produce → preview" loop works end to end today (desktop app, agent runtime, notebook execution, artifact storage, in-app previews) — see [Current Status](#current-status) for exactly what's implemented versus still ahead. If you want a finished product, this isn't there yet; if you want to build the open alternative to a closed-source category from the ground floor, keep reading.
+> 💡 **The application is available now.** Installers for macOS, Windows, and Linux are published on the [latest release](https://github.com/aipoch/open-science/releases/latest) page. Open Science supports the complete `plan → execute → produce → preview` workflow; use the release notes and the installed app for version-specific details.
 
----
+<p align="center">
+  <img src="docs/images/readme/workspace.jpg" alt="Open Science project workspace showing an agent response, generated artifacts, and an in-app Markdown report preview" width="900">
+</p>
 
 ## Table of Contents
 
-- [Quick Start](#quick-start)
-- [Why](#why)
-- [Open Science vs. Claude Science](#open-science-vs-claude-science)
+- [Quick Start](#-quick-start)
+- [Product Tour](#product-tour)
+- [Frequently Asked Questions](#frequently-asked-questions)
+- [Why Open Science](#why-open-science)
 - [Vision](#vision)
 - [Design Principles](#design-principles)
-- [What We're Building](#what-were-building)
-- [Current Status](#current-status)
+- [Core Capabilities](#core-capabilities)
+- [Model Providers](#model-providers)
+- [Data, Permissions, and Trust](#data-permissions-and-trust)
+- [Project Status](#project-status)
 - [Development & Packaging](#development--packaging)
-- [Building From Source (macOS Gatekeeper Note)](#building-from-source-macos-gatekeeper-note)
+- [Building From Source](#building-from-source)
 - [Roadmap](#roadmap)
 - [Relationship to the aipoch Ecosystem](#relationship-to-the-aipoch-ecosystem)
 - [What This Is Not](#what-this-is-not)
@@ -37,341 +41,353 @@
 - [License](#license)
 - [Star History](#star-history)
 
----
+## 🚀 Quick Start
 
-## Quick Start
+### 1. Download the app
 
-Three ways to get the app running — pick whichever matches how you work.
+Open the [latest release](https://github.com/aipoch/open-science/releases/latest), expand **Assets**, and choose the installer for your computer:
 
-### Option 1 — Download a prebuilt app (no toolchain required)
+| Your computer                       | Choose                                   |
+| ----------------------------------- | ---------------------------------------- |
+| macOS — Apple Silicon (M1 or newer) | The macOS DMG for Apple Silicon / ARM64  |
+| macOS — Intel                       | The macOS DMG for Intel / x64            |
+| Windows x64                         | The Windows x64 installer                |
+| Linux x64                           | The Linux x64 AppImage or Debian package |
 
-The fastest path if you just want to use it — no Node, no Git, nothing to build. Three steps:
+Review the assets and verification information published on the release page. See [Verifying your download](SECURITY.md#verifying-your-download) before installation if you need to validate a package.
 
-1. Open the **[Releases page](https://github.com/aipoch/open-science/releases/latest)** (or click the green **Download the App** button at the top of this page).
-2. Under the latest release, expand **▸ Assets** and download the file that matches your computer:
+> If macOS or Windows shows an unidentified-developer or unknown-publisher warning, verify that the package came from the official Releases page before continuing. See [Building From Source](#building-from-source) for platform-specific guidance.
 
-   | Your computer | File to download |
-   | --- | --- |
-   | Mac with Apple Silicon (M1–M4) | `open-science-<version>-mac-arm64.dmg` |
-   | Mac with Intel chip | `open-science-<version>-mac-x64.dmg` |
-   | Windows | `open-science-<version>-win-x64-setup.exe` |
-   | Linux | `open-science-<version>-linux-x86_64.AppImage` or `open-science_<version>_amd64.deb` |
+### 2. Complete first-time setup
 
-   > Not sure which Mac you have? Open the Apple menu (top-left) → **About This Mac**. A "Chip" line reading "Apple M1/M2/M3/M4…" means Apple Silicon; "Intel" means Intel.
+The first launch has two guided steps:
 
-3. Open the downloaded file and install it like any other app.
+1. **Prepare environment** checks compatibility, app storage, secure credential storage, network access, the Claude runtime, and optional Python Notebook support. If the runtime is missing, Open Science can install an app-managed copy without requiring Node.js, npm, or an administrator password.
+2. **Model provider** connects and tests the model you want to use. Choose a built-in provider, an Anthropic-compatible custom gateway, or `Local Claude` to reuse an existing Claude Code login without entering an API Key.
 
-> Security-conscious? Each release ships a `SHA256SUMS.txt` and a signed build-provenance attestation, so you can confirm a download is intact **and** was built by this repo's CI. See [Verifying your download](SECURITY.md#verifying-your-download).
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/readme/onboarding-environment.jpg" alt="Automatic first-run environment checks in Open Science"></td>
+    <td width="50%"><img src="docs/images/readme/onboarding-model-provider.jpg" alt="First-run model provider configuration in Open Science"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Automatic environment detection and managed runtime setup</sub></td>
+    <td align="center"><sub>Provider, API Key, endpoint, and model validation</sub></td>
+  </tr>
+</table>
 
-Official macOS release downloads are now **Developer ID signed and notarized by Apple**, so they open like any other app — no Gatekeeper bypass needed. Windows builds aren't signed with a paid certificate yet, so Windows shows a bypassable "unknown publisher" prompt on first launch — this is expected, not a corrupted download (**More info → Run anyway**). A self-built or nightly `.app` isn't notarized; see the [macOS Gatekeeper note](#building-from-source-macos-gatekeeper-note) for the one-time steps to open those. Want the bleeding edge instead? The **Nightly (latest main)** pre-release tracks the newest commits.
+Python is optional unless you want the built-in Notebook kernel. Every required environment row must pass before `Continue` becomes available, and the model connection must pass before setup finishes.
 
-Once installed, the app keeps itself up to date: on macOS, Windows, and Linux it checks for new stable releases and applies them **in place** in the background, so you don't have to re-download and re-install for each version.
+### 3. Start a research project
 
-> To run agent sessions, the app uses your existing Claude Code login (reused automatically if you have one) or a custom model gateway you set up in-app — it manages this auth in its own config dir and ignores `ANTHROPIC_*` variables from your shell.
+1. Click **New project** and give the project a stable research name and optional description.
+2. Open a session and describe the goal, input data, constraints, desired outputs, and how the result should be checked.
+3. Attach source files, select a verified model, and choose an approval mode.
+4. Send the task. Inspect the agent's tool activity, approve sensitive actions, and open generated artifacts in the preview panel.
+5. Continue the work in later sessions. Use `@` to reference an existing project file and `/` to explicitly select an enabled skill.
 
-### Option 2 — Hand it to an AI agent
+Want to develop the app instead? Skip to [Building From Source](#building-from-source).
 
-If you use a coding agent (Claude Code, Codex, WorkBuddy, Cursor, …), one sentence is enough — the agent will clone, install, and launch it on its own:
+> Screenshots in this README illustrate the workflow. Labels, catalogs, and other interface details may differ from the version you install.
 
-> Clone https://github.com/aipoch/open-science.git, install its dependencies, and run it in development mode.
+## Product Tour
 
-That's genuinely all the context an agent needs today: it's a standard Electron + npm project, `npm install` handles every setup step (Prisma client generation, native Electron dependencies) automatically via `postinstall`, and `npm run dev` opens the desktop window.
+### One workspace from task to artifacts
 
-### Option 3 — Run from source
+Projects keep related sessions, uploads, generated files, and preview state together. The conversation records the agent's answer and the commands, file reads, edits, searches, and connector calls that produced it. Generated reports, figures, and tables remain attached to the session and are also collected in the project file library.
 
-Prerequisites: [Node.js](https://nodejs.org/) (LTS or newer) with npm, and Git. Optional: `python3` on your `PATH` if you want the built-in notebook kernel to execute code.
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/readme/project-files.jpg" alt="Project file library with uploads and generated research artifacts"></td>
+    <td width="50%"><img src="docs/images/readme/csv-preview.jpg" alt="CSV artifact preview beside a completed agent session"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Uploads and generated files organized by project and session</sub></td>
+    <td align="center"><sub>Native previews keep data and the research history side by side</sub></td>
+  </tr>
+</table>
 
-```bash
-# 1. Get the code
-git clone https://github.com/aipoch/open-science.git
-cd open-science
+Open Science previews common scientific data, documents, images, source code, molecular structures and reactions, and Notebook history. Preview limits do not truncate the underlying file—the full artifact stays available to the agent and external tools.
 
-# 2. Install dependencies
-#    (postinstall auto-runs `prisma generate` + `electron-builder install-app-deps` — no extra steps)
-npm install
+### Scientific skills and data connectors
 
-# 3. Run the app in development mode
-npm run dev
-```
+Open Science includes a growing catalog of featured, file-based research skills. You can create personal skills, upload `SKILL.md`/ZIP/`.skill` packages, or preview and import compatible skills from GitHub. Enabled skills can be selected directly in the composer with `/`.
 
-`npm run dev` builds the Electron main/preload bundles, starts the renderer dev server on `localhost:5173`, and opens the **Open Science** desktop window automatically. Development data is isolated under `~/.open-science-project`, so it never touches a production install's data.
+It also includes life-science connectors across literature, genes and proteins, genomics, variants, structures, clinical research, expression, chemistry, drug regulation, and related resources. Built-in and custom connectors remain behind the permission system, with per-tool `Always allow`, `Ask each time`, and `Block` controls. The installed app shows the current skill, connector, and tool catalogs.
 
-> **Tip:** on a cold first launch the window occasionally fails to appear even though the process is running — just `Ctrl+C` and run `npm run dev` again.
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/readme/skills.jpg" alt="Open Science settings showing featured scientific skills"></td>
+    <td width="50%"><img src="docs/images/readme/connectors.jpg" alt="Open Science settings showing built-in scientific data connectors"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Readable, reusable research skills</sub></td>
+    <td align="center"><sub>Scientific databases exposed as permissioned agent tools</sub></td>
+  </tr>
+</table>
 
-To run agent sessions inside the app, sign in with your Claude Code login (reused automatically if you already have one) or configure a custom model gateway in the app's settings; the app keeps this auth in its own config dir rather than reading `ANTHROPIC_*` variables from your shell. To package an installable app instead of running from source, see [Development & Packaging](#development--packaging).
+## Frequently Asked Questions
 
+### **Q: What should I do the first time I open Open Science?**
 
-## Why
+A: Complete **Prepare environment** and **Model provider**. Fix required rows marked `Action needed`, use `Install missing runtime` if offered, click `Check again`, and then test a model connection.
 
-A working scientist's day is a tour of a dozen disconnected tools: a reference manager, a Jupyter kernel, an SSH session into a cluster, six browser tabs of database web forms (UniProt, PDB, GEO, ClinVar...), a stats package, and a manuscript editor that knows nothing about any of the above. None of these tools talk to each other. None of them remember what you did yesterday. Reproducing your own analysis from three months ago is often harder than doing it the first time.
+### **Q: What is an API Key, and where do I get one?**
 
-```mermaid
-flowchart LR
-    A[Reference Manager] --> Z((Researcher))
-    B["Jupyter / R / Notebooks"] --> Z
-    C["SSH into HPC Cluster"] --> Z
-    D["Database Web Forms<br/>UniProt · PDB · GEO"] --> Z
-    E[Stats Package] --> Z
-    F[Manuscript Editor] --> Z
-    Z -.-> X[["No shared memory.<br/>No reproducibility.<br/>No provenance."]]
+A: An API Key is a secret credential issued by a model provider. Create or copy one from that provider's developer/API console. The provider may bill requests made with the key. Treat it like a password: never share it or commit it to a repository.
 
-    style Z fill:#f9f9f9,stroke:#999
-    style X fill:#fff0f0,stroke:#e33,stroke-width:1px,stroke-dasharray: 5 5
-```
+### **Q: Do I need an API Key?**
 
-The clearest current articulation of what an AI-native answer to this looks like is a coordinating agent with specialist sub-agents for genomics, proteomics, structural biology and cheminformatics; native rendering of scientific artifacts; a reviewer agent that checks citations and calculations; and direct integration with the databases and compute scientists already use. That's a genuinely good sketch of the destination — and it's exactly the category of product the best closed-source AI research workbenches on the market today have already demonstrated.
+A: Not if you choose `Local Claude` and already have a working Claude Code login on this computer. Built-in cloud providers and custom gateways require their own keys.
 
-But that category, as it exists today, is also **closed source** — gated behind a single vendor's subscription, one model family, one company's infrastructure, one roadmap, one pricing policy, one data-handling agreement. A university lab in a country without billing access, a hospital that legally cannot send patient data to a third-party API, an independent researcher who wants to run everything on a local GPU box, or a team that simply wants to read the code that touches their data — none of them have a seat at that table. You cannot audit what you cannot read, and you cannot fork what was never released.
+### **Q: Which model providers can I use?**
 
-Science has never worked that way. It advances through open publication, peer review, replication, and the free movement of method and result across borders and budgets — a system built, imperfectly but deliberately, to resist gatekeeping. **Science is not a privilege reserved for whoever can afford the right subscription plan or happens to live in a supported billing region — it is a public good, and the tools that now sit at its center should be held to the same standard the rest of science already is.** A closed-source AI workbench for research recreates exactly the kind of walled garden that scientific norms exist to tear down, no matter how good the product behind the wall is.
+A: Open the provider picker during setup or under `Settings → Model` for the choices supported by your installed app. You can use a built-in cloud provider, an Anthropic-compatible Custom Gateway, or `Local Claude`.
 
-We think the software layer that increasingly mediates how science gets done should be inspectable, forkable, and free of a single corporate gatekeeper — the same argument that got Linux under every cloud and JupyterHub under every university. Open Science is an attempt to build that layer from first principles: not a proxy or a jailbreak of someone else's product (see [What This Is Not](#what-this-is-not)), but an independent, open implementation of the same category of tool — open source, because science itself is supposed to be.
+### **Q: Why does the model connection test fail?**
 
-> Debating whether this problem framing is even right? That's a Discord conversation, not a GitHub Issue — **[come argue with us](https://discord.gg/85dKfuGM9)**.
+A: Check the API Key for missing characters or spaces, verify the Base URL and region, use the provider's exact model ID, and confirm network access and account balance. For `Local Claude`, run `claude` in a terminal and complete login before testing again.
 
-## Open Science vs. Claude Science
+### **Q: Why is `Continue` disabled during setup?**
 
-We keep referencing Claude Science throughout this document because it deserves the credit: it's the best current articulation of "an AI workbench for scientists," and a lot of the architecture below — the coordinator + specialist-agent pattern, a dedicated reviewer agent, artifacts with full reproducibility — is us saluting a good design and asking "what would this look like if it were open?"
+A: At least one required environment check has not passed. Fix the row marked `Action needed`, return to automatic detection, and click `Check again`. Python is optional and only affects Notebook execution.
 
-So let's be direct about where each project actually stands, instead of hand-waving it:
+### **Q: Setup is complete. How do I start a research task?**
 
-|                                   | Claude Science                                                            | Open Science                                                                                                                                                            |
-| --------------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Source**                        | Closed source                                                             | Open source, Apache-2.0                                                                                                                                                 |
-| **Model**                         | Claude models only                                                        | Model-agnostic — Claude, GPT, Gemini, DeepSeek, Qwen, or a local open-weight model                                                                                      |
-| **Deployment**                    | Anthropic-hosted cloud                                                    | Self-hosted by default; your infrastructure, your data doesn't have to leave it                                                                                         |
-| **Pricing**                       | Seat-based subscription (Claude Pro/Max/Team/Enterprise)                  | Free and open; you pay only for the compute/model calls you choose to make                                                                                              |
-| **Availability**                  | Gated by Anthropic billing region and plan tier                           | Runs anywhere you can run the software                                                                                                                                  |
-| **Skills**                        | ~60 curated skills, Anthropic-maintained                                  | Open skills commons — community-contributed, versioned in git, forkable (seeded by [aipoch/medical-research-skills](https://github.com/aipoch/medical-research-skills)) |
-| **Domain scope today**            | Life sciences (genomics, proteomics, structural biology, cheminformatics) | Life sciences, plus social science and economics from day one (planned)                                                                                                 |
-| **Compute**                       | SSH/HPC access plus Modal for on-demand GPUs                              | Pluggable compute fabric — any HPC scheduler, any cloud GPU provider (planned)                                                                                          |
-| **Reviewer / verification agent** | Yes, shipping today                                                       | Yes, planned as an open, inspectable layer ([Phase 4](#roadmap))                                                                                                        |
-| **Customization**                 | Configure agents inside Anthropic's product surface                       | Every layer — gateway, skill runtime, compute broker, reviewer — is inspectable and replaceable                                                                         |
-| **Maturity**                      | A shipping, polished product, in use today                                | Early preview: working core loop with downloadable desktop builds, plus first-cut agent skills and life-science / MCP data connectors; the deeper differentiating layers are still ahead (see [Roadmap](#roadmap))                                                                                                      |
+A: Create or open a project, start a session, attach any source files, and describe the goal, constraints, expected output, and validation criteria. Use `@` to reference a project file and `/` to select an enabled skill.
 
-The Maturity row matters most, so we won't bury it: if you need a working AI research assistant today, Claude Science is the more capable choice. Open Science's advantage isn't feature parity yet — it's the structural ceiling underneath.
+### **Q: Does my research data stay on my computer?**
 
-But look again at the Source and Availability rows, because those are the ones we actually care about. Nothing about Claude Science's design requires it to be closed, single-vendor, or subscription-gated; those are business-model choices layered on top of a good architecture, and they're the choices we reject on principle. Closed source turns a research tool into a rented privilege — usable only by whoever holds an active subscription in a supported billing region, inspectable by no one outside the company that built it. That's a normal thing to accept from a consumer product. It's not a normal thing to accept from infrastructure for science, a field whose entire method depends on being able to see how a result was produced. Open Science exists to remove that layer, so the same category of tool can run on a lab's own terms — any model, any infrastructure, any budget, fully auditable, owned by no one but the researcher running it. We'd rather ship a slower, honest path to that than fake a finished product.
+A: Projects, sessions, files, settings, and configured credentials are stored locally by default. Content needed for model requests, web searches, or connector calls may still be sent to the external service you selected, so review sensitive inputs and provider policies before running a task.
+
+## Why Open Science
+
+Research work is usually split across chat windows, notebooks, local scripts, scientific databases, file browsers, and reporting tools. Context is lost at every handoff, and the answer is often separated from the code and files that produced it.
+
+Open Science brings those pieces into one inspectable desktop workspace:
+
+- **Work that persists.** Projects, sessions, drafts, files, previews, and run history survive application restarts.
+- **Execution, not just suggestions.** The agent can run commands and Python, edit files, search, call connectors, and generate artifacts with the user's approval.
+- **Multiple model choices.** Use a built-in cloud provider, a compatible custom gateway, or a local Claude login.
+- **Local-first ownership.** The application and project state run on your computer; external calls happen through services you explicitly configure or approve.
+- **Inspectability.** The source code, skills, connector definitions, tool activity, and generated files are available for review.
+- **Extensibility.** Add skills and MCP connectors instead of waiting for a closed plugin roadmap.
+- **No seat license.** Open Science is Apache-2.0 software. You pay only for the model or infrastructure you choose to use.
+
+Open Science is an independent product built from scratch. It is not a proxy, unofficial client, or reskin of another AI research application.
 
 ## Vision
 
-Our long-run bet: **the AI research assistant becomes infrastructure, not a product.** In the world we're building toward —
+Our goal is to make the AI research workbench a piece of open infrastructure rather than a rented product surface. A student with a laptop, a lab using a regional model provider, and an institution running its own gateway should be able to use the same research workspace while keeping control of their models, tools, and data boundaries.
 
-- A PhD student with a laptop and an OpenRouter key, a national lab with an air-gapped GPU cluster, and a biotech with an enterprise model contract are all running the _same_ open orchestration core — they've just pointed it at different models and compute.
-- Domain expertise compounds in public. A protocol-design skill written by a genomics lab in Shanghai and a statistics-review skill written by a methodologist in Boston both live in the open skills commons, get used by thousands of other labs, and get better through real usage instead of being reinvented behind each institution's firewall.
-- Reproducibility stops being a virtue people feel guilty about skipping. Every figure, every number in a manuscript, carries its lineage — the exact code, environment, and data version that produced it — because the tooling makes that the default output, not extra work.
-- No researcher is locked out of AI-augmented science by the country they live in, the model vendor their institution can legally contract with, or their ability to pay a per-seat SaaS fee.
-
-None of this is a technical constraint we're working around — it's the point. Every design decision in this project is downstream of one belief: **science is not a privilege, and the tools built for it shouldn't behave like one.**
-
-We're not trying to out-feature any single closed-source competitor. We're trying to make sure this product category has an open, self-hostable, vendor-neutral implementation — the way Postgres exists alongside proprietary databases, and Linux exists alongside proprietary operating systems.
-
-### The Long Arc: Five Horizons
-
-The [Roadmap](#roadmap) below is our concrete, near-term delivery plan. Underneath it sits a longer arc describing what "done" looks like for AI-native science as a field — not just for this codebase — walking from wiring up scientific data and tools as agent-callable capabilities, through making that capability portable across models and frameworks, to a fully open commons where protocols, agents, and workflows compose across labs, models, and platforms:
-
-```mermaid
-flowchart LR
-    H1["Horizon 1<br/>Scientific Connectivity"] --> H2["Horizon 2<br/>Agent Portability"]
-    H2 --> H3["Horizon 3<br/>Context-Aware Discovery"]
-    H3 --> H4["Horizon 4<br/>Closed-Loop Research"]
-    H4 --> H5["Horizon 5<br/>Open Science Commons"]
-
-    style H1 fill:#eef5ff,stroke:#3366cc,stroke-width:2px
-    style H5 fill:#fff0f0,stroke:#e33,stroke-width:2px
-```
-
-Full descriptions of each horizon — and where the current codebase actually sits on this arc — live in [`ROADMAP.md`](ROADMAP.md#long-term-vision-five-horizons).
+The long-term destination is a traceable loop connecting literature, data, computation, artifacts, review, and reusable scientific skills. The released desktop app is the working foundation for that direction, not a placeholder for a future concept.
 
 ## Design Principles
 
-These are the constraints we won't trade away as the project grows:
+- **Open by default.** Source code, formats, connectors, and skills should remain inspectable and forkable.
+- **Multi-provider with explicit compatibility.** The app validates provider configuration and makes endpoint requirements visible instead of treating every API protocol as interchangeable.
+- **Local-first and data-aware.** Keep project state local, surface external data flows, and make autonomy opt-in.
+- **Human-in-the-loop.** File edits, commands, network access, and connector calls are governed by explicit approval profiles.
+- **Durable research records.** Sessions, tool activity, files, and Notebook history should remain reviewable after the run ends.
+- **Composable capabilities.** Skills, connectors, models, previews, and future compute backends should be replaceable parts rather than one black box.
+- **Honest scientific boundaries.** Generated output does not replace expert judgment, statistical review, or validation against primary evidence.
 
-```mermaid
-flowchart TD
-    Core((Open Science<br/>Design Principles))
-    Core --> P1["Model-agnostic core"]
-    Core --> P2["Local-first &<br/>data-sovereign"]
-    Core --> P3["Reproducibility<br/>is not optional"]
-    Core --> P4["Skills are plain files,<br/>not plugins"]
-    Core --> P5["Human-in-the-loop<br/>by construction"]
-    Core --> P6["Composability<br/>over monolith"]
-    Core --> P7["Trust is verified,<br/>not assumed"]
-    Core --> P8["Access is a right,<br/>not a privilege"]
+## Core Capabilities
 
-    style Core fill:#eef5ff,stroke:#3366cc,stroke-width:2px
-    style P8 fill:#fff0f0,stroke:#e33,stroke-width:2px
-```
+This section describes durable product capabilities rather than a version-specific inventory. The installed app and [latest release notes](https://github.com/aipoch/open-science/releases/latest) are the source of truth for changing catalogs, packaging details, and newly added options.
 
-- **Access is a right, not a privilege.** No plan tier, no billing-region allowlist, no corporate approval queue stands between a researcher and the software. If you can run it, you can use all of it — this is the principle every other one on this list exists to protect.
-- **Model-agnostic core.** The orchestrator is designed to talk to LLMs through a pluggable gateway. Claude, GPT, Gemini, DeepSeek, Qwen, or a locally-hosted open-weight model behind vLLM/Ollama should all be first-class citizens — including using different models for different agents based on cost and capability. (This is a design target; see [Current Status](#current-status) for what's actually wired up today.)
-- **Local-first, data-sovereign by default.** Self-hosting is the default deployment target, not an enterprise upsell. Your data, your compute, your keys, unless you explicitly choose a hosted path.
-- **Reproducibility is not optional.** Every artifact — figure, table, claim — should ship with the code, environment, and data lineage that produced it. This is meant to be a property of the system, not a discipline we hope researchers maintain by hand.
-- **Skills are plain files, not plugins.** A skill should be versioned, human-readable, and forkable (markdown + code, in the spirit of [aipoch/medical-research-skills](https://github.com/aipoch/medical-research-skills)) — auditable by the researcher who's trusting it with their analysis, not a binary blob from a marketplace.
-- **Human-in-the-loop by construction.** New data sources, new compute budgets, and new external credentials require explicit approval. Autonomy is meant to be opt-in and scoped, never ambient — today that's a tool-call approval gate with per-conversation approval profiles (grants remembered by tool category); finer per-scope tiers (single-use / session / project / global) are planned.
-- **Composability over monolith.** The target architecture is small, swappable services (model gateway, skill runtime, compute broker, artifact renderer) instead of one inseparable black box, so labs can replace the parts they don't trust or don't need. Most of these services don't exist as separable pieces yet — see [Current Status](#current-status).
-- **Trust is verified, not assumed.** A reviewer/verifier agent should eventually check citations, units, and statistical methods before output ships, with its checks themselves inspectable.
+| Area                         | Core capability                                                                                                                                                                                                                                                             |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Projects and sessions**    | Create, rename, and delete projects; maintain multiple sessions; restore recent work, drafts, conversation history, and preview state.                                                                                                                                      |
+| **Agent workflow**           | Natural-language tasks, streamed responses, typed tool-activity cards, stop controls, approval pauses, and recovery of sessions interrupted by an application restart.                                                                                                      |
+| **Models**                   | Built-in cloud providers, custom compatible gateways, Local Claude, connection validation, and model selection per session.                                                                                                                                                 |
+| **Agent backend**            | A selectable agent-framework backend so the same workspace can run on more than one underlying agent implementation, with provider and model choices validated against the selected backend, and app-managed backends installable, switchable, and removable from Settings. |
+| **Execution**                | A persistent Python Notebook kernel with durable code/output history and a user terminal shared with the agent.                                                                                                                                                             |
+| **Inputs and artifacts**     | File attachments, project-level file library, generated artifact cards, `@` references to existing uploads/outputs, and read-only multi-tab previews.                                                                                                                       |
+| **Preview formats**          | Common scientific data, documents, images, source code, molecular structures and reactions, and Notebook history.                                                                                                                                                           |
+| **Local data management**    | Local project and application data, configurable storage location, and guided migration.                                                                                                                                                                                    |
+| **Skills**                   | Featured and personal skills, package upload, GitHub preview/import, enable/disable controls, and explicit `/` selection in a session.                                                                                                                                      |
+| **Connectors**               | Built-in life-science connectors, custom local/remote MCP connectors, contact metadata, and connector/tool-level permissions.                                                                                                                                               |
+| **Safety controls**          | `Ask for approval`, `Auto-approve edits`, and `Full access` conversation profiles, plus per-connector and per-tool policies.                                                                                                                                                |
+| **Review and verification**  | An opt-in reviewer that audits a completed turn against its own transcript, execution log, and artifacts, reports pass/warn/fail findings, and can run a bounded fix loop to correct them.                                                                                  |
+| **Distribution and support** | Installers for macOS, Windows, and Linux, plus update guidance, local diagnostics, and community links.                                                                                                                                                                     |
 
-## What We're Building
+## Model Providers
 
-Open Science is organized around cooperating layers — the same category of capability a coordinator-plus-specialists AI research workbench demonstrates, decomposed into open, independently replaceable pieces instead of one closed product surface:
+| Provider mode                | How it works                                                                                      |
+| ---------------------------- | ------------------------------------------------------------------------------------------------- |
+| **Built-in cloud providers** | Choose from the provider list shown by the installed app and authenticate with the requested key. |
+| **Custom Gateway**           | Supply a compatible Base URL, API Key, and exact model ID.                                        |
+| **Local Claude**             | Reuse the computer's Claude Code login without entering an API Key in Open Science.               |
 
-```mermaid
-flowchart TB
-    subgraph IF["Interfaces"]
-        Desktop["Desktop App (shipping)"]
-        CLI["CLI / SDK (planned)"]
-        Web["Self-hosted Web App (planned)"]
-    end
+Provider vendors, available models, and regional endpoints can evolve independently of this README. Treat the provider picker and connection test in the installed app as the source of truth. Unless the app states otherwise, a Custom Gateway must expose an Anthropic-compatible messages endpoint.
 
-    IF --> Core
+## Data, Permissions, and Trust
 
-    subgraph Core["Agent Harness / Orchestration Core"]
-        Coordinator["Coordinating Agent (shipping)"]
-        Specialists["Specialist Sub-Agents (planned)<br/>genomics · proteomics · chem · social science"]
-        Reviewer["Reviewer / Verifier Agent (planned)"]
-        Coordinator --> Specialists
-        Specialists --> Reviewer
-    end
+Open Science stores project data and settings on the local computer. API Keys are kept locally and use the operating system's secure credential storage when it is available. Logs are local and are not uploaded automatically.
 
-    Core --> Models["Model Layer (planned)<br/>Claude · GPT · Gemini · DeepSeek · Qwen · local"]
-    Core --> Skills["Skills Commons (early)<br/>versioned, forkable agent skills"]
-    Core --> Data["Data & Knowledge Layer (shipping)<br/>PubMed · UniProt · PDB · ChEMBL · GEO · private data"]
-    Core --> Compute["Compute Fabric (planned)<br/>laptop → HPC/Slurm → cloud GPU"]
+External data flow is still possible and should be reviewed:
 
-    Specialists --> Artifacts["Scientific Artifacts & Notebooks (shipping)<br/>notebook kernel · file previews · artifact storage"]
-    Reviewer --> Provenance["Verification & Provenance (planned)<br/>citation + unit + stats checks, lineage graph"]
-    Artifacts --> Provenance
+- Model requests send the prompt and necessary context to the selected model provider.
+- Web searches and remote connectors send their displayed parameters to external services.
+- Local connectors may execute trusted commands on the computer.
+- Attachments, `@` references, logs, and generated reports may contain sensitive research data.
 
-    style Core fill:#eef5ff,stroke:#3366cc,stroke-width:2px
-```
+Choose the narrowest permission profile that fits the task:
 
-- **Agent Harness / Orchestration Core.** A coordinating agent that plans multi-step research tasks and executes tool calls, with typed activity visualization and a permission gate for higher-risk actions. _Shipping today_ via an Agent Client Protocol (ACP) runtime. Specialist sub-agents (genomics, proteomics, structural biology, cheminformatics, and — unlike most current tools in this space — non-life-science domains like social science and economics) and a dedicated reviewer agent are planned.
-- **Model Layer.** A unified gateway in front of any LLM provider or self-hosted model, with per-agent routing — a cheap fast model for grunt-work sub-tasks, a frontier model for synthesis and writing, a local model for anything that can't leave the building. _Planned_ — today's runtime is wired to a single agent backend.
-- **Skills Commons.** An open, versioned registry of agent skills — protocol design, statistical review, literature synthesis, figure generation, and domain-specific analysis pipelines — designed to interoperate with [aipoch/medical-research-skills](https://github.com/aipoch/medical-research-skills) as its first and largest skill pack. _Early:_ file-based skill management ships today — create, edit, and import (zip) skills and pull them into a session through a `/` selector — but the open, shareable public commons is still planned.
-- **Data & Knowledge Layer.** Connectors to the open scientific commons — PubMed/PMC, UniProt, PDB, Ensembl, Reactome, ClinVar, ChEMBL, GEO, arXiv/bioRxiv/medRxiv, OpenAlex — plus custom MCP servers for institutional and proprietary datasets that never leave the researcher's access boundary. _Shipping today_: 24 built-in connectors — 23 life-science data connectors expanded and aligned to their upstream MCP servers into 200+ callable tools, plus an offline OpenChemLib molecule viewer — plus custom MCP server support (stdio/HTTP/SSE), all callable from agent sessions behind the permission gate.
-- **Compute Fabric.** A broker that scales a job from a laptop kernel, to an institutional Slurm/HPC cluster, to on-demand cloud GPUs, with job submission, monitoring, and cost guardrails handled automatically instead of hand-written SSH scripts. _Planned_ — all execution today runs locally.
-- **Scientific Artifacts & Notebooks.** _Shipping today_: a persistent Python notebook kernel with durable run history, artifact file storage organized by project/session/message/run, in-app rendering for CSV, FASTA, HTML, image, JSON, Markdown, and text files, an offline chemical-structure viewer (OpenChemLib, incl. `.rxn` reactions), and a read-only session notebook viewer. Native structure/genome viewers and reproducible manuscript/figure generation with inline citations are planned.
-- **Verification & Provenance Layer.** A lineage graph connecting every claim back to the figure, code, and dataset version that generated it, with automated checks for citation accuracy, unit consistency, and statistical-method appropriateness. _Planned._
-- **Interfaces.** _Shipping today_: a local Electron desktop app for individual researchers and small labs, with project/session management, a home page, a guided first-run onboarding that checks and provisions the runtime environment automatically, a configurable data-storage location with guided migration, and in-place background auto-update. A CLI/SDK for scripting and embedding, and an optional self-hosted web app for teams, are planned — both designed to eventually talk to the same orchestration core.
+| Mode                 | Behavior                                                                         | Recommended use                                           |
+| -------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `Ask for approval`   | Asks before edits, commands, network, and connector calls                        | New workflows, sensitive data, unfamiliar scripts         |
+| `Auto-approve edits` | Automatically allows workspace edits; asks for commands, network, and connectors | Trusted file-editing work with controlled external access |
+| `Full access`        | Automatically allows edits, commands, network, and connectors                    | Clearly scoped, fully trusted, unattended work            |
 
-## Current Status
+Review connector parameters and tool activity before approving them. Never include API Keys, access tokens, patient identifiers, unpublished data, or sensitive local paths in screenshots or public issue logs.
 
-Open Science is an **early preview**. The core "plan → execute → produce → preview" loop — desktop app, agent runtime, notebook execution, artifact storage, in-app previews — works end to end today, and a first layer of the differentiating capabilities has started to land: file-based agent skills and an initial set of life-science / MCP data connectors. The properties that would make this a genuinely differentiated, science-grade tool — multi-model routing, provenance, remote compute, and a public skills commons — are mostly still ahead. We'd rather ship a slower, honest path to the full vision than fake a finished product.
+## Project Status
 
-The authoritative, kept-up-to-date breakdown of what's shipping versus still ahead lives in `ROADMAP.md`, not here, so this list doesn't quietly drift out of sync as the project moves:
+Open Science is available as a released desktop application and is actively developed. This README focuses on durable workflows so that it does not need to change with every release.
 
-- **[Where We Are Today](ROADMAP.md#where-we-are-today)** — the headline summary of what works today and what doesn't yet
-- **[Capability Map](ROADMAP.md#capability-map)** — layer-by-layer status (✅ shipping / 🟡 partial / ⬜ not started)
-- **[`docs/PRD.md`](docs/PRD.md)** — the full product spec and current architecture, mapped to the actual code
+For version-specific features, provider and catalog changes, platform packaging, and recent fixes, use the [latest release notes](https://github.com/aipoch/open-science/releases/latest) and the installed app. For a maintained shipped/partial/planned breakdown, see the [Capability Map](ROADMAP.md#capability-map).
+
+Open Science assists execution and record-keeping; researchers remain responsible for methods, interpretation, privacy, and scientific validity.
 
 ## Development & Packaging
 
-For contributors. Cloning, `npm install`, and `npm run dev` are covered in [Quick Start → Run from source](#option-3--run-from-source); this section is the rest of the developer toolchain.
+Open Science is an Electron application built with React, TypeScript, Prisma/SQLite, and an ACP-based agent runtime.
 
-Open Science is an Electron application built with React and TypeScript.
+Prerequisites for source development:
 
-### Recommended IDE Setup
-
-- [VS Code](https://code.visualstudio.com/) + [ESLint](https://marketplace.visualstudio.com/items?itemName=dbaeumer.vscode-eslint) + [Prettier](https://marketplace.visualstudio.com/items?itemName=esbenp.prettier-vscode)
-
-### Useful scripts
+- Node.js LTS or newer with npm
+- Git
+- Python 3 only if you want Notebook execution
 
 ```bash
-npm run lint          # ESLint
-npm run format        # Prettier --write
-npm run typecheck     # TypeScript, main + renderer
-npm test              # Vitest
+git clone https://github.com/aipoch/open-science.git
+cd open-science
+npm install
+npm run dev
 ```
 
-### Build (Package the App)
+`npm install` automatically generates the Prisma client and installs Electron native dependencies. `npm run dev` builds the Electron main/preload bundles, starts the renderer, and opens the desktop app. Development data is isolated under `~/.open-science-project`.
+
+Useful commands:
+
+| Command                | Purpose                                  |
+| ---------------------- | ---------------------------------------- |
+| `npm run dev`          | Start the development application        |
+| `npm run dev:web`      | Dev app + localhost web UI (127.0.0.1)   |
+| `npm run dev:headless` | Dev backend + web UI, no Electron window |
+| `npm run lint`         | Run ESLint                               |
+| `npm run typecheck`    | Type-check main and renderer code        |
+| `npm test`             | Run the Vitest suite                     |
+| `npm run build`        | Type-check and build the application     |
+| `npm run build:web`    | Build the optional localhost web UI      |
+| `npm run build:mac`    | Package macOS builds                     |
+| `npm run build:win`    | Package Windows builds                   |
+| `npm run build:linux`  | Package Linux builds                     |
+
+Packaged output is written under `dist/`.
+
+### Localhost web and headless modes
+
+The desktop backend can optionally serve the same renderer to a browser on the local computer. This
+feature is off by default and binds only to `127.0.0.1`.
 
 ```bash
-# macOS
-npm run build:mac
-
-# Windows
-npm run build:win
-
-# Linux
-npm run build:linux
+npm run build:web
+npm run dev:web
 ```
 
-Packaged output lands under `dist/`. On macOS, see the Gatekeeper note below before opening a self-built `.app`.
+Open the authenticated URL printed by the application. Use `npm run dev:headless` to start the
+backend, tray, agent runtime, and localhost web service without opening an Electron window.
+Set `OPEN_SCIENCE_WEB_PORT` to choose a port (default `44100`). Explicitly quitting the
+application still shuts down agent and Notebook processes normally.
 
-## Building From Source (macOS Gatekeeper Note)
+### CLI daemon management
 
-> **Official macOS release downloads are Developer ID signed and notarized by Apple** — they open normally, and the steps below don't apply to them. This note is only for a `.app` you build yourself (or receive outside the notarized release channel).
+The CLI manages the Electron headless process as a background service, so the browser is the only
+UI and closing the terminal does not stop active sessions:
 
-A self-built (or community-distributed) `.app` isn't notarized by Apple. The build pipeline still applies a **deep ad-hoc signature** at pack time (see `build/adhoc-sign.cjs`), which prevents the unrecoverable _"Open Science is damaged and can't be opened"_ Gatekeeper error — but a downloaded/quarantined copy will still show the _"Open Science can't be opened because the developer cannot be verified"_ prompt on first launch.
+```bash
+npm run build
+npm run cli -- start       # starts the daemon and opens the authenticated URL
+npm run cli -- status
+npm run cli -- url
+npm run cli -- stop        # graceful agent and Notebook shutdown
+```
 
-To run it, either:
+Use `--no-open` to start without opening a browser, `--port <port>` to choose a port, and `--json`
+with `status` for machine-readable output. Development builds are discovered from the repository.
+For an installed build, the CLI checks standard installation locations; override discovery with
+`--app-path <executable>` or `OPEN_SCIENCE_APP_PATH`. Use `--config-root <directory>` when an
+explicit configuration location is required.
 
-- **Right-click (or Control-click) the app → Open**, then confirm in the dialog that appears — the standard macOS "open an app from an unidentified developer" flow, or
-- **Clear the quarantine attribute from the Terminal** before launching:
+#### Installing the command from an installed app
 
-  ```bash
-  xattr -dr com.apple.quarantine "/Applications/Open Science.app"
-  ```
+After installing the packaged app, open **Settings → General → Command line tool** and choose
+**Install command**. This adds an `open-science` launcher to your PATH (`~/.local/bin` on macOS and
+Linux; a per-user directory added to your PATH on Windows) that runs the bundled CLI using the app's
+own runtime — no separate Node.js install is needed. Then, from any terminal:
 
-  (Adjust the path if you installed the app somewhere other than `/Applications`.)
+```bash
+open-science start       # start the backend and open the authenticated URL
+open-science status
+open-science url
+open-science stop        # graceful agent and Notebook shutdown
+```
 
-This is expected for any build you compile yourself or receive outside of a notarized release channel — it isn't a sign of a corrupted download.
+If the launcher's directory is not yet on your PATH, the Settings panel shows the one line to add
+(open a new terminal afterwards). Use **Uninstall command** to remove the launcher.
+
+## Building From Source
+
+### macOS Gatekeeper
+
+If the copy you downloaded or built does not carry an Apple Developer ID trusted by your Mac, macOS may block it. In that case:
+
+1. In Finder, right-click **Open Science.app** and choose **Open**.
+2. If it remains blocked, go to **System Settings → Privacy & Security** and choose **Open Anyway**.
+3. For a copy you built or downloaded from this repository and have verified, clear quarantine once:
+
+   ```bash
+   xattr -dr com.apple.quarantine "/Applications/Open Science.app"
+   ```
+
+Only remove quarantine from a package whose source and checksum you trust. See [SECURITY.md](SECURITY.md) for release verification and vulnerability reporting.
+
+### Windows SmartScreen
+
+If Windows shows an unknown-publisher warning, verify the downloaded asset and checksum, choose **More info**, and then **Run anyway**. Do not bypass SmartScreen for packages obtained outside the official Releases page.
 
 ## Roadmap
 
-The full roadmap — the five-horizon long-range vision, the layer-by-layer capability map, the phase-by-phase delivery plan, and the honest list of boundaries and non-goals — lives in **[`ROADMAP.md`](ROADMAP.md)**. In short, delivery moves through six phases:
-
-```mermaid
-flowchart LR
-    P0["Phase 0<br/>Vision & Architecture<br/>(done)"] --> P1["Phase 1<br/>Core Loop<br/>(in progress)"]
-    P1 --> P2["Phase 2<br/>Reproducibility &<br/>Multi-Agent"]
-    P2 --> P3["Phase 3<br/>Knowledge &<br/>Connectors"]
-    P3 --> P4["Phase 4<br/>Compute & Trust"]
-    P4 --> P5["Phase 5<br/>Commons &<br/>Interaction"]
-
-    style P0 fill:#e8f6e8,stroke:#2f9e44,stroke-width:2px
-    style P1 fill:#fff4e5,stroke:#e69500,stroke-width:2px
-```
-
-Phase 2 (**Reproducibility & Multi-Agent** — artifact versioning, provenance, additional kernels, specialist sub-agents) is the project's core differentiation from a generic coding agent, and the highest-priority phase for contributors who want to make the biggest structural dent. See **[`ROADMAP.md`](ROADMAP.md#delivery-phases)** for what each phase actually contains.
+The product roadmap and capability status are maintained in [ROADMAP.md](ROADMAP.md). This README intentionally does not duplicate the moving list of priorities or release targets.
 
 ## Relationship to the aipoch Ecosystem
 
-This repository is the core engine; it's designed to grow alongside a sibling project already in the org:
+Open Science is developed by [aipoch](https://github.com/aipoch) as the desktop orchestration layer for open scientific AI workflows.
 
-```mermaid
-flowchart LR
-    Skills["aipoch/medical-research-skills<br/>hundreds of ready-made skills"] --> Core
-    Core[["aipoch/open-science<br/>orchestration engine (this repo)"]] --> Output(["A working AI research partner"])
+- [aipoch/medical-research-skills](https://github.com/aipoch/medical-research-skills) is a broader collection of file-based medical and scientific research skills. Compatible skills can be inspected and imported into Open Science from GitHub.
+- Open Science supplies the project/session workspace, agent runtime, execution, artifacts, previews, permissions, and connectors that turn those instructions into an interactive workflow.
 
-    style Core fill:#eef5ff,stroke:#3366cc,stroke-width:2px
-```
-
-- **[aipoch/medical-research-skills](https://github.com/aipoch/medical-research-skills)** — hundreds of ready-made agent skills for protocol design, data analysis, and academic writing. This is the intended default skill pack for the life-sciences vertical of Open Science once the Skills Commons ([Phase 3](#roadmap)) ships.
-
-Open Science is the piece that was missing: the orchestration layer that actually runs skills against data and compute, rather than a list of skills.
+Skills and connectors can execute code or send data externally. Review their source, license, scripts, and network behavior before enabling them.
 
 ## What This Is Not
 
-- **Not a proxy or reskin of any closed-source product.** Open Science shares no code with any single vendor's client, UX, or infrastructure — it's an independent implementation of the same problem space, built to be self-hosted and inspected from the ground up.
-- **Not tied to any single model vendor.** Any given model provider's models are a great option through the (planned) gateway, not a dependency.
-- **Not a finished product.** As of this writing, the desktop app runs a real single-agent workflow end to end, but most of the differentiating scientific-workbench capabilities described in [What We're Building](#what-were-building) are still ahead — see [Current Status](#current-status).
-- **Not a real-time multi-user collaborative editor.** Built for a single researcher; team workflows go through export/share/import, not live co-editing.
-- **Not a modeler of research semantics.** The system's structured objects are computations and artifacts, not first-class "hypothesis / experiment / conclusion" entities, and it doesn't replace a domain expert's judgment on statistical validity or data quality.
-
-See [`ROADMAP.md`](ROADMAP.md#boundaries--non-goals) for the full, maintained list of boundaries and non-goals.
+- **Not just a chat UI.** The product is organized around persistent projects, execution, files, artifacts, and reviewable tool activity.
+- **Not an unofficial client for another product.** It is an independent implementation with its own codebase, data model, interface, and roadmap.
+- **Not a replacement for scientific judgment.** Outputs still require domain review, statistical validation, and verification against primary sources.
 
 ## Get Involved
 
-This project is at the stage where architecture decisions are still being made — the best way to have influence is to show up now.
+| Channel                                                                  | Use it for                                                              |
+| ------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| [GitHub Issues](https://github.com/aipoch/open-science/issues)           | Bugs, reproducible failures, and concrete feature proposals             |
+| [GitHub Discussions](https://github.com/aipoch/open-science/discussions) | Design questions, roadmap proposals, and longer technical conversations |
+| [Discord](https://discord.gg/85dKfuGM9)                                  | Community help, contributor coordination, and informal discussion       |
+| [X / @aipoch_ai](https://x.com/aipoch_ai)                                | Release announcements and build-in-public updates                       |
 
-|                    |                                                                                                                                                                                   |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 🐦 **X**           | Follow **[@aipoch_ai](https://x.com/aipoch_ai)** for build-in-public updates, roadmap calls, and announcements.                                                                   |
-| 💬 **Discord**     | **[Join the community](https://discord.gg/85dKfuGM9)** — this is where architecture debates, RFC drafts, and skill-writing happen in real time.                                   |
-| 🐛 **Issues**      | Open an [Issue](https://github.com/aipoch/open-science/issues) for concrete proposals, especially for the unimplemented items in the [Capability Map](ROADMAP.md#capability-map). |
-| 🗣️ **Discussions** | Open a [Discussion](https://github.com/aipoch/open-science/discussions) if you want to propose or debate a piece of the architecture above.                                       |
+Before opening a public issue, remove API Keys, tokens, private file paths, unpublished data, patient identifiers, and other sensitive material from logs and screenshots. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow.
 
 ## License
 

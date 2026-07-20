@@ -192,4 +192,70 @@ describe('ArtifactMentionPopup', () => {
     pressKey('Escape')
     expect(onClose).toHaveBeenCalledTimes(1)
   })
+
+  it('matches a filename by fuzzy subsequence a substring would miss', () => {
+    act(() => {
+      root.render(<ArtifactMentionPopup query="rpt" onSelect={vi.fn()} onClose={vi.fn()} />)
+    })
+
+    // "rpt" is an ordered subsequence of "report.pdf" but not a substring, and matches no upload.
+    const rendered = options()
+    expect(rendered).toHaveLength(1)
+    expect(rendered[0].textContent).toContain('report.pdf')
+    expect(document.body.textContent).not.toContain('sequence.csv')
+  })
+
+  it('highlights the matched characters in the filename', () => {
+    act(() => {
+      root.render(<ArtifactMentionPopup query="report" onSelect={vi.fn()} onClose={vi.fn()} />)
+    })
+
+    const marks = Array.from(document.body.querySelectorAll('mark'))
+    expect(marks).toHaveLength(1)
+    expect(marks[0].textContent?.toLowerCase()).toBe('report')
+  })
+
+  it('ranks a closer fuzzy match first within a section', () => {
+    // Two outputs in the same section: a prefix match must outrank a later word-boundary match.
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        createSession({
+          artifacts: [
+            {
+              id: 'art-late',
+              kind: 'managed-file',
+              path: '/workspace/final-report.pdf',
+              fileUrl: 'file:///workspace/final-report.pdf',
+              name: 'final-report.pdf',
+              mimeType: 'application/pdf',
+              size: 4096,
+              mtimeMs: 1710000001000
+            },
+            {
+              id: 'art-early',
+              kind: 'managed-file',
+              path: '/workspace/report.pdf',
+              fileUrl: 'file:///workspace/report.pdf',
+              name: 'report.pdf',
+              mimeType: 'application/pdf',
+              size: 4096,
+              mtimeMs: 1710000002000
+            }
+          ]
+        })
+      ]
+    })
+    useNavigationStore.setState({ activeProjectId: 'default' })
+
+    act(() => {
+      root.render(<ArtifactMentionPopup query="report" onSelect={vi.fn()} onClose={vi.fn()} />)
+    })
+
+    const rendered = options()
+    expect(rendered).toHaveLength(2)
+    // "report.pdf" (prefix) ranks ahead of "final-report.pdf" (match after the dash).
+    expect(rendered[0].textContent).not.toContain('final')
+    expect(rendered[1].textContent).toContain('final-report.pdf')
+  })
 })

@@ -64,6 +64,16 @@ export type ChatSession = Omit<
   // Transient: set at hydration when a session was interrupted by an app restart, so the UI can
   // offer an explicit Resume affordance. Never persisted (stripped in stripTransientSessionState).
   interrupted?: boolean
+  // Transient: true while a Phase 3 fix loop is active for this session. Disables the send button
+  // for the duration of the loop (across reviewer-review and agent-fix sub-phases). Never persisted.
+  fixLoopActive?: boolean
+  // Transient: true while the app is auto-recovering a conversation that outgrew the request-size limit
+  // (reset agent context + replay a text transcript). The UI shows a neutral "Compacting…" note instead
+  // of the overflow error, and the promise-path failure is suppressed. Cleared on the next run/settle.
+  compacting?: boolean
+  // Transient: latest agent status/stderr line for the in-flight turn, shown in the waiting indicator
+  // so a long silent wait (e.g. the agent retrying a slow request) isn't a blank spinner. Not persisted.
+  agentStatus?: string
 }
 
 type SessionStoreData = {
@@ -161,6 +171,11 @@ type SessionStore = SessionStoreData & {
   hydrateSessions: (sessions: PersistedChatSession[], manifest?: PersistedSessionManifest) => void
   finishRun: (sessionId: string) => void
   failRun: (sessionId: string, error: string) => void
+  // Sets the transient agent status line shown in the waiting indicator; only applies while running.
+  setAgentStatus: (sessionId: string, text: string) => void
+  // Enters the auto-recovery "compacting" state after a request-size overflow: clears the error so the
+  // UI shows a neutral note instead of a dead-end, without blocking the recovery re-send.
+  beginCompaction: (sessionId: string) => void
   markResumed: (sessionId: string) => void
   markDisconnected: (sessionId: string) => void
   removeMessage: (sessionId: string, messageId: string) => void
@@ -168,6 +183,11 @@ type SessionStore = SessionStoreData & {
   setPermissionPending: (sessionId: string) => void
   clearPermissionPending: (sessionId: string) => void
   setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => void
+  // Persists the per-session auto-review toggle. true = on; false = off (default).
+  setAutoReviewEnabled: (sessionId: string, enabled: boolean) => void
+  // Sets or clears the per-session fix loop active flag. When true, the composer send button is
+  // disabled for this session; when false (loop ended or cancelled), send is re-enabled.
+  setFixLoopActive: (sessionId: string, active: boolean) => void
   renameSession: (sessionId: string, title: string) => void
   deleteSession: (sessionId: string) => void
   removeSessionsForProject: (projectId: string) => void
@@ -194,10 +214,22 @@ const stripTransientMessageState = (message: ChatMessage): PersistedChatMessage 
 }
 
 const stripTransientSessionState = (session: ChatSession): PersistedChatSession => {
-  const { activities, isPending, interrupted, messages, ...persistedSession } = session
+  const {
+    activities,
+    isPending,
+    interrupted,
+    fixLoopActive,
+    compacting,
+    agentStatus,
+    messages,
+    ...persistedSession
+  } = session
 
   void isPending
   void interrupted
+  void fixLoopActive
+  void compacting
+  void agentStatus
 
   // Persist a bounded projection of tool activities so the transcript survives restarts.
   const persistedActivities = activities
@@ -502,7 +534,9 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
                 ...session,
                 status: 'running',
                 activeRun,
+                agentStatus: undefined,
                 error: undefined,
+                compacting: undefined,
                 messages: [...session.messages, userMessage],
                 updatedAt: now
               }
@@ -972,6 +1006,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           ...session,
           status: keepArtifactError ? 'error' : 'idle',
           activeRun: undefined,
+          agentStatus: undefined,
+          compacting: undefined,
           error: keepArtifactError ? session.error : undefined,
           messages: completeStreamingMessages(session.messages),
           activities: completeOpenActivities(session.activities),
@@ -994,7 +1030,48 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               ...session,
               status: 'error',
               activeRun: undefined,
+              agentStatus: undefined,
+              compacting: undefined,
               error: message,
+              messages: failStreamingMessages(session.messages),
+              activities: failOpenActivities(session.activities),
+              updatedAt: Date.now()
+            }
+          : session
+      )
+    }))
+  },
+
+  // Records the latest agent status/stderr line for the waiting indicator. Ignored unless the session
+  // is running (a stale line must not linger after output starts or the turn ends).
+  setAgentStatus: (sessionId, text) => {
+    const trimmed = text.trim()
+
+    if (!trimmed) return
+
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId && session.status === 'running'
+          ? { ...session, agentStatus: trimmed }
+          : session
+      )
+    }))
+  },
+
+  // Enters the transient "compacting" state after a request-size overflow. Clears the error and settles
+  // any half-streamed message so nothing hangs, but leaves the status non-running so the recovery re-send
+  // is not blocked by the duplicate-submit guard. The UI shows a neutral note keyed off `compacting`.
+  beginCompaction: (sessionId) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              status: 'idle',
+              activeRun: undefined,
+              agentStatus: undefined,
+              error: undefined,
+              compacting: true,
               messages: failStreamingMessages(session.messages),
               activities: failOpenActivities(session.activities),
               updatedAt: Date.now()
@@ -1014,6 +1091,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               status: 'idle',
               error: undefined,
               interrupted: undefined,
+              compacting: undefined,
               updatedAt: Date.now()
             }
           : session
@@ -1032,6 +1110,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               status: 'error',
               activeRun: undefined,
               interrupted: true,
+              compacting: undefined,
               error: 'Connection lost — Resume to reconnect and continue.',
               messages: failStreamingMessages(session.messages),
               activities: failOpenActivities(session.activities),
@@ -1097,6 +1176,37 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           ? {
               ...session,
               permissionProfile: profile,
+              updatedAt: Date.now()
+            }
+          : session
+      )
+    }))
+  },
+
+  // Persists the per-session auto-review toggle so finishRun can skip a review when disabled.
+  setAutoReviewEnabled: (sessionId, enabled) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              autoReviewEnabled: enabled,
+              updatedAt: Date.now()
+            }
+          : session
+      )
+    }))
+  },
+
+  // Sets or clears the per-session fix loop active flag. The flag is transient (never persisted)
+  // and gates canSendMessage in WorkspacePage: true blocks send for the duration of the fix loop.
+  setFixLoopActive: (sessionId, active) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              fixLoopActive: active,
               updatedAt: Date.now()
             }
           : session

@@ -1,7 +1,8 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { isAbsolute, join, normalize, parse } from 'node:path'
 
 import type {
+  AgentFrameworkId,
   ClaudeInfo,
   ProviderType,
   ProviderValidationFailure,
@@ -130,8 +131,14 @@ const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
       )
     : undefined
 
+  // Preserve the provider's chat-API type through the read; only known values survive.
+  const apiType = asString(value.apiType)
+
   if (baseUrl) provider.baseUrl = baseUrl
   if (model) provider.model = model
+  if (apiType === 'anthropic' || apiType === 'openai' || apiType === 'both') {
+    provider.apiType = apiType
+  }
   if (vendorId) provider.vendorId = vendorId
   if (region) provider.region = region
   if (fetchedModels && fetchedModels.length > 0) provider.fetchedModels = fetchedModels
@@ -279,10 +286,36 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     settings.legacyDataMovePromptDismissedAt = legacyDataMovePromptDismissedAt
   }
 
-  const dataRoot = asString(value.dataRoot)
+  // Only accept an absolute, normalized dataRoot. A relative path (corrupt or hand-edited
+  // settings.json) would make the entire data tree resolve against process.cwd(); drop it so
+  // initDataRoot falls back to the default. Mirrors the OPEN_SCIENCE_STORAGE_ROOT absolute contract.
+  const dataRoot = asString(value.dataRoot)?.trim()
 
-  if (dataRoot) {
-    settings.dataRoot = dataRoot
+  if (dataRoot && isAbsolute(dataRoot)) {
+    // normalize collapses redundant separators; strip any trailing separator so the stored form
+    // matches dataRootForPicked's canonical (no-trailing-slash) output — samePath() compares exact
+    // strings, so a stray trailing slash would wrongly fail the "is default" check. Never strip past a
+    // filesystem root, though: turning "C:\" into "C:" would make an absolute path drive-relative.
+    const normalized = normalize(dataRoot)
+    const { root } = parse(normalized)
+    settings.dataRoot =
+      normalized.length > root.length ? normalized.replace(/[\\/]+$/, '') : normalized
+  }
+
+  // Selected agent backend; only the known ids survive so a bad value can't leak through.
+  const agentFrameworkId = asString(value.agentFrameworkId)
+
+  if (agentFrameworkId === 'claude-code' || agentFrameworkId === 'opencode') {
+    settings.agentFrameworkId = agentFrameworkId
+  }
+
+  const opencodePath = asString(value.opencodePath)
+
+  if (opencodePath) {
+    settings.opencodePath = opencodePath
+
+    const opencodeVersion = asString(value.opencodeVersion)
+    if (opencodeVersion) settings.opencodeVersion = opencodeVersion
   }
 
   return settings
@@ -359,6 +392,34 @@ class SettingsRepository {
   // Records the detected claude executable metadata for later spawns.
   async setClaudeInfo(claude: ClaudeInfo): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, claude }))
+  }
+
+  // Persists the selected agent backend; applied on the next reconnect.
+  async setAgentFramework(id: AgentFrameworkId): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, agentFrameworkId: id }))
+  }
+
+  // Records the detected opencode executable path + version for later spawns + the settings status card.
+  async setOpencodeInfo(resolvedPath: string, version?: string): Promise<StoredSettings> {
+    return this.mutate((settings) => ({
+      ...settings,
+      opencodePath: resolvedPath,
+      opencodeVersion: version
+    }))
+  }
+
+  // Forgets the recorded opencode executable so the status card and gates reflect an uninstall. Called
+  // when a re-detect finds nothing; otherwise a stale path lingers and a spawn against the gone binary
+  // fails with EPIPE.
+  async clearOpencodeInfo(): Promise<StoredSettings> {
+    return this.mutate((settings) => {
+      const { opencodePath, opencodeVersion, ...rest } = settings
+
+      void opencodePath
+      void opencodeVersion
+
+      return rest
+    })
   }
 
   // Stamps the onboarding-completed time exactly once; later calls leave the first value intact.

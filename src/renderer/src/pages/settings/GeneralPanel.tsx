@@ -1,9 +1,10 @@
-import { ExternalLink, FolderOpen, Globe } from 'lucide-react'
+import { ExternalLink, FolderOpen, Globe, Terminal } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { Button } from '@/components/ui/button'
+import type { CliLauncherStatus } from '../../../../shared/cli'
 import { APP } from '../../../../shared/app-config'
 import { AppVersionSection } from './AppVersionSection'
 import { SettingsRow, SettingsSection } from './SettingsLayout'
@@ -33,10 +34,31 @@ const GeneralPanel = (): React.JSX.Element => {
   const [logPath, setLogPath] = useState<string | null>(null)
   const [message, setMessage] = useState<string | undefined>(undefined)
   const [isOpening, setIsOpening] = useState(false)
+  const [cli, setCli] = useState<CliLauncherStatus | null>(null)
+  const [isUpdatingCli, setIsUpdatingCli] = useState(false)
+  const [cliError, setCliError] = useState<string | undefined>(undefined)
 
   useEffect(() => {
     void window.api.logs.getPath().then(setLogPath)
+    void window.api.cli.getStatus().then(setCli)
   }, [])
+
+  const handleCli = async (action: 'install' | 'uninstall'): Promise<void> => {
+    setIsUpdatingCli(true)
+    setCliError(undefined)
+
+    try {
+      setCli(
+        action === 'install' ? await window.api.cli.install() : await window.api.cli.uninstall()
+      )
+    } catch (error) {
+      setCliError(
+        error instanceof Error ? error.message : 'Could not update the command-line tool.'
+      )
+    } finally {
+      setIsUpdatingCli(false)
+    }
+  }
 
   const handleOpenLog = async (): Promise<void> => {
     setIsOpening(true)
@@ -125,6 +147,61 @@ const GeneralPanel = (): React.JSX.Element => {
           <ExternalTextLink href={APP.links.githubIssues}>Open an issue on GitHub</ExternalTextLink>{' '}
           and attach the log above. It stays on this device and is never sent automatically; it may
           contain local file paths, so review it before sharing.
+        </p>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Command line tool"
+        description={
+          <>
+            Install the <code className="font-mono">open-science</code> command so you can start,
+            stop, and check the backend from a terminal, then use it entirely from your browser.
+          </>
+        }
+        aria-label="Command line tool"
+        separated
+      >
+        <SettingsRow
+          label="open-science"
+          controlClassName="w-auto justify-self-end"
+          className="pt-0"
+        >
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void handleCli(cli?.installed ? 'uninstall' : 'install')}
+            disabled={isUpdatingCli || cli === null}
+          >
+            <Terminal className="size-4" aria-hidden="true" />
+            {isUpdatingCli ? 'Working…' : cli?.installed ? 'Uninstall command' : 'Install command'}
+          </Button>
+        </SettingsRow>
+
+        {cli?.installed ? (
+          <pre
+            className="overflow-x-auto rounded-lg border border-border bg-muted/60 px-3 py-2.5 font-mono text-xs text-foreground"
+            aria-label="Command line tool path"
+          >
+            {cli.target}
+          </pre>
+        ) : null}
+
+        {cli?.installed && cli.pathHint ? (
+          <p className="mt-2 text-xs text-muted-foreground">{cli.pathHint}</p>
+        ) : null}
+
+        {cliError ? (
+          <p className="mt-2 text-xs text-destructive" role="alert">
+            {cliError}
+          </p>
+        ) : null}
+
+        <p className="mt-3 text-xs text-muted-foreground">
+          Once installed, run <code className="font-mono">open-science start</code> to launch the
+          backend and open the authenticated URL, then{' '}
+          <code className="font-mono">open-science stop</code> to shut it down.{' '}
+          <code className="font-mono">status</code> and <code className="font-mono">url</code> are
+          also available.
         </p>
       </SettingsSection>
 

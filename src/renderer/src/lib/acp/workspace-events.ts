@@ -1,13 +1,34 @@
 import type { AcpRuntimeEvent, AcpPermissionRequest } from '../../../../shared/acp'
 import type { ArtifactFile, FinalizeRunArtifactsRequest } from '../../../../shared/artifacts'
+import type { ReviewRunRequest } from '../../../../shared/reviewer'
 import { createPreviewFileItem } from '../../pages/workspace/preview-file-item'
 import { getPreviewFormatForFile } from '../../pages/workspace/preview-support'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
+import { isMediaOverflowError } from '../../../../shared/media-overflow'
 import { useSessionStore } from '../../stores/session-store'
+import { useSettingsStore } from '../../stores/settings-store'
 import { createRuntimeStreamId, isAssistantRuntimeChatMessageEvent } from './chat-events'
 
 // Remembers which sessions were marked as waiting during the previous permission sync.
 const pendingPermissionSessionIds = new Set<string>()
+
+// Sessions whose next triggerAutoReview call should be skipped exactly once.
+// Used to suppress the re-review that would otherwise be triggered by the [Auditor] correction turn:
+// the main process broadcasts reviewer:suppress-next-auto-review before sending the correction prompt;
+// the renderer calls suppressNextAutoReview(sessionId) so the correction turn's stop event is ignored.
+const suppressAutoReviewOnceFor = new Set<string>()
+
+// Marks the next triggerAutoReview call for a session as suppressed. Cleared on use (one-shot).
+const suppressNextAutoReview = (sessionId: string): void => {
+  suppressAutoReviewOnceFor.add(sessionId)
+}
+
+// Cancels a pending one-shot suppression. Used when the [Auditor] correction turn fails to send:
+// no stop event will arrive to consume the flag, so it must be cleared to avoid silently skipping
+// the session's next real auto-review.
+const clearSuppressNextAutoReview = (sessionId: string): void => {
+  suppressAutoReviewOnceFor.delete(sessionId)
+}
 
 // Chooses the best user-facing error text from a runtime event.
 const getEventErrorText = (event: AcpRuntimeEvent): string =>
@@ -44,6 +65,62 @@ const openMoleculePreviews = (sessionId: string, artifacts: ArtifactFile[]): voi
         mimeType: artifact.mimeType
       })
     )
+  }
+}
+
+// Assembles a ReviewRunRequest for the last completed agent turn of a session.
+// Returns undefined when no agent turn exists (caller should skip the review).
+// Shared between the auto path (triggerAutoReview) and the manual "Request review" path,
+// so the two can never drift in turn selection or request field construction.
+const assembleReviewRunRequest = (sessionId: string): ReviewRunRequest | undefined => {
+  const sessionState = useSessionStore.getState()
+  const session = sessionState.sessions.find((s) => s.id === sessionId)
+
+  if (!session) return undefined
+
+  // Find the last agent message (the just-completed turn).
+  const lastAgentMessage = [...session.messages].reverse().find((m) => m.role === 'agent')
+
+  if (!lastAgentMessage) return undefined
+
+  return {
+    sessionId,
+    turnMessageId: lastAgentMessage.id,
+    projectId: session.projectId ?? '',
+    mainSessionId: sessionId,
+    model: useSettingsStore.getState().activeModel
+  }
+}
+
+// Triggers a background auto-review for the just-completed turn when autoReviewEnabled is on. The
+// default is off, so a session is auto-reviewed only when the switch was explicitly turned on. Uses
+// the shared assembleReviewRunRequest helper so the auto and manual paths pick the same turn and
+// assemble the same request fields.
+// Fire-and-forget: errors are caught and silently dropped so the main session is never blocked.
+const triggerAutoReview = async (sessionId: string): Promise<void> => {
+  try {
+    // Loop guard: if this session's next review was suppressed (e.g. because the stop comes from
+    // the [Auditor] correction turn), skip exactly this one call and clear the flag.
+    if (suppressAutoReviewOnceFor.has(sessionId)) {
+      suppressAutoReviewOnceFor.delete(sessionId)
+      return
+    }
+
+    const sessionState = useSessionStore.getState()
+    const session = sessionState.sessions.find((s) => s.id === sessionId)
+
+    if (!session) return
+
+    // Auto-review defaults to disabled: run only when the switch was explicitly turned on.
+    if (session.autoReviewEnabled !== true) return
+
+    const request = assembleReviewRunRequest(sessionId)
+
+    if (!request) return
+
+    await window.api.reviewer.run(request)
+  } catch {
+    // Reviewer errors must never surface to the main session.
   }
 }
 
@@ -87,6 +164,11 @@ const applyWorkspaceRuntimeEvent = async (
 
   if (event.kind === 'stop' && event.sessionId) {
     store.finishRun(event.sessionId)
+
+    // Trigger a background review for the just-completed turn.
+    // We read the session state AFTER finishRun so messages are complete.
+    void triggerAutoReview(event.sessionId)
+
     return true
   }
 
@@ -136,7 +218,34 @@ const applyWorkspaceRuntimeEvent = async (
   }
 
   if (event.kind === 'error' && event.sessionId) {
+    // A recoverable request-size overflow shows the neutral "compacting" note ONLY while a recovery is
+    // actually in flight — the workspace runtime flips the session to `compacting` first (its recovery
+    // effect runs before this event is applied). If the session is not compacting, no recovery started
+    // for this overflow (a repeat overflow inside the cooldown, nothing to replay, or a detached
+    // session), so surface a normal error instead of leaving a stuck "Compacting…".
+    const isCompacting = store.sessions.find(
+      (session) => session.id === event.sessionId
+    )?.compacting
+    // Same overflow detection the recovery effect uses (marker first, message as a fallback), so the two
+    // agree on which errors are recoverable.
+    const isOverflow =
+      event.recoverable === 'context-overflow' ||
+      isMediaOverflowError(event.text) ||
+      isMediaOverflowError(event.title)
+
+    if (isOverflow && isCompacting) {
+      return true
+    }
+
     store.failRun(event.sessionId, getEventErrorText(event))
+    return true
+  }
+
+  // Agent stderr/process warnings arrive as session-scoped system warnings. Surface the latest one in
+  // the waiting indicator so a long silent turn (e.g. the agent retrying a slow request) shows a hint
+  // rather than a blank spinner. setAgentStatus no-ops unless the session is still running.
+  if (event.kind === 'system' && event.level === 'warning' && event.sessionId && event.text) {
+    store.setAgentStatus(event.sessionId, event.text)
     return true
   }
 
@@ -175,4 +284,10 @@ const syncWorkspacePermissionState = (requests: AcpPermissionRequest[]): void =>
   }
 }
 
-export { applyWorkspaceRuntimeEvent, syncWorkspacePermissionState }
+export {
+  applyWorkspaceRuntimeEvent,
+  assembleReviewRunRequest,
+  syncWorkspacePermissionState,
+  suppressNextAutoReview,
+  clearSuppressNextAutoReview
+}

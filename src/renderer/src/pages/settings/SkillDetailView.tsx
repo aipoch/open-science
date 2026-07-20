@@ -50,6 +50,10 @@ const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element =
   const name = skill?.name ?? detail?.name ?? ''
   const description = detail?.description ?? skill?.description ?? ''
   const updated = detail ? formatUpdated(detail.updatedAt) : ''
+  // Badge reflects the skill's actual source; imported and personal skills are not "Featured".
+  const source = skill?.source ?? detail?.source
+  const sourceLabel =
+    source === 'imported' ? 'Imported' : source === 'personal' ? 'Personal' : 'Featured'
 
   return (
     <div className="p-5">
@@ -60,7 +64,7 @@ const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element =
           <div className="flex min-w-0 items-center gap-2">
             <h1 className="truncate text-base font-semibold text-foreground">{name}</h1>
             <span className="inline-flex shrink-0 items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-              Featured
+              {sourceLabel}
             </span>
           </div>
         </div>

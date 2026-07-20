@@ -7,6 +7,7 @@ import type {
   ReadArtifactPreviewRequest
 } from '../../shared/artifacts'
 import { resolveDataRoot } from '../storage-root'
+import { withDataRootWrite } from '../storage/migration-state'
 import { ArtifactRepository } from './repository'
 import { ArtifactRunRegistry } from './run-registry'
 
@@ -61,8 +62,10 @@ const createArtifactHandlers = (
 
   return {
     finalizeRunArtifacts: (request) =>
-      withClaimLock(finalizeLocks, request.claimId, () =>
-        finalizeRunArtifacts(repository, runRegistry, request)
+      withDataRootWrite(() =>
+        withClaimLock(finalizeLocks, request.claimId, () =>
+          finalizeRunArtifacts(repository, runRegistry, request)
+        )
       ),
     openFile: async (request) => {
       // Resolve through the repository first so shell.openPath never sees unmanaged locations.

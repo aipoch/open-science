@@ -1,21 +1,77 @@
 import { dialog, type App } from 'electron'
 
-// Whether a data-root migration is copying/verifying/deleting right now. A module-level flag (not a
-// parameter) because the quit guard in the app lifecycle and the migrate IPC handler live in
-// different modules but must agree on a single truth. Set for the whole duration of runDataRootMigration.
-let migrationInProgress = false
+// Two module-level flags (not parameters) because the quit guard, the migrate IPC handler, and the
+// ACP/notebook write paths live in different modules but must agree on a single truth.
+//   - `copying`  drives the before-quit guard: true only while runDataRootMigration is actively copying.
+//   - `pending`  drives the write-gate: true from the moment the copy starts until the switch is
+//     committed (and the app relaunches) or the copy is cancelled/discarded. It stays true across the
+//     copy→commit window — the exact interval during which a prompt or notebook cell writing to the
+//     OLD root would be silently discarded by the commit's delete step.
+let copying = false
+let pending = false
+let activeDataRootWriters = 0
+const writerDrainWaiters = new Set<() => void>()
 
-// Marks the start of a migration. Pair every call with endMigration() in a finally block.
+// Marks the start of a migration copy. Sets both flags. Pair with endMigrationCopy() in a finally.
 export const beginMigration = (): void => {
-  migrationInProgress = true
+  copying = true
+  pending = true
 }
 
-// Marks the end of a migration (success, failure, or cancel).
+// The copy finished (success, failure, or cancel): relax the quit guard, but leave `pending` untouched
+// so a successful-but-uncommitted copy keeps blocking writes until commit or discard resolves it.
+export const endMigrationCopy = (): void => {
+  copying = false
+}
+
+// The migration is fully resolved without committing (copy failed/cancelled, discarded, or a
+// switchover failure left the app on the old root): clear both flags so normal writes resume.
+export const clearMigrationPending = (): void => {
+  pending = false
+  copying = false
+}
+
+// Clears both flags. Used by the quit-guard confirm path (the user is quitting anyway).
 export const endMigration = (): void => {
-  migrationInProgress = false
+  copying = false
+  pending = false
 }
 
-export const isMigrationInProgress = (): boolean => migrationInProgress
+export const isMigrationInProgress = (): boolean => copying
+
+// True whenever a copy is staged-but-not-yet-committed; gates ACP prompts and notebook cell runs so
+// they can't write into the old root during the copy→commit window.
+export const isMigrationPending = (): boolean => pending
+
+// Throws the standard user-facing error when a migration is pending. Called at every data-root write
+// entry point (ACP prompt, notebook run/execute, uploads) so no new write can land in the old root
+// during the copy→commit window and be lost on the commit's delete.
+export const assertNoMigrationPending = (): void => {
+  if (pending) {
+    throw new Error(
+      'Open Science is moving your data. Wait for the move to finish before running this.'
+    )
+  }
+}
+
+export const withDataRootWrite = async <Result>(write: () => Promise<Result>): Promise<Result> => {
+  assertNoMigrationPending()
+  activeDataRootWriters += 1
+  try {
+    return await write()
+  } finally {
+    activeDataRootWriters -= 1
+    if (activeDataRootWriters === 0) {
+      for (const resolve of writerDrainWaiters) resolve()
+      writerDrainWaiters.clear()
+    }
+  }
+}
+
+export const waitForDataRootWriters = (): Promise<void> => {
+  if (activeDataRootWriters === 0) return Promise.resolve()
+  return new Promise((resolve) => writerDrainWaiters.add(resolve))
+}
 
 // Native confirm shown when the user tries to quit mid-migration. Returns true iff they chose to
 // quit anyway. Kept as the injectable default so the guard's control flow stays unit-testable

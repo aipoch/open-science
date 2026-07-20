@@ -49,9 +49,23 @@ const fieldErrorClassName = 'text-xs text-destructive'
 // Static field guidance stays close to the form while FieldHelp remains content-agnostic.
 const BASE_URL_HELP_CONTENT = (
   <>
-    Only Anthropic <code>/v1/messages</code>–compatible gateways are supported (an Anthropic-format
-    endpoint, not an OpenAI-compatible one). Give the root — a trailing <code>/v1</code> is added
-    automatically.
+    The gateway root; a trailing <code>/v1</code> is added automatically. Choose the API format
+    below to match the endpoint.
+  </>
+)
+
+// Human labels for the provider API format (which chat endpoint the gateway speaks).
+const API_FORMAT_LABELS: Record<'anthropic' | 'openai' | 'both', string> = {
+  anthropic: 'Anthropic (/v1/messages)',
+  openai: 'OpenAI (/v1/chat/completions)',
+  both: 'Both'
+}
+
+const API_FORMAT_HELP_CONTENT = (
+  <>
+    Which chat API this gateway speaks. Claude Code only works with Anthropic{' '}
+    <code>/v1/messages</code>; OpenCode works with either. A provider is only selectable under an
+    agent framework that supports its format.
   </>
 )
 
@@ -223,6 +237,30 @@ const ProviderForm = ({
                 {errors.baseUrl}
               </p>
             ) : null}
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1">
+              <span className={fieldLabelClassName}>API format</span>
+              <FieldHelp content={API_FORMAT_HELP_CONTENT} />
+            </div>
+            <Select
+              value={value.apiType}
+              onValueChange={(apiType) =>
+                onChange({ apiType: apiType as ProviderFormValue['apiType'] })
+              }
+            >
+              <SelectTrigger aria-label="API format" disabled={disabled}>
+                <span>{API_FORMAT_LABELS[value.apiType]}</span>
+              </SelectTrigger>
+              <SelectContent>
+                {(['anthropic', 'openai', 'both'] as const).map((apiType) => (
+                  <SelectItem key={apiType} value={apiType}>
+                    {API_FORMAT_LABELS[apiType]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {keyField}

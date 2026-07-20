@@ -160,4 +160,33 @@ describe('normalizeSessionFile with activities', () => {
     expect(full?.permissionProfile).toBe('full')
     expect(unknown?.permissionProfile).toBe('ask')
   })
+
+  it('round-trips the auto-review toggle and defaults older sessions to disabled', () => {
+    const disabled = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      autoReviewEnabled: false
+    })
+    const enabled = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      autoReviewEnabled: true
+    })
+    // A session file written before the reviewer feature has no field at all.
+    const legacy = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined
+    })
+    // A corrupt non-boolean value is treated as the safe default (disabled), not preserved.
+    const corrupt = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      autoReviewEnabled: 'nope'
+    })
+
+    expect(disabled?.autoReviewEnabled).toBe(false)
+    expect(enabled?.autoReviewEnabled).toBe(true)
+    expect(legacy?.autoReviewEnabled).toBe(false)
+    expect(corrupt?.autoReviewEnabled).toBe(false)
+  })
 })

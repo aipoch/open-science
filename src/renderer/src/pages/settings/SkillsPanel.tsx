@@ -158,8 +158,8 @@ const SkillsPanel = ({ view, onNavigate }: SkillsPanelProps): React.JSX.Element 
             <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'upload' })}>
               <FileUp className="size-4 shrink-0" aria-hidden="true" />
               <span className="flex flex-col">
-                <span>Upload a skill</span>
-                <span className="text-xs text-muted-foreground">Pick a SKILL.md file</span>
+                <span>Upload skills</span>
+                <span className="text-xs text-muted-foreground">Pick SKILL.md files</span>
               </span>
             </DropdownMenuItem>
             <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'import' })}>

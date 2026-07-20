@@ -38,7 +38,7 @@ const CHECK_LABELS: Array<{ id: EnvironmentCheckId; label: string }> = [
   { id: 'secure-storage', label: 'Secure credential storage' },
   { id: 'install-network', label: 'Installation network' },
   { id: 'python', label: 'Python for Notebook (optional)' },
-  { id: 'claude', label: 'Claude runtime' }
+  { id: 'agent', label: 'Agent runtime' }
 ]
 
 const CHECK_ICONS = {
@@ -47,7 +47,7 @@ const CHECK_ICONS = {
   'secure-storage': KeyRound,
   'install-network': Wifi,
   python: TerminalSquare,
-  claude: TerminalSquare
+  agent: TerminalSquare
 } satisfies Record<EnvironmentCheckId, typeof MonitorCog>
 
 const STATUS_COPY = {
@@ -141,7 +141,7 @@ const EnvironmentCheckRow = ({ check }: { check: EnvironmentCheckItem }): React.
 }
 
 // Unframed environment summary rendered inside the onboarding work Card: a re-check control, the
-// per-requirement checklist, and (when Claude is the only gap) a one-click app-managed install with
+// per-requirement checklist, and (when the runtime is the only gap) a one-click app-managed install with
 // progress and a copyable technical log. It intentionally carries no card chrome of its own so the
 // wizard keeps a single visible work surface.
 const EnvironmentSetupCard = ({
@@ -187,7 +187,11 @@ const EnvironmentSetupCard = ({
         aria-live="polite"
       >
         {environment
-          ? environment.checks.map((check) => <EnvironmentCheckRow key={check.id} check={check} />)
+          ? // Both agent runtimes share id 'agent', so key by index (+id) to avoid a duplicate-key
+            // collision that could mis-render or skip an update on one of the two runtime rows.
+            environment.checks.map((check, index) => (
+              <EnvironmentCheckRow key={`${check.id}-${index}`} check={check} />
+            ))
           : CHECK_LABELS.map((check) => <PendingCheckRow key={check.id} {...check} />)}
       </ul>
 
@@ -197,7 +201,7 @@ const EnvironmentSetupCard = ({
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-sm font-medium text-foreground">
-                  Claude is the only missing item
+                  The agent runtime is the only missing item
                 </p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   Install it into Open Science using the {sourceLabel}, with the other trusted
@@ -235,7 +239,7 @@ const EnvironmentSetupCard = ({
         >
           <div className="flex items-center justify-between text-xs">
             <span className="font-medium text-foreground">
-              {structuredProgress?.label ?? 'Installing Claude runtime'}
+              {structuredProgress?.label ?? 'Installing agent runtime'}
             </span>
             <span className="text-muted-foreground">
               {progress !== undefined ? `${progress}%` : 'In progress'}

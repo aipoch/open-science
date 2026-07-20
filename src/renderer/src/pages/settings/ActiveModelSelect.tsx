@@ -6,7 +6,12 @@ import {
   SelectLabel,
   SelectTrigger
 } from '@/components/ui/select'
-import { selectProviderModelOptions, useSettingsStore } from '@/stores/settings-store'
+import {
+  selectFrameworkApiEndpoints,
+  selectProviderModelOptions,
+  useSettingsStore
+} from '@/stores/settings-store'
+import { isProviderUsableByFramework } from '../../../../shared/settings'
 import { ProviderKindIcon } from './provider-icons'
 import { providerKindKey } from './provider-form-value'
 
@@ -22,10 +27,20 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
   const activeModel = useSettingsStore((state) => state.activeModel)
   const setActiveProvider = useSettingsStore((state) => state.setActiveProvider)
+  const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
+  const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
 
   const options = selectProviderModelOptions(providers)
 
   if (options.length === 0) return null
+
+  // A provider is selectable only when it can actually drive the current framework (endpoint + type;
+  // a Local Claude provider is Claude-only).
+  const isCompatible = (provider: (typeof providers)[number]): boolean =>
+    isProviderUsableByFramework(
+      { apiType: provider.apiType ?? 'anthropic', type: provider.type },
+      { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
+    )
 
   const activeKeyModel = activeModel ?? ''
   const current = options.find(
@@ -66,25 +81,37 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
         </span>
       </SelectTrigger>
       <SelectContent>
-        {groups.map((group) => (
-          <SelectGroup key={group.provider.id}>
-            <SelectLabel>{group.provider.name}</SelectLabel>
-            {group.options.map((option) => (
-              <SelectItem
-                key={`${option.providerId}${SEP}${option.model}`}
-                value={`${option.providerId}${SEP}${option.model}`}
-                icon={
-                  <ProviderKindIcon
-                    kindKey={providerKindKey(option.providerType, option.vendorId)}
-                    className="size-4"
-                  />
-                }
-              >
-                {option.model || option.providerName}
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        ))}
+        {groups.map((group) => {
+          const compatible = isCompatible(group.provider)
+
+          return (
+            <SelectGroup key={group.provider.id}>
+              <SelectLabel>
+                {group.provider.name}
+                {compatible ? null : (
+                  <span className="ml-1 font-normal text-muted-foreground">
+                    · not usable with this framework
+                  </span>
+                )}
+              </SelectLabel>
+              {group.options.map((option) => (
+                <SelectItem
+                  key={`${option.providerId}${SEP}${option.model}`}
+                  value={`${option.providerId}${SEP}${option.model}`}
+                  disabled={!compatible}
+                  icon={
+                    <ProviderKindIcon
+                      kindKey={providerKindKey(option.providerType, option.vendorId)}
+                      className="size-4"
+                    />
+                  }
+                >
+                  {option.model || option.providerName}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          )
+        })}
       </SelectContent>
     </Select>
   )

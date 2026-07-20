@@ -20,7 +20,12 @@ import type {
   OpenArtifactFileRequest,
   ReadArtifactPreviewRequest
 } from '../shared/artifacts'
-import type { SaveBlobFileRequest, SaveBlobFileResult } from '../shared/file-save'
+import type {
+  SaveBlobFileRequest,
+  SaveBlobFileResult,
+  SaveManagedFileRequest,
+  SaveManagedFileResult
+} from '../shared/file-save'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
   AppendNotebookCodeCellRequest,
@@ -68,10 +73,12 @@ import type {
   DeleteProviderRequest,
   EnvironmentCheckResult,
   InstallClaudeRequest,
+  InstallOpencodeRequest,
   Preflight,
   RefreshProviderModelsRequest,
   RefreshProviderModelsResult,
   SetActiveProviderRequest,
+  SetAgentFrameworkRequest,
   SetSkillEnabledRequest,
   SettingsSnapshot,
   SkillDetailView,
@@ -82,8 +89,10 @@ import type {
   ImportSkillRequest,
   ImportSkillResult,
   ImportSkillZipRequest,
+  ImportSkillZipBatchRequest,
+  ImportSkillZipBatchResult,
   PreviewSkillZipRequest,
-  SkillBundlePreview,
+  SkillBundlePreviewResult,
   ScanRepoRequest,
   ScanRepoResult,
   ConnectorsSnapshot,
@@ -110,6 +119,7 @@ import type {
   MigrationProgress,
   StorageInfo
 } from '../shared/storage'
+import type { CliLauncherStatus } from '../shared/cli'
 import type { AppInfo, UpdateStatus } from '../shared/update'
 import type {
   DeleteUploadRequest,
@@ -117,12 +127,14 @@ import type {
   StageUploadFilesRequest,
   UploadedAttachment
 } from '../shared/uploads'
+import type { ReviewWithChecks, ReviewRunRequest, ReviewUpdateEvent } from '../shared/reviewer'
 
 type RemoveListener = () => void
 type AcpListener<Payload> = (payload: Payload) => void
 
 interface OpenScienceAPI {
   saveBlobFile(request: SaveBlobFileRequest): Promise<SaveBlobFileResult>
+  saveManagedFile(request: SaveManagedFileRequest): Promise<SaveManagedFileResult>
   // Host platform (process.platform), e.g. 'win32' | 'darwin' | 'linux'.
   platform: string
   getRuntimeVersions(): {
@@ -136,6 +148,7 @@ interface OpenScienceAPI {
     disconnect(): Promise<AcpStateSnapshot>
     createSession(request?: AcpCreateSessionRequest): Promise<AcpCreateSessionResponse>
     resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
+    resetSessionContext(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
     sendPrompt(request: AcpPromptRequest): Promise<AcpStateSnapshot>
     cancel(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot>
     deleteSession(request: AcpDeleteSessionRequest): Promise<AcpStateSnapshot>
@@ -160,10 +173,15 @@ interface OpenScienceAPI {
     isNpmAvailable(): Promise<boolean>
     checkEnvironment(): Promise<EnvironmentCheckResult>
     detectClaude(): Promise<ClaudeDetectResult>
+    detectOpencode(): Promise<SettingsSnapshot>
     installClaude(request: InstallClaudeRequest): Promise<ClaudeInstallResult>
+    installOpencode(request: InstallOpencodeRequest): Promise<ClaudeInstallResult>
+    uninstallClaude(): Promise<SettingsSnapshot>
+    uninstallOpencode(): Promise<SettingsSnapshot>
     upsertProvider(request: UpsertProviderRequest): Promise<SettingsSnapshot>
     deleteProvider(request: DeleteProviderRequest): Promise<SettingsSnapshot>
     setActiveProvider(request: SetActiveProviderRequest): Promise<SettingsSnapshot>
+    setAgentFramework(request: SetAgentFrameworkRequest): Promise<SettingsSnapshot>
     validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult>
     refreshProviderModels(
       request: RefreshProviderModelsRequest
@@ -177,7 +195,8 @@ interface OpenScienceAPI {
     deleteSkill(request: DeleteSkillRequest): Promise<SkillView[]>
     importSkill(request: ImportSkillRequest): Promise<ImportSkillResult>
     importSkillZip(request: ImportSkillZipRequest): Promise<ImportSkillResult>
-    previewSkillZip(request: PreviewSkillZipRequest): Promise<SkillBundlePreview>
+    importSkillZipBatch(request: ImportSkillZipBatchRequest): Promise<ImportSkillZipBatchResult>
+    previewSkillZip(request: PreviewSkillZipRequest): Promise<SkillBundlePreviewResult>
     scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult>
     listConnectors(): Promise<ConnectorsSnapshot>
     getConnectorDetail(id: string): Promise<ConnectorDetailView>
@@ -200,6 +219,11 @@ interface OpenScienceAPI {
   }
   github: {
     getStars(): Promise<number | null>
+  }
+  cli: {
+    getStatus(): Promise<CliLauncherStatus>
+    install(): Promise<CliLauncherStatus>
+    uninstall(): Promise<CliLauncherStatus>
   }
   update: {
     getAppInfo(): Promise<AppInfo>
@@ -295,6 +319,30 @@ interface OpenScienceAPI {
     // Marks the one-time legacy-data-move prompt as answered (declined / keep-here) so it's not shown again.
     dismissLegacyMovePrompt(): Promise<void>
     onProgress(listener: AcpListener<MigrationProgress>): RemoveListener
+  }
+  reviewer: {
+    // Trigger a background review for the given turn. Fire-and-forget; updates come via onUpdated.
+    run(request: ReviewRunRequest): Promise<void>
+    // Load persisted reviews for a session (called at workspace startup).
+    getForSession(sessionId: string): Promise<ReviewWithChecks[]>
+    // Subscribe to review lifecycle/findings updates pushed from the main process.
+    onUpdated(listener: AcpListener<ReviewUpdateEvent>): RemoveListener
+    // Subscribe to loop-guard events: suppress (or, when clear=true, un-suppress) the next
+    // auto-review for the given session.
+    onSuppressNextAutoReview(
+      listener: AcpListener<{ sessionId: string; clear?: boolean }>
+    ): RemoveListener
+    // Fix loop lock: fired when the loop starts (lock composer) / ends or is aborted (unlock).
+    onFixLoopStart(listener: AcpListener<{ sessionId: string }>): RemoveListener
+    onFixLoopEnd(listener: AcpListener<{ sessionId: string }>): RemoveListener
+    // Sends an abort request to stop the running fix loop for a session.
+    abortFixLoop(sessionId: string): Promise<void>
+  }
+  window: {
+    // Closes the focused window (the Cmd+W / Ctrl+W fallback when no preview panel is open).
+    close(): Promise<void>
+    // Fires when Cmd+W / Ctrl+W is pressed; the renderer decides pane-vs-window.
+    onCloseActivePane(listener: () => void): RemoveListener
   }
 }
 

@@ -7,6 +7,7 @@ import type {
   PromptResponse,
   RequestPermissionRequest,
   RequestPermissionResponse,
+  SessionConfigOption,
   SessionModeState,
   SessionNotification
 } from '@agentclientprotocol/sdk'
@@ -37,33 +38,53 @@ import {
   type PermissionProfileId,
   type SessionPermissionProfileState
 } from '../../shared/permission-profiles'
-import { spawnClaudeAgentAcp, type SpawnClaudeAgentAcpOptions } from './agent-process'
+import {
+  claudeCodeFramework,
+  type AgentFramework,
+  type ResolvedAgentBackend
+} from '../agent-framework'
 import { createLogger } from '../logger'
+import { terminateProcessTree } from '../process-tree'
 import {
   extractProviderToolName,
   extractToolFailureText,
   toAcpRuntimeEvent
 } from './runtime-events'
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
+import { matchSessionModelOption } from './session-config'
+import { describePromptError } from './prompt-error'
 import { AcpPermissionBroker } from './permission-broker'
+import { isMcpToolName } from './permission-policy'
+import { applyCurrentModeUpdate } from './permission-profile-controller'
 import {
-  applyCurrentModeUpdate,
-  resolvePermissionProfileApplication
-} from './permission-profile-controller'
-import { createArtifactMcpServerConfig } from '../artifacts/mcp-server'
+  ARTIFACT_MCP_SERVER_NAME,
+  createArtifactMcpServerConfig,
+  type ArtifactMcpEnvironment
+} from '../artifacts/mcp-server'
+import { AgentMcpHttpHost } from './mcp-http-host'
 import { ArtifactRepository, getArtifactCurrentRunFilePath } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import {
+  NOTEBOOK_MCP_SERVER_NAME,
   NOTEBOOK_SYSTEM_PROMPT_APPEND,
   createNotebookMcpServerConfig,
+  type NotebookMcpEnvironment,
   type NotebookRpcConnection
 } from '../notebook/mcp-server'
 import { getNotebookSessionRoot } from '../notebook/repository'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
+import { withDataRootWrite } from '../storage/migration-state'
+import { opencodeStorageDir } from '../agent-framework/opencode'
 import type { UploadRepository } from '../uploads/repository'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, ArtifactReference } from '../../shared/artifacts'
-import { buildImageContentData, extractPdfText } from '../uploads/attachment-media'
+import { isMediaOverflowError } from '../../shared/media-overflow'
+import {
+  buildImageContentData,
+  canInlineImageInSession,
+  extractPdfText,
+  MAX_SESSION_INLINE_IMAGE_BYTES
+} from '../uploads/attachment-media'
 
 type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateSnapshot) => void
@@ -76,18 +97,28 @@ type AcpRuntimeOptions = {
   defaultCwd: string
   callbacks?: AcpRuntimeCallbacks
   spawnAgent?: () => ChildProcessWithoutNullStreams
-  // Resolves the current active-provider spawn config at connect time so switching providers takes
-  // effect on reconnect. Ignored when an explicit spawnAgent is provided (tests inject that directly).
-  resolveSpawnConfig?: () => Promise<SpawnClaudeAgentAcpOptions> | SpawnClaudeAgentAcpOptions
+  // Resolves the active agent backend (framework + spawn inputs) at connect time so a framework or
+  // provider switch takes effect on reconnect. Ignored when an explicit spawnAgent is provided (tests
+  // inject that directly).
+  resolveBackend?: () => Promise<ResolvedAgentBackend> | ResolvedAgentBackend
   artifacts?: AcpRuntimeArtifactOptions
   uploads?: AcpRuntimeUploadOptions
   notebook?: AcpRuntimeNotebookOptions
   skills?: AcpRuntimeSkillsOptions
+  // The agent backend to drive. Defaults to Claude Code; selecting another (opencode) swaps only the
+  // framework-coupled behavior (spawn, session meta, permission-mode mapping) via AgentFramework.
+  framework?: AgentFramework
+  // Local http host for the artifact/notebook MCP servers, used for frameworks that reject stdio MCP
+  // (opencode). Absent ⇒ those frameworks run without artifact/notebook tooling.
+  mcpHttpHost?: AgentMcpHttpHost
   // Bounds the network-bound reconnect+resume so Resume always resolves; the fast attached-session
   // path is never timed. Injectable timer mirrors the approval broker so tests stay deterministic.
   resumeTimeoutMs?: number
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   clearTimer?: (handle: ReturnType<typeof setTimeout>) => void
+  // Per-session cumulative inlined-image budget in base64 bytes. Defaults to MAX_SESSION_INLINE_IMAGE_BYTES;
+  // injectable so tests can drive the degrade-to-file path with small fixtures.
+  inlineImageBudgetBytes?: number
 }
 
 // Turn-scoped skill force-load hooks, wired from the settings service. Optional so tests that construct
@@ -208,6 +239,13 @@ class AcpRuntime {
   private events: AcpRuntimeEvent[] = []
   private eventSequence = 0
   private agentProcess: ChildProcessWithoutNullStreams | undefined
+  // Latched by shutdown() on app quit. A connect can be mid-spawn (resolveSpawnConfig is async) when
+  // quit fires, so this lets the post-spawn path kill a child that was created after killAgentProcess ran.
+  private shuttingDown = false
+  // AND-accumulated reaped result of the tree kills performed during the current teardown. Reset to true
+  // at the start of shutdownForQuit/shutdownForUpdateGate, then narrowed by each terminateProcessTree so
+  // those methods can report whether the agent tree was cleanly reaped (vs a degraded taskkill fallback).
+  private lastTreeKillReaped = true
   private connection: ClientConnection | undefined
   private connectInFlight: Promise<AcpStateSnapshot> | undefined
   private connectionGeneration = 0
@@ -216,12 +254,36 @@ class AcpRuntime {
   private supportsSessionResume = false
   private readonly sessions = new Map<string, ActiveSession>()
   private readonly sessionCwds = new Map<string, string>()
+  // Running total of base64 image bytes this session has inlined. The agent replays full history each
+  // turn, so this accumulates; once it nears the request ceiling further images degrade to file links
+  // (see canInlineImageInSession) so a long conversation can never overflow the request or break
+  // compaction with `media_unstrippable`. Cleared on session delete and on disconnect.
+  private readonly sessionInlineImageBytes = new Map<string, number>()
+  // Per-session names of the MCP servers the agent was actually given (from createMcpServers), so
+  // MCP-originated tool calls can be recognized across frameworks (Claude's mcp__<server>__<tool> vs
+  // opencode's <server>_<tool>) and never conservatively auto-approved. Derived per session rather
+  // than hardcoded so it can't drift from what createMcpServers wires up.
+  private readonly sessionMcpServerNames = new Map<string, string[]>()
+  // Ephemeral background reviewer sessions (built via buildReviewerSession). They are deliberately kept
+  // out of `this.sessions` — not tracked in the snapshot, not user-facing — but their tool calls still
+  // trigger permission requests over the shared agent connection. This set lets the permission handler
+  // recognise them and auto-approve without prompting (design §3: background review, no user interaction).
+  private readonly reviewerSessionIds = new Set<string>()
   // A replaced agent's own session id -> the app-facing id it was adopted under (after a provider
   // switch), so agent-origin events/permissions relabel into the conversation the renderer tracks.
   private readonly agentToAppSessionId = new Map<string, string>()
   // Per-session artifact/notebook storage project; keeps run activation and claims in the same subtree.
   private readonly sessionProjectNames = new Map<string, string>()
+  // The framework each session last ran under. Deliberately NOT cleared on disconnect so a framework
+  // switch (which disconnects) can still tell that an existing session belongs to the other framework
+  // and skip a doomed resume. Cleaned per-session on delete.
+  private readonly sessionFrameworks = new Map<string, string>()
   private readonly promptInFlightSessionIds = new Set<string>()
+  // Monotonic per-turn token and the token of the turn that currently owns each app session id. When an
+  // overflow-recovery replay reuses a session id, its start bumps the token; the abandoned turn's finally
+  // then sees a newer owner and leaves the replay's shared state (lock, artifact run) untouched.
+  private promptTurnSequence = 0
+  private readonly currentPromptTurnBySession = new Map<string, number>()
   private readonly permissionProfiles = new Map<string, SessionPermissionProfileState>()
   // A provider change requested while a prompt was running, applied when the session next goes idle.
   private pendingProviderReconnect = false
@@ -231,8 +293,15 @@ class AcpRuntime {
   private readonly callbacks: AcpRuntimeCallbacks
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
   private readonly skillsHooks: AcpRuntimeSkillsOptions | undefined
+  // Mutable: refreshed from resolveBackend on each connect so a framework switch applies on reconnect.
+  private framework: AgentFramework
+  private readonly mcpHttpHost: AgentMcpHttpHost | undefined
+  // Model to apply per session via the ACP model configOption (opencode); undefined for env-driven
+  // frameworks (Claude). Refreshed from the resolved backend on each connect.
+  private pendingSessionModel: string | undefined
   // Bounded resume network timeout + injectable timers (defaults to real setTimeout/clearTimeout).
   private readonly resumeTimeoutMs: number
+  private readonly inlineImageBudgetBytes: number
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void
   private readonly artifactOptions: AcpRuntimeArtifactOptions | undefined
@@ -241,6 +310,9 @@ class AcpRuntime {
   private readonly artifactRunRegistry: ArtifactRunRegistry | undefined
   private readonly uploadRepository: UploadRepository | undefined
   private readonly artifactSessionIds = new Map<string, string>()
+  // app session id -> the notebook routing id registered with the http MCP host, so it can be
+  // unregistered on session delete (the artifact routing id is tracked in artifactSessionIds).
+  private readonly notebookRoutingIds = new Map<string, string>()
   private artifactSessionSequence = 0
   private artifactRunSequence = 0
   private notebookSessionSequence = 0
@@ -254,7 +326,10 @@ class AcpRuntime {
     this.callbacks = options.callbacks ?? {}
     this.spawnAgent = options.spawnAgent
     this.skillsHooks = options.skills
+    this.framework = options.framework ?? claudeCodeFramework
+    this.mcpHttpHost = options.mcpHttpHost
     this.resumeTimeoutMs = options.resumeTimeoutMs ?? 30_000
+    this.inlineImageBudgetBytes = options.inlineImageBudgetBytes ?? MAX_SESSION_INLINE_IMAGE_BYTES
     this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
     this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle))
     this.artifactOptions = options.artifacts
@@ -323,7 +398,7 @@ class AcpRuntime {
     session: ActiveSession,
     profile: PermissionProfileId
   ): Promise<void> {
-    const application = resolvePermissionProfileApplication(profile, session.modes)
+    const application = this.framework.mapPermissionProfile(profile, session.modes)
 
     if (application.modeId && application.modeId !== session.modes?.currentModeId) {
       if (!this.connection) throw new Error('ACP connection is not available.')
@@ -341,6 +416,38 @@ class AcpRuntime {
       effectiveMode: application.state.currentModeId,
       autoReviewStrategy: application.state.autoReviewStrategy
     })
+  }
+
+  // Applies the active model to a freshly built/resumed session via the ACP model configOption, for
+  // frameworks that select the model over the protocol (opencode). No-op for env-driven frameworks
+  // (pendingSessionModel undefined) or when the agent advertises no matching model option — the agent
+  // then keeps its own default. Best-effort: a failure is logged, never fatal to the session.
+  private async applySessionModel(session: ActiveSession): Promise<void> {
+    if (!this.pendingSessionModel || !this.connection) return
+
+    const configOptions = (
+      session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } }
+    ).newSessionResponse?.configOptions
+    const selection = matchSessionModelOption(configOptions, this.pendingSessionModel)
+
+    if (!selection) {
+      log.info('no matching session model option', { desiredModel: this.pendingSessionModel })
+      return
+    }
+
+    try {
+      await this.connection.agent.request(acp.methods.agent.session.setConfigOption, {
+        sessionId: session.sessionId,
+        configId: selection.configId,
+        value: selection.value
+      })
+      log.info('session model applied', { sessionId: session.sessionId, model: selection.value })
+    } catch (error) {
+      log.warn('set session model failed', {
+        sessionId: session.sessionId,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
   }
 
   // Starts a fresh agent process connection and initializes protocol capabilities.
@@ -375,7 +482,28 @@ class AcpRuntime {
     log.info('connecting agent', { cwd: this.cwd, generation })
 
     try {
-      this.agentProcess = await this.spawnAgentProcess()
+      const agentProcess = await this.spawnAgentProcess()
+
+      // spawnAgentProcess resolves the provider config asynchronously, so the connection may have been
+      // torn down or superseded during the spawn: a quit latched shuttingDown, or any teardown/reconnect
+      // bumped the generation past ours (e.g. the pre-update-install gate calls disconnect()). Either way
+      // this freshly-spawned child was never assigned, so the teardown that ran saw no process to reap —
+      // tree-kill it now and abort, or it would outlive that teardown as an orphan holding file handles.
+      // Keying off the generation (not just shuttingDown) lets the NON-LATCHING update gate collect a
+      // late spawn without holding a shuttingDown latch it might never release if it is itself abandoned
+      // on timeout. Awaited (not a bare kill) so a teardown that awaits this in-flight connect does not
+      // resolve before the child's whole tree is reaped on Windows.
+      if (this.shuttingDown || generation !== this.connectionGeneration) {
+        const result = await terminateProcessTree(agentProcess, undefined, log)
+        this.lastTreeKillReaped = this.lastTreeKillReaped && result.reaped
+        throw new Error(
+          this.shuttingDown
+            ? 'ACP runtime is shutting down.'
+            : 'ACP connection superseded during spawn.'
+        )
+      }
+
+      this.agentProcess = agentProcess
       this.attachAgentProcessEvents(this.agentProcess)
 
       const stream = acp.ndJsonStream(
@@ -462,16 +590,17 @@ class AcpRuntime {
     const artifactSessionId = this.createArtifactSessionId()
     const notebookSessionId = this.createNotebookSessionId()
 
+    const mcpServers = await this.createMcpServers({
+      artifactSessionId,
+      notebookSessionId,
+      sessionCwd,
+      projectName
+    })
     const session = await connection.agent
       .buildSession({
         cwd: sessionCwd,
-        mcpServers: await this.createMcpServers({
-          artifactSessionId,
-          notebookSessionId,
-          sessionCwd,
-          projectName
-        }),
-        ...this.createSessionMeta()
+        mcpServers,
+        ...this.buildSessionMetaArg()
       })
       .start()
 
@@ -486,9 +615,13 @@ class AcpRuntime {
       throw error
     }
 
+    await this.applySessionModel(session)
+
     this.sessions.set(session.sessionId, session)
     this.sessionCwds.set(session.sessionId, sessionCwd)
+    this.sessionMcpServerNames.set(session.sessionId, this.mcpServerNamesOf(mcpServers))
     this.sessionProjectNames.set(session.sessionId, projectName)
+    this.sessionFrameworks.set(session.sessionId, this.framework.id)
     this.rememberArtifactSession(session.sessionId, artifactSessionId)
     this.rememberNotebookSession(session.sessionId, notebookSessionId)
     this.currentSessionId = session.sessionId
@@ -512,7 +645,8 @@ class AcpRuntime {
     appSessionId: string,
     session: ActiveSession,
     cwd: string,
-    projectName: string
+    projectName: string,
+    mcpServerNames: string[]
   ): void {
     this.sessions.set(appSessionId, session)
 
@@ -521,7 +655,9 @@ class AcpRuntime {
     }
 
     this.sessionCwds.set(appSessionId, cwd)
+    this.sessionMcpServerNames.set(appSessionId, mcpServerNames)
     this.sessionProjectNames.set(appSessionId, projectName)
+    this.sessionFrameworks.set(appSessionId, this.framework.id)
     this.rememberArtifactSession(appSessionId, appSessionId)
     this.rememberNotebookSession(appSessionId, appSessionId)
     this.currentSessionId = appSessionId
@@ -558,6 +694,38 @@ class AcpRuntime {
     // The reconnect + session/resume handshake spawns a fresh agent and is network-bound, so it is
     // wrapped in a bounded timeout that tears down the half-open connection if the agent stalls.
     return this.resumeSessionWithTimeout(request, sessionCwd, projectName)
+  }
+
+  // Forcibly drops the agent-side context for a session whose accumulated history can no longer be sent
+  // — chiefly when inlined media pushed the request past the provider's size limit and the backend's own
+  // compaction fails with `media_unstrippable`. Disposes the current agent session and adopts a brand-new
+  // one under the SAME app id, resetting the per-session inline-image budget so a replayed text-only
+  // transcript starts clean. Returns contextReset so the caller replays a bounded transcript into the
+  // next prompt (the app-level equivalent of compaction, which — unlike the backend's — drops all media).
+  async resetSessionContext(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
+    const sessionCwd = resolve(request.cwd || this.cwd || this.options.defaultCwd)
+    const projectName = this.normalizeProjectName(request.projectName)
+    const connection = await this.ensureConnected(sessionCwd)
+
+    // Tear down the currently attached agent session (if any) before adopting a replacement, dropping
+    // its reverse routing so late events from the old agent session can no longer target this app id.
+    const attached = this.sessions.get(request.sessionId)
+
+    if (attached) {
+      attached.dispose()
+      this.agentToAppSessionId.delete(attached.sessionId)
+      this.sessions.delete(request.sessionId)
+    }
+
+    // The fresh agent session holds no history, so the accumulated media is gone; start its budget clean.
+    this.sessionInlineImageBytes.delete(request.sessionId)
+
+    // Release the failed turn's in-flight lock now. Its own `finally` clears it too, but that runs only
+    // after async artifact cleanup, so the recovery resend that follows this reset would otherwise race
+    // it and be rejected with "An ACP prompt is already running for this session".
+    this.promptInFlightSessionIds.delete(request.sessionId)
+
+    return this.adoptFreshSession(connection, request, sessionCwd, projectName)
   }
 
   // Races the network-bound resume against a timeout so a stalled agent handshake cannot hang Resume
@@ -606,61 +774,49 @@ class AcpRuntime {
       throw new Error('ACP agent does not support session resume.')
     }
 
+    // A session created under a different framework can never be resumed by the current agent — each
+    // framework keeps its own session store, so the request is guaranteed to fail and only makes the
+    // agent log a scary internal error. Skip straight to adopting a fresh session (context still
+    // resets, so the caller replays the transcript) when we know it last ran under another framework.
+    const priorFramework = this.sessionFrameworks.get(request.sessionId)
+
+    if (priorFramework && priorFramework !== this.framework.id) {
+      log.info('skipping cross-framework resume; adopting a fresh session', {
+        sessionId: request.sessionId,
+        from: priorFramework,
+        to: this.framework.id
+      })
+
+      return this.adoptFreshSession(connection, request, sessionCwd, projectName)
+    }
+
     // Resumed sessions already have stable ids, so the artifact session mirrors the runtime session id.
+    const mcpServers = await this.createMcpServers({
+      artifactSessionId: request.sessionId,
+      notebookSessionId: request.sessionId,
+      sessionCwd,
+      projectName
+    })
     let resumeResponse
     try {
       resumeResponse = await connection.agent.request(acp.methods.agent.session.resume, {
         sessionId: request.sessionId,
         cwd: sessionCwd,
-        mcpServers: await this.createMcpServers({
-          artifactSessionId: request.sessionId,
-          notebookSessionId: request.sessionId,
-          sessionCwd,
-          projectName
-        }),
-        ...this.createSessionMeta()
+        mcpServers,
+        ...this.buildSessionMetaArg()
       })
     } catch (error) {
       if (!isUnresumableSessionError(error)) throw error
 
-      // The agent could not resume this session (it was replaced by a provider switch, or an app
-      // restart spawned a fresh agent process that no longer holds it — surfacing as -32002 not-found
-      // or a generic -32603 Internal error). Rather than dead-end the thread, adopt a brand-new agent
-      // session under the SAME app id so the user can keep chatting — earlier turns stay visible; only
-      // agent-side context resets, which is expected after a restart or model switch.
+      // The agent could not resume this session (an app restart spawned a fresh agent process that no
+      // longer holds it — surfacing as -32002 not-found or a generic -32603 Internal error). Rather
+      // than dead-end the thread, adopt a brand-new agent session under the SAME app id.
       log.info('resumed session adopted after unrecoverable resume error', {
         sessionId: request.sessionId,
         reason: error instanceof Error ? error.message : String(error)
       })
 
-      const adopted = await connection.agent
-        .buildSession({
-          cwd: sessionCwd,
-          mcpServers: await this.createMcpServers({
-            artifactSessionId: request.sessionId,
-            notebookSessionId: request.sessionId,
-            sessionCwd,
-            projectName
-          }),
-          ...this.createSessionMeta()
-        })
-        .start()
-
-      try {
-        await this.configurePermissionProfile(
-          request.sessionId,
-          adopted,
-          normalizePermissionProfile(request.permissionProfile)
-        )
-      } catch (error) {
-        adopted.dispose()
-        throw error
-      }
-
-      this.adoptSession(request.sessionId, adopted, sessionCwd, projectName)
-      this.emitState()
-
-      return { sessionId: request.sessionId, cwd: sessionCwd }
+      return this.adoptFreshSession(connection, request, sessionCwd, projectName)
     }
     // The SDK exposes public helpers for new sessions only. The runtime keeps this adapter
     // narrow so resume can reuse the same update routing surface as newly-created sessions.
@@ -680,9 +836,13 @@ class AcpRuntime {
       throw error
     }
 
+    await this.applySessionModel(session)
+
     this.sessions.set(request.sessionId, session)
     this.sessionCwds.set(request.sessionId, sessionCwd)
+    this.sessionMcpServerNames.set(request.sessionId, this.mcpServerNamesOf(mcpServers))
     this.sessionProjectNames.set(request.sessionId, projectName)
+    this.sessionFrameworks.set(request.sessionId, this.framework.id)
     this.rememberArtifactSession(request.sessionId, request.sessionId)
     this.currentSessionId = request.sessionId
     this.cwd = sessionCwd
@@ -696,6 +856,54 @@ class AcpRuntime {
     this.emitState()
 
     return { sessionId: request.sessionId, cwd: sessionCwd }
+  }
+
+  // Builds a brand-new agent session under the SAME app id when a resume cannot reattach the original
+  // (a cross-framework switch, or an unresumable restart). Earlier turns stay visible; only agent-side
+  // context is gone, so contextReset is returned to let the caller replay a transcript into the next
+  // prompt. Shared by the cross-framework skip and the unrecoverable-error fallback.
+  private async adoptFreshSession(
+    connection: ClientConnection,
+    request: AcpResumeSessionRequest,
+    sessionCwd: string,
+    projectName: string
+  ): Promise<AcpCreateSessionResponse> {
+    const mcpServers = await this.createMcpServers({
+      artifactSessionId: request.sessionId,
+      notebookSessionId: request.sessionId,
+      sessionCwd,
+      projectName
+    })
+    const adopted = await connection.agent
+      .buildSession({
+        cwd: sessionCwd,
+        mcpServers,
+        ...this.buildSessionMetaArg()
+      })
+      .start()
+
+    try {
+      await this.configurePermissionProfile(
+        request.sessionId,
+        adopted,
+        normalizePermissionProfile(request.permissionProfile)
+      )
+    } catch (error) {
+      adopted.dispose()
+      throw error
+    }
+
+    await this.applySessionModel(adopted)
+    this.adoptSession(
+      request.sessionId,
+      adopted,
+      sessionCwd,
+      projectName,
+      this.mcpServerNamesOf(mcpServers)
+    )
+    this.emitState()
+
+    return { sessionId: request.sessionId, cwd: sessionCwd, contextReset: true }
   }
 
   // Changes approval behavior only while the conversation is idle. Applying the ACP mode before the
@@ -731,6 +939,62 @@ class AcpRuntime {
     this.connectInFlight = undefined
 
     return this.disconnectCurrent(emitClosedStatus)
+  }
+
+  // Synchronously terminates the agent child for app shutdown. Electron's `will-quit` cannot await, so
+  // this does only the synchronous work of signalling the child to exit — an agent left running after
+  // the app is gone would be an orphaned process still holding its network connection open. The OS
+  // reclaims the remaining connection/session state as the process exits.
+  shutdown(): void {
+    this.shuttingDown = true
+    this.nextConnectionGeneration()
+    this.connectInFlight = undefined
+    this.connection?.close()
+    this.connection = undefined
+    this.killAgentProcess()
+  }
+
+  // Awaitable quit/relaunch teardown. Latches shuttingDown FIRST so a connect that is mid-spawn when
+  // quit lands self-aborts and kills its freshly-spawned child (see connectFresh). Unlike shutdown(),
+  // this can be awaited, so a caller that follows it with app.exit(0) is guaranteed no orphaned agent
+  // remains — assigned, connecting, or mid-spawn. Returns { reaped } so the caller can tell a clean
+  // teardown from a degraded one (taskkill fallback left grandchildren) before committing to app.exit.
+  async shutdownForQuit(): Promise<{ reaped: boolean }> {
+    this.lastTreeKillReaped = true
+    this.shuttingDown = true
+    // Capture the in-flight connect before disconnect() clears it.
+    const inFlight = this.connectInFlight
+    // Kill the currently-assigned agent tree right away. Do NOT wait on the in-flight connect first: it
+    // may be stalled on ACP initialize with the child already assigned, and waiting would let
+    // shutdownBackends time out and app.exit orphan it. disconnect() reaps that child's tree and closes
+    // the connection, which also unblocks (rejects) the stalled connect.
+    await this.disconnect(false)
+    // Cover the child that had not been assigned yet when disconnect ran: a connect still mid-spawn hits
+    // the shutting-down check and tree-kills its freshly-spawned child. Await it (swallowing its
+    // rejection, bounded by shutdownBackends' timeout) so that kill completes before we resolve.
+    if (inFlight) await inFlight.catch(() => undefined)
+    return { reaped: this.lastTreeKillReaped }
+  }
+
+  // Teardown for the pre-update-install gate. Reaps the current agent tree (so the NSIS installer can
+  // delete files the agent held) but, unlike shutdownForQuit, does NOT latch shuttingDown: a refused
+  // install (degraded or timed-out teardown) must leave the runtime able to lazily reconnect. Crucially
+  // it does not rely on a latch to catch a connect racing inside spawnAgentProcess either — this teardown
+  // can itself be abandoned by its caller (runBounded) once the budget elapses, and a latch set here
+  // would then never clear, wedging every future connect. Instead disconnect() bumps the connection
+  // generation, and connectFresh reaps any freshly-spawned child whose generation is now stale,
+  // independent of shuttingDown. Awaiting the in-flight connect here only sharpens the returned reaped
+  // signal (so a degraded reap makes the caller refuse the install); if that await is abandoned on
+  // timeout the caller refuses on !completed and the stale-generation self-reap still collects the child.
+  async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
+    this.lastTreeKillReaped = true
+    // Capture the in-flight connect before disconnect() clears it. disconnect() bumps the generation, so
+    // a connect still mid-spawn will self-reap on the stale-generation check regardless of this await.
+    const inFlight = this.connectInFlight
+    await this.disconnect(false)
+    // Await so the mid-spawn child's kill settles before we report the reaped signal.
+    if (inFlight) await inFlight.catch(() => undefined)
+    return { reaped: this.lastTreeKillReaped }
   }
 
   // Applies an active-provider change without interrupting the user. The agent bakes its provider env in
@@ -787,9 +1051,14 @@ class AcpRuntime {
 
     this.sessions.clear()
     this.sessionCwds.clear()
+    this.sessionInlineImageBytes.clear()
+    this.currentPromptTurnBySession.clear()
+    this.sessionMcpServerNames.clear()
     this.sessionProjectNames.clear()
     this.permissionProfiles.clear()
     this.artifactSessionIds.clear()
+    this.notebookRoutingIds.clear()
+    this.mcpHttpHost?.clear()
     this.agentToAppSessionId.clear()
     this.currentSessionId = undefined
     this.supportsSessionClose = false
@@ -797,6 +1066,20 @@ class AcpRuntime {
     this.connection?.close()
     this.connection = undefined
 
+    await this.killAgentProcessTree()
+
+    if (emitClosedStatus) {
+      this.setStatus('closed')
+    }
+
+    return this.getSnapshot()
+  }
+
+  // Signals the current agent child to exit and marks the exit expected so the stderr/error/exit
+  // handlers stay quiet. Synchronous: used by the will-quit backstop (shutdown()), which Electron
+  // cannot await. It only signals the immediate child — the awaited disconnect path below reaps the
+  // whole tree.
+  private killAgentProcess(): void {
     if (this.agentProcess) {
       this.expectedProcessExits.add(this.agentProcess)
 
@@ -806,12 +1089,19 @@ class AcpRuntime {
     }
 
     this.agentProcess = undefined
+  }
 
-    if (emitClosedStatus) {
-      this.setStatus('closed')
-    }
-
-    return this.getSnapshot()
+  // Awaitable tree teardown for the async disconnect path: marks the exit expected, then hands the
+  // whole process tree to terminateProcessTree so a Windows grandchild (taskkill /T) is reaped before
+  // the caller (before-quit shutdownBackends) proceeds to app.exit.
+  private async killAgentProcessTree(): Promise<void> {
+    const child = this.agentProcess
+    this.agentProcess = undefined
+    if (!child) return
+    this.expectedProcessExits.add(child)
+    const result = await terminateProcessTree(child, undefined, log)
+    // Narrow the current teardown's reaped accumulator (reset by shutdownForQuit/shutdownForUpdateGate).
+    this.lastTreeKillReaped = this.lastTreeKillReaped && result.reaped
   }
 
   private nextConnectionGeneration(): number {
@@ -826,25 +1116,44 @@ class AcpRuntime {
   }
 
   // Creates the agent process, preferring an injected spawner (tests) and otherwise resolving the
-  // current active-provider spawn config so each reconnect uses up-to-date credentials.
+  // active agent backend so each reconnect uses the current framework + up-to-date credentials.
   private async spawnAgentProcess(): Promise<ChildProcessWithoutNullStreams> {
     if (this.spawnAgent) {
       return this.spawnAgent()
     }
 
-    const config = this.options.resolveSpawnConfig
-      ? await this.options.resolveSpawnConfig()
-      : undefined
+    const backend = this.options.resolveBackend ? await this.options.resolveBackend() : undefined
 
-    if (!config) {
+    if (!backend) {
       throw new Error('ACP agent spawn configuration is not available.')
     }
 
-    return spawnClaudeAgentAcp(config)
+    // Adopt the framework this reconnect resolved so session meta, permission mapping, and the spawn
+    // itself all agree with the current selection.
+    this.framework = backend.framework
+    this.pendingSessionModel = backend.sessionModel
+
+    // Surfaces which backend + model this connect uses, so a fallback to the framework's own default
+    // model (e.g. opencode with no app model to inject) is diagnosable in the log rather than silent.
+    log.info('agent backend resolved', {
+      framework: backend.framework.id,
+      sessionModel: backend.sessionModel ?? '(framework default)',
+      args: backend.args ?? []
+    })
+
+    return this.framework.spawn({
+      executablePath: backend.executablePath,
+      env: backend.env,
+      args: backend.args ?? []
+    })
   }
 
   // Sends one prompt turn to the targeted session and streams updates until stop.
   async sendPrompt(request: AcpPromptRequest): Promise<PromptResponse> {
+    return withDataRootWrite(() => this.sendPromptTurn(request))
+  }
+
+  private async sendPromptTurn(request: AcpPromptRequest): Promise<PromptResponse> {
     let activeSession = this.sessions.get(request.sessionId)
 
     if (!activeSession) {
@@ -891,7 +1200,11 @@ class AcpRuntime {
     }
 
     this.currentSessionId = request.sessionId
+    // Claim ownership of this session's shared turn state so a superseded turn's later finally can tell it
+    // no longer owns the lock/artifact run (see the guarded cleanup in this turn's finally).
+    const promptTurn = ++this.promptTurnSequence
     this.promptInFlightSessionIds.add(request.sessionId)
+    this.currentPromptTurnBySession.set(request.sessionId, promptTurn)
     this.emitState()
     log.info('prompt start', {
       sessionId: request.sessionId,
@@ -908,7 +1221,18 @@ class AcpRuntime {
         : undefined
       // Prepend a short steering nudge naming the picked skills. It goes only into the content sent to
       // the agent; the user-facing message event keeps the original text (which already shows /Name).
-      const promptText = await this.applySkillNudge(request.text, forced)
+      // Framework-neutral delivery of the system-prompt guidance: Claude carries it in session _meta so
+      // the prefix is empty and the prompt is unchanged; opencode has no preset, so its guidance rides as
+      // a prompt prefix here, ahead of the skill nudge and the user's text.
+      const { promptPrefix } = this.framework.buildSessionSetup({
+        systemPromptAppends: this.getSystemPromptAppends()
+      })
+      const nudgedText = await this.applySkillNudge(request.text, forced)
+      // A history preamble (transcript replayed after a context reset) leads, then the framework guidance
+      // prefix, then the nudged user text. Absent segments drop out so the normal turn is unchanged.
+      const promptText = [request.historyPreamble, promptPrefix, nudgedText]
+        .filter((segment): segment is string => Boolean(segment))
+        .join('\n\n')
       const promptContent = await this.createPromptContent(request.sessionId, {
         ...request,
         text: promptText
@@ -949,19 +1273,28 @@ class AcpRuntime {
           return message.response
         }
 
-        log.debug('session update', { sessionId: request.sessionId })
         // Route the update under the app-facing id so a session adopted onto a new agent (after a
-        // provider switch) still streams into the same conversation the renderer is watching.
+        // provider switch) still streams into the same conversation the renderer is watching. (No
+        // per-update log line here: it fires once per streamed chunk and floods the console for no
+        // signal — 'prompt start'/'prompt stopped' already bracket the turn.)
         this.handleSessionUpdate(message.notification, request.sessionId)
       }
     } catch (error) {
       log.error('prompt failed', { sessionId: request.sessionId, error })
+      const text = describePromptError(error, { model: this.pendingSessionModel })
+      // Tag a request-size overflow as recoverable so the renderer compacts-and-retries (reset context +
+      // replay a text transcript) instead of dead-ending; the error still throws to drive that recovery.
+      const recoverable =
+        isMediaOverflowError(text) || isMediaOverflowError(errorMessage(error))
+          ? 'context-overflow'
+          : undefined
       this.pushEvent({
         kind: 'error',
         level: 'error',
+        recoverable,
         sessionId: request.sessionId,
         title: 'Prompt failed',
-        text: errorMessage(error)
+        text
       })
       throw error
     } finally {
@@ -988,8 +1321,18 @@ class AcpRuntime {
           text: errorMessage(error)
         })
       }
-      this.activeArtifactRun = undefined
-      this.promptInFlightSessionIds.delete(request.sessionId)
+      // Only clear shared turn state if a newer turn hasn't taken over this app session id. An
+      // overflow-recovery replay reuses the id: after resetSessionContext releases this (failed) turn's
+      // lock and the renderer starts the replay, this stale finally must not delete the replay's in-flight
+      // lock (which would reopen same-session sends and misreport prompt-in-flight) or clear its active
+      // artifact run. Identity/token comparisons scope each clear to the turn that still owns the state.
+      if (this.activeArtifactRun?.run === artifactRun) {
+        this.activeArtifactRun = undefined
+      }
+      if (this.currentPromptTurnBySession.get(request.sessionId) === promptTurn) {
+        this.currentPromptTurnBySession.delete(request.sessionId)
+        this.promptInFlightSessionIds.delete(request.sessionId)
+      }
       this.emitState()
       // A disabled skill forced for this turn is restored now: clear the force set, then schedule a
       // reconnect so the NEXT prompt respawns with the normal enabled set. Ordering matters — the clear
@@ -1029,24 +1372,46 @@ class AcpRuntime {
     const session = this.sessions.get(request.sessionId)
 
     if (session) {
+      // Talk to the agent using its own session id: for an adopted session the underlying
+      // agent id (session.sessionId) differs from the app-facing request.sessionId.
       if (this.connection && this.supportsSessionClose) {
         await this.connection.agent.request(acp.methods.agent.session.close, {
-          sessionId: request.sessionId
+          sessionId: session.sessionId
         })
       } else {
         await this.connection?.agent.notify(acp.methods.agent.session.cancel, {
-          sessionId: request.sessionId
+          sessionId: session.sessionId
         })
       }
 
       session.dispose()
-      this.permissionBroker.cancelForSession(request.sessionId)
-      this.sessions.delete(request.sessionId)
-      this.sessionCwds.delete(request.sessionId)
-      this.sessionProjectNames.delete(request.sessionId)
-      this.permissionProfiles.delete(request.sessionId)
-      this.artifactSessionIds.delete(request.sessionId)
-      this.promptInFlightSessionIds.delete(request.sessionId)
+      // Drop the reverse (underlying agent id -> app id) mapping an adopted session registered, so a
+      // reused agent id or a late agent event can no longer route to this deleted app session.
+      this.agentToAppSessionId.delete(session.sessionId)
+    }
+
+    // App-session-keyed cleanup runs whether or not a live session is attached. A framework switch
+    // disconnects (clearing this.sessions and most maps) but deliberately KEEPS sessionFrameworks, so
+    // deleting a session that was never re-adopted under the new framework would leak that entry —
+    // later misleading the cross-framework-resume check. These deletes are no-ops when the id is absent.
+    this.permissionBroker.cancelForSession(request.sessionId)
+    // Drop this session's http MCP host registrations (no-op when no host / stdio framework).
+    this.unregisterHttpMcpSession(request.sessionId)
+    this.sessions.delete(request.sessionId)
+    this.sessionCwds.delete(request.sessionId)
+    this.sessionInlineImageBytes.delete(request.sessionId)
+    this.currentPromptTurnBySession.delete(request.sessionId)
+    this.sessionMcpServerNames.delete(request.sessionId)
+    this.sessionProjectNames.delete(request.sessionId)
+    this.sessionFrameworks.delete(request.sessionId)
+    this.permissionProfiles.delete(request.sessionId)
+    this.artifactSessionIds.delete(request.sessionId)
+    this.notebookRoutingIds.delete(request.sessionId)
+    this.promptInFlightSessionIds.delete(request.sessionId)
+
+    // Only announce a deletion and shift the current session when something was actually attached; a
+    // detached cleanup (post-switch) must not emit a spurious event or move currentSessionId.
+    if (session) {
       this.currentSessionId =
         this.currentSessionId === request.sessionId
           ? Array.from(this.sessions.keys())[0]
@@ -1114,13 +1479,13 @@ class AcpRuntime {
 
       // Keep the user's text first, then append files in the same order they were added.
       for (const attachment of finalizedAttachments) {
-        contentBlocks.push(await this.createAttachmentContentBlock(attachment))
+        contentBlocks.push(await this.createAttachmentContentBlock(sessionId, attachment))
       }
     }
 
     // `@`-mentioned artifacts reuse the same per-type block builder as uploads, in mention order.
     for (const reference of referencedArtifacts) {
-      contentBlocks.push(await this.createReferencedArtifactContentBlock(reference))
+      contentBlocks.push(await this.createReferencedArtifactContentBlock(sessionId, reference))
     }
 
     return contentBlocks
@@ -1128,6 +1493,7 @@ class AcpRuntime {
 
   // Converts one managed upload into the richest ACP content block that is safe for its type.
   private async createAttachmentContentBlock(
+    sessionId: string,
     attachment: UploadedAttachment
   ): Promise<ContentBlock> {
     if (!this.uploadRepository) throw new Error('Upload storage is not configured.')
@@ -1135,6 +1501,7 @@ class AcpRuntime {
     const filePath = await this.uploadRepository.resolveManagedUploadPath({ path: attachment.path })
 
     return this.buildFileContentBlock({
+      sessionId,
       absolutePath: filePath,
       uri: pathToFileURL(filePath).href,
       name: attachment.originalName || attachment.name,
@@ -1145,12 +1512,14 @@ class AcpRuntime {
 
   // Converts one `@`-mentioned artifact into the same content block an equivalent upload produces.
   private async createReferencedArtifactContentBlock(
+    sessionId: string,
     reference: ArtifactReference
   ): Promise<ContentBlock> {
     const filePath = await this.resolveReferencedArtifactPath(reference)
     const { size } = await stat(filePath)
 
     return this.buildFileContentBlock({
+      sessionId,
       absolutePath: filePath,
       uri: pathToFileURL(filePath).href,
       name: reference.name,
@@ -1173,13 +1542,14 @@ class AcpRuntime {
   // Builds the richest ACP content block that is safe for a resolved file, shared by uploads and
   // `@`-mentioned artifacts so both reach the agent through identical per-type logic.
   private async buildFileContentBlock(descriptor: {
+    sessionId: string
     absolutePath: string
     uri: string
     name: string
     mimeType?: string
     size: number
   }): Promise<ContentBlock> {
-    const { absolutePath, uri, name, mimeType, size } = descriptor
+    const { sessionId, absolutePath, uri, name, mimeType, size } = descriptor
 
     // Images are embedded as base64 so vision-capable agents receive the actual pixels.
     // Large images are downscaled/re-encoded first so one file cannot overflow the request.
@@ -1189,6 +1559,18 @@ class AcpRuntime {
         mimeType,
         size
       )
+
+      // Inlined images accumulate over a conversation's replayed history. Once this session's running
+      // total nears the request ceiling, degrade further images to a file reference (like large binary
+      // uploads) instead of base64, so the conversation never overflows the request or breaks
+      // compaction with `media_unstrippable`. The file stays reachable to the agent via its uri.
+      const alreadyInlined = this.sessionInlineImageBytes.get(sessionId) ?? 0
+
+      if (!canInlineImageInSession(alreadyInlined, data.length, this.inlineImageBudgetBytes)) {
+        return { type: 'resource_link', uri, name, title: name, mimeType, size }
+      }
+
+      this.sessionInlineImageBytes.set(sessionId, alreadyInlined + data.length)
 
       return { type: 'image', data, mimeType: outMimeType, uri }
     }
@@ -1311,10 +1693,16 @@ class AcpRuntime {
     return sessionCwd
   }
 
-  // App-owned directories the agent's Read tool must never read: the CLAUDE_CONFIG_DIR holds the
-  // materialized skill files, whose (bundled/MCP) contents must not be surfaced into the conversation.
+  // App-owned directories the agent's Read tool must never read: both frameworks' config dirs hold the
+  // materialized skill files (+ opencode.json/auth), whose bundled/MCP contents must not be surfaced
+  // into the conversation. Both are guarded regardless of the active framework so a switch leaves no
+  // gap and the cost is a couple of extra prefix checks.
   private protectedReadRoots(): string[] {
-    return this.artifactOptions ? [getAppClaudeConfigDir(this.artifactOptions.configRoot)] : []
+    if (!this.artifactOptions) return []
+
+    const root = this.artifactOptions.configRoot
+
+    return [getAppClaudeConfigDir(root), opencodeStorageDir(root)]
   }
 
   // Creates an app-owned artifact session id so new ACP sessions never decide their storage directory.
@@ -1333,14 +1721,14 @@ class AcpRuntime {
     this.artifactSessionIds.set(sessionId, artifactSessionId)
   }
 
-  // Provides the agent with exactly one artifact MCP server scoped to this session's storage context.
-  private createArtifactMcpServers(
+  // Builds the artifact MCP environment for one session, shared by the stdio config and the http host.
+  private buildArtifactEnvironment(
     artifactSessionId: string,
     notebookSessionId: string,
     sessionCwd: string,
     projectName: string
-  ): McpServer[] {
-    if (!this.artifactOptions || !artifactSessionId) return []
+  ): ArtifactMcpEnvironment | undefined {
+    if (!this.artifactOptions || !artifactSessionId) return undefined
 
     const allowedImportRoots = [
       sessionCwd,
@@ -1349,15 +1737,36 @@ class AcpRuntime {
         : [])
     ]
 
+    return {
+      storageRoot: this.artifactOptions.dataRoot,
+      projectName,
+      sessionId: artifactSessionId,
+      currentRunFile: this.getArtifactCurrentRunFile(artifactSessionId, projectName),
+      allowedImportRoots
+    }
+  }
+
+  // Provides the agent with exactly one artifact MCP server scoped to this session's storage context.
+  private createArtifactMcpServers(
+    artifactSessionId: string,
+    notebookSessionId: string,
+    sessionCwd: string,
+    projectName: string
+  ): McpServer[] {
+    const environment = this.buildArtifactEnvironment(
+      artifactSessionId,
+      notebookSessionId,
+      sessionCwd,
+      projectName
+    )
+
+    if (!environment || !this.artifactOptions) return []
+
     return [
       createArtifactMcpServerConfig({
         command: this.artifactOptions.mcpCommand ?? process.execPath,
         entryPath: this.artifactOptions.mcpEntryPath,
-        storageRoot: this.artifactOptions.dataRoot,
-        projectName,
-        sessionId: artifactSessionId,
-        currentRunFile: this.getArtifactCurrentRunFile(artifactSessionId, projectName),
-        allowedImportRoots
+        ...environment
       })
     ]
   }
@@ -1373,9 +1782,33 @@ class AcpRuntime {
 
   // Lets the local notebook RPC layer map pre-start aliases to the final ACP session id.
   private rememberNotebookSession(sessionId: string, notebookSessionId: string): void {
-    if (!this.notebookOptions || !notebookSessionId || notebookSessionId === sessionId) return
+    if (!this.notebookOptions || !notebookSessionId) return
+
+    // Record the routing id the http MCP host was registered under, for later unregister.
+    this.notebookRoutingIds.set(sessionId, notebookSessionId)
+
+    if (notebookSessionId === sessionId) return
 
     this.notebookOptions.registerSessionAlias?.(notebookSessionId, sessionId)
+  }
+
+  // Builds the notebook MCP environment for one session, shared by the stdio config and the http host.
+  private async buildNotebookEnvironment(
+    notebookSessionId: string,
+    sessionCwd: string,
+    projectName: string
+  ): Promise<NotebookMcpEnvironment | undefined> {
+    if (!this.notebookOptions || !notebookSessionId) return undefined
+
+    const connection = await this.resolveNotebookRpcConnection()
+
+    return {
+      endpoint: connection.endpoint,
+      token: connection.token,
+      projectName,
+      sessionId: notebookSessionId,
+      workspaceCwd: sessionCwd
+    }
   }
 
   // Provides the agent with a notebook MCP server scoped to this session's runtime route.
@@ -1384,19 +1817,19 @@ class AcpRuntime {
     sessionCwd: string,
     projectName: string
   ): Promise<McpServer[]> {
-    if (!this.notebookOptions || !notebookSessionId) return []
+    const environment = await this.buildNotebookEnvironment(
+      notebookSessionId,
+      sessionCwd,
+      projectName
+    )
 
-    const connection = await this.resolveNotebookRpcConnection()
+    if (!environment || !this.notebookOptions) return []
 
     return [
       createNotebookMcpServerConfig({
         command: this.notebookOptions.mcpCommand ?? process.execPath,
         entryPath: this.notebookOptions.mcpEntryPath,
-        endpoint: connection.endpoint,
-        token: connection.token,
-        projectName,
-        sessionId: notebookSessionId,
-        workspaceCwd: sessionCwd
+        ...environment
       })
     ]
   }
@@ -1426,56 +1859,143 @@ class AcpRuntime {
     sessionCwd: string
     projectName: string
   }): Promise<McpServer[]> {
-    const servers = [
-      ...this.createArtifactMcpServers(
-        artifactSessionId,
-        notebookSessionId,
-        sessionCwd,
-        projectName
-      ),
-      ...(await this.createNotebookMcpServers(notebookSessionId, sessionCwd, projectName))
-    ]
+    // The artifact/notebook servers are stdio. A framework that only accepts http/sse MCP (opencode)
+    // gets them over the http host when one is wired; without a host it gets none so a basic turn still
+    // runs instead of failing on an unsupported stdio server config.
+    const servers = this.framework.acceptsStdioMcp
+      ? [
+          ...this.createArtifactMcpServers(
+            artifactSessionId,
+            notebookSessionId,
+            sessionCwd,
+            projectName
+          ),
+          ...(await this.createNotebookMcpServers(notebookSessionId, sessionCwd, projectName))
+        ]
+      : await this.createHttpMcpServers(
+          artifactSessionId,
+          notebookSessionId,
+          sessionCwd,
+          projectName
+        )
 
-    // Log the MCP server launch specs (command + args, no secrets) — a bad command/entry path in a
-    // packaged build can make the agent stall while it waits on an MCP server that never starts.
+    // Log the MCP server launch specs (command/url, no secrets) — a bad command/entry path or an
+    // unstarted host can make the agent stall while it waits on an MCP server that never responds.
     log.info('session MCP servers', {
       count: servers.length,
       servers: servers.map((server) => {
-        const record = server as { name?: string; command?: string; args?: unknown }
-        return { name: record.name, command: record.command, args: record.args }
+        const record = server as { name?: string; command?: string; url?: string; args?: unknown }
+        return { name: record.name, command: record.command, url: record.url, args: record.args }
       })
     })
 
     return servers
   }
 
-  // Builds Claude-specific session metadata: system-prompt guidance for artifact/notebook tooling, plus
-  // a settingSources restriction to the "user" scope (our app-owned CLAUDE_CONFIG_DIR). This is required:
-  // the "project"/"local" scopes are read from the workspace cwd's `.claude`, and when the cwd is under
-  // the home tree that resolves to the user's own ~/.claude — whose `env` block (e.g. a proxy
-  // ANTHROPIC_BASE_URL) would otherwise override the active provider's endpoint. Restricting to "user"
-  // loads only the clean app dir's settings + the app's own skills/plugins/commands.
-  private createSessionMeta(): { _meta: Record<string, unknown> } {
-    const appendSections = [
-      // The skill-privacy guardrail always applies — skills are materialized whenever the app runs.
+  // Extracts the names of the MCP servers handed to a session so MCP-origin tool calls can be
+  // recognized later (see sessionMcpServerNames). Both stdio and http McpServer configs carry a name.
+  private mcpServerNamesOf(servers: McpServer[]): string[] {
+    return servers
+      .map((server) => (server as { name?: unknown }).name)
+      .filter((name): name is string => typeof name === 'string')
+  }
+
+  // Drops one session's artifact/notebook registrations from the http MCP host (no-op without a host).
+  private unregisterHttpMcpSession(appSessionId: string): void {
+    if (!this.mcpHttpHost) return
+
+    const artifactRoutingId = this.artifactSessionIds.get(appSessionId)
+    if (artifactRoutingId) this.mcpHttpHost.unregister(artifactRoutingId)
+
+    const notebookRoutingId = this.notebookRoutingIds.get(appSessionId)
+    if (notebookRoutingId) this.mcpHttpHost.unregister(notebookRoutingId)
+  }
+
+  // Serves the artifact/notebook MCP over the local http host for frameworks that reject stdio MCP.
+  // Registers each session's environment under its app-owned id and returns http McpServer configs
+  // pointing at the host, authenticated with the host token. No host wired ⇒ no servers (basic turn).
+  private async createHttpMcpServers(
+    artifactSessionId: string,
+    notebookSessionId: string,
+    sessionCwd: string,
+    projectName: string
+  ): Promise<McpServer[]> {
+    if (!this.mcpHttpHost) return []
+
+    const { token } = await this.mcpHttpHost.ensureStarted()
+    const authHeader = { name: 'authorization', value: `Bearer ${token}` }
+    const servers: McpServer[] = []
+
+    const artifactEnvironment = this.buildArtifactEnvironment(
+      artifactSessionId,
+      notebookSessionId,
+      sessionCwd,
+      projectName
+    )
+
+    if (artifactEnvironment) {
+      this.mcpHttpHost.registerArtifact(artifactSessionId, artifactEnvironment)
+      servers.push({
+        type: 'http',
+        name: ARTIFACT_MCP_SERVER_NAME,
+        url: this.mcpHttpHost.urlFor('artifact', artifactSessionId),
+        headers: [authHeader]
+      })
+    }
+
+    const notebookEnvironment = await this.buildNotebookEnvironment(
+      notebookSessionId,
+      sessionCwd,
+      projectName
+    )
+
+    if (notebookEnvironment) {
+      this.mcpHttpHost.registerNotebook(notebookSessionId, notebookEnvironment)
+      servers.push({
+        type: 'http',
+        name: NOTEBOOK_MCP_SERVER_NAME,
+        url: this.mcpHttpHost.urlFor('notebook', notebookSessionId),
+        headers: [authHeader]
+      })
+    }
+
+    return servers
+  }
+
+  // Collects the system-prompt guidance appended to every session: the skill-privacy guardrail (always
+  // — skills are materialized whenever the app runs), plus artifact/notebook tooling instructions when
+  // those services are wired. The active framework decides how these are delivered (Claude's preset
+  // append vs opencode's prompt prefix).
+  // Whether artifact/notebook MCP tooling reaches the agent this run: either the framework takes stdio
+  // MCP directly (Claude) or an http host is wired to serve it (opencode). Drives both the MCP configs
+  // and whether their system-prompt guidance is sent.
+  private mcpToolingAvailable(): boolean {
+    return this.framework.acceptsStdioMcp || Boolean(this.mcpHttpHost)
+  }
+
+  private getSystemPromptAppends(): string[] {
+    // Artifact/notebook guidance names MCP tools that only exist when that tooling is actually wired for
+    // this framework; omit it otherwise so the agent isn't told to use tools it wasn't given.
+    const toolsAvailable = this.mcpToolingAvailable()
+
+    return [
       SKILLS_READ_GUARD_SYSTEM_PROMPT_APPEND,
-      ...(this.artifactOptions ? [ARTIFACT_FILE_SYSTEM_PROMPT_APPEND] : []),
-      ...(this.notebookOptions ? [NOTEBOOK_SYSTEM_PROMPT_APPEND] : [])
+      ...(toolsAvailable && this.artifactOptions ? [ARTIFACT_FILE_SYSTEM_PROMPT_APPEND] : []),
+      ...(toolsAvailable && this.notebookOptions ? [NOTEBOOK_SYSTEM_PROMPT_APPEND] : [])
     ]
+  }
 
-    const meta: Record<string, unknown> = {
-      claudeCode: { options: { settingSources: ['user'] } }
-    }
+  // Builds the ACP `_meta` argument for session/new and session/resume, delegating the framework-specific
+  // shape to the active framework. For Claude this is the claudeCode.settingSources restriction (pins the
+  // app-owned config dir so a workspace ~/.claude env block can't override the active provider endpoint)
+  // plus the system-prompt preset carrying the appends; opencode returns no meta and delivers the appends
+  // as a prompt prefix instead.
+  private buildSessionMetaArg(): { _meta?: Record<string, unknown> } {
+    const setup = this.framework.buildSessionSetup({
+      systemPromptAppends: this.getSystemPromptAppends()
+    })
 
-    if (appendSections.length > 0) {
-      meta.systemPrompt = {
-        type: 'preset',
-        preset: 'claude_code',
-        append: appendSections.join('\n\n')
-      }
-    }
-
-    return { _meta: meta }
+    return setup.meta ? { _meta: setup.meta } : {}
   }
 
   // Resolves the artifact/notebook storage project for a session, defaulting to the runtime constant.
@@ -1603,17 +2123,31 @@ class AcpRuntime {
     params: RequestPermissionRequest
   ): Promise<RequestPermissionResponse> {
     // Fork point: a WebFetch/server-side tool that never reaches this line means the "Internal error"
-    // originated elsewhere. Debug level keeps it out of normal runs. Log the tool identity (name/kind),
-    // never the title — a WebFetch title is the full URL with query params (user data).
-    log.debug('permission request received', {
-      tool: extractProviderToolName(params.toolCall) ?? params.toolCall?.kind,
+    // originated elsewhere. Info level so it's a visible audit line (one per prompt): if an MCP call
+    // runs without this appearing, the agent never asked (e.g. an un-gated permission config). Log the
+    // tool identity (name/kind) and whether it looks like MCP — never the title (a WebFetch title is the
+    // full URL with query params, i.e. user data).
+    const appSessionId = this.agentToAppSessionId.get(params.sessionId) ?? params.sessionId
+    const mcpServerNames = this.sessionMcpServerNames.get(appSessionId) ?? []
+    const toolName = extractProviderToolName(params.toolCall)
+    const isMcp =
+      isMcpToolName(params.toolCall?.title, mcpServerNames) ||
+      isMcpToolName(toolName, mcpServerNames)
+    log.info('permission request received', {
+      tool: toolName ?? params.toolCall?.kind,
+      isMcp,
       toolCallId: params.toolCall?.toolCallId,
       sessionId: params.sessionId,
       optionCount: params.options?.length
     })
 
     try {
-      const appSessionId = this.agentToAppSessionId.get(params.sessionId) ?? params.sessionId
+      // Background reviewer sessions run unattended with a restricted toolset: auto-approve their tool
+      // calls instead of routing to the renderer (which never sees these sessions) or throwing "Unknown
+      // ACP session" because they are intentionally not in `this.sessions`. See design §3.
+      if (this.reviewerSessionIds.has(params.sessionId)) {
+        return this.autoApproveReviewerPermission(params)
+      }
 
       if (!this.sessions.has(appSessionId)) {
         throw new Error(`Unknown ACP session: ${appSessionId}`)
@@ -1626,7 +2160,8 @@ class AcpRuntime {
         {
           profile: profileState?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
           autoReviewStrategy: profileState?.autoReviewStrategy,
-          cwd: this.sessionCwds.get(appSessionId)
+          cwd: this.sessionCwds.get(appSessionId),
+          mcpServerNames
         }
       )
     } catch (error) {
@@ -1638,6 +2173,34 @@ class AcpRuntime {
       })
       throw error
     }
+  }
+
+  // Selects an allow option for an unattended reviewer tool call. Prefers a one-shot allow (the reviewer
+  // session is ephemeral, so remembering an "always" grant is pointless) and falls back to allow_always,
+  // then the first option. A request with no allow option is cancelled rather than left hanging.
+  private autoApproveReviewerPermission(
+    params: RequestPermissionRequest
+  ): RequestPermissionResponse {
+    const allowOption =
+      params.options.find((option) => option.kind === 'allow_once') ??
+      params.options.find((option) => option.kind === 'allow_always') ??
+      params.options[0]
+
+    if (!allowOption) {
+      log.warn('reviewer permission request had no allow option; cancelling', {
+        sessionId: params.sessionId,
+        toolCallId: params.toolCall?.toolCallId
+      })
+      return { outcome: { outcome: 'cancelled' } }
+    }
+
+    log.debug('auto-approving reviewer tool call', {
+      sessionId: params.sessionId,
+      toolCallId: params.toolCall?.toolCallId,
+      optionId: allowOption.optionId
+    })
+
+    return { outcome: { outcome: 'selected', optionId: allowOption.optionId } }
   }
 
   // Normalizes low-level session notifications into runtime/workspace events.
@@ -1697,10 +2260,15 @@ class AcpRuntime {
       }
 
       if (text) {
+        // Attribute stderr to a session only when exactly one prompt is in flight — then it's
+        // unambiguously that turn's. With zero or multiple concurrent prompts, omit the sessionId
+        // rather than risk pinning it to the wrong conversation's waiting indicator.
+        const inFlight = Array.from(this.promptInFlightSessionIds)
         this.pushEvent({
           kind: 'system',
           level: 'warning',
-          title: 'claude-agent-acp',
+          sessionId: inFlight.length === 1 ? inFlight[0] : undefined,
+          title: 'agent',
           text
         })
       }
@@ -1742,8 +2310,13 @@ class AcpRuntime {
     this.permissionBroker.cancelAll()
     this.sessions.clear()
     this.sessionCwds.clear()
+    this.sessionInlineImageBytes.clear()
+    this.currentPromptTurnBySession.clear()
+    this.sessionMcpServerNames.clear()
     this.sessionProjectNames.clear()
     this.artifactSessionIds.clear()
+    this.notebookRoutingIds.clear()
+    this.mcpHttpHost?.clear()
     this.agentToAppSessionId.clear()
     this.currentSessionId = undefined
     this.supportsSessionClose = false
@@ -1768,6 +2341,7 @@ class AcpRuntime {
       timestamp: event.timestamp ?? Date.now(),
       level: event.level ?? 'info',
       kind: event.kind,
+      recoverable: event.recoverable,
       sessionId: event.sessionId,
       messageId: event.messageId,
       role: event.role,
@@ -1800,6 +2374,52 @@ class AcpRuntime {
   // Broadcasts the latest runtime snapshot if a listener is registered.
   private emitState(): void {
     this.callbacks.onStateChanged?.(this.getSnapshot())
+  }
+
+  // Creates an ephemeral reviewer ACP session using the existing agent connection. The reviewer
+  // session is isolated from main agent sessions: it is not tracked in this.sessions, does not
+  // appear in the snapshot, and callers are responsible for disposing it. This allows background
+  // review to run in parallel with the main session without affecting the main state machine.
+  async buildReviewerSession(request: {
+    cwd: string
+    mcpServers: McpServer[]
+    systemPromptAppend?: string
+  }): Promise<{
+    session: import('@agentclientprotocol/sdk').ActiveSession
+    // Framework-neutral rubric delivery: Claude carries the append in session _meta (empty prefix),
+    // opencode has no preset so the rubric rides back as a prompt prefix the caller must prepend.
+    promptPrefix?: string
+  }> {
+    const connection = await this.ensureConnected(request.cwd)
+
+    const setup = this.framework.buildSessionSetup({
+      systemPromptAppends: request.systemPromptAppend ? [request.systemPromptAppend] : []
+    })
+
+    const session = await connection.agent
+      .buildSession({
+        cwd: request.cwd,
+        mcpServers: request.mcpServers,
+        ...(setup.meta ? { _meta: setup.meta } : {})
+      })
+      .start()
+
+    // Register so the permission handler recognises this session and auto-approves its tool calls.
+    // The orchestrator must call disposeReviewerSession() to unregister and tear it down.
+    this.reviewerSessionIds.add(session.sessionId)
+    // Record the reviewer's MCP server names too, so its MCP tool calls are audited as MCP (they are
+    // still auto-approved via reviewerSessionIds, but the isMcp classification must stay accurate).
+    this.sessionMcpServerNames.set(session.sessionId, this.mcpServerNamesOf(request.mcpServers))
+
+    return { session, promptPrefix: setup.promptPrefix }
+  }
+
+  // Disposes an ephemeral reviewer session and unregisters it from the auto-approve set. Safe to call
+  // even if the session was never registered (e.g. it failed before start).
+  disposeReviewerSession(session: import('@agentclientprotocol/sdk').ActiveSession): void {
+    this.reviewerSessionIds.delete(session.sessionId)
+    this.sessionMcpServerNames.delete(session.sessionId)
+    session.dispose()
   }
 }
 

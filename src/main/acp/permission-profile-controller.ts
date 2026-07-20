@@ -30,13 +30,22 @@ const availableModeIds = (modes: SessionModeState | null | undefined): string[] 
 
 // Maps stable application semantics onto the modes advertised by the active Agent. Auto has a
 // conservative application fallback; Full access is offered only when bypass is genuinely available.
+type ResolveOptions = {
+  // Frameworks with no native bypass mode (e.g. opencode) can still offer Full access when the app
+  // owns the permission decision: the agent is configured to delegate every prompt to the client and
+  // the broker auto-approves them. Set this so 'full' is offered and enforced app-side, not natively.
+  brokerEnforcesFullAccess?: boolean
+}
+
 const resolvePermissionProfileApplication = (
   profile: PermissionProfileId,
-  modes: SessionModeState | null | undefined
+  modes: SessionModeState | null | undefined,
+  options: ResolveOptions = {}
 ): PermissionProfileApplication => {
   const modeIds = availableModeIds(modes)
   const hasMode = (modeId: string): boolean => modeIds.includes(modeId)
-  const fullAccessAvailable = hasMode(FULL_ACCESS_MODE_ID)
+  const nativeBypass = hasMode(FULL_ACCESS_MODE_ID)
+  const fullAccessAvailable = nativeBypass || options.brokerEnforcesFullAccess === true
 
   if (profile === 'full' && !fullAccessAvailable) {
     throw new PermissionProfileUnavailableError(profile)

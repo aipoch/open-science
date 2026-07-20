@@ -1,6 +1,6 @@
 import { Check } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -16,14 +16,17 @@ import { cn } from '@/lib/utils'
 import { APP } from '../../../../shared/app-config'
 import type { StorageInfo } from '../../../../shared/storage'
 import type {
+  AgentFrameworkId,
   ClaudeInstallResult,
   ClaudeInstallSource,
   UpsertProviderRequest
 } from '../../../../shared/settings'
-import { useSettingsStore } from '@/stores/settings-store'
+import { isProviderUsableByFramework } from '../../../../shared/settings'
+import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import { DataRootWarning } from '@/components/DataRootWarning'
 import { ClaudeInstallCard } from '../settings/ClaudeInstallCard'
 import { ClaudeStatusCard } from '../settings/ClaudeStatusCard'
+import { OpencodeStatusCard } from '../settings/OpencodeStatusCard'
 import { EnvironmentSetupCard } from './EnvironmentSetupCard'
 import { ProviderForm } from '../settings/ProviderForm'
 import {
@@ -97,6 +100,8 @@ const toUpsertRequest = (value: ProviderFormValue): UpsertProviderRequest => ({
   model: value.model,
   vendorId: value.vendorId,
   region: value.region,
+  // Persist the chosen API format so an OpenAI-compatible provider is validated + driven correctly.
+  apiType: value.apiType,
   key: value.key || undefined
 })
 
@@ -106,6 +111,13 @@ const toUpsertRequest = (value: ProviderFormValue): UpsertProviderRequest => ({
 // re-open only the environment portion when a required dependency later disappears (recovery mode).
 const OnboardingWizard = (): React.JSX.Element => {
   const claude = useSettingsStore((state) => state.claude)
+  const opencode = useSettingsStore((state) => state.opencode)
+  const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
+  const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
+  const setAgentFramework = useSettingsStore((state) => state.setAgentFramework)
+  const isDetectingOpencode = useSettingsStore((state) => state.isDetectingOpencode)
+  const installOpencode = useSettingsStore((state) => state.installOpencode)
+  const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
   const preflight = useSettingsStore((state) => state.preflight)
   const isDetectingClaude = useSettingsStore((state) => state.isDetectingClaude)
   const isInstalling = useSettingsStore((state) => state.isInstalling)
@@ -130,6 +142,9 @@ const OnboardingWizard = (): React.JSX.Element => {
   // already passed. The user explicitly continues to model configuration after reviewing it.
   const [step, setStep] = useState<WizardStep>('claude')
   const [environmentMode, setEnvironmentMode] = useState<EnvironmentMode>('automatic')
+  // The framework switcher stays collapsed once the selected agent is ready; the user reveals it with
+  // "Change agent" only when they actually want a different runtime.
+  const [showFrameworkSwitcher, setShowFrameworkSwitcher] = useState(false)
   const [automaticInstallError, setAutomaticInstallError] = useState<string | undefined>(undefined)
 
   // Data-root location step. Only `dataRoot` is ever touched here — the config root (settings,
@@ -160,6 +175,13 @@ const OnboardingWizard = (): React.JSX.Element => {
   const [validationMessage, setValidationMessage] = useState<string | undefined>(undefined)
   const [validationOk, setValidationOk] = useState(false)
   const didRequestCheck = useRef(false)
+  // Once the user manually picks an agent, stop auto-selecting; and only auto-select once per mount.
+  const userPickedFramework = useRef(false)
+  const autoSelectAttempted = useRef(false)
+  // Serializes framework switches: detection + preflight run async in the store, so a second switch
+  // started before the first settles could interleave and leave the selection, preflight, and
+  // environment result out of sync. This synchronous guard drops any switch while one is in flight.
+  const switchInFlight = useRef(false)
   // Guards against handleKeepDefault's completeOnboarding firing spuriously after Restart:
   // AlertDialog.Action fires onOpenChange(false) on click (same as Cancel), and closures inside
   // that handler can't see isRelaunching's update from the same synchronous batch, so a ref is
@@ -202,14 +224,22 @@ const OnboardingWizard = (): React.JSX.Element => {
     await checkEnvironment()
   }
 
-  const handleInstall = async (source: ClaudeInstallSource): Promise<void> => {
+  const handleInstall = async (
+    source: ClaudeInstallSource,
+    framework: AgentFrameworkId = agentFrameworkId
+  ): Promise<void> => {
     setAutomaticInstallError(undefined)
 
     try {
-      const result = await installClaude(
-        source,
-        source === 'managed' ? environmentCheck?.recommendedRegistry : undefined
-      )
+      // Install the requested framework: the per-card button names its own, the automatic one-click
+      // install targets the selected framework.
+      const result =
+        framework === 'opencode'
+          ? await installOpencode(source)
+          : await installClaude(
+              source,
+              source === 'managed' ? environmentCheck?.recommendedRegistry : undefined
+            )
 
       if (!result.ok) {
         setAutomaticInstallError(describeInstallFailure(result))
@@ -223,6 +253,51 @@ const OnboardingWizard = (): React.JSX.Element => {
       )
     }
   }
+
+  // Switching the framework re-detects it and re-runs the host inspection so the environment card
+  // reflects the chosen runtime immediately. Serialized by switchInFlight so overlapping switches can't
+  // interleave the store's async detection/preflight; refs (not setState) keep it usable from effects.
+  const runFrameworkSwitch = useCallback(
+    async (id: AgentFrameworkId): Promise<void> => {
+      if (switchInFlight.current || id === agentFrameworkId) return
+
+      switchInFlight.current = true
+      try {
+        await setAgentFramework(id)
+        await checkEnvironment()
+      } finally {
+        switchInFlight.current = false
+      }
+    },
+    [agentFrameworkId, setAgentFramework, checkEnvironment]
+  )
+
+  // Records an explicit user choice so the prefer-installed auto-selection below never overrides it.
+  const handlePickFramework = (id: AgentFrameworkId): void => {
+    userPickedFramework.current = true
+    setAutomaticInstallError(undefined)
+    void runFrameworkSwitch(id)
+  }
+
+  // Prefer whatever's installed during first-time onboarding: Claude Code is the default probe, but if
+  // Claude isn't installed while OpenCode is, switch the selection to OpenCode automatically. Runs once
+  // and never overrides an explicit user choice or a returning user's saved framework.
+  useEffect(() => {
+    if (isRecovery || userPickedFramework.current || autoSelectAttempted.current) return
+    if (agentFrameworks.length < 2) return
+
+    if (agentFrameworkId === 'claude-code' && !preflight.claudeReady && preflight.opencodeReady) {
+      autoSelectAttempted.current = true
+      void runFrameworkSwitch('opencode')
+    }
+  }, [
+    isRecovery,
+    agentFrameworks.length,
+    agentFrameworkId,
+    preflight.claudeReady,
+    preflight.opencodeReady,
+    runFrameworkSwitch
+  ])
 
   const handleBrowseLocation = async (): Promise<void> => {
     const picked = await window.api.storage.pickDirectory()
@@ -251,6 +326,25 @@ const OnboardingWizard = (): React.JSX.Element => {
     // First submit attempt surfaces any missing required fields instead of testing an incomplete draft.
     if (hasProviderFormErrors(formErrors)) {
       setShowProviderErrors(true)
+      return
+    }
+
+    // A provider that validates can still be unusable by the selected framework (e.g. Claude + an
+    // OpenAI-only gateway, or OpenCode + a Local Claude login). Block that before it becomes the active
+    // provider, so onboarding can't finish with a pair the agent can't actually spawn.
+    if (
+      !isProviderUsableByFramework(
+        { apiType: formValue.apiType, type: formValue.type },
+        { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
+      )
+    ) {
+      const label =
+        agentFrameworks.find((framework) => framework.id === agentFrameworkId)?.displayName ??
+        'the selected agent'
+      setValidationOk(false)
+      setValidationMessage(
+        `This provider isn't compatible with ${label}. Pick a provider whose API format ${label} supports, or change the agent framework.`
+      )
       return
     }
 
@@ -320,7 +414,13 @@ const OnboardingWizard = (): React.JSX.Element => {
     }
   }
 
-  const environmentReady = environmentCheck?.ready ?? false
+  // Ready only when the latest check is for the CURRENTLY selected framework and no re-check is in
+  // flight — otherwise switching a ready Claude to an uninstalled OpenCode would let Continue fire on
+  // the stale (Claude) result before the re-detect lands.
+  const environmentReady =
+    !isCheckingEnvironment &&
+    environmentCheck?.ready === true &&
+    environmentCheck.agentFrameworkId === agentFrameworkId
 
   if (isRelaunching) {
     return (
@@ -453,29 +553,116 @@ const OnboardingWizard = (): React.JSX.Element => {
                           scripts. Use Re-detect after completing any external permission or
                           installation step.
                         </p>
-                        <ClaudeStatusCard
-                          claude={claude}
-                          claudeReady={preflight.claudeReady}
-                          isDetecting={isDetectingClaude || isCheckingEnvironment}
-                          onDetect={() => void handleEnvironmentCheck()}
-                          embedded
-                        />
-                        {!preflight.claudeReady ? (
-                          <>
-                            <Separator className="bg-border-200" />
-                            <ClaudeInstallCard
-                              isInstalling={isInstalling}
-                              installLogs={installLogs}
-                              installProgress={installProgress}
-                              installError={storeInstallError}
-                              npmAvailable={npmAvailable}
-                              onInstall={(source) => void handleInstall(source)}
-                              embedded
-                            />
-                          </>
-                        ) : null}
+                        {/* Only the selected framework's runtime is shown — it is the one that must be
+                            installed to continue. Switch frameworks above to set up the other. */}
+                        {agentFrameworkId === 'opencode' ? (
+                          <OpencodeStatusCard
+                            opencode={opencode}
+                            opencodeReady={preflight.opencodeReady}
+                            isDetecting={isDetectingOpencode || isCheckingEnvironment}
+                            onDetect={() => void handleEnvironmentCheck()}
+                            isInstalling={isInstalling}
+                            installLogs={installLogs}
+                            installProgress={installProgress}
+                            installError={storeInstallError}
+                            npmAvailable={npmAvailable}
+                            onInstall={(source) => void handleInstall(source, 'opencode')}
+                          />
+                        ) : (
+                          // Same boxed shell as OpencodeStatusCard so both frameworks read identically:
+                          // one card holding the runtime status and, when missing, the install picker.
+                          <Card className="gap-0 rounded-lg py-0">
+                            <CardContent className="space-y-3 p-4">
+                              <ClaudeStatusCard
+                                claude={claude}
+                                claudeReady={preflight.claudeReady}
+                                isDetecting={isDetectingClaude || isCheckingEnvironment}
+                                onDetect={() => void handleEnvironmentCheck()}
+                                embedded
+                              />
+                              {!preflight.claudeReady ? (
+                                <ClaudeInstallCard
+                                  isInstalling={isInstalling}
+                                  installLogs={installLogs}
+                                  installProgress={installProgress}
+                                  installError={storeInstallError}
+                                  npmAvailable={npmAvailable}
+                                  onInstall={(source) => void handleInstall(source, 'claude-code')}
+                                  embedded
+                                />
+                              ) : null}
+                            </CardContent>
+                          </Card>
+                        )}
                       </div>
                     )}
+
+                    {/* Agent switcher lives below the detection results. Detection auto-picks the
+                        installed runtime, so when the selected agent is ready this collapses to a
+                        "Change agent" link; only a not-ready (or explicitly revealed) state shows the
+                        full Claude Code / OpenCode toggle. */}
+                    {agentFrameworks.length > 1 ? (
+                      <div className="rounded-lg bg-bg-10 p-3 ring-1 ring-border-200">
+                        {preflight.agentReady && !showFrameworkSwitcher ? (
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-xs leading-5 text-text-300">
+                              Open Science will use{' '}
+                              <span className="font-medium text-text-100">
+                                {agentFrameworks.find((f) => f.id === agentFrameworkId)
+                                  ?.displayName ?? 'the selected agent'}
+                              </span>
+                              . Only this agent needs to be installed to continue.
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setShowFrameworkSwitcher(true)}
+                              className="shrink-0 text-xs font-medium text-text-100 underline-offset-2 hover:text-text-000 hover:underline"
+                            >
+                              Change agent
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="space-y-1.5">
+                            <span className="text-xs font-medium text-text-100">
+                              Which agent should Open Science use?
+                            </span>
+                            <div
+                              className="grid grid-cols-2 gap-1 rounded-md bg-bg-000 p-1 ring-1 ring-border-200"
+                              role="radiogroup"
+                              aria-label="Agent framework"
+                            >
+                              {agentFrameworks.map((framework) => (
+                                <button
+                                  key={framework.id}
+                                  type="button"
+                                  role="radio"
+                                  aria-checked={agentFrameworkId === framework.id}
+                                  onClick={() => handlePickFramework(framework.id)}
+                                  disabled={
+                                    isCheckingEnvironment ||
+                                    isInstalling ||
+                                    isDetectingClaude ||
+                                    isDetectingOpencode
+                                  }
+                                  className={cn(
+                                    'rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-60',
+                                    agentFrameworkId === framework.id
+                                      ? 'bg-bg-10 text-text-000 shadow-sm ring-1 ring-border-200'
+                                      : 'text-text-100 hover:text-text-000'
+                                  )}
+                                >
+                                  {framework.displayName}
+                                </button>
+                              ))}
+                            </div>
+                            <p className="text-xs leading-5 text-text-300">
+                              Only this agent needs to be installed to continue; you can change it
+                              later in Settings.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
                   </section>
                 </CardContent>
                 <CardFooter className="mt-auto items-center justify-between gap-4 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">

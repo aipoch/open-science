@@ -52,6 +52,12 @@ const useAcpRuntime = (): {
     projectName?: string,
     permissionProfile?: PermissionProfileId
   ) => Promise<AcpCreateSessionResponse>
+  resetSessionContext: (
+    sessionId: AcpResumeSessionRequest['sessionId'],
+    cwd: AcpResumeSessionRequest['cwd'],
+    projectName?: string,
+    permissionProfile?: PermissionProfileId
+  ) => Promise<AcpCreateSessionResponse>
   deleteSession: (sessionId: string) => Promise<AcpStateSnapshot | undefined>
   cancel: (sessionId: string) => Promise<AcpStateSnapshot | undefined>
   sendPrompt: (
@@ -59,7 +65,8 @@ const useAcpRuntime = (): {
     text: string,
     attachments?: AcpPromptRequest['attachments'],
     forcedSkillIds?: string[],
-    referencedArtifacts?: AcpPromptRequest['referencedArtifacts']
+    referencedArtifacts?: AcpPromptRequest['referencedArtifacts'],
+    historyPreamble?: AcpPromptRequest['historyPreamble']
   ) => Promise<AcpStateSnapshot | undefined>
   respondToPermission: (
     requestId: string,
@@ -194,6 +201,21 @@ const useAcpRuntime = (): {
     [runValueAction]
   )
 
+  // Drops the agent-side context for a session whose accumulated history outgrew the request limit,
+  // adopting a fresh agent session so the next prompt can replay a bounded text transcript.
+  const resetSessionContext = useCallback(
+    (
+      sessionId: AcpResumeSessionRequest['sessionId'],
+      cwd: AcpResumeSessionRequest['cwd'],
+      projectName?: string,
+      permissionProfile?: PermissionProfileId
+    ) =>
+      runValueAction(setIsConnecting, () =>
+        window.api.acp.resetSessionContext({ sessionId, cwd, projectName, permissionProfile })
+      ),
+    [runValueAction]
+  )
+
   // Deletes a runtime session and returns the updated snapshot if it succeeds.
   const deleteSession = useCallback(
     (sessionId: string) =>
@@ -214,7 +236,8 @@ const useAcpRuntime = (): {
       text: AcpPromptRequest['text'],
       attachments?: AcpPromptRequest['attachments'],
       forcedSkillIds?: string[],
-      referencedArtifacts?: AcpPromptRequest['referencedArtifacts']
+      referencedArtifacts?: AcpPromptRequest['referencedArtifacts'],
+      historyPreamble?: AcpPromptRequest['historyPreamble']
     ) =>
       runSnapshotAction(undefined, () =>
         window.api.acp.sendPrompt({
@@ -224,7 +247,9 @@ const useAcpRuntime = (): {
           // Omit the field entirely when no skills were picked so the request stays minimal.
           ...(forcedSkillIds && forcedSkillIds.length > 0 ? { forcedSkillIds } : {}),
           // Same minimal-request rule for `@`-mentioned artifacts.
-          ...(referencedArtifacts && referencedArtifacts.length > 0 ? { referencedArtifacts } : {})
+          ...(referencedArtifacts && referencedArtifacts.length > 0 ? { referencedArtifacts } : {}),
+          // Only present right after a context reset, when a transcript is replayed for continuity.
+          ...(historyPreamble ? { historyPreamble } : {})
         })
       ),
     [runSnapshotAction]
@@ -272,6 +297,7 @@ const useAcpRuntime = (): {
     disconnect,
     createSession,
     resumeSession,
+    resetSessionContext,
     deleteSession,
     cancel,
     sendPrompt,

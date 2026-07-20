@@ -51,6 +51,29 @@ describe('permission profile controller', () => {
     )
   })
 
+  it('offers broker-enforced Full access when the agent has no native bypass mode', () => {
+    // opencode advertises build/plan, no bypassPermissions; the app owns the decision instead.
+    const modes = createModes(['build', 'plan'])
+
+    const application = resolvePermissionProfileApplication('full', modes, {
+      brokerEnforcesFullAccess: true
+    })
+
+    // No native mode to set, but Full access is available and won't throw — the broker enforces it.
+    expect(application.modeId).toBeUndefined()
+    expect(application.state).toMatchObject({
+      selectedProfile: 'full',
+      effectiveProfile: 'full',
+      fullAccessAvailable: true
+    })
+  })
+
+  it('still rejects Full access when neither native bypass nor broker enforcement is available', () => {
+    expect(() =>
+      resolvePermissionProfileApplication('full', createModes(['build', 'plan']))
+    ).toThrow(PermissionProfileUnavailableError)
+  })
+
   it('keeps conservative Auto selected when the Agent reports default mode', () => {
     const state = resolvePermissionProfileApplication('auto', createModes(['default'])).state
 

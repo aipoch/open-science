@@ -19,11 +19,19 @@ export type AcpRuntimeEventKind =
 
 export type AcpRuntimeEventLevel = 'info' | 'warning' | 'error'
 
+// Marks a prompt failure the app can auto-recover from without user action. 'context-overflow' means
+// the conversation outgrew the provider's request-size limit (accumulated media); the renderer resets
+// the agent context and replays a text-only transcript. Absent on ordinary events.
+export type AcpRecoverableFailure = 'context-overflow'
+
 export type AcpRuntimeEvent = {
   id: string
   timestamp: number
   kind: AcpRuntimeEventKind
   level: AcpRuntimeEventLevel
+  // Set on an error event the app can auto-recover from, so the renderer compacts-and-retries instead
+  // of surfacing a dead-end error.
+  recoverable?: AcpRecoverableFailure
   sessionId?: string
   messageId?: string
   role?: 'assistant' | 'user'
@@ -106,6 +114,10 @@ export type AcpCreateSessionRequest = {
 export type AcpCreateSessionResponse = {
   sessionId: string
   cwd?: string
+  // True when a resume could not reattach the agent's own session and a fresh one was adopted under the
+  // same app id (framework switch, or a restart the agent could not resume). Agent-side context is gone,
+  // so the caller may replay a transcript preamble into the next prompt to restore continuity.
+  contextReset?: boolean
 }
 
 export type AcpResumeSessionRequest = {
@@ -128,6 +140,9 @@ export type AcpPromptRequest = {
   forcedSkillIds?: string[]
   // Existing files referenced via composer `@` mentions; appended as prompt content blocks.
   referencedArtifacts?: ArtifactReference[]
+  // Transcript of prior turns injected only into the content sent to the agent (never the user-facing
+  // message), so a freshly-adopted session after a framework switch keeps conversational continuity.
+  historyPreamble?: string
 }
 
 export type AcpCancelPromptRequest = {

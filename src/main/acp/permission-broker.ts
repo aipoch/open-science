@@ -7,7 +7,11 @@ import type {
   AcpPermissionResponse
 } from '../../shared/acp'
 import { extractProviderToolName } from './runtime-events'
-import { resolveAutomaticPermission, type PermissionPolicyContext } from './permission-policy'
+import {
+  isMcpToolName,
+  resolveAutomaticPermission,
+  type PermissionPolicyContext
+} from './permission-policy'
 
 type PendingPermission = {
   request: AcpPermissionRequest
@@ -16,10 +20,6 @@ type PendingPermission = {
 }
 
 type EmitPermissionRequest = (request: AcpPermissionRequest) => void
-
-// Claude Code namespaces MCP tools as mcp__<server>__<tool>; notebook and other MCP tool calls carry
-// this prefix as their permission title, so their title alone is a stable per-tool category key.
-const MCP_TOOL_TITLE_PREFIX = 'mcp__'
 
 const ALLOW_ALWAYS_OPTION_KIND = 'allow_always'
 const ALLOW_ONCE_OPTION_KIND = 'allow_once'
@@ -46,17 +46,25 @@ const commandSignature = (command: string): string => {
 }
 
 // Derives a session-scoped "Always" category key from a permission request (first match wins):
-// 1. MCP/notebook tool (title starts with mcp__): keyed by title (the tool name, no args).
+// 1. MCP tool (recognized across frameworks — Claude's mcp__ prefix or an opencode <server>_ name):
+//    keyed by the tool name, no args.
 // 2. Shell/execute tool (provider tool name Bash, or execute kind): keyed by full command signature.
 // 3. Other built-ins (Write/Edit/WebFetch/…): keyed by provider tool name (falls back to title).
-// The mcp__ check runs before the execute branch so a notebook execute-cell is not misrouted to Bash.
-const resolveCategoryKey = (params: RequestPermissionRequest): string => {
+// The MCP check runs before the execute branch so an opencode MCP tool reporting kind:execute (e.g. a
+// notebook execute-cell) is grouped as its own MCP tool, not misrouted to the shared Bash category.
+const resolveCategoryKey = (
+  params: RequestPermissionRequest,
+  mcpServerNames: readonly string[] = []
+): string => {
   const { toolCall } = params
   const title = toolCall.title ?? toolCall.toolCallId
   const providerToolName = extractProviderToolName(toolCall)
 
-  if (title.startsWith(MCP_TOOL_TITLE_PREFIX)) {
-    return `tool:${title}`
+  if (
+    isMcpToolName(toolCall.title, mcpServerNames) ||
+    isMcpToolName(providerToolName, mcpServerNames)
+  ) {
+    return `mcp:${title}`
   }
 
   if (providerToolName === 'Bash' || toolCall.kind === 'execute') {
@@ -72,10 +80,12 @@ const describeGrant = (categoryKey: string): AcpPermissionGrant => {
     return { categoryKey, kind: 'shell', label: categoryKey.slice('bash:'.length) }
   }
 
-  if (categoryKey.startsWith('tool:')) {
-    const label = categoryKey.slice('tool:'.length)
+  if (categoryKey.startsWith('mcp:')) {
+    return { categoryKey, kind: 'mcp', label: categoryKey.slice('mcp:'.length) }
+  }
 
-    return { categoryKey, kind: label.startsWith(MCP_TOOL_TITLE_PREFIX) ? 'mcp' : 'tool', label }
+  if (categoryKey.startsWith('tool:')) {
+    return { categoryKey, kind: 'tool', label: categoryKey.slice('tool:'.length) }
   }
 
   return { categoryKey, kind: 'tool', label: categoryKey }
@@ -137,7 +147,7 @@ class AcpPermissionBroker {
       raw: params
     }
 
-    const categoryKey = resolveCategoryKey(params)
+    const categoryKey = resolveCategoryKey(params, policyContext?.mcpServerNames)
 
     // A model-independent fallback auto-reviews only structured, workspace-contained low-risk tools.
     const automaticOptionId = resolveAutomaticPermission(params, policyContext)

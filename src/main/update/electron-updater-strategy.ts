@@ -1,8 +1,14 @@
-import { app, BrowserWindow } from 'electron'
+import { app } from 'electron'
 import { autoUpdater } from 'electron-updater'
 
+import { APP } from '../../shared/app-config'
 import type { UpdateStatus } from '../../shared/update'
-import type { UpdateStrategy } from './strategy'
+import { fetchManifest } from './manifest'
+import type { InstallGate, UpdateStrategy } from './strategy'
+import { broadcastToRenderers } from '../renderer-broadcast'
+
+// Minimal logger surface so tests inject a spy without pulling electron-log.
+type UpdaterLogger = { info: (msg: string) => void; error: (msg: string, err?: unknown) => void }
 
 // Structural subset of electron-updater's autoUpdater we depend on, so tests can inject a fake without
 // pulling a real Electron runtime.
@@ -19,14 +25,20 @@ export type ElectronUpdaterDeps = {
   updater?: MinimalAutoUpdater
   currentVersion?: string
   broadcast?: (channel: string, payload: unknown) => void
+  // CDN manifest the release notes are read from (same version.json the installer flow uses).
+  // Injectable for tests; defaults to the public stable manifest.
+  fetchImpl?: typeof fetch
+  manifestUrl?: string
+  // Pre-install backend-shutdown gate; usually injected later via setInstallGate once the runtime exists.
+  installGate?: InstallGate
+  // Diagnostics sink for the apply path; defaults to a no-op so unit tests stay quiet.
+  log?: UpdaterLogger
 }
 
 // Default broadcast pushes to every live window (mirrors service.ts). Never runs in unit tests, which
 // inject their own broadcast.
 const defaultBroadcast = (channel: string, payload: unknown): void => {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send(channel, payload)
-  }
+  broadcastToRenderers(channel, payload)
 }
 
 // Coerce electron-updater's releaseNotes (string | {note}[] | null) to a plain string for the dialog.
@@ -50,17 +62,33 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private readonly updater: MinimalAutoUpdater
   private readonly currentVersion: string
   private readonly broadcast: (channel: string, payload: unknown) => void
+  private readonly fetchImpl?: typeof fetch
+  private readonly manifestUrl: string
+  private readonly log: UpdaterLogger
   private status: UpdateStatus
+  // In-flight manifest notes fetch for the current update, awaited by check() so the returned
+  // status reflects the hydrated notes.
+  private notesHydration?: Promise<void>
+  // Pre-install backend-shutdown gate, injected once the runtime exists (see ipc.ts).
+  private installGate?: InstallGate
 
   constructor(deps: ElectronUpdaterDeps = {}) {
     this.updater = deps.updater ?? (autoUpdater as unknown as MinimalAutoUpdater)
     this.currentVersion = deps.currentVersion ?? app?.getVersion?.() ?? '0.0.0'
     this.broadcast = deps.broadcast ?? defaultBroadcast
+    this.fetchImpl = deps.fetchImpl
+    this.manifestUrl = deps.manifestUrl ?? APP.update.manifestUrl
+    this.log = deps.log ?? { info: () => {}, error: () => {} }
+    this.installGate = deps.installGate
     this.status = { state: 'idle', current: this.currentVersion, applyKind: 'restart' }
 
     this.updater.autoDownload = false
     this.updater.autoInstallOnAppQuit = false
     this.subscribe()
+  }
+
+  setInstallGate(gate: InstallGate): void {
+    this.installGate = gate
   }
 
   private subscribe(): void {
@@ -72,6 +100,10 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         latest: i.version,
         notes: notesToString(i.releaseNotes)
       })
+      // electron-updater's *.yml feed carries no release notes, so the dialog would only get a
+      // GitHub link. Hydrate the notes from the CDN manifest (the same version.json the installer
+      // flow reads) so the "What's new" section renders in-app.
+      if (i.version) this.notesHydration = this.hydrateNotes(i.version)
     })
     this.updater.on('update-not-available', (info) => {
       const i = info as { version?: string }
@@ -106,6 +138,20 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     return this.status
   }
 
+  // Fetch the CDN manifest and, when it matches the offered update and actually carries notes,
+  // merge them into the current status. Any failure (network, parse, version drift) leaves the
+  // GitHub-link fallback in place — notes are best-effort and never block the update.
+  private async hydrateNotes(version: string): Promise<void> {
+    try {
+      const manifest = await fetchManifest(this.manifestUrl, this.fetchImpl)
+      if (manifest.version === version && manifest.notes && this.status.latest === version) {
+        this.setStatus({ ...this.status, notes: manifest.notes })
+      }
+    } catch {
+      // Keep the fallback that links out to the GitHub release.
+    }
+  }
+
   async check(): Promise<UpdateStatus> {
     try {
       await this.updater.checkForUpdates()
@@ -115,6 +161,8 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         error: error instanceof Error ? error.message : 'Update check failed'
       })
     }
+    // Wait for the notes fetch triggered by update-available so the returned status carries them.
+    await this.notesHydration
     return this.status
   }
 
@@ -136,6 +184,25 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   // relaunches into the new version (per-user install = no UAC prompt). On macOS Squirrel.Mac swaps
   // the .app and relaunches; it ignores isSilent, so the same call is correct there too.
   async apply(): Promise<UpdateStatus> {
+    // Stop the agent + notebook process trees BEFORE handing off to the installer. Its uninstall step
+    // deletes the running app's files, and on Windows an executable/DLL still mapped by a background
+    // child (agent CLI, python kernel, conda) is locked — the classic "Failed to uninstall old
+    // application files" error. If the teardown is degraded (budget elapsed, or taskkill fell back and
+    // may have left grandchildren), refuse the install rather than fail mid-uninstall: the gate is
+    // non-latching, so the app stays usable and the user can retry (fewer live processes next time).
+    if (this.installGate) {
+      const readiness = await this.installGate()
+      if (!readiness.completed || !readiness.reaped) {
+        this.log.error('update install gate refused: backend teardown degraded', readiness)
+        this.setStatus({
+          state: 'error',
+          error: 'Could not fully stop background processes before updating. Please try again.'
+        })
+        return this.status
+      }
+      this.log.info('update install gate cleared; proceeding to quitAndInstall')
+    }
+
     this.updater.quitAndInstall(true, true)
     return this.status
   }

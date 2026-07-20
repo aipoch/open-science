@@ -43,8 +43,9 @@ describe('parseFrontmatter', () => {
       '# AlphaFold2'
     ].join('\n')
     const { fields, body } = parseFrontmatter(raw)
+    // The reader is lossless: a folded block scalar keeps its single trailing newline (YAML clip).
     expect(fields.description).toBe(
-      'Predict protein structure for monomers and multimers with AlphaFold2 via the ColabFold runner.'
+      'Predict protein structure for monomers and multimers with AlphaFold2 via the ColabFold runner.\n'
     )
     expect(fields.license).toBe('Apache-2.0')
     expect(body.startsWith('# AlphaFold2')).toBe(true)
@@ -61,8 +62,44 @@ describe('parseFrontmatter', () => {
       'body'
     ].join('\n')
     const { fields } = parseFrontmatter(raw)
-    expect(fields.description).toBe('line one\nline two')
+    // Literal block scalar keeps its trailing newline (clip); the reader no longer trims.
+    expect(fields.description).toBe('line one\nline two\n')
     expect(fields.name).toBe('demo')
+  })
+
+  it('parses a bundle authored with CRLF line endings', () => {
+    const raw = [
+      '---',
+      'name: demo',
+      'description: Does a thing.',
+      'license: MIT',
+      '---',
+      '',
+      '# Demo'
+    ].join('\r\n')
+    const { fields, body } = parseFrontmatter(raw)
+    expect(fields).toMatchObject({
+      name: 'demo',
+      description: 'Does a thing.',
+      license: 'MIT'
+    })
+    expect(body.startsWith('# Demo')).toBe(true)
+  })
+
+  it('joins a CRLF folded block scalar (>) into a single spaced line', () => {
+    const raw = [
+      '---',
+      'name: demo',
+      'description: >',
+      '  first line',
+      '  second line',
+      '---',
+      '',
+      '# Demo'
+    ].join('\r\n')
+    const { fields } = parseFrontmatter(raw)
+    // Same value the LF folded test yields: folded to one line, trailing newline kept (YAML clip).
+    expect(fields.description).toBe('first line second line\n')
   })
 
   it('ignores nested (indented) keys after a block scalar, as a flat reader', () => {
@@ -77,8 +114,52 @@ describe('parseFrontmatter', () => {
       'body'
     ].join('\n')
     const { fields } = parseFrontmatter(raw)
-    expect(fields.description).toBe('folded text')
+    expect(fields.description).toBe('folded text\n')
     expect(fields['display-name']).toBeUndefined()
+  })
+
+  it('coerces bare date/number/boolean scalars to strings (no Date, no drop)', () => {
+    const raw = [
+      '---',
+      'name: demo',
+      'updated: 2026-07-17',
+      'version: 2',
+      'beta: true',
+      '---',
+      'body'
+    ].join('\n')
+    const { fields } = parseFrontmatter(raw)
+    // The FAILSAFE schema keeps these as verbatim strings; a Date would be dropped as a non-scalar.
+    expect(fields.updated).toBe('2026-07-17')
+    expect(fields.version).toBe('2')
+    expect(fields.beta).toBe('true')
+  })
+
+  it('flattens a YAML list to a comma-separated string and drops nested maps', () => {
+    const raw = [
+      '---',
+      'name: demo',
+      'requirements: [gpu, compute]', // flow sequence
+      'tags:', // block sequence
+      '  - alpha',
+      '  - beta',
+      'meta:', // nested map is dropped by the flat reader
+      '  key: value',
+      '---',
+      'body'
+    ].join('\n')
+    const { fields } = parseFrontmatter(raw)
+    expect(fields.requirements).toBe('gpu, compute')
+    expect(fields.tags).toBe('alpha, beta')
+    expect(fields.meta).toBeUndefined()
+  })
+
+  it('tolerates malformed frontmatter, returning empty fields and the body', () => {
+    // Unbalanced flow map is invalid YAML; the reader must not throw.
+    const raw = ['---', 'name: [oops', 'description: broken', '---', '# Body'].join('\n')
+    const { fields, body } = parseFrontmatter(raw)
+    expect(fields).toEqual({})
+    expect(body.startsWith('# Body')).toBe(true)
   })
 })
 

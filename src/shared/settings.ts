@@ -14,8 +14,58 @@ export const SETTINGS_FILE_VERSION = 2
 // model catalog from the registry), or reuses the local claude auth.
 export type ProviderType = 'custom' | 'claude-default' | 'official'
 
+// The chat API a model endpoint speaks: `anthropic` = /v1/messages, `openai` = /v1/chat/completions.
+// A framework supports a set of these; a provider offers one or `both`.
+export type ChatApiEndpoint = 'anthropic' | 'openai'
+export type ProviderApiType = ChatApiEndpoint | 'both'
+
+// The concrete endpoint(s) a provider offers.
+export const providerEndpoints = (apiType: ProviderApiType): ChatApiEndpoint[] =>
+  apiType === 'both' ? ['anthropic', 'openai'] : [apiType]
+
+// A provider's endpoint is usable by a framework only when they share at least one endpoint.
+export const isProviderCompatibleWith = (
+  apiType: ProviderApiType,
+  frameworkEndpoints: readonly ChatApiEndpoint[]
+): boolean => providerEndpoints(apiType).some((endpoint) => frameworkEndpoints.includes(endpoint))
+
+// Whether a provider can actually drive a given framework. Two axes: endpoint compatibility (above),
+// AND provider-type — a `claude-default` provider reuses the machine's own Claude login (Claude-specific
+// OAuth/config), which no other framework can consume, so it is only usable by Claude Code regardless
+// of endpoint. Enforced both in the renderer gates and main-side (preflight + spawn).
+export const isProviderUsableByFramework = (
+  provider: { apiType: ProviderApiType; type: ProviderType },
+  framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+): boolean => {
+  if (provider.type === 'claude-default' && framework.id !== 'claude-code') return false
+
+  return isProviderCompatibleWith(provider.apiType, framework.supportedApiTypes)
+}
+
+// The endpoint to actually use for a (provider, framework) pair. When both sides support OpenAI
+// /v1/chat/completions it wins (per product decision); otherwise the shared Anthropic endpoint; else
+// undefined when the pair is incompatible.
+export const preferredEndpoint = (
+  apiType: ProviderApiType,
+  frameworkEndpoints: readonly ChatApiEndpoint[]
+): ChatApiEndpoint | undefined => {
+  const shared = providerEndpoints(apiType).filter((endpoint) =>
+    frameworkEndpoints.includes(endpoint)
+  )
+
+  if (shared.length === 0) return undefined
+
+  return shared.includes('openai') ? 'openai' : 'anthropic'
+}
+
 // Detected claude executable metadata, persisted so later spawns skip re-detection.
 export type ClaudeInfo = {
+  resolvedPath?: string
+  version?: string
+}
+
+// Detected opencode executable metadata (resolved path + reported version), persisted for the card.
+export type OpencodeInfo = {
   resolvedPath?: string
   version?: string
 }
@@ -41,6 +91,9 @@ export type ProviderView = {
   id: string
   type: ProviderType
   name: string
+  // Which chat API this provider's endpoint speaks; drives per-framework availability. Absent ⇒
+  // treat as 'anthropic' (every existing provider).
+  apiType?: ProviderApiType
   baseUrl?: string
   model?: string
   // Set for official-vendor providers: which vendor and (where applicable) which regional endpoint.
@@ -72,21 +125,56 @@ export const providerValidationFailed = (provider: {
   (provider.lastValidatedAt === undefined ||
     provider.lastValidationFailure.at >= provider.lastValidatedAt)
 
+// The agent backends the app can drive over ACP. Persisted settings and the UI reference these ids;
+// the main-process AgentFramework registry is keyed by the same union.
+export type AgentFrameworkId = 'claude-code' | 'opencode'
+
+// Renderer-facing descriptor for one selectable agent framework (built from the main registry).
+export type AgentFrameworkView = {
+  id: AgentFrameworkId
+  // Chat endpoints this framework can drive; a provider is selectable only if it shares one. Absent ⇒
+  // treat as ['anthropic'].
+  supportedApiTypes?: ChatApiEndpoint[]
+  displayName: string
+  // Whether this framework materializes app skills; the renderer hides the skills UI when false.
+  supportsSkills: boolean
+}
+
 // Full renderer snapshot of settings state.
 export type SettingsSnapshot = {
   claude: ClaudeInfo
+  // Detected opencode executable, for the framework-aware detection card.
+  opencode: OpencodeInfo
   activeProviderId?: string
   // The active model within the active provider. For custom/claude-default this mirrors the provider's
   // own model; for official providers it's the chosen catalog entry. Undefined until a provider exists.
   activeModel?: string
   providers: ProviderView[]
+  // The selected agent backend, and the frameworks available to choose from.
+  agentFrameworkId: AgentFrameworkId
+  agentFrameworks: AgentFrameworkView[]
+  // Whether each framework's detected runtime is the app-managed install (binary in the app's data
+  // dir), which is the only case an in-app uninstall is offered — a PATH/npm binary we didn't install
+  // is never removed. Derived each read from the resolved path, never persisted.
+  claudeManaged: boolean
+  opencodeManaged: boolean
   // Timestamp of first-run onboarding completion; undefined until it finishes at least once.
   onboardingCompletedAt?: number
 }
 
-// The two hard startup gates. Kept as plain booleans so the wizard can target the first unmet step.
+export type SetAgentFrameworkRequest = {
+  id: AgentFrameworkId
+}
+
+// The hard startup gates. Kept as plain booleans so the wizard can target the first unmet step.
+// Per-framework readiness is exposed alongside `agentReady`, which reflects the currently-selected
+// framework — the gate a session actually depends on.
 export type Preflight = {
   claudeReady: boolean
+  opencodeReady: boolean
+  // Readiness of the selected agent framework (claudeReady or opencodeReady), plus which one it is.
+  agentFrameworkId: AgentFrameworkId
+  agentReady: boolean
   activeProviderReady: boolean
 }
 
@@ -97,6 +185,9 @@ export type ProviderDraft = {
   name?: string
   baseUrl?: string
   model?: string
+  // Which chat API a custom gateway speaks (form selector). Official providers take it from the
+  // registry; omitted defaults to 'anthropic'.
+  apiType?: ProviderApiType
   // Set when type is 'official': the chosen vendor and (where applicable) region. Base URL and model
   // catalog then come from the registry rather than the draft's baseUrl.
   vendorId?: OfficialVendorId
@@ -238,6 +329,49 @@ export type InstallClaudeRequest = {
   managedRegistry?: ManagedClaudeRegistry
 }
 
+// Install request for OpenCode. Reuses the same three source kinds as Claude; the app-managed download
+// is the recommended default and the only cross-platform-guaranteed path (no user Node/npm needed).
+export type InstallOpencodeRequest = {
+  source: ClaudeInstallSource
+}
+
+// The ordered OpenCode install sources for a host platform, mirroring getClaudeInstallSources. The
+// app-managed native-binary download leads (works on every OS, including native Windows). npm follows
+// (`npm i -g opencode-ai`). The shell installer (`curl … | bash`) is offered only off Windows —
+// OpenCode ships no official Windows PowerShell installer, so Windows users take managed or npm.
+export const getOpencodeInstallSources = (
+  platform: string = 'linux'
+): ClaudeInstallSourceInfo[] => {
+  const isWindows = platform === 'win32'
+
+  const sources: ClaudeInstallSourceInfo[] = [
+    {
+      id: 'managed',
+      label: 'App-managed download (recommended)',
+      displayCommand: '',
+      requiresNpm: false,
+      description: 'Downloads a self-contained OpenCode — no Node.js or npm required.'
+    },
+    {
+      id: 'npm',
+      label: 'npm (global install)',
+      displayCommand: 'npm i -g opencode-ai',
+      requiresNpm: true
+    }
+  ]
+
+  if (!isWindows) {
+    sources.push({
+      id: 'official-script',
+      label: 'Official install script',
+      displayCommand: 'curl -fsSL https://opencode.ai/install | bash',
+      requiresNpm: false
+    })
+  }
+
+  return sources
+}
+
 // One streamed line of installer output. `installId` groups a single install run.
 export type ClaudeInstallLogEvent = {
   kind: 'log'
@@ -284,7 +418,13 @@ export type NpmAvailability = {
 // Automatic first-run environment inspection. Warnings are intentionally non-blocking (for example,
 // OS keychain encryption may be unavailable while the app can still operate with reduced protection).
 export type EnvironmentCheckId =
-  'system' | 'storage' | 'secure-storage' | 'install-network' | 'python' | 'claude'
+  | 'system'
+  | 'storage'
+  | 'secure-storage'
+  | 'install-network'
+  | 'python'
+  // The selected agent runtime (Claude or OpenCode); label/summary are framework-specific.
+  | 'agent'
 
 export type EnvironmentCheckStatus = 'passed' | 'warning' | 'failed'
 
@@ -307,7 +447,9 @@ export type EnvironmentCheckResult = {
   // data directory. More detailed operational errors are reported by the install log.
   canAutoInstall: boolean
   recommendedRegistry?: ManagedClaudeRegistry
-  claude: ClaudeDetectResult
+  // The framework this check inspected, and its runtime detection result.
+  agentFrameworkId: AgentFrameworkId
+  runtime: ClaudeDetectResult
 }
 
 // A bundled skill's source category: app-bundled, imported from GitHub, or user-authored.
@@ -386,6 +528,7 @@ export type ImportSkillZipRequest = {
   dataBase64: string
   filename?: string
   replaceId?: string
+  subPath?: string
 }
 
 // Parse an uploaded .zip / .skill bundle without importing it, for a confirm-before-import preview.
@@ -393,16 +536,54 @@ export type PreviewSkillZipRequest = {
   dataBase64: string
 }
 
+// Import several skills from ONE uploaded bundle in a single call, so a bundle holding many skills is
+// unpacked once instead of re-decoded per skill. Each item selects a skill root by subPath (and may
+// target an existing imported skill to replace).
+export type ImportSkillZipBatchRequest = {
+  dataBase64: string
+  items: { subPath: string; replaceId?: string }[]
+}
+
+// Per-item outcome of a batch import: the same status as a single import on success, or an error
+// message on failure, keyed by the requested subPath. The refreshed skill list is returned once.
+// Per-item outcome: on success `status` (+ `id`) is set and `error` is absent; on failure `error` is
+// set and `status`/`id` are absent. The two are mutually exclusive, so a caller keys off `error`.
+export type ImportSkillZipBatchItemResult =
+  | { subPath: string; status: 'imported' | 'unchanged' | 'updated'; id: string; error?: undefined }
+  | { subPath: string; status?: undefined; id?: undefined; error: string }
+
+export type ImportSkillZipBatchResult = {
+  results: ImportSkillZipBatchItemResult[]
+  skills: SkillView[]
+}
+
 // The parsed contents of a bundle: the skill's name/description, the files it contains, whether an
 // identical bundle was already imported (same content signature), and — when the name collides with
 // exactly one existing imported skill of different content — the id of that skill, offered as a
 // replace target.
 export type SkillBundlePreview = {
+  subPath: string
   name: string
   description: string
   files: string[]
   alreadyImported: boolean
   replaceableId?: string
+}
+
+// One skill the bundle contained but that couldn't be imported (too large, no SKILL.md, no name, an
+// unreadable nested archive, ...). `source` identifies it within the bundle (the nested archive name
+// or subPath); `reason` is a plain-English explanation shown to the user. Surfaced so a partial import
+// tells the user exactly what was left out instead of failing the whole bundle.
+export type SkippedSkill = {
+  source: string
+  reason: string
+}
+
+// Result of previewing a bundle: the importable skills, plus any that were skipped and why. A bundle
+// with a mix of good and bad skills yields previews for the good ones and a skipped entry per bad one.
+export type SkillBundlePreviewResult = {
+  previews: SkillBundlePreview[]
+  skipped: SkippedSkill[]
 }
 
 // Scan a GitHub repo (owner/repo, owner/repo@ref, or a URL) for skill directories.

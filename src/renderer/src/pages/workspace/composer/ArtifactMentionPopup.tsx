@@ -5,6 +5,8 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useSessionStore } from '@/stores/session-store'
 
 import { ArtifactFileIcon } from './artifact-file-icon'
+import { fuzzyScore, type FuzzyMatch } from './fuzzy-match'
+import { HighlightedText } from './HighlightedText'
 import { buildProjectFileLibrary } from '../project-files-library'
 
 // The reference passed back to the composer when an artifact row is picked.
@@ -25,10 +27,12 @@ type ArtifactMentionPopupProps = {
   onClose: () => void
 }
 
-// One suggestion row: a picked artifact plus the display size and its section tag.
+// One suggestion row: a picked artifact plus the display size and its section tag. `positions` holds
+// the fuzzy-match indices into `name` to highlight (empty when the query is empty).
 type ArtifactRow = PickedArtifact & {
   size?: number
   tag: 'upload' | 'output'
+  positions?: number[]
 }
 
 // Human-readable section headers, ordered as they render.
@@ -74,11 +78,22 @@ export const ArtifactMentionPopup = ({
     return [...uploadRows, ...artifactRows]
   }, [sessions, activeProjectId])
 
-  // Case-insensitive filename match; empty query shows every artifact.
-  const matches = useMemo(() => {
-    const needle = query.trim().toLowerCase()
+  // Fuzzy-match the query against each filename, ranked best-first. Ranking happens within each section
+  // so uploads still render before outputs — the flat highlight index depends on that order. Empty
+  // query shows every artifact untouched.
+  const matches = useMemo<ArtifactRow[]>(() => {
+    const needle = query.trim()
     if (needle.length === 0) return rows
-    return rows.filter((row) => row.name.toLowerCase().includes(needle))
+
+    const rankSection = (tag: ArtifactRow['tag']): ArtifactRow[] =>
+      rows
+        .filter((row) => row.tag === tag)
+        .map((row) => ({ row, match: fuzzyScore(needle, row.name) }))
+        .filter((entry): entry is { row: ArtifactRow; match: FuzzyMatch } => entry.match !== null)
+        .sort((a, b) => b.match.score - a.match.score)
+        .map(({ row, match }) => ({ ...row, positions: match.positions }))
+
+    return [...rankSection('upload'), ...rankSection('output')]
   }, [rows, query])
 
   const [activeIndex, setActiveIndex] = useState(0)
@@ -145,7 +160,9 @@ export const ArtifactMentionPopup = ({
           path={row.path}
           source={row.source}
         />
-        <span className="flex-1 min-w-0 truncate font-medium">{row.name}</span>
+        <span className="flex-1 min-w-0 truncate font-medium">
+          <HighlightedText text={row.name} positions={row.positions ?? []} />
+        </span>
         {size ? <span className="text-xs text-text-300 shrink-0">{size}</span> : null}
         <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent text-accent-foreground shrink-0">
           {row.tag}

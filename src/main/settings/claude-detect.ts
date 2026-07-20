@@ -6,6 +6,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
 import type { ClaudeDetectResult } from '../../shared/settings'
+import { resolveClaudeExecutableForSpawn } from '../acp/claude-executable'
 import { augmentedPathEnv } from './shell-path'
 
 const execFileAsync = promisify(execFile)
@@ -29,6 +30,10 @@ export type ClaudeDetectDeps = {
   resolveNpmBinDirs: () => Promise<string[]>
   // Extra fixed directories to probe (e.g. the app-managed install dir), searched after PATH/home.
   extraDirs?: string[]
+  // Maps a detected path to what the ACP agent will actually spawn (on win32 a `claude.cmd` shim is
+  // resolved to the `cli.js`/`.exe` it wraps). A candidate whose spawn target is still a `.cmd`/`.bat`
+  // cannot be launched without a shell, so detection rejects it. Defaults to identity when omitted.
+  resolveSpawnTarget?: (path: string) => string
 }
 
 // Path semantics follow the injected platform, not the host running the code. Production wires
@@ -79,14 +84,25 @@ const collectCandidateDirs = async (deps: ClaudeDetectDeps): Promise<string[]> =
   )
 }
 
+// Whether a resolved spawn target is still a Windows batch shim. The ACP agent spawns without a shell,
+// so a `.cmd`/`.bat` here would fail with `spawn EINVAL`; such a candidate must be rejected.
+const isUnspawnableShim = (target: string, platform: NodeJS.Platform): boolean => {
+  if (platform !== 'win32') return false
+
+  const lower = target.toLowerCase()
+
+  return lower.endsWith('.cmd') || lower.endsWith('.bat')
+}
+
 // Probes each candidate directory × filename, returning the first executable whose `--version`
-// succeeds.
+// succeeds and that the ACP agent can actually spawn.
 const detectClaude = async (
   deps: ClaudeDetectDeps = createDefaultDetectDeps()
 ): Promise<ClaudeDetectResult> => {
   const p = pathFor(deps.platform)
   const candidateDirs = await collectCandidateDirs(deps)
   const binaryNames = claudeBinaryNames(deps.platform)
+  const resolveSpawnTarget = deps.resolveSpawnTarget ?? ((candidate: string) => candidate)
 
   for (const dir of candidateDirs) {
     for (const name of binaryNames) {
@@ -98,6 +114,11 @@ const detectClaude = async (
 
       // A path that exists but cannot report a version is not a usable claude; keep searching.
       if (version === undefined) continue
+
+      // On win32 the ACP agent spawns the executable without a shell. A `claude.cmd` shim that cannot
+      // be resolved to the `cli.js`/`.exe` it wraps would fail there with `spawn EINVAL` even though
+      // its shell-run `--version` just succeeded, so reject it and keep probing for a spawnable target.
+      if (isUnspawnableShim(resolveSpawnTarget(candidate), deps.platform)) continue
 
       return { found: true, path: candidate, version }
     }
@@ -187,7 +208,8 @@ const createDefaultDetectDeps = (): ClaudeDetectDeps => {
     platform,
     isExecutable: isExecutableFile(platform),
     getVersion: runClaudeVersion(platform),
-    resolveNpmBinDirs: resolveNpmBinDirs(platform)
+    resolveNpmBinDirs: resolveNpmBinDirs(platform),
+    resolveSpawnTarget: (candidate) => resolveClaudeExecutableForSpawn(candidate, platform)
   }
 }
 

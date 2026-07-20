@@ -49,11 +49,21 @@ beforeEach(() => {
     importSkillZip: vi
       .fn()
       .mockResolvedValue({ status: 'imported', id: 'imported-zip', skills: [] }),
+    importSkillZipBatch: vi.fn().mockResolvedValue({
+      results: [{ subPath: '', status: 'imported', id: 'imported-zip' }],
+      skills: []
+    }),
     previewSkillZip: vi.fn().mockResolvedValue({
-      name: 'Bundled',
-      description: 'From a bundle',
-      files: ['SKILL.md'],
-      alreadyImported: false
+      previews: [
+        {
+          subPath: '',
+          name: 'Bundled',
+          description: 'From a bundle',
+          files: ['SKILL.md'],
+          alreadyImported: false
+        }
+      ],
+      skipped: []
     }),
     scanRepoSkills: vi.fn().mockResolvedValue({
       skills: [
@@ -293,8 +303,7 @@ describe('SkillsPanel (sub-views)', () => {
 
     // The confirm page shows, with the duplicate reminder (parse-first, not imported yet).
     expect(document.body.textContent).toContain('Confirm import')
-    expect(document.body.textContent).toContain('Already uploaded')
-    expect(document.body.textContent).toContain('A skill named "Alpha" already exists.')
+    expect(document.body.textContent).toContain('Name exists')
     expect(useSettingsStore.getState().createSkill).not.toHaveBeenCalled()
   })
 })

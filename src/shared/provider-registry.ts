@@ -7,7 +7,17 @@
 // that shifts over time — update the lists here as vendors publish new models. Only vendors with a
 // documented Anthropic-compatible endpoint belong here (e.g. OpenAI's native API does not qualify).
 
-export type OfficialVendorId = 'anthropic' | 'deepseek' | 'zhipu' | 'minimax'
+import type { ProviderApiType } from './settings'
+
+export type OfficialVendorId =
+  | 'anthropic'
+  | 'deepseek'
+  | 'zhipu'
+  | 'minimax'
+  | 'kimi'
+  | 'kimiforcode'
+  | 'xiaomimimo'
+  | 'openrouter'
 
 // A selectable endpoint for vendors that publish more than one host — e.g. a Global vs. China region
 // (MiniMax) or a separate overseas/domestic console (GLM's Z.AI vs. BigModel). Each carries its own
@@ -16,6 +26,9 @@ export type VendorRegion = {
   id: string
   label: string
   baseUrl: string
+  // The region's OpenAI /v1/chat/completions base, when it differs from the Anthropic `baseUrl` and the
+  // vendor supports both endpoints. Falls back to the region's `baseUrl` when absent.
+  openaiBaseUrl?: string
   // Where the user creates/copies a key for this endpoint; falls back to the vendor-level one.
   apiKeyUrl?: string
   // Full URL of the vendor's model-list endpoint for this region; falls back to the vendor-level one.
@@ -26,11 +39,18 @@ export type OfficialVendor = {
   id: OfficialVendorId
   // Human-readable name shown in the provider-type picker and composer group headings.
   label: string
+  // Which chat API this vendor's endpoint speaks; drives per-framework availability. Absent ⇒
+  // 'anthropic' (every shipped vendor today exposes an Anthropic /v1/messages route).
+  apiType?: ProviderApiType
   // Anthropic-compatible model ids offered in the composer once a key is stored. First entry is the
   // default selection when the vendor is first added.
   models: string[]
   // Single-endpoint vendors set `baseUrl`; multi-region vendors set `regions` instead (never both).
+  // `baseUrl` is the Anthropic /v1/messages route; `openaiBaseUrl` is the vendor's separate OpenAI
+  // /v1/chat/completions root (they differ — e.g. DeepSeek serves Anthropic under `/anthropic` and
+  // OpenAI at the bare root). Set both only for a vendor whose apiType is 'both'.
   baseUrl?: string
+  openaiBaseUrl?: string
   regions?: VendorRegion[]
   // Page where the user obtains an API key. For multi-region vendors a per-region url takes priority.
   apiKeyUrl?: string
@@ -58,14 +78,19 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   {
     id: 'deepseek',
     label: 'DeepSeek',
+    // DeepSeek exposes both routes: Anthropic /v1/messages under `/anthropic`, and the OpenAI-compatible
+    // /v1/chat/completions at the bare root. The same model ids work on both, so it's safe to prefer
+    // OpenAI where the framework supports it (e.g. OpenCode).
+    apiType: 'both',
     baseUrl: 'https://api.deepseek.com/anthropic',
+    openaiBaseUrl: 'https://api.deepseek.com',
     apiKeyUrl: 'https://platform.deepseek.com/api_keys',
     modelsListUrl: 'https://api.deepseek.com/v1/models',
     models: ['deepseek-v4-pro', 'deepseek-v4-pro[1m]', 'deepseek-v4-flash']
   },
   {
     id: 'zhipu',
-    label: 'GLM (Z.AI / BigModel)',
+    label: 'Zhipu AI (GLM)',
     // GLM serves overseas from Z.AI and mainland China from BigModel (智谱) — different hosts and
     // separate consoles, so they are distinct endpoints rather than one base URL.
     regions: [
@@ -73,7 +98,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         id: 'global',
         label: 'Global (Z.AI)',
         baseUrl: 'https://api.z.ai/api/anthropic',
-        apiKeyUrl: 'https://z.ai/manage-apikey/apikey-list'
+        apiKeyUrl: 'https://z.ai'
       },
       {
         id: 'china',
@@ -82,7 +107,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         apiKeyUrl: 'https://open.bigmodel.cn/usercenter/apikeys'
       }
     ],
-    models: ['glm-5.2', 'glm-5-turbo', 'glm-4.7', 'glm-4.5-air']
+    models: ['glm-5.2', 'glm-5.1', 'glm-5', 'glm-5v-turbo', 'glm-5-turbo']
   },
   {
     id: 'minimax',
@@ -102,6 +127,74 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       }
     ],
     models: ['MiniMax-M3', 'MiniMax-M3[1m]', 'MiniMax-M2.7', 'MiniMax-M2.5']
+  },
+  {
+    id: 'kimi',
+    label: 'Kimi (Moonshot)',
+    // Moonshot's Anthropic-compatible route for the general Kimi platform. Models are billed per token
+    // and can be refreshed from the live list endpoint below.
+    baseUrl: 'https://api.moonshot.cn/anthropic',
+    apiKeyUrl: 'https://platform.kimi.com/console',
+    modelsListUrl: 'https://api.moonshot.cn/v1/models',
+    models: ['kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6', 'kimi-k2.5']
+  },
+  {
+    id: 'kimiforcode',
+    label: 'Kimi For Coding',
+    // The Kimi Code subscription endpoint: quota-based models (billed against a periodically refreshing
+    // quota rather than per token), so it ships a fixed catalog and exposes no live model list.
+    baseUrl: 'https://api.kimi.com/coding',
+    apiKeyUrl: 'https://www.kimi.com/code/docs',
+    models: ['kimi-k3', 'kimi-for-coding', 'kimi-for-coding-highspeed']
+  },
+  {
+    id: 'xiaomimimo',
+    label: 'Xiaomi MIMO',
+    // Xiaomi MiMo exposes both routes: Anthropic /v1/messages under `/anthropic` and the OpenAI-compatible
+    // /v1/chat/completions under `/v1`. The same model ids work on both.
+    apiType: 'both',
+    baseUrl: 'https://api.xiaomimimo.com/anthropic',
+    openaiBaseUrl: 'https://api.xiaomimimo.com/v1',
+    apiKeyUrl: 'https://platform.xiaomimimo.com/console/api-keys',
+    modelsListUrl: 'https://api.xiaomimimo.com/v1/models',
+    models: ['mimo-v2.5-pro', 'mimo-v2.5']
+  },
+  // OpenRouter is an aggregation gateway (many vendors behind one key), so it sits last in the picker.
+  {
+    id: 'openrouter',
+    label: 'OpenRouter',
+    // Multi-vendor gateway: Anthropic /v1/messages under `/api` and the OpenAI-compatible
+    // /v1/chat/completions under `/api/v1`. Its live catalog is 300+ ids, so this ships a curated set of
+    // the top models across vendors (no modelsListUrl) rather than a "refresh from vendor" that would
+    // flood the model picker. Model slugs use OpenRouter's `vendor/model` form.
+    apiType: 'both',
+    baseUrl: 'https://openrouter.ai/api',
+    openaiBaseUrl: 'https://openrouter.ai/api/v1',
+    apiKeyUrl: 'https://openrouter.ai/workspaces/default/keys',
+    models: [
+      // Anthropic
+      'anthropic/claude-opus-4.8',
+      'anthropic/claude-sonnet-5',
+      'anthropic/claude-haiku-4.5',
+      // OpenAI
+      'openai/gpt-5.6-terra-pro',
+      'openai/gpt-5.6-terra',
+      'openai/gpt-5.6-sol-pro',
+      'openai/gpt-5.6-sol',
+      'openai/gpt-5.6-luna-pro',
+      'openai/gpt-5.6-luna',
+      'openai/gpt-5.5-pro',
+      'openai/gpt-5.5',
+      'openai/gpt-5.3-codex',
+      // Other top-ranked vendors on OpenRouter
+      'google/gemini-3.1-pro-preview',
+      'google/gemini-3.5-flash',
+      'x-ai/grok-4.5',
+      'deepseek/deepseek-v4-pro',
+      'z-ai/glm-5.2',
+      'moonshotai/kimi-k3',
+      'qwen/qwen3.7-max'
+    ]
   }
 ]
 
@@ -132,6 +225,23 @@ export const resolveVendorBaseUrl = (
   const region = regions.find((candidate) => candidate.id === regionId) ?? regions[0]
 
   return region?.baseUrl
+}
+
+// Resolves a vendor's OpenAI /v1/chat/completions base, when it publishes one distinct from the
+// Anthropic route (only 'both' vendors do). Undefined otherwise, so callers fall back to `baseUrl`.
+export const resolveVendorOpenAiBaseUrl = (
+  id: OfficialVendorId,
+  regionId?: string
+): string | undefined => {
+  const vendor = VENDORS_BY_ID.get(id)
+
+  if (!vendor) return undefined
+  if (vendor.openaiBaseUrl) return vendor.openaiBaseUrl
+
+  const regions = vendor.regions ?? []
+  const region = regions.find((candidate) => candidate.id === regionId) ?? regions[0]
+
+  return region?.openaiBaseUrl
 }
 
 // Resolves where the user gets an API key for a vendor, preferring the selected region's console and
@@ -179,6 +289,10 @@ export const resolveVendorModelsUrl = (
 // The default model for a freshly added vendor (first catalog entry).
 export const defaultVendorModel = (id: OfficialVendorId): string | undefined =>
   VENDORS_BY_ID.get(id)?.models[0]
+
+// The chat API a vendor speaks, defaulting to Anthropic /v1/messages when unset.
+export const resolveVendorApiType = (id: OfficialVendorId): ProviderApiType =>
+  VENDORS_BY_ID.get(id)?.apiType ?? 'anthropic'
 
 // Whether a vendor needs a region choice (more than one endpoint).
 export const vendorHasRegions = (id: OfficialVendorId): boolean =>

@@ -4,7 +4,11 @@ import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
-import type { ClaudeInstallProgressEvent, ClaudeInstallSource } from '../../../../shared/settings'
+import type {
+  ClaudeInstallProgressEvent,
+  ClaudeInstallSource,
+  ClaudeInstallSourceInfo
+} from '../../../../shared/settings'
 import { getClaudeInstallSources, getNodeInstallHint } from '../../../../shared/settings'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { describeInstallProgress } from './claude-install-progress'
@@ -20,6 +24,9 @@ type ClaudeInstallCardProps = {
   npmAvailable: boolean
   onInstall: (source: ClaudeInstallSource) => void
   embedded?: boolean
+  // The install sources to offer; defaults to Claude's. Pass getOpencodeInstallSources to reuse this
+  // card for OpenCode (same picker, progress bar, log pane, and copyable command).
+  sources?: ClaudeInstallSourceInfo[]
 }
 
 // Source picker + one-click installer with a progress bar and an error-aware, collapsible log pane
@@ -32,14 +39,18 @@ const ClaudeInstallCard = ({
   installError,
   npmAvailable,
   onInstall,
-  embedded = false
+  embedded = false,
+  sources
 }: ClaudeInstallCardProps): React.JSX.Element => {
   // Default to the app-managed download — it needs no Node.js/npm and works behind region blocks.
   const [source, setSource] = useState<ClaudeInstallSource>('managed')
   const [showLog, setShowLog] = useState(false)
   // Sources carry platform-specific copy (e.g. install.ps1 vs install.sh), so resolve them for the
-  // host the app is running on.
-  const installSources = useMemo(() => getClaudeInstallSources(window.api?.platform), [])
+  // host the app is running on. Caller-supplied sources (e.g. OpenCode's) take precedence.
+  const installSources = useMemo(
+    () => sources ?? getClaudeInstallSources(window.api?.platform),
+    [sources]
+  )
   const nodeHint = useMemo(() => getNodeInstallHint(window.api?.platform), [])
   const selectedSource = installSources.find((item) => item.id === source)
   const npmMissing = source === 'npm' && !npmAvailable

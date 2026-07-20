@@ -61,7 +61,31 @@ vi.mock('./WorkspaceToolDiffBlock', () => ({
 vi.mock('@/stores/preview-workbench-store', () => ({
   usePreviewWorkbenchStore: {
     getState: () => ({ upsertAndActivateItem: vi.fn() })
-  }
+  },
+  createSessionReviewerPreviewItem: vi.fn(() => ({
+    id: 'tool:session-1:reviewer',
+    sessionId: 'session-1',
+    type: 'tool',
+    toolKind: 'reviewer',
+    title: 'Session Reviewer'
+  }))
+}))
+
+vi.mock('@/stores/review-store', () => ({
+  useReviewStore: (
+    selector: (state: {
+      getReviewForTurn: () => undefined
+      loadReviewsForSession: () => Promise<void>
+    }) => unknown
+  ) =>
+    selector({
+      getReviewForTurn: () => undefined,
+      loadReviewsForSession: () => Promise.resolve()
+    })
+}))
+
+vi.mock('@/components/ReviewerCard', () => ({
+  ReviewerCard: () => null
 }))
 
 const createMessage = (overrides: Partial<ChatMessage>): ChatMessage => ({

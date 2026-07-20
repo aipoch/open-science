@@ -334,6 +334,42 @@ describe('ACP permission broker', () => {
     expect(emittedRequests).toHaveLength(1)
   })
 
+  it('classifies an opencode-named MCP tool as MCP, not shell, even when it reports kind execute', async () => {
+    const emittedRequests: string[] = []
+    const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))
+    const mcpServerNames = ['open-science-artifacts', 'open-science-notebook']
+
+    // opencode renames the MCP tool <server>_<tool> and may report kind:execute; without MCP-aware
+    // classification it would be grouped under the shared Bash category and mislabeled as shell.
+    const grant = broker.requestPermission(
+      createToolPermissionRequest({
+        title: 'open-science-artifacts_write_artifact_file',
+        kind: 'execute'
+      }),
+      { profile: 'ask', mcpServerNames }
+    )
+    broker.respond({ requestId: emittedRequests[0], optionId: 'allow-always' })
+    await grant
+
+    expect(broker.listGrants('session-1')).toEqual([
+      {
+        categoryKey: 'mcp:open-science-artifacts_write_artifact_file',
+        kind: 'mcp',
+        label: 'open-science-artifacts_write_artifact_file'
+      }
+    ])
+
+    // The same MCP tool is now always-allowed and no longer prompts.
+    void broker.requestPermission(
+      createToolPermissionRequest({
+        title: 'open-science-artifacts_write_artifact_file',
+        kind: 'execute'
+      }),
+      { profile: 'ask', mcpServerNames }
+    )
+    expect(emittedRequests).toHaveLength(1)
+  })
+
   it('does not remember Always across sessions for built-in tools', async () => {
     const emittedRequests: string[] = []
     const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))
@@ -378,7 +414,7 @@ describe('ACP permission broker', () => {
         { categoryKey: 'tool:Write', kind: 'tool', label: 'Write' },
         { categoryKey: 'bash:python a.py', kind: 'shell', label: 'python a.py' },
         {
-          categoryKey: 'tool:mcp__open-science-notebook__notebook_execute',
+          categoryKey: 'mcp:mcp__open-science-notebook__notebook_execute',
           kind: 'mcp',
           label: 'mcp__open-science-notebook__notebook_execute'
         }
@@ -392,7 +428,7 @@ describe('ACP permission broker', () => {
         .listGrants('session-1')
         .map((grant) => grant.categoryKey)
         .sort()
-    ).toEqual(['bash:python a.py', 'tool:mcp__open-science-notebook__notebook_execute'].sort())
+    ).toEqual(['bash:python a.py', 'mcp:mcp__open-science-notebook__notebook_execute'].sort())
 
     const countBeforeWrite = emittedRequests.length
     broker.requestPermission(

@@ -22,7 +22,12 @@ import type {
   OpenArtifactFileRequest,
   ReadArtifactPreviewRequest
 } from '../shared/artifacts'
-import type { SaveBlobFileRequest, SaveBlobFileResult } from '../shared/file-save'
+import type {
+  SaveBlobFileRequest,
+  SaveBlobFileResult,
+  SaveManagedFileRequest,
+  SaveManagedFileResult
+} from '../shared/file-save'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
   AppendNotebookCodeCellRequest,
@@ -70,10 +75,12 @@ import type {
   DeleteProviderRequest,
   EnvironmentCheckResult,
   InstallClaudeRequest,
+  InstallOpencodeRequest,
   Preflight,
   RefreshProviderModelsRequest,
   RefreshProviderModelsResult,
   SetActiveProviderRequest,
+  SetAgentFrameworkRequest,
   SetSkillEnabledRequest,
   SettingsSnapshot,
   SkillDetailView,
@@ -84,8 +91,10 @@ import type {
   ImportSkillRequest,
   ImportSkillResult,
   ImportSkillZipRequest,
+  ImportSkillZipBatchRequest,
+  ImportSkillZipBatchResult,
   PreviewSkillZipRequest,
-  SkillBundlePreview,
+  SkillBundlePreviewResult,
   ScanRepoRequest,
   ScanRepoResult,
   ConnectorsSnapshot,
@@ -112,6 +121,7 @@ import type {
   MigrationProgress,
   StorageInfo
 } from '../shared/storage'
+import type { CliLauncherStatus } from '../shared/cli'
 import type { AppInfo, UpdateStatus } from '../shared/update'
 import type {
   DeleteUploadRequest,
@@ -119,6 +129,9 @@ import type {
   StageUploadFilesRequest,
   UploadedAttachment
 } from '../shared/uploads'
+import type { ReviewWithChecks, ReviewRunRequest, ReviewUpdateEvent } from '../shared/reviewer'
+import { REVIEWER_IPC } from '../shared/reviewer'
+import { subscribeCloseActivePane, WINDOW_CLOSE_CHANNEL } from '../shared/window-controls'
 
 type RemoveListener = () => void
 type AcpListener<Payload> = (payload: Payload) => void
@@ -137,6 +150,7 @@ const onIpcMessage = <Payload>(channel: string, listener: AcpListener<Payload>):
 // Custom APIs for renderer
 type OpenScienceAPI = {
   saveBlobFile: (request: SaveBlobFileRequest) => Promise<SaveBlobFileResult>
+  saveManagedFile: (request: SaveManagedFileRequest) => Promise<SaveManagedFileResult>
   // Host platform (process.platform), e.g. 'win32' | 'darwin' | 'linux'. Lets the renderer pick
   // platform-correct copy such as the claude install command shown in the onboarding/settings card.
   platform: string
@@ -151,6 +165,7 @@ type OpenScienceAPI = {
     disconnect: () => Promise<AcpStateSnapshot>
     createSession: (request?: AcpCreateSessionRequest) => Promise<AcpCreateSessionResponse>
     resumeSession: (request: AcpResumeSessionRequest) => Promise<AcpCreateSessionResponse>
+    resetSessionContext: (request: AcpResumeSessionRequest) => Promise<AcpCreateSessionResponse>
     sendPrompt: (request: AcpPromptRequest) => Promise<AcpStateSnapshot>
     cancel: (request: AcpCancelPromptRequest) => Promise<AcpStateSnapshot>
     deleteSession: (request: AcpDeleteSessionRequest) => Promise<AcpStateSnapshot>
@@ -175,10 +190,15 @@ type OpenScienceAPI = {
     isNpmAvailable: () => Promise<boolean>
     checkEnvironment: () => Promise<EnvironmentCheckResult>
     detectClaude: () => Promise<ClaudeDetectResult>
+    detectOpencode: () => Promise<SettingsSnapshot>
     installClaude: (request: InstallClaudeRequest) => Promise<ClaudeInstallResult>
+    installOpencode: (request: InstallOpencodeRequest) => Promise<ClaudeInstallResult>
+    uninstallClaude: () => Promise<SettingsSnapshot>
+    uninstallOpencode: () => Promise<SettingsSnapshot>
     upsertProvider: (request: UpsertProviderRequest) => Promise<SettingsSnapshot>
     deleteProvider: (request: DeleteProviderRequest) => Promise<SettingsSnapshot>
     setActiveProvider: (request: SetActiveProviderRequest) => Promise<SettingsSnapshot>
+    setAgentFramework: (request: SetAgentFrameworkRequest) => Promise<SettingsSnapshot>
     validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
     refreshProviderModels: (
       request: RefreshProviderModelsRequest
@@ -192,7 +212,8 @@ type OpenScienceAPI = {
     deleteSkill: (request: DeleteSkillRequest) => Promise<SkillView[]>
     importSkill: (request: ImportSkillRequest) => Promise<ImportSkillResult>
     importSkillZip: (request: ImportSkillZipRequest) => Promise<ImportSkillResult>
-    previewSkillZip: (request: PreviewSkillZipRequest) => Promise<SkillBundlePreview>
+    importSkillZipBatch: (request: ImportSkillZipBatchRequest) => Promise<ImportSkillZipBatchResult>
+    previewSkillZip: (request: PreviewSkillZipRequest) => Promise<SkillBundlePreviewResult>
     scanRepoSkills: (request: ScanRepoRequest) => Promise<ScanRepoResult>
     listConnectors: () => Promise<ConnectorsSnapshot>
     getConnectorDetail: (id: string) => Promise<ConnectorDetailView>
@@ -215,6 +236,13 @@ type OpenScienceAPI = {
   }
   github: {
     getStars: () => Promise<number | null>
+  }
+  cli: {
+    // The `open-science` command-line launcher: read status, install the shim into the user's PATH,
+    // or remove it. Install/uninstall touch only the user's own bin dir (no elevation).
+    getStatus: () => Promise<CliLauncherStatus>
+    install: () => Promise<CliLauncherStatus>
+    uninstall: () => Promise<CliLauncherStatus>
   }
   update: {
     getAppInfo: () => Promise<AppInfo>
@@ -318,12 +346,33 @@ type OpenScienceAPI = {
     dismissLegacyMovePrompt: () => Promise<void>
     onProgress: (listener: AcpListener<MigrationProgress>) => RemoveListener
   }
+  reviewer: {
+    run: (request: ReviewRunRequest) => Promise<void>
+    getForSession: (sessionId: string) => Promise<ReviewWithChecks[]>
+    onUpdated: (listener: AcpListener<ReviewUpdateEvent>) => RemoveListener
+    onSuppressNextAutoReview: (
+      listener: AcpListener<{ sessionId: string; clear?: boolean }>
+    ) => RemoveListener
+    // Fix loop lock events.
+    onFixLoopStart: (listener: AcpListener<{ sessionId: string }>) => RemoveListener
+    onFixLoopEnd: (listener: AcpListener<{ sessionId: string }>) => RemoveListener
+    // Sends an abort request to stop the running fix loop for a session.
+    abortFixLoop: (sessionId: string) => Promise<void>
+  }
+  window: {
+    // Closes the focused window (the Cmd+W / Ctrl+W fallback when no preview panel is open).
+    close: () => Promise<void>
+    // Fires when Cmd+W / Ctrl+W is pressed; the renderer decides pane-vs-window.
+    onCloseActivePane: (listener: () => void) => RemoveListener
+  }
 }
 
 // Exposes the small, typed bridge surface available to renderer code.
 const api: OpenScienceAPI = {
   saveBlobFile: (request) =>
     ipcRenderer.invoke('file:save-blob', request) as Promise<SaveBlobFileResult>,
+  saveManagedFile: (request) =>
+    ipcRenderer.invoke('file:save-managed', request) as Promise<SaveManagedFileResult>,
   platform: process.platform,
   getRuntimeVersions: () => ({
     electron: process.versions.electron,
@@ -339,6 +388,8 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('acp:create-session', request) as Promise<AcpCreateSessionResponse>,
     resumeSession: (request) =>
       ipcRenderer.invoke('acp:resume-session', request) as Promise<AcpCreateSessionResponse>,
+    resetSessionContext: (request) =>
+      ipcRenderer.invoke('acp:reset-session-context', request) as Promise<AcpCreateSessionResponse>,
     sendPrompt: (request) =>
       ipcRenderer.invoke('acp:send-prompt', request) as Promise<AcpStateSnapshot>,
     cancel: (request) => ipcRenderer.invoke('acp:cancel', request) as Promise<AcpStateSnapshot>,
@@ -379,14 +430,24 @@ const api: OpenScienceAPI = {
     checkEnvironment: () =>
       ipcRenderer.invoke('settings:check-environment') as Promise<EnvironmentCheckResult>,
     detectClaude: () => ipcRenderer.invoke('settings:detect-claude') as Promise<ClaudeDetectResult>,
+    detectOpencode: () =>
+      ipcRenderer.invoke('settings:detect-opencode') as Promise<SettingsSnapshot>,
     installClaude: (request) =>
       ipcRenderer.invoke('settings:install-claude', request) as Promise<ClaudeInstallResult>,
+    installOpencode: (request) =>
+      ipcRenderer.invoke('settings:install-opencode', request) as Promise<ClaudeInstallResult>,
+    uninstallClaude: () =>
+      ipcRenderer.invoke('settings:uninstall-claude') as Promise<SettingsSnapshot>,
+    uninstallOpencode: () =>
+      ipcRenderer.invoke('settings:uninstall-opencode') as Promise<SettingsSnapshot>,
     upsertProvider: (request) =>
       ipcRenderer.invoke('settings:upsert-provider', request) as Promise<SettingsSnapshot>,
     deleteProvider: (request) =>
       ipcRenderer.invoke('settings:delete-provider', request) as Promise<SettingsSnapshot>,
     setActiveProvider: (request) =>
       ipcRenderer.invoke('settings:set-active-provider', request) as Promise<SettingsSnapshot>,
+    setAgentFramework: (request) =>
+      ipcRenderer.invoke('settings:set-agent-framework', request) as Promise<SettingsSnapshot>,
     validateProvider: (request) =>
       ipcRenderer.invoke('settings:validate-provider', request) as Promise<ValidateProviderResult>,
     refreshProviderModels: (request) =>
@@ -411,8 +472,16 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('settings:import-skill', request) as Promise<ImportSkillResult>,
     importSkillZip: (request: ImportSkillZipRequest) =>
       ipcRenderer.invoke('settings:import-skill-zip', request) as Promise<ImportSkillResult>,
+    importSkillZipBatch: (request: ImportSkillZipBatchRequest) =>
+      ipcRenderer.invoke(
+        'settings:import-skill-zip-batch',
+        request
+      ) as Promise<ImportSkillZipBatchResult>,
     previewSkillZip: (request: PreviewSkillZipRequest) =>
-      ipcRenderer.invoke('settings:preview-skill-zip', request) as Promise<SkillBundlePreview>,
+      ipcRenderer.invoke(
+        'settings:preview-skill-zip',
+        request
+      ) as Promise<SkillBundlePreviewResult>,
     scanRepoSkills: (request: ScanRepoRequest) =>
       ipcRenderer.invoke('settings:scan-repo-skills', request) as Promise<ScanRepoResult>,
     listConnectors: () =>
@@ -456,6 +525,11 @@ const api: OpenScienceAPI = {
   },
   github: {
     getStars: () => ipcRenderer.invoke('github:get-stars') as Promise<number | null>
+  },
+  cli: {
+    getStatus: () => ipcRenderer.invoke('cli:get-status') as Promise<CliLauncherStatus>,
+    install: () => ipcRenderer.invoke('cli:install') as Promise<CliLauncherStatus>,
+    uninstall: () => ipcRenderer.invoke('cli:uninstall') as Promise<CliLauncherStatus>
   },
   update: {
     getAppInfo: () => ipcRenderer.invoke('update:get-app-info') as Promise<AppInfo>,
@@ -576,6 +650,36 @@ const api: OpenScienceAPI = {
     dismissLegacyMovePrompt: () =>
       ipcRenderer.invoke('storage:dismiss-legacy-move-prompt') as Promise<void>,
     onProgress: (listener) => onIpcMessage('storage:migrate-progress', listener)
+  },
+  reviewer: {
+    run: (request: ReviewRunRequest) =>
+      ipcRenderer.invoke(REVIEWER_IPC.RUN, request) as Promise<void>,
+    getForSession: (sessionId: string) =>
+      ipcRenderer.invoke(REVIEWER_IPC.GET_FOR_SESSION, sessionId) as Promise<ReviewWithChecks[]>,
+    onUpdated: (listener) => onIpcMessage(REVIEWER_IPC.UPDATED, listener),
+    onSuppressNextAutoReview: (listener: AcpListener<{ sessionId: string; clear?: boolean }>) =>
+      onIpcMessage(REVIEWER_IPC.SUPPRESS_NEXT_AUTO_REVIEW, listener),
+    // Fix loop lock: fired when the loop starts (lock composer) / ends or is aborted (unlock).
+    onFixLoopStart: (listener: AcpListener<{ sessionId: string }>) =>
+      onIpcMessage(REVIEWER_IPC.FIX_LOOP_START, listener),
+    onFixLoopEnd: (listener: AcpListener<{ sessionId: string }>) =>
+      onIpcMessage(REVIEWER_IPC.FIX_LOOP_END, listener),
+    // Sends an abort request to the main process to stop the running fix loop for a session.
+    abortFixLoop: (sessionId: string) =>
+      ipcRenderer.invoke(REVIEWER_IPC.ABORT_FIX_LOOP, sessionId) as Promise<void>
+  },
+  window: {
+    close: () => ipcRenderer.invoke(WINDOW_CLOSE_CHANNEL) as Promise<void>,
+    // The shared helper announces READY on subscribe (so main forwards the chord here) and UNREADY on
+    // teardown (so main re-arms its direct close). Reload remounts the hook, re-running the handshake.
+    onCloseActivePane: (listener) =>
+      subscribeCloseActivePane(
+        {
+          on: (channel, paneListener) => onIpcMessage(channel, paneListener),
+          send: (channel) => ipcRenderer.send(channel)
+        },
+        listener
+      )
   }
 }
 

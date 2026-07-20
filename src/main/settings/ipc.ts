@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain } from 'electron'
+import { ipcMain } from 'electron'
 
 import type {
   CreateSkillRequest,
@@ -6,12 +6,15 @@ import type {
   DeleteSkillRequest,
   ImportSkillRequest,
   ImportSkillZipRequest,
+  ImportSkillZipBatchRequest,
   PreviewSkillZipRequest,
   ScanRepoRequest,
   InstallClaudeRequest,
+  InstallOpencodeRequest,
   ClaudeInstallEvent,
   RefreshProviderModelsRequest,
   SetActiveProviderRequest,
+  SetAgentFrameworkRequest,
   AddCustomServerRequest,
   RemoveCustomServerRequest,
   SetCustomServerEnabledRequest,
@@ -26,6 +29,10 @@ import type {
   ValidateProviderRequest
 } from '../../shared/settings'
 import { createDefaultSettingsService, SettingsService } from './service'
+import { createLogger } from '../logger'
+import { broadcastToRenderers } from '../renderer-broadcast'
+
+const log = createLogger('settings-ipc')
 
 // IPC channel names for the settings/onboarding surface. Kept together so preload and main agree.
 // Carries both log lines and progress ticks (a `ClaudeInstallEvent` discriminated union).
@@ -43,11 +50,7 @@ export type SettingsIpcOptions = {
 
 // Streams one install event (log line or progress tick) to every open renderer window.
 const broadcastInstallEvent = (event: ClaudeInstallEvent): void => {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.webContents.send(SETTINGS_INSTALL_LOG_CHANNEL, event)
-    }
-  }
+  broadcastToRenderers(SETTINGS_INSTALL_LOG_CHANNEL, event)
 }
 
 // Registers renderer-callable settings commands. Secret handling stays entirely in the service; the
@@ -64,10 +67,33 @@ const registerSettingsIpcHandlers = ({
   ipcMain.handle('settings:npm-available', () => service.isNpmAvailable())
   ipcMain.handle('settings:check-environment', () => service.checkEnvironment())
   ipcMain.handle('settings:detect-claude', () => service.detectClaude())
+  ipcMain.handle('settings:detect-opencode', () => service.detectOpencode())
+  ipcMain.handle('settings:install-opencode', (_event, request: InstallOpencodeRequest) =>
+    service.installOpencode(request, broadcastInstallEvent)
+  )
 
   ipcMain.handle('settings:install-claude', (_event, request: InstallClaudeRequest) =>
     service.installClaude(request, broadcastInstallEvent)
   )
+
+  ipcMain.handle('settings:uninstall-claude', async () => {
+    const { snapshot, activeBackendAffected } = await service.uninstallClaude()
+
+    // Reconnect only when the removed runtime backed the active framework (its live agent is now stale,
+    // possibly auto-switched to the other). Uninstalling the inactive runtime touches nothing the live
+    // agent depends on, so it must not churn the connection.
+    if (activeBackendAffected) onActiveProviderChanged?.()
+
+    return snapshot
+  })
+
+  ipcMain.handle('settings:uninstall-opencode', async () => {
+    const { snapshot, activeBackendAffected } = await service.uninstallOpencode()
+
+    if (activeBackendAffected) onActiveProviderChanged?.()
+
+    return snapshot
+  })
 
   ipcMain.handle('settings:upsert-provider', async (_event, request: UpsertProviderRequest) => {
     const snapshot = await service.upsertProvider(request)
@@ -90,6 +116,19 @@ const registerSettingsIpcHandlers = ({
       const snapshot = await service.setActiveProvider(request.id, request.model)
 
       // Switching providers requires a fresh agent process so the new credentials take effect.
+      onActiveProviderChanged?.()
+
+      return snapshot
+    }
+  )
+  ipcMain.handle(
+    'settings:set-agent-framework',
+    async (_event, request: SetAgentFrameworkRequest) => {
+      log.info('set agent framework requested', { id: request.id })
+      const snapshot = await service.setAgentFramework(request.id)
+
+      // Switching frameworks needs a fresh agent process, exactly like a provider switch — the live
+      // process is a different backend binary, so the choice only takes effect on reconnect.
       onActiveProviderChanged?.()
 
       return snapshot
@@ -140,6 +179,14 @@ const registerSettingsIpcHandlers = ({
     onSkillsChanged?.()
     return result
   })
+  ipcMain.handle(
+    'settings:import-skill-zip-batch',
+    async (_event, request: ImportSkillZipBatchRequest) => {
+      const result = await service.importSkillZipBatch(request)
+      onSkillsChanged?.()
+      return result
+    }
+  )
   ipcMain.handle('settings:preview-skill-zip', (_event, request: PreviewSkillZipRequest) =>
     service.previewSkillZip(request)
   )

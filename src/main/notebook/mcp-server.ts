@@ -3,7 +3,8 @@ import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/s
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 
-const NOTEBOOK_MCP_SERVER_ARG = '--open-science-notebook-mcp'
+import { NOTEBOOK_MCP_SERVER_ARG } from '../mcp-server-args'
+
 const NOTEBOOK_MCP_SERVER_NAME = 'open-science-notebook'
 
 // Scoped prompt addendum that only applies when the agent is given notebook tools.

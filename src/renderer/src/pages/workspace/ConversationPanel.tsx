@@ -10,8 +10,10 @@ import {
   BookOpen,
   FileText,
   Image as ImageIcon,
+  Loader2,
   PanelRight,
   Plus,
+  ScanEye,
   Square,
   X
 } from 'lucide-react'
@@ -19,12 +21,20 @@ import { useRef, useState } from 'react'
 
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { ResizablePanel } from '@/components/ui/resizable'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { cn } from '@/lib/utils'
 import type { ChatSession } from '@/stores/session-store'
 
 import { ComposerEditor } from './composer/ComposerEditor'
 import { docToSkillIds, type ComposerDoc } from './composer/composer-doc'
+import { ComposerAutoReviewToggle } from './ComposerAutoReviewToggle'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { ComposerPermissionProfilePicker } from './ComposerPermissionProfilePicker'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
@@ -81,6 +91,8 @@ type ConversationPanelProps = {
   permissionProfileState: SessionPermissionProfileState | undefined
   permissionGrants: AcpPermissionGrant[]
   canChangePermissionProfile: boolean
+  // Auto-review toggle: whether the current session has auto-review enabled (default false).
+  autoReviewEnabled: boolean
   onDraftDocChange: (doc: ComposerDoc) => void
   onSendMessage: (forcedSkillIds: string[]) => void
   onStageAttachmentFiles: (files: File[]) => void
@@ -93,6 +105,11 @@ type ConversationPanelProps = {
   onPermissionProfileChange: (profile: PermissionProfileId) => void
   onRevokePermissionGrant: (categoryKey: string) => void
   onClearPermissionGrants: () => void
+  onAutoReviewToggle: (enabled: boolean) => void
+  // Manual review: invoked by the "Request review" + menu item.
+  onRequestReview: () => void
+  // True when "Request review" should be disabled: no completed turn, already reviewed, or currently reviewing.
+  isRequestReviewDisabled: boolean
 }
 
 // Middle chat surface owns the visible conversation and local message composer UI.
@@ -111,6 +128,7 @@ const ConversationPanel = ({
   permissionProfileState,
   permissionGrants,
   canChangePermissionProfile,
+  autoReviewEnabled,
   onDraftDocChange,
   onSendMessage,
   onStageAttachmentFiles,
@@ -122,7 +140,10 @@ const ConversationPanel = ({
   onRespondToPermission,
   onPermissionProfileChange,
   onRevokePermissionGrant,
-  onClearPermissionGrants
+  onClearPermissionGrants,
+  onAutoReviewToggle,
+  onRequestReview,
+  isRequestReviewDisabled
 }: ConversationPanelProps): React.JSX.Element => {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   // Local so the interrupted banner can show a spinner and block a double-resume until the request settles.
@@ -222,6 +243,13 @@ const ConversationPanel = ({
                     isResuming={isResuming}
                     onResume={() => void handleResume()}
                   />
+                ) : activeSession?.compacting ? (
+                  // Auto-recovery after a request-size overflow: a neutral note, not the red error box,
+                  // while the agent context is reset and the conversation is replayed as text.
+                  <div className="mb-2 flex items-center gap-2 rounded-lg border border-border-200 bg-bg-200 px-3 py-2 text-[12px] leading-5 text-text-300">
+                    <Loader2 className="size-3.5 animate-spin" strokeWidth={2} aria-hidden="true" />
+                    Compacting conversation to fit the context limit…
+                  </div>
                 ) : actionError || activeSession?.error ? (
                   <div className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700">
                     {actionError ?? activeSession?.error}
@@ -320,15 +348,40 @@ const ConversationPanel = ({
                       </div>
 
                       <div className="@container/composer flex items-center gap-1">
-                        <button
-                          type="button"
-                          disabled={!canEditDraft || isUploadingAttachments}
-                          className={composerIconButtonClassName}
-                          aria-label="Add attachment"
-                          onClick={() => fileInputRef.current?.click()}
-                        >
-                          <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
-                        </button>
+                        {/* The + button opens a dropdown for Attach files and Request review actions. */}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              type="button"
+                              disabled={!canEditDraft || isUploadingAttachments}
+                              className={composerIconButtonClassName}
+                              aria-label="Add attachment or request review"
+                              data-testid="composer-plus-trigger"
+                            >
+                              <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent side="top" align="start" className="w-48">
+                            <DropdownMenuItem
+                              data-testid="menu-attach-files"
+                              onSelect={() => fileInputRef.current?.click()}
+                            >
+                              <FileText className="mr-2 size-4 text-text-300" aria-hidden="true" />
+                              Attach files
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              data-testid="menu-request-review"
+                              disabled={isRequestReviewDisabled}
+                              onSelect={() => {
+                                if (!isRequestReviewDisabled) onRequestReview()
+                              }}
+                            >
+                              <ScanEye className="mr-2 size-4 text-text-300" aria-hidden="true" />
+                              Request review
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                         {/* The native picker is hidden because the composer button carries the UI. */}
                         <input
                           ref={fileInputRef}
@@ -349,6 +402,12 @@ const ConversationPanel = ({
                           onClearGrants={onClearPermissionGrants}
                         />
 
+                        <ComposerAutoReviewToggle
+                          value={autoReviewEnabled}
+                          disabled={!canEditDraft}
+                          onChange={onAutoReviewToggle}
+                        />
+
                         <div className="flex-1" />
 
                         {/* Model/provider switcher; hides itself unless more than one is configured.
@@ -356,8 +415,12 @@ const ConversationPanel = ({
                         <ComposerModelPicker />
 
                         {activeSession?.status === 'running' ||
-                        activeSession?.status === 'waiting-permission' ? (
+                        activeSession?.status === 'waiting-permission' ||
+                        activeSession?.fixLoopActive ? (
                           // Running sessions expose cancel instead of send to prevent overlapping turns.
+                          // During a fix loop the main agent may be idle (the reviewer-review sub-phase runs
+                          // in a separate ACP session), so fixLoopActive keeps the cancel affordance
+                          // reachable across the whole loop, not just the agent-fix running turn.
                           <button
                             type="button"
                             onClick={onCancelRun}

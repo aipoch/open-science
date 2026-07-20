@@ -10,4 +10,17 @@ type SaveBlobFileResult = {
   filePath?: string
 }
 
-export type { SaveBlobFileRequest, SaveBlobFileResult }
+type SaveManagedFileRequest = {
+  source: 'artifact' | 'upload'
+  path: string
+  suggestedName: string
+}
+
+type SaveManagedFileResult = SaveBlobFileResult
+
+export type {
+  SaveBlobFileRequest,
+  SaveBlobFileResult,
+  SaveManagedFileRequest,
+  SaveManagedFileResult
+}

@@ -118,30 +118,33 @@ describe('ProviderForm field switching', () => {
     expect(keyInput?.value).toBe('')
   })
 
-  it('moves custom-provider descriptions into three generic field-help tooltips', async () => {
+  it('moves custom-provider descriptions into generic field-help tooltips', async () => {
     render(createEmptyProviderFormValue({ type: 'custom' }))
     const helpButtons = Array.from(
       container.querySelectorAll<HTMLButtonElement>('[data-slot="field-help"]')
     )
 
-    expect(helpButtons).toHaveLength(3)
+    expect(helpButtons).toHaveLength(4)
     expect(
       helpButtons.every((button) => button.getAttribute('aria-label') === 'More information')
     ).toBe(true)
     expect(container.textContent).not.toContain(
-      'Anthropic /v1/messages-compatible base URL, key, and model'
+      'Base URL, key, and model for an Anthropic or OpenAI-compatible endpoint'
     )
-    expect(container.textContent).not.toContain('Only Anthropic')
+    expect(container.textContent).not.toContain('Which chat API this gateway speaks')
 
     await act(async () => helpButtons[0]?.focus())
     expect(document.body.textContent).toContain(
-      'Anthropic /v1/messages-compatible base URL, key, and model'
+      'Base URL, key, and model for an Anthropic or OpenAI-compatible endpoint'
     )
 
     await act(async () => helpButtons[1]?.focus())
-    expect(document.body.textContent).toContain('Only Anthropic /v1/messages–compatible gateways')
+    expect(document.body.textContent).toContain('The gateway root')
 
     await act(async () => helpButtons[2]?.focus())
+    expect(document.body.textContent).toContain('Which chat API this gateway speaks')
+
+    await act(async () => helpButtons[3]?.focus())
     expect(document.body.textContent).toContain('Your key stays private.')
   })
 

@@ -2,8 +2,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({ dialog: { showMessageBoxSync: vi.fn() } }))
 
-const { beginMigration, endMigration, isMigrationInProgress, installMigrationQuitGuard } =
-  await import('./migration-state')
+const {
+  beginMigration,
+  clearMigrationPending,
+  endMigration,
+  endMigrationCopy,
+  installMigrationQuitGuard,
+  isMigrationInProgress,
+  isMigrationPending,
+  waitForDataRootWriters,
+  withDataRootWrite
+} = await import('./migration-state')
 
 // A minimal app double: records the before-quit listener and whether quit() was called.
 type GuardApp = Parameters<typeof installMigrationQuitGuard>[0]
@@ -35,6 +44,70 @@ describe('migration-state', () => {
     expect(isMigrationInProgress()).toBe(true)
     endMigration()
     expect(isMigrationInProgress()).toBe(false)
+  })
+
+  it('beginMigration sets both the copying (quit) and pending (write-gate) flags', () => {
+    expect(isMigrationInProgress()).toBe(false)
+    expect(isMigrationPending()).toBe(false)
+
+    beginMigration()
+
+    expect(isMigrationInProgress()).toBe(true)
+    expect(isMigrationPending()).toBe(true)
+  })
+
+  it('endMigrationCopy relaxes the quit guard but keeps the write-gate pending', () => {
+    beginMigration()
+    endMigrationCopy()
+
+    // The copy finished, so quit is no longer blocked — but a successful-but-uncommitted copy still
+    // blocks writes until commit or discard resolves it.
+    expect(isMigrationInProgress()).toBe(false)
+    expect(isMigrationPending()).toBe(true)
+  })
+
+  it('clearMigrationPending lifts both flags (copy failed/cancelled/discarded, or switch failed)', () => {
+    beginMigration()
+    endMigrationCopy()
+    clearMigrationPending()
+
+    expect(isMigrationInProgress()).toBe(false)
+    expect(isMigrationPending()).toBe(false)
+  })
+
+  it('endMigration clears both flags (quit-anyway path)', () => {
+    beginMigration()
+    endMigration()
+
+    expect(isMigrationInProgress()).toBe(false)
+    expect(isMigrationPending()).toBe(false)
+  })
+
+  it('drains writes that started before migration and rejects new writes after the gate rises', async () => {
+    let releaseWrite: (() => void) | undefined
+    let writeStarted = false
+    const activeWrite = withDataRootWrite(
+      () =>
+        new Promise<void>((resolve) => {
+          writeStarted = true
+          releaseWrite = resolve
+        })
+    )
+    expect(writeStarted).toBe(true)
+
+    beginMigration()
+    let drained = false
+    const drainPromise = waitForDataRootWriters().then(() => {
+      drained = true
+    })
+    await Promise.resolve()
+    expect(drained).toBe(false)
+    await expect(withDataRootWrite(async () => {})).rejects.toThrow(/moving your data/i)
+
+    releaseWrite?.()
+    await activeWrite
+    await drainPromise
+    expect(drained).toBe(true)
   })
 
   it('quit guard does not interfere when no migration is running', () => {

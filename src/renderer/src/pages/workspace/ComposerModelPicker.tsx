@@ -7,16 +7,20 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { ProviderKindIcon } from '../settings/provider-icons'
 import { providerKindKey } from '../settings/provider-form-value'
 import {
+  selectFrameworkApiEndpoints,
   selectProviderModelOptions,
   useSettingsStore,
   type ProviderModelOption
 } from '@/stores/settings-store'
+import { isProviderUsableByFramework } from '../../../../shared/settings'
+import { incompatibilityReason } from './composer-model-picker-utils'
 
 const triggerClassName =
   'flex h-8 max-w-[220px] items-center gap-1 rounded-md px-2.5 text-sm text-text-300 hover:bg-bg-200 hover:text-text-100 disabled:cursor-not-allowed disabled:opacity-50 transition-colors'
@@ -35,12 +39,31 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
   const activeModel = useSettingsStore((state) => state.activeModel)
   const setActiveProvider = useSettingsStore((state) => state.setActiveProvider)
   const openSettings = useSettingsStore((state) => state.openSettings)
+  const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
+  const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
+  const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
+
+  const frameworkName =
+    agentFrameworks.find((framework) => framework.id === agentFrameworkId)?.displayName ??
+    'this framework'
+
+  // A provider is selectable only when it can actually drive the current framework (endpoint + type;
+  // a Local Claude provider is Claude-only).
+  const isCompatible = (provider: (typeof providers)[number]): boolean =>
+    isProviderUsableByFramework(
+      { apiType: provider.apiType ?? 'anthropic', type: provider.type },
+      { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
+    )
 
   const options = selectProviderModelOptions(providers)
+  const compatibleProviderIds = new Set(
+    providers.filter((provider) => isCompatible(provider)).map((provider) => provider.id)
+  )
+  const usableOptions = options.filter((option) => compatibleProviderIds.has(option.providerId))
+  const hasUsable = usableOptions.length > 0
 
-  // No selectable (provider, model): the user has nothing to send with — either nothing is configured
-  // or every provider failed its last test. Warn instead of hiding so the empty toolbar isn't a
-  // silent dead end; clicking opens Settings to add or fix a provider.
+  // No provider configured at all: nothing to pick or explain, so warn with a button that opens
+  // Settings rather than leaving the toolbar a silent dead end.
   if (options.length === 0) {
     return (
       <button
@@ -55,8 +78,10 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
     )
   }
 
-  // A single option leaves nothing to switch between, so the picker stays hidden.
-  if (options.length === 1) return null
+  // A single usable option leaves nothing to switch between, so the picker stays hidden. When the
+  // sole provider is incompatible we instead fall through to the dropdown (hasUsable is false) so its
+  // incompatibility reason stays reachable — an all-incompatible framework must never silently vanish.
+  if (options.length === 1 && hasUsable) return null
 
   // The active option matches by provider and model; an undefined activeModel maps to the empty-model
   // "default" entry.
@@ -76,61 +101,115 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className={triggerClassName} aria-label="Select model">
-          {current ? (
-            <ProviderKindIcon
-              kindKey={providerKindKey(current.providerType, current.vendorId)}
-              className="size-4"
-            />
-          ) : null}
-          <span className="truncate">
-            {current ? (
-              <>
-                <span className="font-medium text-text-100">{optionLabel(current)}</span>
-                {current.model ? (
-                  <span className="ml-1.5 text-text-300">· {current.providerName}</span>
-                ) : null}
-              </>
-            ) : (
-              'Select model'
-            )}
-          </span>
+        <Button
+          variant="ghost"
+          className={cn(triggerClassName, !hasUsable && 'text-amber-700 hover:text-amber-700')}
+          aria-label={hasUsable ? 'Select model' : 'No compatible model'}
+        >
+          {hasUsable ? (
+            <>
+              {current ? (
+                <ProviderKindIcon
+                  kindKey={providerKindKey(current.providerType, current.vendorId)}
+                  className="size-4"
+                />
+              ) : null}
+              <span className="truncate">
+                {current ? (
+                  <>
+                    <span className="font-medium text-text-100">{optionLabel(current)}</span>
+                    {current.model ? (
+                      <span className="ml-1.5 text-text-300">· {current.providerName}</span>
+                    ) : null}
+                  </>
+                ) : (
+                  'Select model'
+                )}
+              </span>
+            </>
+          ) : (
+            <>
+              <AlertTriangle className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
+              <span className="truncate">No compatible model</span>
+            </>
+          )}
           <ChevronDown className="size-3.5 shrink-0" aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="max-h-[320px] min-w-[15rem] overflow-y-auto">
-        {groups.map((group) => (
-          <DropdownMenuGroup key={group.provider.id}>
-            <DropdownMenuLabel>{group.provider.name}</DropdownMenuLabel>
-            {group.options.map((option) => {
-              const isActive =
-                option.providerId === activeProviderId && option.model === activeKeyModel
-
-              return (
-                <DropdownMenuItem
-                  key={`${option.providerId}:${option.model}`}
-                  role="menuitemradio"
-                  aria-checked={isActive}
-                  onSelect={() => void setActiveProvider(option.providerId, option.model)}
-                  className={cn('gap-2', isActive && 'font-medium')}
-                >
-                  <ProviderKindIcon
-                    kindKey={providerKindKey(option.providerType, option.vendorId)}
-                    className="size-4 shrink-0"
-                  />
-                  <span className="min-w-0 flex-1 truncate">{optionLabel(option)}</span>
-                  {isActive ? (
-                    <Check
-                      className="size-4 shrink-0 text-primary"
-                      strokeWidth={2}
-                      aria-hidden="true"
-                    />
-                  ) : null}
-                </DropdownMenuItem>
+        {groups.map((group) => {
+          const compatible = isCompatible(group.provider)
+          const reason = compatible
+            ? undefined
+            : incompatibilityReason(
+                {
+                  apiType: group.provider.apiType ?? 'anthropic',
+                  type: group.provider.type,
+                  name: group.provider.name
+                },
+                frameworkName,
+                frameworkEndpoints
               )
-            })}
-          </DropdownMenuGroup>
-        ))}
+
+          return (
+            <DropdownMenuGroup key={group.provider.id}>
+              <DropdownMenuLabel>{group.provider.name}</DropdownMenuLabel>
+              {compatible ? (
+                group.options.map((option) => {
+                  const isActive =
+                    option.providerId === activeProviderId && option.model === activeKeyModel
+
+                  return (
+                    <DropdownMenuItem
+                      key={`${option.providerId}:${option.model}`}
+                      role="menuitemradio"
+                      aria-checked={isActive}
+                      onSelect={() => void setActiveProvider(option.providerId, option.model)}
+                      className={cn('gap-2', isActive && 'font-medium')}
+                    >
+                      <ProviderKindIcon
+                        kindKey={providerKindKey(option.providerType, option.vendorId)}
+                        className="size-4 shrink-0"
+                      />
+                      <span className="min-w-0 flex-1 truncate">{optionLabel(option)}</span>
+                      {isActive ? (
+                        <Check
+                          className="size-4 shrink-0 text-primary"
+                          strokeWidth={2}
+                          aria-hidden="true"
+                        />
+                      ) : null}
+                    </DropdownMenuItem>
+                  )
+                })
+              ) : (
+                // An incompatible provider gets one focusable, non-actionable item that states WHY it
+                // is unavailable. It stays keyboard-reachable via roving focus (a `disabled` item is
+                // skipped, and a label is not focusable at all), and its visible text is the reason —
+                // so mouse and keyboard/AT users get it without a hover-only tooltip. aria-disabled
+                // marks it unselectable and onSelect is prevented so it never switches the model.
+                <DropdownMenuItem
+                  aria-disabled
+                  onSelect={(event) => event.preventDefault()}
+                  className="items-start gap-2 text-text-300"
+                >
+                  <AlertTriangle
+                    className="mt-0.5 size-4 shrink-0"
+                    strokeWidth={2}
+                    aria-hidden="true"
+                  />
+                  <span className="min-w-0 flex-1 whitespace-normal">{reason}</span>
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuGroup>
+          )
+        })}
+        {hasUsable ? null : (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => openSettings()}>Open Settings</DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   )

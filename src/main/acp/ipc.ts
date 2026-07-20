@@ -1,6 +1,6 @@
 import { homedir } from 'node:os'
 
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, ipcMain } from 'electron'
 
 import type {
   AcpCancelPromptRequest,
@@ -18,6 +18,8 @@ import type {
 } from '../../shared/acp'
 import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../../shared/artifacts'
 import { AcpRuntime } from './runtime'
+import { installAgentShutdownGuard } from './shutdown-guard'
+import { AgentMcpHttpHost } from './mcp-http-host'
 import type { ArtifactRepository } from '../artifacts/repository'
 import type { ArtifactRunRegistry } from '../artifacts/run-registry'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
@@ -26,6 +28,7 @@ import { NotebookRuntimeService } from '../notebook/runtime-service'
 import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import type { SettingsService } from '../settings/service'
 import type { UploadRepository } from '../uploads/repository'
+import { broadcastToRenderers } from '../renderer-broadcast'
 
 type AcpIpcArtifacts = {
   repository: ArtifactRepository
@@ -42,11 +45,7 @@ type AcpIpcOptions = AcpIpcArtifacts & {
 
 // Sends one runtime payload to every currently open renderer window.
 const broadcast = <Payload>(channel: string, payload: Payload): void => {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.webContents.send(channel, payload)
-    }
-  }
+  broadcastToRenderers(channel, payload)
 }
 
 // Creates the shared runtime instance used by all ACP IPC handlers and artifact claims.
@@ -65,8 +64,12 @@ const createRuntime = ({
     appVersion: app.getVersion(),
     // Packaged macOS apps often start with cwd at "/" or the app bundle; use home instead.
     defaultCwd: homedir(),
-    // Read the active provider's credentials/model on every connect so provider switches apply.
-    resolveSpawnConfig: () => settingsService.resolveActiveSpawnConfig(),
+    // Resolve the active framework + provider credentials/model on every connect so framework and
+    // provider switches apply on reconnect.
+    resolveBackend: () => settingsService.resolveActiveAgentBackend(),
+    // Serves the artifact/notebook MCP over local http for frameworks that reject stdio MCP (opencode);
+    // Claude ignores it and keeps launching them over stdio.
+    mcpHttpHost: new AgentMcpHttpHost(),
     // Turn-scoped skill force-load: the runtime uses these to respawn with a picked-but-disabled skill
     // for one prompt and to build the steering nudge naming the picked skills.
     skills: {
@@ -120,6 +123,9 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntime => {
   ipcMain.handle('acp:resume-session', async (_event, request: AcpResumeSessionRequest) =>
     runtime.resumeSession(request)
   )
+  ipcMain.handle('acp:reset-session-context', async (_event, request: AcpResumeSessionRequest) =>
+    runtime.resetSessionContext(request)
+  )
   // Prompt calls wait for the turn to stop, then return the latest snapshot.
   ipcMain.handle('acp:send-prompt', async (_event, request: AcpPromptRequest) => {
     await runtime.sendPrompt(request)
@@ -141,6 +147,9 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntime => {
     'acp:revoke-permission-grant',
     (_event, request: AcpRevokePermissionGrantRequest) => runtime.revokePermissionGrant(request)
   )
+
+  // Kill the agent child on quit so it never outlives the app as an orphaned process.
+  installAgentShutdownGuard(app, runtime)
 
   return runtime
 }

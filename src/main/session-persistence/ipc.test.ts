@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import type { ReviewRepository } from '../reviewer/repository'
 import { createSessionPersistenceHandlers } from './ipc'
 
 const createSession = (): PersistedChatSession => ({
@@ -14,6 +15,13 @@ const createSession = (): PersistedChatSession => ({
   updatedAt: 1710000000000
 })
 
+// Minimal mock review repository that satisfies the cascade contract.
+const createMockReviewRepository = (): ReviewRepository =>
+  ({
+    deleteReviewsForSession: vi.fn().mockResolvedValue(undefined),
+    deleteReviewsForProject: vi.fn().mockResolvedValue(undefined)
+  }) as unknown as ReviewRepository
+
 describe('session persistence IPC handlers', () => {
   it('routes each command to the repository', async () => {
     const session = createSession()
@@ -25,7 +33,8 @@ describe('session persistence IPC handlers', () => {
       deleteProjectSessions: vi.fn().mockResolvedValue(undefined),
       saveManifest: vi.fn().mockResolvedValue(undefined)
     }
-    const handlers = createSessionPersistenceHandlers(repository)
+    const reviewRepository = createMockReviewRepository()
+    const handlers = createSessionPersistenceHandlers(repository, reviewRepository)
 
     await expect(handlers.loadAll()).resolves.toBe(loadResult)
 
@@ -34,9 +43,13 @@ describe('session persistence IPC handlers', () => {
 
     await handlers.deleteSession({ projectId: 'project-a', sessionId: 'session-1' })
     expect(repository.deleteSession).toHaveBeenCalledWith('project-a', 'session-1')
+    // Cascade: review cleanup is attempted before the session delete.
+    expect(reviewRepository.deleteReviewsForSession).toHaveBeenCalledWith('session-1')
 
     await handlers.deleteProjectSessions({ projectId: 'project-a' })
     expect(repository.deleteProjectSessions).toHaveBeenCalledWith('project-a')
+    // Cascade: review cleanup is attempted for the project.
+    expect(reviewRepository.deleteReviewsForProject).toHaveBeenCalledWith('project-a')
 
     await handlers.saveManifest({ lastProjectId: 'project-a', lastSessionId: 'session-1' })
     expect(repository.saveManifest).toHaveBeenCalledWith({

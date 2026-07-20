@@ -29,6 +29,7 @@ import {
   createPreviewFileItemFromUpload
 } from './preview-file-item'
 import type { MessageArtifact } from './preview-file-item'
+import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
 import { getPreviewThumbnailReadEncoding } from './preview-support'
 import { getPreviewFileReader } from './previews/preview-file-reader'
 import { useNearViewport } from './previews/useNearViewport'
@@ -244,52 +245,62 @@ const FileTile = ({
   })
 
   return (
-    <button
-      ref={setTileElement}
-      type="button"
-      className="flex h-[128px] min-w-0 flex-col overflow-hidden rounded-lg border border-border-300/50 bg-bg-000 text-left shadow-sm hover:border-border-200 hover:bg-bg-100"
-      aria-label={previewLabel}
-      title={name}
-      onClick={onPreview}
-    >
-      <span
-        data-testid="project-file-preview"
-        className="relative h-[82px] w-full overflow-hidden bg-bg-200"
+    <div className="group relative h-[128px] min-w-0 overflow-hidden rounded-lg border border-border-300/50 bg-bg-000 shadow-sm hover:border-border-200 hover:bg-bg-100 focus-within:ring-2 focus-within:ring-ring/50 focus-within:ring-inset">
+      <button
+        ref={setTileElement}
+        type="button"
+        className="flex h-[128px] w-full min-w-0 flex-col text-left"
+        aria-label={previewLabel}
+        title={name}
+        onClick={onPreview}
       >
-        <span className={cn('block size-full', missing && 'opacity-40')}>
-          {/* Unmount the reader outside the overscan window so tile previews release local data. */}
-          {isNearViewport ? (
-            <VisibleProjectFilePreview artifact={previewArtifact} target={target} />
-          ) : (
-            <ArtifactPreview artifact={previewArtifact} source={source} isVisible={false} />
-          )}
-        </span>
-        {missing ? (
-          <span className="absolute left-1.5 top-1.5 rounded bg-text-000/75 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-bg-000 shadow-sm">
-            {FILE_MISSING_TAG}
+        <span
+          data-testid="project-file-preview"
+          className="relative h-[82px] w-full overflow-hidden bg-bg-200"
+        >
+          <span className={cn('block size-full', missing && 'opacity-40')}>
+            {/* Unmount the reader outside the overscan window so tile previews release local data. */}
+            {isNearViewport ? (
+              <VisibleProjectFilePreview artifact={previewArtifact} target={target} />
+            ) : (
+              <ArtifactPreview artifact={previewArtifact} source={source} isVisible={false} />
+            )}
           </span>
-        ) : null}
-      </span>
-      <span
-        data-testid="project-file-meta"
-        className="flex min-w-0 flex-1 flex-col justify-center gap-0.5 px-2 py-1.5"
-      >
-        <span className="block min-w-0 truncate text-[11px] leading-5 text-text-000">
-          {displayName}
+          {missing ? (
+            <span className="absolute left-1.5 top-1.5 rounded bg-text-000/75 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-bg-000 shadow-sm">
+              {FILE_MISSING_TAG}
+            </span>
+          ) : null}
         </span>
-        {sizeLabel || relativeTimeLabel ? (
-          <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0 text-[10px] leading-3 text-text-300">
-            {sizeLabel ? <span className="shrink-0">{sizeLabel}</span> : null}
-            {sizeLabel && relativeTimeLabel ? (
-              <span className="shrink-0" aria-hidden="true">
-                ·
-              </span>
-            ) : null}
-            {relativeTimeLabel ? <span className="min-w-0">{relativeTimeLabel}</span> : null}
+        <span
+          data-testid="project-file-meta"
+          className="flex min-w-0 flex-1 flex-col justify-center gap-0.5 px-2 py-1.5"
+        >
+          <span className="block min-w-0 truncate text-[11px] leading-5 text-text-000">
+            {displayName}
           </span>
-        ) : null}
-      </span>
-    </button>
+          {sizeLabel || relativeTimeLabel ? (
+            <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0 text-[10px] leading-3 text-text-300">
+              {sizeLabel ? <span className="shrink-0">{sizeLabel}</span> : null}
+              {sizeLabel && relativeTimeLabel ? (
+                <span className="shrink-0" aria-hidden="true">
+                  ·
+                </span>
+              ) : null}
+              {relativeTimeLabel ? <span className="min-w-0">{relativeTimeLabel}</span> : null}
+            </span>
+          ) : null}
+        </span>
+      </button>
+      <ManagedFileDownloadButton
+        source={source}
+        path={previewArtifact.path}
+        suggestedName={name}
+        disabled={missing}
+        revealOnParentHover
+        wrapperClassName="absolute right-1.5 top-1.5 z-10"
+      />
+    </div>
   )
 }
 

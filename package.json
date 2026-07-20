@@ -1,12 +1,15 @@
 {
   "name": "open-science",
   "productName": "Open Science",
-  "version": "0.3.0",
+  "version": "0.4.1",
   "description": "Open Science — an open-source, model-agnostic AI workbench for scientific discovery.",
   "main": "./out/main/index.js",
   "author": "aipoch",
   "license": "Apache-2.0",
   "homepage": "https://www.aipoch.com/open-science",
+  "bin": {
+    "open-science": "cli/index.mjs"
+  },
   "scripts": {
     "format": "prettier --write .",
     "lint": "eslint --cache .",
@@ -15,14 +18,20 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "gen:web-api-map": "node scripts/generate-web-api-map.mjs",
+    "check:web-api-map": "node scripts/generate-web-api-map.mjs --check",
+    "build:web": "npm run gen:web-api-map && vite build --config vite.web.config.ts",
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
-    "build": "npm run typecheck && electron-vite build",
+    "dev:web": "node scripts/dev-app-branding.cjs && node scripts/dev-web.cjs",
+    "dev:headless": "node scripts/dev-app-branding.cjs && node scripts/dev-web.cjs --headless",
+    "cli": "node cli/index.mjs",
+    "build": "npm run typecheck && electron-vite build && npm run build:web",
     "postinstall": "prisma generate && electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",
-    "build:mac": "electron-vite build && electron-builder --mac",
-    "build:linux": "electron-vite build && electron-builder --linux",
-    "build:win": "electron-vite build && electron-builder --win",
+    "build:mac": "npm run build:web && electron-vite build && electron-builder --mac",
+    "build:linux": "npm run build:web && electron-vite build && electron-builder --linux",
+    "build:win": "npm run build:web && electron-vite build && electron-builder --win",
     "predev": "node scripts/dev-app-branding.cjs"
   },
   "dependencies": {
@@ -33,8 +42,10 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@prisma/client": "^6.19.3",
     "electron-updater": "^6.3.9",
+    "js-yaml": "^4.1.0",
     "openchemlib": "^9.24.0",
     "pdfjs-dist": "5.4.624",
+    "ws": "^8.21.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -55,6 +66,7 @@
     "@types/papaparse": "^5.5.2",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.1.1",
     "@vitest/coverage-v8": "^4.1.10",
     "3dmol": "^2.5.5",

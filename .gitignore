@@ -88,3 +88,6 @@ dist-win-artifact/
 
 # SDD scratch (progress ledger, task briefs, reports) — worktree-local, not tracked
 .superpowers/
+.scratch/
+
+.worktreeinclude

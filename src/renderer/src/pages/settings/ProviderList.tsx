@@ -1,6 +1,10 @@
-import { CircleCheck, Pencil, PlugZap, TriangleAlert, Trash2 } from 'lucide-react'
+import { CircleCheck, Pencil, PlugZap, Route, TriangleAlert, Trash2 } from 'lucide-react'
 
-import type { ProviderValidationFailure, ProviderView } from '../../../../shared/settings'
+import type {
+  ProviderApiType,
+  ProviderValidationFailure,
+  ProviderView
+} from '../../../../shared/settings'
 import { providerValidationFailed } from '../../../../shared/settings'
 import { getOfficialVendor } from '../../../../shared/provider-registry'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -36,6 +40,19 @@ const describeValidationFailure = (failure: ProviderValidationFailure): string =
       return 'Test failed: the connection timed out.'
     default:
       return failure.message ? `Test failed: ${failure.message}` : 'Connection test failed.'
+  }
+}
+
+// Endpoint route + full description for the chat API a provider speaks. Rendered as a route-icon badge
+// showing the raw /v1 path (not a vendor name) so the user reads it as "which API shape", distinct from
+// the provider's own name/brand: Claude Code needs the Anthropic /v1/messages route, while OpenCode also
+// accepts the OpenAI /v1/chat/completions route.
+const ENDPOINT_LABELS: Record<ProviderApiType, { path: string; full: string }> = {
+  anthropic: { path: '/v1/messages', full: '/v1/messages endpoint' },
+  openai: { path: '/v1/chat/completions', full: '/v1/chat/completions endpoint' },
+  both: {
+    path: '/v1/messages · /v1/chat/completions',
+    full: '/v1/messages and /v1/chat/completions endpoints'
   }
 }
 
@@ -84,6 +101,8 @@ const ProviderList = ({
           // The provider sourcing the selected model (and the last remaining one) can't be deleted:
           // removing it would leave no model to run, so its delete action stays disabled.
           const canDelete = !isActiveSource && providers.length > 1
+          // The chat endpoint(s) this provider speaks; defaults to Anthropic when unset (older/custom).
+          const endpoint = ENDPOINT_LABELS[provider.apiType ?? 'anthropic']
 
           return (
             <li
@@ -104,6 +123,18 @@ const ProviderList = ({
                       />
                       {describeType(provider)}
                     </span>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          className="inline-flex shrink-0 items-center gap-1 rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+                          aria-label={`Speaks the ${endpoint.full}`}
+                        >
+                          <Route className="size-3" strokeWidth={2} aria-hidden="true" />
+                          {endpoint.path}
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>Speaks the {endpoint.full}</TooltipContent>
+                    </Tooltip>
                     {isBusy ? (
                       <span className="shrink-0 text-[10px] text-muted-foreground">Testing…</span>
                     ) : failure ? (

@@ -7,10 +7,20 @@
 // Matches a trailing `/v1` or `/v1/messages` segment (case-insensitive), with optional trailing slash.
 const REDUNDANT_SUFFIX = /\/v1(\/messages)?\/*$/i
 
+// Same idea for an OpenAI-compatible gateway, whose endpoint is `/v1/chat/completions`.
+const REDUNDANT_OPENAI_SUFFIX = /\/v1(\/chat\/completions)?\/*$/i
+
 const normalizeAnthropicBaseUrl = (baseUrl: string): string => {
   const trimmed = baseUrl.trim().replace(/\/+$/, '')
 
   return trimmed.replace(REDUNDANT_SUFFIX, '')
 }
 
-export { normalizeAnthropicBaseUrl }
+// Strips a trailing `/v1` or `/v1/chat/completions` so appending `/v1/chat/completions` never doubles.
+const normalizeOpenAiBaseUrl = (baseUrl: string): string => {
+  const trimmed = baseUrl.trim().replace(/\/+$/, '')
+
+  return trimmed.replace(REDUNDANT_OPENAI_SUFFIX, '')
+}
+
+export { normalizeAnthropicBaseUrl, normalizeOpenAiBaseUrl }

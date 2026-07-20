@@ -209,4 +209,4 @@ const toAcpRuntimeEvent = (
   }
 }
 
-export { extractProviderToolName, extractToolFailureText, toAcpRuntimeEvent }
+export { extractProviderToolName, extractTerminalMeta, extractToolFailureText, toAcpRuntimeEvent }

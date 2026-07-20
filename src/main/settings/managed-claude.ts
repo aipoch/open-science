@@ -4,7 +4,7 @@ import { chmod, mkdir, rm } from 'node:fs/promises'
 import { get } from 'node:https'
 import type { IncomingMessage } from 'node:http'
 import { arch as osArch } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { Transform, Writable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -105,6 +105,20 @@ const getManagedPlatform = (deps: ManagedPlatformDeps = {}): ManagedPlatform => 
 // detection and PATH augmentation can point at one fixed directory without symlinks (portable to
 // Windows). The resolved version is recorded separately in the persisted ClaudeInfo.
 const managedClaudeDir = (dataRoot: string): string => join(dataRoot, 'claude-code', 'bin')
+
+// True when `resolvedPath` is the app-managed Claude binary (lives directly in managedClaudeDir).
+// Detection probes PATH before the managed dir, so a PATH copy shadows the managed one and this
+// returns false for it — only a genuinely app-owned install is treated as managed (and uninstallable).
+const isManagedClaudePath = (resolvedPath: string, dataRoot: string): boolean =>
+  resolve(dirname(resolvedPath)) === resolve(managedClaudeDir(dataRoot))
+
+// Removes the app-managed Claude install tree (the `claude-code` dir holding `bin/<binName>`).
+// Resolves (never rejects); a missing dir is a no-op so callers can uninstall idempotently.
+const uninstallManagedClaude = async (dataRoot: string): Promise<void> => {
+  await rm(dirname(managedClaudeDir(dataRoot)), { recursive: true, force: true }).catch(
+    () => undefined
+  )
+}
 
 // ---- Registry metadata -----------------------------------------------------------------------------
 
@@ -555,10 +569,14 @@ const defaultFetchTarball: FetchTarball = async (url) => {
 
 export {
   DEFAULT_REGISTRIES,
+  defaultFetchJson,
+  defaultFetchTarball,
   downloadAndVerify,
   extractFileFromTgz,
   getManagedPlatform,
   installManagedClaude,
+  isManagedClaudePath,
   managedClaudeDir,
-  resolveNativePackage
+  resolveNativePackage,
+  uninstallManagedClaude
 }

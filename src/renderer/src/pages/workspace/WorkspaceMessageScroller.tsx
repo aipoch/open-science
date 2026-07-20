@@ -5,7 +5,11 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport
 } from '@/components/ui/message-scroller'
-import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import {
+  usePreviewWorkbenchStore,
+  createSessionReviewerPreviewItem
+} from '@/stores/preview-workbench-store'
+import { useReviewStore } from '@/stores/review-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { ChatSession } from '@/stores/session-store'
 import { useEffect, useRef, useState } from 'react'
@@ -16,6 +20,7 @@ import {
   createPreviewFileItemFromMention,
   createPreviewFileItemFromUpload
 } from './preview-file-item'
+import { ReviewerCard } from '@/components/ReviewerCard'
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
 import { WorkspaceAgentLoadingRow } from './WorkspaceAgentLoadingRow'
 import { WorkspaceMessageItem } from './WorkspaceMessageItem'
@@ -23,6 +28,7 @@ import type { ArtifactMentionPart } from './WorkspaceMessageItem'
 import { createConversationItems } from './workspace-conversation-items'
 import { groupConversationItems } from './workspace-tool-activity-groups'
 import type { ActivityExpansionOverrides } from './workspace-tool-activity-groups'
+import type { GoToTranscriptIntent } from '../../../../shared/reviewer'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
@@ -74,11 +80,33 @@ const previewUploadAttachment = (attachment: MessageUploadAttachment, sessionId:
     .upsertAndActivateItem(createPreviewFileItemFromUpload(attachment, sessionId))
 }
 
+// Opens the Session reviewer panel in the preview workbench, positioned at the finding's locator.
+const openSessionReviewer = (sessionId: string, intent: GoToTranscriptIntent): void => {
+  usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+    createSessionReviewerPreviewItem({
+      sessionId,
+      reviewId: intent.reviewId,
+      findingId: intent.findingId,
+      locator: intent.locator
+    })
+  )
+}
+
 // Owns transcript scrolling and session-scoped expansion state for activity groups.
 const WorkspaceMessageScroller = ({
   activeSession
 }: WorkspaceMessageScrollerProps): React.JSX.Element => {
   const currentSessionId = activeSession?.id
+  const getReviewForTurn = useReviewStore((state) => state.getReviewForTurn)
+  const loadReviewsForSession = useReviewStore((state) => state.loadReviewsForSession)
+
+  // Load persisted reviews whenever the active session changes.
+  useEffect(() => {
+    if (currentSessionId) {
+      void loadReviewsForSession(currentSessionId)
+    }
+  }, [currentSessionId, loadReviewsForSession])
+
   // Group expansion is keyed by session so switching conversations never reuses stale UI state.
   const [collapsedActivityGroupState, setCollapsedActivityGroupState] =
     useState<SessionScopedActivityGroupState>(() => ({
@@ -206,6 +234,13 @@ const WorkspaceMessageScroller = ({
     })
   }
 
+  // Opens the Session reviewer panel positioned at the finding the user clicked.
+  // Only the "Go to transcript" button on a finding fires this; clicking the card itself does not.
+  const handleGoToTranscript = (intent: GoToTranscriptIntent): void => {
+    if (!currentSessionId) return
+    openSessionReviewer(currentSessionId, intent)
+  }
+
   return (
     <MessageScrollerProvider
       key={activeSession?.id ?? 'empty-conversation'}
@@ -228,17 +263,31 @@ const WorkspaceMessageScroller = ({
                     activeSession && item.message.role !== 'user'
                       ? getMessageArtifacts(activeSession, item.message)
                       : []
+                  // Look up any review for this agent message (its id is the turnMessageId).
+                  const review =
+                    currentSessionId && item.message.role === 'agent'
+                      ? getReviewForTurn(currentSessionId, item.message.id)
+                      : undefined
 
                   return (
-                    <WorkspaceMessageItem
-                      key={item.id}
-                      message={item.message}
-                      onPreviewArtifact={onPreviewArtifact}
-                      onPreviewUploadAttachment={onPreviewUploadAttachment}
-                      onOpenSkillMention={onOpenSkillMention}
-                      onPreviewMentionArtifact={onPreviewMentionArtifact}
-                      artifacts={artifacts}
-                    />
+                    <div key={item.id}>
+                      <WorkspaceMessageItem
+                        message={item.message}
+                        onPreviewArtifact={onPreviewArtifact}
+                        onPreviewUploadAttachment={onPreviewUploadAttachment}
+                        onOpenSkillMention={onOpenSkillMention}
+                        onPreviewMentionArtifact={onPreviewMentionArtifact}
+                        artifacts={artifacts}
+                      />
+                      {review ? (
+                        <div className="px-4 pb-1 md:px-6">
+                          <div className="mx-auto w-full max-w-[56rem]">
+                            {/* Only "Go to transcript" navigates to the reviewer page; the card itself does not. */}
+                            <ReviewerCard review={review} onGoToTranscript={handleGoToTranscript} />
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
                   )
                 }
 

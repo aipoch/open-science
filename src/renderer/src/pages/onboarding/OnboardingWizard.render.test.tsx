@@ -19,10 +19,11 @@ const environment = (ready: boolean): EnvironmentCheckResult => ({
   ready,
   canAutoInstall: !ready,
   recommendedRegistry: ready ? undefined : 'npmmirror',
-  claude: ready ? { found: true, path: '/bin/claude', version: '2.1.0' } : { found: false },
+  agentFrameworkId: 'claude-code',
+  runtime: ready ? { found: true, path: '/bin/claude', version: '2.1.0' } : { found: false },
   checks: [
     {
-      id: 'claude',
+      id: 'agent',
       label: 'Claude runtime',
       status: ready ? 'passed' : 'failed',
       summary: ready ? 'Claude is ready.' : 'Claude is not installed yet.'
@@ -116,9 +117,69 @@ afterEach(() => {
 })
 
 describe('OnboardingWizard', () => {
+  it('offers an agent-framework choice and switches on selection', async () => {
+    const setAgentFramework = vi.fn().mockResolvedValue(undefined)
+    const checkEnvironment = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [
+        { id: 'claude-code', displayName: 'Claude Code', supportsSkills: true },
+        { id: 'opencode', displayName: 'OpenCode', supportsSkills: true }
+      ],
+      setAgentFramework,
+      checkEnvironment,
+      environmentCheck: environment(true)
+    })
+
+    act(() => {
+      root.render(<OnboardingWizard />)
+    })
+
+    const radios = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+    expect(radios.map((r) => r.textContent)).toEqual(['Claude Code', 'OpenCode'])
+    expect(radios[0].getAttribute('aria-checked')).toBe('true')
+
+    await act(async () => {
+      radios[1].click()
+    })
+
+    expect(setAgentFramework).toHaveBeenCalledWith('opencode')
+    expect(checkEnvironment).toHaveBeenCalled()
+  })
+
+  it('disables Continue when the latest check is for a different framework than selected', async () => {
+    // The env result is a READY Claude check, but OpenCode is now selected — Continue must stay
+    // disabled until a re-check for OpenCode lands (the stale Claude result must not slip through).
+    useSettingsStore.setState({
+      agentFrameworkId: 'opencode',
+      agentFrameworks: [
+        { id: 'claude-code', displayName: 'Claude Code', supportsSkills: true },
+        { id: 'opencode', displayName: 'OpenCode', supportsSkills: true }
+      ],
+      setAgentFramework: vi.fn().mockResolvedValue(undefined),
+      checkEnvironment: vi.fn().mockResolvedValue(undefined),
+      environmentCheck: environment(true) // agentFrameworkId: 'claude-code'
+    })
+
+    act(() => {
+      root.render(<OnboardingWizard />)
+    })
+
+    const continueButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Continue'
+    )
+    expect(continueButton?.disabled).toBe(true)
+  })
+
   it('keeps first-time users on the environment summary until they explicitly continue', async () => {
     useSettingsStore.setState({
-      preflight: { claudeReady: true, activeProviderReady: false },
+      preflight: {
+        claudeReady: true,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: true,
+        activeProviderReady: false
+      },
       claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
       environmentCheck: environment(true)
     })
@@ -141,7 +202,13 @@ describe('OnboardingWizard', () => {
 
   it('blocks continuation while any required environment check fails', async () => {
     useSettingsStore.setState({
-      preflight: { claudeReady: false, activeProviderReady: false },
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
       environmentCheck: environment(false)
     })
 
@@ -163,7 +230,13 @@ describe('OnboardingWizard', () => {
 
   it('Back returns from the model step to the Claude step', async () => {
     useSettingsStore.setState({
-      preflight: { claudeReady: true, activeProviderReady: false },
+      preflight: {
+        claudeReady: true,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: true,
+        activeProviderReady: false
+      },
       claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
       environmentCheck: environment(true)
     })
@@ -191,7 +264,13 @@ describe('OnboardingWizard', () => {
 
   it('defaults to automatic detection and keeps the original installer under the manual tab', async () => {
     useSettingsStore.setState({
-      preflight: { claudeReady: false, activeProviderReady: false },
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
       environmentCheck: environment(false)
     })
 
@@ -210,6 +289,222 @@ describe('OnboardingWizard', () => {
     await act(async () => manualTab?.click())
 
     expect(container.querySelector('[role="combobox"][aria-label="Install source"]')).not.toBeNull()
+    // The manual tab shows ONLY the selected framework's runtime (default: Claude), not the other.
+    expect(container.textContent).toContain('Claude')
+    expect(container.textContent).not.toContain('OpenCode not detected')
+  })
+
+  it('routes the manual OpenCode install button to installOpencode, not installClaude', async () => {
+    const installOpencode = vi.fn().mockResolvedValue({ installId: 'i', ok: true })
+    const installClaude = vi.fn().mockResolvedValue({ installId: 'i', ok: true })
+    useSettingsStore.setState({
+      // OpenCode is the selected framework, so the manual tab shows only its (not-detected) card and
+      // its install button must route to installOpencode, never installClaude.
+      agentFrameworkId: 'opencode',
+      preflight: {
+        claudeReady: true,
+        opencodeReady: false,
+        agentFrameworkId: 'opencode',
+        agentReady: false,
+        activeProviderReady: false
+      },
+      claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
+      environmentCheck: environment(false),
+      installOpencode,
+      installClaude
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+
+    const manualTab = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+    ).find((button) => button.textContent?.includes('Manual setup'))
+    await act(async () => manualTab?.click())
+
+    // Only the selected (OpenCode) runtime shows, so there is exactly one install button — its own.
+    expect(container.textContent).toContain('OpenCode not detected')
+    const installButtons = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('button')
+    ).filter((button) => /install with one click/i.test(button.textContent ?? ''))
+    expect(installButtons).toHaveLength(1)
+    await act(async () => installButtons[0].click())
+
+    // Default source is 'managed'; the OpenCode card must route to installOpencode, never installClaude.
+    expect(installOpencode).toHaveBeenCalledWith('managed')
+    expect(installClaude).not.toHaveBeenCalled()
+  })
+
+  const twoFrameworks = [
+    { id: 'claude-code' as const, displayName: 'Claude Code', supportsSkills: true },
+    { id: 'opencode' as const, displayName: 'OpenCode', supportsSkills: true }
+  ]
+
+  it('auto-selects OpenCode when Claude is not installed but OpenCode is', async () => {
+    const setAgentFramework = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: twoFrameworks,
+      setAgentFramework,
+      // Claude missing, OpenCode present: the prefer-installed rule switches to OpenCode.
+      preflight: {
+        claudeReady: false,
+        opencodeReady: true,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(false)
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+
+    expect(setAgentFramework).toHaveBeenCalledWith('opencode')
+  })
+
+  it('prefers Claude and does not auto-switch when Claude is installed', async () => {
+    const setAgentFramework = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: twoFrameworks,
+      setAgentFramework,
+      // Both installed → keep the Claude default; no auto-switch.
+      preflight: {
+        claudeReady: true,
+        opencodeReady: true,
+        agentFrameworkId: 'claude-code',
+        agentReady: true,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(true)
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+
+    expect(setAgentFramework).not.toHaveBeenCalled()
+  })
+
+  it('does not auto-switch for a returning (recovery) user', async () => {
+    const setAgentFramework = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      onboardingCompletedAt: 1234,
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: twoFrameworks,
+      setAgentFramework,
+      preflight: {
+        claudeReady: false,
+        opencodeReady: true,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(false)
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+
+    expect(setAgentFramework).not.toHaveBeenCalled()
+  })
+
+  it('collapses the switcher to a "Change agent" link when the selected agent is ready', async () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: twoFrameworks,
+      claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
+      preflight: {
+        claudeReady: true,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: true,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(true)
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+
+    // Ready → the toggle is hidden; only a "Change agent" affordance shows.
+    expect(container.querySelector('[role="radiogroup"][aria-label="Agent framework"]')).toBeNull()
+    const changeButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => /change agent/i.test(button.textContent ?? '')
+    )
+    expect(changeButton).not.toBeUndefined()
+
+    // Revealing it exposes the full Claude Code / OpenCode toggle.
+    await act(async () => changeButton?.click())
+    expect(
+      container.querySelector('[role="radiogroup"][aria-label="Agent framework"]')
+    ).not.toBeNull()
+  })
+
+  it('drops a second framework switch while the first is still in flight', async () => {
+    let releaseSwitch: (() => void) | undefined
+    const setAgentFramework = vi
+      .fn()
+      .mockImplementation(() => new Promise<void>((resolve) => (releaseSwitch = resolve)))
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: twoFrameworks,
+      setAgentFramework,
+      checkEnvironment: vi.fn().mockResolvedValue(undefined),
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(false)
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+
+    const opencodeRadio = (): HTMLButtonElement | undefined =>
+      Array.from(container.querySelectorAll<HTMLButtonElement>('[role="radio"]')).find((button) =>
+        /opencode/i.test(button.textContent ?? '')
+      )
+    // Two rapid clicks before the first switch resolves: the in-flight guard collapses them into one.
+    await act(async () => opencodeRadio()?.click())
+    await act(async () => opencodeRadio()?.click())
+
+    expect(setAgentFramework).toHaveBeenCalledTimes(1)
+
+    await act(async () => releaseSwitch?.())
+  })
+
+  it('disables the framework toggle while a runtime probe is in flight', async () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: twoFrameworks,
+      isDetectingOpencode: true,
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(false)
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+
+    const radios = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+    expect(radios).toHaveLength(2)
+    expect(radios.every((radio) => radio.disabled)).toBe(true)
   })
 
   it('uses the recommended mirror and surfaces the actual automatic install error', async () => {
@@ -217,7 +512,13 @@ describe('OnboardingWizard', () => {
       .fn()
       .mockResolvedValue({ installId: 'i', ok: false, error: 'download integrity failed' })
     useSettingsStore.setState({
-      preflight: { claudeReady: false, activeProviderReady: false },
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
       environmentCheck: environment(false),
       installClaude
     })
@@ -239,13 +540,25 @@ describe('OnboardingWizard', () => {
     const checkEnvironment = vi.fn().mockImplementation(async () => {
       useSettingsStore.setState({
         environmentCheck: environment(true),
-        preflight: { claudeReady: true, activeProviderReady: false },
+        preflight: {
+          claudeReady: true,
+          opencodeReady: false,
+          agentFrameworkId: 'claude-code',
+          agentReady: true,
+          activeProviderReady: false
+        },
         claude: { resolvedPath: '/managed/claude', version: '2.1.0' }
       })
       return environment(true)
     })
     useSettingsStore.setState({
-      preflight: { claudeReady: false, activeProviderReady: false },
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
       environmentCheck: environment(false),
       checkEnvironment
     })
@@ -273,7 +586,13 @@ describe('OnboardingWizard', () => {
 
   it('shows structured install progress and a copyable technical log', async () => {
     useSettingsStore.setState({
-      preflight: { claudeReady: false, activeProviderReady: false },
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
       environmentCheck: environment(false),
       isInstalling: true,
       installLogs: ['Downloading Claude — 5 MB / 10.0 MB']
@@ -292,7 +611,13 @@ describe('OnboardingWizard', () => {
   it('uses a focused repair screen for previously completed onboarding', async () => {
     useSettingsStore.setState({
       onboardingCompletedAt: 1234,
-      preflight: { claudeReady: false, activeProviderReady: true },
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: true
+      },
       environmentCheck: environment(false)
     })
 
@@ -309,7 +634,13 @@ describe('OnboardingWizard', () => {
     const closeEnvironmentRepair = vi.fn()
     useSettingsStore.setState({
       onboardingCompletedAt: 1234,
-      preflight: { claudeReady: true, activeProviderReady: true },
+      preflight: {
+        claudeReady: true,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: true,
+        activeProviderReady: true
+      },
       environmentCheck: environment(true),
       closeEnvironmentRepair
     })
@@ -329,7 +660,13 @@ describe('OnboardingWizard', () => {
 
   it('defers required-field errors until the first submit attempt', async () => {
     useSettingsStore.setState({
-      preflight: { claudeReady: true, activeProviderReady: false },
+      preflight: {
+        claudeReady: true,
+        opencodeReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: true,
+        activeProviderReady: false
+      },
       claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
       environmentCheck: environment(true)
     })
@@ -363,7 +700,13 @@ describe('OnboardingWizard', () => {
     // reach the model and, finally, the location step.
     const readyEnvironment = (): void => {
       useSettingsStore.setState({
-        preflight: { claudeReady: true, activeProviderReady: false },
+        preflight: {
+          claudeReady: true,
+          opencodeReady: false,
+          agentFrameworkId: 'claude-code',
+          agentReady: true,
+          activeProviderReady: false
+        },
         claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
         environmentCheck: environment(true)
       })
