@@ -24,6 +24,12 @@ type ComputeStore = ComputeStoreData & {
   deleteHost: (providerId: string) => Promise<void>
   // Runs the probe bundle and updates the cached host with the returned probeResult.
   probeHost: (providerId: string) => Promise<ProbeResult>
+  // Saves the details document (full replace with old_text guard). Author is always 'user' from UI.
+  saveDetails: (providerId: string, text: string, oldText: string) => Promise<void>
+  // Sets the scratch root path and marks the host as pinned.
+  setScratch: (providerId: string, path: string) => Promise<void>
+  // Sets the concurrent job limit (1..500). Phase 1 stores but does not enforce.
+  setConcurrency: (providerId: string, limit: number) => Promise<void>
 }
 
 // Surfaces DB/IPC failures as a short message instead of a silent empty list.
@@ -118,6 +124,41 @@ export const useComputeStore = create<ComputeStore>((set) => ({
         next.delete(providerId)
         return { probingIds: next }
       })
+    }
+  },
+
+  // Saves the details document via full replace (old_text guard prevents concurrent collisions).
+  // The UI always writes with author='user'; issue 06 agent paths will call the same IPC directly.
+  saveDetails: async (providerId, text, oldText) => {
+    await window.api.compute.detailsSave(providerId, text, oldText, 'user')
+    // Re-fetch so detailsUpdatedAt/detailsUpdatedBy are reflected in the cache.
+    const updatedHost = await window.api.compute.get(providerId)
+    if (updatedHost) {
+      set((state) => ({
+        hosts: state.hosts.map((h) => (h.providerId === providerId ? updatedHost : h))
+      }))
+    }
+  },
+
+  // Sets the scratch root path and marks the host as pinned. Merges the updated host into cache.
+  setScratch: async (providerId, path) => {
+    await window.api.compute.scratchSet(providerId, path)
+    const updatedHost = await window.api.compute.get(providerId)
+    if (updatedHost) {
+      set((state) => ({
+        hosts: state.hosts.map((h) => (h.providerId === providerId ? updatedHost : h))
+      }))
+    }
+  },
+
+  // Stores the concurrent job limit. Merges the updated host into cache.
+  setConcurrency: async (providerId, limit) => {
+    await window.api.compute.concurrencySet(providerId, limit)
+    const updatedHost = await window.api.compute.get(providerId)
+    if (updatedHost) {
+      set((state) => ({
+        hosts: state.hosts.map((h) => (h.providerId === providerId ? updatedHost : h))
+      }))
     }
   }
 }))

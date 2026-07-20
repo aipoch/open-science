@@ -1,7 +1,8 @@
-import { AlertTriangle, Cpu, HardDrive, MemoryStick, RefreshCw, Zap } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { AlertTriangle, Cpu, HardDrive, MemoryStick, Pin, RefreshCw, Zap } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { ComputeHost } from '../../../../shared/compute'
+import { DETAILS_DOC_MAX_LENGTH } from '../../../../shared/compute'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -28,8 +29,8 @@ const probedLabel = (host: ComputeHost): string | null => {
   return `probed ${Math.round(hours / 24)} d ago`
 }
 
-// Host detail page for issue 02: adds Probe button, probe failure banner, and resource summary.
-// The Details editor, Scratch root, and Concurrency blocks come in issue 03.
+// Host detail page for issues 02 + 03: probe button, probe failure banner, resource summary,
+// details editor, scratch root editor, and concurrent job limit editor.
 export function ComputeHostDetail({
   providerId,
   onRemoved
@@ -40,8 +41,32 @@ export function ComputeHostDetail({
   const deleteHost = useComputeStore((state) => state.deleteHost)
   const probeHost = useComputeStore((state) => state.probeHost)
   const probingIds = useComputeStore((state) => state.probingIds)
+  const saveDetails = useComputeStore((state) => state.saveDetails)
+  const setScratch = useComputeStore((state) => state.setScratch)
+  const setConcurrency = useComputeStore((state) => state.setConcurrency)
 
   const [probeError, setProbeError] = useState<string | undefined>(undefined)
+
+  // Details editor state
+  const [detailsDoc, setDetailsDoc] = useState<string>('')
+  const [originalDoc, setOriginalDoc] = useState<string>('')
+  const [isEditingDetails, setIsEditingDetails] = useState(false)
+  const [detailsSaving, setDetailsSaving] = useState(false)
+  const [detailsError, setDetailsError] = useState<string | undefined>(undefined)
+  const [isSkeleton, setIsSkeleton] = useState(false)
+  const detailsLoadedRef = useRef(false)
+
+  // Scratch root editor state
+  const [isEditingScratch, setIsEditingScratch] = useState(false)
+  const [scratchInput, setScratchInput] = useState('')
+  const [scratchSaving, setScratchSaving] = useState(false)
+  const [scratchError, setScratchError] = useState<string | undefined>(undefined)
+
+  // Concurrency editor state
+  const [isEditingConcurrency, setIsEditingConcurrency] = useState(false)
+  const [concurrencyInput, setConcurrencyInput] = useState('')
+  const [concurrencySaving, setConcurrencySaving] = useState(false)
+  const [concurrencyError, setConcurrencyError] = useState<string | undefined>(undefined)
 
   useEffect(() => {
     if (!isLoaded) void loadHosts()
@@ -49,6 +74,25 @@ export function ComputeHostDetail({
 
   const host = hosts.find((entry) => entry.providerId === providerId)
   const isProbing = probingIds.has(providerId)
+
+  // Load the details doc (with skeleton synthesis) when the host is first available.
+  useEffect(() => {
+    if (!host || detailsLoadedRef.current) return
+    detailsLoadedRef.current = true
+
+    window.api.compute
+      .detailsGet(providerId)
+      .then(({ doc, isSkeleton: skelFlag }) => {
+        setDetailsDoc(doc)
+        setOriginalDoc(doc)
+        setIsSkeleton(skelFlag)
+      })
+      .catch(() => {
+        // Fallback to the cached detailsDoc if IPC fails.
+        setDetailsDoc(host.detailsDoc ?? '')
+        setOriginalDoc(host.detailsDoc ?? '')
+      })
+  }, [host, providerId])
 
   if (!host) {
     return (
@@ -78,8 +122,80 @@ export function ComputeHostDetail({
     setProbeError(undefined)
     try {
       await probeHost(host.providerId)
+      // After a probe, reset the details-loaded flag so skeleton is re-fetched.
+      detailsLoadedRef.current = false
     } catch (err) {
       setProbeError(err instanceof Error ? err.message : 'Probe failed unexpectedly.')
+    }
+  }
+
+  const handleDetailsSave = async (): Promise<void> => {
+    if (detailsDoc.length > DETAILS_DOC_MAX_LENGTH) {
+      setDetailsError(
+        `Details must be ${DETAILS_DOC_MAX_LENGTH.toLocaleString()} characters or fewer.`
+      )
+      return
+    }
+    setDetailsSaving(true)
+    setDetailsError(undefined)
+    try {
+      await saveDetails(providerId, detailsDoc, originalDoc)
+      setOriginalDoc(detailsDoc)
+      setIsSkeleton(false)
+      setIsEditingDetails(false)
+    } catch (err) {
+      setDetailsError(err instanceof Error ? err.message : 'Failed to save details.')
+    } finally {
+      setDetailsSaving(false)
+    }
+  }
+
+  const handleDetailsCancel = (): void => {
+    setDetailsDoc(originalDoc)
+    setDetailsError(undefined)
+    setIsEditingDetails(false)
+  }
+
+  const handleScratchEdit = (): void => {
+    setScratchInput(host.scratchRoot ?? '')
+    setScratchError(undefined)
+    setIsEditingScratch(true)
+  }
+
+  const handleScratchSave = async (): Promise<void> => {
+    setScratchSaving(true)
+    setScratchError(undefined)
+    try {
+      await setScratch(providerId, scratchInput)
+      setIsEditingScratch(false)
+    } catch (err) {
+      setScratchError(err instanceof Error ? err.message : 'Failed to set scratch root.')
+    } finally {
+      setScratchSaving(false)
+    }
+  }
+
+  const handleConcurrencyEdit = (): void => {
+    setConcurrencyInput(String(host.concurrencyLimit ?? ''))
+    setConcurrencyError(undefined)
+    setIsEditingConcurrency(true)
+  }
+
+  const handleConcurrencySave = async (): Promise<void> => {
+    const n = Number.parseInt(concurrencyInput, 10)
+    if (!Number.isInteger(n) || n < 1 || n > 500) {
+      setConcurrencyError('Must be an integer between 1 and 500.')
+      return
+    }
+    setConcurrencySaving(true)
+    setConcurrencyError(undefined)
+    try {
+      await setConcurrency(providerId, n)
+      setIsEditingConcurrency(false)
+    } catch (err) {
+      setConcurrencyError(err instanceof Error ? err.message : 'Failed to set concurrency limit.')
+    } finally {
+      setConcurrencySaving(false)
     }
   }
 
@@ -247,10 +363,253 @@ export function ComputeHostDetail({
         </div>
       ) : null}
 
-      {/* Placeholder for Details editor, Scratch root, Concurrency (issues 03+) */}
-      <p className="mt-6 rounded-lg border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
-        Details, Scratch root, and Concurrent job limit are coming soon.
-      </p>
+      {/* Details document block */}
+      <div className="mt-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h4 className="text-sm font-medium text-foreground">Details</h4>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Free-form notes about this provider. Open Science reads and adds to them as it learns.
+            </p>
+          </div>
+          {!isEditingDetails ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setIsEditingDetails(true)}
+              className="shrink-0"
+            >
+              Edit
+            </Button>
+          ) : null}
+        </div>
+
+        {isEditingDetails ? (
+          <div className="mt-2 flex flex-col gap-2">
+            <textarea
+              className="min-h-[160px] w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+              value={detailsDoc}
+              onChange={(e) => {
+                setDetailsDoc(e.target.value)
+                setDetailsError(undefined)
+              }}
+              aria-label="Details document"
+              aria-describedby={detailsError ? 'details-error' : undefined}
+            />
+            <div className="flex items-center justify-between gap-2">
+              <span
+                className={cn(
+                  'font-mono text-xs',
+                  detailsDoc.length > DETAILS_DOC_MAX_LENGTH
+                    ? 'text-destructive'
+                    : 'text-muted-foreground'
+                )}
+              >
+                {detailsDoc.length.toLocaleString()} / {DETAILS_DOC_MAX_LENGTH.toLocaleString()}{' '}
+                chars
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleDetailsCancel}
+                  disabled={detailsSaving}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => void handleDetailsSave()}
+                  disabled={detailsSaving || detailsDoc.length > DETAILS_DOC_MAX_LENGTH}
+                  aria-busy={detailsSaving}
+                >
+                  {detailsSaving ? 'Saving…' : 'Save'}
+                </Button>
+              </div>
+            </div>
+            {detailsError ? (
+              <p id="details-error" role="alert" className="text-xs text-destructive">
+                {detailsError}
+              </p>
+            ) : null}
+          </div>
+        ) : detailsDoc ? (
+          <pre
+            className={cn(
+              'mt-2 overflow-x-auto whitespace-pre-wrap rounded-md border border-border bg-muted/30 px-3 py-2 font-mono text-xs text-foreground',
+              isSkeleton && 'border-dashed opacity-70'
+            )}
+          >
+            {detailsDoc}
+            {isSkeleton ? (
+              <span className="ml-2 text-muted-foreground">(auto-generated from probe)</span>
+            ) : null}
+          </pre>
+        ) : (
+          <p className="mt-2 text-xs text-muted-foreground italic">
+            No notes yet. Click Edit to add details about this provider.
+          </p>
+        )}
+      </div>
+
+      {/* Scratch root block */}
+      <div className="mt-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h4 className="text-sm font-medium text-foreground">Scratch root</h4>
+              {host.scratchPinned ? (
+                <Badge variant="secondary" className="flex items-center gap-1 py-0 text-xs">
+                  <Pin className="size-3" aria-hidden="true" />
+                  PINNED
+                </Badge>
+              ) : null}
+            </div>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Working directory for remote jobs. Pinned paths are never overwritten by re-probe.
+            </p>
+          </div>
+          {!isEditingScratch ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleScratchEdit}
+              className="shrink-0"
+            >
+              Edit
+            </Button>
+          ) : null}
+        </div>
+
+        {isEditingScratch ? (
+          <div className="mt-2 flex flex-col gap-2">
+            <input
+              type="text"
+              className="w-full rounded-md border border-input bg-background px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              value={scratchInput}
+              onChange={(e) => {
+                setScratchInput(e.target.value)
+                setScratchError(undefined)
+              }}
+              placeholder="/scratch/username"
+              aria-label="Scratch root path"
+              aria-describedby={scratchError ? 'scratch-error' : undefined}
+            />
+            {scratchError ? (
+              <p id="scratch-error" role="alert" className="text-xs text-destructive">
+                {scratchError}
+              </p>
+            ) : null}
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setIsEditingScratch(false)
+                  setScratchError(undefined)
+                }}
+                disabled={scratchSaving}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void handleScratchSave()}
+                disabled={scratchSaving}
+                aria-busy={scratchSaving}
+              >
+                {scratchSaving ? 'Saving…' : 'Save'}
+              </Button>
+            </div>
+          </div>
+        ) : host.scratchRoot ? (
+          <p className="mt-1 font-mono text-sm text-foreground">{host.scratchRoot}</p>
+        ) : (
+          <p className="mt-1 text-xs text-muted-foreground italic">
+            Not set. Will be updated from $SCRATCH on next probe.
+          </p>
+        )}
+      </div>
+
+      {/* Concurrent job limit block */}
+      <div className="mt-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h4 className="text-sm font-medium text-foreground">Concurrent job limit</h4>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Maximum jobs running at the same time on this host (1–500). Not yet enforced.
+            </p>
+          </div>
+          {!isEditingConcurrency ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleConcurrencyEdit}
+              className="shrink-0"
+            >
+              Edit
+            </Button>
+          ) : null}
+        </div>
+
+        {isEditingConcurrency ? (
+          <div className="mt-2 flex flex-col gap-2">
+            <input
+              type="number"
+              min={1}
+              max={500}
+              className="w-32 rounded-md border border-input bg-background px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              value={concurrencyInput}
+              onChange={(e) => {
+                setConcurrencyInput(e.target.value)
+                setConcurrencyError(undefined)
+              }}
+              placeholder="10"
+              aria-label="Concurrent job limit"
+              aria-describedby={concurrencyError ? 'concurrency-error' : undefined}
+            />
+            {concurrencyError ? (
+              <p id="concurrency-error" role="alert" className="text-xs text-destructive">
+                {concurrencyError}
+              </p>
+            ) : null}
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setIsEditingConcurrency(false)
+                  setConcurrencyError(undefined)
+                }}
+                disabled={concurrencySaving}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void handleConcurrencySave()}
+                disabled={concurrencySaving}
+                aria-busy={concurrencySaving}
+              >
+                {concurrencySaving ? 'Saving…' : 'Save'}
+              </Button>
+            </div>
+          </div>
+        ) : host.concurrencyLimit != null ? (
+          <p className="mt-1 font-mono text-sm text-foreground">{host.concurrencyLimit}</p>
+        ) : (
+          <p className="mt-1 text-xs text-muted-foreground italic">(default)</p>
+        )}
+      </div>
     </div>
   )
 }

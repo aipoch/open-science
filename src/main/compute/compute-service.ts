@@ -1,4 +1,5 @@
-import type { ProbeResult } from '../../shared/compute'
+import type { DetailsAuthor, ProbeResult } from '../../shared/compute'
+import { DETAILS_DOC_MAX_LENGTH } from '../../shared/compute'
 import type { ComputeHostRepository } from './repository'
 import type { SshRunner } from './ssh-runner'
 import { resolveSshTarget } from './ssh-runner'
@@ -97,6 +98,27 @@ const errorTail = (stderr: string, stdout: string, maxLines = 10): string => {
   return lines.slice(-maxLines).join('\n')
 }
 
+// Synthesizes a first-contact skeleton from a successful probeResult. Used by getDetails when
+// detailsDoc is empty — gives agents a structured starting point without requiring a manual edit.
+const buildDetailsSkeleton = (probe: ProbeResult): string => {
+  const lines: string[] = ['## Resources', '']
+  if (probe.cpus != null) {
+    lines.push(`cpus: ${probe.cpus}`)
+  }
+  if (probe.memMib != null) {
+    const gb = Math.round(probe.memMib / 1024)
+    lines.push(`mem: ${gb} GB`)
+  }
+  if (probe.gpus && probe.gpus.length > 0) {
+    const gpuStr = probe.gpus.map((g) => `${g.count}x ${g.type}`).join(', ')
+    lines.push(`gpus: ${gpuStr}`)
+  }
+  if (probe.detectedScheduler) {
+    lines.push(`scheduler: ${probe.detectedScheduler}`)
+  }
+  return lines.join('\n')
+}
+
 // ComputeService owns probe logic. It is injected with a SshRunner (for testability) and a
 // repository (for persistence). It does NOT write detailsDoc — only probeResult, shape, and
 // scratchRoot (when applicable). See design.md §4 for the probe/Details distinction.
@@ -186,5 +208,81 @@ export class ComputeService {
     }
 
     return result
+  }
+
+  // Returns the details document for a host. When detailsDoc is empty and a successful probe
+  // exists, synthesizes a first-contact skeleton from probeResult (## Resources + resource lines).
+  // isSkeleton=true signals the caller this was auto-generated, not user/agent content.
+  async getDetails(providerId: string): Promise<{ doc: string; isSkeleton: boolean }> {
+    const host = await this.repository.get(providerId)
+    if (!host) {
+      throw new Error(`No compute host found with provider id "${providerId}".`)
+    }
+
+    if (host.detailsDoc) {
+      return { doc: host.detailsDoc, isSkeleton: false }
+    }
+
+    // No stored doc — synthesize a skeleton from the last probe result if available.
+    const probe = host.probeResult
+    if (!probe || !probe.ok) {
+      return { doc: '', isSkeleton: false }
+    }
+
+    return { doc: buildDetailsSkeleton(probe), isSkeleton: true }
+  }
+
+  // Replaces detailsDoc via exact-match: the full current doc is replaced with `text` only if
+  // `oldText` equals the current detailsDoc. This prevents concurrent edit collisions and is the
+  // mechanism used by both the UI (author='user') and the agent (author='agent', issue 06).
+  async replaceDetails(
+    providerId: string,
+    { text, oldText, author }: { text: string; oldText: string; author: DetailsAuthor }
+  ): Promise<void> {
+    const host = await this.repository.get(providerId)
+    if (!host) {
+      throw new Error(`No compute host found with provider id "${providerId}".`)
+    }
+
+    // Exact-match guard: oldText must equal the current stored doc.
+    if (host.detailsDoc !== oldText) {
+      throw new Error(
+        `replaceDetails: old_text does not match the current details document for "${providerId}".`
+      )
+    }
+
+    if (text.length > DETAILS_DOC_MAX_LENGTH) {
+      throw new Error(
+        `Details must be ${DETAILS_DOC_MAX_LENGTH} characters or fewer (got ${text.length}).`
+      )
+    }
+
+    await this.repository.updateDetails(providerId, text, author)
+  }
+
+  // Sets the scratch root and marks the host as pinned. Pinned hosts are never overwritten by
+  // probe (probe checks scratchPinned before updating scratchRoot — see probe() above).
+  async setScratchRoot(providerId: string, path: string): Promise<void> {
+    const host = await this.repository.get(providerId)
+    if (!host) {
+      throw new Error(`No compute host found with provider id "${providerId}".`)
+    }
+
+    await this.repository.updateScratchPinned(providerId, path)
+  }
+
+  // Stores the concurrent job limit (1..500). Phase 1 persists it only — no enforcement until
+  // the job runner lands in a later phase.
+  async setConcurrencyLimit(providerId: string, limit: number): Promise<void> {
+    const host = await this.repository.get(providerId)
+    if (!host) {
+      throw new Error(`No compute host found with provider id "${providerId}".`)
+    }
+
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+      throw new Error(`Concurrent job limit must be an integer in the range 1..500 (got ${limit}).`)
+    }
+
+    await this.repository.updateConcurrencyLimit(providerId, limit)
   }
 }

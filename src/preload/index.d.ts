@@ -32,6 +32,7 @@ import type {
   ComputeHost,
   CreateComputeHostRequest,
   DeleteComputeHostRequest,
+  DetailsAuthor,
   ProbeResult
 } from '../shared/compute'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
@@ -282,6 +283,18 @@ interface OpenScienceAPI {
     sshConfigAliases(): Promise<string[]>
     // Runs the probe bundle against the host; persists probeResult + shape. SSH stays in main.
     probe(providerId: string): Promise<ProbeResult>
+    // Details document: get (with skeleton synthesis when empty) and save (old_text guard).
+    detailsGet(providerId: string): Promise<{ doc: string; isSkeleton: boolean }>
+    detailsSave(
+      providerId: string,
+      text: string,
+      oldText: string,
+      author: DetailsAuthor
+    ): Promise<void>
+    // Scratch root: set path and mark pinned.
+    scratchSet(providerId: string, path: string): Promise<void>
+    // Concurrent job limit: store 1..500 (not enforced in Phase 1).
+    concurrencySet(providerId: string, limit: number): Promise<void>
   }
   preview: {
     load(request: LoadPreviewStateRequest): Promise<PersistedPreviewState | null>

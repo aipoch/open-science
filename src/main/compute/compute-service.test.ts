@@ -48,18 +48,27 @@ const makeRepo = (
   repo: ComputeHostRepository
   updateProbeResult: ReturnType<typeof vi.fn>
   updateScratchRoot: ReturnType<typeof vi.fn>
+  updateDetails: ReturnType<typeof vi.fn>
+  updateScratchPinned: ReturnType<typeof vi.fn>
+  updateConcurrencyLimit: ReturnType<typeof vi.fn>
 } => {
   const updateProbeResult = vi.fn(() => Promise.resolve())
   const updateScratchRoot = vi.fn(() => Promise.resolve())
+  const updateDetails = vi.fn(() => Promise.resolve())
+  const updateScratchPinned = vi.fn(() => Promise.resolve())
+  const updateConcurrencyLimit = vi.fn(() => Promise.resolve())
   const repo: ComputeHostRepository = {
     get: vi.fn(() => Promise.resolve(host)),
     list: vi.fn(() => Promise.resolve([])),
     create: vi.fn(),
     delete: vi.fn(),
     updateProbeResult,
-    updateScratchRoot
+    updateScratchRoot,
+    updateDetails,
+    updateScratchPinned,
+    updateConcurrencyLimit
   } as unknown as ComputeHostRepository
-  return { repo, updateProbeResult, updateScratchRoot }
+  return { repo, updateProbeResult, updateScratchRoot, updateDetails, updateScratchPinned, updateConcurrencyLimit }
 }
 
 // A successful probe script output representing a Linux slurm cluster.
@@ -320,5 +329,177 @@ describe('ComputeService.probe', () => {
     const service = new ComputeService(runner, repo)
 
     await expect(service.probe('ssh:nonexistent')).rejects.toThrow(/not found|no compute host/i)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ComputeService.getDetails — skeleton synthesis and pass-through
+// ---------------------------------------------------------------------------
+
+describe('ComputeService.getDetails', () => {
+  const fakeRunner = makeFakeRunner({ exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false })
+
+  it('returns detailsDoc as-is when it is non-empty', async () => {
+    const { repo } = makeRepo(sampleHost({ detailsDoc: '## Resources\ncpus: 8' }))
+    const service = new ComputeService(fakeRunner, repo)
+    const result = await service.getDetails('ssh:biowulf')
+    expect(result.doc).toBe('## Resources\ncpus: 8')
+    expect(result.isSkeleton).toBe(false)
+  })
+
+  it('returns a skeleton from probeResult when detailsDoc is empty', async () => {
+    const probeResult = {
+      ok: true,
+      probedAt: '2026-01-01T00:00:00Z',
+      exitCode: 0,
+      errorTail: null,
+      cpus: 64,
+      memMib: 256000,
+      gpus: [{ type: 'A100 80GB', count: 2 }],
+      detectedScheduler: 'slurm' as const
+    }
+    const { repo } = makeRepo(sampleHost({ detailsDoc: '', probeResult }))
+    const service = new ComputeService(fakeRunner, repo)
+    const result = await service.getDetails('ssh:biowulf')
+    expect(result.isSkeleton).toBe(true)
+    expect(result.doc).toContain('## Resources')
+    expect(result.doc).toContain('cpus:')
+    expect(result.doc).toContain('mem:')
+    expect(result.doc).toContain('gpus:')
+    expect(result.doc).toContain('scheduler:')
+  })
+
+  it('returns a skeleton with only available fields when some are missing', async () => {
+    const probeResult = {
+      ok: true,
+      probedAt: '2026-01-01T00:00:00Z',
+      exitCode: 0,
+      errorTail: null,
+      cpus: 8
+    }
+    const { repo } = makeRepo(sampleHost({ detailsDoc: '', probeResult }))
+    const service = new ComputeService(fakeRunner, repo)
+    const result = await service.getDetails('ssh:biowulf')
+    expect(result.isSkeleton).toBe(true)
+    expect(result.doc).toContain('cpus: 8')
+    expect(result.doc).not.toContain('gpus:')
+    expect(result.doc).not.toContain('mem:')
+  })
+
+  it('returns empty string with isSkeleton=false when no probeResult and detailsDoc is empty', async () => {
+    const { repo } = makeRepo(sampleHost({ detailsDoc: '', probeResult: undefined }))
+    const service = new ComputeService(fakeRunner, repo)
+    const result = await service.getDetails('ssh:biowulf')
+    expect(result.doc).toBe('')
+    expect(result.isSkeleton).toBe(false)
+  })
+
+  it('throws when the host does not exist', async () => {
+    const { repo } = makeRepo(null)
+    const service = new ComputeService(fakeRunner, repo)
+    await expect(service.getDetails('ssh:nonexistent')).rejects.toThrow(/not found|no compute host/i)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ComputeService.replaceDetails — old_text guard and persistence
+// ---------------------------------------------------------------------------
+
+describe('ComputeService.replaceDetails', () => {
+  const fakeRunner = makeFakeRunner({ exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false })
+
+  it('replaces matching text and persists with author=user', async () => {
+    const { repo, updateDetails } = makeRepo(sampleHost({ detailsDoc: 'hello world' }))
+    const service = new ComputeService(fakeRunner, repo)
+    await service.replaceDetails('ssh:biowulf', { text: 'hello friend', oldText: 'hello world', author: 'user' })
+    expect(updateDetails).toHaveBeenCalledWith('ssh:biowulf', 'hello friend', 'user')
+  })
+
+  it('returns error and does not write when oldText does not match', async () => {
+    const { repo, updateDetails } = makeRepo(sampleHost({ detailsDoc: 'hello world' }))
+    const service = new ComputeService(fakeRunner, repo)
+    await expect(
+      service.replaceDetails('ssh:biowulf', { text: 'something', oldText: 'not present', author: 'user' })
+    ).rejects.toThrow(/not found|does not match|old_text/i)
+    expect(updateDetails).not.toHaveBeenCalled()
+  })
+
+  it('rejects when resulting doc exceeds 32768 characters', async () => {
+    const { repo, updateDetails } = makeRepo(sampleHost({ detailsDoc: 'short' }))
+    const service = new ComputeService(fakeRunner, repo)
+    const bigText = 'x'.repeat(32769)
+    await expect(
+      service.replaceDetails('ssh:biowulf', { text: bigText, oldText: 'short', author: 'user' })
+    ).rejects.toThrow(/32768|too long|limit/i)
+    expect(updateDetails).not.toHaveBeenCalled()
+  })
+
+  it('works with author=agent', async () => {
+    const { repo, updateDetails } = makeRepo(sampleHost({ detailsDoc: 'original text' }))
+    const service = new ComputeService(fakeRunner, repo)
+    await service.replaceDetails('ssh:biowulf', { text: 'new text', oldText: 'original text', author: 'agent' })
+    expect(updateDetails).toHaveBeenCalledWith('ssh:biowulf', 'new text', 'agent')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ComputeService.setScratchRoot — sets scratchPinned=true
+// ---------------------------------------------------------------------------
+
+describe('ComputeService.setScratchRoot', () => {
+  const fakeRunner = makeFakeRunner({ exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false })
+
+  it('sets scratch root and marks pinned', async () => {
+    const { repo, updateScratchPinned } = makeRepo()
+    const service = new ComputeService(fakeRunner, repo)
+    await service.setScratchRoot('ssh:biowulf', '/my/scratch')
+    expect(updateScratchPinned).toHaveBeenCalledWith('ssh:biowulf', '/my/scratch')
+  })
+
+  it('throws when the host does not exist', async () => {
+    const { repo } = makeRepo(null)
+    const service = new ComputeService(fakeRunner, repo)
+    await expect(service.setScratchRoot('ssh:nonexistent', '/path')).rejects.toThrow(/not found|no compute host/i)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ComputeService.setConcurrencyLimit — validates 1..500
+// ---------------------------------------------------------------------------
+
+describe('ComputeService.setConcurrencyLimit', () => {
+  const fakeRunner = makeFakeRunner({ exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false })
+
+  it('persists a valid concurrency limit', async () => {
+    const { repo, updateConcurrencyLimit } = makeRepo()
+    const service = new ComputeService(fakeRunner, repo)
+    await service.setConcurrencyLimit('ssh:biowulf', 10)
+    expect(updateConcurrencyLimit).toHaveBeenCalledWith('ssh:biowulf', 10)
+  })
+
+  it('rejects 0 (below minimum)', async () => {
+    const { repo } = makeRepo()
+    const service = new ComputeService(fakeRunner, repo)
+    await expect(service.setConcurrencyLimit('ssh:biowulf', 0)).rejects.toThrow(/1.*500|range|invalid/i)
+  })
+
+  it('rejects 501 (above maximum)', async () => {
+    const { repo } = makeRepo()
+    const service = new ComputeService(fakeRunner, repo)
+    await expect(service.setConcurrencyLimit('ssh:biowulf', 501)).rejects.toThrow(/1.*500|range|invalid/i)
+  })
+
+  it('accepts the boundary values 1 and 500', async () => {
+    const { repo, updateConcurrencyLimit } = makeRepo()
+    const service = new ComputeService(fakeRunner, repo)
+    await service.setConcurrencyLimit('ssh:biowulf', 1)
+    await service.setConcurrencyLimit('ssh:biowulf', 500)
+    expect(updateConcurrencyLimit).toHaveBeenCalledTimes(2)
+  })
+
+  it('throws when the host does not exist', async () => {
+    const { repo } = makeRepo(null)
+    const service = new ComputeService(fakeRunner, repo)
+    await expect(service.setConcurrencyLimit('ssh:nonexistent', 10)).rejects.toThrow(/not found|no compute host/i)
   })
 })

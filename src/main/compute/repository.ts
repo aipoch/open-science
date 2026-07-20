@@ -174,6 +174,47 @@ class ComputeHostRepository {
       data: { scratchRoot }
     })
   }
+
+  // Writes detailsDoc and records who edited it (user or agent) and when. Called by
+  // ComputeService.replaceDetails (UI + agent-facing). Never called by probe.
+  async updateDetails(
+    providerId: string,
+    detailsDoc: string,
+    author: DetailsAuthor
+  ): Promise<void> {
+    const client = await this.getClient()
+
+    await client.computeHost.update({
+      where: { providerId },
+      data: {
+        detailsDoc,
+        detailsUpdatedBy: author,
+        detailsUpdatedAt: new Date()
+      }
+    })
+  }
+
+  // Updates scratchRoot and sets scratchPinned=true. Called when the user explicitly sets a
+  // scratch path in the UI — pinned hosts are never overwritten by probe.
+  async updateScratchPinned(providerId: string, scratchRoot: string): Promise<void> {
+    const client = await this.getClient()
+
+    await client.computeHost.update({
+      where: { providerId },
+      data: { scratchRoot, scratchPinned: true }
+    })
+  }
+
+  // Persists the concurrent job limit (1..500). Phase 1 stores the value but does not enforce it
+  // (no job runner). Callers must validate the range before calling.
+  async updateConcurrencyLimit(providerId: string, concurrencyLimit: number): Promise<void> {
+    const client = await this.getClient()
+
+    await client.computeHost.update({
+      where: { providerId },
+      data: { concurrencyLimit }
+    })
+  }
 }
 
 export { ComputeHostRepository, toHost }

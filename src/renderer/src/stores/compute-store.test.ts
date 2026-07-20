@@ -111,3 +111,58 @@ describe('compute store', () => {
     expect(useComputeStore.getState().hosts.map((h) => h.providerId)).toEqual(['ssh:b'])
   })
 })
+
+describe('compute store — details', () => {
+  it('saveDetails calls detailsSave and re-fetches the host', async () => {
+    const updatedHost = createHost({ detailsDoc: 'new content', detailsUpdatedBy: 'user' })
+    const detailsSave = vi.fn().mockResolvedValue(undefined)
+    const get = vi.fn().mockResolvedValue(updatedHost)
+    setComputeApi({ detailsSave, get })
+    useComputeStore.setState({ hosts: [createHost()] })
+
+    await useComputeStore.getState().saveDetails('ssh:biowulf', 'new content', '')
+
+    expect(detailsSave).toHaveBeenCalledWith('ssh:biowulf', 'new content', '', 'user')
+    expect(useComputeStore.getState().hosts[0].detailsDoc).toBe('new content')
+  })
+
+  it('saveDetails propagates errors', async () => {
+    setComputeApi({
+      detailsSave: vi.fn().mockRejectedValue(new Error('old_text mismatch'))
+    })
+
+    await expect(
+      useComputeStore.getState().saveDetails('ssh:biowulf', 'new', 'wrong old')
+    ).rejects.toThrow(/old_text|mismatch/i)
+  })
+})
+
+describe('compute store — scratch root', () => {
+  it('setScratch calls scratchSet and re-fetches the host', async () => {
+    const pinnedHost = createHost({ scratchRoot: '/my/scratch', scratchPinned: true })
+    const scratchSet = vi.fn().mockResolvedValue(undefined)
+    const get = vi.fn().mockResolvedValue(pinnedHost)
+    setComputeApi({ scratchSet, get })
+    useComputeStore.setState({ hosts: [createHost()] })
+
+    await useComputeStore.getState().setScratch('ssh:biowulf', '/my/scratch')
+
+    expect(scratchSet).toHaveBeenCalledWith('ssh:biowulf', '/my/scratch')
+    expect(useComputeStore.getState().hosts[0].scratchPinned).toBe(true)
+  })
+})
+
+describe('compute store — concurrency limit', () => {
+  it('setConcurrency calls concurrencySet and re-fetches the host', async () => {
+    const updatedHost = createHost({ concurrencyLimit: 20 })
+    const concurrencySet = vi.fn().mockResolvedValue(undefined)
+    const get = vi.fn().mockResolvedValue(updatedHost)
+    setComputeApi({ concurrencySet, get })
+    useComputeStore.setState({ hosts: [createHost()] })
+
+    await useComputeStore.getState().setConcurrency('ssh:biowulf', 20)
+
+    expect(concurrencySet).toHaveBeenCalledWith('ssh:biowulf', 20)
+    expect(useComputeStore.getState().hosts[0].concurrencyLimit).toBe(20)
+  })
+})
