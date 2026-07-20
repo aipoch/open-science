@@ -5,7 +5,8 @@ import type {
   FinalizeRunArtifactsRequest,
   ListProjectArtifactsRequest,
   OpenArtifactFileRequest,
-  ReadArtifactPreviewRequest
+  ReadArtifactPreviewRequest,
+  ReconcilePendingArtifactsRequest
 } from '../../shared/artifacts'
 import { resolveDataRoot } from '../storage-root'
 import { withDataRootWrite } from '../storage/migration-state'
@@ -15,6 +16,7 @@ import { ArtifactRunRegistry } from './run-registry'
 type ArtifactHandlers = {
   finalizeRunArtifacts: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
   listProjectFiles: (request: ListProjectArtifactsRequest) => Promise<ArtifactFile[]>
+  reconcilePendingArtifacts: (request: ReconcilePendingArtifactsRequest) => Promise<ArtifactFile[]>
   openFile: (request: OpenArtifactFileRequest) => Promise<void>
   readPreview: (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
 }
@@ -70,6 +72,8 @@ const createArtifactHandlers = (
         )
       ),
     listProjectFiles: (request) => repository.listProjectArtifacts(request.projectName),
+    reconcilePendingArtifacts: (request) =>
+      withDataRootWrite(() => repository.reconcilePendingArtifactPaths(request)),
     openFile: async (request) => {
       // Resolve through the repository first so shell.openPath never sees unmanaged locations.
       const filePath = await repository.resolveManagedFilePath(request)
@@ -135,6 +139,11 @@ const registerArtifactIpcHandlers = (
   )
   ipcMain.handle('artifacts:list-project-files', (_event, request: ListProjectArtifactsRequest) =>
     handlers.listProjectFiles(request)
+  )
+  ipcMain.handle(
+    'artifacts:reconcile-pending',
+    (_event, request: ReconcilePendingArtifactsRequest) =>
+      handlers.reconcilePendingArtifacts(request)
   )
   ipcMain.handle('artifacts:open-file', (_event, request: OpenArtifactFileRequest) =>
     handlers.openFile(request)

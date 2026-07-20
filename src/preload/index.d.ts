@@ -19,7 +19,8 @@ import type {
   FinalizeRunArtifactsRequest,
   ListProjectArtifactsRequest,
   OpenArtifactFileRequest,
-  ReadArtifactPreviewRequest
+  ReadArtifactPreviewRequest,
+  ReconcilePendingArtifactsRequest
 } from '../shared/artifacts'
 import type {
   SaveBlobFileRequest,
@@ -255,6 +256,7 @@ interface OpenScienceAPI {
   artifacts: {
     finalizeRunArtifacts(request: FinalizeRunArtifactsRequest): Promise<ArtifactFile[]>
     listProjectFiles(request: ListProjectArtifactsRequest): Promise<ArtifactFile[]>
+    reconcilePendingArtifacts(request: ReconcilePendingArtifactsRequest): Promise<ArtifactFile[]>
     openFile(request: OpenArtifactFileRequest): Promise<void>
     readPreview(request: ReadArtifactPreviewRequest): Promise<ArtifactPreviewResult>
   }

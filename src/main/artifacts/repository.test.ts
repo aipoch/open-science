@@ -562,6 +562,59 @@ describe('artifact repository', () => {
     await expect(repository.listProjectArtifacts('default-project')).resolves.toEqual([])
   })
 
+  it('reconciles a crash-orphaned pending artifact into its message directory', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+
+    // Simulate the crash window: a pending file was written and its path persisted, but finalize never
+    // ran (no run-registry claim survives a restart).
+    const pending = await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'artifact-session-1',
+      runId: 'run-7',
+      filename: 'chart.png',
+      mimeType: 'image/png',
+      source: createInlineSource('png')
+    })
+    expect(pending.path).toContain('.pending')
+
+    const finalized = await repository.reconcilePendingArtifactPaths({
+      projectName: 'default-project',
+      sessionId: 'app-session-1',
+      messageId: 'message-9',
+      pendingPaths: [pending.path]
+    })
+
+    expect(finalized.map((file) => file.name)).toEqual(['chart.png'])
+    expect(finalized[0].path).toBe(
+      join(root, 'artifacts', 'default-project', 'app-session-1', 'message-9', 'chart.png')
+    )
+    await expect(readFile(finalized[0].path, 'utf8')).resolves.toBe('png')
+
+    // Idempotent: replaying the reconcile (e.g. a second startup) returns the same finalized file.
+    const replayed = await repository.reconcilePendingArtifactPaths({
+      projectName: 'default-project',
+      sessionId: 'app-session-1',
+      messageId: 'message-9',
+      pendingPaths: [pending.path]
+    })
+    expect(replayed.map((file) => file.name)).toEqual(['chart.png'])
+  })
+
+  it('ignores non-pending paths during reconciliation instead of moving unrelated files', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+
+    const finalized = await repository.reconcilePendingArtifactPaths({
+      projectName: 'default-project',
+      sessionId: 'app-session-1',
+      messageId: 'message-1',
+      pendingPaths: [join(root, 'artifacts', 'default-project', 'app-session-1', 'message-1', 'x.txt')]
+    })
+
+    expect(finalized).toEqual([])
+  })
+
   it('derives the project artifact directory from the app storage root', () => {
     // Build the expectation with join() so the separator matches the host the test runs on.
     expect(getProjectArtifactDir('/Users/example/.open-science', 'default-project')).toBe(

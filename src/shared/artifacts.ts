@@ -107,6 +107,16 @@ export type ListProjectArtifactsRequest = {
   projectName: string
 }
 
+// Renderer request to re-finalize pending artifacts a crash left behind: the persisted message still
+// references `.pending/<run>/<file>` paths whose in-memory finalize claim was lost on restart. Returns
+// the message's finalized files so the renderer can replace the stale pending references.
+export type ReconcilePendingArtifactsRequest = {
+  projectName: string
+  sessionId: string
+  messageId: string
+  pendingPaths: string[]
+}
+
 // Internal repository list request after the app has resolved the logical project bucket.
 export type ListProjectMessageArtifactsRequest = ListMessageArtifactsRequest & {
   projectName: string

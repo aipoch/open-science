@@ -317,6 +317,61 @@ class ArtifactRepository {
     )
   }
 
+  // Re-finalizes artifacts a crash left in `.pending` after the in-memory run claim was lost: the
+  // session JSON persisted a `.pending/<run>/<file>` path, but the pending->message move never ran. Only
+  // the artifactSessionId + runId segments are read from each path; the pending directory is rebuilt
+  // from the storage root, so a corrupt stored path cannot point the move outside managed storage.
+  // Idempotent — finalizeRunArtifacts tolerates files already moved. Returns the message's final files.
+  async reconcilePendingArtifactPaths(request: {
+    projectName: string
+    sessionId: string
+    messageId: string
+    pendingPaths: string[]
+  }): Promise<ArtifactFile[]> {
+    const runs = new Map<string, { artifactSessionId: string; runId: string }>()
+
+    for (const pendingPath of request.pendingPaths) {
+      const parsed = this.parsePendingPath(pendingPath)
+      if (parsed) runs.set(`${parsed.artifactSessionId}/${parsed.runId}`, parsed)
+    }
+
+    for (const { artifactSessionId, runId } of runs.values()) {
+      await this.finalizeRunArtifacts({
+        projectName: request.projectName,
+        sessionId: request.sessionId,
+        sourceSessionId: artifactSessionId,
+        runId,
+        messageId: request.messageId
+      })
+    }
+
+    return this.listMessageFiles({
+      projectName: request.projectName,
+      sessionId: request.sessionId,
+      messageId: request.messageId
+    })
+  }
+
+  // Extracts the artifact session id and run id from a `.../<artifactSessionId>/.pending/<runId>/<file>`
+  // path. Returns undefined when the path is not a pending path or the segments are unsafe.
+  private parsePendingPath(
+    pendingPath: string
+  ): { artifactSessionId: string; runId: string } | undefined {
+    if (typeof pendingPath !== 'string' || pendingPath.length === 0) return undefined
+
+    const runDir = dirname(pendingPath)
+    const runId = basename(runDir)
+    const pendingDir = dirname(runDir)
+    if (basename(pendingDir) !== PENDING_DIR) return undefined
+
+    const artifactSessionId = basename(dirname(pendingDir))
+    if (!SAFE_SEGMENT_PATTERN.test(runId) || !SAFE_SEGMENT_PATTERN.test(artifactSessionId)) {
+      return undefined
+    }
+
+    return { artifactSessionId, runId }
+  }
+
   // Enumerates every finalized artifact on disk for one project, across all sessions and messages —
   // including sessions whose metadata has since been deleted. Skips pending runs and sidecar metadata.
   // Used to surface orphaned artifacts whose owning session no longer exists, so deleting a session or

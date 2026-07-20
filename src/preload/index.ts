@@ -21,7 +21,8 @@ import type {
   FinalizeRunArtifactsRequest,
   ListProjectArtifactsRequest,
   OpenArtifactFileRequest,
-  ReadArtifactPreviewRequest
+  ReadArtifactPreviewRequest,
+  ReconcilePendingArtifactsRequest
 } from '../shared/artifacts'
 import type {
   SaveBlobFileRequest,
@@ -276,6 +277,8 @@ type OpenScienceAPI = {
     finalizeRunArtifacts: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
     // Lists every on-disk artifact for a project so orphaned files (owning session deleted) still show.
     listProjectFiles: (request: ListProjectArtifactsRequest) => Promise<ArtifactFile[]>
+    // Re-finalizes pending artifacts left behind by a crash, returning the message's finalized files.
+    reconcilePendingArtifacts: (request: ReconcilePendingArtifactsRequest) => Promise<ArtifactFile[]>
     // Opens only managed files after the main process verifies the path.
     openFile: (request: OpenArtifactFileRequest) => Promise<void>
     // Reads a bounded text preview from managed generated files.
@@ -575,6 +578,9 @@ const api: OpenScienceAPI = {
     // Lists every on-disk artifact for a project so orphaned files (owning session deleted) still show.
     listProjectFiles: (request) =>
       ipcRenderer.invoke('artifacts:list-project-files', request) as Promise<ArtifactFile[]>,
+    // Re-finalizes crash-orphaned pending artifacts so the renderer can replace stale pending paths.
+    reconcilePendingArtifacts: (request) =>
+      ipcRenderer.invoke('artifacts:reconcile-pending', request) as Promise<ArtifactFile[]>,
     openFile: (request) => ipcRenderer.invoke('artifacts:open-file', request) as Promise<void>,
     // Keep preview reads on the same managed-file trust path as opening files.
     readPreview: (request) =>
