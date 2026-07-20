@@ -28,6 +28,8 @@ import { readBoundedManagedFilePreview } from '../managed-file-preview'
 const ARTIFACTS_DIR = 'artifacts'
 const PENDING_DIR = '.pending'
 const METADATA_DIR = '.metadata'
+// Per-run markers recording which app session + message a finalized run moved into, keyed by run id.
+const RUNS_DIR = '.runs'
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 type ArtifactMetadata = {
@@ -249,6 +251,10 @@ class ArtifactRepository {
     const messageDir = this.getMessageDir(projectName, sessionId, messageId)
     const entries = await this.readFileEntries(pendingDir)
 
+    // Record where this run finalized so a stale `.pending/<run>` path recovers to this exact message,
+    // not the newest same-named file in the session. Written on every finalize (idempotent).
+    await this.writeRunMarker(projectName, sourceSessionId, runId, { sessionId, messageId })
+
     if (entries.length === 0) {
       // A repeated finalize may find files already moved; recover metadata and return the final state.
       await this.recoverMovedArtifactMetadata(pendingDir, messageDir)
@@ -454,23 +460,41 @@ class ArtifactRepository {
   }
 
   // Given a now-missing `.pending/<run>/<file>` artifact path, finds the same file after finalize moved
-  // it into a sibling message directory (`<session>/<messageId>/<file>`). Returns the newest match, or
-  // undefined when the path is not a pending path or no finalized copy exists. Path safety is still
-  // enforced by resolveManagedFilePath's root check on the returned path.
+  // it. Prefers the run marker written at finalize (`.runs/<run>.json`), which pins the exact app
+  // session + message the run produced — so two runs that both wrote `report.csv` never cross-resolve.
+  // Falls back to the newest same-named file in the session for legacy artifacts with no marker.
+  // Returns undefined when the path is not a pending path or no finalized copy exists. Path safety is
+  // still enforced by resolveManagedFilePath's root check on the returned path.
   private async recoverFinalizedPendingPath(requestedPath: string): Promise<string | undefined> {
-    const pendingDir = dirname(dirname(requestedPath)) // <session>/.pending
+    // requestedPath = <project>/<sourceSessionId>/.pending/<runId>/<file>
+    const runDir = dirname(requestedPath)
+    const runId = basename(runDir)
+    const pendingDir = dirname(runDir)
     if (basename(pendingDir) !== PENDING_DIR) return undefined
-    const sessionDir = dirname(pendingDir)
+    const sourceSessionDir = dirname(pendingDir)
     const filename = basename(requestedPath)
 
-    const entries = await readdir(sessionDir, { withFileTypes: true }).catch(() => null)
+    // Marker path: resolve directly from the source-session dir the stale path already points into.
+    const marker = SAFE_SEGMENT_PATTERN.test(runId)
+      ? await this.readRunMarker(join(sourceSessionDir, RUNS_DIR, `${runId}.json`))
+      : undefined
+
+    if (marker) {
+      const projectDir = dirname(sourceSessionDir)
+      const candidate = join(projectDir, marker.sessionId, marker.messageId, filename)
+      const candidateStat = await stat(candidate).catch(() => undefined)
+      if (candidateStat?.isFile()) return candidate
+    }
+
+    // Legacy fallback: no (or stale) marker. Scan the session's message dirs for the newest same name.
+    const entries = await readdir(sourceSessionDir, { withFileTypes: true }).catch(() => null)
     if (!entries) return undefined
 
     const matches: Array<{ path: string; mtimeMs: number }> = []
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.name === PENDING_DIR || entry.name === METADATA_DIR)
         continue
-      const candidate = join(sessionDir, entry.name, filename)
+      const candidate = join(sourceSessionDir, entry.name, filename)
       const candidateStat = await stat(candidate).catch(() => undefined)
       if (candidateStat?.isFile()) matches.push({ path: candidate, mtimeMs: candidateStat.mtimeMs })
     }
@@ -484,6 +508,60 @@ class ArtifactRepository {
   ): Promise<ArtifactPreviewResult> {
     const filePath = await this.resolveManagedFilePath(request)
     return readBoundedManagedFilePreview(filePath, request, 'Invalid artifact preview encoding.')
+  }
+
+  // Resolves the per-run marker path under the source (artifact) session, keyed by run id — the same
+  // scope a stale pending path carries, so recovery can find it without knowing the app session id.
+  private getRunMarkerPath(projectName: string, sourceSessionId: string, runId: string): string {
+    return join(
+      getProjectArtifactDir(this.storageRoot, projectName),
+      sourceSessionId,
+      RUNS_DIR,
+      `${runId}.json`
+    )
+  }
+
+  // Persists the app session + message a run finalized into. Best-effort: a marker write failure must
+  // not fail the finalize itself (recovery still falls back to a newest-mtime scan).
+  private async writeRunMarker(
+    projectName: string,
+    sourceSessionId: string,
+    runId: string,
+    marker: { sessionId: string; messageId: string }
+  ): Promise<void> {
+    try {
+      const markerPath = this.getRunMarkerPath(projectName, sourceSessionId, runId)
+      await mkdir(dirname(markerPath), { recursive: true })
+      await writeFile(markerPath, `${JSON.stringify(marker)}\n`, 'utf8')
+    } catch {
+      // Non-fatal: the run still finalized; only same-name recovery precision is degraded.
+    }
+  }
+
+  // Reads a run marker written by a prior finalize, tolerating absent/corrupt markers (returns
+  // undefined so recovery falls back to its newest-mtime scan for legacy artifacts).
+  private async readRunMarker(
+    markerPath: string
+  ): Promise<{ sessionId: string; messageId: string } | undefined> {
+    try {
+      const parsed = JSON.parse(await readFile(markerPath, 'utf8')) as unknown
+
+      if (
+        typeof parsed === 'object' &&
+        parsed !== null &&
+        typeof (parsed as { sessionId?: unknown }).sessionId === 'string' &&
+        typeof (parsed as { messageId?: unknown }).messageId === 'string'
+      ) {
+        const { sessionId, messageId } = parsed as { sessionId: string; messageId: string }
+        if (SAFE_SEGMENT_PATTERN.test(sessionId) && SAFE_SEGMENT_PATTERN.test(messageId)) {
+          return { sessionId, messageId }
+        }
+      }
+
+      return undefined
+    } catch {
+      return undefined
+    }
   }
 
   // Builds the temporary directory for files generated during one active assistant turn.

@@ -294,6 +294,94 @@ describe('artifact repository', () => {
     expect(preview.content).toContain('img-bytes')
   })
 
+  it('recovers a same-named pending file to its own run, not the newest same-named file', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+
+    // Two runs in one session each produce report.csv, finalized into different messages. The second
+    // finalize is newer, so a newest-mtime recovery would wrongly resolve run A's path to run B's file.
+    await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'run-a',
+      filename: 'report.csv',
+      source: createInlineSource('run-a-content')
+    })
+    await repository.finalizeRunArtifacts({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'run-a',
+      messageId: 'message-a'
+    })
+    await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'run-b',
+      filename: 'report.csv',
+      source: createInlineSource('run-b-content')
+    })
+    await repository.finalizeRunArtifacts({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'run-b',
+      messageId: 'message-b'
+    })
+
+    const pendingPathA = join(
+      root,
+      'artifacts',
+      'default-project',
+      'session-1',
+      '.pending',
+      'run-a',
+      'report.csv'
+    )
+    const resolved = await repository.resolveManagedFilePath({ path: pendingPathA })
+    expect(resolved).toBe(
+      await realpath(join(root, 'artifacts', 'default-project', 'session-1', 'message-a', 'report.csv'))
+    )
+    const preview = await repository.readManagedFilePreview({ path: pendingPathA })
+    expect(preview.content).toContain('run-a-content')
+  })
+
+  it('falls back to a newest-mtime scan when no run marker exists (legacy artifacts)', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+
+    await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      filename: 'legacy.txt',
+      source: createInlineSource('legacy')
+    })
+    await repository.finalizeRunArtifacts({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      messageId: 'message-1'
+    })
+    // Remove the run marker to simulate an artifact finalized before markers existed.
+    await rm(join(root, 'artifacts', 'default-project', 'session-1', '.runs'), {
+      recursive: true,
+      force: true
+    })
+
+    const pendingPath = join(
+      root,
+      'artifacts',
+      'default-project',
+      'session-1',
+      '.pending',
+      'run-1',
+      'legacy.txt'
+    )
+    const resolved = await repository.resolveManagedFilePath({ path: pendingPath })
+    expect(resolved).toBe(
+      await realpath(join(root, 'artifacts', 'default-project', 'session-1', 'message-1', 'legacy.txt'))
+    )
+  })
+
   it('still throws for a missing artifact path that was never finalized', async () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)
