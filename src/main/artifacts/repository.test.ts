@@ -398,7 +398,7 @@ describe('artifact repository', () => {
     await expect(repository.resolveManagedFilePath({ path: pendingPathA })).rejects.toThrow()
   })
 
-  it('falls back to a newest-mtime scan when no run marker exists (legacy artifacts)', async () => {
+  it('recovers an unmarked artifact only when the same-name match is unambiguous (legacy)', async () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)
 
@@ -436,6 +436,86 @@ describe('artifact repository', () => {
         join(root, 'artifacts', 'default-project', 'session-1', 'message-1', 'legacy.txt')
       )
     )
+  })
+
+  it('does NOT recover an unmarked path when multiple same-named candidates exist', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+
+    // Two runs both produced report.csv into different messages, then BOTH markers were lost (e.g. the
+    // marker writes failed). Recovery must not guess between them — that is the cross-run mis-read.
+    for (const [runId, messageId, content] of [
+      ['run-a', 'message-a', 'a'],
+      ['run-b', 'message-b', 'b']
+    ] as const) {
+      await repository.writePendingFile({
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        runId,
+        filename: 'report.csv',
+        source: createInlineSource(content)
+      })
+      await repository.finalizeRunArtifacts({
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        runId,
+        messageId
+      })
+    }
+    await rm(join(root, 'artifacts', 'default-project', 'session-1', '.runs'), {
+      recursive: true,
+      force: true
+    })
+
+    const pendingPathA = join(
+      root,
+      'artifacts',
+      'default-project',
+      'session-1',
+      '.pending',
+      'run-a',
+      'report.csv'
+    )
+    await expect(repository.resolveManagedFilePath({ path: pendingPathA })).rejects.toThrow()
+  })
+
+  it('does NOT cross-read when a marker is present but corrupt and its target is gone', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+
+    for (const [runId, messageId, content] of [
+      ['run-a', 'message-a', 'a'],
+      ['run-b', 'message-b', 'b']
+    ] as const) {
+      await repository.writePendingFile({
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        runId,
+        filename: 'report.csv',
+        source: createInlineSource(content)
+      })
+      await repository.finalizeRunArtifacts({
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        runId,
+        messageId
+      })
+    }
+    // Corrupt run-a's marker and delete its target file; run-b's identical-named file still exists.
+    const runsDir = join(root, 'artifacts', 'default-project', 'session-1', '.runs')
+    await writeFile(join(runsDir, 'run-a.json'), 'not json{', 'utf8')
+    await rm(join(root, 'artifacts', 'default-project', 'session-1', 'message-a', 'report.csv'))
+
+    const pendingPathA = join(
+      root,
+      'artifacts',
+      'default-project',
+      'session-1',
+      '.pending',
+      'run-a',
+      'report.csv'
+    )
+    await expect(repository.resolveManagedFilePath({ path: pendingPathA })).rejects.toThrow()
   })
 
   it('still throws for a missing artifact path that was never finalized', async () => {
@@ -722,6 +802,36 @@ describe('artifact repository', () => {
     await writeFile(handoff, JSON.stringify({ runId: 'x' }), 'utf8')
 
     await expect(repository.listProjectArtifacts('default-project')).resolves.toEqual([])
+  })
+
+  it('excludes the active run (named by current-run.json) from the orphan scan', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+
+    // An in-flight turn: current-run.json names run-active, whose files are still being written.
+    await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'run-active',
+      filename: 'in-progress.txt',
+      source: createInlineSource('partial')
+    })
+    // A genuinely orphaned pending run from an earlier crash.
+    await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'run-dead',
+      filename: 'orphan.txt',
+      source: createInlineSource('dead')
+    })
+    const handoff = getArtifactCurrentRunFilePath(root, 'default-project', 'session-1')
+    await writeFile(handoff, JSON.stringify({ runId: 'run-active' }), 'utf8')
+
+    const files = await repository.listProjectArtifacts('default-project')
+
+    // Only the dead run's file surfaces; the in-flight run's half-written file is not shown as an orphan.
+    expect(files.map((file) => file.name)).toEqual(['orphan.txt'])
+    expect(files[0].runId).toBe('run-dead')
   })
 
   it('returns an empty list when a project has no artifacts on disk', async () => {
