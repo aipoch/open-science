@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs'
+import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { app, dialog, ipcMain } from 'electron'
@@ -406,6 +407,13 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
         }
 
         const target = dataRootForPicked(request.parent)
+        // Create the data root now, before persisting the pointer. Unlike storage:migrate there is no
+        // copy phase to mkdir it, so a fresh onboarding folder ('move') would be recorded in
+        // settings.dataRoot without ever existing on disk - and the next launch's startup guard would
+        // read that explicitly-configured-but-absent root as deleted and wrongly show "Data folder not
+        // found". For an 'adopt' target the folder already exists, so this is a no-op. classifyDataRoot
+        // has already proven the parent writable, so failure here is genuinely unexpected.
+        await mkdir(target, { recursive: true })
         await deps.settingsService.setDataRoot(target)
         if (request.markOnboarding) {
           await deps.settingsService.markOnboardingComplete()
