@@ -23,6 +23,9 @@ type ArtifactHandlers = {
 
 type ArtifactHandlerDependencies = {
   openPath?: (path: string) => Promise<string>
+  // Run ids of turns in flight right now (live runtime state). Their pending files are still being
+  // written, so the orphan scan excludes them; a crashed run is absent here and correctly surfaces.
+  getActiveArtifactRunIds?: () => string[]
 }
 
 // Serializes finalization per claim so duplicate renderer event processing cannot move files twice.
@@ -63,6 +66,7 @@ const createArtifactHandlers = (
   const finalizeLocks = new Map<string, Promise<void>>()
   const openPath =
     dependencies.openPath ?? ((filePath: string): Promise<string> => shell.openPath(filePath))
+  const getActiveArtifactRunIds = dependencies.getActiveArtifactRunIds ?? ((): string[] => [])
 
   return {
     finalizeRunArtifacts: (request) =>
@@ -71,7 +75,8 @@ const createArtifactHandlers = (
           finalizeRunArtifacts(repository, runRegistry, request)
         )
       ),
-    listProjectFiles: (request) => repository.listProjectArtifacts(request.projectName),
+    listProjectFiles: (request) =>
+      repository.listProjectArtifacts(request.projectName, new Set(getActiveArtifactRunIds())),
     reconcilePendingArtifacts: (request) =>
       withDataRootWrite(() => repository.reconcilePendingArtifactPaths(request)),
     openFile: async (request) => {
@@ -130,9 +135,10 @@ const createDefaultArtifactRepository = (): ArtifactRepository =>
 // Registers the renderer-visible artifact commands without exposing internal message-file listing.
 const registerArtifactIpcHandlers = (
   repository = createDefaultArtifactRepository(),
-  runRegistry = new ArtifactRunRegistry()
+  runRegistry = new ArtifactRunRegistry(),
+  getActiveArtifactRunIds?: () => string[]
 ): void => {
-  const handlers = createArtifactHandlers(repository, runRegistry)
+  const handlers = createArtifactHandlers(repository, runRegistry, { getActiveArtifactRunIds })
 
   ipcMain.handle('artifacts:finalize-run', (_event, request: FinalizeRunArtifactsRequest) =>
     handlers.finalizeRunArtifacts(request)

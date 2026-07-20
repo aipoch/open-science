@@ -285,7 +285,9 @@ const registerIpcHandlers = async ({
     getActivePromptSessions: () => runtime.getActivePromptSessions(),
     settingsService
   })
-  registerArtifactIpcHandlers(artifactRepository, artifactRunRegistry)
+  registerArtifactIpcHandlers(artifactRepository, artifactRunRegistry, () =>
+    runtimeRef.current ? runtimeRef.current.getActiveArtifactRunIds() : []
+  )
   registerUploadIpcHandlers(uploadRepository)
   registerSessionPersistenceIpcHandlers(sessionRepository)
   registerProjectIpcHandlers(projectRepository, previewStateRepository)

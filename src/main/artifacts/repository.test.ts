@@ -398,7 +398,7 @@ describe('artifact repository', () => {
     await expect(repository.resolveManagedFilePath({ path: pendingPathA })).rejects.toThrow()
   })
 
-  it('recovers an unmarked artifact only when the same-name match is unambiguous (legacy)', async () => {
+  it('does NOT recover an unmarked stale pending path (absent marker == failed write, unsafe to guess)', async () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)
 
@@ -415,7 +415,8 @@ describe('artifact repository', () => {
       runId: 'run-1',
       messageId: 'message-1'
     })
-    // Remove the run marker to simulate an artifact finalized before markers existed.
+    // Remove the run marker: an absent marker (legacy artifact OR a failed best-effort write) is
+    // indistinguishable, so recovery must not guess even though the finalized file exists.
     await rm(join(root, 'artifacts', 'default-project', 'session-1', '.runs'), {
       recursive: true,
       force: true
@@ -430,12 +431,7 @@ describe('artifact repository', () => {
       'run-1',
       'legacy.txt'
     )
-    const resolved = await repository.resolveManagedFilePath({ path: pendingPath })
-    expect(resolved).toBe(
-      await realpath(
-        join(root, 'artifacts', 'default-project', 'session-1', 'message-1', 'legacy.txt')
-      )
-    )
+    await expect(repository.resolveManagedFilePath({ path: pendingPath })).rejects.toThrow()
   })
 
   it('does NOT recover an unmarked path when multiple same-named candidates exist', async () => {
@@ -804,11 +800,11 @@ describe('artifact repository', () => {
     await expect(repository.listProjectArtifacts('default-project')).resolves.toEqual([])
   })
 
-  it('excludes the active run (named by current-run.json) from the orphan scan', async () => {
+  it('excludes only the runs the caller reports as in-flight from the orphan scan', async () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)
 
-    // An in-flight turn: current-run.json names run-active, whose files are still being written.
+    // An in-flight turn (run-active): its files are still being written.
     await repository.writePendingFile({
       projectName: 'default-project',
       sessionId: 'session-1',
@@ -824,14 +820,37 @@ describe('artifact repository', () => {
       filename: 'orphan.txt',
       source: createInlineSource('dead')
     })
-    const handoff = getArtifactCurrentRunFilePath(root, 'default-project', 'session-1')
-    await writeFile(handoff, JSON.stringify({ runId: 'run-active' }), 'utf8')
 
+    // With run-active reported as live: only the dead run's file surfaces.
+    const liveFiles = await repository.listProjectArtifacts(
+      'default-project',
+      new Set(['run-active'])
+    )
+    expect(liveFiles.map((file) => file.name)).toEqual(['orphan.txt'])
+    expect(liveFiles[0].runId).toBe('run-dead')
+  })
+
+  it('surfaces every pending run when nothing is in flight (post-crash restart)', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+
+    // A crash left a pending run AND its stale current-run.json handoff. On restart no run is live, so
+    // the crashed run's files must surface — the persisted handoff must NOT keep hiding them.
+    await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'run-crashed',
+      filename: 'crashed.txt',
+      source: createInlineSource('x')
+    })
+    const handoff = getArtifactCurrentRunFilePath(root, 'default-project', 'session-1')
+    await writeFile(handoff, JSON.stringify({ runId: 'run-crashed' }), 'utf8')
+
+    // No active run ids (fresh runtime after restart).
     const files = await repository.listProjectArtifacts('default-project')
 
-    // Only the dead run's file surfaces; the in-flight run's half-written file is not shown as an orphan.
-    expect(files.map((file) => file.name)).toEqual(['orphan.txt'])
-    expect(files[0].runId).toBe('run-dead')
+    expect(files.map((file) => file.name)).toEqual(['crashed.txt'])
+    expect(files[0].runId).toBe('run-crashed')
   })
 
   it('returns an empty list when a project has no artifacts on disk', async () => {

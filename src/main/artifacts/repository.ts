@@ -388,7 +388,15 @@ class ArtifactRepository {
   // message (which startup reconciliation cannot claim). Skips sidecar metadata and the current-run
   // handoff. Used to surface orphaned artifacts whose owning session/message no longer exists, so a
   // delete or a mid-turn crash never strands files that the user was promised would remain.
-  async listProjectArtifacts(projectName: string): Promise<ArtifactFile[]> {
+  //
+  // `activeRunIds` are the runs of turns the caller knows are IN FLIGHT right now (from live runtime
+  // state, not the persisted current-run.json handoff — that file survives a crash and would then hide
+  // the crashed run's files forever). Their pending files are still being written, so they are excluded
+  // from the orphan list; every other pending run is a crashed/ownerless run and is surfaced.
+  async listProjectArtifacts(
+    projectName: string,
+    activeRunIds: ReadonlySet<string> = new Set()
+  ): Promise<ArtifactFile[]> {
     const project = assertSafePathSegment(projectName)
     const projectDir = getProjectArtifactDir(this.storageRoot, project)
     const files: ArtifactFile[] = []
@@ -422,14 +430,13 @@ class ArtifactRepository {
       // Ownerless pending files: a turn that crashed before the renderer attached its artifacts leaves
       // files here with no message to reconcile against, so surface them rather than hide them forever.
       // Only `.pending/<run>/` subdirectories hold artifacts; the `current-run.json` handoff is a plain
-      // file and is skipped by the subdirectory walk. The run named by that handoff is the in-flight
-      // turn, whose files are still being written and will finalize into a message shortly — skip it so
-      // a scan racing generation never shows half-written files as orphans.
+      // file and is skipped by the subdirectory walk. A run the caller reports as in-flight is skipped
+      // (its files are mid-write and will finalize into a message shortly); a crashed run is NOT in that
+      // live set, so its leftover files correctly surface as orphans.
       const pendingDir = join(sessionDir, PENDING_DIR)
-      const activeRunId = await this.readActiveRunId(pendingDir)
       for (const runId of await this.readSubdirectoryNames(pendingDir)) {
         if (!SAFE_SEGMENT_PATTERN.test(runId)) continue
-        if (runId === activeRunId) continue
+        if (activeRunIds.has(runId)) continue
         const runDir = join(pendingDir, runId)
 
         for (const entry of await this.readFileEntries(runDir)) {
@@ -494,11 +501,11 @@ class ArtifactRepository {
   }
 
   // Given a now-missing `.pending/<run>/<file>` artifact path, finds the same file after finalize moved
-  // it. Prefers the run marker written at finalize (`.runs/<run>.json`), which pins the exact app
-  // session + message the run produced — so two runs that both wrote `report.csv` never cross-resolve.
-  // Falls back to the newest same-named file in the session for legacy artifacts with no marker.
-  // Returns undefined when the path is not a pending path or no finalized copy exists. Path safety is
-  // still enforced by resolveManagedFilePath's root check on the returned path.
+  // it, using ONLY the run marker written at finalize (`.runs/<run>.json`), which pins the exact app
+  // session + message the run produced. An unmarked run is never recovered by guessing among same-named
+  // files (that could cross-resolve to a different run's file); returns undefined instead. Also returns
+  // undefined when the path is not a pending path or the marker's target no longer exists. Path safety
+  // is still enforced by resolveManagedFilePath's root check on the returned path.
   private async recoverFinalizedPendingPath(requestedPath: string): Promise<string | undefined> {
     // requestedPath = <project>/<sourceSessionId>/.pending/<runId>/<file>
     const runDir = dirname(requestedPath)
@@ -532,36 +539,14 @@ class ArtifactRepository {
       return candidateStat?.isFile() ? candidate : undefined
     }
 
-    // No marker at all — a legacy artifact (finalized before markers) or a marker whose write failed.
-    // Scan the session's message dirs for the same filename, but recover ONLY when the match is
-    // UNAMBIGUOUS: a marker's absence doesn't prove the artifact is legacy, so if two runs produced the
-    // same filename, guessing could resolve one run's stale path to another run's file. 0 or 2+ → 404.
-    const entries = await readdir(sourceSessionDir, { withFileTypes: true }).catch(() => null)
-    if (!entries) return undefined
-
-    const matches: string[] = []
-    for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name === PENDING_DIR || entry.name === METADATA_DIR)
-        continue
-      const candidate = join(sourceSessionDir, entry.name, filename)
-      const candidateStat = await stat(candidate).catch(() => undefined)
-      if (candidateStat?.isFile()) matches.push(candidate)
-    }
-
-    if (matches.length === 1) {
-      log.warn('artifact recovered via unmarked single-candidate fallback', {
-        requestedPath,
-        recovered: matches[0]
-      })
-      return matches[0]
-    }
-
-    if (matches.length > 1) {
-      log.warn('artifact recovery skipped: no marker and multiple same-named candidates', {
-        requestedPath,
-        candidateCount: matches.length
-      })
-    }
+    // No marker at all. This is a legacy artifact (finalized before markers existed) OR one whose
+    // best-effort marker write failed — the two are indistinguishable on disk. A same-name scan is
+    // therefore unsafe even with a single candidate: if the run's own file was deleted and a different
+    // run left an identically-named file, that lone candidate would be the WRONG run's file. So we do
+    // not guess at all — recovery of an unmarked stale pending path returns undefined (a real 404). New
+    // artifacts always carry a marker; the only loss is best-effort recovery of pre-marker legacy files,
+    // whose finalized paths are already what a reloaded session persists (it doesn't hold pending paths).
+    log.warn('artifact recovery skipped: stale pending path has no run marker', { requestedPath })
     return undefined
   }
 
@@ -594,14 +579,17 @@ class ArtifactRepository {
     runId: string,
     marker: { sessionId: string; messageId: string }
   ): Promise<void> {
+    const markerPath = this.getRunMarkerPath(projectName, sourceSessionId, runId)
+    const temporaryPath = `${markerPath}.${Date.now()}-${randomUUID()}.tmp`
     try {
-      const markerPath = this.getRunMarkerPath(projectName, sourceSessionId, runId)
-      const temporaryPath = `${markerPath}.${Date.now()}-${randomUUID()}.tmp`
       await mkdir(dirname(markerPath), { recursive: true })
       await writeFile(temporaryPath, `${JSON.stringify(marker)}\n`, 'utf8')
       await rename(temporaryPath, markerPath)
     } catch {
-      // Non-fatal: the run still finalized; only same-name recovery precision is degraded.
+      // Non-fatal: the run still finalized; an unmarked run just isn't recoverable via stale pending
+      // path. Remove any temp left behind so a failed write never litters the `.runs` dir (matches the
+      // atomic-write cleanup elsewhere in this repository).
+      await rm(temporaryPath, { force: true }).catch(() => undefined)
     }
   }
 
@@ -650,23 +638,6 @@ class ArtifactRepository {
   // Builds the durable directory displayed under one completed assistant message.
   private getMessageDir(projectName: string, sessionId: string, messageId: string): string {
     return join(getProjectArtifactDir(this.storageRoot, projectName), sessionId, messageId)
-  }
-
-  // Reads the run id of the in-flight turn from a session's `.pending/current-run.json` handoff, or
-  // undefined when no run is active (file absent, cleared to `{}`, or unreadable/corrupt).
-  private async readActiveRunId(pendingDir: string): Promise<string | undefined> {
-    try {
-      const parsed = JSON.parse(
-        await readFile(join(pendingDir, CURRENT_RUN_FILE), 'utf8')
-      ) as unknown
-      const runId =
-        typeof parsed === 'object' && parsed !== null
-          ? (parsed as { runId?: unknown }).runId
-          : undefined
-      return typeof runId === 'string' && runId.length > 0 ? runId : undefined
-    } catch {
-      return undefined
-    }
   }
 
   // Reads only direct subdirectory names, returning an empty list when the directory does not exist.

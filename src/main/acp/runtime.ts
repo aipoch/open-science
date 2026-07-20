@@ -392,6 +392,13 @@ class AcpRuntime {
     }))
   }
 
+  // Run ids of turns currently in flight, from live in-memory state (not the persisted current-run
+  // handoff, which survives a crash). The artifact orphan scan uses this to exclude files a running
+  // turn is still writing, while a crashed run — absent here — correctly surfaces as orphaned.
+  getActiveArtifactRunIds(): string[] {
+    return Array.from(this.activeArtifactRuns.values(), (run) => run.runId)
+  }
+
   // Resolves an application profile against per-session ACP capabilities and applies the real Agent
   // mode before any prompt is sent. The selected/effective projection is then shared with the UI and
   // the conservative fallback reviewer.
