@@ -22,6 +22,7 @@ import type {
   SessionSetup,
   SessionSetupContext
 } from './types'
+import { isCodexSubscriptionProvider } from '../../shared/settings'
 
 const CODEX_PROVIDER_ID = 'open-science'
 // Catalog model used only for Codex's local metadata; the Responses bridge rewrites it to the selected
@@ -64,6 +65,8 @@ type CodexFrameworkDeps = {
 }
 
 export const codexStorageDir = (storageRoot: string): string => join(storageRoot, 'codex')
+export const codexSubscriptionStorageDir = (storageRoot: string): string =>
+  join(storageRoot, 'codex-subscription')
 
 const normalizeResponsesBaseUrl = (value: string | undefined): string | undefined => {
   const normalized = value
@@ -197,6 +200,15 @@ export const createCodexFramework = ({
   },
 
   prepareModelConfig(provider, ctx: ModelConfigContext): AgentModelConfig {
+    if (isCodexSubscriptionProvider(provider.type)) {
+      return {
+        env:
+          provider.type === 'codex-isolated'
+            ? { CODEX_HOME: codexSubscriptionStorageDir(ctx.storageRoot) }
+            : {}
+      }
+    }
+
     const bridge = ctx.responsesBridge
     const useBridge =
       bridge !== undefined && !(provider.apiEndpoints?.includes('responses') ?? false)

@@ -1,4 +1,8 @@
-import type { ChatApiEndpoint, ProviderType } from '../../../../shared/settings'
+import {
+  codexSubscriptionProviderIdentity,
+  type ChatApiEndpoint,
+  type ProviderType
+} from '../../../../shared/settings'
 import {
   OFFICIAL_VENDORS,
   getOfficialVendor,
@@ -85,6 +89,20 @@ export type ProviderKind = {
 }
 
 export const PROVIDER_KINDS: ProviderKind[] = [
+  {
+    key: 'codex-isolated',
+    label: 'Open Science Codex login',
+    description:
+      'Sign in with ChatGPT using a profile stored separately by Open Science. Recommended.',
+    group: 'coding'
+  },
+  {
+    key: 'codex-shared',
+    label: 'Existing Codex profile',
+    description:
+      'Uses your existing Codex CLI profile, including its login, configuration, skills, threads, logs, and token refresh.',
+    group: 'coding'
+  },
   ...OFFICIAL_VENDORS.map((vendor): ProviderKind => ({
     key: `official:${vendor.id}`,
     label: vendor.label,
@@ -108,6 +126,20 @@ export const PROVIDER_KINDS: ProviderKind[] = [
 // The patch applied to the form value when a provider-kind is picked. Switching to an official vendor
 // seeds its default region + model; switching away clears vendor-only fields.
 export const providerKindPatch = (key: string): Partial<ProviderFormValue> => {
+  if (key === 'codex-shared' || key === 'codex-isolated') {
+    const identity = codexSubscriptionProviderIdentity(key)
+    return {
+      type: key,
+      name: identity.name,
+      apiEndpoint: 'responses',
+      baseUrl: '',
+      model: '',
+      key: '',
+      vendorId: undefined,
+      region: undefined
+    }
+  }
+
   if (key === 'claude-default') {
     return { type: 'claude-default', vendorId: undefined, region: undefined, model: '' }
   }
@@ -135,6 +167,7 @@ export const selectedKindKey = (value: ProviderFormValue): string => {
     return 'custom'
   }
   if (value.type === 'claude-default') return 'claude-default'
+  if (value.type === 'codex-shared' || value.type === 'codex-isolated') return value.type
 
   return value.vendorId ? `official:${value.vendorId}` : 'custom'
 }

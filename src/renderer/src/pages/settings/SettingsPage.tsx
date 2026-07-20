@@ -15,10 +15,11 @@ import {
 import { Dialog } from 'radix-ui'
 import { useEffect, useState } from 'react'
 
-import type {
-  AgentFrameworkId,
-  ProviderView,
-  UpsertProviderRequest
+import {
+  isCodexSubscriptionProvider,
+  type AgentFrameworkId,
+  type ProviderView,
+  type UpsertProviderRequest
 } from '../../../../shared/settings'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -184,6 +185,8 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const persistProvider = useSettingsStore((state) => state.persistProvider)
   const deleteProvider = useSettingsStore((state) => state.deleteProvider)
   const validateProvider = useSettingsStore((state) => state.validateProvider)
+  const cancelCodexLogin = useSettingsStore((state) => state.cancelCodexLogin)
+  const logoutIsolatedCodex = useSettingsStore((state) => state.logoutIsolatedCodex)
   const refreshProviderModels = useSettingsStore((state) => state.refreshProviderModels)
   const pendingSkillId = useSettingsStore((state) => state.pendingSkillId)
   const consumePendingSkill = useSettingsStore((state) => state.consumePendingSkill)
@@ -468,6 +471,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   }
 
   const activeFramework = agentFrameworks.find((framework) => framework.id === agentFrameworkId)
+  const visibleProviders = providers.filter(
+    (provider) => agentFrameworkId === 'codex' || !isCodexSubscriptionProvider(provider.type)
+  )
   const pendingSwitchName = agentFrameworks.find(
     (framework) => framework.id === pendingSwitch
   )?.displayName
@@ -758,6 +764,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                       isRefreshingModels={isRefreshingModels}
                       disabled={isSaving}
                       encryptionAvailable={encryptionAvailable}
+                      showCodexSubscriptions={
+                        agentFrameworkId === 'codex' && editingProvider === undefined
+                      }
                     />
                     {statusMessage ? (
                       <p
@@ -877,19 +886,21 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                         </Button>
                       }
                     >
-                      {providers.length > 0 ? (
+                      {visibleProviders.length > 0 ? (
                         <SettingsRow label="Active model" className="border-b border-border pt-0">
                           <ActiveModelSelect />
                         </SettingsRow>
                       ) : null}
 
                       <ProviderList
-                        providers={providers}
+                        providers={visibleProviders}
                         activeProviderId={activeProviderId}
                         busyProviderId={busyProviderId}
                         onEdit={openEdit}
                         onDelete={(provider) => void deleteProvider(provider.id)}
                         onTest={(provider) => void handleTest(provider)}
+                        onCancelCodexLogin={() => void cancelCodexLogin()}
+                        onLogoutIsolatedCodex={() => void logoutIsolatedCodex()}
                       />
                     </SettingsSection>
                   </div>

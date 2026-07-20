@@ -151,6 +151,7 @@ const OnboardingWizard = (): React.JSX.Element => {
   const closeEnvironmentRepair = useSettingsStore((state) => state.closeEnvironmentRepair)
   const installClaude = useSettingsStore((state) => state.installClaude)
   const saveAndActivateProvider = useSettingsStore((state) => state.saveAndActivateProvider)
+  const cancelCodexLogin = useSettingsStore((state) => state.cancelCodexLogin)
   const completeOnboarding = useSettingsStore((state) => state.completeOnboarding)
 
   // A completed user re-opened only for a regressed required check: environment repair, no model step.
@@ -794,6 +795,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                       errors={showProviderErrors ? formErrors : undefined}
                       disabled={isSaving}
                       encryptionAvailable={encryptionAvailable}
+                      showCodexSubscriptions={agentFrameworkId === 'codex'}
                     />
                     {validationMessage ? (
                       <p
@@ -806,16 +808,28 @@ const OnboardingWizard = (): React.JSX.Element => {
                   </section>
                 </CardContent>
                 <CardFooter className="mt-auto justify-end gap-2 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
-                  <Button type="button" variant="outline" onClick={() => setStep('claude')}>
-                    Back
-                  </Button>
+                  {isSaving && formValue.type === 'codex-isolated' ? (
+                    <Button type="button" variant="outline" onClick={() => void cancelCodexLogin()}>
+                      Cancel sign-in
+                    </Button>
+                  ) : (
+                    <Button type="button" variant="outline" onClick={() => setStep('claude')}>
+                      Back
+                    </Button>
+                  )}
                   <Button
                     type="button"
                     onClick={() => void handleSaveProvider()}
                     disabled={isSaving}
                     className="px-4"
                   >
-                    {isSaving ? 'Testing connection…' : 'Test & continue'}
+                    {isSaving
+                      ? formValue.type === 'codex-isolated'
+                        ? 'Waiting for sign-in…'
+                        : 'Testing connection…'
+                      : formValue.type === 'codex-isolated'
+                        ? 'Sign in & continue'
+                        : 'Test & continue'}
                   </Button>
                 </CardFooter>
               </>

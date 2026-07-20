@@ -25,7 +25,13 @@ import {
 
 const SETTINGS_FILE = 'settings.json'
 
-const PROVIDER_TYPES = new Set<ProviderType>(['custom', 'claude-default', 'official'])
+const PROVIDER_TYPES = new Set<ProviderType>([
+  'custom',
+  'claude-default',
+  'official',
+  'codex-shared',
+  'codex-isolated'
+])
 
 const VALIDATION_CATEGORIES = new Set<ValidationCategory>([
   'ok',

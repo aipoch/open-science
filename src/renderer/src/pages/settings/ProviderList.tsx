@@ -1,11 +1,15 @@
-import { CircleCheck, Pencil, PlugZap, Route, TriangleAlert, Trash2 } from 'lucide-react'
+import { CircleCheck, LogOut, Pencil, PlugZap, Route, TriangleAlert, Trash2, X } from 'lucide-react'
 
 import type {
   ChatApiEndpoint,
   ProviderValidationFailure,
   ProviderView
 } from '../../../../shared/settings'
-import { providerEndpoints, providerValidationFailed } from '../../../../shared/settings'
+import {
+  isCodexSubscriptionProvider,
+  providerEndpoints,
+  providerValidationFailed
+} from '../../../../shared/settings'
 import { getOfficialVendor } from '../../../../shared/provider-registry'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ProviderKindIcon } from './provider-icons'
@@ -21,6 +25,8 @@ type ProviderListProps = {
   onEdit: (provider: ProviderView) => void
   onDelete: (provider: ProviderView) => void
   onTest: (provider: ProviderView) => void
+  onCancelCodexLogin?: () => void
+  onLogoutIsolatedCodex?: () => void
 }
 
 // Concise, actionable reason for a failed connection test, shown on the unverified warning.
@@ -57,6 +63,7 @@ const ENDPOINT_PATHS: Record<ChatApiEndpoint, string> = {
 const describeType = (provider: ProviderView): string => {
   if (provider.type === 'custom') return 'Custom'
   if (provider.type === 'claude-default') return 'Local Claude'
+  if (isCodexSubscriptionProvider(provider.type)) return 'Codex subscription'
 
   return provider.vendorId
     ? (getOfficialVendor(provider.vendorId)?.label ?? 'Official')
@@ -72,7 +79,9 @@ const ProviderList = ({
   busyProviderId,
   onEdit,
   onDelete,
-  onTest
+  onTest,
+  onCancelCodexLogin,
+  onLogoutIsolatedCodex
 }: ProviderListProps): React.JSX.Element => {
   if (providers.length === 0) {
     return (
@@ -95,6 +104,7 @@ const ProviderList = ({
             : undefined
           // A passing test shows a green check. Suppressed while a test is in flight.
           const isVerified = !failure && !isBusy && provider.lastValidatedAt !== undefined
+          const isCodexSubscription = isCodexSubscriptionProvider(provider.type)
           // The provider sourcing the selected model (and the last remaining one) can't be deleted:
           // removing it would leave no model to run, so its delete action stays disabled.
           const canDelete = !isActiveSource && providers.length > 1
@@ -126,18 +136,20 @@ const ProviderList = ({
                       />
                       {describeType(provider)}
                     </span>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span
-                          className="inline-flex shrink-0 items-center gap-1 rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
-                          aria-label={`Speaks the ${endpoint.full}`}
-                        >
-                          <Route className="size-3" strokeWidth={2} aria-hidden="true" />
-                          {endpoint.path}
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent>Speaks the {endpoint.full}</TooltipContent>
-                    </Tooltip>
+                    {!isCodexSubscription ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span
+                            className="inline-flex shrink-0 items-center gap-1 rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+                            aria-label={`Speaks the ${endpoint.full}`}
+                          >
+                            <Route className="size-3" strokeWidth={2} aria-hidden="true" />
+                            {endpoint.path}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>Speaks the {endpoint.full}</TooltipContent>
+                      </Tooltip>
+                    ) : null}
                     {isBusy ? (
                       <span className="shrink-0 text-[10px] text-muted-foreground">Testing…</span>
                     ) : failure ? (
@@ -171,7 +183,11 @@ const ProviderList = ({
                     ) : null}
                   </div>
                   <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
-                    {provider.type === 'claude-default' ? (
+                    {provider.type === 'codex-shared' ? (
+                      <div>Uses your existing Codex profile · Managed by Codex CLI</div>
+                    ) : provider.type === 'codex-isolated' ? (
+                      <div>Codex login stored separately by Open Science</div>
+                    ) : provider.type === 'claude-default' ? (
                       // Local Claude reuses the machine's own auth: show only the model (never a key).
                       <div className="truncate">Model: {provider.model || 'default'}</div>
                     ) : (
@@ -200,27 +216,48 @@ const ProviderList = ({
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
-                  <SettingsIconAction
-                    label="Test connection"
-                    icon={PlugZap}
-                    onClick={() => onTest(provider)}
-                    disabled={isBusy}
-                    className="border border-border text-foreground"
-                  />
-                  <SettingsIconAction
-                    label="Edit"
-                    icon={Pencil}
-                    onClick={() => onEdit(provider)}
-                    className="border border-border text-foreground"
-                  />
-                  <SettingsIconAction
-                    label="Delete"
-                    icon={Trash2}
-                    onClick={() => onDelete(provider)}
-                    disabled={!canDelete}
-                    className="border border-border"
-                    danger
-                  />
+                  {provider.type === 'codex-isolated' && isBusy ? (
+                    <SettingsIconAction
+                      label="Cancel sign-in"
+                      icon={X}
+                      onClick={() => onCancelCodexLogin?.()}
+                      className="border border-border text-foreground"
+                    />
+                  ) : (
+                    <SettingsIconAction
+                      label={isCodexSubscription ? 'Check Codex login' : 'Test connection'}
+                      icon={PlugZap}
+                      onClick={() => onTest(provider)}
+                      disabled={isBusy}
+                      className="border border-border text-foreground"
+                    />
+                  )}
+                  {provider.type === 'codex-isolated' && isVerified ? (
+                    <SettingsIconAction
+                      label="Sign out"
+                      icon={LogOut}
+                      onClick={() => onLogoutIsolatedCodex?.()}
+                      className="border border-border text-foreground"
+                    />
+                  ) : null}
+                  {!isCodexSubscription ? (
+                    <>
+                      <SettingsIconAction
+                        label="Edit"
+                        icon={Pencil}
+                        onClick={() => onEdit(provider)}
+                        className="border border-border text-foreground"
+                      />
+                      <SettingsIconAction
+                        label="Delete"
+                        icon={Trash2}
+                        onClick={() => onDelete(provider)}
+                        disabled={!canDelete}
+                        className="border border-border"
+                        danger
+                      />
+                    </>
+                  ) : null}
                 </div>
               </div>
             </li>

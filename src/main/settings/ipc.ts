@@ -1,34 +1,35 @@
 import { ipcMain } from 'electron'
 
-import type {
-  CreateSkillRequest,
-  DeleteProviderRequest,
-  DeleteSkillRequest,
-  ImportSkillRequest,
-  ImportSkillZipRequest,
-  ImportSkillZipBatchRequest,
-  PreviewSkillZipRequest,
-  ScanRepoRequest,
-  InstallClaudeRequest,
-  InstallCodexRequest,
-  InstallOpencodeRequest,
-  ClaudeInstallEvent,
-  RefreshProviderModelsRequest,
-  SetActiveProviderRequest,
-  SetAgentFrameworkRequest,
-  AddCustomServerRequest,
-  RemoveCustomServerRequest,
-  SetCustomServerEnabledRequest,
-  UpdateCustomServerRequest,
-  SetConnectorAutoAllowRequest,
-  SetConnectorEnabledRequest,
-  SetNcbiCredentialsRequest,
-  SetPackageMirrorRequest,
-  SetSkillEnabledRequest,
-  SetToolPermissionRequest,
-  UpdateSkillRequest,
-  UpsertProviderRequest,
-  ValidateProviderRequest
+import {
+  CODEX_ISOLATED_PROVIDER_ID,
+  type CreateSkillRequest,
+  type DeleteProviderRequest,
+  type DeleteSkillRequest,
+  type ImportSkillRequest,
+  type ImportSkillZipRequest,
+  type ImportSkillZipBatchRequest,
+  type PreviewSkillZipRequest,
+  type ScanRepoRequest,
+  type InstallClaudeRequest,
+  type InstallCodexRequest,
+  type InstallOpencodeRequest,
+  type ClaudeInstallEvent,
+  type RefreshProviderModelsRequest,
+  type SetActiveProviderRequest,
+  type SetAgentFrameworkRequest,
+  type AddCustomServerRequest,
+  type RemoveCustomServerRequest,
+  type SetCustomServerEnabledRequest,
+  type UpdateCustomServerRequest,
+  type SetConnectorAutoAllowRequest,
+  type SetConnectorEnabledRequest,
+  type SetNcbiCredentialsRequest,
+  type SetPackageMirrorRequest,
+  type SetSkillEnabledRequest,
+  type SetToolPermissionRequest,
+  type UpdateSkillRequest,
+  type UpsertProviderRequest,
+  type ValidateProviderRequest
 } from '../../shared/settings'
 import { createDefaultSettingsService, SettingsService } from './service'
 import { createLogger } from '../logger'
@@ -157,6 +158,16 @@ const registerSettingsIpcHandlers = ({
   ipcMain.handle('settings:validate-provider', (_event, request: ValidateProviderRequest) =>
     service.validateProvider(request)
   )
+  ipcMain.handle('settings:cancel-codex-login', () => service.cancelCodexLogin())
+  ipcMain.handle('settings:logout-isolated-codex', async () => {
+    const snapshot = await service.logoutIsolatedCodex()
+
+    if (snapshot.activeProviderId === CODEX_ISOLATED_PROVIDER_ID) {
+      onActiveProviderChanged?.()
+    }
+
+    return snapshot
+  })
   ipcMain.handle(
     'settings:refresh-provider-models',
     (_event, request: RefreshProviderModelsRequest) => service.refreshProviderModels(request)

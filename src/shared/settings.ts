@@ -11,9 +11,28 @@ import type { PackageMirror } from './mirror'
 // providers (vendorId/region) and a per-selection activeModel alongside activeProviderId.
 export const SETTINGS_FILE_VERSION = 2
 
-// A provider targets a custom Anthropic-compatible gateway, a built-in official vendor (base URL +
-// model catalog from the registry), or reuses the local claude auth.
-export type ProviderType = 'custom' | 'claude-default' | 'official'
+// A provider targets a custom gateway, a built-in official vendor, a local Claude login, or one of
+// Codex's two subscription profiles. Codex shared uses the machine's normal CODEX_HOME; isolated uses
+// the app-owned profile.
+export type ProviderType =
+  'custom' | 'claude-default' | 'official' | 'codex-shared' | 'codex-isolated'
+
+export const CODEX_SHARED_PROVIDER_ID = 'builtin-codex-shared'
+export const CODEX_ISOLATED_PROVIDER_ID = 'builtin-codex-isolated'
+
+export const isCodexSubscriptionProvider = (
+  type: ProviderType
+): type is 'codex-shared' | 'codex-isolated' => type === 'codex-shared' || type === 'codex-isolated'
+
+export const codexSubscriptionProviderIdentity = (
+  type: 'codex-shared' | 'codex-isolated'
+): { id: string; name: string } =>
+  type === 'codex-shared'
+    ? { id: CODEX_SHARED_PROVIDER_ID, name: 'Existing Codex profile' }
+    : { id: CODEX_ISOLATED_PROVIDER_ID, name: 'Open Science Codex login' }
+
+export const isCodexSubscriptionProviderId = (id: string): boolean =>
+  id === CODEX_SHARED_PROVIDER_ID || id === CODEX_ISOLATED_PROVIDER_ID
 
 // The chat API a model endpoint speaks: `anthropic` = /v1/messages, `openai` =
 // /v1/chat/completions, and `responses` = /v1/responses. Keep the two OpenAI-shaped protocols
@@ -46,6 +65,7 @@ export const isProviderUsableByFramework = (
   provider: { apiEndpoints?: readonly ChatApiEndpoint[]; type: ProviderType },
   framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
 ): boolean => {
+  if (isCodexSubscriptionProvider(provider.type)) return framework.id === 'codex'
   if (provider.type === 'claude-default' && framework.id !== 'claude-code') return false
 
   const endpoints = providerEndpoints(provider)

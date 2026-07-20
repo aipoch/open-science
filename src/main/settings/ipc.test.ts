@@ -37,6 +37,8 @@ type FakeSettingsService = Record<
   | 'deleteProvider'
   | 'setActiveProvider'
   | 'validateProvider'
+  | 'cancelCodexLogin'
+  | 'logoutIsolatedCodex'
   | 'markOnboardingComplete'
   | 'listSkills'
   | 'getSkillDetail'
@@ -79,6 +81,10 @@ const createFakeService = (): FakeSettingsService => ({
   deleteProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   setActiveProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   validateProvider: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
+  cancelCodexLogin: vi.fn(),
+  logoutIsolatedCodex: vi
+    .fn()
+    .mockResolvedValue({ claude: {}, providers: [], activeProviderId: undefined }),
   markOnboardingComplete: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   listSkills: vi.fn().mockResolvedValue([]),
   getSkillDetail: vi.fn().mockResolvedValue({
@@ -121,6 +127,8 @@ describe('settings IPC handlers', () => {
       'settings:delete-provider',
       'settings:set-active-provider',
       'settings:validate-provider',
+      'settings:cancel-codex-login',
+      'settings:logout-isolated-codex',
       'settings:mark-onboarding-complete'
     ]) {
       expect(handlers.has(channel)).toBe(true)
@@ -140,6 +148,12 @@ describe('settings IPC handlers', () => {
 
     await invoke('settings:validate-provider', { providerId: 'p1' })
     expect(service.validateProvider).toHaveBeenCalledWith({ providerId: 'p1' })
+
+    await invoke('settings:cancel-codex-login')
+    expect(service.cancelCodexLogin).toHaveBeenCalledOnce()
+
+    await invoke('settings:logout-isolated-codex')
+    expect(service.logoutIsolatedCodex).toHaveBeenCalledOnce()
   })
 
   it('routes mark-onboarding-complete to the service', async () => {

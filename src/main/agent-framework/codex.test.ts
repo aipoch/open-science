@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
@@ -21,7 +22,7 @@ describe('codexFramework', () => {
     )
 
     expect(config.env).toMatchObject({
-      CODEX_HOME: '/data/codex',
+      CODEX_HOME: join('/data', 'codex'),
       MODEL_PROVIDER: 'open-science',
       NO_BROWSER: '1'
     })
@@ -32,7 +33,7 @@ describe('codexFramework', () => {
     })
     expect(config.configFiles).toEqual([
       {
-        path: '/data/codex/config.toml',
+        path: join('/data', 'codex', 'config.toml'),
         content: 'cli_auth_credentials_store = "ephemeral"\n',
         mode: 0o600
       }
@@ -92,6 +93,26 @@ describe('codexFramework', () => {
       headers: { authorization: 'Bearer local-token' }
     })
     expect(config.env?.CODEX_CONFIG).not.toContain('upstream-secret')
+  })
+
+  it('reuses the normal Codex profile for a shared subscription without overriding it', () => {
+    const framework = createCodexFramework()
+    const config = framework.prepareModelConfig(
+      { type: 'codex-shared', apiEndpoints: ['responses'] },
+      { storageRoot: '/data', executablePath: '/runtime/codex-acp' }
+    )
+
+    expect(config).toEqual({ env: {} })
+  })
+
+  it('uses persistent app-owned storage for an isolated Codex subscription', () => {
+    const framework = createCodexFramework()
+    const config = framework.prepareModelConfig(
+      { type: 'codex-isolated', apiEndpoints: ['responses'] },
+      { storageRoot: '/data', executablePath: '/runtime/codex-acp' }
+    )
+
+    expect(config).toEqual({ env: { CODEX_HOME: join('/data', 'codex-subscription') } })
   })
 
   it.each([

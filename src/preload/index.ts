@@ -235,6 +235,8 @@ type OpenScienceAPI = {
     setActiveProvider: (request: SetActiveProviderRequest) => Promise<SettingsSnapshot>
     setAgentFramework: (request: SetAgentFrameworkRequest) => Promise<SettingsSnapshot>
     validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
+    cancelCodexLogin: () => Promise<void>
+    logoutIsolatedCodex: () => Promise<SettingsSnapshot>
     refreshProviderModels: (
       request: RefreshProviderModelsRequest
     ) => Promise<RefreshProviderModelsResult>
@@ -550,6 +552,9 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('settings:set-agent-framework', request) as Promise<SettingsSnapshot>,
     validateProvider: (request) =>
       ipcRenderer.invoke('settings:validate-provider', request) as Promise<ValidateProviderResult>,
+    cancelCodexLogin: () => ipcRenderer.invoke('settings:cancel-codex-login') as Promise<void>,
+    logoutIsolatedCodex: () =>
+      ipcRenderer.invoke('settings:logout-isolated-codex') as Promise<SettingsSnapshot>,
     refreshProviderModels: (request) =>
       ipcRenderer.invoke(
         'settings:refresh-provider-models',

@@ -43,6 +43,8 @@ type PreloadApi = {
     uninstallClaude: () => unknown
     uninstallOpencode: () => unknown
     uninstallCodex: () => unknown
+    cancelCodexLogin: () => unknown
+    logoutIsolatedCodex: () => unknown
   }
   acp: {
     resumeSession: (request: unknown) => unknown
@@ -162,6 +164,18 @@ const cases: ForwardingCase[] = [
     name: 'settings.uninstallCodex → settings:uninstall-codex (no args)',
     invoke: (a) => a.settings.uninstallCodex(),
     channel: 'settings:uninstall-codex',
+    args: []
+  },
+  {
+    name: 'settings.cancelCodexLogin → settings:cancel-codex-login (no args)',
+    invoke: (a) => a.settings.cancelCodexLogin(),
+    channel: 'settings:cancel-codex-login',
+    args: []
+  },
+  {
+    name: 'settings.logoutIsolatedCodex → settings:logout-isolated-codex (no args)',
+    invoke: (a) => a.settings.logoutIsolatedCodex(),
+    channel: 'settings:logout-isolated-codex',
     args: []
   },
   // command-line launcher install/uninstall/status

@@ -37,7 +37,12 @@ const provider = (overrides: Partial<ProviderView> = {}): ProviderView => ({
 
 const noop = vi.fn()
 
-const renderList = (providers: ProviderView[], activeId?: string, busyId?: string): void => {
+const renderList = (
+  providers: ProviderView[],
+  activeId?: string,
+  busyId?: string,
+  callbacks: { onCancel?: () => void; onLogout?: () => void } = {}
+): void => {
   act(() => {
     root.render(
       <ProviderList
@@ -47,6 +52,8 @@ const renderList = (providers: ProviderView[], activeId?: string, busyId?: strin
         onEdit={noop}
         onDelete={noop}
         onTest={noop}
+        onCancelCodexLogin={callbacks.onCancel}
+        onLogoutIsolatedCodex={callbacks.onLogout}
       />
     )
   })
@@ -212,6 +219,50 @@ describe('ProviderList', () => {
 
     expect(container.textContent).toContain('Model: default')
     expect(container.textContent).not.toContain('Key:')
+  })
+
+  it('keeps shared Codex account management under Codex CLI', () => {
+    renderList([
+      provider({
+        id: 'builtin-codex-shared',
+        type: 'codex-shared',
+        name: 'Existing Codex profile',
+        models: [],
+        model: undefined,
+        maskedKey: undefined,
+        hasKey: false
+      })
+    ])
+
+    expect(container.textContent).toContain('Managed by Codex CLI')
+    expect(buttonByLabel('Check Codex login')).toBeDefined()
+    expect(buttonByLabel('Edit')).toBeUndefined()
+    expect(buttonByLabel('Delete')).toBeUndefined()
+    expect(buttonByLabel('Sign out')).toBeUndefined()
+  })
+
+  it('offers cancel during isolated sign-in and sign out after validation', () => {
+    const onCancel = vi.fn()
+    const onLogout = vi.fn()
+    const isolated = provider({
+      id: 'builtin-codex-isolated',
+      type: 'codex-isolated',
+      name: 'Open Science Codex login',
+      models: [],
+      model: undefined,
+      maskedKey: undefined,
+      hasKey: false
+    })
+
+    renderList([isolated], undefined, isolated.id, { onCancel, onLogout })
+    act(() => buttonByLabel('Cancel sign-in')?.click())
+    expect(onCancel).toHaveBeenCalledOnce()
+
+    renderList([isolated], undefined, undefined, { onCancel, onLogout })
+    act(() => buttonByLabel('Sign out')?.click())
+    expect(onLogout).toHaveBeenCalledOnce()
+    expect(buttonByLabel('Edit')).toBeUndefined()
+    expect(buttonByLabel('Delete')).toBeUndefined()
   })
 
   it('renders an empty state with no providers', () => {
