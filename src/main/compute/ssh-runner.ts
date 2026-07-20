@@ -45,7 +45,7 @@ export interface SshRunner {
 
 // Builds the ControlMaster args used on mac/linux to reuse a single SSH connection across the probe
 // bundle. Windows does not support ControlMaster so this returns an empty array there.
-const controlMasterArgs = (alias: string): string[] => {
+export const controlMasterArgs = (alias: string): string[] => {
   if (platform() === 'win32') return []
   // Use a per-alias socket under ~/.ssh/ctrl/ so multiple hosts don't share a socket. ssh does not
   // create the ControlPath parent directory itself, so ensure it exists (mode 0700 like ~/.ssh) —
@@ -153,10 +153,39 @@ export const resolveSshTarget = async (
   return { sshBinary, host, extraArgs }
 }
 
-// Truncates a Buffer to at most maxBytes, returning the string and a boolean indicating truncation.
-const truncateOutput = (buf: Buffer, maxBytes: number): { text: string; truncated: boolean } => {
-  if (buf.length <= maxBytes) return { text: buf.toString('utf8'), truncated: false }
-  return { text: buf.slice(0, maxBytes).toString('utf8'), truncated: true }
+// Accumulates stream chunks up to maxBytes, capping stored content and recording whether any bytes
+// were dropped. Truncation is tracked here — at the point bytes are actually discarded — rather than
+// re-checked afterwards against the already-capped buffer (whose length can never exceed maxBytes,
+// which is why the old length-based check could never fire). See design.md §5 "超出标 truncated=true".
+export class CappedOutput {
+  private readonly chunks: Buffer[] = []
+  private bytes = 0
+  private truncated = false
+
+  constructor(private readonly maxBytes: number) {}
+
+  push(chunk: Buffer): void {
+    const remaining = this.maxBytes - this.bytes
+    if (chunk.length > remaining) {
+      // Chunk overflows the cap: keep only what fits (if anything) and flag the drop.
+      if (remaining > 0) {
+        this.chunks.push(chunk.subarray(0, remaining))
+        this.bytes += remaining
+      }
+      this.truncated = true
+      return
+    }
+    this.chunks.push(chunk)
+    this.bytes += chunk.length
+  }
+
+  toString(): string {
+    return Buffer.concat(this.chunks).toString('utf8')
+  }
+
+  wasTruncated(): boolean {
+    return this.truncated
+  }
 }
 
 // Real SSH runner: spawns the system ssh binary. Credentials stay in the OS ssh-agent — this code
@@ -187,10 +216,8 @@ export class SystemSshRunner implements SshRunner {
     const args = [...target.extraArgs, target.host, finalCommand]
 
     return new Promise((resolve) => {
-      const stdoutChunks: Buffer[] = []
-      const stderrChunks: Buffer[] = []
-      let stdoutBytes = 0
-      let stderrBytes = 0
+      const stdoutBuf = new CappedOutput(maxBytes)
+      const stderrBuf = new CappedOutput(maxBytes)
       let timedOut = false
 
       const child = execFile(target.sshBinary, args, { timeout: 0, encoding: 'buffer' })
@@ -201,32 +228,20 @@ export class SystemSshRunner implements SshRunner {
       }, opts.timeoutMs)
 
       child.stdout?.on('data', (chunk: Buffer) => {
-        const remaining = maxBytes - stdoutBytes
-        if (remaining > 0) {
-          stdoutChunks.push(chunk.slice(0, remaining))
-          stdoutBytes += chunk.length
-        }
+        stdoutBuf.push(chunk)
       })
 
       child.stderr?.on('data', (chunk: Buffer) => {
-        const remaining = maxBytes - stderrBytes
-        if (remaining > 0) {
-          stderrChunks.push(chunk.slice(0, remaining))
-          stderrBytes += chunk.length
-        }
+        stderrBuf.push(chunk)
       })
 
       child.on('close', (code) => {
         clearTimeout(timer)
-        const stdoutBuf = Buffer.concat(stdoutChunks)
-        const stderrBuf = Buffer.concat(stderrChunks)
-        const { text: stdout, truncated: stdoutTruncated } = truncateOutput(stdoutBuf, maxBytes)
-        const { text: stderr, truncated: stderrTruncated } = truncateOutput(stderrBuf, maxBytes)
         resolve({
           exitCode: code,
-          stdout,
-          stderr,
-          truncated: stdoutTruncated || stderrTruncated,
+          stdout: stdoutBuf.toString(),
+          stderr: stderrBuf.toString(),
+          truncated: stdoutBuf.wasTruncated() || stderrBuf.wasTruncated(),
           timedOut
         })
       })

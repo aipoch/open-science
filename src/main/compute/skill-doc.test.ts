@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 
 import type { ComputeHost } from '../../shared/compute'
-import { renderComputeSkillDoc, syncComputeSkillDoc, removeComputeSkillDoc } from './skill-doc'
+import { renderComputeSkillDoc, syncComputeSkillDoc } from './skill-doc'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -124,23 +124,5 @@ describe('syncComputeSkillDoc', () => {
     await syncComputeSkillDoc(tmpDir, [sampleHost(), newHost])
     const content = await readFile(join(tmpDir, 'remote-compute-ssh', 'SKILL.md'), 'utf8')
     expect(content).toContain('ssh:lab')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// removeComputeSkillDoc — cleans up the skill dir
-// ---------------------------------------------------------------------------
-
-describe('removeComputeSkillDoc', () => {
-  it('removes remote-compute-ssh dir when it exists', async () => {
-    await syncComputeSkillDoc(tmpDir, [sampleHost()])
-    await removeComputeSkillDoc(tmpDir)
-    // Re-reading should fail because the dir is gone.
-    await expect(readFile(join(tmpDir, 'remote-compute-ssh', 'SKILL.md'), 'utf8')).rejects.toThrow()
-  })
-
-  it('is a no-op when the dir does not exist', async () => {
-    // Should not throw even when dir is absent.
-    await expect(removeComputeSkillDoc(tmpDir)).resolves.toBeUndefined()
   })
 })

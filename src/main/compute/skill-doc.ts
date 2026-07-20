@@ -1,4 +1,4 @@
-import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { ComputeHost } from '../../shared/compute'
@@ -118,13 +118,4 @@ export async function syncComputeSkillDoc(skillsDir: string, hosts: ComputeHost[
   const dir = join(skillsDir, COMPUTE_SKILL_DIR)
   await mkdir(dir, { recursive: true })
   await writeFile(join(dir, 'SKILL.md'), renderComputeSkillDoc(hosts), 'utf8')
-}
-
-// Removes the remote-compute-ssh skill dir when all compute hosts have been deleted, so agents
-// don't see stale host lists. Mirrors the cleanup pass in syncConnectorSkillDocs.
-export async function removeComputeSkillDoc(skillsDir: string): Promise<void> {
-  const existing = await readdir(skillsDir).catch(() => [] as string[])
-  if (existing.includes(COMPUTE_SKILL_DIR)) {
-    await rm(join(skillsDir, COMPUTE_SKILL_DIR), { recursive: true, force: true })
-  }
 }
