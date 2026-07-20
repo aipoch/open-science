@@ -1,6 +1,6 @@
 import type { AcpRuntimeEvent, AcpPermissionRequest } from '../../../../shared/acp'
 import type { ArtifactFile, FinalizeRunArtifactsRequest } from '../../../../shared/artifacts'
-import type { ReviewRunRequest } from '../../../../shared/reviewer'
+import type { ReviewRunNotStartedReason, ReviewRunRequest } from '../../../../shared/reviewer'
 import { createPreviewFileItem } from '../../pages/workspace/preview-file-item'
 import { getPreviewFormatForFile } from '../../pages/workspace/preview-support'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
@@ -100,6 +100,14 @@ const assembleReviewRunRequest = (sessionId: string): ReviewRunRequest | undefin
 const AUTO_REVIEW_START_ATTEMPTS = 4
 const AUTO_REVIEW_RETRY_DELAY_MS = 400
 
+// Only these started:false reasons are retried — both are transient, create no Review row, and hold no
+// in-flight lock, so a retry cannot double-run a turn. 'already-in-flight' and 'run-failed' are omitted
+// deliberately (see ReviewRunNotStartedReason): retrying them risks a duplicate review or is pointless.
+const RETRYABLE_START_FAILURE_REASONS = new Set<ReviewRunNotStartedReason>([
+  'not-found',
+  'load-failed'
+])
+
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 // Triggers a background auto-review for the just-completed turn when autoReviewEnabled is on. The
@@ -128,12 +136,14 @@ const triggerAutoReview = async (sessionId: string): Promise<void> => {
 
     if (!request) return
 
-    // Retry a started:false a bounded number of times so a not-yet-persisted new session's first
-    // turn isn't silently skipped. Anything other than an explicit false (started:true, or a bridge
-    // that doesn't report a result) is treated as done on the first attempt.
+    // Retry a started:false a bounded number of times, but ONLY for reasons a persistence race can
+    // produce (the session may not be flushed to disk yet). An already-in-flight turn is already being
+    // reviewed, so retrying it would launch a duplicate review/fix-loop once the lock releases — treat
+    // it (and any non-retryable/absent reason, or a bridge that returns nothing) as done immediately.
     for (let attempt = 0; attempt < AUTO_REVIEW_START_ATTEMPTS; attempt++) {
       const result = await window.api.reviewer.run(request)
       if (result?.started !== false) return
+      if (!result.reason || !RETRYABLE_START_FAILURE_REASONS.has(result.reason)) return
       if (attempt < AUTO_REVIEW_START_ATTEMPTS - 1) await delay(AUTO_REVIEW_RETRY_DELAY_MS)
     }
   } catch {

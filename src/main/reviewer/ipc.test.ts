@@ -150,7 +150,10 @@ describe('reviewer IPC handlers', () => {
 
     const runHandler = handlers.get(REVIEWER_IPC.RUN)
     runHandler?.({}, createRequest())
-    runHandler?.({}, createRequest()) // same turn, still in flight → dropped
+    // Same turn, still in flight → dropped with the non-retryable already-in-flight reason so the
+    // auto path does NOT retry it into a duplicate review.
+    const dropped = await runHandler?.({}, createRequest())
+    expect(dropped).toEqual({ started: false, reason: 'already-in-flight' })
 
     await vi.waitFor(() => expect(runReview).toHaveBeenCalledTimes(1))
     resolveRun?.()
@@ -166,8 +169,8 @@ describe('reviewer IPC handlers', () => {
     const runHandler = handlers.get(REVIEWER_IPC.RUN)
     const result = await runHandler?.({}, { ...createRequest(), turnMessageId: 'message-1' })
 
-    // No fabricated error review, no broadcast — just started:false, so the caller can retry the turn.
-    expect(result).toEqual({ started: false })
+    // No fabricated error review, no broadcast — started:false with a retryable reason.
+    expect(result).toEqual({ started: false, reason: 'load-failed' })
     expect(runReview).not.toHaveBeenCalled()
     expect(broadcastToRenderers).not.toHaveBeenCalled()
   })
@@ -183,7 +186,7 @@ describe('reviewer IPC handlers', () => {
     const runHandler = handlers.get(REVIEWER_IPC.RUN)
     const result = await runHandler?.({}, createRequest())
 
-    expect(result).toEqual({ started: false })
+    expect(result).toEqual({ started: false, reason: 'not-found' })
     expect(runReview).not.toHaveBeenCalled()
     expect(broadcastToRenderers).not.toHaveBeenCalled()
   })
@@ -201,7 +204,7 @@ describe('reviewer IPC handlers', () => {
     const runHandler = handlers.get(REVIEWER_IPC.RUN)
 
     const first = await runHandler?.({}, createRequest())
-    expect(first).toEqual({ started: false })
+    expect(first).toEqual({ started: false, reason: 'not-found' })
     expect(runReview).not.toHaveBeenCalled()
 
     const second = await runHandler?.({}, createRequest())
@@ -218,7 +221,8 @@ describe('reviewer IPC handlers', () => {
     const runHandler = handlers.get(REVIEWER_IPC.RUN)
     const result = await runHandler?.({}, createRequest())
 
-    expect(result).toEqual({ started: false })
+    // A genuine pre-push failure — not a persistence race, so not auto-retried.
+    expect(result).toEqual({ started: false, reason: 'run-failed' })
   })
 
   it('returns started:true when a review begins', async () => {

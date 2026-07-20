@@ -184,11 +184,25 @@ export type ReviewUpdateEvent = {
   review: ReviewWithChecks
 }
 
-// IPC: result of reviewer:run. `started` is false when the run could not begin (the session couldn't
-// be loaded, or a run for this turn was already in flight) — no Review row is created in that case, so
-// the caller (e.g. a stale-review Re-run) can release its pending state and leave the turn retriable.
+// Why a review did not start (set on ReviewRunResult when started is false). The auto-review caller
+// uses this to decide whether a retry could help:
+//   - 'already-in-flight': a run for this turn is already active → the turn IS being handled; retrying
+//     would launch a DUPLICATE review/fix-loop once the in-flight lock releases. Never retry.
+//   - 'not-found': the session wasn't on disk. A brand-new session persists via an async queue, so
+//     this can be a transient race the retry catches once the write lands. Retryable.
+//   - 'load-failed': the session store read threw (transient DB/FS). Retryable; creates no Review row.
+//   - 'run-failed': runReview threw before the running row was pushed (scope resolution / DB insert).
+//     A genuine failure, not a race — leave it to the user's manual Re-run rather than auto-retrying.
+export type ReviewRunNotStartedReason =
+  'already-in-flight' | 'not-found' | 'load-failed' | 'run-failed'
+
+// IPC: result of reviewer:run. `started` is false when the run could not begin — no Review row is
+// created in that case, so the caller (e.g. a stale-review Re-run) can release its pending state and
+// leave the turn retriable. `reason` (present only when started is false) says WHY, so the auto path
+// can retry a persistence-race cause without retrying an already-in-flight turn into a duplicate run.
 export type ReviewRunResult = {
   started: boolean
+  reason?: ReviewRunNotStartedReason
 }
 
 // Navigation intent emitted when the user clicks "Go to transcript" on a warn/fail check.

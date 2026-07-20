@@ -132,7 +132,9 @@ const registerReviewerIpcHandlers = (
     const inFlightKey = `${sessionId}:${turnMessageId}`
     if (inFlightReviewKeys.has(inFlightKey)) {
       log.info('review skipped: already in flight for this turn', { sessionId, turnMessageId })
-      return { started: false }
+      // The turn IS being handled by the in-flight run — this is NOT a retry candidate. Retrying
+      // after the lock releases would launch a duplicate review (and possibly a second fix loop).
+      return { started: false, reason: 'already-in-flight' }
     }
     inFlightReviewKeys.add(inFlightKey)
 
@@ -149,7 +151,8 @@ const registerReviewerIpcHandlers = (
         turnMessageId,
         error: error instanceof Error ? error.message : String(error)
       })
-      return { started: false }
+      // Transient store read failure — no Review row, lock released. Safe (and worth) retrying.
+      return { started: false, reason: 'load-failed' }
     }
 
     // Session load succeeded but the id is gone (deleted between the card render and the click).
@@ -160,7 +163,9 @@ const registerReviewerIpcHandlers = (
     if (!session) {
       inFlightReviewKeys.delete(inFlightKey)
       log.warn('review start failed: session not found', { sessionId, turnMessageId })
-      return { started: false }
+      // The session may simply not be flushed to disk yet (async persistence queue) — a retry can
+      // catch it once the write lands, so report the race-shaped reason rather than a hard failure.
+      return { started: false, reason: 'not-found' }
     }
 
     log.info('review triggered', { sessionId, turnMessageId })
@@ -171,10 +176,10 @@ const registerReviewerIpcHandlers = (
     // review (reviewer session + fix loop) continues in the background regardless.
     return await new Promise<ReviewRunResult>((resolveStart) => {
       let settled = false
-      const settle = (started: boolean): void => {
+      const settle = (result: ReviewRunResult): void => {
         if (settled) return
         settled = true
-        resolveStart({ started })
+        resolveStart(result)
       }
 
       // Create an AbortController for this review's fix loop. The controller is registered
@@ -194,7 +199,7 @@ const registerReviewerIpcHandlers = (
         acpRuntime: options.acpRuntime,
         // Artifacts live under the relocatable data root; DB/sessions stay on the config root.
         artifactStorageRoot: dataRoot,
-        onStarted: () => settle(true),
+        onStarted: () => settle({ started: true }),
         onReviewUpdate: (review: ReviewWithChecks) => {
           broadcastReviewUpdate({ review })
         },
@@ -233,8 +238,9 @@ const registerReviewerIpcHandlers = (
           })
         })
         .finally(() => {
-          // If the run ended without ever signalling onStarted, no review actually began.
-          settle(false)
+          // If the run ended without ever signalling onStarted, no review actually began — this is a
+          // genuine pre-push failure (scope/insert), not a persistence race, so it is not auto-retried.
+          settle({ started: false, reason: 'run-failed' })
           inFlightReviewKeys.delete(inFlightKey)
         })
     })
