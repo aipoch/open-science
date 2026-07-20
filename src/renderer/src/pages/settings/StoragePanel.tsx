@@ -28,8 +28,7 @@ const CATEGORY_LABELS: Record<UsageCategoryKey, string> = {
   artifacts: 'Artifacts',
   uploads: 'Uploads',
   runtime: 'Runtime',
-  notebooks: 'Notebooks',
-  workspaces: 'Session workspaces'
+  notebooks: 'Notebooks'
 }
 
 // Fixed swatch palette keyed by category so the stacked bar and legend always agree on color,
@@ -38,8 +37,7 @@ const CATEGORY_COLORS: Record<UsageCategoryKey, string> = {
   artifacts: 'bg-sky-500',
   runtime: 'bg-violet-500',
   uploads: 'bg-amber-500',
-  notebooks: 'bg-emerald-500',
-  workspaces: 'bg-rose-500'
+  notebooks: 'bg-emerald-500'
 }
 
 // Shared path-pill style, matching GeneralPanel's log-file display so every settings path reads the same.

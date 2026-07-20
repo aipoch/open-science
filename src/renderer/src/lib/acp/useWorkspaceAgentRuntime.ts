@@ -367,7 +367,7 @@ const sendWorkspaceMessage = async (
     const sessionProjectName = projectName ?? currentSession?.projectId
 
     if (currentSession?.isPending) {
-      const retryCwd = targetCwd || currentSession.cwd || undefined
+      const retryCwd = targetCwd ?? currentSession.cwd ?? runtime.state.cwd
       const appended = useSessionStore.getState().appendUserMessage({
         sessionId: currentSession.id,
         content,
@@ -527,7 +527,7 @@ const sendWorkspaceMessage = async (
     content,
     attachments,
     parts,
-    cwd: targetCwd,
+    cwd: targetCwd ?? runtime.state.cwd,
     projectId,
     permissionProfile
   })
@@ -540,7 +540,7 @@ const sendWorkspaceMessage = async (
     pending,
     content,
     attachments,
-    targetCwd,
+    targetCwd ?? runtime.state.cwd,
     projectName,
     permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
     forcedSkillIds,

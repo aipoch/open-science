@@ -25,7 +25,6 @@ describe('computeStorageUsage', () => {
   it('sums per-category bytes and gives runtime a sorted children breakdown', async () => {
     await writeSized(join(dataRoot, 'artifacts', 'a.bin'), 100)
     await writeSized(join(dataRoot, 'uploads', 'b.bin'), 50)
-    await writeSized(join(dataRoot, 'workspaces', 'session-1', 'repo', 'data.bin'), 25)
     await writeSized(join(dataRoot, 'runtime', 'python', 'p.bin'), 200)
     await writeSized(join(dataRoot, 'runtime', 'r', 'r.bin'), 300)
     // notebooks/ left absent.
@@ -43,10 +42,9 @@ describe('computeStorageUsage', () => {
           { name: 'python', bytes: 200 }
         ]
       },
-      { key: 'notebooks', bytes: 0 },
-      { key: 'workspaces', bytes: 25 }
+      { key: 'notebooks', bytes: 0 }
     ])
-    expect(usage.totalBytes).toBe(675)
+    expect(usage.totalBytes).toBe(650)
   })
 
   it('labels default-python/-r as python/r and the shared pkgs cache as conda', async () => {
@@ -133,8 +131,7 @@ describe('computeStorageUsage', () => {
       { key: 'artifacts', bytes: 0 },
       { key: 'uploads', bytes: 0 },
       { key: 'runtime', bytes: 0, children: [] },
-      { key: 'notebooks', bytes: 0 },
-      { key: 'workspaces', bytes: 0 }
+      { key: 'notebooks', bytes: 0 }
     ])
     expect(usage.totalBytes).toBe(0)
   })

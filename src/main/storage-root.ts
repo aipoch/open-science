@@ -9,7 +9,6 @@ import {
   getSessionPersistenceDir
 } from './session-persistence/repository'
 import { hasPendingMigrationMarker } from './storage/migration-marker'
-import { RELOCATABLE_DATA_DIRS } from './storage/data-directories'
 
 // Fixed, dev-aware config root (DB, sessions, claude, skills, settings live here). Never relocated.
 // A development-only absolute override supports truly isolated onboarding previews without changing
@@ -60,9 +59,14 @@ const dataRootForPicked = (picked: string): string => {
   return isDataFolder ? resolved : join(resolved, folder)
 }
 
-// RELOCATABLE_DATA_DIRS also marks an existing (pre-§20) config root with user data. runtime/ is
-// excluded because it is rebuildable and remains behind after relocation; counting it would keep
-// the legacy fallback stuck on the config root after the user's real data had moved away.
+// Top-level dirs that mark a config root as an existing (pre-§20) install with USER data still
+// living there. Mirrors migration-service's MIGRATED_DIRS (NOT DATA_ROOT_DIRS): runtime/ is
+// excluded because it is a rebuildable environment, not user data, and it is left behind after a
+// relocation — including it would keep the legacy fallback "stuck" on the config root forever once
+// a user had already moved their real data away. Kept as its own list (rather than imported) to
+// avoid an import cycle with migration-service.
+const LEGACY_DATA_MARKERS = ['artifacts', 'notebooks', 'uploads']
+
 // Default data root for a fresh install is `~/OpenScience` (dev `~/OpenScience-DEV`). A legacy
 // install - config root already holds data and never got an OpenScience subdir - keeps its data
 // where it is instead of silently splitting an existing user's data across two locations. But this
@@ -84,7 +88,7 @@ const computeDefaultDataRoot = (): string => {
     existsSync(homeDefault) &&
     !hasPendingMigrationMarker(homeDefault)
   const isLegacyInstall =
-    RELOCATABLE_DATA_DIRS.some((dir) => existsSync(join(configRoot, dir))) &&
+    LEGACY_DATA_MARKERS.some((dir) => existsSync(join(configRoot, dir))) &&
     !existsSync(join(configRoot, dataFolderName())) &&
     !homeDefaultIsCommitted
 

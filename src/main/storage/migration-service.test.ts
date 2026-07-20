@@ -465,9 +465,7 @@ describe('runDataRootMigration (copy phase)', () => {
     )
     // runtime/ is excluded from the moved set (non-relocatable; rebuilt on demand).
     expect(MIGRATED_DIRS).not.toContain('runtime')
-    expect(MIGRATED_DIRS).toContain('workspaces')
     expect(DATA_ROOT_DIRS).toContain('runtime')
-    expect(DATA_ROOT_DIRS).toContain('workspaces')
     expect(deps.setDataRoot).not.toHaveBeenCalled()
   })
 
