@@ -88,4 +88,57 @@ describe('resolveTurnScopeWithArtifactDigests', () => {
 
     expect(hashOf(first)).toBe(hashOf(second))
   })
+
+  it('streams a large artifact fully (a late-byte edit still changes the hash)', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'reviewer-digest-'))
+    const session = buildSession()
+    const dir = join(storageRoot, 'artifacts', 'project-1', 'session-1', 'a1')
+    await mkdir(dir, { recursive: true })
+
+    // ~8 MB: comfortably larger than a stream chunk, so hashing must consume the whole file, not a head.
+    const big = Buffer.alloc(8 * 1024 * 1024, 7)
+    await writeFile(join(dir, 'report.csv'), big)
+    const before = await resolveTurnScopeWithArtifactDigests(session, 'a1', storageRoot)
+
+    // Flip the very last byte only — a head-only or truncated read would miss this.
+    big[big.length - 1] = 8
+    await writeFile(join(dir, 'report.csv'), big)
+    const after = await resolveTurnScopeWithArtifactDigests(session, 'a1', storageRoot)
+
+    const hashOf = (
+      scope: Awaited<ReturnType<typeof resolveTurnScopeWithArtifactDigests>>
+    ): string | undefined => scope.blocks.find((block) => block.sourceId === 'a1')?.contentHash
+
+    expect(hashOf(after)).not.toBe(hashOf(before))
+  })
+
+  it('hashes more artifacts than the concurrency limit and reflects a per-artifact edit', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'reviewer-digest-'))
+    const names = Array.from({ length: 10 }, (_, index) => `file-${index}.txt`)
+    const session: PersistedChatSession = {
+      ...buildSession(),
+      messages: [
+        buildSession().messages[0],
+        { ...buildSession().messages[1], artifactIds: names.map((name) => `session-1:a1:${name}`) }
+      ]
+    }
+    const dir = join(storageRoot, 'artifacts', 'project-1', 'session-1', 'a1')
+    await mkdir(dir, { recursive: true })
+    for (const name of names) await writeFile(join(dir, name), `content of ${name}`)
+
+    const first = await resolveTurnScopeWithArtifactDigests(session, 'a1', storageRoot)
+    const second = await resolveTurnScopeWithArtifactDigests(session, 'a1', storageRoot)
+
+    const hashOf = (
+      scope: Awaited<ReturnType<typeof resolveTurnScopeWithArtifactDigests>>
+    ): string | undefined => scope.blocks.find((block) => block.sourceId === 'a1')?.contentHash
+
+    // All 10 hashed deterministically across the batched passes.
+    expect(hashOf(first)).toBe(hashOf(second))
+
+    // Editing any one of them (past the first batch) still changes the block hash.
+    await writeFile(join(dir, 'file-9.txt'), 'edited')
+    const edited = await resolveTurnScopeWithArtifactDigests(session, 'a1', storageRoot)
+    expect(hashOf(edited)).not.toBe(hashOf(first))
+  })
 })
