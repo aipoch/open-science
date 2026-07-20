@@ -11,7 +11,11 @@ import {
   OFFICE_PREVIEW_MAX_COMPRESSED_BYTES,
   validateOfficePackage
 } from '../office-package'
-import { renderOfficeFile, type OfficeRenderCleanup } from '../office-renderers'
+import {
+  renderOfficeFile,
+  type OfficeRenderCleanup,
+  type OfficeRenderStatus
+} from '../office-renderers'
 import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
 import { usePreviewRuntime } from '../preview-runtime'
 import type { PreviewFileRendererProps } from '../preview-types'
@@ -36,6 +40,10 @@ type OfficeRenderState = {
   key: string
   status: 'ready' | 'error'
   message?: string
+}
+
+type OfficeLoadingState = OfficeRenderStatus & {
+  key: string
 }
 
 // Resolves ambiguous spreadsheet names from their container signature while other formats are fixed.
@@ -67,6 +75,7 @@ export const OfficePreviewContent = ({
 }): React.JSX.Element => {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [renderState, setRenderState] = useState<OfficeRenderState | null>(null)
+  const [loadingState, setLoadingState] = useState<OfficeLoadingState | null>(null)
   const attempt = usePreviewRuntime()?.attempt ?? 0
   const renderKey = `${source}:${item.path}:${item.name}:${item.format}`
   const timeoutMs = getOfficePreviewTimeoutMs(item, attempt)
@@ -117,7 +126,12 @@ export const OfficePreviewContent = ({
         name: item.name,
         container: renderTarget,
         scrollContainer: container,
-        signal: controller.signal
+        signal: controller.signal,
+        // The application remains the sole owner of blocking loading chrome across vendor phases.
+        onStatus: (status) => {
+          if (canceled || controller.signal.aborted) return
+          setLoadingState({ key: renderKey, ...status })
+        }
       })
 
       // Some third-party renderers ignore AbortSignal; dispose their late result immediately.
@@ -149,6 +163,7 @@ export const OfficePreviewContent = ({
   }, [item, renderKey, source, timeoutMs])
 
   const state = renderState?.key === renderKey ? renderState : null
+  const loading = loadingState?.key === renderKey ? loadingState : null
   if (state?.status === 'error') {
     return (
       <PreviewFallbackCard
@@ -174,7 +189,7 @@ export const OfficePreviewContent = ({
     <div className="relative size-full overflow-hidden bg-bg-20">
       {!state && (
         <div className="absolute inset-0 z-10 bg-bg-20">
-          <PreviewLoadingContent />
+          <PreviewLoadingContent title={loading?.title} description={loading?.description} />
         </div>
       )}
       <div

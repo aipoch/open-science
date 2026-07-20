@@ -86,12 +86,18 @@ const PreviewFormatTile = ({ badge }: { badge: string }): React.JSX.Element => (
 )
 
 export const PreviewLoadingContent = ({
-  compact = false
+  compact = false,
+  title,
+  description
 }: {
   compact?: boolean
+  title?: string
+  description?: string
 } = {}): React.JSX.Element => {
   const runtime = usePreviewRuntime()
   const presentation = getFormatPresentation(runtime?.item.format, runtime?.item.name)
+  const loadingTitle = title ?? presentation.loadingTitle
+  const loadingDescription = description ?? runtime?.item.name
 
   if (compact) {
     return (
@@ -116,12 +122,10 @@ export const PreviewLoadingContent = ({
       <div className="grid w-full max-w-[19rem] grid-cols-[2.25rem_minmax(0,1fr)_auto] items-center gap-x-3">
         <PreviewFormatTile badge={presentation.badge} />
         <div className="min-w-0">
-          <div className="truncate text-[12px] font-medium text-text-000">
-            {presentation.loadingTitle}
-          </div>
-          {runtime?.item.name ? (
-            <div className="mt-0.5 truncate text-[10px] text-text-300" title={runtime.item.name}>
-              {runtime.item.name}
+          <div className="truncate text-[12px] font-medium text-text-000">{loadingTitle}</div>
+          {loadingDescription ? (
+            <div className="mt-0.5 truncate text-[10px] text-text-300" title={loadingDescription}>
+              {loadingDescription}
             </div>
           ) : null}
         </div>

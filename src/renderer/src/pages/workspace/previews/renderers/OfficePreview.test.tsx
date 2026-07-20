@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { PreviewFileContent } from '../PreviewFileContent'
+import { PreviewRuntimeBoundary } from '../preview-runtime'
 import {
   LARGE_SPREADSHEET_PREVIEW_TIMEOUT_MS,
   OFFICE_PREVIEW_TIMEOUT_MS,
@@ -86,10 +87,61 @@ describe('OfficePreviewRenderer', () => {
       name: 'report.docx',
       container: expect.any(HTMLDivElement),
       scrollContainer: expect.any(HTMLDivElement),
-      signal: expect.any(AbortSignal)
+      signal: expect.any(AbortSignal),
+      onStatus: expect.any(Function)
     })
     expect(mocks.render.mock.calls[0][0]).not.toHaveProperty('path')
     expect(container.querySelector('.office-preview-content')).not.toBeNull()
+  })
+
+  it('updates shared loading copy when spreadsheet parsing starts', async () => {
+    const spreadsheet = createItem({
+      name: 'results.xlsx',
+      title: 'results.xlsx',
+      path: '/artifacts/results.xlsx',
+      format: 'spreadsheet'
+    })
+    let finishRender: (() => void) | undefined
+    const renderGate = new Promise<void>((resolve) => {
+      finishRender = resolve
+    })
+    mocks.render.mockImplementation(
+      async ({
+        onStatus
+      }: {
+        onStatus?: (status: { title: string; description: string }) => void
+      }) => {
+        onStatus?.({
+          title: 'Parsing the Excel workbook. Please wait...',
+          description: 'Preparing worksheets, styles, and virtualized viewport data.'
+        })
+        await renderGate
+        return vi.fn()
+      }
+    )
+
+    await act(async () => {
+      root.render(
+        <PreviewRuntimeBoundary item={spreadsheet}>
+          <OfficePreviewRenderer item={spreadsheet} />
+        </PreviewRuntimeBoundary>
+      )
+      await flushMicrotasks()
+    })
+
+    const status = container.querySelector('[data-preview-status="loading"]')
+    expect(status?.textContent).toContain('Parsing the Excel workbook. Please wait...')
+    expect(status?.textContent).toContain(
+      'Preparing worksheets, styles, and virtualized viewport data.'
+    )
+    expect(container.querySelectorAll('[data-preview-status="loading"]')).toHaveLength(1)
+    expect(container.querySelectorAll('[data-preview-activity-dot]')).toHaveLength(3)
+    expect(container.querySelectorAll('[data-preview-progress]')).toHaveLength(1)
+
+    await act(async () => {
+      finishRender?.()
+      await flushMicrotasks()
+    })
   })
 
   it('re-reads a finalized upload path and disposes the pending render', async () => {

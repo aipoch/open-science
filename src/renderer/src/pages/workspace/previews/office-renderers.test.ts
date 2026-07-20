@@ -379,9 +379,21 @@ describe('renderOfficeFile', () => {
     }
   )
 
-  it('overrides spreadsheet parsing surfaces with the shared quiet progress style', async () => {
+  it('hides the vendor blocking loader before parsing while preserving background progress', async () => {
     const unmount = vi.fn()
+    const onStatus = vi.fn()
     mocks.renderSpreadsheet.mockImplementation(async (_buffer, target, _type, context) => {
+      const statusStyle = document.head.querySelector<HTMLStyleElement>(
+        'style[data-open-science-spreadsheet-status]'
+      )
+      expect(target.hasAttribute('data-open-science-spreadsheet-preview')).toBe(true)
+      expect(statusStyle?.textContent).toContain(
+        '[data-open-science-spreadsheet-preview] .excel-wrapper .loading'
+      )
+      expect(statusStyle?.textContent).toContain('display: none !important')
+      expect(statusStyle?.textContent).toContain('.excel-wrapper .sheet-loading')
+      expect(statusStyle?.textContent).not.toContain('.excel-wrapper .loading-card')
+
       new Worker(context?.options?.spreadsheet?.workerUrl, { type: 'module' })
       const wrapper = document.createElement('div')
       wrapper.className = 'excel-wrapper'
@@ -399,19 +411,25 @@ describe('renderOfficeFile', () => {
       extension: 'xlsx',
       name: 'results.xlsx',
       container,
-      signal
+      signal,
+      onStatus
     })
 
-    const style = container.querySelector<HTMLStyleElement>(
+    const style = document.head.querySelector<HTMLStyleElement>(
       'style[data-open-science-spreadsheet-status]'
     )
-    expect(style?.textContent).toContain('.excel-wrapper .loading-card')
+    expect(onStatus).toHaveBeenCalledWith({
+      title: 'Parsing the Excel workbook. Please wait...',
+      description: 'Preparing worksheets, styles, and virtualized viewport data.'
+    })
+    expect(getComputedStyle(container.querySelector<HTMLElement>('.loading')!).display).toBe('none')
     expect(style?.textContent).toContain('.excel-wrapper .sheet-loading')
     expect(style?.textContent).toContain('box-shadow: none')
     expect(style?.textContent).toContain('@media (prefers-reduced-motion: reduce)')
 
     await cleanup()
-    expect(container.querySelector('style[data-open-science-spreadsheet-status]')).toBeNull()
+    expect(document.head.querySelector('style[data-open-science-spreadsheet-status]')).toBeNull()
+    expect(container.hasAttribute('data-open-science-spreadsheet-preview')).toBe(false)
   })
 
   it('unmounts a spreadsheet Worker when rendering is aborted before first paint', async () => {

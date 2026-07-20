@@ -1,6 +1,10 @@
 import type { OfficeFileExtension } from './office-package'
 
 export type OfficeRenderCleanup = () => void | Promise<void>
+export type OfficeRenderStatus = {
+  title: string
+  description: string
+}
 
 type RenderOfficeFileOptions = {
   bytes: Uint8Array
@@ -9,6 +13,7 @@ type RenderOfficeFileOptions = {
   container: HTMLDivElement
   scrollContainer?: HTMLElement
   signal: AbortSignal
+  onStatus?: (status: OfficeRenderStatus) => void
 }
 
 const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer => Uint8Array.from(bytes).buffer
@@ -217,57 +222,17 @@ const neutralizeDocxLinks = (container: HTMLElement): void => {
 }
 
 const SPREADSHEET_WORKER_STARTUP_TIMEOUT_MS = 5_000
+const SPREADSHEET_STATUS_SCOPE_ATTRIBUTE = 'data-open-science-spreadsheet-preview'
+const SPREADSHEET_STATUS_SCOPE = `[${SPREADSHEET_STATUS_SCOPE_ATTRIBUTE}]`
+const SPREADSHEET_PARSING_STATUS: OfficeRenderStatus = {
+  title: 'Parsing the Excel workbook. Please wait...',
+  description: 'Preparing worksheets, styles, and virtualized viewport data.'
+}
 const SPREADSHEET_STATUS_STYLE = `
-.excel-wrapper .loading {
-  background: var(--bg-10);
-  backdrop-filter: none;
+${SPREADSHEET_STATUS_SCOPE} .excel-wrapper .loading {
+  display: none !important;
 }
-.excel-wrapper .loading-card {
-  width: min(19rem, calc(100% - 3rem));
-  display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) 20px;
-  align-items: center;
-  gap: 12px;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-.excel-wrapper .loading-brand {
-  width: 36px;
-  height: 36px;
-  border: 1px solid color-mix(in srgb, var(--primary) 15%, transparent);
-  border-radius: 8px;
-  background: var(--bg-000);
-  color: var(--primary);
-  font-size: 9px;
-  font-weight: 600;
-}
-.excel-wrapper .loading-kicker {
-  display: none;
-}
-.excel-wrapper .loading-copy strong {
-  margin-top: 0;
-  color: var(--text-000);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.4;
-}
-.excel-wrapper .loading-copy p {
-  margin-top: 2px;
-  color: var(--text-300);
-  font-size: 10px;
-  line-height: 1.4;
-}
-.excel-wrapper .loading-spinner {
-  width: 18px;
-  height: 18px;
-  border: 2px solid var(--bg-400);
-  border-top-color: var(--primary);
-  box-shadow: none;
-}
-.excel-wrapper .sheet-loading {
+${SPREADSHEET_STATUS_SCOPE} .excel-wrapper .sheet-loading {
   right: 12px;
   bottom: 12px;
   gap: 6px;
@@ -280,30 +245,34 @@ const SPREADSHEET_STATUS_STYLE = `
   font-size: 10px;
   font-weight: 500;
 }
-.excel-wrapper .sheet-loading-dot {
+${SPREADSHEET_STATUS_SCOPE} .excel-wrapper .sheet-loading-dot {
   width: 4px;
   height: 4px;
   background: var(--primary);
   box-shadow: none;
 }
-.excel-wrapper .sheet-loading-summary {
+${SPREADSHEET_STATUS_SCOPE} .excel-wrapper .sheet-loading-summary {
   color: var(--text-300);
 }
 @media (prefers-reduced-motion: reduce) {
-  .excel-wrapper .loading-spinner,
-  .excel-wrapper .sheet-loading-dot {
+  ${SPREADSHEET_STATUS_SCOPE} .excel-wrapper .sheet-loading-dot {
     animation: none;
   }
 }
 `
 
-// Keeps vendor-owned parsing surfaces aligned with the application's shared preview status UI.
-const installSpreadsheetStatusStyle = (container: HTMLElement): HTMLStyleElement => {
+// Hides the vendor's blocking loader before it is inserted while retaining background progress.
+const installSpreadsheetStatusStyle = (container: HTMLElement): OfficeRenderCleanup => {
   const style = container.ownerDocument.createElement('style')
   style.dataset.openScienceSpreadsheetStatus = 'true'
   style.textContent = SPREADSHEET_STATUS_STYLE
-  container.appendChild(style)
-  return style
+  container.setAttribute(SPREADSHEET_STATUS_SCOPE_ATTRIBUTE, 'true')
+  container.ownerDocument.head.appendChild(style)
+
+  return () => {
+    style.remove()
+    container.removeAttribute(SPREADSHEET_STATUS_SCOPE_ATTRIBUTE)
+  }
 }
 
 // Canonicalizes Vite's relative worker asset so the vendor resolver and handshake compare one URL.
@@ -427,7 +396,8 @@ export const renderOfficeFile = async ({
   name,
   container,
   scrollContainer,
-  signal
+  signal,
+  onStatus
 }: RenderOfficeFileOptions): Promise<OfficeRenderCleanup> => {
   if (extension === 'docx') {
     // Keep active-content features disabled and inline media so detached Blob URLs cannot leak.
@@ -502,10 +472,11 @@ export const renderOfficeFile = async ({
       childList: true,
       subtree: true
     })
+    const disposeStatusStyle = installSpreadsheetStatusStyle(container)
     let instance: Awaited<ReturnType<typeof renderFileViewerSpreadsheet>>
     let claimed = false
-    let statusStyle: HTMLStyleElement | undefined
     try {
+      onStatus?.(SPREADSHEET_PARSING_STATUS)
       const rendered = await renderWithReadySpreadsheetWorker(
         workerUrl,
         container,
@@ -526,9 +497,9 @@ export const renderOfficeFile = async ({
       )
       instance = rendered.instance
       claimed = rendered.claimed
-      statusStyle = installSpreadsheetStatusStyle(container)
     } catch (error) {
       errorObserver.disconnect()
+      disposeStatusStyle()
       readyWorker.terminate()
       clearContainer(container)
       throw error
@@ -544,7 +515,7 @@ export const renderOfficeFile = async ({
         else if ('$destroy' in instance) await instance.$destroy()
         else await instance.destroy()
       } finally {
-        statusStyle?.remove()
+        disposeStatusStyle()
         readyWorker.terminate()
         clearContainer(container)
       }

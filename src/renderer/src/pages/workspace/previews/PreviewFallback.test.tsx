@@ -67,6 +67,42 @@ describe('PreviewFallback', () => {
     )
   })
 
+  it('keeps the shared loading chrome while phase copy changes', async () => {
+    const renderLoading = (title: string, description: string): React.JSX.Element => (
+      <PreviewRuntimeBoundary item={item}>
+        <PreviewLoadingContent title={title} description={description} />
+      </PreviewRuntimeBoundary>
+    )
+
+    await act(async () => {
+      root.render(renderLoading('Preparing spreadsheet', item.name))
+    })
+
+    const initialStatus = container.querySelector('[data-preview-status="loading"]')
+    expect(initialStatus?.textContent).toContain('Preparing spreadsheet')
+    expect(initialStatus?.textContent).toContain(item.name)
+    expect(container.querySelectorAll('[data-preview-activity-dot]')).toHaveLength(3)
+    expect(container.querySelectorAll('[data-preview-progress]')).toHaveLength(1)
+
+    await act(async () => {
+      root.render(
+        renderLoading(
+          'Parsing the Excel workbook. Please wait...',
+          'Preparing worksheets, styles, and virtualized viewport data.'
+        )
+      )
+    })
+
+    const parsingStatus = container.querySelector('[data-preview-status="loading"]')
+    expect(parsingStatus).toBe(initialStatus)
+    expect(parsingStatus?.textContent).toContain('Parsing the Excel workbook. Please wait...')
+    expect(parsingStatus?.textContent).toContain(
+      'Preparing worksheets, styles, and virtualized viewport data.'
+    )
+    expect(container.querySelectorAll('[data-preview-activity-dot]')).toHaveLength(3)
+    expect(container.querySelectorAll('[data-preview-progress]')).toHaveLength(1)
+  })
+
   it('remounts status content on Retry and exposes the incremented attempt', async () => {
     await act(async () => {
       root.render(
