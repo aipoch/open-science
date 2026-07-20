@@ -5,8 +5,17 @@ import { describe, expect, it, vi } from 'vitest'
 import { ElectronUpdaterStrategy } from './electron-updater-strategy'
 
 // The default autoUpdater is never exercised here (every test injects a FakeUpdater); mock the module
-// so importing the strategy doesn't pull a real Electron runtime into the test process.
-vi.mock('electron-updater', () => ({ autoUpdater: {} }))
+// so importing the strategy doesn't pull a real Electron runtime into the test process. A stub
+// CancellationToken stands in for the real class so the default token factory works in download().
+vi.mock('electron-updater', () => ({
+  autoUpdater: {},
+  CancellationToken: class {
+    cancelled = false
+    cancel(): void {
+      this.cancelled = true
+    }
+  }
+}))
 
 // Minimal fake of electron-updater's autoUpdater: an EventEmitter plus the methods/flags we drive.
 class FakeUpdater extends EventEmitter {
@@ -73,6 +82,49 @@ describe('ElectronUpdaterStrategy', () => {
     const status = await strategy.download()
     expect(broadcast).toHaveBeenCalledWith('update:progress', 42)
     expect(status.state).toBe('ready')
+  })
+
+  it('cancel aborts an in-flight download and resets the status to available', async () => {
+    const updater = new FakeUpdater()
+    let release: (() => void) | undefined
+    let seenToken: { cancelled: boolean } | undefined
+    // Hang the download until released, then mimic electron-updater rejecting a cancelled download.
+    updater.downloadUpdate = vi.fn(async (token?: { cancelled: boolean }) => {
+      seenToken = token
+      await new Promise<void>((resolve) => (release = resolve))
+      if (token?.cancelled) throw new Error('cancelled')
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    await strategy.check()
+
+    const downloading = strategy.download()
+    const cancelled = await strategy.cancel()
+    expect(cancelled.state).toBe('available')
+    expect(seenToken?.cancelled).toBe(true)
+
+    // The rejected downloadUpdate must not clobber the reset status with an error.
+    release?.()
+    const final = await downloading
+    expect(final.state).toBe('available')
+    expect(final.error).toBeUndefined()
+  })
+
+  it('cancel is a no-op when nothing is downloading', async () => {
+    const updater = new FakeUpdater()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    await strategy.check()
+    const status = await strategy.cancel()
+    expect(status.state).toBe('available')
   })
 
   it('reports up-to-date when no update is available', async () => {

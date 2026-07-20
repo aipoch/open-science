@@ -45,6 +45,8 @@ const installerFileName = (url: string): string => {
 // renderer stores stay in sync. All I/O is injectable for tests; production reads Electron/OS.
 export class UpdateService implements UpdateStrategy {
   private status: UpdateStatus
+  // Aborts the in-flight installer download; held so cancel() can stop it. Cleared once download settles.
+  private downloadAbort?: AbortController
   private readonly fetchImpl?: typeof fetch
   private readonly platform: NodeJS.Platform
   private readonly arch: string
@@ -149,18 +151,38 @@ export class UpdateService implements UpdateStrategy {
     if (!targetPath) return this.status
 
     this.setStatus({ ...this.status, state: 'downloading', progress: 0 })
+    const abort = new AbortController()
+    this.downloadAbort = abort
     try {
       const localPath = await downloadInstaller(download, targetPath, {
         fetchImpl: this.fetchImpl,
-        onProgress: (percent) => this.broadcast('update:progress', percent)
+        onProgress: (percent) => this.broadcast('update:progress', percent),
+        signal: abort.signal
       })
       this.setStatus({ ...this.status, state: 'ready', progress: 100, localPath })
     } catch (error) {
-      this.setStatus({
-        ...this.status,
-        state: 'error',
-        error: error instanceof Error ? error.message : 'Download failed'
-      })
+      // A user cancel aborts the fetch, which rejects here; cancel() has already reset the status to
+      // 'available', so don't overwrite it with an error.
+      if (!abort.signal.aborted) {
+        this.setStatus({
+          ...this.status,
+          state: 'error',
+          error: error instanceof Error ? error.message : 'Download failed'
+        })
+      }
+    } finally {
+      if (this.downloadAbort === abort) this.downloadAbort = undefined
+    }
+    return this.status
+  }
+
+  // Aborts the in-flight installer download and resets the status to 'available' so the UI leaves the
+  // downloading state. No-op when nothing is downloading.
+  async cancel(): Promise<UpdateStatus> {
+    this.downloadAbort?.abort()
+    this.downloadAbort = undefined
+    if (this.status.state === 'downloading') {
+      this.setStatus({ ...this.status, state: 'available', progress: undefined })
     }
     return this.status
   }

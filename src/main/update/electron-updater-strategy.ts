@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { autoUpdater } from 'electron-updater'
+import { autoUpdater, CancellationToken } from 'electron-updater'
 
 import { APP } from '../../shared/app-config'
 import type { UpdateStatus } from '../../shared/update'
@@ -10,6 +10,14 @@ import { broadcastToRenderers } from '../renderer-broadcast'
 // Minimal logger surface so tests inject a spy without pulling electron-log.
 type UpdaterLogger = { info: (msg: string) => void; error: (msg: string, err?: unknown) => void }
 
+// The slice of electron-updater's CancellationToken we drive: pass it to downloadUpdate() so the
+// in-flight HTTP download can be aborted, and read `cancelled` to distinguish a user cancel from a
+// real download failure.
+export interface MinimalCancellationToken {
+  readonly cancelled: boolean
+  cancel(): void
+}
+
 // Structural subset of electron-updater's autoUpdater we depend on, so tests can inject a fake without
 // pulling a real Electron runtime.
 export interface MinimalAutoUpdater {
@@ -17,7 +25,7 @@ export interface MinimalAutoUpdater {
   autoInstallOnAppQuit: boolean
   on(event: string, listener: (...args: unknown[]) => void): unknown
   checkForUpdates(): Promise<unknown>
-  downloadUpdate(): Promise<unknown>
+  downloadUpdate(cancellationToken?: MinimalCancellationToken): Promise<unknown>
   quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void
 }
 
@@ -25,6 +33,9 @@ export type ElectronUpdaterDeps = {
   updater?: MinimalAutoUpdater
   currentVersion?: string
   broadcast?: (channel: string, payload: unknown) => void
+  // Factory for the per-download cancellation token; defaults to electron-updater's CancellationToken.
+  // Injectable so tests can drive cancel() without the real class.
+  createCancellationToken?: () => MinimalCancellationToken
   // CDN manifest the release notes are read from (same version.json the installer flow uses).
   // Injectable for tests; defaults to the public stable manifest.
   fetchImpl?: typeof fetch
@@ -65,6 +76,9 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private readonly fetchImpl?: typeof fetch
   private readonly manifestUrl: string
   private readonly log: UpdaterLogger
+  private readonly createCancellationToken: () => MinimalCancellationToken
+  // The token for the current download, held so cancel() can abort it. Cleared once download() settles.
+  private downloadToken?: MinimalCancellationToken
   private status: UpdateStatus
   // In-flight manifest notes fetch for the current update, awaited by check() so the returned
   // status reflects the hydrated notes.
@@ -79,6 +93,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.fetchImpl = deps.fetchImpl
     this.manifestUrl = deps.manifestUrl ?? APP.update.manifestUrl
     this.log = deps.log ?? { info: () => {}, error: () => {} }
+    this.createCancellationToken = deps.createCancellationToken ?? (() => new CancellationToken())
     this.installGate = deps.installGate
     this.status = { state: 'idle', current: this.currentVersion, applyKind: 'restart' }
 
@@ -168,13 +183,32 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
 
   async download(): Promise<UpdateStatus> {
     this.setStatus({ ...this.status, state: 'downloading', progress: 0 })
+    const token = this.createCancellationToken()
+    this.downloadToken = token
     try {
-      await this.updater.downloadUpdate()
+      await this.updater.downloadUpdate(token)
     } catch (error) {
-      this.setStatus({
-        state: 'error',
-        error: error instanceof Error ? error.message : 'Download failed'
-      })
+      // A user cancel rejects downloadUpdate too; don't surface it as an error. cancel() has already
+      // reset the status to 'available', so leave it untouched here.
+      if (!token.cancelled) {
+        this.setStatus({
+          state: 'error',
+          error: error instanceof Error ? error.message : 'Download failed'
+        })
+      }
+    } finally {
+      if (this.downloadToken === token) this.downloadToken = undefined
+    }
+    return this.status
+  }
+
+  // Aborts the in-flight electron-updater download by cancelling its token and resets the status to
+  // 'available' so the UI leaves the downloading state. No-op when nothing is downloading.
+  async cancel(): Promise<UpdateStatus> {
+    this.downloadToken?.cancel()
+    this.downloadToken = undefined
+    if (this.status.state === 'downloading') {
+      this.setStatus({ ...this.status, state: 'available', progress: undefined })
     }
     return this.status
   }

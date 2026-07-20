@@ -12,6 +12,7 @@ type UpdateStore = {
   openDialog: () => void
   closeDialog: () => void
   download: () => Promise<void>
+  cancel: () => Promise<void>
   apply: () => Promise<void>
 }
 
@@ -50,12 +51,24 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
 
   openDialog: () => set({ isDialogOpen: true }),
 
-  closeDialog: () => set({ isDialogOpen: false }),
+  // Closing the dialog mid-download aborts the download. The Cancel button and the X / overlay /
+  // Escape dismissals all route here, so any way of closing the dialog stops the background download
+  // rather than letting it run on invisibly.
+  closeDialog: () => {
+    if (get().status.state === 'downloading') void get().cancel()
+    set({ isDialogOpen: false })
+  },
 
   download: async () => {
     const api = window.api?.update
     if (!api) return
     set({ status: await api.download() })
+  },
+
+  cancel: async () => {
+    const api = window.api?.update
+    if (!api) return
+    set({ status: await api.cancel() })
   },
 
   apply: async () => {

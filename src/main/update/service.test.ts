@@ -156,6 +156,50 @@ describe('UpdateService.download', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('cancel aborts an in-flight download, resets to available, and leaves no partial file', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'svc-'))
+    const target = join(dir, 'installer.dmg')
+    const manifestForCheck = downloadManifest(100, 'irrelevant')
+    let onInstallerFetch: (() => void) | undefined
+    const fetched = new Promise<void>((resolve) => (onInstallerFetch = resolve))
+    // The installer body hangs (one chunk, no end) and errors on abort, mimicking a real fetch.
+    const fetchImpl = ((input: unknown, init?: { signal?: AbortSignal }) => {
+      if (String(input).endsWith('version.json')) {
+        return Promise.resolve(jsonResponse(manifestForCheck))
+      }
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]))
+          init?.signal?.addEventListener('abort', () =>
+            controller.error(new DOMException('The user aborted a request.', 'AbortError'))
+          )
+        }
+      })
+      onInstallerFetch?.()
+      return Promise.resolve(new Response(body, { status: 200 }))
+    }) as unknown as typeof fetch
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn(),
+      promptSavePath: () => Promise.resolve(target)
+    })
+
+    await service.check()
+    const downloading = service.download()
+    await fetched
+    const cancelled = await service.cancel()
+    expect(cancelled.state).toBe('available')
+
+    const final = await downloading
+    expect(final.state).toBe('available')
+    expect(final.error).toBeUndefined()
+    expect(existsSync(target)).toBe(false)
+  })
+
   it('rejects a download whose URL host differs from the manifest host, without fetching', async () => {
     const offHostManifest: UpdateManifest = {
       version: '0.3.0',
