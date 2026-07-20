@@ -1,4 +1,15 @@
-import { chmod, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  lstat,
+  mkdtemp,
+  mkdir,
+  readFile,
+  readlink,
+  rm,
+  stat,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -65,6 +76,31 @@ describe('copyAndVerify', () => {
     expect(await exists(join(from, 'artifacts'))).toBe(false)
     expect(await exists(join(from, 'uploads'))).toBe(false)
   })
+
+  // Windows has no POSIX mode bits, so the executable-bit assertion is unix-only.
+  it.skipIf(process.platform === 'win32')(
+    'preserves the source file mode (executable bit survives the copy)',
+    async () => {
+      // A runtime/pkgs binary that micromamba hard-links into a relocated env: if the copy drops +x,
+      // the rebuilt env's Rscript/.dylib fails with EACCES. Mirror that with an executable fixture.
+      await mkdir(join(from, 'runtime', 'pkgs'), { recursive: true })
+      const exe = join(from, 'runtime', 'pkgs', 'Rscript')
+      await writeFile(exe, '#!/bin/sh\necho hi\n')
+      await chmod(exe, 0o755)
+
+      const result = await copyAndVerify({
+        from,
+        to,
+        dirs: [join('runtime', 'pkgs')],
+        signal: new AbortController().signal,
+        onProgress: () => {}
+      })
+
+      expect(result).toEqual({ ok: true })
+      const copiedMode = (await stat(join(to, 'runtime', 'pkgs', 'Rscript'))).mode & 0o777
+      expect(copiedMode).toBe(0o755)
+    }
+  )
 
   it('forces the byte-copy branch (simulated cross-device) and produces the same result', async () => {
     await seedFixture()
@@ -158,12 +194,47 @@ describe('copyAndVerify', () => {
 
   // Symlink creation needs privilege on Windows, so skip there.
   it.skipIf(process.platform === 'win32')(
-    'refuses to migrate when a source dir holds a symlink, leaving sources and dest untouched',
+    'preserves an inner symlink by recreating it as a link at the destination (conda cache support)',
+    async () => {
+      // Mirrors the conda pkgs cache (runtime/pkgs): a package dir with a relative symlink like
+      // ca-certificates' cert.pem, which the old strict engine rejected outright.
+      await mkdir(join(from, 'runtime', 'pkgs', 'ca-certs'), { recursive: true })
+      await writeFile(join(from, 'runtime', 'pkgs', 'ca-certs', 'cacert.pem'), 'CERT')
+      await symlink('cacert.pem', join(from, 'runtime', 'pkgs', 'ca-certs', 'cert.pem'))
+
+      const result = await copyAndVerify({
+        from,
+        to,
+        dirs: [join('runtime', 'pkgs')],
+        signal: new AbortController().signal,
+        onProgress: () => {}
+      })
+
+      expect(result).toEqual({ ok: true })
+      // The link is recreated AS a symlink (not followed and copied as a regular file), verbatim target.
+      const destLink = join(to, 'runtime', 'pkgs', 'ca-certs', 'cert.pem')
+      expect((await lstat(destLink)).isSymbolicLink()).toBe(true)
+      expect(await readlink(destLink)).toBe('cacert.pem')
+      // The regular file it points at was copied too.
+      expect(await readFile(join(to, 'runtime', 'pkgs', 'ca-certs', 'cacert.pem'), 'utf8')).toBe(
+        'CERT'
+      )
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'still refuses a true special file (fifo) it cannot copy',
     async () => {
       await mkdir(join(from, 'artifacts'), { recursive: true })
-      await writeFile(join(from, 'artifacts', 'a.txt'), 'hello artifacts')
-      const linkPath = join(from, 'artifacts', 'link')
-      await symlink(join(from, 'artifacts', 'a.txt'), linkPath)
+      const { execFileSync } = await import('node:child_process')
+      // mkfifo is POSIX; if unavailable on the runner, skip the assertion rather than fail spuriously.
+      let fifoMade = true
+      try {
+        execFileSync('mkfifo', [join(from, 'artifacts', 'pipe')])
+      } catch {
+        fifoMade = false
+      }
+      if (!fifoMade) return
 
       const result = await copyAndVerify({
         from,
@@ -174,11 +245,7 @@ describe('copyAndVerify', () => {
       })
 
       expect(result.ok).toBe(false)
-      if (!result.ok) expect(result.error).toMatch(/symbolic link|special file/i)
-      // Source file and the link itself are untouched (caller only deletes on ok).
-      expect(await readFile(join(from, 'artifacts', 'a.txt'), 'utf8')).toBe('hello artifacts')
-      expect(await exists(linkPath)).toBe(true)
-      // No partial dest tree remains.
+      if (!result.ok) expect(result.error).toMatch(/special file/i)
       expect(await exists(join(to, 'artifacts'))).toBe(false)
     }
   )

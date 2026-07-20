@@ -1,0 +1,26 @@
+{
+  "_comment": [
+    "Pinned micromamba release + per-subdir SHA256 of the micro.mamba.pm .tar.bz2 archive.",
+    "fetch-micromamba.mjs downloads https://micro.mamba.pm/api/micromamba/<subdir>/<version> and",
+    "REQUIRES the sha256 here to match before it copies the binary into resources/bin — an unpinned",
+    "or unverified binary is a supply-chain risk because it is signed/notarized with the app.",
+    "",
+    "IMPORTANT: micro.mamba.pm re-packages the release, so its archive hash differs from the plain",
+    "GitHub release tarball. Hash the micro.mamba.pm archive itself, NOT the GitHub .sha256 files.",
+    "",
+    "To repin (bump `version`, then regenerate every digest below):",
+    "  ver=2.8.1   # micro.mamba.pm uses the bare X.Y.Z, not the GitHub `X.Y.Z-0` tag",
+    "  for s in osx-arm64 osx-64 linux-64 linux-aarch64 win-64; do",
+    "    curl -fsSL \"https://micro.mamba.pm/api/micromamba/$s/$ver\" | shasum -a 256 | awk -v s=$s '{print s, $1}'",
+    "  done",
+    "The sha256 covers the downloaded .tar.bz2 archive (before extraction)."
+  ],
+  "version": "2.8.1",
+  "sha256": {
+    "osx-arm64": "a28588c79e96436c2001c87e3b8360bf2eb5c380fb288871389197b9150caf0a",
+    "osx-64": "146abdea8793c6ccf1b8600ae2b03cf2a0f1506a2846eeafc34ae3ebe1123fe6",
+    "linux-64": "a934c3709c997feae403a27fd1e321c106d26ffa4f294800ffb11cbc9a3e8515",
+    "linux-aarch64": "70c60a36609ee8bcc07a3a1a66b2c3a65cff7c1053466963437f1bda72e5210f",
+    "win-64": "8648c6d302bb6d7432e5d620bc862c2be14c00f39ddd7e10c5eb6d73250dbba1"
+  }
+}

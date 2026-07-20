@@ -272,7 +272,7 @@ export const VARIANTS_CLINVAR_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ term, total, n_returned, truncated, missing_uids, records }` — `total` is the true ClinVar match count (may exceed the returned list); `truncated` flags a capped page; `missing_uids` lists matched IDs whose summary doc NCBI dropped (rare, transient — distinct from truncation; retry to recover). Each record: `{ variation_id, accession (VCV), accession_version, title, obj_type, variant_type, canonical_spdi, cdna_change, protein_change, rsids, other_xrefs, genes, molecular_consequences, locations (GRCh38+GRCh37), allele_frequencies, germline_classification, clinical_impact_classification, oncogenicity_classification (each: description, review_status, gold_stars 0-4, last_evaluated, fda_recognized_database, conditions with ontology xrefs; null when ClinVar has no classification on that axis), n_submissions (SCV count), supporting_submissions }`. When no contact email is set, returns `{ error: "contact_email_required", message }` instead.',
     example:
-      'result = host.mcp("variants", "clinvar_search", {"query": "BRCA1 pathogenic[CLIN_SIG]", "max_records": 50})',
+      'const result = await host.mcp("variants", "clinvar_search", {"query": "BRCA1 pathogenic[CLIN_SIG]", "max_records": 50})',
     run: async (ctx, a): Promise<Record<string, unknown> | ContactRequired> => {
       if (!ctx.credentials.ncbiEmail) return contactRequired()
       const q = ncbiEtiquette(ctx.credentials)
@@ -310,7 +310,7 @@ export const VARIANTS_CLINVAR_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ n_requested, n_unique, n_duplicate_skipped, records, not_found, missing_uids, not_processed }`. Records carry the full shape documented in `clinvar_search` plus `requested_as` (which input(s) mapped to the record), sorted by variation_id. `not_found` lists unknown accessions (definitive absence — RCVs that esearch proves unknown); `missing_uids` lists inputs whose summary NCBI dropped or error-flagged (for a just-resolved RCV this is a transient drop — the record EXISTS, retry; for a VCV/numeric input it is a transient drop OR a nonexistent id — retry to disambiguate, never conclude absence from one call); `not_processed` lists RCVs skipped because the per-call time budget ran out (re-request just those — VCV/numeric inputs always resolve, they never land there). When no contact email is set, returns `{ error: "contact_email_required", message }` instead.',
     example:
-      'result = host.mcp("variants", "clinvar_get_records", {"accessions": ["VCV000045122", "RCV000019428", "45123"]})',
+      'const result = await host.mcp("variants", "clinvar_get_records", {"accessions": ["VCV000045122", "RCV000019428", "45123"]})',
     run: async (ctx, a): Promise<Record<string, unknown> | ContactRequired> => {
       if (!ctx.credentials.ncbiEmail) return contactRequired()
       const q = ncbiEtiquette(ctx.credentials)
@@ -400,7 +400,7 @@ export const VARIANTS_CLINVAR_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ rsid, total, n_returned, truncated, missing_uids, records }` with the full record shape documented in `clinvar_search` (review status, gold stars, last-evaluated dates, SCV counts — the fields gnomAD’s ClinVar mirror lacks). Records come in ClinVar relevance order; `missing_uids` lists matches whose summary NCBI dropped (transient). `total == 0` means ClinVar has no record for the rsID. When no contact email is set, returns `{ error: "contact_email_required", message }` instead.',
     example:
-      'result = host.mcp("variants", "clinvar_variant_by_rsid", {"rsid": "rs121913529", "max_records": 50})',
+      'const result = await host.mcp("variants", "clinvar_variant_by_rsid", {"rsid": "rs121913529", "max_records": 50})',
     run: async (ctx, a): Promise<Record<string, unknown> | ContactRequired> => {
       if (!ctx.credentials.ncbiEmail) return contactRequired()
       const rsid = String(a.rsid).trim()

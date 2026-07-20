@@ -121,7 +121,7 @@ export const HUMANGENETICS_EQTL_TOOLS: ToolDescriptor[] = [
     returns:
       '{filters (applied filter object), returned, truncated (returned == cap; a short page proves the listing complete), datasets:[{dataset_id, study_id, study_label, sample_group, tissue_id, tissue_label, condition_label, quant_method, sample_size}]} sorted by dataset_id.',
     example:
-      'result = host.mcp("human_genetics", "eqtl_list_datasets", {"study_label": "Alasoo_2018", "quant_method": "ge"})',
+      'const result = await host.mcp("human_genetics", "eqtl_list_datasets", {"study_label": "Alasoo_2018", "quant_method": "ge"})',
     run: async (ctx, a) => {
       const maxRecords = clampInt(a.max_records, 1000, 1, MAX_SIZE)
       const filters: Record<string, string> = {}
@@ -169,7 +169,7 @@ export const HUMANGENETICS_EQTL_TOOLS: ToolDescriptor[] = [
     returns:
       '{dataset_id, filters (applied filter object incl. nlog10p_min), returned, truncated (returned == cap), associations:[{molecular_trait_id, gene_id, variant, rsid, chromosome, position, ref, alt, type, beta, se, pvalue, nlog10p, maf, ac, an, r2, median_tpm}]}.',
     example:
-      'result = host.mcp("human_genetics", "eqtl_associations", {"dataset_id": "QTD000266", "gene_id": "ENSG00000130203", "nlog10p_min": 2})',
+      'const result = await host.mcp("human_genetics", "eqtl_associations", {"dataset_id": "QTD000266", "gene_id": "ENSG00000130203", "nlog10p_min": 2})',
     run: async (ctx, a) => {
       const datasetId = String(a.dataset_id)
       const geneId = a.gene_id != null && String(a.gene_id) !== '' ? String(a.gene_id) : undefined

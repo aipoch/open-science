@@ -52,6 +52,7 @@ const buildLegacyRunDocument = (root: string, projectName: string): NotebookRunD
         runId: 'run-1',
         cellId: 'cell-1',
         source: 'agent',
+        kernelKind: 'python',
         script: "print('hi')",
         status: 'completed',
         startedAt: 0,

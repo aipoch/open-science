@@ -9,6 +9,7 @@ const makeRun = (overrides: Partial<NotebookRunRecord> = {}): NotebookRunRecord 
   runId: 'r1',
   cellId: 'c1',
   source: 'agent',
+  kernelKind: 'python',
   script: 'print(1)',
   status: 'completed',
   startedAt: 0,

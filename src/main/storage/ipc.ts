@@ -13,6 +13,9 @@ import {
   resolveDataRoot,
   samePath
 } from '../storage-root'
+import { resolveMicromamba } from '../notebook/micromamba'
+import { captureMicromamba } from '../notebook/provisioner-runtime'
+import { exportRuntimeLocks } from '../notebook/runtime-relocation'
 import { detectActiveSessions } from './detect-active'
 import { isDataRootMissing } from './path-presence'
 import { beginMigration, clearMigrationPending, endMigrationCopy } from './migration-state'
@@ -186,7 +189,14 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
           {
             currentDataRoot: resolveDataRoot(),
             runtime: deps.runtime,
-            notebook: deps.notebook
+            notebook: deps.notebook,
+            // Preserve the runtime across the move by exporting each env to an offline lock at the
+            // new root; the copied pkgs cache lets the provisioner rebuild them offline on relaunch.
+            exportRuntimeLocks: (fromDataRoot, toDataRoot) =>
+              exportRuntimeLocks(fromDataRoot, toDataRoot, {
+                mm: resolveMicromamba({ resourcesPath: process.resourcesPath }),
+                capture: captureMicromamba
+              })
           },
           request.parent,
           {

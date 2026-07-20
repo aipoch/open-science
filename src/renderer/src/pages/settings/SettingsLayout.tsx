@@ -8,6 +8,8 @@ import { cn } from '@/lib/utils'
 
 type SettingsSectionProps = ComponentProps<'section'> & {
   title: string
+  // Optional decorative glyph rendered just before the title (e.g. a language logo).
+  icon?: ReactNode
   description?: ReactNode
   action?: ReactNode
   separated?: boolean
@@ -17,6 +19,7 @@ type SettingsSectionProps = ComponentProps<'section'> & {
 // Keeps first-level settings groups aligned without turning every group into a card.
 const SettingsSection = ({
   title,
+  icon,
   description,
   action,
   separated = false,
@@ -32,7 +35,17 @@ const SettingsSection = ({
   >
     <div className="flex items-start justify-between gap-4">
       <div className="min-w-0">
-        <h3 className="text-base font-semibold text-foreground">{title}</h3>
+        <h3 className="flex items-center gap-2 text-base font-semibold text-foreground">
+          {icon ? (
+            <span
+              className="inline-flex size-5 shrink-0 items-center justify-center"
+              aria-hidden="true"
+            >
+              {icon}
+            </span>
+          ) : null}
+          {title}
+        </h3>
         {description ? (
           <p className="mt-0.5 max-w-2xl text-[13px] leading-5 text-muted-foreground">
             {description}

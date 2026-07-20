@@ -57,9 +57,9 @@ const BASE_URL_HELP_CONTENT = (
 
 // Human labels for the provider API format (which chat endpoint the gateway speaks).
 const API_FORMAT_LABELS: Record<ProviderFormValue['apiEndpoint'], string> = {
-  openai: 'OpenAI (/v1/chat/completions)',
-  anthropic: 'Anthropic (/v1/messages)',
-  responses: 'OpenAI Responses (/v1/responses)'
+  openai: 'Chat Completions API (/v1/chat/completions)',
+  anthropic: 'Messages API (/v1/messages)',
+  responses: 'Responses API (/v1/responses)'
 }
 
 const API_FORMAT_HELP_CONTENT = (

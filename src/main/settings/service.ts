@@ -35,6 +35,7 @@ import type {
   SetConnectorAutoAllowRequest,
   SetConnectorEnabledRequest,
   SetNcbiCredentialsRequest,
+  SetPackageMirrorRequest,
   SetSkillEnabledRequest,
   SetToolPermissionRequest,
   SettingsSnapshot,
@@ -55,6 +56,9 @@ import type {
   ValidateProviderRequest,
   ValidateProviderResult
 } from '../../shared/settings'
+import type { PackageMirror } from '../../shared/mirror'
+import type { NotebookLanguage } from '../../shared/notebook'
+import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import { isProviderUsableByFramework } from '../../shared/settings'
 import {
   defaultVendorModel,
@@ -389,15 +393,115 @@ class SettingsService {
           provider.id === settings.activeProviderId ? settings.activeModel : undefined
         )
       ),
+      onboardingCompletedAt: settings.onboardingCompletedAt,
+      packageMirror: settings.packageMirror,
       agentFrameworkId: settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
       agentFrameworks: listAgentFrameworks().map((framework) => ({
         id: framework.id,
         displayName: framework.displayName,
         supportsSkills: framework.supportsSkills,
         supportedApiTypes: [...framework.supportedApiTypes]
-      })),
-      onboardingCompletedAt: settings.onboardingCompletedAt
+      }))
     }
+  }
+
+  // Reads the package-mirror configuration, read fresh so callers see the latest saved state.
+  // Empty object means public hosts (no override configured).
+  async getPackageMirror(): Promise<PackageMirror> {
+    return (await this.repository.getSettings()).packageMirror ?? {}
+  }
+
+  // The persisted notebook runtime selection for a language (managed vs the user's own interpreter),
+  // read fresh. undefined means "not chosen" -> the notebook runtime resolves to the managed default.
+  async getRuntimeSelection(language: NotebookLanguage): Promise<RuntimeSelection | undefined> {
+    return (await this.repository.getSettings()).notebookRuntimes?.[language]
+  }
+
+  // Sets (or clears, when `selection` is null) the persisted runtime choice for a language, returning
+  // the resulting per-language selection (undefined once cleared, or when a bad value was dropped).
+  // Validation/rejection (bad shape, external R) lives in the repository so it can never be bypassed.
+  async setRuntimeSelection(
+    language: NotebookLanguage,
+    selection: RuntimeSelection | null
+  ): Promise<RuntimeSelection | undefined> {
+    const settings = await this.repository.setRuntimeSelection(language, selection)
+
+    return settings.notebookRuntimes?.[language]
+  }
+
+  // The persisted v4 environment enablement for a language, read fresh. Always returns a concrete
+  // RuntimeEnablement (empty maps when nothing is stored) so callers can index it and apply the
+  // provenance default (isEnvEnabled) without a null check.
+  async getRuntimeEnablement(language: NotebookLanguage): Promise<RuntimeEnablement> {
+    const stored = (await this.repository.getSettings()).notebookRuntimeEnablement?.[language]
+
+    return { enabled: { ...stored?.enabled }, installAuthorized: { ...stored?.installAuthorized } }
+  }
+
+  // Sets one env's explicit enabled override (keyed by envId) for a language, read-modify-write over
+  // the per-language RuntimeEnablement, returning the refreshed value. The enabled map records the
+  // explicit choice regardless of the provenance default, so it survives re-detection.
+  async setEnvironmentEnabled(
+    language: NotebookLanguage,
+    envId: string,
+    enabled: boolean
+  ): Promise<RuntimeEnablement> {
+    const current = await this.getRuntimeEnablement(language)
+    const next: RuntimeEnablement = {
+      enabled: { ...current.enabled, [envId]: enabled },
+      installAuthorized: { ...current.installAuthorized }
+    }
+    const settings = await this.repository.setRuntimeEnablement(language, next)
+
+    return settings.notebookRuntimeEnablement?.[language] ?? { enabled: {}, installAuthorized: {} }
+  }
+
+  // Sets one env's high-risk package-install authorization (keyed by envId) for a language, returning
+  // the refreshed enablement. This is the separate opt-in that lets Open Science write packages into an
+  // external env; it does not affect whether the env is enabled for execution.
+  async setInstallAuthorized(
+    language: NotebookLanguage,
+    envId: string,
+    authorized: boolean
+  ): Promise<RuntimeEnablement> {
+    const current = await this.getRuntimeEnablement(language)
+    const next: RuntimeEnablement = {
+      enabled: { ...current.enabled },
+      installAuthorized: { ...current.installAuthorized, [envId]: authorized }
+    }
+    const settings = await this.repository.setRuntimeEnablement(language, next)
+
+    return settings.notebookRuntimeEnablement?.[language] ?? { enabled: {}, installAuthorized: {} }
+  }
+
+  // The manual-interpreter catalog for a language (paths added via "Add interpreter…"), for merging
+  // into environment discovery. Empty array when none.
+  async getManualInterpreters(language: NotebookLanguage): Promise<string[]> {
+    return (await this.repository.getSettings()).notebookManualInterpreters?.[language] ?? []
+  }
+
+  // Adds an interpreter path to a language's manual catalog (idempotent), returning the refreshed list.
+  async addManualInterpreter(language: NotebookLanguage, path: string): Promise<string[]> {
+    const current = await this.getManualInterpreters(language)
+    const settings = await this.repository.setManualInterpreters(language, [...current, path])
+    return settings.notebookManualInterpreters?.[language] ?? []
+  }
+
+  // Removes an interpreter path from a language's manual catalog, returning the refreshed list.
+  async removeManualInterpreter(language: NotebookLanguage, path: string): Promise<string[]> {
+    const current = await this.getManualInterpreters(language)
+    const settings = await this.repository.setManualInterpreters(
+      language,
+      current.filter((p) => p !== path)
+    )
+    return settings.notebookManualInterpreters?.[language] ?? []
+  }
+
+  // Sets (or clears) the package-mirror configuration and returns the sanitized, persisted value.
+  async setPackageMirror(request: SetPackageMirrorRequest): Promise<PackageMirror> {
+    const settings = await this.repository.setPackageMirror(request)
+
+    return settings.packageMirror ?? {}
   }
 
   private async migrateLegacyKeyRefs(settings: StoredSettings): Promise<StoredSettings> {
