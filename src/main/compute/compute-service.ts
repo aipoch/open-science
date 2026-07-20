@@ -609,18 +609,20 @@ export class ComputeService {
   //   - os-downloads:  scp directly to OS Downloads; ≤2 GiB; duplicate names get (1)/(2) suffix.
   //   - artifact:      scp to temp → validate (not-empty, not-dir, no-glob, ≤50 MB, post-transfer
   //                    re-stat) → write as project artifact with provenance metadata.
-  //   - session-cache: scp to session workspace; intended for the agent Python API (issue 04).
+  //   - session-cache: scp to session workspace; agent Python API path (issue 04).
+  //                    Requires approval from the ComputeApprovalBroker BEFORE scp.
+  //                    Optional context enables grant-aware approval (conversation/project scope).
   //
-  // Human-initiated downloads (os-downloads, artifact) do NOT trigger the approval gate — only the
-  // agent session-cache path goes through approval (design §5). This method leaves the gate open
-  // for session-cache so issue 04 can layer approval on top without changing this signature.
+  // Human-initiated downloads (os-downloads, artifact) do NOT trigger the approval gate.
+  // Only session-cache (agent) downloads go through approval (design §5).
   //
   // Throws an Error with .remoteFsError on any failure (too_large / not_a_file / connection /
   // outside_roots / permission / other).
   async download(
     providerId: string,
     remotePath: string,
-    dest: DownloadDest
+    dest: DownloadDest,
+    context?: { sessionId: string; projectId: string }
   ): Promise<LocalFile> {
     const host = await this.repository.get(providerId)
     if (!host) {
@@ -647,7 +649,37 @@ export class ComputeService {
     } else if (dest.kind === 'artifact') {
       return this._downloadToArtifact(host, target, remotePath, filename)
     } else {
-      // session-cache: scp to a temp dir, return the LocalFile (no approval here — issue 04 adds it)
+      // session-cache: agent download path — requires approval BEFORE scp (design.md §5).
+      if (!this.approvalBroker) {
+        throw new Error('ComputeApprovalBroker is required for session-cache downloads.')
+      }
+
+      const approvalInfo = {
+        provider_id: host.providerId,
+        provider_name: host.displayName,
+        shape: host.shape,
+        intent: 'Download remote file to session workspace',
+        remote_path: remotePath
+      }
+
+      // Use grant-aware requestWithContext when session/project context is available.
+      // Falls back to once-only request() when no context is supplied.
+      const decision = context
+        ? await this.approvalBroker.requestWithContext(approvalInfo, {
+            sessionId: context.sessionId,
+            projectId: context.projectId,
+            operation: 'download'
+          })
+        : await this.approvalBroker.request(approvalInfo)
+
+      if (decision === 'deny') {
+        const err = new Error(
+          `Download approval was denied for "${remotePath}" on host "${host.displayName}".`
+        ) as Error & { code: string }
+        err.code = 'download_denied'
+        throw err
+      }
+
       return this._downloadToSessionCache(host, target, remotePath, filename)
     }
   }
@@ -790,7 +822,8 @@ export class ComputeService {
     }
   }
 
-  // Downloads to a session-cache temp dir. No approval gate here — issue 04 layers it on top.
+  // Downloads to a session-cache temp dir. Approval gate is applied in download() before this is
+  // called for session-cache requests (design.md §5 — approval fires before scp).
   private async _downloadToSessionCache(
     _host: ComputeHost,
     target: import('./ssh-runner').ResolvedSshTarget,

@@ -172,6 +172,59 @@ describe('computeCall RPC', () => {
     expect(body.error).toMatch(/unknown computecall op/i)
   })
 
+  it('routes computeCall op=download to compute service download (session-cache)', async () => {
+    const fakeLocalFile = { path: '/tmp/cs-session-abc/results.csv', name: 'results.csv', size: 1024, mimeType: 'text/csv' }
+    const fakeCompute = {
+      callCommand: async () => ({}),
+      download: async (providerId: string, remotePath: string, dest: { kind: string }) => ({
+        ...fakeLocalFile,
+        _args: { providerId, remotePath, destKind: dest.kind }
+      })
+    }
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      computeService: fakeCompute as never
+    })
+    const { endpoint, token } = await server.ensureStarted()
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        method: 'computeCall',
+        params: { op: 'download', provider_id: 'ssh:biowulf', remote_path: '/remote/results.csv' }
+      })
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { result: typeof fakeLocalFile & { _args: Record<string, unknown> } }
+    expect(body.result.name).toBe('results.csv')
+    expect(body.result._args.providerId).toBe('ssh:biowulf')
+    expect(body.result._args.remotePath).toBe('/remote/results.csv')
+    expect(body.result._args.destKind).toBe('session-cache')
+  })
+
+  it('returns 500 with download_denied error when download is denied', async () => {
+    const err = new Error('Download denied') as Error & { code: string }
+    err.code = 'download_denied'
+    const fakeCompute = {
+      callCommand: async () => ({}),
+      download: async () => { throw err }
+    }
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      computeService: fakeCompute as never
+    })
+    const { endpoint, token } = await server.ensureStarted()
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        method: 'computeCall',
+        params: { op: 'download', provider_id: 'ssh:biowulf', remote_path: '/remote/secret.key' }
+      })
+    })
+    expect(res.status).toBe(500)
+    const body = (await res.json()) as { error: string }
+    expect(body.error).toMatch(/download.denied|denied/i)
+  })
+
   it('routes computeCall op=list to the compute service', async () => {
     const fakeHosts = [
       { providerId: 'ssh:biowulf', displayName: 'biowulf', shape: 'direct_ssh', probeResult: null }

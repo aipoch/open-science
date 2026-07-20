@@ -34,6 +34,18 @@ const makeRequest = (
   ...overrides
 })
 
+// Minimal download approval request payload (no command fields).
+const makeDownloadRequest = (
+  overrides: Partial<Omit<ComputeApprovalRequest, 'id'>> = {}
+): Omit<ComputeApprovalRequest, 'id'> => ({
+  provider_id: 'ssh:biowulf',
+  provider_name: 'biowulf',
+  shape: 'direct_ssh',
+  intent: 'Download remote file for analysis',
+  remote_path: '/home/user/data/results.csv',
+  ...overrides
+})
+
 describe('ComputeApprovalBroker', () => {
   it('broadcasts request and resolves with once decision', async () => {
     const timer = makeTimer()
@@ -278,5 +290,137 @@ describe('ComputeApprovalBroker', () => {
       operation: 'call_command',
       providerId: 'ssh:biowulf'
     })
+  })
+})
+
+// ── Download operation scope tests ───────────────────────────────────────────────────────────────
+describe('ComputeApprovalBroker — download operation', () => {
+  it('broadcasts a download approval request with remote_path', async () => {
+    const timer = makeTimer()
+    let broadcast: ComputeApprovalRequest | undefined
+    let n = 0
+    const broker = new ComputeApprovalBroker({
+      generateId: () => `id-${++n}`,
+      broadcast: (r) => { broadcast = r },
+      setTimer: timer.set,
+      clearTimer: timer.clear
+    })
+
+    const req = makeDownloadRequest()
+    const decision = broker.request(req)
+    expect(broadcast).toMatchObject({
+      id: 'id-1',
+      provider_id: 'ssh:biowulf',
+      remote_path: '/home/user/data/results.csv'
+    })
+    broker.respond('id-1', 'once')
+    await expect(decision).resolves.toBe('once')
+  })
+
+  it('conversation grant for (download, provider) skips card on repeat', async () => {
+    const timer = makeTimer()
+    let broadcastCount = 0
+    let n = 0
+    const broker = new ComputeApprovalBroker({
+      generateId: () => `id-${++n}`,
+      broadcast: () => { broadcastCount++ },
+      setTimer: timer.set,
+      clearTimer: timer.clear,
+      checkProjectGrant: () => Promise.resolve(false)
+    })
+
+    const req = makeDownloadRequest({ provider_id: 'ssh:biowulf' })
+    const ctx = { sessionId: 'session-dl', projectId: 'proj-1', operation: 'download' }
+
+    const firstPromise = broker.requestWithContext(req, ctx)
+    await Promise.resolve()
+    broker.respond('id-1', 'conversation')
+    await expect(firstPromise).resolves.toBe('conversation')
+    expect(broadcastCount).toBe(1)
+
+    // Second download request: conversation grant for (download, ssh:biowulf) → no card.
+    const second = await broker.requestWithContext(req, ctx)
+    expect(second).toBe('conversation')
+    expect(broadcastCount).toBe(1)
+  })
+
+  it('download and call_command grants are isolated by operation', async () => {
+    const timer = makeTimer()
+    let n = 0
+    const broker = new ComputeApprovalBroker({
+      generateId: () => `id-${++n}`,
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear,
+      checkProjectGrant: () => Promise.resolve(false)
+    })
+
+    // Grant conversation scope for call_command.
+    const cmdReq = makeRequest({ provider_id: 'ssh:biowulf' })
+    const cmdCtx = { sessionId: 'sess', projectId: 'p', operation: 'call_command' }
+    const p1 = broker.requestWithContext(cmdReq, cmdCtx)
+    await Promise.resolve()
+    broker.respond('id-1', 'conversation')
+    await p1
+
+    // download for same provider must still show card (different operation key).
+    let broadcastCount = 0
+    const broker2 = new ComputeApprovalBroker({
+      generateId: () => `id-${++n}`,
+      broadcast: () => { broadcastCount++ },
+      setTimer: timer.set,
+      clearTimer: timer.clear,
+      checkProjectGrant: () => Promise.resolve(false)
+    })
+    const dlReq = makeDownloadRequest({ provider_id: 'ssh:biowulf' })
+    const dlCtx = { sessionId: 'sess', projectId: 'p', operation: 'download' }
+    const p2 = broker2.requestWithContext(dlReq, dlCtx)
+    await Promise.resolve()
+    broker2.respond('id-2', 'once')
+    await p2
+    expect(broadcastCount).toBe(1)
+  })
+
+  it('project grant for download persists to settings JSON and skips card', async () => {
+    const timer = makeTimer()
+    let n = 0
+    let savedGrant: { projectId: string; operation: string; providerId: string } | undefined
+
+    const broker = new ComputeApprovalBroker({
+      generateId: () => `id-${++n}`,
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear,
+      checkProjectGrant: (g) => Promise.resolve(
+        savedGrant?.projectId === g.projectId &&
+        savedGrant?.operation === g.operation &&
+        savedGrant?.providerId === g.providerId
+      ),
+      saveProjectGrant: (g) => { savedGrant = g; return Promise.resolve() }
+    })
+
+    const req = makeDownloadRequest({ provider_id: 'ssh:biowulf' })
+    const ctx = { sessionId: 'sess', projectId: 'proj-dl', operation: 'download' }
+
+    // First request: user picks project scope.
+    const p1 = broker.requestWithContext(req, ctx)
+    await Promise.resolve()
+    broker.respond('id-1', 'project')
+    const d1 = await p1
+    expect(d1).toBe('project')
+    expect(savedGrant).toEqual({ projectId: 'proj-dl', operation: 'download', providerId: 'ssh:biowulf' })
+
+    // Second request: project grant exists → resolves immediately without broadcast.
+    let broadcastCount = 0
+    const broker2 = new ComputeApprovalBroker({
+      generateId: () => `id-${++n}`,
+      broadcast: () => { broadcastCount++ },
+      setTimer: timer.set,
+      clearTimer: timer.clear,
+      checkProjectGrant: () => Promise.resolve(true)
+    })
+    const d2 = await broker2.requestWithContext(req, ctx)
+    expect(d2).toBe('project')
+    expect(broadcastCount).toBe(0)
   })
 })

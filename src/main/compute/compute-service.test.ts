@@ -1316,3 +1316,136 @@ describe('ComputeService.download (artifact)', () => {
     expect(err.remoteFsError?.remoteKind).toBe('not_a_file')
   })
 })
+
+// ---------------------------------------------------------------------------
+// ComputeService.download (session-cache) — agent approval gate
+// ---------------------------------------------------------------------------
+
+describe('ComputeService.download (session-cache)', () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'cs-session-cache-test-'))
+  })
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('downloads to session cache and returns LocalFile when approved', async () => {
+    // Stat not needed for session-cache; runner is used only for stat on other paths.
+    const runner = makeFakeRunner({ exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false })
+    const { repo } = makeRepo()
+    const scpRunner: ScpRunner = {
+      copy: vi.fn(async (_bin, args) => {
+        const localPath = args[args.length - 1] as string
+        await writeFile(localPath, 'content')
+        return { exitCode: 0, stderr: '', timedOut: false }
+      })
+    }
+    const broker = makeApprovalBroker('once')
+    const service = new ComputeService(runner, repo, broker, scpRunner, tmpDir)
+
+    const result = await service.download('ssh:biowulf', '/remote/results.csv', { kind: 'session-cache' })
+
+    expect(result.name).toBe('results.csv')
+    expect(result.size).toBe(7) // 'content' is 7 bytes
+    expect(result.path).toContain('results.csv')
+    expect(result.mimeType).toBe('text/csv')
+  })
+
+  it('throws download_denied when broker denies session-cache download', async () => {
+    const runner = makeFakeRunner({ exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false })
+    const { repo } = makeRepo()
+    const broker = makeApprovalBroker('deny')
+    const service = new ComputeService(runner, repo, broker, successScpRunner, tmpDir)
+
+    const err = await service.download('ssh:biowulf', '/remote/secret.key', { kind: 'session-cache' }).catch(e => e)
+    expect(err.message).toMatch(/download_denied|denied/i)
+  })
+
+  it('fires approval BEFORE scp for session-cache', async () => {
+    const callOrder: string[] = []
+
+    const runner = makeFakeRunner({ exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false })
+    const { repo } = makeRepo()
+    const scpRunner: ScpRunner = {
+      copy: vi.fn(async (_bin, args) => {
+        callOrder.push('scp')
+        const localPath = args[args.length - 1] as string
+        await writeFile(localPath, 'data')
+        return { exitCode: 0, stderr: '', timedOut: false }
+      })
+    }
+    const broker: ComputeApprovalBroker = {
+      request: vi.fn(() => {
+        callOrder.push('approval')
+        return Promise.resolve('once')
+      }),
+      requestWithContext: vi.fn(() => {
+        callOrder.push('approval')
+        return Promise.resolve('once')
+      }),
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    const service = new ComputeService(runner, repo, broker, scpRunner, tmpDir)
+    await service.download('ssh:biowulf', '/remote/data.csv', { kind: 'session-cache' })
+
+    expect(callOrder).toEqual(['approval', 'scp'])
+  })
+
+  it('uses requestWithContext when session/project context is supplied', async () => {
+    const runner = makeFakeRunner({ exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false })
+    const { repo } = makeRepo()
+    const scpRunner: ScpRunner = {
+      copy: vi.fn(async (_bin, args) => {
+        const localPath = args[args.length - 1] as string
+        await writeFile(localPath, 'data')
+        return { exitCode: 0, stderr: '', timedOut: false }
+      })
+    }
+    const broker: ComputeApprovalBroker = {
+      request: vi.fn(() => Promise.resolve('once')),
+      requestWithContext: vi.fn(() => Promise.resolve('conversation')),
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    const service = new ComputeService(runner, repo, broker, scpRunner, tmpDir)
+    await service.download('ssh:biowulf', '/remote/data.csv', { kind: 'session-cache' },
+      { sessionId: 'sess-1', projectId: 'proj-1' })
+
+    expect(vi.mocked(broker.requestWithContext)).toHaveBeenCalledOnce()
+    expect(vi.mocked(broker.request)).not.toHaveBeenCalled()
+  })
+
+  it('does NOT trigger approval for os-downloads', async () => {
+    const runner = makeFakeRunner({ exitCode: 0, stdout: '100', stderr: '', truncated: false, timedOut: false })
+    const { repo } = makeRepo()
+    const scpRunner: ScpRunner = {
+      copy: vi.fn(async (_bin, args) => {
+        const localPath = args[args.length - 1] as string
+        await writeFile(localPath, 'x'.repeat(100))
+        return { exitCode: 0, stderr: '', timedOut: false }
+      })
+    }
+    const broker = makeApprovalBroker('deny') // if called, denies
+    const service = new ComputeService(runner, repo, broker, scpRunner, tmpDir)
+
+    // os-downloads should NOT consult the broker - should succeed even with deny broker
+    const result = await service.download('ssh:biowulf', '/remote/file.txt', { kind: 'os-downloads' })
+    expect(result.name).toBe('file.txt')
+    // Confirm broker was NOT called
+    expect(vi.mocked(broker.request)).not.toHaveBeenCalled()
+  })
+
+  it('throws when no approval broker is configured for session-cache', async () => {
+    const runner = makeFakeRunner({ exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false })
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo) // no broker
+
+    await expect(
+      service.download('ssh:biowulf', '/remote/data.csv', { kind: 'session-cache' })
+    ).rejects.toThrow(/broker|required/i)
+  })
+})

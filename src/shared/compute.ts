@@ -103,13 +103,17 @@ export type ComputeApprovalDecision = ComputeApprovalScope | 'deny'
 
 // Approval request broadcast from main to the renderer for a compute:call_command invocation.
 // provider_name is the human-readable display name; shape is the host topology string.
+// For call_command: command_preview + command_full are set.
+// For download: remote_path is set instead of command fields.
 export type ComputeApprovalRequest = {
   id: string
   provider_id: string
   provider_name: string
   shape: string
   intent: string
-  // Short command preview shown collapsed; the full command is available in command_full.
-  command_preview: string
-  command_full: string
+  // call_command fields (present for op=call_command).
+  command_preview?: string
+  command_full?: string
+  // download field (present for op=download).
+  remote_path?: string
 }

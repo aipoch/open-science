@@ -38,6 +38,12 @@ type NotebookLocalRpcServerOptions = {
       providerId: string,
       args: { text: string; oldText: string; author: string }
     ): Promise<void>
+    download(
+      providerId: string,
+      remotePath: string,
+      dest: { kind: 'session-cache' },
+      context?: { sessionId: string; projectId: string }
+    ): Promise<unknown>
   }
 }
 
@@ -252,6 +258,19 @@ class NotebookLocalRpcServer {
         }
         throw new Error(`Unknown details mode: ${mode}`)
       }
+
+      // op='download' — agent-initiated file download to session-cache (design.md §5).
+      // Approval gate fires inside ComputeService.download() before scp starts.
+      if (op === 'download') {
+        const providerId = typeof params.provider_id === 'string' ? params.provider_id : ''
+        const remotePath = typeof params.remote_path === 'string' ? params.remote_path : ''
+        // Optional session/project context for grant-scope approval memory (matching call_command).
+        const sessionId = typeof params.session_id === 'string' ? params.session_id : undefined
+        const projectId = typeof params.project_id === 'string' ? params.project_id : undefined
+        const context = sessionId && projectId ? { sessionId, projectId } : undefined
+        return this.computeService.download(providerId, remotePath, { kind: 'session-cache' }, context)
+      }
+
       throw new Error(`Unknown computeCall op: ${op}`)
     }
 
