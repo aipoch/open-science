@@ -29,8 +29,19 @@ type ConnectorServiceDeps = {
   }) => Promise<ApprovalDecision>
   // Handlers for bundled tools that run privileged local code (e.g. write an artifact, open a preview)
   // instead of the read-only HTTP ParserEngine. Keyed by `${connector}/${method}`; invoked after the
-  // same enable/policy/approval gate as any other bundled call.
-  localToolHandlers?: Record<string, (args: Record<string, unknown>) => Promise<unknown>>
+  // same enable/policy/approval gate as any other bundled call. The call context carries the id of the
+  // session that triggered the call so a handler can attribute side effects (e.g. a generated artifact)
+  // to the right session instead of a global "current" one.
+  localToolHandlers?: Record<
+    string,
+    (args: Record<string, unknown>, context: ConnectorCallContext) => Promise<unknown>
+  >
+}
+
+// Optional routing context for a connector call. Present for calls that originate inside a session
+// (e.g. notebook host.mcp); absent for context-free callers.
+export type ConnectorCallContext = {
+  sessionId?: string
 }
 
 // Agent-agnostic gate: enforces enabled state + per-tool policy, prompts for approval on un-trusted
@@ -47,10 +58,15 @@ export class ConnectorService {
     return !(this.deps.getConnectors()?.disabledConnectorIds ?? []).includes(connector)
   }
 
-  async call(connector: string, method: string, args: Record<string, unknown>): Promise<unknown> {
+  async call(
+    connector: string,
+    method: string,
+    args: Record<string, unknown>,
+    context: ConnectorCallContext = {}
+  ): Promise<unknown> {
     const descriptor = getDescriptor(connector, method)
     const isBundled = descriptor !== undefined || ALL_CONNECTOR_IDS.includes(connector)
-    if (isBundled) return this.callBundled(connector, method, args, descriptor)
+    if (isBundled) return this.callBundled(connector, method, args, descriptor, context)
 
     const custom = (this.deps.getConnectors()?.customMcpServers ?? []).find(
       (s) => s.name === connector
@@ -63,7 +79,8 @@ export class ConnectorService {
     connector: string,
     method: string,
     args: Record<string, unknown>,
-    descriptor: ToolDescriptor | undefined
+    descriptor: ToolDescriptor | undefined,
+    context: ConnectorCallContext
   ): Promise<unknown> {
     if (!this.isEnabled(connector)) throw new Error(`connector not enabled: ${connector}`)
     if (!descriptor) throw new Error(`unknown tool: ${connector}/${method}`)
@@ -76,7 +93,7 @@ export class ConnectorService {
     // Bundled tools that need privileged local behavior run here, after the same gate, instead of the
     // read-only HTTP engine.
     const localHandler = this.deps.localToolHandlers?.[`${connector}/${method}`]
-    if (localHandler) return localHandler(args)
+    if (localHandler) return localHandler(args, context)
 
     return this.engine.call(descriptor, args, this.credentials())
   }

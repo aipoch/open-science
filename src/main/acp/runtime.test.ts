@@ -1036,6 +1036,64 @@ describe('ACP runtime session management', () => {
     // is markedly slower on a cold Windows CI runner and can exceed the 5s default there.
   }, 30000)
 
+  it('attributes app-side artifact writes to the calling session while another turn is in flight', async () => {
+    const root = await createTemporaryRoot()
+    const artifactRepository = new ArtifactRepository(root)
+    const process = new FakeAgentProcess()
+    const gateA = createDeferred()
+    const gateB = createDeferred()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1', 'remote-session-2'], {
+      onPrompt: ({ sessionId }) =>
+        sessionId === 'remote-session-1' ? gateA.promise : gateB.promise
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        mcpEntryPath: '/unused',
+        repository: artifactRepository
+      }
+    })
+
+    const sessionA = await runtime.createSession({ cwd: '/workspace' })
+    const sessionB = await runtime.createSession({ cwd: '/workspace' })
+
+    // Hold both turns open so both sessions have an active artifact run at the same time — the exact
+    // condition a single global "current run" mis-attributes.
+    const promptA = runtime.sendPrompt({ sessionId: sessionA.sessionId, text: 'a' })
+    const promptB = runtime.sendPrompt({ sessionId: sessionB.sessionId, text: 'b' })
+    // Both prompts have reached the agent, so both sessions' artifact runs are now active.
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(2))
+
+    const artifactA = await runtime.writeArtifactForCurrentRun(sessionA.sessionId, {
+      filename: 'a.txt',
+      content: 'from A'
+    })
+    const artifactB = await runtime.writeArtifactForCurrentRun(sessionB.sessionId, {
+      filename: 'b.txt',
+      content: 'from B'
+    })
+
+    // Each write lands in its own session's distinct run, never a shared global one.
+    expect(artifactA.sessionId).not.toBe(artifactB.sessionId)
+    expect(artifactA.runId).not.toBe(artifactB.runId)
+    expect(artifactA.path).toContain(artifactA.sessionId)
+    expect(artifactB.path).toContain(artifactB.sessionId)
+
+    // A write with no live run for the session fails closed instead of falling back to another run.
+    await expect(
+      runtime.writeArtifactForCurrentRun('unknown-session', { filename: 'x.txt', content: 'x' })
+    ).rejects.toThrow(/active assistant turn/)
+
+    gateA.resolve()
+    gateB.resolve()
+    await Promise.all([promptA, promptB])
+  })
+
   it('appends referenced artifacts as content blocks by file type', async () => {
     const root = await createTemporaryRoot()
     const uploadRepository = new UploadRepository(root)

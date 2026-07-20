@@ -60,8 +60,8 @@ describe('ConnectorService', () => {
       resolveApiKey: () => undefined,
       localToolHandlers: { 'molecule/preview_molecule': localHandler }
     })
-    const out = await svc.call('molecule', 'preview_molecule', { smiles: 'C' })
-    expect(localHandler).toHaveBeenCalledWith({ smiles: 'C' })
+    const out = await svc.call('molecule', 'preview_molecule', { smiles: 'C' }, { sessionId: 's-1' })
+    expect(localHandler).toHaveBeenCalledWith({ smiles: 'C' }, { sessionId: 's-1' })
     expect(out).toEqual({ ok: true })
     expect(engine.call).not.toHaveBeenCalled()
   })

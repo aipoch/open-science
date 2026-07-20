@@ -35,6 +35,9 @@ type NotebookExecutionRequest = {
   // Connector RPC connection injected into the kernel spawn env for host.mcp().
   mcpRpcEndpoint?: string
   mcpRpcToken?: string
+  // App session id owning this kernel, injected into the spawn env so host.mcp() can tell the main
+  // process which session a connector call (e.g. molecule preview) belongs to.
+  sessionId?: string
 }
 
 type NotebookExecutionResult = {
@@ -351,7 +354,8 @@ class NotebookRuntimeService {
         protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
         timeoutMs: request.timeoutMs,
         mcpRpcEndpoint: mcpRpc?.endpoint,
-        mcpRpcToken: mcpRpc?.token
+        mcpRpcToken: mcpRpc?.token,
+        sessionId: session.sessionId
       })
       .catch((error: unknown) => errorToExecutionResult(error, cwdBefore))
     // Replace the running record instead of appending so each run id has one durable entry.

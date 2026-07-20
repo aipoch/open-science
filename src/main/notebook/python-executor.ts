@@ -54,9 +54,15 @@ class _Host:
             call_args = kwargs
         endpoint = os.environ.get("OPEN_SCIENCE_MCP_RPC_ENDPOINT")
         token = os.environ.get("OPEN_SCIENCE_MCP_RPC_TOKEN")
+        session_id = os.environ.get("OPEN_SCIENCE_MCP_RPC_SESSION_ID")
         if not endpoint:
             raise RuntimeError("host.mcp is unavailable: connector RPC endpoint not set")
-        payload = json.dumps({"method": "mcpCall", "params": {"server": server, "method": method, "args": call_args}}).encode("utf-8")
+        mcp_params = {"server": server, "method": method, "args": call_args}
+        # Tell the main process which session this call belongs to, so a connector that writes an
+        # artifact (e.g. molecule preview) attaches it to this session's run and never a parallel one.
+        if session_id:
+            mcp_params["sessionId"] = session_id
+        payload = json.dumps({"method": "mcpCall", "params": mcp_params}).encode("utf-8")
         req = urllib.request.Request(endpoint, data=payload, method="POST",
             headers={"content-type": "application/json", "authorization": "Bearer " + (token or "")})
         try:
@@ -444,6 +450,9 @@ class NotebookPythonExecutor implements NotebookExecutor {
           ? { OPEN_SCIENCE_MCP_RPC_ENDPOINT: request.mcpRpcEndpoint }
           : {}),
         ...(request.mcpRpcToken ? { OPEN_SCIENCE_MCP_RPC_TOKEN: request.mcpRpcToken } : {}),
+        // App session id this kernel belongs to, forwarded by host.mcp() so the main process attributes
+        // connector side effects (e.g. molecule preview artifacts) to the right session.
+        ...(request.sessionId ? { OPEN_SCIENCE_MCP_RPC_SESSION_ID: request.sessionId } : {}),
         // App-owned directories the notebook kernel must not read (e.g. materialized skill files).
         OPEN_SCIENCE_PROTECTED_DIRS: (request.protectedDirs ?? []).join(delimiter)
       }
