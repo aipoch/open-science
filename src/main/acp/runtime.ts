@@ -632,7 +632,15 @@ class AcpRuntime {
       }
 
       this.error = errorMessage(error)
-      log.error('agent connection failed', error)
+      log.error('agent connection failed', {
+        error,
+        generation,
+        framework: this.framework.id,
+        cwd: this.cwd,
+        shuttingDown: this.shuttingDown,
+        agentProcessPid: this.agentProcess?.pid,
+        agentProcessKilled: this.agentProcess?.killed
+      })
       this.pushEvent({
         kind: 'error',
         level: 'error',
@@ -1234,14 +1242,24 @@ class AcpRuntime {
     log.info('agent backend resolved', {
       framework: backend.framework.id,
       sessionModel: backend.sessionModel ?? '(framework default)',
-      args: backend.args ?? []
+      args: backend.args ?? [],
+      executablePath: backend.executablePath,
+      // Log env keys but not values (may contain credentials)
+      envKeys: Object.keys(backend.env ?? {})
     })
 
-    return this.framework.spawn({
+    const process = this.framework.spawn({
       executablePath: backend.executablePath,
       env: backend.env,
       args: backend.args ?? []
     })
+
+    log.info('agent process spawned', {
+      framework: backend.framework.id,
+      pid: process.pid
+    })
+
+    return process
   }
 
   // Sends one prompt turn to the targeted session and streams updates until stop.
@@ -1873,12 +1891,21 @@ class AcpRuntime {
       return this.connection
     }
 
-    await this.connect({ cwd })
+    log.info('ensureConnected: attempting connection', { cwd, status: this.status })
+
+    try {
+      await this.connect({ cwd })
+    } catch (error) {
+      log.error('ensureConnected: connect failed', { cwd, error })
+      throw error
+    }
 
     if (!this.connection) {
+      log.error('ensureConnected: connection is null after connect', { cwd, status: this.status })
       throw new Error('ACP connection failed')
     }
 
+    log.info('ensureConnected: connection established', { cwd })
     return this.connection
   }
 
@@ -2505,7 +2532,14 @@ class AcpRuntime {
 
       // Always capture agent stderr in the log — it's the primary clue when a turn stalls or the
       // agent misbehaves (auth loops, MCP connection failures, tool errors) in a packaged build.
-      if (text) log.warn('agent stderr', { text })
+      if (text) {
+        log.warn('agent stderr', {
+          text,
+          framework: this.framework.id,
+          status: this.status,
+          sessionCount: this.sessions.size
+        })
+      }
 
       if (this.expectedProcessExits.has(agentProcess)) {
         return
@@ -2527,6 +2561,13 @@ class AcpRuntime {
     })
 
     agentProcess.on('error', (error) => {
+      log.error('agent process error event', {
+        error,
+        framework: this.framework.id,
+        status: this.status,
+        pid: agentProcess.pid
+      })
+
       if (this.expectedProcessExits.has(agentProcess)) {
         return
       }
@@ -2542,6 +2583,16 @@ class AcpRuntime {
     })
 
     agentProcess.on('exit', (code, signal) => {
+      log.info('agent process exit', {
+        code,
+        signal,
+        framework: this.framework.id,
+        status: this.status,
+        expected: this.expectedProcessExits.has(agentProcess),
+        sessionCount: this.sessions.size,
+        pid: agentProcess.pid
+      })
+
       if (this.expectedProcessExits.has(agentProcess)) {
         return
       }
