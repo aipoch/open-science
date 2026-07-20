@@ -1,7 +1,10 @@
-import { ipcMain } from 'electron'
+import { randomUUID } from 'node:crypto'
+
+import { BrowserWindow, ipcMain } from 'electron'
 
 import type {
   ComputeHost,
+  ComputeApprovalRequest,
   CreateComputeHostRequest,
   DeleteComputeHostRequest,
   DetailsAuthor,
@@ -9,6 +12,7 @@ import type {
 } from '../../shared/compute'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { resolveStorageRoot } from '../storage-root'
+import { ComputeApprovalBroker } from './compute-approval-broker'
 import { ComputeService } from './compute-service'
 import { ComputeHostRepository } from './repository'
 import { readSshConfigHostAliases } from './ssh-config'
@@ -16,7 +20,8 @@ import { SystemSshRunner } from './ssh-runner'
 
 // The renderer-callable compute commands. Kept as a thin adapter over the repository + the pure
 // ssh-config parser so the IPC surface stays easy to unit test (aligns with projects/ipc.ts). Issue 01:
-// host record CRUD + ssh-config alias listing. Issue 02 adds probe. Issue 03 adds details/scratch/concurrency.
+// host record CRUD + ssh-config alias listing. Issue 02 adds probe. Issue 03 adds
+// details/scratch/concurrency. Issue 04 adds callCommand + the approval broker wiring.
 type ComputeHandlers = {
   list: () => Promise<ComputeHost[]>
   get: (providerId: string) => Promise<ComputeHost | null>
@@ -38,15 +43,34 @@ type ComputeHandlers = {
   scratchSet: (providerId: string, path: string) => Promise<void>
   // Concurrent job limit: store 1..500 (not enforced in Phase 1).
   concurrencySet: (providerId: string, limit: number) => Promise<void>
+  // The compute service instance, exposed so the notebook RPC server can wire computeCall.
+  computeService: ComputeService
+  // Responds to a pending approval request from the renderer.
+  approvalRespond: (id: string, decision: 'once' | 'deny') => void
 }
 
 // Adapts a repository into thin handlers.
 const createComputeHandlers = (
   repository: ComputeHostRepository,
   listSshAliases: () => Promise<string[]> = readSshConfigHostAliases,
-  computeService?: ComputeService
+  injectedService?: ComputeService,
+  injectedBroker?: ComputeApprovalBroker
 ): ComputeHandlers => {
-  const service = computeService ?? new ComputeService(new SystemSshRunner(), repository)
+  // The broadcast function sends approval requests to all renderer windows. In tests, callers
+  // inject a fake broker so this function is never called directly.
+  const broker =
+    injectedBroker ??
+    new ComputeApprovalBroker({
+      generateId: () => randomUUID(),
+      broadcast: (request: ComputeApprovalRequest) => {
+        // Push the approval card to every focused BrowserWindow.
+        for (const win of BrowserWindow.getAllWindows()) {
+          win.webContents.send('compute:approval-request', request)
+        }
+      }
+    })
+
+  const service = injectedService ?? new ComputeService(new SystemSshRunner(), repository, broker)
   return {
     list: () => repository.list(),
     get: (providerId) => repository.get(providerId),
@@ -58,7 +82,9 @@ const createComputeHandlers = (
     detailsSave: (providerId, text, oldText, author) =>
       service.replaceDetails(providerId, { text, oldText, author }),
     scratchSet: (providerId, path) => service.setScratchRoot(providerId, path),
-    concurrencySet: (providerId, limit) => service.setConcurrencyLimit(providerId, limit)
+    concurrencySet: (providerId, limit) => service.setConcurrencyLimit(providerId, limit),
+    computeService: service,
+    approvalRespond: (id, decision) => broker.respond(id, decision)
   }
 }
 
@@ -69,7 +95,9 @@ const createDefaultComputeHostRepository = (): ComputeHostRepository =>
   new ComputeHostRepository(() => getProjectDbClient(resolveStorageRoot()))
 
 // Registers the renderer-callable compute host commands.
-const registerComputeIpcHandlers = (repository = createDefaultComputeHostRepository()): void => {
+const registerComputeIpcHandlers = (
+  repository = createDefaultComputeHostRepository()
+): { computeService: ComputeService } => {
   const handlers = createComputeHandlers(repository)
 
   ipcMain.handle('compute:list', () => handlers.list())
@@ -96,6 +124,15 @@ const registerComputeIpcHandlers = (repository = createDefaultComputeHostReposit
   ipcMain.handle('compute:concurrency:set', (_event, providerId: string, limit: number) =>
     handlers.concurrencySet(providerId, limit)
   )
+  // Renderer responds to an in-flight approval card (issue 04).
+  ipcMain.handle(
+    'compute:approval-respond',
+    (_event, request: { id: string; decision: 'once' | 'deny' }) => {
+      handlers.approvalRespond(request.id, request.decision)
+    }
+  )
+
+  return { computeService: handlers.computeService }
 }
 
 export { createComputeHandlers, createDefaultComputeHostRepository, registerComputeIpcHandlers }

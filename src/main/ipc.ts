@@ -220,7 +220,14 @@ const registerIpcHandlers = async ({
       approvalBroker.request({ connector, method, argsPreview: previewArgs(args) }),
     localToolHandlers: { 'molecule/preview_molecule': moleculePreviewHandler }
   })
-  const notebookRpcServer = new NotebookLocalRpcServer(notebookService, { connectorService })
+  // Register compute IPC handlers early so computeService can be wired into the notebook RPC server.
+  // The approval broker in compute/ipc.ts broadcasts via BrowserWindow.getAllWindows(), which requires
+  // Electron to be ready — this is always the case here since we're inside registerIpcHandlers.
+  const { computeService } = registerComputeIpcHandlers()
+  const notebookRpcServer = new NotebookLocalRpcServer(notebookService, {
+    connectorService,
+    computeService
+  })
   // The RPC server needs the runtime service to dispatch to, and the runtime service needs the RPC
   // server's (lazily-started) connection for host.mcp() env injection — wire the second half here to
   // avoid a construction cycle.
@@ -422,9 +429,8 @@ const registerIpcHandlers = async ({
     uploadRepository.deleteSessionUploads(sessionId)
   )
   registerProjectIpcHandlers(projectRepository, previewStateRepository)
-  // Compute settings: SSH host record CRUD + ~/.ssh/config alias listing (issue 01). Backed by the
-  // same SQLite client as projects/reviewer; no SSH connection is made in this phase.
-  registerComputeIpcHandlers()
+  // Compute IPC handlers are registered earlier (before the notebook RPC server) so computeService
+  // can be injected into the RPC server for the computeCall route. See above.
   // Wire the reviewer backend into the app lifecycle: installs ipcMain.handle('reviewer:run', ...)
   // and 'reviewer:get-for-session' so the renderer's fire-and-forget reviewer calls resolve to
   // real handlers instead of no-ops. Passing the already-constructed AcpRuntime so the reviewer

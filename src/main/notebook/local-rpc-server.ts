@@ -22,6 +22,15 @@ type NotebookLocalRpcServerOptions = {
       context?: { sessionId?: string }
     ): Promise<unknown>
   }
+  computeService?: {
+    callCommand(
+      providerId: string,
+      cmd: string,
+      intent: string,
+      loginShell?: boolean,
+      timeoutSeconds?: number
+    ): Promise<unknown>
+  }
 }
 
 type NotebookRpcPayload = {
@@ -62,6 +71,7 @@ class NotebookLocalRpcServer {
   private readonly token: string
   private readonly host: string
   private readonly connectorService: NotebookLocalRpcServerOptions['connectorService']
+  private readonly computeService: NotebookLocalRpcServerOptions['computeService']
   private server: Server | undefined
   private startPromise: Promise<NotebookRpcConnection> | undefined
   private readonly sessionAliases = new Map<string, string>()
@@ -73,6 +83,7 @@ class NotebookLocalRpcServer {
     this.token = options.token ?? randomUUID()
     this.host = options.host ?? '127.0.0.1'
     this.connectorService = options.connectorService
+    this.computeService = options.computeService
   }
 
   // Starts the server once on an ephemeral port and returns the connection details for MCP env.
@@ -166,6 +177,41 @@ class NotebookLocalRpcServer {
       const args = isRecord(params.args) ? params.args : {}
       const sessionId = typeof params.sessionId === 'string' ? params.sessionId : undefined
       return this.connectorService.call(server, toolMethod, args, { sessionId })
+    }
+
+    // computeCall routes compute API operations to ComputeService (design.md §2). The `op` field
+    // allows future ops (list, details) to be added without breaking the contract (design.md §5).
+    // Not session-scoped — like mcpCall it bypasses the session routing below.
+    if (method === 'computeCall') {
+      if (!this.computeService) throw new Error('Compute service is not configured.')
+      const op = typeof params.op === 'string' ? params.op : ''
+      if (op === 'call_command') {
+        const providerId = typeof params.provider_id === 'string' ? params.provider_id : ''
+        const cmd = typeof params.cmd === 'string' ? params.cmd : ''
+        const intent = typeof params.intent === 'string' ? params.intent : ''
+        const loginShell = typeof params.login_shell === 'boolean' ? params.login_shell : true
+        const timeoutSeconds =
+          typeof params.timeout_seconds === 'number' ? params.timeout_seconds : undefined
+        try {
+          return await this.computeService.callCommand(
+            providerId,
+            cmd,
+            intent,
+            loginShell,
+            timeoutSeconds
+          )
+        } catch (err) {
+          // Re-throw compute call errors as structured error objects so the Python shim can
+          // distinguish them from unexpected failures.
+          if (err instanceof Error && 'computeCallError' in err) {
+            throw new Error(
+              JSON.stringify((err as Error & { computeCallError: unknown }).computeCallError)
+            )
+          }
+          throw err
+        }
+      }
+      throw new Error(`Unknown computeCall op: ${op}`)
     }
 
     assertSessionParams(params)

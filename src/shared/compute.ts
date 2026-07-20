@@ -77,3 +77,34 @@ export const DETAILS_DOC_MAX_LENGTH = 32768
 
 // The single source of truth for the provider_id convention: "ssh:<alias>".
 export const computeProviderId = (alias: string): string => `ssh:${alias.trim()}`
+
+// Result returned by call_command / computeCall RPC. exit_code is null when the process was killed
+// (e.g. timeout). truncated=true means at least one of stdout/stderr was capped at 64 KB.
+export type ExecResult = {
+  exit_code: number | null
+  stdout: string
+  stderr: string
+  truncated: boolean
+}
+
+// Structured error payload for call_command failures. error_code identifies the failure class;
+// retry_after_user_action=true means the system will NOT retry automatically — the user must fix
+// an external condition first (e.g. SSH connectivity).
+export type ComputeCallError = {
+  error_code: 'host_unreachable' | 'timeout' | 'approval_denied'
+  message: string
+  retry_after_user_action: boolean
+}
+
+// Approval request broadcast from main to the renderer for a compute:call_command invocation.
+// provider_name is the human-readable display name; shape is the host topology string.
+export type ComputeApprovalRequest = {
+  id: string
+  provider_id: string
+  provider_name: string
+  shape: string
+  intent: string
+  // Short command preview shown collapsed; the full command is available in command_full.
+  command_preview: string
+  command_full: string
+}

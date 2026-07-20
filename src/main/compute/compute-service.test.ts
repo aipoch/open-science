@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { ComputeHost } from '../../shared/compute'
 import { ComputeService, parseProbeOutput } from './compute-service'
+import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeHostRepository } from './repository'
 import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
 
@@ -68,7 +69,14 @@ const makeRepo = (
     updateScratchPinned,
     updateConcurrencyLimit
   } as unknown as ComputeHostRepository
-  return { repo, updateProbeResult, updateScratchRoot, updateDetails, updateScratchPinned, updateConcurrencyLimit }
+  return {
+    repo,
+    updateProbeResult,
+    updateScratchRoot,
+    updateDetails,
+    updateScratchPinned,
+    updateConcurrencyLimit
+  }
 }
 
 // A successful probe script output representing a Linux slurm cluster.
@@ -337,7 +345,13 @@ describe('ComputeService.probe', () => {
 // ---------------------------------------------------------------------------
 
 describe('ComputeService.getDetails', () => {
-  const fakeRunner = makeFakeRunner({ exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false })
+  const fakeRunner = makeFakeRunner({
+    exitCode: 0,
+    stdout: '',
+    stderr: '',
+    truncated: false,
+    timedOut: false
+  })
 
   it('returns detailsDoc as-is when it is non-empty', async () => {
     const { repo } = makeRepo(sampleHost({ detailsDoc: '## Resources\ncpus: 8' }))
@@ -397,7 +411,9 @@ describe('ComputeService.getDetails', () => {
   it('throws when the host does not exist', async () => {
     const { repo } = makeRepo(null)
     const service = new ComputeService(fakeRunner, repo)
-    await expect(service.getDetails('ssh:nonexistent')).rejects.toThrow(/not found|no compute host/i)
+    await expect(service.getDetails('ssh:nonexistent')).rejects.toThrow(
+      /not found|no compute host/i
+    )
   })
 })
 
@@ -406,12 +422,22 @@ describe('ComputeService.getDetails', () => {
 // ---------------------------------------------------------------------------
 
 describe('ComputeService.replaceDetails', () => {
-  const fakeRunner = makeFakeRunner({ exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false })
+  const fakeRunner = makeFakeRunner({
+    exitCode: 0,
+    stdout: '',
+    stderr: '',
+    truncated: false,
+    timedOut: false
+  })
 
   it('replaces matching text and persists with author=user', async () => {
     const { repo, updateDetails } = makeRepo(sampleHost({ detailsDoc: 'hello world' }))
     const service = new ComputeService(fakeRunner, repo)
-    await service.replaceDetails('ssh:biowulf', { text: 'hello friend', oldText: 'hello world', author: 'user' })
+    await service.replaceDetails('ssh:biowulf', {
+      text: 'hello friend',
+      oldText: 'hello world',
+      author: 'user'
+    })
     expect(updateDetails).toHaveBeenCalledWith('ssh:biowulf', 'hello friend', 'user')
   })
 
@@ -419,7 +445,11 @@ describe('ComputeService.replaceDetails', () => {
     const { repo, updateDetails } = makeRepo(sampleHost({ detailsDoc: 'hello world' }))
     const service = new ComputeService(fakeRunner, repo)
     await expect(
-      service.replaceDetails('ssh:biowulf', { text: 'something', oldText: 'not present', author: 'user' })
+      service.replaceDetails('ssh:biowulf', {
+        text: 'something',
+        oldText: 'not present',
+        author: 'user'
+      })
     ).rejects.toThrow(/not found|does not match|old_text/i)
     expect(updateDetails).not.toHaveBeenCalled()
   })
@@ -437,7 +467,11 @@ describe('ComputeService.replaceDetails', () => {
   it('works with author=agent', async () => {
     const { repo, updateDetails } = makeRepo(sampleHost({ detailsDoc: 'original text' }))
     const service = new ComputeService(fakeRunner, repo)
-    await service.replaceDetails('ssh:biowulf', { text: 'new text', oldText: 'original text', author: 'agent' })
+    await service.replaceDetails('ssh:biowulf', {
+      text: 'new text',
+      oldText: 'original text',
+      author: 'agent'
+    })
     expect(updateDetails).toHaveBeenCalledWith('ssh:biowulf', 'new text', 'agent')
   })
 })
@@ -447,7 +481,13 @@ describe('ComputeService.replaceDetails', () => {
 // ---------------------------------------------------------------------------
 
 describe('ComputeService.setScratchRoot', () => {
-  const fakeRunner = makeFakeRunner({ exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false })
+  const fakeRunner = makeFakeRunner({
+    exitCode: 0,
+    stdout: '',
+    stderr: '',
+    truncated: false,
+    timedOut: false
+  })
 
   it('sets scratch root and marks pinned', async () => {
     const { repo, updateScratchPinned } = makeRepo()
@@ -459,7 +499,9 @@ describe('ComputeService.setScratchRoot', () => {
   it('throws when the host does not exist', async () => {
     const { repo } = makeRepo(null)
     const service = new ComputeService(fakeRunner, repo)
-    await expect(service.setScratchRoot('ssh:nonexistent', '/path')).rejects.toThrow(/not found|no compute host/i)
+    await expect(service.setScratchRoot('ssh:nonexistent', '/path')).rejects.toThrow(
+      /not found|no compute host/i
+    )
   })
 })
 
@@ -468,7 +510,13 @@ describe('ComputeService.setScratchRoot', () => {
 // ---------------------------------------------------------------------------
 
 describe('ComputeService.setConcurrencyLimit', () => {
-  const fakeRunner = makeFakeRunner({ exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false })
+  const fakeRunner = makeFakeRunner({
+    exitCode: 0,
+    stdout: '',
+    stderr: '',
+    truncated: false,
+    timedOut: false
+  })
 
   it('persists a valid concurrency limit', async () => {
     const { repo, updateConcurrencyLimit } = makeRepo()
@@ -480,13 +528,17 @@ describe('ComputeService.setConcurrencyLimit', () => {
   it('rejects 0 (below minimum)', async () => {
     const { repo } = makeRepo()
     const service = new ComputeService(fakeRunner, repo)
-    await expect(service.setConcurrencyLimit('ssh:biowulf', 0)).rejects.toThrow(/1.*500|range|invalid/i)
+    await expect(service.setConcurrencyLimit('ssh:biowulf', 0)).rejects.toThrow(
+      /1.*500|range|invalid/i
+    )
   })
 
   it('rejects 501 (above maximum)', async () => {
     const { repo } = makeRepo()
     const service = new ComputeService(fakeRunner, repo)
-    await expect(service.setConcurrencyLimit('ssh:biowulf', 501)).rejects.toThrow(/1.*500|range|invalid/i)
+    await expect(service.setConcurrencyLimit('ssh:biowulf', 501)).rejects.toThrow(
+      /1.*500|range|invalid/i
+    )
   })
 
   it('accepts the boundary values 1 and 500', async () => {
@@ -500,6 +552,239 @@ describe('ComputeService.setConcurrencyLimit', () => {
   it('throws when the host does not exist', async () => {
     const { repo } = makeRepo(null)
     const service = new ComputeService(fakeRunner, repo)
-    await expect(service.setConcurrencyLimit('ssh:nonexistent', 10)).rejects.toThrow(/not found|no compute host/i)
+    await expect(service.setConcurrencyLimit('ssh:nonexistent', 10)).rejects.toThrow(
+      /not found|no compute host/i
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ComputeService.callCommand — fake SshRunner + fake approval broker
+// ---------------------------------------------------------------------------
+
+// A minimal fake approval broker that resolves instantly.
+const makeApprovalBroker = (decision: 'once' | 'deny'): ComputeApprovalBroker =>
+  ({
+    request: vi.fn(() => Promise.resolve(decision)),
+    respond: vi.fn()
+  }) as unknown as ComputeApprovalBroker
+
+describe('ComputeService.callCommand', () => {
+  it('returns ExecResult on success with correct fields', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: 'hello world',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo()
+    const broker = makeApprovalBroker('once')
+    const service = new ComputeService(runner, repo, broker)
+
+    const result = await service.callCommand('ssh:biowulf', 'echo hello', 'test intent')
+
+    expect(result.exit_code).toBe(0)
+    expect(result.stdout).toBe('hello world')
+    expect(result.stderr).toBe('')
+    expect(result.truncated).toBe(false)
+  })
+
+  it('calls runner with login shell when loginShell=true', async () => {
+    const runMock = vi.fn(() =>
+      Promise.resolve({ exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false })
+    )
+    const runner: SshRunner = { run: runMock }
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo, makeApprovalBroker('once'))
+
+    await service.callCommand('ssh:biowulf', 'echo hi', 'intent', true)
+
+    expect(runMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('echo hi'),
+      expect.objectContaining({ loginShell: true })
+    )
+  })
+
+  it('wraps command with scratchRoot cd when configured', async () => {
+    const runMock = vi.fn(() =>
+      Promise.resolve({ exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false })
+    )
+    const runner: SshRunner = { run: runMock }
+    const host = sampleHost({ scratchRoot: '/scratch/user' })
+    const { repo } = makeRepo(host)
+    const service = new ComputeService(runner, repo, makeApprovalBroker('once'))
+
+    await service.callCommand('ssh:biowulf', 'ls', 'list files')
+
+    const calledCmd = (runMock.mock.calls[0] as unknown as [unknown, string])?.[1]
+    expect(calledCmd).toContain('/scratch/user')
+    expect(calledCmd).toContain('ls')
+  })
+
+  it('falls back to cd ~ when no scratchRoot is configured', async () => {
+    const runMock = vi.fn(() =>
+      Promise.resolve({ exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false })
+    )
+    const runner: SshRunner = { run: runMock }
+    const { repo } = makeRepo(sampleHost({ scratchRoot: undefined }))
+    const service = new ComputeService(runner, repo, makeApprovalBroker('once'))
+
+    await service.callCommand('ssh:biowulf', 'ls', 'list files')
+
+    const calledCmd = (runMock.mock.calls[0] as unknown as [unknown, string])?.[1]
+    expect(calledCmd).toContain('cd ~')
+  })
+
+  it('uses default 60s timeout when not specified', async () => {
+    const runMock = vi.fn(() =>
+      Promise.resolve({ exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false })
+    )
+    const runner: SshRunner = { run: runMock }
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo, makeApprovalBroker('once'))
+
+    await service.callCommand('ssh:biowulf', 'echo hi', 'intent')
+
+    expect(runMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ timeoutMs: 60_000 })
+    )
+  })
+
+  it('uses caller-provided timeout when specified', async () => {
+    const runMock = vi.fn(() =>
+      Promise.resolve({ exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false })
+    )
+    const runner: SshRunner = { run: runMock }
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo, makeApprovalBroker('once'))
+
+    await service.callCommand('ssh:biowulf', 'echo hi', 'intent', true, 120)
+
+    expect(runMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ timeoutMs: 120_000 })
+    )
+  })
+
+  it('throws approval_denied when user denies', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo, makeApprovalBroker('deny'))
+
+    const err = await service.callCommand('ssh:biowulf', 'rm -rf /', 'cleanup').catch((e) => e)
+
+    expect(err).toBeInstanceOf(Error)
+    expect(err.computeCallError?.error_code).toBe('approval_denied')
+    expect(err.computeCallError?.retry_after_user_action).toBe(false)
+  })
+
+  it('throws host_unreachable on ssh exit 255', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 255,
+      stdout: '',
+      stderr: 'ssh: connect to host biowulf port 22: Connection refused',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo, makeApprovalBroker('once'))
+
+    const err = await service.callCommand('ssh:biowulf', 'echo hi', 'intent').catch((e) => e)
+
+    expect(err.computeCallError?.error_code).toBe('host_unreachable')
+    expect(err.computeCallError?.retry_after_user_action).toBe(true)
+  })
+
+  it('throws timeout when the runner times out', async () => {
+    const runner = makeFakeRunner({
+      exitCode: null,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: true
+    })
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo, makeApprovalBroker('once'))
+
+    const err = await service.callCommand('ssh:biowulf', 'sleep 9999', 'long sleep').catch((e) => e)
+
+    expect(err.computeCallError?.error_code).toBe('timeout')
+    expect(err.computeCallError?.retry_after_user_action).toBe(false)
+  })
+
+  it('passes truncated=true when output is capped', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: 'large output',
+      stderr: '',
+      truncated: true,
+      timedOut: false
+    })
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo, makeApprovalBroker('once'))
+
+    const result = await service.callCommand('ssh:biowulf', 'cat big_file', 'read file')
+
+    expect(result.truncated).toBe(true)
+  })
+
+  it('fires approval BEFORE any ssh run call', async () => {
+    const runMock = vi.fn(() =>
+      Promise.resolve({ exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false })
+    )
+    const runner: SshRunner = { run: runMock }
+    const callOrder: string[] = []
+    const broker: ComputeApprovalBroker = {
+      request: vi.fn(() => {
+        callOrder.push('approval')
+        return Promise.resolve('once' as const)
+      }),
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+    // Override run to record call order AFTER approval mock records its order.
+    ;(runMock as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      callOrder.push('ssh')
+      return Promise.resolve({
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+    })
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo, broker)
+
+    await service.callCommand('ssh:biowulf', 'echo hi', 'intent')
+
+    expect(callOrder).toEqual(['approval', 'ssh'])
+  })
+
+  it('throws when no approval broker is injected', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo()
+    // No broker injected
+    const service = new ComputeService(runner, repo)
+
+    await expect(service.callCommand('ssh:biowulf', 'echo hi', 'intent')).rejects.toThrow(
+      /approval.*broker|required/i
+    )
   })
 })

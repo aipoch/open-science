@@ -1,5 +1,6 @@
-import type { DetailsAuthor, ProbeResult } from '../../shared/compute'
+import type { ComputeCallError, DetailsAuthor, ExecResult, ProbeResult } from '../../shared/compute'
 import { DETAILS_DOC_MAX_LENGTH } from '../../shared/compute'
+import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeHostRepository } from './repository'
 import type { SshRunner } from './ssh-runner'
 import { resolveSshTarget } from './ssh-runner'
@@ -10,6 +11,17 @@ const PROBE_TIMEOUT_MS = 30_000
 
 // Maximum output to capture per probe command (4 KB is plenty for nproc / nvidia-smi -L output).
 const PROBE_MAX_OUTPUT_BYTES = 4 * 1024
+
+// Default timeout for call_command (design.md §5). Callers may pass a longer value but 60s prevents
+// accidental indefinite hangs when the agent forgets to set a timeout.
+const CALL_COMMAND_DEFAULT_TIMEOUT_MS = 60_000
+
+// Maximum bytes captured per stream for call_command (design.md §5). Prevents `cat big_file` from
+// filling memory or the RPC response buffer.
+const CALL_COMMAND_MAX_OUTPUT_BYTES = 64 * 1024
+
+// Short command preview shown in the approval card when the full command is long.
+const COMMAND_PREVIEW_MAX_LEN = 120
 
 // Shell script run as a single SSH command. We collect all outputs in one round-trip:
 //   - uname -s for OS
@@ -122,10 +134,13 @@ const buildDetailsSkeleton = (probe: ProbeResult): string => {
 // ComputeService owns probe logic. It is injected with a SshRunner (for testability) and a
 // repository (for persistence). It does NOT write detailsDoc — only probeResult, shape, and
 // scratchRoot (when applicable). See design.md §4 for the probe/Details distinction.
+// approvalBroker is optional: when omitted, callCommand throws rather than requesting approval
+// (unit tests that don't exercise the approval path omit it).
 export class ComputeService {
   constructor(
     private readonly runner: SshRunner,
-    private readonly repository: ComputeHostRepository
+    private readonly repository: ComputeHostRepository,
+    private readonly approvalBroker?: ComputeApprovalBroker
   ) {}
 
   // Runs the probe bundle against the host identified by providerId. Persists the structured
@@ -284,5 +299,125 @@ export class ComputeService {
     }
 
     await this.repository.updateConcurrencyLimit(providerId, limit)
+  }
+
+  // Executes a short remote command on the SSH host, preceded by an approval gate (design.md §6).
+  //
+  // The approval card is shown BEFORE any SSH connection is made. Only 'once' and 'deny' are
+  // supported in this issue; issue 05 adds 'conversation' and 'project' scopes.
+  //
+  // call_command does NOT count against the concurrent job limit (design.md §5).
+  //
+  // Returns ExecResult on success; throws ComputeCallError (as an Error with .code property) on
+  // approval_denied, host_unreachable, or timeout.
+  async callCommand(
+    providerId: string,
+    cmd: string,
+    intent: string,
+    loginShell = true,
+    timeoutSeconds?: number
+  ): Promise<ExecResult> {
+    const host = await this.repository.get(providerId)
+    if (!host) {
+      throw new Error(`No compute host found with provider id "${providerId}".`)
+    }
+
+    // ── APPROVAL GATE (must fire before any SSH call) ──────────────────────────────
+    if (!this.approvalBroker) {
+      throw new Error('ComputeApprovalBroker is required to call callCommand.')
+    }
+
+    const commandPreview =
+      cmd.length > COMMAND_PREVIEW_MAX_LEN ? `${cmd.slice(0, COMMAND_PREVIEW_MAX_LEN)}…` : cmd
+
+    const decision = await this.approvalBroker.request({
+      provider_id: host.providerId,
+      provider_name: host.displayName,
+      shape: host.shape,
+      intent,
+      command_preview: commandPreview,
+      command_full: cmd
+    })
+
+    if (decision === 'deny') {
+      const err = new Error(
+        `Remote command approval was denied for host "${host.displayName}".`
+      ) as Error & { computeCallError: ComputeCallError }
+      err.computeCallError = {
+        error_code: 'approval_denied',
+        message: `Approval denied for call_command on ${host.displayName}.`,
+        retry_after_user_action: false
+      }
+      throw err
+    }
+
+    // ── SSH EXECUTION ───────────────────────────────────────────────────────────────
+    let target
+    try {
+      target = await resolveSshTarget(host.sshAlias, host.sshOverrides)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      const callErr = new Error(msg) as Error & { computeCallError: ComputeCallError }
+      callErr.computeCallError = {
+        error_code: 'host_unreachable',
+        message: msg,
+        retry_after_user_action: true
+      }
+      throw callErr
+    }
+
+    // cwd = scratchRoot if configured; fallback to home on cd failure (design.md §5).
+    const cwdExpr = host.scratchRoot
+      ? `cd ${JSON.stringify(host.scratchRoot)} 2>/dev/null || cd ~`
+      : 'cd ~'
+
+    // Wrap the user command in a cwd-change prefix so it runs in the right directory.
+    const wrappedCmd = `${cwdExpr}; ${cmd}`
+
+    const timeoutMs =
+      typeof timeoutSeconds === 'number' && timeoutSeconds > 0
+        ? timeoutSeconds * 1000
+        : CALL_COMMAND_DEFAULT_TIMEOUT_MS
+
+    const runResult = await this.runner.run(target, wrappedCmd, {
+      timeoutMs,
+      loginShell,
+      maxOutputBytes: CALL_COMMAND_MAX_OUTPUT_BYTES
+    })
+
+    // ── ERROR MAPPING ────────────────────────────────────────────────────────────────
+    if (runResult.timedOut) {
+      const callErr = new Error(
+        `call_command on "${host.displayName}" timed out after ${timeoutMs}ms.`
+      ) as Error & { computeCallError: ComputeCallError }
+      callErr.computeCallError = {
+        error_code: 'timeout',
+        message: `Command timed out after ${timeoutMs / 1000}s.`,
+        retry_after_user_action: false
+      }
+      throw callErr
+    }
+
+    // SSH exit code 255 indicates a connection-level failure (BatchMode auth failure, unknown host
+    // key, network error). The user must fix the external condition; no automatic retry.
+    if (runResult.exitCode === 255) {
+      const tail = errorTail(runResult.stderr, runResult.stdout)
+      const callErr = new Error(
+        `SSH connection to "${host.displayName}" failed: ${tail || 'exit 255'}`
+      ) as Error & { computeCallError: ComputeCallError }
+      callErr.computeCallError = {
+        error_code: 'host_unreachable',
+        message: tail || 'SSH exit 255: connection failed.',
+        retry_after_user_action: true
+      }
+      throw callErr
+    }
+
+    return {
+      exit_code: runResult.exitCode,
+      stdout: runResult.stdout,
+      stderr: runResult.stderr,
+      truncated: runResult.truncated
+    }
   }
 }
