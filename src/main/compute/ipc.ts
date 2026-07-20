@@ -3,16 +3,19 @@ import { ipcMain } from 'electron'
 import type {
   ComputeHost,
   CreateComputeHostRequest,
-  DeleteComputeHostRequest
+  DeleteComputeHostRequest,
+  ProbeResult
 } from '../../shared/compute'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { resolveStorageRoot } from '../storage-root'
+import { ComputeService } from './compute-service'
 import { ComputeHostRepository } from './repository'
 import { readSshConfigHostAliases } from './ssh-config'
+import { SystemSshRunner } from './ssh-runner'
 
 // The renderer-callable compute commands. Kept as a thin adapter over the repository + the pure
-// ssh-config parser so the IPC surface stays easy to unit test (aligns with projects/ipc.ts). Phase 1
-// (issue 01): host record CRUD + ssh-config alias listing. No SSH connection is made here.
+// ssh-config parser so the IPC surface stays easy to unit test (aligns with projects/ipc.ts). Issue 01:
+// host record CRUD + ssh-config alias listing. Issue 02 adds probe.
 type ComputeHandlers = {
   list: () => Promise<ComputeHost[]>
   get: (providerId: string) => Promise<ComputeHost | null>
@@ -20,19 +23,26 @@ type ComputeHandlers = {
   delete: (providerId: string) => Promise<void>
   // Selectable Host aliases parsed from ~/.ssh/config (patterns and Match blocks excluded).
   sshConfigAliases: () => Promise<string[]>
+  // Runs the probe bundle against the host and persists the result. Returns the ProbeResult.
+  probe: (providerId: string) => Promise<ProbeResult>
 }
 
 // Adapts a repository into thin handlers.
 const createComputeHandlers = (
   repository: ComputeHostRepository,
-  listSshAliases: () => Promise<string[]> = readSshConfigHostAliases
-): ComputeHandlers => ({
-  list: () => repository.list(),
-  get: (providerId) => repository.get(providerId),
-  create: (request) => repository.create(request),
-  delete: (providerId) => repository.delete(providerId),
-  sshConfigAliases: () => listSshAliases()
-})
+  listSshAliases: () => Promise<string[]> = readSshConfigHostAliases,
+  computeService?: ComputeService
+): ComputeHandlers => {
+  const service = computeService ?? new ComputeService(new SystemSshRunner(), repository)
+  return {
+    list: () => repository.list(),
+    get: (providerId) => repository.get(providerId),
+    create: (request) => repository.create(request),
+    delete: (providerId) => repository.delete(providerId),
+    sshConfigAliases: () => listSshAliases(),
+    probe: (providerId) => service.probe(providerId)
+  }
+}
 
 // Production repository backed by the SQLite database under the (dev-aware) storage root. The client
 // is passed as a provider (not a resolved promise) so a failed first initialization can be retried on
@@ -53,6 +63,7 @@ const registerComputeIpcHandlers = (repository = createDefaultComputeHostReposit
     handlers.delete(request.providerId)
   )
   ipcMain.handle('compute:ssh-config-aliases', () => handlers.sshConfigAliases())
+  ipcMain.handle('compute:probe', (_event, providerId: string) => handlers.probe(providerId))
 }
 
 export { createComputeHandlers, createDefaultComputeHostRepository, registerComputeIpcHandlers }

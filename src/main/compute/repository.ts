@@ -74,8 +74,8 @@ const serializeOverrides = (overrides: SshOverrides | undefined): string | null 
 }
 
 // Owns ComputeHost reads/writes. The client is resolved lazily per call so schema-ensure failures can
-// recover (see projects/repository.ts). Phase 1 (issue 01): create / list / get / delete only — probe,
-// details editing, and concurrency updates land in later issues.
+// recover (see projects/repository.ts). Phase 1 (issue 01): create / list / get / delete; issue 02
+// adds updateProbeResult and updateScratchRoot for probe persistence.
 class ComputeHostRepository {
   constructor(private readonly getClient: ComputeHostClientProvider) {}
 
@@ -145,6 +145,34 @@ class ComputeHostRepository {
     const client = await this.getClient()
 
     await client.computeHost.delete({ where: { providerId } })
+  }
+
+  // Writes the structured probe snapshot and inferred shape. Never touches detailsDoc (design.md §4).
+  async updateProbeResult(
+    providerId: string,
+    result: ProbeResult,
+    shape: ComputeHostShape
+  ): Promise<void> {
+    const client = await this.getClient()
+
+    await client.computeHost.update({
+      where: { providerId },
+      data: {
+        probeResult: JSON.stringify(result),
+        shape
+      }
+    })
+  }
+
+  // Updates scratchRoot when the probe reads $SCRATCH and scratchPinned is false. Probe callers
+  // must check scratchPinned before calling (ComputeService.probe does this).
+  async updateScratchRoot(providerId: string, scratchRoot: string): Promise<void> {
+    const client = await this.getClient()
+
+    await client.computeHost.update({
+      where: { providerId },
+      data: { scratchRoot }
+    })
   }
 }
 

@@ -33,7 +33,8 @@ import type {
 import type {
   ComputeHost,
   CreateComputeHostRequest,
-  DeleteComputeHostRequest
+  DeleteComputeHostRequest,
+  ProbeResult
 } from '../shared/compute'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
@@ -299,6 +300,8 @@ type OpenScienceAPI = {
     create: (request: CreateComputeHostRequest) => Promise<ComputeHost>
     delete: (request: DeleteComputeHostRequest) => Promise<void>
     sshConfigAliases: () => Promise<string[]>
+    // Runs the probe bundle; persists probeResult + shape. SSH never leaves the main process.
+    probe: (providerId: string) => Promise<ProbeResult>
   }
   preview: {
     load: (request: LoadPreviewStateRequest) => Promise<PersistedPreviewState | null>
@@ -654,7 +657,8 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('compute:get', providerId) as Promise<ComputeHost | null>,
     create: (request) => ipcRenderer.invoke('compute:create', request) as Promise<ComputeHost>,
     delete: (request) => ipcRenderer.invoke('compute:delete', request) as Promise<void>,
-    sshConfigAliases: () => ipcRenderer.invoke('compute:ssh-config-aliases') as Promise<string[]>
+    sshConfigAliases: () => ipcRenderer.invoke('compute:ssh-config-aliases') as Promise<string[]>,
+    probe: (providerId) => ipcRenderer.invoke('compute:probe', providerId) as Promise<ProbeResult>
   },
   preview: {
     // Per-project preview panel state, persisted alongside projects in SQLite.

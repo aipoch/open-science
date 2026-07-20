@@ -24,6 +24,7 @@ export const WEB_INVOKE_CHANNELS = {
   'compute.delete': 'compute:delete',
   'compute.get': 'compute:get',
   'compute.list': 'compute:list',
+  'compute.probe': 'compute:probe',
   'compute.sshConfigAliases': 'compute:ssh-config-aliases',
   'github.getStars': 'github:get-stars',
   'logs.getPath': 'logs:get-path',

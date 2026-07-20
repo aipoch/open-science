@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ComputeHost, CreateComputeHostRequest } from '../../shared/compute'
+import type { ComputeService } from './compute-service'
 import { createComputeHandlers } from './ipc'
 import type { ComputeHostRepository } from './repository'
 
@@ -26,6 +27,9 @@ const sampleHost = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
 // A minimal repository double exposing only the methods the handlers call.
 const mockRepository = (impl: Partial<ComputeHostRepository>): ComputeHostRepository =>
   impl as ComputeHostRepository
+
+// A minimal ComputeService double.
+const mockService = (impl: Partial<ComputeService>): ComputeService => impl as ComputeService
 
 describe('compute handlers', () => {
   it('list delegates to the repository', async () => {
@@ -77,5 +81,23 @@ describe('compute handlers', () => {
     const handlers = createComputeHandlers(mockRepository({}), lister)
 
     await expect(handlers.sshConfigAliases()).resolves.toEqual(['biowulf', 'lab-gpu'])
+  })
+
+  it('probe delegates to the injected ComputeService', async () => {
+    const probeResult = {
+      ok: true,
+      probedAt: '2026-01-01T00:00:00Z',
+      exitCode: 0,
+      errorTail: null,
+      cpus: 64,
+      detectedScheduler: 'slurm' as const
+    }
+    const probe = vi.fn(() => Promise.resolve(probeResult))
+    const handlers = createComputeHandlers(mockRepository({}), undefined, mockService({ probe }))
+
+    const result = await handlers.probe('ssh:biowulf')
+    expect(probe).toHaveBeenCalledWith('ssh:biowulf')
+    expect(result.ok).toBe(true)
+    expect(result.cpus).toBe(64)
   })
 })

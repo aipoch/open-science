@@ -42,6 +42,7 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
   const sshAliases = useComputeStore((state) => state.sshAliases)
   const loadSshAliases = useComputeStore((state) => state.loadSshAliases)
   const createHost = useComputeStore((state) => state.createHost)
+  const probeHost = useComputeStore((state) => state.probeHost)
 
   const [alias, setAlias] = useState('')
   const [detailsDoc, setDetailsDoc] = useState('')
@@ -69,7 +70,11 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
 
     try {
       const host = await createHost(buildRequest(alias, detailsDoc, user, port, identityFile))
+      // Navigate to the detail page immediately; the probe runs in the background so the detail page
+      // can show "Probing…" state (design.md §7: "提交后：建记录 → 自动 probe → 跳转详情页").
       onCreated(host.providerId)
+      // Fire-and-forget: errors are captured as probeResult.ok=false and surfaced in the detail UI.
+      void probeHost(host.providerId).catch(() => undefined)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not add host.')
     } finally {

@@ -31,7 +31,8 @@ import type {
 import type {
   ComputeHost,
   CreateComputeHostRequest,
-  DeleteComputeHostRequest
+  DeleteComputeHostRequest,
+  ProbeResult
 } from '../shared/compute'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
@@ -279,6 +280,8 @@ interface OpenScienceAPI {
     delete(request: DeleteComputeHostRequest): Promise<void>
     // Selectable Host aliases parsed from ~/.ssh/config (patterns / Match blocks excluded).
     sshConfigAliases(): Promise<string[]>
+    // Runs the probe bundle against the host; persists probeResult + shape. SSH stays in main.
+    probe(providerId: string): Promise<ProbeResult>
   }
   preview: {
     load(request: LoadPreviewStateRequest): Promise<PersistedPreviewState | null>
