@@ -177,7 +177,15 @@ export type ReviewRunRequest = {
   // the original turn (turnMessageId), but its scope belongs to the correction turn (scopeTurnMessageId)
   // — re-running must re-audit that correction turn, not the original.
   scopeTurnMessageId?: string
+  // Who requested the run. 'auto' (post-turn auto-review) is idempotent per turn: main refuses to start
+  // a second review for a turn that already has one, which is the atomic guarantee against duplicate
+  // runs from concurrent entry points. 'manual' (Request review / stale/error Re-run) intentionally
+  // bypasses that check so the user can force a fresh review. Defaults to 'manual' when omitted.
+  origin?: ReviewRunOrigin
 }
+
+// Distinguishes an automatic post-turn review from a user-initiated one — see ReviewRunRequest.origin.
+export type ReviewRunOrigin = 'auto' | 'manual'
 
 // IPC: pushed to renderer when a review's lifecycle/outcome/checks change.
 export type ReviewUpdateEvent = {
@@ -193,8 +201,11 @@ export type ReviewUpdateEvent = {
 //   - 'load-failed': the session store read threw (transient DB/FS). Retryable; creates no Review row.
 //   - 'run-failed': runReview threw before the running row was pushed (scope resolution / DB insert).
 //     A genuine failure, not a race — leave it to the user's manual Re-run rather than auto-retrying.
+//   - 'already-reviewed': an auto-origin request for a turn that already has a review. This is main's
+//     atomic per-turn idempotency verdict (checked after the in-flight key is reserved), so the turn is
+//     definitively handled — never retry. Manual re-runs bypass this and never receive it.
 export type ReviewRunNotStartedReason =
-  'already-in-flight' | 'not-found' | 'load-failed' | 'run-failed'
+  'already-in-flight' | 'not-found' | 'load-failed' | 'run-failed' | 'already-reviewed'
 
 // IPC: result of reviewer:run. `started` is false when the run could not begin — no Review row is
 // created in that case, so the caller (e.g. a stale-review Re-run) can release its pending state and

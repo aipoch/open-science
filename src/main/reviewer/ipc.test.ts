@@ -30,10 +30,11 @@ vi.mock('./orchestrator', () => ({
   runReview: (options: unknown) => runReview(options)
 }))
 
-// The repository/DB/session collaborators are irrelevant to the root split; stub them out.
+// Controllable review lookup so a test can make main's auto-idempotency check find an existing review.
+const getReviewsForSession = vi.fn().mockResolvedValue([])
 vi.mock('./repository', () => ({
   ReviewRepository: class {
-    getReviewsForSession = vi.fn().mockResolvedValue([])
+    getReviewsForSession = getReviewsForSession
   }
 }))
 
@@ -79,6 +80,9 @@ beforeEach(() => {
   sessionLoadAll.mockReset()
   // Default: the requested session exists, so triggerReview proceeds to runReview.
   sessionLoadAll.mockResolvedValue({ sessions: [{ id: 'session-1' }] })
+  getReviewsForSession.mockReset()
+  // Default: no prior review for the turn, so the auto-idempotency check lets the run proceed.
+  getReviewsForSession.mockResolvedValue([])
 })
 
 describe('reviewer IPC handlers', () => {
@@ -234,5 +238,42 @@ describe('reviewer IPC handlers', () => {
 
     expect(result).toEqual({ started: true })
     await vi.waitFor(() => expect(runReview).toHaveBeenCalledTimes(1))
+  })
+
+  it('refuses an auto review for a turn that already has a review (atomic idempotency)', async () => {
+    // The cross-renderer TOCTOU: even if the caller's local store looked empty, main is the single
+    // serialization point — a review already exists for this turn, so an auto request is a duplicate.
+    getReviewsForSession.mockResolvedValue([{ turnMessageId: 'message-1' }])
+    registerReviewerIpcHandlers({ acpRuntime })
+
+    const runHandler = handlers.get(REVIEWER_IPC.RUN)
+    const result = await runHandler?.({}, { ...createRequest(), origin: 'auto' })
+
+    expect(result).toEqual({ started: false, reason: 'already-reviewed' })
+    expect(runReview).not.toHaveBeenCalled()
+  })
+
+  it('runs an auto review when no review exists yet for the turn', async () => {
+    getReviewsForSession.mockResolvedValue([{ turnMessageId: 'a-different-turn' }])
+    registerReviewerIpcHandlers({ acpRuntime })
+
+    const runHandler = handlers.get(REVIEWER_IPC.RUN)
+    const result = await runHandler?.({}, { ...createRequest(), origin: 'auto' })
+
+    expect(result).toEqual({ started: true })
+    await vi.waitFor(() => expect(runReview).toHaveBeenCalledTimes(1))
+  })
+
+  it('lets a manual re-run bypass idempotency even when the turn already has a review', async () => {
+    // Manual stale/error Re-run must force a fresh review — it never consults the auto-idempotency check.
+    getReviewsForSession.mockResolvedValue([{ turnMessageId: 'message-1' }])
+    registerReviewerIpcHandlers({ acpRuntime })
+
+    const runHandler = handlers.get(REVIEWER_IPC.RUN)
+    const result = await runHandler?.({}, { ...createRequest(), origin: 'manual' })
+
+    expect(result).toEqual({ started: true })
+    expect(getReviewsForSession).not.toHaveBeenCalled()
+    expect(runReview).toHaveBeenCalledTimes(1)
   })
 })

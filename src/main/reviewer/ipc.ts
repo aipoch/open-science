@@ -138,6 +138,32 @@ const registerReviewerIpcHandlers = (
     }
     inFlightReviewKeys.add(inFlightKey)
 
+    // Atomic per-turn idempotency for auto-review. The in-flight key (reserved synchronously above)
+    // serializes concurrent starts; this DB check — running while we hold that key — covers the other
+    // half: a run by another entry that has already COMPLETED and released its key. main is the single
+    // process every renderer's IPC funnels through, so together they are the real mutex the renderer's
+    // store check could only approximate (that check races across processes). If any review already
+    // exists for this turn, an auto request is a duplicate → refuse. Manual re-runs (Request review,
+    // stale/error Re-run) set origin='manual' and skip this so the user can force a fresh review.
+    if (request.origin === 'auto') {
+      try {
+        const existing = await reviewRepository.getReviewsForSession(sessionId)
+        if (existing.some((review) => review.turnMessageId === turnMessageId)) {
+          inFlightReviewKeys.delete(inFlightKey)
+          log.info('auto review skipped: turn already has a review', { sessionId, turnMessageId })
+          return { started: false, reason: 'already-reviewed' }
+        }
+      } catch (error) {
+        // A review-store read failure is non-fatal here: fall through and let the normal session
+        // load + run guard correctness. Worst case is the duplicate this check would have prevented.
+        log.warn('auto-review idempotency check failed; proceeding', {
+          sessionId,
+          turnMessageId,
+          error: error instanceof Error ? error.message : String(error)
+        })
+      }
+    }
+
     let session: PersistedChatSession | undefined
     try {
       const { sessions } = await sessionRepository.loadAll()

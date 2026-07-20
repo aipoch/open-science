@@ -5,7 +5,6 @@ import { createPreviewFileItem } from '../../pages/workspace/preview-file-item'
 import { getPreviewFormatForFile } from '../../pages/workspace/preview-support'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
 import { isMediaOverflowError } from '../../../../shared/media-overflow'
-import { useReviewStore } from '../../stores/review-store'
 import { useSessionStore } from '../../stores/session-store'
 import { useSettingsStore } from '../../stores/settings-store'
 import { createRuntimeStreamId, isAssistantRuntimeChatMessageEvent } from './chat-events'
@@ -138,21 +137,17 @@ const triggerAutoReview = async (sessionId: string): Promise<void> => {
     if (!request) return
 
     // Retry a started:false a bounded number of times, but ONLY for reasons a persistence race can
-    // produce (the session may not be flushed to disk yet). An already-in-flight turn is already being
-    // reviewed, so retrying it would launch a duplicate review/fix-loop once the lock releases — treat
-    // it (and any non-retryable/absent reason, or a bridge that returns nothing) as done immediately.
+    // produce (the session may not be flushed to disk yet). Every other reason is terminal for the auto
+    // path: 'already-in-flight' / 'already-reviewed' mean the turn is (being) handled, 'run-failed' is a
+    // genuine failure for the user's manual Re-run — and a bridge that returns nothing is treated done.
     //
-    // The per-call reason only describes ONE call, so it can't make the whole retry task idempotent:
-    // during the delay another entry (manual, another renderer, another auto trigger) can start AND
-    // complete a review for this turn, releasing main's in-flight lock before our next attempt — which
-    // would then start a SECOND review without ever seeing already-in-flight. Guard every attempt with
-    // the review store: once any review exists for this turn (its running row has been pushed), the
-    // turn is handled and we stop. Combined with main's synchronous in-flight lock (which serializes
-    // truly-simultaneous starts into already-in-flight), this closes the retry-window duplicate.
+    // Idempotency across the whole retry task is enforced by MAIN, not here: it reserves the in-flight
+    // key synchronously and, for origin='auto', refuses a turn that already has a review. So even if
+    // another entry starts and finishes during our delay (releasing the lock), the next attempt reaches
+    // main and comes back 'already-reviewed' rather than launching a duplicate. A renderer-local store
+    // check could only race that cross-process window, so we rely on main's verdict.
     for (let attempt = 0; attempt < AUTO_REVIEW_START_ATTEMPTS; attempt++) {
-      if (useReviewStore.getState().getReviewForTurn(sessionId, request.turnMessageId)) return
-
-      const result = await window.api.reviewer.run(request)
+      const result = await window.api.reviewer.run({ ...request, origin: 'auto' })
       if (result?.started !== false) return
       if (!result.reason || !RETRYABLE_START_FAILURE_REASONS.has(result.reason)) return
       if (attempt < AUTO_REVIEW_START_ATTEMPTS - 1) await delay(AUTO_REVIEW_RETRY_DELAY_MS)

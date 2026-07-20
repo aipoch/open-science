@@ -721,7 +721,8 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
 
     if (!request) return
 
-    void window.api.reviewer.run(request)
+    // Explicit user action: bypass main's auto-only per-turn idempotency so a manual review always runs.
+    void window.api.reviewer.run({ ...request, origin: 'manual' })
   }
 
   // Revokes one always-allow grant for the visible session; new conversations have no grants.
