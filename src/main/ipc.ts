@@ -29,11 +29,11 @@ import { NotebookLocalRpcServer } from './notebook/local-rpc-server'
 import {
   createDefaultPreviewStateRepository,
   createDefaultProjectRepository,
-  createDefaultReviewRepository,
   registerProjectIpcHandlers
 } from './projects/ipc'
 import { registerReviewerIpcHandlers } from './reviewer/ipc'
 import {
+  createDefaultReviewRepository,
   createDefaultSessionRepository,
   registerSessionPersistenceIpcHandlers
 } from './session-persistence/ipc'
@@ -190,35 +190,11 @@ const registerIpcHandlers = async ({
     (event) => broadcastToRenderers('project-files:changed', event)
   )
   const reviewRepository = createDefaultReviewRepository()
-  const projectDeletionLog = createLogger('projects:deletion')
-  // Project deletion bypasses the session IPC handler, so keep upload cleanup on this authoritative
-  // path as well. Cleanup is best-effort after the session/index delete, matching session IPC semantics.
-  const projectSessionDeletion = {
-    deleteProjectSessions: async (projectId: string): Promise<void> => {
-      const sessions = (await sessionPersistenceCoordinator.loadAll()).sessions.filter(
-        (session) => session.projectId === projectId
-      )
-      await sessionPersistenceCoordinator.deleteProjectSessions(projectId)
-      await Promise.all(
-        sessions.map((session) =>
-          uploadRepository.deleteSessionUploads(session.id).catch((error: unknown) => {
-            projectDeletionLog.warn(
-              'deleteSessionUploads failed after project delete (non-fatal)',
-              {
-                projectId,
-                sessionId: session.id,
-                error: error instanceof Error ? error.message : String(error)
-              }
-            )
-          })
-        )
-      )
-    }
-  }
   const projectDeletionCoordinator = new ProjectDeletionCoordinator(
     projectRepository,
-    projectSessionDeletion,
-    previewStateRepository
+    sessionPersistenceCoordinator,
+    previewStateRepository,
+    reviewRepository
   )
   const sessionPersistenceBackend: SessionPersistenceBackend = {
     loadAll: async () => {
@@ -368,20 +344,13 @@ const registerIpcHandlers = async ({
   })
   registerArtifactIpcHandlers(artifactRepository, artifactRunRegistry)
   registerUploadIpcHandlers(uploadRepository)
-  registerSessionPersistenceIpcHandlers(sessionPersistenceBackend, reviewRepository, (sessionId) =>
-    uploadRepository.deleteSessionUploads(sessionId)
-  )
+  registerSessionPersistenceIpcHandlers(sessionPersistenceBackend, reviewRepository)
   registerProjectFilesIpcHandlers(
     projectFilesRepository,
     sessionPersistenceCoordinator,
     projectDeletionCoordinator
   )
-  registerProjectIpcHandlers(
-    projectRepository,
-    previewStateRepository,
-    reviewRepository,
-    projectDeletionCoordinator
-  )
+  registerProjectIpcHandlers(projectRepository, previewStateRepository, projectDeletionCoordinator)
   // Wire the reviewer backend into the app lifecycle: installs ipcMain.handle('reviewer:run', ...)
   // and 'reviewer:get-for-session' so the renderer's fire-and-forget reviewer calls resolve to
   // real handlers instead of no-ops. Passing the already-constructed AcpRuntime so the reviewer

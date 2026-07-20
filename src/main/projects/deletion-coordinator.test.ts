@@ -16,7 +16,8 @@ describe('ProjectDeletionCoordinator', () => {
     const projects = createProjects()
     const sessions = { deleteProjectSessions: vi.fn().mockResolvedValue(undefined) }
     const preview = { delete: vi.fn().mockResolvedValue(undefined) }
-    const coordinator = new ProjectDeletionCoordinator(projects, sessions, preview)
+    const reviews = { deleteReviewsForProject: vi.fn().mockResolvedValue(undefined) }
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions, preview, reviews)
 
     await coordinator.deleteProject('project-1')
 
@@ -25,6 +26,7 @@ describe('ProjectDeletionCoordinator', () => {
     expect(sessions.deleteProjectSessions).toHaveBeenCalledWith('project-1')
     expect(projects.deleteDeletionIntent).toHaveBeenCalledWith('project-1')
     expect(preview.delete).toHaveBeenCalledWith('project-1')
+    expect(reviews.deleteReviewsForProject).toHaveBeenCalledWith('project-1')
   })
 
   it('keeps the project row and clears intent when session and index cleanup fails', async () => {
@@ -46,15 +48,49 @@ describe('ProjectDeletionCoordinator', () => {
     const projects = createProjects()
     projects.listDeletionIntents = vi.fn().mockResolvedValue(['project-1'])
     const sessions = { deleteProjectSessions: vi.fn().mockResolvedValue(undefined) }
-    const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
-      delete: vi.fn().mockResolvedValue(undefined)
-    })
+    const reviews = { deleteReviewsForProject: vi.fn().mockResolvedValue(undefined) }
+    const coordinator = new ProjectDeletionCoordinator(
+      projects,
+      sessions,
+      { delete: vi.fn().mockResolvedValue(undefined) },
+      reviews
+    )
 
     await coordinator.recoverPendingDeletions()
 
     expect(sessions.deleteProjectSessions).toHaveBeenCalledWith('project-1')
     expect(projects.delete).toHaveBeenCalledWith('project-1')
     expect(projects.deleteDeletionIntent).toHaveBeenCalledWith('project-1')
+    expect(reviews.deleteReviewsForProject).toHaveBeenCalledWith('project-1')
+  })
+
+  it('keeps the recovery intent until derived project cleanup has finished', async () => {
+    const order: string[] = []
+    const projects = createProjects()
+    projects.delete = vi.fn(async () => {
+      order.push('project')
+    })
+    projects.deleteDeletionIntent = vi.fn(async () => {
+      order.push('intent')
+    })
+    const coordinator = new ProjectDeletionCoordinator(
+      projects,
+      { deleteProjectSessions: vi.fn().mockResolvedValue(undefined) },
+      {
+        delete: vi.fn(async () => {
+          order.push('preview')
+        })
+      },
+      {
+        deleteReviewsForProject: vi.fn(async () => {
+          order.push('reviews')
+        })
+      }
+    )
+
+    await coordinator.deleteProject('project-1')
+
+    expect(order).toEqual(['project', 'preview', 'reviews', 'intent'])
   })
 
   it('reuses a successful recovery gate for later operations', async () => {

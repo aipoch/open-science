@@ -770,14 +770,14 @@ const deleteWorkspaceSession = async (
   runtime: WorkspaceDeletionRuntime,
   sessionId: string,
   persistDeletion: PersistSessionDeletion = window.api.sessions.deleteSession
-): Promise<void> => {
+): Promise<boolean> => {
   const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
-  if (!session?.projectId) return
+  if (!session?.projectId) return false
 
   const snapshot = await runtime.deleteSession(sessionId)
   if (!snapshot || snapshot.sessionIds.includes(sessionId)) {
     useSessionStore.getState().failRun(sessionId, 'Agent session deletion failed')
-    return
+    return false
   }
 
   try {
@@ -790,6 +790,7 @@ const deleteWorkspaceSession = async (
   }
 
   useSessionStore.getState().deleteSession(sessionId)
+  return true
 }
 
 const useWorkspaceAgentRuntime = (): {
@@ -801,7 +802,7 @@ const useWorkspaceAgentRuntime = (): {
   sendMessage: (input: SendWorkspaceMessageInput) => Promise<SendWorkspaceMessageResult | undefined>
   cancelRun: (sessionId: string) => Promise<void>
   resumeInterruptedSession: (sessionId: string) => Promise<void>
-  deleteRuntimeSession: (sessionId: string) => Promise<void>
+  deleteRuntimeSession: (sessionId: string) => Promise<boolean>
   respondToPermission: (requestId: string, optionId?: string) => Promise<void>
   setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => Promise<boolean>
   revokePermissionGrant: (sessionId: string, categoryKey: string) => Promise<void>
@@ -881,8 +882,8 @@ const useWorkspaceAgentRuntime = (): {
 
   // Deletes the local session only after runtime state confirms it was removed.
   const deleteRuntimeSession = useCallback(
-    async (sessionId: string): Promise<void> => {
-      await deleteWorkspaceSession(runtime, sessionId).catch(() => undefined)
+    async (sessionId: string): Promise<boolean> => {
+      return deleteWorkspaceSession(runtime, sessionId).catch(() => false)
     },
     [runtime]
   )

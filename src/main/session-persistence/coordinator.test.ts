@@ -84,6 +84,24 @@ describe('SessionPersistenceCoordinator', () => {
     expect(repository.saveSession).toHaveBeenCalledOnce()
   })
 
+  it('marks the index incomplete when deletion compensation cannot restore DB visibility', async () => {
+    const repository = createSessionRepository({
+      deleteSession: vi.fn().mockRejectedValueOnce(new Error('disk locked'))
+    })
+    const markReconciliationIncomplete = vi.fn()
+    const fileIndex = createFileIndex({
+      restoreSession: vi.fn().mockRejectedValueOnce(new Error('database unavailable')),
+      markReconciliationIncomplete
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
+
+    await expect(coordinator.deleteSession('project-1', 'session-1')).rejects.toThrow(
+      'database unavailable'
+    )
+    expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
+    await expect(coordinator.saveSession(createSession())).resolves.toBeUndefined()
+  })
+
   it('hydrates sessions after indexing and reconciles only a complete scan', async () => {
     const session = createSession()
     const result = { sessions: [session], manifest: { version: 1 as const } }
@@ -98,7 +116,7 @@ describe('SessionPersistenceCoordinator', () => {
     expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledWith([session])
   })
 
-  it('retries active sessions after complete reconciliation releases a file collision', async () => {
+  it('reconciles active owners before syncing sessions from a complete startup scan', async () => {
     const session = createSession()
     const result = { sessions: [session], manifest: { version: 1 as const } }
     let isReconciled = false
@@ -113,14 +131,14 @@ describe('SessionPersistenceCoordinator', () => {
       })
     })
     syncSession.mockImplementation(async () => {
-      expect(isReconciled).toBe(syncSession.mock.calls.length > 1)
+      expect(isReconciled).toBe(true)
       return []
     })
     const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
 
     await coordinator.loadAll()
 
-    expect(syncSession).toHaveBeenCalledTimes(2)
+    expect(syncSession).toHaveBeenCalledOnce()
   })
 
   it('retries surviving project sessions after deleting a collision owner', async () => {
@@ -212,6 +230,44 @@ describe('SessionPersistenceCoordinator', () => {
     await coordinator.deleteProjectSessions('project-1')
 
     await expect(coordinator.saveSession(createSession())).rejects.toThrow(/project.*deleted/i)
+  })
+
+  it('does not turn a committed project-session deletion into a failure when notification throws', async () => {
+    const repository = createSessionRepository()
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex(), () => {
+      throw new Error('renderer unavailable')
+    })
+
+    await expect(coordinator.deleteProjectSessions('project-1')).resolves.toBeUndefined()
+    expect(repository.deleteProjectSessions).toHaveBeenCalledWith('project-1')
+    await expect(coordinator.saveSession(createSession())).rejects.toThrow(/project.*deleted/i)
+  })
+
+  it('does not turn a committed session deletion into a failure when notification throws', async () => {
+    const repository = createSessionRepository()
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex(), () => {
+      throw new Error('renderer unavailable')
+    })
+
+    await expect(coordinator.deleteSession('project-1', 'session-1')).resolves.toBeUndefined()
+    expect(repository.deleteSession).toHaveBeenCalledWith('project-1', 'session-1')
+    await expect(coordinator.saveSession(createSession())).rejects.toThrow(/deleted/)
+  })
+
+  it('reconciles surviving sessions after a successful session deletion', async () => {
+    const survivor = createSession({ id: 'session-2' })
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({
+        result: { sessions: [survivor], manifest: { version: 1 as const } },
+        isComplete: true
+      })
+    })
+    const fileIndex = createFileIndex()
+    const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
+
+    await coordinator.deleteSession('project-1', 'session-1')
+
+    expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledWith([survivor])
   })
 
   it('routes manifest writes through the same mutation queue', async () => {

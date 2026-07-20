@@ -16,11 +16,7 @@ import type { ProjectDeletionCoordinator } from './deletion-coordinator'
 import { PreviewStateRepository } from './preview-repository'
 import { getProjectDbClient } from './prisma-client'
 import { ProjectRepository } from './repository'
-import { ReviewRepository } from '../reviewer/repository'
-import { createLogger } from '../logger'
 import { resolveStorageRoot } from '../storage-root'
-
-const log = createLogger('projects:ipc')
 
 type ProjectHandlers = {
   list: () => Promise<Project[]>
@@ -39,21 +35,16 @@ const createDefaultProjectRepository = (): ProjectRepository =>
 const createDefaultPreviewStateRepository = (): PreviewStateRepository =>
   new PreviewStateRepository(() => getProjectDbClient(resolveStorageRoot()))
 
-const createDefaultReviewRepository = (): ReviewRepository =>
-  new ReviewRepository(() => getProjectDbClient(resolveStorageRoot()))
-
 type ProjectDeleteHandler = Pick<
   ProjectDeletionCoordinator,
   'deleteProject' | 'recoverPendingDeletions'
 >
 type ProjectCrudRepository = Pick<ProjectRepository, 'list' | 'get' | 'create' | 'update'>
-type ProjectReviewDeletion = Pick<ReviewRepository, 'deleteReviewsForProject'>
 
 // Adapts repository operations into thin handlers while enforcing one shared recovery gate. CRUD
 // cannot observe or mutate projects until every durable deletion intent has finished replaying.
 const createProjectHandlers = (
   repository: ProjectCrudRepository,
-  reviewRepository: ProjectReviewDeletion,
   deletionCoordinator: ProjectDeleteHandler
 ): ProjectHandlers => ({
   list: async () => {
@@ -74,15 +65,7 @@ const createProjectHandlers = (
   },
   delete: async (id) => {
     await deletionCoordinator.recoverPendingDeletions()
-    // Reviewer data is auxiliary. Log cleanup failures but never block the authoritative project,
-    // session, and managed-file deletion transaction.
-    await reviewRepository.deleteReviewsForProject(id).catch((error: unknown) => {
-      log.warn('deleteReviewsForProject failed (non-fatal)', {
-        projectId: id,
-        error: error instanceof Error ? error.message : String(error)
-      })
-    })
-    return deletionCoordinator.deleteProject(id)
+    await deletionCoordinator.deleteProject(id)
   }
 })
 
@@ -90,10 +73,9 @@ const createProjectHandlers = (
 const registerProjectIpcHandlers = (
   repository: ProjectRepository,
   previewRepository: PreviewStateRepository,
-  reviewRepository: ReviewRepository,
   deletionCoordinator: ProjectDeleteHandler
 ): void => {
-  const handlers = createProjectHandlers(repository, reviewRepository, deletionCoordinator)
+  const handlers = createProjectHandlers(repository, deletionCoordinator)
 
   ipcMain.handle('projects:list', () => handlers.list())
   ipcMain.handle('projects:get', (_event, id: string) => handlers.get(id))
@@ -123,7 +105,6 @@ const registerProjectIpcHandlers = (
 export {
   createDefaultPreviewStateRepository,
   createDefaultProjectRepository,
-  createDefaultReviewRepository,
   createProjectHandlers,
   registerProjectIpcHandlers
 }

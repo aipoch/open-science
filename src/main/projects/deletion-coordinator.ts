@@ -16,6 +16,10 @@ type PreviewDeletion = {
   delete(projectId: string): Promise<void>
 }
 
+type ProjectReviewDeletion = {
+  deleteReviewsForProject(projectId: string): Promise<void>
+}
+
 // Persists deletion intent so a crash cannot strand an absent project with active session data. The
 // same sticky recovery gate is shared by project CRUD, session persistence, and Files queries.
 class ProjectDeletionCoordinator {
@@ -26,7 +30,8 @@ class ProjectDeletionCoordinator {
   constructor(
     private readonly projects: ProjectDeletionRepository,
     private readonly sessions: ProjectSessionDeletion,
-    private readonly preview: PreviewDeletion
+    private readonly preview: PreviewDeletion,
+    private readonly reviews?: ProjectReviewDeletion
   ) {}
 
   // Enqueues before yielding so two callers in the same event-loop turn cannot publish competing
@@ -103,12 +108,23 @@ class ProjectDeletionCoordinator {
   // makes this tail idempotent if the app crashes between either statement.
   private async finishDeletion(projectId: string): Promise<void> {
     if (await this.projects.get(projectId)) await this.projects.delete(projectId)
-    await this.projects.deleteDeletionIntent(projectId)
 
     // Preview state is derived UI state; a cleanup failure must not resurrect deleted chat data.
     await this.preview.delete(projectId).catch(() => undefined)
+
+    // Reviews are derived project data. Keeping this after the project/session commit makes normal
+    // deletion and crash recovery remove the same orphan rows without risking review loss on failure.
+    await this.reviews?.deleteReviewsForProject(projectId).catch(() => undefined)
+
+    // Keep the intent until all derived cleanup has been attempted so a crash replays the full tail.
+    await this.projects.deleteDeletionIntent(projectId)
   }
 }
 
 export { ProjectDeletionCoordinator }
-export type { PreviewDeletion, ProjectDeletionRepository, ProjectSessionDeletion }
+export type {
+  PreviewDeletion,
+  ProjectDeletionRepository,
+  ProjectReviewDeletion,
+  ProjectSessionDeletion
+}

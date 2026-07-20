@@ -740,12 +740,6 @@ export type DeleteSessionRequest = {
   sessionId: string
 }
 
-// Retained for callers that explicitly remove all sessions in a project; the main-process coordinator
-// applies the same soft-delete/index invalidation path used by project deletion.
-export type DeleteProjectSessionsRequest = {
-  projectId: string
-}
-
 export type SaveSessionManifestRequest = {
   lastProjectId?: string
   lastSessionId?: string

@@ -274,6 +274,53 @@ describe('ManagedFileIndexRepository', () => {
     })
   })
 
+  it('restores a soft-deleted owner before another active session can claim its file', async () => {
+    const sharedPath = join(
+      storageRoot,
+      'artifacts',
+      'default-project',
+      'legacy-shared',
+      'recover.txt'
+    )
+    await writeManagedFile(sharedPath, 'recover owner')
+    const owner = createSession({
+      artifacts: [
+        { id: 'artifact-owner', kind: 'managed-file', path: sharedPath, name: 'recover.txt' }
+      ]
+    })
+    const claimant = createSession({
+      id: 'session-b',
+      artifacts: [
+        { id: 'artifact-claimant', kind: 'managed-file', path: sharedPath, name: 'recover.txt' }
+      ]
+    })
+    await repository.syncSession(owner)
+    await repository.softDeleteSession(PROJECT_ID, SESSION_ID)
+
+    // A complete scan proves the owner JSON survived the interrupted delete. Reconciliation must
+    // restore that owner before startup sync order gives another active session a chance to claim it.
+    await repository.reconcileActiveSessions([owner, claimant])
+    await repository.syncSession(claimant)
+
+    await expect(
+      repository.listFiles({
+        projectId: PROJECT_ID,
+        collection: { kind: 'sessionArtifacts', sessionId: SESSION_ID },
+        limit: 20
+      })
+    ).resolves.toMatchObject({
+      items: [expect.objectContaining({ sourceFileId: 'artifact-owner' })],
+      totalCount: 1
+    })
+    await expect(
+      repository.listFiles({
+        projectId: PROJECT_ID,
+        collection: { kind: 'sessionArtifacts', sessionId: 'session-b' },
+        limit: 20
+      })
+    ).resolves.toMatchObject({ items: [], totalCount: 0 })
+  })
+
   it('skips pending uploads and artifacts during migration', async () => {
     const pendingArtifactPath = join(
       storageRoot,

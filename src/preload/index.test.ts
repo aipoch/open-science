@@ -32,7 +32,6 @@ type PreloadApi = {
     loadAll: () => unknown
     saveSession: (session: unknown) => unknown
     deleteSession: (request: unknown) => unknown
-    deleteProjectSessions: (request: unknown) => unknown
     saveManifest: (request: unknown) => unknown
   }
   settings: {
@@ -85,7 +84,6 @@ type ForwardingCase = {
 
 const sampleSession = { id: 's-1', projectId: 'p-1', title: 't' }
 const sampleDeleteSession = { projectId: 'p-1', sessionId: 's-1' }
-const sampleDeleteProject = { projectId: 'p-1' }
 const sampleManifest = { projectId: 'p-1', sessionId: 's-1' }
 const sampleInstall = { executablePath: '/usr/local/bin/opencode' }
 const sampleFramework = { framework: 'opencode' }
@@ -110,12 +108,6 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.sessions.deleteSession(sampleDeleteSession),
     channel: 'sessions:delete-session',
     args: [sampleDeleteSession]
-  },
-  {
-    name: 'sessions.deleteProjectSessions → sessions:delete-project-sessions',
-    invoke: (a) => a.sessions.deleteProjectSessions(sampleDeleteProject),
-    channel: 'sessions:delete-project-sessions',
-    args: [sampleDeleteProject]
   },
   {
     name: 'sessions.saveManifest → sessions:save-manifest',
@@ -207,6 +199,10 @@ const cases: ForwardingCase[] = [
 ]
 
 describe('preload bridge — sessions + agent-framework IPC channels', () => {
+  it('does not expose the legacy half-delete project-session command', () => {
+    expect(api.sessions).not.toHaveProperty('deleteProjectSessions')
+  })
+
   it.each(cases)('$name', ({ invoke, channel, args }) => {
     invoke(api)
 

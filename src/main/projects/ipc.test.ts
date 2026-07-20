@@ -15,8 +15,7 @@ describe('createProjectHandlers', () => {
       deleteProject: vi.fn().mockResolvedValue(undefined),
       recoverPendingDeletions: vi.fn().mockResolvedValue(undefined)
     }
-    const reviewRepository = { deleteReviewsForProject: vi.fn().mockResolvedValue(undefined) }
-    const handlers = createProjectHandlers(repository, reviewRepository, deletionCoordinator)
+    const handlers = createProjectHandlers(repository, deletionCoordinator)
 
     await handlers.delete('project-1')
 
@@ -35,8 +34,7 @@ describe('createProjectHandlers', () => {
       deleteProject: vi.fn(),
       recoverPendingDeletions: vi.fn().mockResolvedValue(undefined)
     }
-    const reviewRepository = { deleteReviewsForProject: vi.fn().mockResolvedValue(undefined) }
-    const handlers = createProjectHandlers(repository, reviewRepository, deletionCoordinator)
+    const handlers = createProjectHandlers(repository, deletionCoordinator)
 
     await handlers.list()
 
@@ -67,8 +65,7 @@ describe('createProjectHandlers', () => {
         order.push('recover')
       })
     }
-    const reviewRepository = { deleteReviewsForProject: vi.fn().mockResolvedValue(undefined) }
-    const handlers = createProjectHandlers(repository, reviewRepository, deletionCoordinator)
+    const handlers = createProjectHandlers(repository, deletionCoordinator)
 
     await handlers.get('project-1')
     await handlers.create({ name: 'Project' })

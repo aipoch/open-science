@@ -49,38 +49,31 @@ class SessionPersistenceCoordinator {
   ) {}
 
   /**
-   * Loads durable sessions and opportunistically backfills their file projection.
-   *
-   * Chat hydration remains available when indexing fails. Reconciliation only runs after a complete
-   * directory scan, then a cheap second revision pass lets collision losers claim rows released by
-   * reconciliation in the same startup cycle.
+   * Loads durable sessions and backfills their file projection only after a complete scan has restored
+   * active ownership. Chat hydration remains available when indexing or reconciliation fails.
    */
   loadAll(): Promise<LoadAllSessionsResult> {
     return this.enqueue(async () => {
       const scan = await this.repository.loadAllWithDiagnostics()
 
-      for (const session of scan.result.sessions) {
-        await this.fileIndex.syncSession(session).catch(() => undefined)
+      if (!scan.isComplete) {
+        // Without the full active-session set, syncing could let a readable duplicate steal a row from
+        // a soft-deleted owner whose JSON was merely unreadable during this scan.
+        this.fileIndex.markReconciliationIncomplete()
+        return scan.result
       }
 
-      if (scan.isComplete) {
-        let reconciliationSucceeded = false
-        try {
-          await this.fileIndex.reconcileActiveSessions(scan.result.sessions)
-          reconciliationSucceeded = true
-        } catch {
-          // The repository records the global incomplete marker.
-        }
+      try {
+        // Reconciliation restores active owners left soft-deleted by an interrupted delete before any
+        // scan-order-dependent sync can offer their canonical rows to another session.
+        await this.fileIndex.reconcileActiveSessions(scan.result.sessions)
+      } catch {
+        // The repository records the global incomplete marker; keep chat hydration available.
+        return scan.result
+      }
 
-        if (reconciliationSucceeded) {
-          // Reconciliation can soft-delete a missing collision owner. A cheap second revision pass
-          // lets a retry-sentinel loser claim that file during the same startup.
-          for (const session of scan.result.sessions) {
-            await this.fileIndex.syncSession(session).catch(() => undefined)
-          }
-        }
-      } else {
-        this.fileIndex.markReconciliationIncomplete()
+      for (const session of scan.result.sessions) {
+        await this.fileIndex.syncSession(session).catch(() => undefined)
       }
 
       return scan.result
@@ -106,7 +99,7 @@ class SessionPersistenceCoordinator {
       } catch (error) {
         // The JSON is already durable. Tell open Files views to surface the incomplete projection,
         // then preserve the rejection so the normal persistence retry path remains active.
-        this.onFilesChanged?.({
+        this.notifyFilesChanged({
           projectId: session.projectId,
           sources: ['artifact', 'upload'],
           kind: 'reset'
@@ -114,7 +107,7 @@ class SessionPersistenceCoordinator {
         throw error
       }
       if (changedSources.length > 0) {
-        this.onFilesChanged?.({
+        this.notifyFilesChanged({
           projectId: session.projectId,
           sessionId: session.id,
           sources: changedSources,
@@ -137,13 +130,16 @@ class SessionPersistenceCoordinator {
       } catch (error) {
         try {
           if (token) await this.fileIndex.restoreProject(projectId, token)
+        } catch (restoreError) {
+          this.fileIndex.markReconciliationIncomplete()
+          throw restoreError
         } finally {
           this.deletedProjects.delete(projectId)
         }
         throw error
       }
 
-      this.onFilesChanged?.({
+      this.notifyFilesChanged({
         projectId,
         sources: ['artifact', 'upload'],
         kind: 'reset'
@@ -163,7 +159,7 @@ class SessionPersistenceCoordinator {
       const scan = await this.repository.loadAllWithDiagnostics()
       if (!scan.isComplete) {
         this.fileIndex.markReconciliationIncomplete()
-        this.onFilesChanged?.({
+        this.notifyFilesChanged({
           projectId,
           sources: ['artifact', 'upload'],
           kind: 'reset'
@@ -204,7 +200,7 @@ class SessionPersistenceCoordinator {
       }
 
       // One reset refreshes overview and all cursor layers after the explicit repair attempt.
-      this.onFilesChanged?.({
+      this.notifyFilesChanged({
         projectId,
         sources: ['artifact', 'upload'],
         kind: 'reset'
@@ -239,6 +235,9 @@ class SessionPersistenceCoordinator {
       } catch (error) {
         try {
           if (token) await this.fileIndex.restoreSession(projectId, sessionId, token)
+        } catch (restoreError) {
+          this.fileIndex.markReconciliationIncomplete()
+          throw restoreError
         } finally {
           this.deletedSessions.delete(key)
         }
@@ -261,6 +260,9 @@ class SessionPersistenceCoordinator {
               survivorChanges.push({ sessionId: session.id, sources: changedSources })
             }
           }
+          // A complete scan is the commit point for clearing the deleted session's incomplete marker
+          // and any other stale ledgers that no longer have authoritative JSON.
+          await this.fileIndex.reconcileActiveSessions(scan.result.sessions)
         } else {
           this.fileIndex.markReconciliationIncomplete()
         }
@@ -269,7 +271,7 @@ class SessionPersistenceCoordinator {
       }
 
       for (const change of survivorChanges) {
-        this.onFilesChanged?.({
+        this.notifyFilesChanged({
           projectId,
           sessionId: change.sessionId,
           sources: change.sources,
@@ -277,7 +279,7 @@ class SessionPersistenceCoordinator {
         })
       }
 
-      this.onFilesChanged?.({
+      this.notifyFilesChanged({
         projectId,
         sessionId,
         sources: ['artifact', 'upload'],
@@ -295,6 +297,16 @@ class SessionPersistenceCoordinator {
       () => undefined
     )
     return run
+  }
+
+  // Renderer notifications are derived state. They must never change the result of an authoritative
+  // JSON/index mutation that has already committed; the next Files request can refresh if delivery fails.
+  private notifyFilesChanged(event: ProjectFilesChangedEvent): void {
+    try {
+      this.onFilesChanged?.(event)
+    } catch {
+      // A closed window or test sink may reject synchronously after the durable mutation succeeds.
+    }
   }
 }
 

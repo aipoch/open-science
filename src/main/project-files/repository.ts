@@ -367,12 +367,34 @@ class ManagedFileIndexRepository {
         sessions.map((session) => sessionKey(session.projectId, session.id))
       )
       const indexedSessions = await client.managedFileSessionSync.findMany({
-        where: { deletedAt: null },
-        select: { projectId: true, sessionId: true }
+        select: { projectId: true, sessionId: true, deletedAt: true }
       })
 
       for (const indexed of indexedSessions) {
-        if (!activeKeys.has(sessionKey(indexed.projectId, indexed.sessionId))) {
+        const isActive = activeKeys.has(sessionKey(indexed.projectId, indexed.sessionId))
+
+        if (isActive && indexed.deletedAt !== null) {
+          // A complete scan proves that JSON survived an interrupted deletion. Restore all metadata for
+          // that owner before startup sync order can let another active session claim its unique rows.
+          await client.$transaction([
+            client.managedFile.updateMany({
+              where: {
+                projectId: indexed.projectId,
+                sessionId: indexed.sessionId,
+                deletedAt: { not: null }
+              },
+              data: { deletedAt: null, deleteOperationId: null }
+            }),
+            client.managedFileSessionSync.updateMany({
+              where: {
+                projectId: indexed.projectId,
+                sessionId: indexed.sessionId,
+                deletedAt: { not: null }
+              },
+              data: { deletedAt: null, deleteOperationId: null }
+            })
+          ])
+        } else if (!isActive && indexed.deletedAt === null) {
           await this.softDeleteSession(indexed.projectId, indexed.sessionId)
         }
       }
