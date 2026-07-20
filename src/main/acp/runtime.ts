@@ -532,6 +532,11 @@ class AcpRuntime {
     // failure path — including "superseded during spawn", where the process is deliberately never
     // assigned to this.agentProcess.
     let agentProcess: ChildProcessWithoutNullStreams | undefined
+    // The framework THIS connect spawned under. spawnAgentProcess sets this.framework to the resolved
+    // backend, but a concurrent supersede can then reassign it while the old child is torn down — so the
+    // catch must log the value bound to this spawn, not the mutable this.framework.id, to avoid pairing
+    // an old PID with a new backend. Seeded with the current value in case spawn itself throws first.
+    let spawnedFramework = this.framework.id
 
     try {
       // Inside the try so a teardown throw or the generation assertion (a supersede race) also produces
@@ -545,6 +550,7 @@ class AcpRuntime {
       log.info('connecting agent', { cwd: this.cwd, generation })
 
       agentProcess = await this.spawnAgentProcess()
+      spawnedFramework = this.framework.id
 
       // spawnAgentProcess resolves the provider config asynchronously, so the connection may have been
       // torn down or superseded during the spawn: a quit latched shuttingDown, or any teardown/reconnect
@@ -644,7 +650,7 @@ class AcpRuntime {
         cwd,
         generation,
         currentGeneration: this.connectionGeneration,
-        framework: this.framework.id,
+        framework: spawnedFramework,
         shuttingDown: this.shuttingDown,
         agentProcessPid: agentProcess?.pid,
         agentProcessKilled: agentProcess?.killed

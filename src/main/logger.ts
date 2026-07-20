@@ -55,9 +55,15 @@ const ERROR_DETAIL_KEYS = ['name', 'code', 'data', 'errno', 'syscall', 'path'] a
 // to `{}` because its fields are non-enumerable — losing the message, stack, and (worse) the code/data
 // that name the real cause. Spread the result into the log context so all of it survives:
 //   log.error('connect failed', { ...errorLogFields(err), framework })
-// Bounded cause-chain following prevents a self-referential cause from recursing forever.
-const errorLogFields = (error: unknown, depth = 0): Record<string, unknown> => {
+// The cause chain is followed into plain objects, and a `seen` set breaks any cycle (a self-referential
+// or mutually-referential cause) with a marker string — leaving a raw Error in the output would rewrap
+// the cycle and make the *whole* record unserializable, dropping the error and its context entirely.
+const errorLogFields = (
+  error: unknown,
+  seen: Set<unknown> = new Set()
+): Record<string, unknown> => {
   if (error instanceof Error) {
+    seen.add(error)
     const fields: Record<string, unknown> = { error: error.message, stack: error.stack }
 
     const own = error as unknown as Record<string, unknown>
@@ -66,8 +72,10 @@ const errorLogFields = (error: unknown, depth = 0): Record<string, unknown> => {
     }
 
     const cause = (error as { cause?: unknown }).cause
-    if (cause !== undefined) {
-      fields.cause = cause instanceof Error && depth < 2 ? errorLogFields(cause, depth + 1) : cause
+    if (cause instanceof Error) {
+      fields.cause = seen.has(cause) ? '[circular cause]' : errorLogFields(cause, seen)
+    } else if (cause !== undefined) {
+      fields.cause = cause
     }
 
     return fields

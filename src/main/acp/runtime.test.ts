@@ -25,7 +25,11 @@ import {
 // Captures info/warn logs so the permission-request audit line and the agent-process lifecycle records
 // can be asserted; real file/console logging is otherwise irrelevant to these tests. errorLogFields is
 // left as the real implementation so lifecycle records carry its true output shape.
-const { infoLogSpy, warnLogSpy } = vi.hoisted(() => ({ infoLogSpy: vi.fn(), warnLogSpy: vi.fn() }))
+const { infoLogSpy, warnLogSpy, errorLogSpy } = vi.hoisted(() => ({
+  infoLogSpy: vi.fn(),
+  warnLogSpy: vi.fn(),
+  errorLogSpy: vi.fn()
+}))
 vi.mock('../logger', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../logger')>()
   return {
@@ -33,7 +37,8 @@ vi.mock('../logger', async (importOriginal) => {
     createLogger: (scope: string) => ({
       ...actual.createLogger(scope),
       info: infoLogSpy,
-      warn: warnLogSpy
+      warn: warnLogSpy,
+      error: errorLogSpy
     })
   }
 })
@@ -3605,11 +3610,54 @@ describe('ACP runtime — agent process lifecycle logging', () => {
       framework: string
       expected: boolean
       pid: number
+      status: string
+      sessionCount: number
     }
     expect(data.code).toBe(1)
     expect(data.framework).toBe('claude-code')
     expect(data.expected).toBe(false)
     expect(data.pid).toBe(4321)
+    expect(data.status).toBe('connected')
+    expect(data.sessionCount).toBe(1)
+  })
+
+  it('logs a signal-terminated exit with the signal name', async () => {
+    infoLogSpy.mockClear()
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['signal-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    process.emit('exit', null, 'SIGKILL')
+
+    const call = infoLogSpy.mock.calls.find(([message]) => message === 'agent process exit')
+    expect((call?.[1] as { signal: string }).signal).toBe('SIGKILL')
+  })
+
+  it('logs an agent process error event with framework and pid', async () => {
+    errorLogSpy.mockClear()
+    const process = new FakeAgentProcess()
+    process.pid = 9090
+    startFakeAgent(process, ['error-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    process.emit('error', new Error('EPIPE'))
+
+    const call = errorLogSpy.mock.calls.find(([message]) => message === 'agent process error event')
+    expect(call).toBeDefined()
+    const data = call?.[1] as { error: string; framework: string; pid: number }
+    expect(data.error).toBe('EPIPE')
+    expect(data.framework).toBe('claude-code')
+    expect(data.pid).toBe(9090)
   })
 
   it('logs agent stderr with the framework the process was spawned under', async () => {
@@ -3650,5 +3698,116 @@ describe('ACP runtime — agent process lifecycle logging', () => {
 
     const call = warnLogSpy.mock.calls.find(([message]) => message === 'agent stderr')
     expect((call?.[1] as { framework: string }).framework).toBe('claude-code')
+  })
+})
+
+describe('ACP runtime — connect failure logging', () => {
+  it('logs "agent connection failed" with error, cwd, and framework when spawn throws', async () => {
+    errorLogSpy.mockClear()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => {
+        throw Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' })
+      }
+    })
+
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(/ENOENT/)
+
+    const call = errorLogSpy.mock.calls.find(([message]) => message === 'agent connection failed')
+    expect(call).toBeDefined()
+    const data = call?.[1] as { error: string; code: string; cwd: string; framework: string }
+    expect(data.error).toBe('spawn claude ENOENT')
+    expect(data.code).toBe('ENOENT')
+    expect(data.cwd).toBe(resolve('/workspace'))
+    expect(data.framework).toBe('claude-code')
+  })
+
+  it('logs "agent connection abandoned" (not failed) when the generation is superseded mid-spawn', async () => {
+    warnLogSpy.mockClear()
+    errorLogSpy.mockClear()
+    const process = new FakeAgentProcess()
+    process.pid = 1212
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      // Bump the connection generation synchronously during spawn: the connect that captured the older
+      // generation must detect the supersede after the child appears and abandon it.
+      spawnAgent: () => {
+        ;(runtime as unknown as { connectionGeneration: number }).connectionGeneration += 1
+        return asAgentProcess(process)
+      }
+    })
+
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(/superseded/i)
+
+    const abandoned = warnLogSpy.mock.calls.find(
+      ([message]) => message === 'agent connection abandoned (superseded or shutting down)'
+    )
+    expect(abandoned).toBeDefined()
+    const data = abandoned?.[1] as { framework: string; agentProcessPid: number; cwd: string }
+    expect(data.framework).toBe('claude-code')
+    expect(data.agentProcessPid).toBe(1212)
+    expect(data.cwd).toBe(resolve('/workspace'))
+    // The supersede path must NOT also emit the error-level "failed" record.
+    expect(errorLogSpy.mock.calls.some(([message]) => message === 'agent connection failed')).toBe(
+      false
+    )
+  })
+})
+
+describe('ACP runtime — session-creation and spawn diagnostics', () => {
+  it('logs the createSession stage breadcrumbs through to completion', async () => {
+    infoLogSpy.mockClear()
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['staged-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+
+    const messages = infoLogSpy.mock.calls.map(([message]) => message)
+    expect(messages).toContain('createSession: starting')
+    expect(messages).toContain('ensureConnected: attempting connection')
+    expect(messages).toContain('ensureConnected: connection established')
+    expect(messages).toContain('createSession: completed successfully')
+  })
+
+  it('logs the resolved backend (executable + env keys, values omitted) and the spawned pid', async () => {
+    infoLogSpy.mockClear()
+    const process = new FakeAgentProcess()
+    process.pid = 7654
+    startFakeAgent(process, ['spawn-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/agent',
+        env: { ANTHROPIC_AUTH_TOKEN: 'secret-should-not-be-logged', REGION: 'us' },
+        args: ['--acp']
+      })
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+
+    const resolved = infoLogSpy.mock.calls.find(([message]) => message === 'agent backend resolved')
+    expect(resolved).toBeDefined()
+    const resolvedData = resolved?.[1] as {
+      executablePath: string
+      envKeys: string[]
+      args: string[]
+    }
+    expect(resolvedData.executablePath).toBe('/bin/agent')
+    expect(resolvedData.envKeys).toEqual(['ANTHROPIC_AUTH_TOKEN', 'REGION'])
+    expect(resolvedData.args).toEqual(['--acp'])
+    // The env *values* must never be logged — only the keys.
+    expect(JSON.stringify(resolvedData)).not.toContain('secret-should-not-be-logged')
+
+    const spawned = infoLogSpy.mock.calls.find(([message]) => message === 'agent process spawned')
+    expect((spawned?.[1] as { pid: number }).pid).toBe(7654)
   })
 })

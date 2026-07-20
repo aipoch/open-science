@@ -105,11 +105,33 @@ describe('logger: errorLogFields', () => {
     expect(fields.cause.error).toBe('underlying socket hang up')
   })
 
-  it('does not recurse forever on a self-referential cause', () => {
+  it('breaks a self-referential cause so the record still serializes (not [unserializable])', () => {
     const selfReferential = new Error('loop') as Error & { cause?: unknown }
     selfReferential.cause = selfReferential
 
-    expect(() => errorLogFields(selfReferential)).not.toThrow()
+    const fields = errorLogFields(selfReferential)
+    expect(fields.cause).toBe('[circular cause]')
+
+    // The whole point: the final log line must survive JSON.stringify with the error + context intact,
+    // rather than collapsing to the circular fallback and dropping everything.
+    const parsed = JSON.parse(
+      formatLine('error', 'acp', 'failed', { ...fields, framework: 'claude-code' })
+    ) as { data: { error: string; cause: string; framework: string } }
+    expect(parsed.data.error).toBe('loop')
+    expect(parsed.data.cause).toBe('[circular cause]')
+    expect(parsed.data.framework).toBe('claude-code')
+  })
+
+  it('breaks a mutually-referential cause cycle (a → b → a)', () => {
+    const a = new Error('a') as Error & { cause?: unknown }
+    const b = new Error('b') as Error & { cause?: unknown }
+    a.cause = b
+    b.cause = a
+
+    const fields = errorLogFields(a) as { cause: { error: string; cause: string } }
+    expect(fields.cause.error).toBe('b')
+    expect(fields.cause.cause).toBe('[circular cause]')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
   })
 
   it('keeps a thrown plain object’s own fields instead of "[object Object]"', () => {
