@@ -112,6 +112,7 @@ type BindPendingSessionInput = {
   sessionId: string
   cwd?: string
   agentFrameworkId?: PersistedChatSession['agentFrameworkId']
+  agentBackendId?: PersistedChatSession['agentBackendId']
 }
 
 type AppendAgentMessageChunkInput = {
@@ -186,7 +187,8 @@ type SessionStore = SessionStoreData & {
   beginCompaction: (sessionId: string) => void
   markResumed: (
     sessionId: string,
-    agentFrameworkId?: PersistedChatSession['agentFrameworkId']
+    agentFrameworkId?: PersistedChatSession['agentFrameworkId'],
+    agentBackendId?: PersistedChatSession['agentBackendId']
   ) => void
   markDisconnected: (sessionId: string) => void
   removeMessage: (sessionId: string, messageId: string) => void
@@ -652,7 +654,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   // Replaces the temporary renderer id once ACP returns the real protocol session id.
-  bindPendingSession: ({ pendingSessionId, sessionId, cwd, agentFrameworkId }) => {
+  bindPendingSession: ({ pendingSessionId, sessionId, cwd, agentFrameworkId, agentBackendId }) => {
     if (!pendingSessionId || !sessionId) return undefined
 
     const state = get()
@@ -675,6 +677,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               isPending: false,
               cwd: cwd ?? session.cwd,
               agentFrameworkId: agentFrameworkId ?? session.agentFrameworkId,
+              agentBackendId: agentBackendId ?? session.agentBackendId,
               updatedAt: now
             }
           : session
@@ -1188,7 +1191,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   // Clears the interrupted/error state after a successful resume so the composer is usable again.
-  markResumed: (sessionId, agentFrameworkId) => {
+  markResumed: (sessionId, agentFrameworkId, agentBackendId) => {
     set((state) => ({
       sessions: state.sessions.map((session) =>
         session.id === sessionId
@@ -1198,6 +1201,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               error: undefined,
               interrupted: undefined,
               agentFrameworkId: agentFrameworkId ?? session.agentFrameworkId,
+              agentBackendId: agentBackendId ?? session.agentBackendId,
               compacting: undefined,
               updatedAt: Date.now()
             }

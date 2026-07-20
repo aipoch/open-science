@@ -123,6 +123,9 @@ export interface AgentFramework {
 // provider switch takes effect on reconnect.
 export type ResolvedAgentBackend = {
   framework: AgentFramework
+  // Stable identity of the framework/provider storage boundary. Two providers can use the same
+  // framework while keeping incompatible session stores (for example Codex shared vs isolated login).
+  backendId?: string
   executablePath: string
   env: Record<string, string>
   args?: string[]

@@ -219,7 +219,9 @@ describe('session store', () => {
     const bound = useSessionStore.getState().bindPendingSession({
       pendingSessionId: pending?.sessionId ?? '',
       sessionId: 'transport-session-1',
-      cwd: '/workspace/project'
+      cwd: '/workspace/project',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:codex-shared'
     })
 
     expect(bound).toEqual({
@@ -232,6 +234,8 @@ describe('session store', () => {
         id: 'transport-session-1',
         isPending: false,
         cwd: '/workspace/project',
+        agentFrameworkId: 'codex',
+        agentBackendId: 'codex:codex-shared',
         status: 'running',
         activeRun: {
           promptMessageId: pending?.messageId,
@@ -1381,14 +1385,16 @@ describe('session store', () => {
     it('markResumed clears the interrupted state so the composer is usable', () => {
       hydrateInterrupted()
 
-      useSessionStore.getState().markResumed('resumable-session', 'codex')
+      useSessionStore.getState().markResumed('resumable-session', 'codex', 'codex:codex-isolated')
       const session = useSessionStore.getState().sessions[0]
 
       expect(session.interrupted).toBeUndefined()
       expect(session.error).toBeUndefined()
       expect(session.status).toBe('idle')
       expect(session.agentFrameworkId).toBe('codex')
+      expect(session.agentBackendId).toBe('codex:codex-isolated')
       expect(toPersistedSession(session).agentFrameworkId).toBe('codex')
+      expect(toPersistedSession(session).agentBackendId).toBe('codex:codex-isolated')
     })
 
     it('markDisconnected flags a live drop and settles the half-streamed reply, keeping the user turn', () => {

@@ -43,6 +43,24 @@ const getEventErrorText = (event: AcpRuntimeEvent): string =>
 const getErrorText = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
+// Codex writes two informational diagnostics to stderr during otherwise-successful turns: skill
+// descriptions may be compacted to their context budget, and a timed-out WebSocket attempt may fall
+// back to working HTTPS. codex-acp can repeat or concatenate them, but neither asks the user to act
+// and both otherwise replace the useful waiting status with a large warning block. Suppress only a
+// payload made entirely from these exact diagnostics; any additional stderr text remains visible.
+const isNonActionableCodexDiagnostic = (text: string): boolean => {
+  const withoutSkillBudgetNotice = text.replace(
+    /Warning:\s*Skill descriptions were shortened to fit the 2% skills context budget\.\s*Codex can still see every skill, but some descriptions are shorter\.\s*Disable unused skills or plugins to leave more room for the rest\.\s*/gi,
+    ''
+  )
+  const withoutTransportFallback = withoutSkillBudgetNotice.replace(
+    /Warning:\s*Falling back from WebSockets to HTTPS transport\.\s*request timed out\s*/gi,
+    ''
+  )
+
+  return withoutTransportFallback.trim().length === 0
+}
+
 type WorkspaceRuntimeEventDependencies = {
   finalizeRunArtifacts?: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
 }
@@ -288,6 +306,8 @@ const applyWorkspaceRuntimeEvent = async (
   // the waiting indicator so a long silent turn (e.g. the agent retrying a slow request) shows a hint
   // rather than a blank spinner. setAgentStatus no-ops unless the session is still running.
   if (event.kind === 'system' && event.level === 'warning' && event.sessionId && event.text) {
+    if (isNonActionableCodexDiagnostic(event.text)) return true
+
     store.setAgentStatus(event.sessionId, event.text)
     return true
   }

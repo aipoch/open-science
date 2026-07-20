@@ -249,6 +249,18 @@ describe('normalizeSessionFile with activities', () => {
     expect(malformed?.filesRevision).toBeUndefined()
   })
 
+  it('round-trips the agent backend identity used to resume a session', () => {
+    const session = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:codex-isolated'
+    })
+
+    expect(session?.agentFrameworkId).toBe('codex')
+    expect(session?.agentBackendId).toBe('codex:codex-isolated')
+  })
+
   it('keeps known approval profiles and safely defaults unknown values', () => {
     const full = normalizeSessionFile({
       ...createSessionWithActivity(undefined),

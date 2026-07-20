@@ -225,6 +225,28 @@ describe('workspace runtime events', () => {
     expect(useSessionStore.getState().sessions[0].agentStatus).toBeUndefined()
   })
 
+  it('suppresses non-actionable Codex startup and transport fallback diagnostics', async () => {
+    const diagnostic = [
+      'Warning: Skill descriptions were shortened to fit the 2% skills context budget.',
+      'Codex can still see every skill, but some descriptions are shorter.',
+      'Disable unused skills or plugins to leave more room for the rest.',
+      '',
+      'Warning: Falling back from WebSockets to HTTPS transport. request timed out',
+      'Warning: Skill descriptions were shortened to fit the 2% skills context budget.',
+      'Codex can still see every skill, but some descriptions are shorter.',
+      'Disable unused skills or plugins to leave more room for the rest.',
+      '',
+      'Warning: Falling back from WebSockets to HTTPS transport. request timed out'
+    ].join('\n')
+
+    const applied = await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'event-codex-warning', kind: 'system', level: 'warning', text: diagnostic })
+    )
+
+    expect(applied).toBe(true)
+    expect(useSessionStore.getState().sessions[0].agentStatus).toBeUndefined()
+  })
+
   it('ignores an info-level system event (only warnings become status)', async () => {
     const applied = await applyWorkspaceRuntimeEvent(
       createEvent({ id: 'event-1', kind: 'system', level: 'info', text: 'Session created' })

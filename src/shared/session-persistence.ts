@@ -121,6 +121,9 @@ export type PersistedChatSession = {
   cwd: string
   status: PersistedSessionStatus
   agentFrameworkId?: AgentFrameworkId
+  // Identifies the provider/profile session store within a framework so a restored session is never
+  // resumed against an incompatible backend (for example Codex shared profile vs isolated login).
+  agentBackendId?: string
   // Per-conversation approval posture. Older session files omit it and safely restore to Ask.
   permissionProfile?: PermissionProfileId
   // Per-conversation auto-review toggle. Absent (older files) or non-true is treated as disabled;
@@ -661,12 +664,14 @@ const sanitizeSession = (session: unknown): PersistedChatSession | undefined => 
   const activeRun = sanitizeActiveRun(session.activeRun)
   const error = asString(session.error)
   const agentFrameworkId = asString(session.agentFrameworkId) as AgentFrameworkId | undefined
+  const agentBackendId = asString(session.agentBackendId)
 
   if (activeRun) sanitized.activeRun = activeRun
   if (error) sanitized.error = error
   if (agentFrameworkId && AGENT_FRAMEWORK_IDS.has(agentFrameworkId)) {
     sanitized.agentFrameworkId = agentFrameworkId
   }
+  if (agentBackendId) sanitized.agentBackendId = agentBackendId
   if (artifacts.length > 0) sanitized.artifacts = artifacts
   const filesRevision = asNumber(session.filesRevision)
   if (filesRevision !== undefined && Number.isInteger(filesRevision) && filesRevision >= 0) {

@@ -907,6 +907,8 @@ describe('resuming an interrupted session on demand', () => {
         cwd,
         status: 'error',
         error: 'Session was interrupted before the app closed.',
+        agentFrameworkId: 'codex',
+        agentBackendId: 'codex:codex-isolated',
         permissionProfile: 'ask',
         messages: [],
         createdAt: 1,
@@ -934,7 +936,8 @@ describe('resuming an interrupted session on demand', () => {
       '/workspace/project',
       'default-project',
       expect.any(String),
-      undefined
+      'codex',
+      'codex:codex-isolated'
     )
     expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
     expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
