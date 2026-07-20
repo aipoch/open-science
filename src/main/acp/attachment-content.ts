@@ -93,15 +93,25 @@ const mimeEssence = (mimeType?: string): string | undefined => {
   return essence ? essence : undefined
 }
 
-// True when the file can be read as UTF-8 text. An explicit text MIME wins; an explicit *non-text*,
+// True when the MIME essence names a text-bearing format directly. Covers text/*, JSON/XML and their
+// structured suffixes (RFC 6839 `+json`/`+xml`, e.g. application/geo+json, application/atom+xml), and the
+// `chemical/*` family, which the scientific formats we handle (PDB, MDL/SDF, MOL, SMILES) are all text.
+const isTextBearingMime = (essence: string): boolean =>
+  essence.startsWith('text/') ||
+  essence.startsWith('chemical/') ||
+  essence.endsWith('+json') ||
+  essence.endsWith('+xml') ||
+  essence === 'application/json' ||
+  essence === 'application/xml' ||
+  essence === 'application/x-ndjson'
+
+// True when the file can be read as UTF-8 text. A text-bearing MIME wins; an explicit *non-text*,
 // non-generic MIME (e.g. application/gzip, image/png) loses outright so a gzipped `.fastq` is never
 // treated as text. Only a missing or generic MIME defers to the known-text extension list.
 export const isTextLikeAttachment = (name: string, mimeType?: string): boolean => {
   const essence = mimeEssence(mimeType)
 
-  if (essence?.startsWith('text/')) return true
-  if (essence === 'application/json' || essence === 'application/xml') return true
-  if (essence === 'application/x-ndjson') return true
+  if (essence && isTextBearingMime(essence)) return true
 
   // A concrete non-text MIME is authoritative — do not second-guess it from the extension.
   if (essence && !GENERIC_MIME_TYPES.has(essence)) return false

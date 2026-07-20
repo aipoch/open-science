@@ -52,6 +52,15 @@ describe('isTextLikeAttachment', () => {
     // A generic MIME with a parameter still defers to the extension.
     expect(isTextLikeAttachment('data.csv', 'application/octet-stream; charset=binary')).toBe(true)
   })
+
+  it('accepts structured-suffix and chemical text MIME types', () => {
+    expect(isTextLikeAttachment('regions.geojson', 'application/geo+json')).toBe(true)
+    expect(isTextLikeAttachment('feed.xml', 'application/atom+xml')).toBe(true)
+    expect(isTextLikeAttachment('1abc.pdb', 'chemical/x-pdb')).toBe(true)
+    expect(isTextLikeAttachment('mol.sdf', 'chemical/x-mdl-sdfile')).toBe(true)
+    // A compressed payload stays binary even with a text-looking name.
+    expect(isTextLikeAttachment('reads.fastq', 'application/gzip')).toBe(false)
+  })
 })
 
 describe('isTabularAttachment', () => {
