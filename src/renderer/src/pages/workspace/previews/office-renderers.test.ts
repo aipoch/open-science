@@ -186,7 +186,10 @@ describe('renderOfficeFile', () => {
     expect(wrapperStyle.paddingRight).toBe('0px')
     expect(wrapper?.style.getPropertyValue('--open-science-docx-scale')).toBe('1')
     expect(pageStyle.backgroundColor).toBe('rgb(255, 255, 255)')
-    expect(pageStyle.boxShadow).not.toBe('none')
+    expect(pageStyle.boxShadow).toBe('0 2px 8px rgba(0, 0, 0, 0.15)')
+    expect(container.querySelector('style[data-open-science-docx-fit]')?.textContent).toContain(
+      'box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15)'
+    )
     expect(pageStyle.marginBottom).toBe('30px')
 
     await cleanup()
@@ -358,7 +361,7 @@ describe('renderOfficeFile', () => {
           signal,
           onProgressiveRender: expect.any(Function),
           options: {
-            locale: 'zh-CN',
+            locale: 'en-US',
             spreadsheet: {
               worker: true,
               workerUrl: new URL('local-sheet-worker.js', document.baseURI).href

@@ -46,6 +46,7 @@ const DOCX_FIT_STYLE = `
   padding: 0;
 }
 .docx-wrapper > section.docx {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   zoom: var(${DOCX_SCALE_PROPERTY}, 1);
   transform-origin: top center;
 }
@@ -324,7 +325,7 @@ export const renderOfficeFile = async ({
             signal,
             onProgressiveRender: markFirstPaint,
             options: {
-              locale: 'zh-CN',
+              locale: 'en-US',
               spreadsheet: {
                 worker: true,
                 workerUrl
