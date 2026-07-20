@@ -5,7 +5,7 @@ import type {
   PersistedChatSession,
   PersistedToolActivity
 } from '../../shared/session-persistence'
-import { resolveTurnScope } from './scope'
+import { isTurnScopeStale, resolveTurnScope } from './scope'
 
 // Builds a persisted message with sensible defaults; callers override only what a case cares about.
 const message = (
@@ -162,5 +162,33 @@ describe('resolveTurnScope', () => {
       blocks: [],
       artifactVersionIds: []
     })
+  })
+})
+
+describe('isTurnScopeStale', () => {
+  it('is false for the identical scope recomputed twice', () => {
+    const scope = resolveTurnScope(buildSession(), 'a1', new Map([['art-1', 'sha256:aaa']]))
+    const again = resolveTurnScope(buildSession(), 'a1', new Map([['art-1', 'sha256:aaa']]))
+
+    expect(isTurnScopeStale(scope, again)).toBe(false)
+  })
+
+  it('is true when a block the stored review audited has changed since (e.g. artifact edit)', () => {
+    const stored = resolveTurnScope(buildSession(), 'a1', new Map([['art-1', 'sha256:aaa']]))
+    // The artifact was edited outside the app after the review ran — its digest changes.
+    const current = resolveTurnScope(buildSession(), 'a1', new Map([['art-1', 'sha256:bbb']]))
+
+    expect(isTurnScopeStale(stored, current)).toBe(true)
+  })
+
+  it("is true when the turn's own message content changed after the review ran", () => {
+    const stored = resolveTurnScope(buildSession(), 'a1')
+
+    const edited = buildSession()
+    const agentMessage = edited.messages.find((message) => message.id === 'a1')
+    if (agentMessage) agentMessage.content = 'agent a1 (edited)'
+    const current = resolveTurnScope(edited, 'a1')
+
+    expect(isTurnScopeStale(stored, current)).toBe(true)
   })
 })

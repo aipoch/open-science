@@ -108,6 +108,10 @@ export type Review = {
   reviewerLog: ReviewerLogEntry[]
   createdAt: number
   updatedAt: number
+  // Transient (never persisted): set at load time when the turn's current scope no longer matches the
+  // scope this review was run against — e.g. an artifact was edited after the review completed. The UI
+  // uses it to stop presenting a stale "No issues found" as current. Computed by re-resolving the scope.
+  stale?: boolean
 }
 
 // A Review with its checks eagerly loaded, as returned by getReviewsForSession.

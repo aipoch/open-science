@@ -5,9 +5,11 @@
 import { ipcMain } from 'electron'
 
 import type { ReviewWithChecks, ReviewRunRequest, ReviewUpdateEvent } from '../../shared/reviewer'
+import type { PersistedChatSession } from '../../shared/session-persistence'
 import { REVIEWER_IPC } from '../../shared/reviewer'
 import { createLogger } from '../logger'
 import { runReview } from './orchestrator'
+import { flagStaleReviews } from './stale-reviews'
 import { ReviewRepository } from './repository'
 import type { AcpRuntime } from '../acp/runtime'
 import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
@@ -81,9 +83,19 @@ const registerReviewerIpcHandlers = (
     triggerReview(request)
   })
 
-  // reviewer:get-for-session — load persisted reviews for a session at startup.
+  // reviewer:get-for-session — load persisted reviews for a session at startup, flagging any whose
+  // audited turn has since changed (e.g. an artifact was edited after the review completed) so the UI
+  // does not present a stale verdict as current.
   ipcMain.handle(REVIEWER_IPC.GET_FOR_SESSION, async (_event, sessionId: string) => {
-    return reviewRepository.getReviewsForSession(sessionId)
+    const reviews = await reviewRepository.getReviewsForSession(sessionId)
+    let session: PersistedChatSession | undefined
+    try {
+      const { sessions } = await sessionRepository.loadAll()
+      session = sessions.find((candidate) => candidate.id === sessionId)
+    } catch {
+      return reviews
+    }
+    return flagStaleReviews(reviews, session, dataRoot)
   })
 
   // reviewer:abort-fix-loop — renderer requests that the active fix loop for a session be aborted.

@@ -188,20 +188,30 @@ export const ReviewerCard = ({
   const canExpand = (isComplete && totalCheckCount > 0) || hasErrorDetail
   const isFlagged = isComplete && hasWarnOrFail
 
+  // The turn changed after this review ran (e.g. an artifact was edited) — the verdict may not
+  // describe the current turn. Computed at load time (see flagStaleReviews); only meaningful for a
+  // completed review, since running/error reviews have no verdict to go stale.
+  const isStale = isComplete && review.stale === true
+
   // Compact summary line.
   const summaryText = (): string => {
     if (isRunning) return 'Reviewing…'
     if (isError) return 'Review error'
-    if (isComplete && !hasWarnOrFail) return 'No issues found'
-    if (isComplete && hasWarnOrFail)
-      return `${warnFailCount} finding${warnFailCount === 1 ? '' : 's'}`
+    if (isComplete && !hasWarnOrFail)
+      return isStale ? 'No issues found (outdated)' : 'No issues found'
+    if (isComplete && hasWarnOrFail) {
+      const base = `${warnFailCount} finding${warnFailCount === 1 ? '' : 's'}`
+      return isStale ? `${base} (outdated)` : base
+    }
     return 'Review pending'
   }
 
-  // Status icon.
+  // Status icon. A stale complete review always shows the warning icon (amber), even a stale pass —
+  // the point is "this verdict may not reflect the turn anymore", not the original outcome.
   const statusIcon = ((): React.JSX.Element => {
     if (isRunning) return <Loader className="h-3 w-3 animate-spin text-text-400" />
     if (isError) return <AlertTriangle className="h-3 w-3 text-yellow-500" />
+    if (isStale) return <AlertTriangle className="h-3 w-3 text-amber-500" />
     if (isComplete && !hasWarnOrFail) return <ShieldCheck className="h-3 w-3 text-green-600" />
     if (isComplete && hasWarnOrFail) return <AlertTriangle className="h-3 w-3 text-red-500" />
     return <Loader className="h-3 w-3 text-text-400" />

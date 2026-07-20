@@ -220,6 +220,28 @@ describe('SessionReviewerPanel — pass outcome', () => {
   })
 })
 
+describe('SessionReviewerPanel — stale review notice', () => {
+  it('shows a stale notice in the header when the review is flagged stale', () => {
+    const staleReview = makeReview({ stale: true })
+
+    act(() => {
+      root.render(<SessionReviewerPanel review={staleReview} activeFindingId={undefined} />)
+    })
+
+    expect(container.querySelector('[data-testid="reviewer-stale-notice"]')).not.toBeNull()
+  })
+
+  it('shows no stale notice for a fresh review', () => {
+    const review = makeReview()
+
+    act(() => {
+      root.render(<SessionReviewerPanel review={review} activeFindingId={undefined} />)
+    })
+
+    expect(container.querySelector('[data-testid="reviewer-stale-notice"]')).toBeNull()
+  })
+})
+
 describe('SessionReviewerPanel — GoToTranscript positioning', () => {
   it('highlights the active check when activeFindingId is set', () => {
     const review = makeReview({

@@ -884,3 +884,34 @@ describe('ReviewerCard — error card', () => {
     expect(detail?.textContent).toContain('Argument `severity` is missing.')
   })
 })
+
+describe('ReviewerCard — stale review', () => {
+  it('marks a stale pass review as outdated instead of presenting it as current', async () => {
+    const review = makeReview({ outcome: 'pass', checks: [], stale: true })
+    await act(async () => {
+      root.render(<ReviewerCard review={review} />)
+    })
+
+    expect(container.textContent).toContain('No issues found')
+    expect(container.textContent).toContain('(outdated)')
+  })
+
+  it('marks a stale flagged review as outdated', async () => {
+    const review = makeReview({ outcome: 'flagged', checks: [makeCheck()], stale: true })
+    await act(async () => {
+      root.render(<ReviewerCard review={review} />)
+    })
+
+    expect(container.textContent).toContain('1 finding')
+    expect(container.textContent).toContain('(outdated)')
+  })
+
+  it('does not mark a non-stale review as outdated', async () => {
+    const review = makeReview({ outcome: 'pass', checks: [] })
+    await act(async () => {
+      root.render(<ReviewerCard review={review} />)
+    })
+
+    expect(container.textContent).not.toContain('(outdated)')
+  })
+})

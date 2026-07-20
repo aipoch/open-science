@@ -156,3 +156,15 @@ export const resolveTurnScope = (
 
   return { turnMessageId, blocks, artifactVersionIds }
 }
+
+// Reports whether a stored review scope no longer matches the freshly-resolved scope for the same turn.
+// A review is stale when any block it audited has since changed, disappeared, or was added — including
+// an artifact edit, which changes its producing message block's content hash (the digest is folded in
+// by resolveTurnScopeWithArtifactDigests). Used at load time so the UI can flag a review whose verdict
+// no longer describes the current turn instead of presenting a stale "No issues found" as current.
+export const isTurnScopeStale = (stored: TurnScope, current: TurnScope): boolean => {
+  const hashesOf = (scope: TurnScope): string =>
+    scope.blocks.map((block) => `${block.sourceId}:${block.contentHash}`).join('\n')
+
+  return hashesOf(stored) !== hashesOf(current)
+}
