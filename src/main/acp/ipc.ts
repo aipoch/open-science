@@ -17,7 +17,7 @@ import type {
   AcpStateSnapshot
 } from '../../shared/acp'
 import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../../shared/artifacts'
-import { AcpRuntime, errorLogFields } from './runtime'
+import { AcpRuntime } from './runtime'
 import { installAgentShutdownGuard } from './shutdown-guard'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import type { ArtifactRepository } from '../artifacts/repository'
@@ -29,7 +29,7 @@ import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import type { SettingsService } from '../settings/service'
 import type { UploadRepository } from '../uploads/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
-import { createLogger } from '../logger'
+import { createLogger, errorLogFields } from '../logger'
 
 const log = createLogger('acp')
 

@@ -22,14 +22,19 @@ import {
   waitForDataRootWriters
 } from '../storage/migration-state'
 
-// Captures every info-level log so the permission-request audit line can be asserted; real file/console
-// logging is otherwise irrelevant to these tests.
-const { infoLogSpy } = vi.hoisted(() => ({ infoLogSpy: vi.fn() }))
+// Captures info/warn logs so the permission-request audit line and the agent-process lifecycle records
+// can be asserted; real file/console logging is otherwise irrelevant to these tests. errorLogFields is
+// left as the real implementation so lifecycle records carry its true output shape.
+const { infoLogSpy, warnLogSpy } = vi.hoisted(() => ({ infoLogSpy: vi.fn(), warnLogSpy: vi.fn() }))
 vi.mock('../logger', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../logger')>()
   return {
     ...actual,
-    createLogger: (scope: string) => ({ ...actual.createLogger(scope), info: infoLogSpy })
+    createLogger: (scope: string) => ({
+      ...actual.createLogger(scope),
+      info: infoLogSpy,
+      warn: warnLogSpy
+    })
   }
 })
 
@@ -53,6 +58,8 @@ class FakeAgentProcess extends EventEmitter {
   stdout = new PassThrough()
   stderr = new PassThrough()
   killed = false
+  // Undefined by default (mirrors a not-yet-assigned pid); a test sets it to assert lifecycle logging.
+  pid: number | undefined = undefined
 
   // Simulates a clean process shutdown and emits the normal exit signal.
   kill(): boolean {
@@ -3567,5 +3574,81 @@ describe('ACP runtime skill force-load + nudge', () => {
     expect(spawner.agents[0].prompts).toEqual([
       { sessionId: 'remote-session-1', text: 'plain prompt' }
     ])
+  })
+})
+
+// Reads the private framework pointer so a test can simulate a mid-reconnect backend switch.
+const setRuntimeFramework = (runtime: AcpRuntime, framework: unknown): void => {
+  ;(runtime as unknown as { framework: unknown }).framework = framework
+}
+
+describe('ACP runtime — agent process lifecycle logging', () => {
+  it('logs a non-zero agent exit with code, framework, pid, and expected=false', async () => {
+    infoLogSpy.mockClear()
+    const process = new FakeAgentProcess()
+    process.pid = 4321
+    startFakeAgent(process, ['exit-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    // A spontaneous crash (not an app-initiated teardown, so it is not in expectedProcessExits).
+    process.emit('exit', 1, null)
+
+    const call = infoLogSpy.mock.calls.find(([message]) => message === 'agent process exit')
+    expect(call).toBeDefined()
+    const data = call?.[1] as {
+      code: number
+      framework: string
+      expected: boolean
+      pid: number
+    }
+    expect(data.code).toBe(1)
+    expect(data.framework).toBe('claude-code')
+    expect(data.expected).toBe(false)
+    expect(data.pid).toBe(4321)
+  })
+
+  it('logs agent stderr with the framework the process was spawned under', async () => {
+    warnLogSpy.mockClear()
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['stderr-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    process.stderr.emit('data', Buffer.from('provider auth failed'))
+
+    const call = warnLogSpy.mock.calls.find(([message]) => message === 'agent stderr')
+    expect(call).toBeDefined()
+    const data = call?.[1] as { text: string; framework: string }
+    expect(data.text).toBe('provider auth failed')
+    expect(data.framework).toBe('claude-code')
+  })
+
+  it('labels a late stderr with the framework captured at bind time, not the current one', async () => {
+    warnLogSpy.mockClear()
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['bind-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    // Simulate a reconnect having swapped the active backend after this process was bound. A late
+    // stderr from the *old* process must still be attributed to the framework it was spawned under.
+    setRuntimeFramework(runtime, opencodeFramework)
+    process.stderr.emit('data', Buffer.from('slow tail output'))
+
+    const call = warnLogSpy.mock.calls.find(([message]) => message === 'agent stderr')
+    expect((call?.[1] as { framework: string }).framework).toBe('claude-code')
   })
 })

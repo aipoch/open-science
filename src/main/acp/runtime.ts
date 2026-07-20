@@ -44,7 +44,7 @@ import {
   type AgentFramework,
   type ResolvedAgentBackend
 } from '../agent-framework'
-import { createLogger } from '../logger'
+import { createLogger, errorLogFields } from '../logger'
 import { terminateProcessTree } from '../process-tree'
 import {
   extractProviderToolName,
@@ -234,13 +234,6 @@ const errorMessage = (error: unknown): string => {
 
   return String(error)
 }
-
-// Expands an unknown thrown value into log-safe fields. The file logger only unwraps a *top-level*
-// Error (its fields are non-enumerable); an Error nested inside a context object would otherwise
-// serialize to `{}` and lose its message + stack. Spreading these fields keeps both visible alongside
-// the surrounding diagnostic context.
-export const errorLogFields = (error: unknown): { error: string; stack?: string } =>
-  error instanceof Error ? { error: error.message, stack: error.stack } : { error: String(error) }
 
 const log = createLogger('acp')
 
@@ -532,16 +525,26 @@ class AcpRuntime {
     request: AcpConnectRequest = {},
     generation: number
   ): Promise<AcpStateSnapshot> {
-    await this.disconnectCurrent(false)
-    this.assertCurrentConnectionGeneration(generation)
-
-    this.cwd = resolve(request.cwd || this.options.defaultCwd)
-    this.error = undefined
-    this.setStatus('connecting')
-    log.info('connecting agent', { cwd: this.cwd, generation })
+    // Resolved up front (not this.cwd, which the pre-connect teardown below may still be mutating) so the
+    // failure log always names the target workspace even if we throw before assigning this.cwd.
+    const cwd = resolve(request.cwd || this.options.defaultCwd)
+    // Captured at function scope so the catch can log the spawned child's pid/killed state on *every*
+    // failure path — including "superseded during spawn", where the process is deliberately never
+    // assigned to this.agentProcess.
+    let agentProcess: ChildProcessWithoutNullStreams | undefined
 
     try {
-      const agentProcess = await this.spawnAgentProcess()
+      // Inside the try so a teardown throw or the generation assertion (a supersede race) also produces
+      // an enriched failure record instead of propagating silently.
+      await this.disconnectCurrent(false)
+      this.assertCurrentConnectionGeneration(generation)
+
+      this.cwd = cwd
+      this.error = undefined
+      this.setStatus('connecting')
+      log.info('connecting agent', { cwd: this.cwd, generation })
+
+      agentProcess = await this.spawnAgentProcess()
 
       // spawnAgentProcess resolves the provider config asynchronously, so the connection may have been
       // torn down or superseded during the spawn: a quit latched shuttingDown, or any teardown/reconnect
@@ -634,30 +637,32 @@ class AcpRuntime {
       })
       this.setStatus('connected')
     } catch (error) {
+      // Shared process context so both the abandoned and the failed paths name the child — including the
+      // superseded-during-spawn case, where the local `agentProcess` holds the child this.agentProcess
+      // never received.
+      const processFields = {
+        cwd,
+        generation,
+        currentGeneration: this.connectionGeneration,
+        framework: this.framework.id,
+        shuttingDown: this.shuttingDown,
+        agentProcessPid: agentProcess?.pid,
+        agentProcessKilled: agentProcess?.killed
+      }
+
       if (generation !== this.connectionGeneration) {
         // Superseded (a newer reconnect bumped the generation) or shutting down: the fast-path re-throw
         // skips the error handling below, so log here too — these late-spawn/teardown races are exactly
         // the failures that are otherwise invisible.
         log.warn('agent connection abandoned (superseded or shutting down)', {
           ...errorLogFields(error),
-          generation,
-          currentGeneration: this.connectionGeneration,
-          framework: this.framework.id,
-          shuttingDown: this.shuttingDown
+          ...processFields
         })
         throw error
       }
 
       this.error = errorMessage(error)
-      log.error('agent connection failed', {
-        ...errorLogFields(error),
-        generation,
-        framework: this.framework.id,
-        cwd: this.cwd,
-        shuttingDown: this.shuttingDown,
-        agentProcessPid: this.agentProcess?.pid,
-        agentProcessKilled: this.agentProcess?.killed
-      })
+      log.error('agent connection failed', { ...errorLogFields(error), ...processFields })
       this.pushEvent({
         kind: 'error',
         level: 'error',

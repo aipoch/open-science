@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { createLogger, flushLogs, formatLine, initLogger } from './logger'
+import { createLogger, errorLogFields, flushLogs, formatLine, initLogger } from './logger'
 
 let logDir: string | undefined
 
@@ -53,6 +53,96 @@ describe('logger: formatLine', () => {
 
     expect(() => JSON.parse(line)).not.toThrow()
     expect((JSON.parse(line) as { data: unknown }).data).toBe('[unserializable]')
+  })
+})
+
+describe('logger: errorLogFields', () => {
+  it('expands an Error into message + stack', () => {
+    const fields = errorLogFields(new Error('boom'))
+
+    expect(fields.error).toBe('boom')
+    expect(typeof fields.stack).toBe('string')
+  })
+
+  it('keeps JSON-RPC RequestError code + data (the real provider/agent reason)', () => {
+    // Shape of the ACP RequestError the renderer saw as a bare "Internal error".
+    const requestError = Object.assign(new Error('Internal error'), {
+      name: 'RequestError',
+      code: -32603,
+      data: { details: 'agent exited with code 1' }
+    })
+
+    const fields = errorLogFields(requestError)
+
+    expect(fields.error).toBe('Internal error')
+    expect(fields.name).toBe('RequestError')
+    expect(fields.code).toBe(-32603)
+    expect(fields.data).toEqual({ details: 'agent exited with code 1' })
+  })
+
+  it('keeps Node system-error fields (errno/syscall/path)', () => {
+    const spawnError = Object.assign(new Error('spawn claude ENOENT'), {
+      code: 'ENOENT',
+      errno: -2,
+      syscall: 'spawn claude',
+      path: 'claude'
+    })
+
+    const fields = errorLogFields(spawnError)
+
+    expect(fields.code).toBe('ENOENT')
+    expect(fields.errno).toBe(-2)
+    expect(fields.syscall).toBe('spawn claude')
+    expect(fields.path).toBe('claude')
+  })
+
+  it('follows a nested cause (bounded), not collapsing it to {}', () => {
+    const cause = new Error('underlying socket hang up')
+    const wrapper = Object.assign(new Error('request failed'), { cause })
+
+    const fields = errorLogFields(wrapper) as { cause: { error: string } }
+
+    expect(fields.cause.error).toBe('underlying socket hang up')
+  })
+
+  it('does not recurse forever on a self-referential cause', () => {
+    const selfReferential = new Error('loop') as Error & { cause?: unknown }
+    selfReferential.cause = selfReferential
+
+    expect(() => errorLogFields(selfReferential)).not.toThrow()
+  })
+
+  it('keeps a thrown plain object’s own fields instead of "[object Object]"', () => {
+    const fields = errorLogFields({ code: -32603, message: 'Internal error', data: { x: 1 } })
+
+    expect(fields.error).toBe('Internal error')
+    expect(fields.code).toBe(-32603)
+    expect(fields.data).toEqual({ x: 1 })
+  })
+
+  it('stringifies primitive throws', () => {
+    expect(errorLogFields('plain string').error).toBe('plain string')
+    expect(errorLogFields(42).error).toBe('42')
+  })
+
+  it('survives the file logger nested in a context object (the {} regression it guards)', () => {
+    // A raw Error nested in a context object serializes to {} — its fields are non-enumerable.
+    const raw = JSON.parse(
+      formatLine('error', 'acp', 'failed', { error: new Error('x'), framework: 'claude-code' })
+    ) as { data: { error: unknown } }
+    expect(raw.data.error).toEqual({})
+
+    // Spreading errorLogFields keeps message + stack + context visible.
+    const fixed = JSON.parse(
+      formatLine('error', 'acp', 'failed', {
+        ...errorLogFields(new Error('x')),
+        framework: 'claude-code'
+      })
+    ) as { data: { error: string; stack?: string; framework: string } }
+
+    expect(fixed.data.error).toBe('x')
+    expect(typeof fixed.data.stack).toBe('string')
+    expect(fixed.data.framework).toBe('claude-code')
   })
 })
 

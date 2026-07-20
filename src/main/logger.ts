@@ -44,6 +44,46 @@ const toSerializable = (value: unknown): unknown => {
   return value
 }
 
+// Own-property keys carried by common runtime errors that a bare message+stack capture would drop:
+// JSON-RPC RequestErrors attach code + data (the provider/agent's real reason lives in data), and Node
+// system errors attach errno/syscall/path/code. Enumerated explicitly because they are non-enumerable
+// or inconsistently present, so a spread wouldn't reliably pick them up.
+const ERROR_DETAIL_KEYS = ['name', 'code', 'data', 'errno', 'syscall', 'path'] as const
+
+// Expands an unknown thrown value into a log-safe record for nesting inside a larger context object.
+// toSerializable only unwraps a *top-level* Error; an Error nested inside `{ error, ...ctx }` serializes
+// to `{}` because its fields are non-enumerable — losing the message, stack, and (worse) the code/data
+// that name the real cause. Spread the result into the log context so all of it survives:
+//   log.error('connect failed', { ...errorLogFields(err), framework })
+// Bounded cause-chain following prevents a self-referential cause from recursing forever.
+const errorLogFields = (error: unknown, depth = 0): Record<string, unknown> => {
+  if (error instanceof Error) {
+    const fields: Record<string, unknown> = { error: error.message, stack: error.stack }
+
+    const own = error as unknown as Record<string, unknown>
+    for (const key of ERROR_DETAIL_KEYS) {
+      if (own[key] !== undefined) fields[key] = own[key]
+    }
+
+    const cause = (error as { cause?: unknown }).cause
+    if (cause !== undefined) {
+      fields.cause = cause instanceof Error && depth < 2 ? errorLogFields(cause, depth + 1) : cause
+    }
+
+    return fields
+  }
+
+  // A thrown non-Error object (e.g. a JSON-RPC error `{ code, message, data }`): keep its own fields
+  // rather than collapsing to "[object Object]" the way String() would.
+  if (error !== null && typeof error === 'object') {
+    const record = error as Record<string, unknown>
+
+    return { error: typeof record.message === 'string' ? record.message : '[object]', ...record }
+  }
+
+  return { error: String(error) }
+}
+
 const formatLine = (level: LogLevel, scope: string, message: string, data?: unknown): string => {
   const record: Record<string, unknown> = {
     t: new Date().toISOString(),
@@ -184,4 +224,4 @@ const createLogger = (scope: string): Logger => ({
   error: (message, data) => emit('error', scope, message, data)
 })
 
-export { createLogger, flushLogs, formatLine, getLogFilePath, initLogger }
+export { createLogger, errorLogFields, flushLogs, formatLine, getLogFilePath, initLogger }
