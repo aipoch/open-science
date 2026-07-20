@@ -107,6 +107,7 @@ export const WEB_INVOKE_CHANNELS = {
   'storage.setDataRootAndRelaunch': 'storage:set-data-root-and-relaunch',
   'storage.validateDataRoot': 'storage:validate-data-root',
   'update.apply': 'update:apply',
+  'update.cancel': 'update:cancel',
   'update.check': 'update:check',
   'update.download': 'update:download',
   'update.getAppInfo': 'update:get-app-info',

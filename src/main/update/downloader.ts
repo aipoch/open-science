@@ -7,6 +7,8 @@ import type { PlatformDownload } from '../../shared/update'
 export type DownloadDeps = {
   fetchImpl?: typeof fetch
   onProgress?: (percent: number) => void
+  // Aborts the request/stream when signalled; the reader rejects and the partial file is cleaned up.
+  signal?: AbortSignal
 }
 
 // Streams the installer to `targetPath`, hashing as it goes. The sha256 comes from the manifest
@@ -18,7 +20,7 @@ export const downloadInstaller = async (
   deps: DownloadDeps = {}
 ): Promise<string> => {
   const fetchImpl = deps.fetchImpl ?? fetch
-  const response = await fetchImpl(download.url)
+  const response = await fetchImpl(download.url, { signal: deps.signal })
   if (!response.ok || !response.body) throw new Error(`Download failed: ${response.status}`)
 
   const hash = createHash('sha256')

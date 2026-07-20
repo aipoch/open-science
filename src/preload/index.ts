@@ -253,6 +253,7 @@ type OpenScienceAPI = {
     getStatus: () => Promise<UpdateStatus>
     check: () => Promise<UpdateStatus>
     download: () => Promise<UpdateStatus>
+    cancel: () => Promise<UpdateStatus>
     apply: () => Promise<UpdateStatus>
     onStatus: (listener: (status: UpdateStatus) => void) => RemoveListener
     onProgress: (listener: (percent: number) => void) => RemoveListener
@@ -545,6 +546,7 @@ const api: OpenScienceAPI = {
     getStatus: () => ipcRenderer.invoke('update:get-status') as Promise<UpdateStatus>,
     check: () => ipcRenderer.invoke('update:check') as Promise<UpdateStatus>,
     download: () => ipcRenderer.invoke('update:download') as Promise<UpdateStatus>,
+    cancel: () => ipcRenderer.invoke('update:cancel') as Promise<UpdateStatus>,
     apply: () => ipcRenderer.invoke('update:apply') as Promise<UpdateStatus>,
     onStatus: (listener) => onIpcMessage('update:status', listener),
     onProgress: (listener) => onIpcMessage('update:progress', listener)
