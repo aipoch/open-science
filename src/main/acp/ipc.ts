@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -130,11 +130,18 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntime => {
   )
   ipcMain.handle('acp:disconnect', () => runtime.disconnect())
   ipcMain.handle('acp:create-session', async (_event, request: AcpCreateSessionRequest) => {
-    const sessionRequest = request.cwd?.trim()
-      ? request
-      : { ...request, cwd: await createManagedSessionWorkspace() }
+    const explicitCwd = request.cwd?.trim()
+    if (explicitCwd) {
+      return runtime.createSession({ ...request, cwd: explicitCwd })
+    }
 
-    return runtime.createSession(sessionRequest)
+    const managedCwd = await createManagedSessionWorkspace()
+    try {
+      return await runtime.createSession({ ...request, cwd: managedCwd })
+    } catch (error) {
+      await rm(managedCwd, { recursive: true, force: true }).catch(() => undefined)
+      throw error
+    }
   })
   ipcMain.handle('acp:resume-session', async (_event, request: AcpResumeSessionRequest) =>
     runtime.resumeSession(request)

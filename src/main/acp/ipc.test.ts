@@ -11,8 +11,9 @@ import type { AcpResumeSessionRequest } from '../../shared/acp'
 
 // Capture every ipcMain.handle registration so a handler can be invoked directly.
 const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>()
-const { mkdir } = vi.hoisted(() => ({
-  mkdir: vi.fn().mockResolvedValue(undefined)
+const { mkdir, rm } = vi.hoisted(() => ({
+  mkdir: vi.fn().mockResolvedValue(undefined),
+  rm: vi.fn().mockResolvedValue(undefined)
 }))
 
 vi.mock('electron', () => ({
@@ -24,7 +25,7 @@ vi.mock('electron', () => ({
   app: { getVersion: () => '0.0.0-test' },
   BrowserWindow: { getAllWindows: () => [] }
 }))
-vi.mock('node:fs/promises', () => ({ mkdir }))
+vi.mock('node:fs/promises', () => ({ mkdir, rm }))
 
 // A fake runtime whose methods are spies; registration wires closures over these, so only the invoked
 // handler's method needs meaningful behavior. Hoisted so the (hoisted) vi.mock factory can reference it.
@@ -66,6 +67,7 @@ const registerWithFakes = (): void => {
 
 afterEach(() => {
   mkdir.mockClear()
+  rm.mockClear()
   createSession.mockClear()
   resetSessionContext.mockClear()
   resumeSession.mockClear()
@@ -116,6 +118,26 @@ describe('registerAcpIpcHandlers — managed session workspace', () => {
     expect(mkdir).not.toHaveBeenCalled()
   })
 
+  it('trims an explicitly supplied cwd before creating the session', async () => {
+    registerWithFakes()
+
+    await handlers.get('acp:create-session')?.(
+      {},
+      {
+        cwd: '  D:\\research\\chosen-workspace  ',
+        projectName: 'project-1',
+        permissionProfile: 'ask'
+      }
+    )
+
+    expect(createSession).toHaveBeenCalledWith({
+      cwd: 'D:\\research\\chosen-workspace',
+      projectName: 'project-1',
+      permissionProfile: 'ask'
+    })
+    expect(mkdir).not.toHaveBeenCalled()
+  })
+
   it('treats a blank cwd as missing and allocates a managed workspace', async () => {
     registerWithFakes()
 
@@ -127,6 +149,23 @@ describe('registerAcpIpcHandlers — managed session workspace', () => {
     const request = createSession.mock.calls[0][0]
     expect(request.cwd).not.toBe('   ')
     expect(mkdir).toHaveBeenCalledWith(request.cwd, { recursive: true })
+  })
+
+  it('removes a managed workspace when session creation fails', async () => {
+    registerWithFakes()
+    const error = new Error('session creation failed')
+    createSession.mockRejectedValueOnce(error)
+
+    await expect(
+      handlers.get('acp:create-session')?.(
+        {},
+        { projectName: 'project-1', permissionProfile: 'ask' }
+      )
+    ).rejects.toBe(error)
+
+    const request = createSession.mock.calls[0][0]
+    expect(mkdir).toHaveBeenCalledWith(request.cwd, { recursive: true })
+    expect(rm).toHaveBeenCalledWith(request.cwd, { recursive: true, force: true })
   })
 })
 
