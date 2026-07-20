@@ -30,6 +30,13 @@ type NotebookLocalRpcServerOptions = {
       loginShell?: boolean,
       timeoutSeconds?: number
     ): Promise<unknown>
+    list(): Promise<unknown>
+    getDetails(providerId: string): Promise<unknown>
+    appendDetails(providerId: string, args: { text: string; author: string }): Promise<void>
+    replaceDetails(
+      providerId: string,
+      args: { text: string; oldText: string; author: string }
+    ): Promise<void>
   }
 }
 
@@ -210,6 +217,33 @@ class NotebookLocalRpcServer {
           }
           throw err
         }
+      }
+
+      // op='list' — returns all registered compute hosts for agent discovery (design.md §5).
+      if (op === 'list') {
+        return this.computeService.list()
+      }
+
+      // op='details' — agent-facing read/append/replace for host knowledge docs (design.md §5).
+      // All writes set author='agent' so the repository records detailsUpdatedBy correctly.
+      if (op === 'details') {
+        const providerId = typeof params.provider_id === 'string' ? params.provider_id : ''
+        const mode = typeof params.mode === 'string' ? params.mode : 'read'
+        if (mode === 'read') {
+          return this.computeService.getDetails(providerId)
+        }
+        if (mode === 'append') {
+          const text = typeof params.text === 'string' ? params.text : ''
+          await this.computeService.appendDetails(providerId, { text, author: 'agent' })
+          return { ok: true }
+        }
+        if (mode === 'replace') {
+          const text = typeof params.text === 'string' ? params.text : ''
+          const oldText = typeof params.old_text === 'string' ? params.old_text : ''
+          await this.computeService.replaceDetails(providerId, { text, oldText, author: 'agent' })
+          return { ok: true }
+        }
+        throw new Error(`Unknown details mode: ${mode}`)
       }
       throw new Error(`Unknown computeCall op: ${op}`)
     }

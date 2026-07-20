@@ -17,11 +17,15 @@ import { ComputeService } from './compute-service'
 import { ComputeHostRepository } from './repository'
 import { readSshConfigHostAliases } from './ssh-config'
 import { SystemSshRunner } from './ssh-runner'
+import { syncComputeSkillDoc } from './skill-doc'
+import { getAppClaudeConfigDir } from '../settings/provider-env'
+import { join } from 'node:path'
 
 // The renderer-callable compute commands. Kept as a thin adapter over the repository + the pure
 // ssh-config parser so the IPC surface stays easy to unit test (aligns with projects/ipc.ts). Issue 01:
 // host record CRUD + ssh-config alias listing. Issue 02 adds probe. Issue 03 adds
 // details/scratch/concurrency. Issue 04 adds callCommand + the approval broker wiring.
+// Issue 06 adds list (via ComputeService) and skill doc sync.
 type ComputeHandlers = {
   list: () => Promise<ComputeHost[]>
   get: (providerId: string) => Promise<ComputeHost | null>
@@ -49,12 +53,17 @@ type ComputeHandlers = {
   approvalRespond: (id: string, decision: 'once' | 'deny') => void
 }
 
+// Optional callback injected into createComputeHandlers so create/delete can re-sync the skill doc
+// without coupling the handler factory to fs or settings (keeps it unit-testable).
+type SkillDocSyncer = (hosts: ComputeHost[]) => Promise<void>
+
 // Adapts a repository into thin handlers.
 const createComputeHandlers = (
   repository: ComputeHostRepository,
   listSshAliases: () => Promise<string[]> = readSshConfigHostAliases,
   injectedService?: ComputeService,
-  injectedBroker?: ComputeApprovalBroker
+  injectedBroker?: ComputeApprovalBroker,
+  onSkillDocSync?: SkillDocSyncer
 ): ComputeHandlers => {
   // The broadcast function sends approval requests to all renderer windows. In tests, callers
   // inject a fake broker so this function is never called directly.
@@ -71,11 +80,31 @@ const createComputeHandlers = (
     })
 
   const service = injectedService ?? new ComputeService(new SystemSshRunner(), repository, broker)
+
+  // Re-syncs the skill doc after a create or delete. Runs fire-and-forget — a failure to write
+  // the skill doc never rolls back the host mutation (the doc is best-effort, like connector docs).
+  const syncSkillDocAfterMutation = (syncer: SkillDocSyncer | undefined): void => {
+    if (!syncer) return
+    void repository
+      .list()
+      .then((hosts) => syncer(hosts))
+      .catch((err) => {
+        console.error('Failed to sync compute skill doc:', err)
+      })
+  }
+
   return {
     list: () => repository.list(),
     get: (providerId) => repository.get(providerId),
-    create: (request) => repository.create(request),
-    delete: (providerId) => repository.delete(providerId),
+    create: async (request) => {
+      const host = await repository.create(request)
+      syncSkillDocAfterMutation(onSkillDocSync)
+      return host
+    },
+    delete: async (providerId) => {
+      await repository.delete(providerId)
+      syncSkillDocAfterMutation(onSkillDocSync)
+    },
     sshConfigAliases: () => listSshAliases(),
     probe: (providerId) => service.probe(providerId),
     detailsGet: (providerId) => service.getDetails(providerId),
@@ -98,7 +127,27 @@ const createDefaultComputeHostRepository = (): ComputeHostRepository =>
 const registerComputeIpcHandlers = (
   repository = createDefaultComputeHostRepository()
 ): { computeService: ComputeService } => {
-  const handlers = createComputeHandlers(repository)
+  const storageRoot = resolveStorageRoot()
+  const skillsDir = join(getAppClaudeConfigDir(storageRoot), 'skills')
+
+  // Skill doc syncer: writes remote-compute-ssh/SKILL.md with the current host list.
+  const skillDocSyncer: SkillDocSyncer = (hosts) => syncComputeSkillDoc(skillsDir, hosts)
+
+  const handlers = createComputeHandlers(
+    repository,
+    undefined,
+    undefined,
+    undefined,
+    skillDocSyncer
+  )
+
+  // Write the initial skill doc at startup so agents see the host list from the first session.
+  void repository
+    .list()
+    .then((hosts) => syncComputeSkillDoc(skillsDir, hosts))
+    .catch((err) => {
+      console.error('Failed to write initial compute skill doc:', err)
+    })
 
   ipcMain.handle('compute:list', () => handlers.list())
   ipcMain.handle('compute:get', (_event, providerId: string) => handlers.get(providerId))
@@ -136,4 +185,4 @@ const registerComputeIpcHandlers = (
 }
 
 export { createComputeHandlers, createDefaultComputeHostRepository, registerComputeIpcHandlers }
-export type { ComputeHandlers }
+export type { ComputeHandlers, SkillDocSyncer }

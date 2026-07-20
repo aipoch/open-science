@@ -788,3 +788,106 @@ describe('ComputeService.callCommand', () => {
     )
   })
 })
+
+// ---------------------------------------------------------------------------
+// ComputeService.list — issue 06
+// ---------------------------------------------------------------------------
+
+describe('ComputeService.list', () => {
+  it('returns all hosts from the repository', async () => {
+    const hosts = [
+      sampleHost({ providerId: 'ssh:biowulf', displayName: 'biowulf' }),
+      sampleHost({ providerId: 'ssh:lab-gpu', displayName: 'lab-gpu', id: 'host-2' })
+    ]
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo()
+    ;(repo.list as ReturnType<typeof vi.fn>).mockResolvedValue(hosts)
+    const service = new ComputeService(runner, repo)
+
+    const result = await service.list()
+    expect(result).toHaveLength(2)
+    expect(result[0].providerId).toBe('ssh:biowulf')
+    expect(result[1].providerId).toBe('ssh:lab-gpu')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ComputeService.appendDetails — issue 06
+// ---------------------------------------------------------------------------
+
+describe('ComputeService.appendDetails', () => {
+  it('appends text to an empty doc', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo, updateDetails } = makeRepo(sampleHost({ detailsDoc: '' }))
+    const service = new ComputeService(runner, repo)
+
+    await service.appendDetails('ssh:biowulf', { text: '## Note\nhello', author: 'agent' })
+
+    expect(updateDetails).toHaveBeenCalledWith('ssh:biowulf', '## Note\nhello', 'agent')
+  })
+
+  it('appends text with a newline separator when doc is non-empty', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo, updateDetails } = makeRepo(sampleHost({ detailsDoc: '## Resources\ncpus: 4' }))
+    const service = new ComputeService(runner, repo)
+
+    await service.appendDetails('ssh:biowulf', { text: '## Note\nhello', author: 'agent' })
+
+    expect(updateDetails).toHaveBeenCalledWith(
+      'ssh:biowulf',
+      '## Resources\ncpus: 4\n## Note\nhello',
+      'agent'
+    )
+  })
+
+  it('throws when the appended doc would exceed 32KB', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const bigDoc = 'x'.repeat(32760)
+    const { repo } = makeRepo(sampleHost({ detailsDoc: bigDoc }))
+    const service = new ComputeService(runner, repo)
+
+    await expect(
+      service.appendDetails('ssh:biowulf', { text: 'overflow', author: 'agent' })
+    ).rejects.toThrow(/32768|characters or fewer/i)
+  })
+
+  it('throws when host is not found', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo(null)
+    const service = new ComputeService(runner, repo)
+
+    await expect(
+      service.appendDetails('ssh:ghost', { text: 'hello', author: 'agent' })
+    ).rejects.toThrow(/no compute host found/i)
+  })
+})

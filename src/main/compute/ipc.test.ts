@@ -52,7 +52,8 @@ describe('compute handlers', () => {
     const create = vi.fn((request: CreateComputeHostRequest) =>
       Promise.resolve(sampleHost({ sshAlias: request.sshAlias }))
     )
-    const handlers = createComputeHandlers(mockRepository({ create }))
+    const list = vi.fn(() => Promise.resolve([sampleHost()]))
+    const handlers = createComputeHandlers(mockRepository({ create, list }))
 
     const host = await handlers.create({ sshAlias: 'lab-gpu' })
     expect(create).toHaveBeenCalledWith({ sshAlias: 'lab-gpu' })
@@ -70,7 +71,8 @@ describe('compute handlers', () => {
 
   it('delete passes the provider id through', async () => {
     const del = vi.fn(() => Promise.resolve())
-    const handlers = createComputeHandlers(mockRepository({ delete: del }))
+    const list = vi.fn(() => Promise.resolve([]))
+    const handlers = createComputeHandlers(mockRepository({ delete: del, list }))
 
     await handlers.delete('ssh:biowulf')
     expect(del).toHaveBeenCalledWith('ssh:biowulf')
@@ -99,5 +101,57 @@ describe('compute handlers', () => {
     expect(probe).toHaveBeenCalledWith('ssh:biowulf')
     expect(result.ok).toBe(true)
     expect(result.cpus).toBe(64)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Skill doc sync hooks — issue 06
+// ---------------------------------------------------------------------------
+
+describe('skill doc sync on create/delete', () => {
+  it('calls onSkillDocSync after create with the updated host list', async () => {
+    const created = sampleHost()
+    const hostList = [created]
+    const create = vi.fn(() => Promise.resolve(created))
+    const list = vi.fn(() => Promise.resolve(hostList))
+    const syncer = vi.fn(() => Promise.resolve())
+    const handlers = createComputeHandlers(
+      mockRepository({ create, list }),
+      undefined,
+      undefined,
+      undefined,
+      syncer
+    )
+
+    await handlers.create({ sshAlias: 'biowulf' })
+
+    // Give the fire-and-forget a tick to run.
+    await new Promise((r) => setTimeout(r, 0))
+    expect(syncer).toHaveBeenCalledWith(hostList)
+  })
+
+  it('calls onSkillDocSync after delete with the updated host list', async () => {
+    const del = vi.fn(() => Promise.resolve())
+    const list = vi.fn(() => Promise.resolve([]))
+    const syncer = vi.fn(() => Promise.resolve())
+    const handlers = createComputeHandlers(
+      mockRepository({ delete: del, list }),
+      undefined,
+      undefined,
+      undefined,
+      syncer
+    )
+
+    await handlers.delete('ssh:biowulf')
+
+    // Give the fire-and-forget a tick to run.
+    await new Promise((r) => setTimeout(r, 0))
+    expect(syncer).toHaveBeenCalledWith([])
+  })
+
+  it('does not throw when onSkillDocSync is undefined', async () => {
+    const create = vi.fn(() => Promise.resolve(sampleHost()))
+    const handlers = createComputeHandlers(mockRepository({ create }))
+    await expect(handlers.create({ sshAlias: 'biowulf' })).resolves.toBeDefined()
   })
 })

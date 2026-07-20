@@ -1,4 +1,10 @@
-import type { ComputeCallError, DetailsAuthor, ExecResult, ProbeResult } from '../../shared/compute'
+import type {
+  ComputeCallError,
+  ComputeHost,
+  DetailsAuthor,
+  ExecResult,
+  ProbeResult
+} from '../../shared/compute'
 import { DETAILS_DOC_MAX_LENGTH } from '../../shared/compute'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeHostRepository } from './repository'
@@ -225,6 +231,12 @@ export class ComputeService {
     return result
   }
 
+  // Lists all registered compute hosts, newest-first. Returns a lightweight summary for discovery
+  // (provider_id / display_name / shape / status derived from probeResult.ok).
+  async list(): Promise<ComputeHost[]> {
+    return this.repository.list()
+  }
+
   // Returns the details document for a host. When detailsDoc is empty and a successful probe
   // exists, synthesizes a first-contact skeleton from probeResult (## Resources + resource lines).
   // isSkeleton=true signals the caller this was auto-generated, not user/agent content.
@@ -273,6 +285,29 @@ export class ComputeService {
     }
 
     await this.repository.updateDetails(providerId, text, author)
+  }
+
+  // Appends text to detailsDoc, respecting the 32KB cap. Used by the agent-facing details channel
+  // (design.md §5). Reads the current doc, validates the combined length, then delegates to the
+  // repository updateDetails — same path as replaceDetails, no duplicated validation logic.
+  async appendDetails(
+    providerId: string,
+    { text, author }: { text: string; author: DetailsAuthor }
+  ): Promise<void> {
+    const host = await this.repository.get(providerId)
+    if (!host) {
+      throw new Error(`No compute host found with provider id "${providerId}".`)
+    }
+
+    const newDoc = host.detailsDoc ? `${host.detailsDoc}\n${text}` : text
+
+    if (newDoc.length > DETAILS_DOC_MAX_LENGTH) {
+      throw new Error(
+        `Details must be ${DETAILS_DOC_MAX_LENGTH} characters or fewer (appended doc would be ${newDoc.length}).`
+      )
+    }
+
+    await this.repository.updateDetails(providerId, newDoc, author)
   }
 
   // Sets the scratch root and marks the host as pinned. Pinned hosts are never overwritten by

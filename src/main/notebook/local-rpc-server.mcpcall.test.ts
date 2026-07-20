@@ -171,4 +171,152 @@ describe('computeCall RPC', () => {
     const body = (await res.json()) as { error: string }
     expect(body.error).toMatch(/unknown computecall op/i)
   })
+
+  it('routes computeCall op=list to the compute service', async () => {
+    const fakeHosts = [
+      { providerId: 'ssh:biowulf', displayName: 'biowulf', shape: 'direct_ssh', probeResult: null }
+    ]
+    const fakeCompute = {
+      callCommand: async () => ({}),
+      list: async () => fakeHosts,
+      getDetails: async () => ({ doc: '', isSkeleton: false }),
+      appendDetails: async () => {},
+      replaceDetails: async () => {}
+    }
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      computeService: fakeCompute as never
+    })
+    const { endpoint, token } = await server.ensureStarted()
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ method: 'computeCall', params: { op: 'list' } })
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { result: typeof fakeHosts }
+    expect(body.result).toEqual(fakeHosts)
+  })
+
+  it('routes computeCall op=details mode=read to getDetails', async () => {
+    const fakeCompute = {
+      callCommand: async () => ({}),
+      list: async () => [],
+      getDetails: async (providerId: string) => ({
+        doc: `doc for ${providerId}`,
+        isSkeleton: false
+      }),
+      appendDetails: async () => {},
+      replaceDetails: async () => {}
+    }
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      computeService: fakeCompute as never
+    })
+    const { endpoint, token } = await server.ensureStarted()
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        method: 'computeCall',
+        params: { op: 'details', provider_id: 'ssh:biowulf', mode: 'read' }
+      })
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { result: { doc: string; isSkeleton: boolean } }
+    expect(body.result.doc).toBe('doc for ssh:biowulf')
+    expect(body.result.isSkeleton).toBe(false)
+  })
+
+  it('routes computeCall op=details mode=append to appendDetails with author=agent', async () => {
+    let capturedArgs: unknown
+    const fakeCompute = {
+      callCommand: async () => ({}),
+      list: async () => [],
+      getDetails: async () => ({ doc: '', isSkeleton: false }),
+      appendDetails: async (providerId: string, args: unknown) => {
+        capturedArgs = { providerId, ...((args ?? {}) as object) }
+      },
+      replaceDetails: async () => {}
+    }
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      computeService: fakeCompute as never
+    })
+    const { endpoint, token } = await server.ensureStarted()
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        method: 'computeCall',
+        params: { op: 'details', provider_id: 'ssh:biowulf', mode: 'append', text: '## Note\nhi' }
+      })
+    })
+    expect(res.status).toBe(200)
+    expect(capturedArgs).toMatchObject({
+      providerId: 'ssh:biowulf',
+      text: '## Note\nhi',
+      author: 'agent'
+    })
+  })
+
+  it('routes computeCall op=details mode=replace to replaceDetails with author=agent', async () => {
+    let capturedArgs: unknown
+    const fakeCompute = {
+      callCommand: async () => ({}),
+      list: async () => [],
+      getDetails: async () => ({ doc: '', isSkeleton: false }),
+      appendDetails: async () => {},
+      replaceDetails: async (providerId: string, args: unknown) => {
+        capturedArgs = { providerId, ...((args ?? {}) as object) }
+      }
+    }
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      computeService: fakeCompute as never
+    })
+    const { endpoint, token } = await server.ensureStarted()
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        method: 'computeCall',
+        params: {
+          op: 'details',
+          provider_id: 'ssh:biowulf',
+          mode: 'replace',
+          text: 'new doc',
+          old_text: 'old doc'
+        }
+      })
+    })
+    expect(res.status).toBe(200)
+    expect(capturedArgs).toMatchObject({
+      providerId: 'ssh:biowulf',
+      text: 'new doc',
+      oldText: 'old doc',
+      author: 'agent'
+    })
+  })
+
+  it('returns 500 for unknown details mode', async () => {
+    const fakeCompute = {
+      callCommand: async () => ({}),
+      list: async () => [],
+      getDetails: async () => ({ doc: '', isSkeleton: false }),
+      appendDetails: async () => {},
+      replaceDetails: async () => {}
+    }
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      computeService: fakeCompute as never
+    })
+    const { endpoint, token } = await server.ensureStarted()
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        method: 'computeCall',
+        params: { op: 'details', provider_id: 'ssh:biowulf', mode: 'zap' }
+      })
+    })
+    expect(res.status).toBe(500)
+    const body = (await res.json()) as { error: string }
+    expect(body.error).toMatch(/unknown details mode/i)
+  })
 })
