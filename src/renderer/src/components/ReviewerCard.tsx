@@ -165,6 +165,15 @@ export const ReviewerCard = ({
   onRerun
 }: ReviewerCardProps): React.JSX.Element => {
   const [expanded, setExpanded] = useState(false)
+  // Latches on the first Re-run click so the button can't fire twice. Reset whenever the review updates
+  // (a fresh review row arrived, or its lifecycle/timestamp changed) so a later re-stale review can be
+  // re-run again. setState-during-render pattern, matching the composer popup's query reset.
+  const [rerunRequested, setRerunRequested] = useState(false)
+  const [lastReviewStamp, setLastReviewStamp] = useState(review.updatedAt)
+  if (lastReviewStamp !== review.updatedAt) {
+    setLastReviewStamp(review.updatedAt)
+    setRerunRequested(false)
+  }
 
   const isRunning = review.lifecycle === 'running'
   const isError = review.lifecycle === 'error'
@@ -284,10 +293,16 @@ export const ReviewerCard = ({
           {onRerun && (
             <button
               type="button"
-              className="shrink-0 rounded border border-amber-300 px-2 py-0.5 text-[11px] text-amber-800 hover:bg-amber-100 transition-colors"
-              onClick={() => onRerun(review)}
+              // Disable immediately on click so a double-click (or an impatient second click before the
+              // review flips to 'running') can't launch two reviews; main also dedups concurrent runs.
+              disabled={rerunRequested}
+              className="shrink-0 rounded border border-amber-300 px-2 py-0.5 text-[11px] text-amber-800 hover:bg-amber-100 transition-colors disabled:cursor-default disabled:opacity-50"
+              onClick={() => {
+                setRerunRequested(true)
+                onRerun(review)
+              }}
             >
-              Re-run review
+              {rerunRequested ? 'Re-running…' : 'Re-run review'}
             </button>
           )}
         </div>

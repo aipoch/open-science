@@ -943,4 +943,28 @@ describe('ReviewerCard — stale review', () => {
 
     expect(container.querySelector('[data-testid="reviewer-stale-notice"]')).toBeNull()
   })
+
+  it('disables the Re-run button after the first click so a double-click fires once', async () => {
+    const review = makeReview({ outcome: 'pass', checks: [], stale: true })
+    const onRerun = vi.fn()
+    await act(async () => {
+      root.render(<ReviewerCard review={review} onRerun={onRerun} />)
+    })
+
+    const notice = container.querySelector('[data-testid="reviewer-stale-notice"]')
+    const rerunButton = [...notice!.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('Re-run')
+    ) as HTMLButtonElement
+
+    // Two separate events (as a real double-click is): the first disables the button before the second.
+    await act(async () => {
+      rerunButton.click()
+    })
+    await act(async () => {
+      rerunButton.click()
+    })
+
+    expect(onRerun).toHaveBeenCalledTimes(1)
+    expect(rerunButton.disabled).toBe(true)
+  })
 })

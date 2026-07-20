@@ -77,6 +77,11 @@ const registerReviewerIpcHandlers = (
   // reviewer session id). Entries are created when a fix loop starts and deleted when it ends.
   const fixLoopAbortControllers = new Map<string, AbortController>()
 
+  // Guards against concurrent reviews of the same turn — e.g. a double-clicked "Re-run review" or two
+  // stale cards fired at once. Keyed by `${sessionId}:${turnMessageId}` (the grouping turn), cleared
+  // when the run settles. The renderer also disables its button, but this is the authoritative guard.
+  const inFlightReviewKeys = new Set<string>()
+
   // reviewer:run — trigger a review for a completed turn. Fire-and-forget: the renderer does
   // not await this; it receives reviewer:updated events as the lifecycle progresses.
   ipcMain.handle(REVIEWER_IPC.RUN, (_event, request: ReviewRunRequest) => {
@@ -111,7 +116,16 @@ const registerReviewerIpcHandlers = (
   })
 
   const triggerReview = (request: ReviewRunRequest): void => {
-    const { sessionId, turnMessageId, projectId, mainSessionId, model } = request
+    const { sessionId, turnMessageId, scopeTurnMessageId, projectId, mainSessionId, model } =
+      request
+
+    // Drop a duplicate run for a turn already being reviewed (double-click / multiple stale cards).
+    const inFlightKey = `${sessionId}:${turnMessageId}`
+    if (inFlightReviewKeys.has(inFlightKey)) {
+      log.info('review skipped: already in flight for this turn', { sessionId, turnMessageId })
+      return
+    }
+    inFlightReviewKeys.add(inFlightKey)
 
     log.info('review triggered', { sessionId, turnMessageId })
 
@@ -129,6 +143,7 @@ const registerReviewerIpcHandlers = (
         await runReview({
           sessionId,
           turnMessageId,
+          scopeTurnMessageId,
           projectId,
           mainSessionId,
           model: model ?? '',
@@ -170,6 +185,8 @@ const registerReviewerIpcHandlers = (
           sessionId,
           error: error instanceof Error ? error.message : String(error)
         })
+      } finally {
+        inFlightReviewKeys.delete(inFlightKey)
       }
     })()
   }

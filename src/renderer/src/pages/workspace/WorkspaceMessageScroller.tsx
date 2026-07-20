@@ -256,12 +256,15 @@ const WorkspaceMessageScroller = ({
   }
 
   // Re-runs the review for a specific (stale) turn — the actionable refresh the stale notice offers.
-  // Unlike the composer's last-turn-only "Request review", this reaches any turn's review by its own
-  // turnMessageId. Fire-and-forget: a fresh review supersedes the stale one via reviewer:updated.
+  // Unlike the composer's last-turn-only "Request review", this reaches any turn's review. The row is
+  // grouped under review.turnMessageId (so a fix-loop review refreshes in place), but the audited
+  // content is review.scope.turnMessageId — the turn whose bytes actually changed. Fire-and-forget:
+  // a fresh review supersedes the stale one via reviewer:updated; concurrent runs are deduped in main.
   const handleRerunReview = (review: ReviewWithChecks): void => {
     void window.api.reviewer.run({
       sessionId: review.sessionId,
       turnMessageId: review.turnMessageId,
+      scopeTurnMessageId: review.scope.turnMessageId,
       projectId: review.projectId,
       mainSessionId: review.sessionId,
       model: useSettingsStore.getState().activeModel

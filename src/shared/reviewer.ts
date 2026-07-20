@@ -172,6 +172,11 @@ export type ReviewRunRequest = {
   mainSessionId?: string
   // Provider/model tag recorded on the Review row (e.g. 'claude-opus-4-5'). Falls back to ''.
   model?: string
+  // Turn whose content is actually audited, when it differs from turnMessageId (the grouping id).
+  // Defaults to turnMessageId. Used when re-running a fix-loop review: the review row is grouped under
+  // the original turn (turnMessageId), but its scope belongs to the correction turn (scopeTurnMessageId)
+  // — re-running must re-audit that correction turn, not the original.
+  scopeTurnMessageId?: string
 }
 
 // IPC: pushed to renderer when a review's lifecycle/outcome/checks change.

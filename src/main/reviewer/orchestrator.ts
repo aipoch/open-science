@@ -34,8 +34,13 @@ const log = createLogger('reviewer:orchestrator')
 
 export type RunReviewOptions = {
   sessionId: string
-  // The turn to review: the agent message id (or user message id) for that turn.
+  // The turn to review: the agent message id (or user message id) for that turn. This is also the
+  // grouping id stored on the Review row.
   turnMessageId: string
+  // Turn whose content is audited when it differs from turnMessageId (e.g. re-running a fix-loop
+  // review). The scope is resolved from this turn; the row is still grouped under turnMessageId.
+  // Defaults to turnMessageId.
+  scopeTurnMessageId?: string
   // The project this session belongs to.
   projectId: string
   // Used to resolve the session's persisted data for turn-scope resolution.
@@ -747,6 +752,7 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
   const {
     sessionId,
     turnMessageId,
+    scopeTurnMessageId,
     projectId,
     getSession,
     reviewRepository,
@@ -786,9 +792,10 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
     return withFindings
   }
 
+  // Audit the scope turn (defaults to the grouping turn) but keep the row grouped under turnMessageId.
   const scope = await resolveTurnScopeWithArtifactDigests(
     session,
-    turnMessageId,
+    scopeTurnMessageId ?? turnMessageId,
     artifactStorageRoot
   )
 

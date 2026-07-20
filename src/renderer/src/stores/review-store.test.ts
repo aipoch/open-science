@@ -147,4 +147,46 @@ describe('review store', () => {
     expect(useReviewStore.getState().getReviewsForSession('session-1')).toEqual([])
     vi.unstubAllGlobals()
   })
+
+  it('does not let a stale load overwrite a newer review delivered by a push', async () => {
+    // A push completes the review while a slow focus-load is mid-flight holding an older snapshot.
+    useReviewStore.getState().handleReviewUpdate({
+      review: makeReview({ id: 'review-1', lifecycle: 'complete', updatedAt: 2_000 })
+    })
+
+    const staleSnapshot = [
+      makeReview({ id: 'review-1', lifecycle: 'running', outcome: null, updatedAt: 1_000 })
+    ]
+    const getForSession = vi.fn().mockResolvedValue(staleSnapshot)
+    vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
+
+    await useReviewStore.getState().loadReviewsForSession('session-1')
+
+    // The newer pushed review (updatedAt 2000, complete) survives the merge.
+    const stored = useReviewStore.getState().getReviewsForSession('session-1')
+    expect(stored).toHaveLength(1)
+    expect(stored[0]?.lifecycle).toBe('complete')
+    expect(stored[0]?.updatedAt).toBe(2_000)
+    vi.unstubAllGlobals()
+  })
+
+  it('dedupes concurrent loads for the same session', async () => {
+    let resolveLoad: ((value: ReviewWithChecks[]) => void) | undefined
+    const getForSession = vi.fn().mockReturnValue(
+      new Promise<ReviewWithChecks[]>((resolve) => {
+        resolveLoad = resolve
+      })
+    )
+    vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
+
+    const first = useReviewStore.getState().loadReviewsForSession('session-1')
+    const second = useReviewStore.getState().loadReviewsForSession('session-1')
+
+    resolveLoad?.([makeReview({ id: 'r' })])
+    await Promise.all([first, second])
+
+    // The in-flight guard drops the overlapping second call.
+    expect(getForSession).toHaveBeenCalledTimes(1)
+    vi.unstubAllGlobals()
+  })
 })

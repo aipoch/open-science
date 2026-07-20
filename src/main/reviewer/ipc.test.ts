@@ -95,4 +95,50 @@ describe('reviewer IPC handlers', () => {
     const passed = runReview.mock.calls[0][0] as { artifactStorageRoot: string }
     expect(passed.artifactStorageRoot).toBe('/tmp/injected-data')
   })
+
+  it('forwards scopeTurnMessageId so a re-run audits the scope turn, grouped under turnMessageId', async () => {
+    runReview.mockClear()
+    registerReviewerIpcHandlers({ acpRuntime })
+
+    const runHandler = handlers.get(REVIEWER_IPC.RUN)
+    // Re-running a fix-loop review: grouped under the original turn, but audit the correction turn.
+    runHandler?.(
+      {},
+      { ...createRequest(), turnMessageId: 'original', scopeTurnMessageId: 'correction' }
+    )
+
+    await vi.waitFor(() => expect(runReview).toHaveBeenCalledTimes(1))
+
+    const passed = runReview.mock.calls[0][0] as {
+      turnMessageId: string
+      scopeTurnMessageId?: string
+    }
+    expect(passed.turnMessageId).toBe('original')
+    expect(passed.scopeTurnMessageId).toBe('correction')
+  })
+
+  it('dedupes concurrent reviews of the same turn (double-click / multiple stale cards)', async () => {
+    runReview.mockClear()
+    // Hold runReview open so both synchronous triggers overlap in flight.
+    let resolveRun: (() => void) | undefined
+    runReview.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRun = () => resolve()
+        })
+    )
+    registerReviewerIpcHandlers({ acpRuntime })
+
+    const runHandler = handlers.get(REVIEWER_IPC.RUN)
+    runHandler?.({}, createRequest())
+    runHandler?.({}, createRequest()) // same turn, still in flight → dropped
+
+    await vi.waitFor(() => expect(runReview).toHaveBeenCalledTimes(1))
+    resolveRun?.()
+    await Promise.resolve()
+    expect(runReview).toHaveBeenCalledTimes(1)
+
+    runReview.mockReset()
+    runReview.mockResolvedValue(undefined)
+  })
 })
