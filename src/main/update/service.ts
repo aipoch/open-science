@@ -133,13 +133,9 @@ export class UpdateService implements UpdateStrategy {
   }
 
   async download(): Promise<UpdateStatus> {
-    // An active download is in flight; ignore repeat clicks / concurrent renderers immediately. Starting
-    // a second would overwrite downloadAbort and orphan the first (cancel() could no longer stop it).
-    if (this.downloadAbort) return this.status
-    // A just-cancelled download may still be settling (cancel() returns before downloadInstaller's abort
-    // cleanup — its partial-file rm — finishes). Wait it out so an aborted download can't delete a
-    // same-path retry's freshly written file, then re-check the guard.
-    await this.downloadLifecycle
+    // An active download is in flight; ignore repeat clicks / concurrent renderers. The abort claim
+    // below is synchronous (before any await) so this guard and a cancel() during the drain both target
+    // a consistent slot — a cancel while a retry is still draining must abort it, not be a no-op.
     if (this.downloadAbort) return this.status
 
     const { download } = this.status
@@ -159,19 +155,26 @@ export class UpdateService implements UpdateStrategy {
       return this.status
     }
 
-    // Claim the in-flight slot synchronously, before the save-dialog await, so a concurrent download()
-    // is rejected by the guard above and cancel() can abort even while the save prompt is open.
+    // Claim the slot synchronously, before any await, so a concurrent download() is rejected and a
+    // cancel() during the drain (below) aborts this download instead of being a no-op.
+    const previous = this.downloadLifecycle
     const abort = new AbortController()
     this.downloadAbort = abort
 
     const lifecycle = (async () => {
-      // Ask where to save (platform-aware). A dialog cancel — or a cancel() during the prompt — leaves
-      // the status untouched (stays 'available').
-      const targetPath = await this.promptSavePath(installerFileName(download.url))
-      if (!targetPath || abort.signal.aborted) return
-
-      this.setStatus({ ...this.status, state: 'downloading', progress: 0 })
       try {
+        // Drain any prior (e.g. just-cancelled) download so its partial-file rm can't delete a same-path
+        // retry's installer. Swallow its outcome — it is owned by its own lifecycle.
+        if (previous) await previous.catch(() => {})
+        // A cancel() during the drain means never start this download.
+        if (abort.signal.aborted) return
+
+        // Ask where to save (platform-aware). A dialog cancel — or a cancel() during the prompt —
+        // leaves the status untouched (stays 'available').
+        const targetPath = await this.promptSavePath(installerFileName(download.url))
+        if (!targetPath || abort.signal.aborted) return
+
+        this.setStatus({ ...this.status, state: 'downloading', progress: 0 })
         const localPath = await downloadInstaller(download, targetPath, {
           fetchImpl: this.fetchImpl,
           onProgress: (percent) => this.broadcast('update:progress', percent),
@@ -179,8 +182,10 @@ export class UpdateService implements UpdateStrategy {
         })
         this.setStatus({ ...this.status, state: 'ready', progress: 100, localPath })
       } catch (error) {
-        // A user cancel aborts the fetch, which rejects here; cancel() has already reset the status to
-        // 'available', so don't overwrite it with an error.
+        // A user cancel aborts the fetch (rejects here); cancel() already reset the status to
+        // 'available', so leave it. Any other failure — including a save-dialog rejection — surfaces as
+        // an error the user can retry from. Caught here so the lifecycle never rejects and can't poison
+        // the next download()'s drain.
         if (!abort.signal.aborted) {
           this.setStatus({
             ...this.status,
@@ -188,13 +193,16 @@ export class UpdateService implements UpdateStrategy {
             error: error instanceof Error ? error.message : 'Download failed'
           })
         }
+      } finally {
+        if (this.downloadAbort === abort) this.downloadAbort = undefined
       }
-    })().finally(() => {
-      if (this.downloadAbort === abort) this.downloadAbort = undefined
-    })
+    })()
     this.downloadLifecycle = lifecycle
-    await lifecycle
-    if (this.downloadLifecycle === lifecycle) this.downloadLifecycle = undefined
+    try {
+      await lifecycle
+    } finally {
+      if (this.downloadLifecycle === lifecycle) this.downloadLifecycle = undefined
+    }
     return this.status
   }
 

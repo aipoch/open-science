@@ -315,6 +315,99 @@ describe('UpdateService.download', () => {
     expect(firstFinal.error).toBeUndefined()
   })
 
+  it('a cancel while a retry is still draining aborts it — no hidden download starts', async () => {
+    // Reproduces issue #216's core symptom for the retry path: cancel first, retry (which drains the
+    // cancelled download), then cancel again during that drain. A no-op cancel here would let the retry
+    // start a hidden download after the dialog closed.
+    dir = await mkdtemp(join(tmpdir(), 'svc-'))
+    const target = join(dir, 'installer.dmg')
+    const manifestForCheck = downloadManifest(100, 'irrelevant')
+    let installerFetches = 0
+    let onFirstFetch: (() => void) | undefined
+    let errorFirstStream: (() => void) | undefined
+    const firstFetched = new Promise<void>((resolve) => (onFirstFetch = resolve))
+    const fetchImpl = ((input: unknown) => {
+      if (String(input).endsWith('version.json')) {
+        return Promise.resolve(jsonResponse(manifestForCheck))
+      }
+      installerFetches += 1
+      const hanging = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]))
+          errorFirstStream = () =>
+            controller.error(new DOMException('The user aborted a request.', 'AbortError'))
+        }
+      })
+      onFirstFetch?.()
+      return Promise.resolve(new Response(hanging, { status: 200 }))
+    }) as unknown as typeof fetch
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn(),
+      promptSavePath: () => Promise.resolve(target)
+    })
+
+    await service.check()
+    const first = service.download()
+    await firstFetched
+    expect((await service.cancel()).state).toBe('available')
+
+    // Retry drains the cancelled download; cancel it again while it is still draining.
+    const retry = service.download()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect((await service.cancel()).state).toBe('available')
+
+    // Let the first download settle so the retry's drain unblocks.
+    errorFirstStream?.()
+    const status = await retry
+    expect(status.state).toBe('available')
+    // The retry must NOT have started a second (hidden) download.
+    expect(installerFetches).toBe(1)
+
+    await first
+  })
+
+  it('recovers on a later download() after the save dialog throws (no poisoned lifecycle)', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'svc-'))
+    const target = join(dir, 'installer.dmg')
+    const body = Buffer.from('installer-bytes')
+    const manifestForCheck = downloadManifest(
+      body.byteLength,
+      createHash('sha256').update(body).digest('hex')
+    )
+    const fetchImpl = ((input: unknown) =>
+      String(input).endsWith('version.json')
+        ? Promise.resolve(jsonResponse(manifestForCheck))
+        : Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch
+    let saveCall = 0
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn(),
+      // First prompt throws (e.g. a dialog failure); the second succeeds.
+      promptSavePath: () =>
+        saveCall++ === 0 ? Promise.reject(new Error('dialog failed')) : Promise.resolve(target)
+    })
+
+    await service.check()
+    const failed = await service.download()
+    expect(failed.state).toBe('error')
+    expect(failed.error).toBe('dialog failed')
+
+    // A poisoned lifecycle would rethrow 'dialog failed' here and never reopen the dialog.
+    const retry = await service.download()
+    expect(retry.state).toBe('ready')
+    expect(retry.localPath).toBe(target)
+    expect(existsSync(target)).toBe(true)
+  })
+
   it('rejects a download whose URL host differs from the manifest host, without fetching', async () => {
     const offHostManifest: UpdateManifest = {
       version: '0.3.0',

@@ -204,13 +204,15 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     const lifecycle = (async () => {
       try {
         // Let the prior cancelled download's promise clear (and its cleanup finish) before starting.
-        if (previous) await previous
+        // Swallow its outcome — it is owned by its own lifecycle.
+        if (previous) await previous.catch(() => {})
         // A cancel() during the drain means never start this download.
         if (token.cancelled) return
         await this.updater.downloadUpdate(token)
       } catch (error) {
         // A user cancel rejects downloadUpdate too; don't surface it as an error. cancel() has already
-        // reset the status to 'available', so leave it untouched here.
+        // reset the status to 'available', so leave it untouched here. Caught so the lifecycle never
+        // rejects and can't poison the next download()'s drain.
         if (!token.cancelled) {
           this.setStatus({
             state: 'error',
@@ -222,8 +224,11 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       }
     })()
     this.downloadLifecycle = lifecycle
-    await lifecycle
-    if (this.downloadLifecycle === lifecycle) this.downloadLifecycle = undefined
+    try {
+      await lifecycle
+    } finally {
+      if (this.downloadLifecycle === lifecycle) this.downloadLifecycle = undefined
+    }
     return this.status
   }
 
