@@ -25,6 +25,7 @@ const buildDocument = (): NotebookRunDocument => ({
       runId: 'run-1',
       cellId: 'cell-1',
       source: 'agent',
+      kernelKind: 'python',
       script: "print('hello')",
       status: 'completed',
       startedAt: 100,
