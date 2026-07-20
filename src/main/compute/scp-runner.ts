@@ -13,6 +13,23 @@ import type { ResolvedSshTarget } from './ssh-runner'
 // Glob metacharacters that must not appear in an import path (prevents shell expansion).
 const GLOB_CHARS = /[*?[\]{}\\]/
 
+// Shell-dangerous characters that must not appear in a path used as an scp remote spec.
+// Traditional scp (pre-OpenSSH-9 SCP/RCP protocol) passes the remote path through a remote
+// shell, so command-substitution / redirection / control chars in an attacker- or agent-supplied
+// path could execute as the user. scp's protocol default is version-dependent (SFTP on 9+), so we
+// reject these characters outright rather than rely on quoting, which is fragile across versions.
+// Control chars (0x00–0x1f, 0x7f) are included. Note: this deliberately rejects legitimate but
+// rare filenames containing `$` etc. on the transfer path — an acceptable trade for a security
+// boundary. Directory browsing (listDir) does NOT use this; it single-quotes for the ssh-exec
+// shell we fully control, preserving the ability to browse such names.
+// eslint-disable-next-line no-control-regex
+const SHELL_UNSAFE_CHARS = /[$`;|&<>()"'\x00-\x1f\x7f]/
+
+// Wraps a string in single quotes for safe embedding in a shell command we author (ssh-exec).
+// Inside single quotes the shell performs no expansion at all; the only character needing special
+// handling is the single quote itself, closed and re-opened via the '\'' idiom.
+export const shellSingleQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
+
 // 2 GiB in bytes — hard upper limit for os-downloads destination.
 export const MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024
 
@@ -44,13 +61,16 @@ export const resolveScpBinary = (): string => {
   return 'scp'
 }
 
-// Validates a remote path for import: must be absolute, no glob chars.
-// Returns a RemoteKind string on rejection or undefined on success.
+// Validates a remote path used as an scp remote spec: must be absolute, no glob chars, and no
+// shell-injection metacharacters/control chars (scp may pass the path through a remote shell,
+// version-dependent — see SHELL_UNSAFE_CHARS). Returns a RemoteKind string on rejection or
+// undefined on success. Applied to every download destination before scp runs.
 export const validateImportPath = (
   remotePath: string
 ): 'outside_roots' | 'not_a_file' | undefined => {
   if (!remotePath.startsWith('/')) return 'outside_roots'
   if (GLOB_CHARS.test(remotePath)) return 'outside_roots'
+  if (SHELL_UNSAFE_CHARS.test(remotePath)) return 'outside_roots'
   return undefined
 }
 

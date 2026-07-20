@@ -50,7 +50,8 @@ const mockListing: DirListing = {
 
 const setComputeApi = (api: Partial<Window['api']['compute']>): void => {
   // Preserve the real window (including getComputedStyle etc) while injecting api.
-  // We use Object.defineProperty to add api to the existing global window.
+  // We use Object.defineProperty to add api to the existing global window — replacing
+  // globalThis.window wholesale breaks window.getComputedStyle, which radix-ui's portal needs.
   Object.defineProperty(globalThis.window, 'api', {
     configurable: true,
     writable: true,
@@ -188,20 +189,30 @@ describe('FileBrowserModal', () => {
         <FileBrowserModal open={true} onClose={vi.fn()} initialProviderId="ssh:biowulf" />
       )
     })
-    await act(async () => { await Promise.resolve() })
+    await act(async () => {
+      await Promise.resolve()
+    })
 
     // Select readme.txt
     const fileButton = Array.from(document.querySelectorAll('[role="option"]')).find((el) =>
       el.textContent?.includes('readme.txt')
     ) as HTMLElement | undefined
-    await act(async () => { fileButton?.click() })
+    await act(async () => {
+      fileButton?.click()
+    })
 
     // Click the Download button
-    const downloadButton = Array.from(document.querySelectorAll('button')).find((el) =>
-      el.textContent?.includes('Download') && el.getAttribute('aria-label')?.includes('OS Downloads')
+    const downloadButton = Array.from(document.querySelectorAll('button')).find(
+      (el) =>
+        el.textContent?.includes('Download') &&
+        el.getAttribute('aria-label')?.includes('OS Downloads')
     ) as HTMLElement | undefined
-    await act(async () => { downloadButton?.click() })
-    await act(async () => { await Promise.resolve() })
+    await act(async () => {
+      downloadButton?.click()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
 
     expect(downloadMock).toHaveBeenCalledWith('ssh:biowulf', '/scratch/user/readme.txt', {
       kind: 'os-downloads'
@@ -224,15 +235,24 @@ describe('FileBrowserModal', () => {
         <FileBrowserModal open={true} onClose={vi.fn()} initialProviderId="ssh:biowulf" />
       )
     })
-    await act(async () => { await Promise.resolve() })
+    await act(async () => {
+      await Promise.resolve()
+    })
 
     // Select readme.txt
     const fileButton = Array.from(document.querySelectorAll('[role="option"]')).find((el) =>
       el.textContent?.includes('readme.txt')
     ) as HTMLElement | undefined
-    await act(async () => { fileButton?.click() })
+    await act(async () => {
+      fileButton?.click()
+    })
 
-    // Add to project button should be visible
+    // Add to project button is visible but disabled — artifact persistence isn't wired yet
+    // (issue 06), so the entry point is greyed out rather than showing a misleading success.
     expect(document.body.textContent).toContain('Add to project')
+    const addButton = Array.from(document.querySelectorAll('button')).find((el) =>
+      el.textContent?.includes('Add to project')
+    ) as HTMLButtonElement | undefined
+    expect(addButton?.disabled).toBe(true)
   })
 })

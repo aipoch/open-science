@@ -26,6 +26,7 @@ import {
   inferMimeType,
   resolveDestFilename,
   runScpTransfer,
+  shellSingleQuote,
   validateImportPath
 } from './scp-runner'
 
@@ -404,7 +405,11 @@ export class ComputeService {
     // error (nonzero exit + cd's stderr) rather than silently falling back to listing $HOME.
     // We keep cd's stderr intact (no `2>&1`) so classifyRemoteError can distinguish
     // not_found ("no such file or directory") from permission ("permission denied").
-    const quotedPath = JSON.stringify(path)
+    //
+    // Single-quote the path so the remote shell performs no expansion: an attacker-named directory
+    // like `$(...)` or with backticks (browsed via double-click) cannot inject commands. We author
+    // this ssh-exec command ourselves, so single-quoting is robust (unlike scp — see validateImportPath).
+    const quotedPath = shellSingleQuote(path)
     const remoteCmd = [
       `realpath ${quotedPath} 2>/dev/null || echo ${quotedPath}`,
       `cd ${quotedPath} || exit 1`,
@@ -647,6 +652,21 @@ export class ComputeService {
       throw fsErr
     }
 
+    // Validate the remote path for EVERY destination before it reaches scp: absolute, no glob, no
+    // shell-injection metacharacters/control chars. scp may pass the path through a remote shell
+    // (version-dependent), so os-downloads and session-cache need this guard just as import does.
+    const pathError = validateImportPath(remotePath)
+    if (pathError) {
+      const fsErr = new Error(`Invalid remote path: ${remotePath}`) as Error & {
+        remoteFsError: RemoteFsError
+      }
+      fsErr.remoteFsError = {
+        detail: 'Path must be absolute and contain no glob or shell metacharacters.',
+        remoteKind: pathError
+      }
+      throw fsErr
+    }
+
     const filename = basename(remotePath)
 
     if (dest.kind === 'os-downloads') {
@@ -700,7 +720,9 @@ export class ComputeService {
     const remoteSize = await this._statRemoteSize(host, target, remotePath)
 
     if (remoteSize > MAX_DOWNLOAD_BYTES) {
-      const fsErr = new Error(`File exceeds 2 GiB download limit (${remoteSize} bytes)`) as Error & {
+      const fsErr = new Error(
+        `File exceeds 2 GiB download limit (${remoteSize} bytes)`
+      ) as Error & {
         remoteFsError: RemoteFsError
       }
       fsErr.remoteFsError = {
@@ -816,7 +838,7 @@ export class ComputeService {
         name: filename,
         size: localStat.size,
         mimeType,
-        artifactId,
+        artifactId
         // provenance is stored in artifactId so the renderer can surface it
         // (ArtifactFile metadata will include provenance via the IPC handler)
       }
@@ -863,7 +885,10 @@ export class ComputeService {
     target: import('./ssh-runner').ResolvedSshTarget,
     remotePath: string
   ): Promise<{ fileType: string; size: number }> {
-    const quoted = JSON.stringify(remotePath)
+    // Single-quote to neutralise shell expansion of the path in this ssh-exec command (same
+    // injection class as listDir). The scp transfer that follows is guarded separately by
+    // validateImportPath, since scp's remote-path shell handling is version-dependent.
+    const quoted = shellSingleQuote(remotePath)
     // Portable: test for file/dir, get size via stat -c (Linux) with macOS fallback.
     const cmd = [
       `if [ -f ${quoted} ]; then`,
@@ -885,7 +910,11 @@ export class ComputeService {
       const fsErr = new Error('SSH connection failed during stat') as Error & {
         remoteFsError: RemoteFsError & { retry_after_user_action: boolean }
       }
-      fsErr.remoteFsError = { detail: 'Connection failed.', remoteKind: 'connection', retry_after_user_action: true }
+      fsErr.remoteFsError = {
+        detail: 'Connection failed.',
+        remoteKind: 'connection',
+        retry_after_user_action: true
+      }
       throw fsErr
     }
 

@@ -10,6 +10,7 @@ import {
   buildScpArgs,
   inferMimeType,
   resolveDestFilename,
+  shellSingleQuote,
   validateImportPath
 } from './scp-runner'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -63,6 +64,63 @@ describe('validateImportPath', () => {
 
   it('accepts a path with spaces', () => {
     expect(validateImportPath('/home/user/my file.csv')).toBeUndefined()
+  })
+
+  // Shell-injection guard for the scp remote spec (scp may pass the path through a remote shell,
+  // version-dependent). These must be rejected so an agent-supplied path can't run commands.
+  it('rejects a path with command substitution $()', () => {
+    expect(validateImportPath('/home/user/$(id).csv')).toBe('outside_roots')
+  })
+
+  it('rejects a path with backtick command substitution', () => {
+    expect(validateImportPath('/home/user/`whoami`.csv')).toBe('outside_roots')
+  })
+
+  it('rejects a path with a semicolon', () => {
+    expect(validateImportPath('/home/user/a.csv; rm -rf ~')).toBe('outside_roots')
+  })
+
+  it('rejects a path with a pipe', () => {
+    expect(validateImportPath('/home/user/a.csv | sh')).toBe('outside_roots')
+  })
+
+  it('rejects a path with redirection or subshell chars', () => {
+    expect(validateImportPath('/home/user/a>b')).toBe('outside_roots')
+    expect(validateImportPath('/home/user/(x)')).toBe('outside_roots')
+    expect(validateImportPath('/home/user/a&b')).toBe('outside_roots')
+  })
+
+  it('rejects a path with a newline', () => {
+    expect(validateImportPath('/home/user/a\ncurl evil')).toBe('outside_roots')
+  })
+
+  it('rejects a path with a control character', () => {
+    expect(validateImportPath('/home/user/a\x01b')).toBe('outside_roots')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// shellSingleQuote
+// ---------------------------------------------------------------------------
+
+describe('shellSingleQuote', () => {
+  it('wraps a plain string in single quotes', () => {
+    expect(shellSingleQuote('/home/user/data.csv')).toBe(`'/home/user/data.csv'`)
+  })
+
+  it('neutralizes command substitution by keeping it literal inside single quotes', () => {
+    // Inside single quotes the shell does no expansion, so $() and backticks stay literal.
+    expect(shellSingleQuote('/a/$(id)')).toBe(`'/a/$(id)'`)
+    expect(shellSingleQuote('/a/`whoami`')).toBe("'/a/`whoami`'")
+  })
+
+  it('escapes an embedded single quote via the close/reopen idiom', () => {
+    // O'Brien → 'O'\''Brien'
+    expect(shellSingleQuote("O'Brien")).toBe(`'O'\\''Brien'`)
+  })
+
+  it('preserves spaces without extra escaping', () => {
+    expect(shellSingleQuote('/a/my file.csv')).toBe(`'/a/my file.csv'`)
   })
 })
 

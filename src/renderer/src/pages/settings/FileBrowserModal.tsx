@@ -143,7 +143,13 @@ type ActionStatus =
   | { kind: 'success'; action: 'download' | 'import'; message: string; filePath?: string }
   | { kind: 'error'; message: string }
 
-function DetailPanel({ entry, resolvedDir, providerId, activeProjectId, onClose }: DetailPanelProps): React.JSX.Element {
+function DetailPanel({
+  entry,
+  resolvedDir,
+  providerId,
+  activeProjectId,
+  onClose
+}: DetailPanelProps): React.JSX.Element {
   const [copied, setCopied] = useState(false)
   const [actionStatus, setActionStatus] = useState<ActionStatus>({ kind: 'idle' })
   const remoteAbsPath = `${resolvedDir.replace(/\/$/, '')}/${entry.name}`
@@ -179,26 +185,9 @@ function DetailPanel({ entry, resolvedDir, providerId, activeProjectId, onClose 
     void window.api.compute.revealInFolder(filePath)
   }
 
-  // Add to project → artifact (no approval gate).
-  const handleAddToProject = async (): Promise<void> => {
-    if (!activeProjectId) return
-    setActionStatus({ kind: 'loading', action: 'import' })
-    try {
-      await window.api.compute.download(providerId, remoteAbsPath, {
-        kind: 'artifact',
-        projectId: activeProjectId
-      })
-      setActionStatus({
-        kind: 'success',
-        action: 'import',
-        message: `Added ${entry.name} to project`
-      })
-    } catch (err) {
-      const e = err as Error & { remoteFsError?: { detail: string; remoteKind: string } }
-      const detail = e.remoteFsError?.detail ?? e.message ?? 'Import failed'
-      setActionStatus({ kind: 'error', message: detail })
-    }
-  }
+  // "Add to project" (artifact import) is intentionally not wired yet — see the disabled button
+  // below and issue 06 (compute-file-preview). The ComputeService.download(dest='artifact') path
+  // exists but no caller persists the temp file into the project artifact store.
 
   const isLoading = actionStatus.kind === 'loading'
 
@@ -275,21 +264,22 @@ function DetailPanel({ entry, resolvedDir, providerId, activeProjectId, onClose 
             : 'Download'}
         </Button>
 
-        {/* Add to project → artifact (no approval) */}
+        {/* Add to project → artifact. Disabled until artifact persistence is wired: the download
+            currently scp's to a temp dir but nothing writes it to the project artifact store, so
+            enabling it would show a misleading "success" with no artifact. Tracked in issue 06
+            (compute-file-preview). */}
         {activeProjectId && (
           <Button
             type="button"
             variant="outline"
             size="sm"
             className="w-full gap-1.5 text-xs"
-            disabled={isLoading}
-            onClick={() => void handleAddToProject()}
-            aria-label="Add file to current project as artifact"
+            disabled
+            title="Coming soon — remote import to project artifacts is not yet available"
+            aria-label="Add file to current project as artifact (coming soon)"
           >
             <FolderOpen className="size-3.5" />
-            {actionStatus.kind === 'loading' && actionStatus.action === 'import'
-              ? 'Importing…'
-              : 'Add to project'}
+            Add to project
           </Button>
         )}
 
