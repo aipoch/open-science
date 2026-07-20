@@ -51,6 +51,9 @@ export type OfficialVendor = {
   // the Codex Responses->Chat bridge. Ships with the app so such models are greyed in the picker
   // rather than user-tested. Absent/empty ⇒ every listed model is bridge-compatible.
   bridgeUnsupportedModels?: readonly string[]
+  // Models that support image input (multimodal vision capabilities). Absent/empty ⇒ no models support
+  // images. When present, only listed model ids accept image attachments; others are text-only.
+  multimodalModels?: readonly string[]
   // Single-endpoint vendors set `baseUrl`; multi-region vendors set `regions` instead (never both).
   // For dual-endpoint vendors, `baseUrl` is the Anthropic /v1/messages route and `openaiBaseUrl` is the
   // separate OpenAI /v1/chat/completions root. Set both only for a vendor whose apiEndpoints include
@@ -76,7 +79,16 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     apiKeyUrl: 'https://platform.openai.com/api-keys',
     // The API exposes a broader mixed catalog (embeddings, image, and audio models); keep the coding
     // catalog curated here instead of importing every id from /v1/models.
-    models: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini']
+    models: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini'],
+    // All GPT-5+ models support vision
+    multimodalModels: [
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna',
+      'gpt-5.5',
+      'gpt-5.4',
+      'gpt-5.4-mini'
+    ]
   },
   {
     id: 'anthropic',
@@ -86,6 +98,13 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     modelsListUrl: 'https://api.anthropic.com/v1/models',
     // Models with a 1M-context variant list both the standard id and the `[1m]` one.
     models: [
+      'claude-opus-4-8',
+      'claude-opus-4-8[1m]',
+      'claude-sonnet-5',
+      'claude-haiku-4-5-20251001'
+    ],
+    // All Claude models support vision
+    multimodalModels: [
       'claude-opus-4-8',
       'claude-opus-4-8[1m]',
       'claude-sonnet-5',
@@ -104,7 +123,9 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     openaiBaseUrl: 'https://api.deepseek.com/v1',
     apiKeyUrl: 'https://platform.deepseek.com/api_keys',
     modelsListUrl: 'https://api.deepseek.com/v1/models',
-    models: ['deepseek-v4-pro', 'deepseek-v4-pro[1m]', 'deepseek-v4-flash']
+    models: ['deepseek-v4-pro', 'deepseek-v4-pro[1m]', 'deepseek-v4-flash'],
+    // DeepSeek v4 models do not support vision yet (text-only)
+    multimodalModels: []
   },
   {
     id: 'zhipu',
@@ -129,7 +150,9 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         apiKeyUrl: 'https://open.bigmodel.cn/usercenter/apikeys'
       }
     ],
-    models: ['glm-5.2', 'glm-5.1', 'glm-5', 'glm-5v-turbo', 'glm-5-turbo']
+    models: ['glm-5.2', 'glm-5.1', 'glm-5', 'glm-5v-turbo', 'glm-5-turbo'],
+    // Only the 'v' variants support vision (glm-5v-turbo has multimodal capabilities)
+    multimodalModels: ['glm-5v-turbo']
   },
   {
     id: 'minimax',
@@ -148,7 +171,9 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         apiKeyUrl: 'https://platform.minimaxi.com/user-center/basic-information/interface-key'
       }
     ],
-    models: ['MiniMax-M3', 'MiniMax-M3[1m]', 'MiniMax-M2.7', 'MiniMax-M2.5']
+    models: ['MiniMax-M3', 'MiniMax-M3[1m]', 'MiniMax-M2.7', 'MiniMax-M2.5'],
+    // MiniMax models do not support vision yet (text-only)
+    multimodalModels: []
   },
   {
     id: 'kimi',
@@ -161,7 +186,9 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     openaiBaseUrl: 'https://api.moonshot.cn/v1',
     apiKeyUrl: 'https://platform.kimi.com/console',
     modelsListUrl: 'https://api.moonshot.cn/v1/models',
-    models: ['kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6', 'kimi-k2.5']
+    models: ['kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6', 'kimi-k2.5'],
+    // Kimi models support vision starting from k3
+    multimodalModels: ['kimi-k3']
   },
   {
     id: 'kimiforcode',
@@ -174,7 +201,9 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     baseUrl: 'https://api.kimi.com/coding',
     openaiBaseUrl: 'https://api.kimi.com/coding/v1',
     apiKeyUrl: 'https://www.kimi.com/code/docs',
-    models: ['kimi-k3', 'kimi-for-coding', 'kimi-for-coding-highspeed']
+    models: ['kimi-k3', 'kimi-for-coding', 'kimi-for-coding-highspeed'],
+    // Only k3 supports vision in the coding plan
+    multimodalModels: ['kimi-k3']
   },
   {
     id: 'xiaomimimo',
@@ -186,7 +215,9 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     openaiBaseUrl: 'https://api.xiaomimimo.com/v1',
     apiKeyUrl: 'https://platform.xiaomimimo.com/console/api-keys',
     modelsListUrl: 'https://api.xiaomimimo.com/v1/models',
-    models: ['mimo-v2.5-pro', 'mimo-v2.5']
+    models: ['mimo-v2.5-pro', 'mimo-v2.5'],
+    // Xiaomi MIMO models do not support vision yet (text-only)
+    multimodalModels: []
   },
   // OpenRouter is an aggregation gateway (many vendors behind one key), so it sits last in the picker.
   {
@@ -221,6 +252,25 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       'x-ai/grok-4.5',
       'deepseek/deepseek-v4-pro',
       'z-ai/glm-5.2',
+      'moonshotai/kimi-k3',
+      'qwen/qwen3.7-max'
+    ],
+    // Most models on OpenRouter support vision (Claude, GPT-5+, Gemini, Grok)
+    multimodalModels: [
+      'anthropic/claude-opus-4.8',
+      'anthropic/claude-sonnet-5',
+      'anthropic/claude-haiku-4.5',
+      'openai/gpt-5.6-terra-pro',
+      'openai/gpt-5.6-terra',
+      'openai/gpt-5.6-sol-pro',
+      'openai/gpt-5.6-sol',
+      'openai/gpt-5.6-luna-pro',
+      'openai/gpt-5.6-luna',
+      'openai/gpt-5.5-pro',
+      'openai/gpt-5.5',
+      'google/gemini-3.1-pro-preview',
+      'google/gemini-3.5-flash',
+      'x-ai/grok-4.5',
       'moonshotai/kimi-k3',
       'qwen/qwen3.7-max'
     ]
@@ -344,3 +394,18 @@ export const isModelBridgeSupported = (
 // Whether a vendor needs a region choice (more than one endpoint).
 export const vendorHasRegions = (id: OfficialVendorId): boolean =>
   (VENDORS_BY_ID.get(id)?.regions?.length ?? 0) > 0
+
+// Checks whether a specific model from an official vendor supports image input (multimodal vision).
+// Returns false for unknown vendors, unknown models, or models not in the vendor's multimodalModels list.
+export const isVendorModelMultimodal = (
+  vendorId: OfficialVendorId,
+  modelId: string | undefined
+): boolean => {
+  if (!modelId) return false
+
+  const vendor = VENDORS_BY_ID.get(vendorId)
+  if (!vendor) return false
+
+  const multimodalModels = vendor.multimodalModels ?? []
+  return multimodalModels.includes(modelId)
+}

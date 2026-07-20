@@ -61,6 +61,7 @@ import {
   getOfficialVendor,
   isModelBridgeSupported,
   isOfficialVendorId,
+  isVendorModelMultimodal,
   resolveVendorApiEndpoints,
   resolveVendorBaseUrl,
   resolveVendorModelsUrl,
@@ -1919,14 +1920,18 @@ class SettingsService {
   }
 
   private providerSupportsImageInput(provider: StoredProvider, activeModel?: string): boolean {
+    // claude-default always supports images (uses the user's Claude login, which has vision models)
     if (provider.type === 'claude-default') return true
+
+    // Custom providers: respect the user-configured supportsImageInput flag
     if (provider.type === 'custom') return provider.supportsImageInput === true
-    if (provider.vendorId === 'openai' || provider.vendorId === 'anthropic') return true
-    if (provider.vendorId === 'zhipu') {
-      return /(^|[-_.])\w*v\w*($|[-_.])/i.test(
-        activeModel ?? this.availableModels(provider)[0] ?? ''
-      )
+
+    // Official vendors: check the model against the vendor's multimodalModels registry
+    if (provider.type === 'official' && provider.vendorId) {
+      const modelToCheck = activeModel ?? this.availableModels(provider)[0]
+      return isVendorModelMultimodal(provider.vendorId, modelToCheck)
     }
+
     return false
   }
 
