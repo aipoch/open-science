@@ -7,8 +7,11 @@ import { pathToFileURL } from 'node:url'
 // blows past the model's per-image (~5MB) and total-request (~32MB) limits after base64 growth.
 export const MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024
 
-// Anthropic rejects a single image whose payload exceeds 5MB; stay comfortably under it.
-export const MAX_IMAGE_PAYLOAD_BYTES = 4.5 * 1024 * 1024
+// A single image must stay under the provider per-image limit AFTER base64 growth. Anthropic rejects
+// an image near 5MB and OpenCode's default image config caps base64 at 5MB (5242880); base64 inflates
+// raw bytes ~33%. Cap the re-encoded raw payload at 3.5MB so its base64 form (~4.7MB) stays under 5MB
+// on both routes — the previous 4.5MB raw grew to ~6MB base64 and could be rejected or force a re-resize.
+export const MAX_IMAGE_PAYLOAD_BYTES = 3.5 * 1024 * 1024
 
 // Base64 image data shares the request with prompts and tools. Keep 8MB of a typical 32MB request
 // available for that non-image content even when the composer accepts its maximum attachment count.
