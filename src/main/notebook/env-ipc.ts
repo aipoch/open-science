@@ -56,20 +56,28 @@ export const createNotebookEnvHandlers = (
   provisioner: RuntimeProvisioner,
   // Awaited before a UI-triggered provision/repair so recovery's prefix cleanup can't race a rebuild
   // the user just kicked off. Optional so existing behavior tests construct handlers unchanged.
-  waitForRecovery?: () => Promise<void>
+  waitForRecovery?: () => Promise<void>,
+  // Throws if the default env for a language is recovery-blocked (an unknown-liveness orphan may still
+  // be writing its prefix), so a UI provision/repair refuses instead of materializing over a live env.
+  // Checked AFTER waitForRecovery, so the blocked set is populated. Optional for existing tests.
+  assertProvisionAllowed?: (language: NotebookLanguage) => void
 ): NotebookEnvHandlers => {
   const serialized = serializeProvisioner(provisioner)
-  const afterRecovery = async (run: () => Promise<void>): Promise<void> => {
+  const afterRecovery = async (
+    language: NotebookLanguage,
+    run: () => Promise<void>
+  ): Promise<void> => {
     if (waitForRecovery) await waitForRecovery()
+    assertProvisionAllowed?.(language)
     await run()
   }
   return {
     status: () => serialized.status(),
     provision: (lang, onProgress) =>
-      afterRecovery(() =>
+      afterRecovery(lang, () =>
         lang === 'r' ? serialized.provisionR(onProgress) : serialized.provisionPython(onProgress)
       ),
-    repair: (lang, onProgress) => afterRecovery(() => serialized.repair(lang, onProgress)),
+    repair: (lang, onProgress) => afterRecovery(lang, () => serialized.repair(lang, onProgress)),
     cancel: () => serialized.cancel()
   }
 }
@@ -167,11 +175,14 @@ export const registerNotebookEnvIpcHandlers = (
   // Awaited before the startup gate and any UI provision/repair touches a prefix, so crash recovery
   // (kicked off in the caller BEFORE this registration) finishes reconciling first. Optional so the
   // "no provisioner" path and existing tests keep their signatures.
-  waitForRecovery?: () => Promise<void>
+  waitForRecovery?: () => Promise<void>,
+  // Throws if the default env for a language is recovery-blocked, so UI provision/repair refuses rather
+  // than materializing over a prefix an unknown-liveness orphan may still hold.
+  assertProvisionAllowed?: (language: NotebookLanguage) => void
 ): void => {
   const serialized = provisioner ? serializeProvisioner(provisioner) : undefined
   const handlers = serialized
-    ? createNotebookEnvHandlers(serialized, waitForRecovery)
+    ? createNotebookEnvHandlers(serialized, waitForRecovery, assertProvisionAllowed)
     : createUnavailableHandlers()
   ipcMain.handle('notebook-env:status', () => handlers.status())
   ipcMain.handle('notebook-env:provision', (_event, lang: NotebookLanguage) =>

@@ -25,6 +25,7 @@ import type { EnvironmentInfo } from '../../shared/notebook-env'
 import type { NotebookEnvironmentStatus } from '../../shared/notebook'
 import type { DiscoveredInterpreter, RuntimeEnablement } from '../../shared/notebook-runtime'
 import {
+  addRepairRequired,
   DEFAULT_ENV_VERSION,
   DEFAULT_PY_ENV,
   envPrefix,
@@ -3036,9 +3037,10 @@ describe('v4 runtime bindings & agent tools', () => {
         return { ok: true, needsRestart: false, log: '' }
       }
     })
-    // No binding -> managed default. A caller passing a bogus environment must not redirect the install.
+    // No session/binding -> managed default. A caller passing a bogus environment must not redirect the
+    // install. (No sessionId: a caller with no session context legitimately targets the default; a
+    // sessionId with no workspaceCwd would instead be refused, covered by its own test.)
     const result = await service.managePackages({
-      sessionId: 's',
       language: 'python',
       packages: ['numpy'],
       environment: 'some-other-env'
@@ -3095,6 +3097,122 @@ describe('v4 runtime bindings & agent tools', () => {
     // Installed into the user's own interpreter (external pip), proving the persisted binding was
     // honored — not the managed default prefix.
     expect(captured[0]?.interpreter).toBe(userPyA.interpreterPath)
+  })
+
+  it('refuses manage_packages with a sessionId but no workspaceCwd on a memory miss (no silent default)', async () => {
+    // A sessionId names a session whose persisted binding we must honor, but with no workspaceCwd we
+    // can't load it and it isn't in memory. Installing would silently target the default env, bypassing
+    // the binding — so refuse instead.
+    const root = await createStorageRoot()
+    let installRan = false
+    const service = bindingService(root, {
+      installPackagesImpl: async () => {
+        installRan = true
+        return { ok: true, needsRestart: false, log: '' }
+      }
+    })
+    const result = await service.managePackages({
+      sessionId: 'ghost',
+      language: 'python',
+      packages: ['numpy']
+    } as InstallRequestForTest)
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/RUNTIME_SESSION_UNAVAILABLE/)
+    expect(installRan).toBe(false)
+  })
+
+  it('blocks execute + install + provision on a prefix an unknown-liveness orphan may still hold', async () => {
+    // After recovery, an interrupted materialize whose child could NOT be confirmed dead ('unknown' —
+    // here a live pid with no recorded start time) must leave its prefix BLOCKED for this process, so a
+    // fresh materialize/install/provision refuses rather than racing the possible survivor. Verifies the
+    // barrier resolving is not mistaken for "safe to write this prefix".
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    const defaultPrefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+    const journal = new RuntimeOperationJournal(operationJournalPath(runtimeRoot))
+    // childPid alive (this process) + no childStartedAt => defaultOperationChildLiveness = 'unknown'
+    // deterministically, on every platform (it returns before consulting ps).
+    await journal.begin({
+      operationId: 'm',
+      kind: 'materialize',
+      runtimeId: DEFAULT_PY_ENV,
+      phase: 'create',
+      startedAt: 100,
+      childPid: process.pid,
+      targetPath: defaultPrefix
+    })
+
+    const provisionPython = vi.fn(async () => undefined)
+    let installRan = false
+    const service = bindingService(root, {
+      installPackagesImpl: async () => {
+        installRan = true
+        return { ok: true, needsRestart: false, log: '' }
+      }
+    })
+    service.setDefaultEnvProvisioner({ provisionPython, provisionR: async () => undefined })
+
+    await service.recoverInterruptedOperations()
+
+    // The default prefix is now recovery-blocked.
+    expect(service.isDefaultEnvRecoveryBlocked('python')).toBe(true)
+
+    // A no-binding execute (default env) fails rather than materializing over the blocked prefix.
+    const run = await service.execute({ sessionId: 's', workspaceCwd: root, code: '1' })
+    expect(run.status).toBe('failed')
+    expect(run.text.traceback).toMatch(/RUNTIME_RECOVERY_BLOCKED/)
+    expect(provisionPython).not.toHaveBeenCalled()
+
+    // A manage_packages install into that env refuses too.
+    const install = await service.managePackages({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      packages: ['numpy']
+    })
+    expect(install.ok).toBe(false)
+    expect(install.error).toMatch(/RUNTIME_RECOVERY_BLOCKED/)
+    expect(installRan).toBe(false)
+  })
+
+  it('restores a repaired binding to active across sessions after a successful repair install', async () => {
+    // A binding resolved while its runtime was repair-required is held unavailable/repair-required in
+    // memory. A completed repair install clears the disk flag AND must restore the in-memory binding to
+    // active (in every session), or it keeps refusing until a rebind.
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    // Flag the external runtime repair-required BEFORE binding, so the bind resolves it as unavailable.
+    addRepairRequired(runtimeRoot, userPyA.envId)
+    const service = bindingService(root, {
+      discovered: [managedPy, userPyA],
+      enablement: {
+        enabled: { [userPyA.envId]: true },
+        installAuthorized: { [userPyA.envId]: true }
+      },
+      installPackagesImpl: async () => ({ ok: true, needsRestart: false, log: '' })
+    })
+    const bound = await service.bindRuntime({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      runtimeId: userPyA.envId
+    })
+    // Bound but unavailable/repair-required (installable — completing the install is the repair).
+    expect(bound.bound.status).toBe('unavailable')
+    expect(bound.bound.reason).toBe('repair-required')
+
+    const result = await service.managePackages({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      packages: ['numpy']
+    })
+    expect(result.ok).toBe(true)
+
+    // The binding is now active again in the live session (not just the disk flag cleared).
+    const state = await service.state({ sessionId: 's', workspaceCwd: root })
+    expect(state.runtimeBindings.python?.status).toBe('active')
+    expect(state.runtimeBindings.python?.reason).toBeUndefined()
   })
 
   it('revokes a disabled runtime from a bound session so execution rejects (no silent fallback)', async () => {

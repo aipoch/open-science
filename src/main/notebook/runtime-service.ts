@@ -629,6 +629,13 @@ class NotebookRuntimeService {
   // Resolves when startup crash-recovery has finished; awaited by materialize/install so their prefix
   // work never races recovery's cleanup. Undefined until recoverInterruptedOperations is kicked off.
   private recoveryComplete: Promise<void> | undefined
+  // Env prefixes an interrupted op left possibly-live: recovery couldn't confirm the child process died
+  // (liveness 'unknown' — no ps / Windows / unparsable), so a survivor might STILL be writing this
+  // prefix. Any op that would write it (default materialize, package install, named-env create, UI
+  // provision/repair) must refuse for the rest of THIS process's life — the recovery barrier resolving
+  // is not enough, since the op wasn't actually reconciled. A later restart re-runs recovery against the
+  // retained journal entry: if the pid is gone/verifiable then, it reconciles and the prefix clears.
+  private readonly blockedPrefixes = new Set<string>()
   private readonly runtimeDiscoveryImpl: (
     language: NotebookLanguage
   ) => Promise<DiscoveredInterpreter[]>
@@ -716,6 +723,9 @@ class NotebookRuntimeService {
     if (env !== DEFAULT_PY_ENV && env !== DEFAULT_R_ENV) return
     // Let startup recovery finish first so its prefix cleanup/verify can't race this materialize.
     await this.ensureRecovered()
+    // Refuse if recovery left this prefix blocked (an unknown-liveness orphan may still be writing it) —
+    // materializing over it now could corrupt a live env.
+    this.assertPrefixRecoverable(envPrefix(runtimeRootDir, env))
     const ready =
       language === 'r'
         ? rReady(runtimeRootDir, DEFAULT_ENV_VERSION)
@@ -1735,18 +1745,35 @@ class NotebookRuntimeService {
     // session isn't in memory yet, the binding reads as undefined, and the install silently targets the
     // default env (bypassing a bound named/external/unavailable runtime and its install-authorization,
     // while pinnedRequest below would then guarantee the wrong target). Mirrors execute(), which already
-    // ensureSession()s. Falls back to the bare lookup only when workspaceCwd is absent (a direct/legacy
-    // caller that never carried session context — its request can't identify a session to load anyway).
-    const bindingSession =
-      request.sessionId && request.workspaceCwd
-        ? await this.ensureSession({
-            sessionId: request.sessionId,
-            workspaceCwd: request.workspaceCwd,
-            projectName: request.projectName
-          })
-        : request.sessionId
-          ? this.sessions.get(request.sessionId)
-          : undefined
+    // ensureSession()s. The MCP bridge and local RPC always carry workspaceCwd, so this is the real path.
+    let bindingSession: RuntimeSession | undefined
+    if (request.sessionId) {
+      if (request.workspaceCwd) {
+        bindingSession = await this.ensureSession({
+          sessionId: request.sessionId,
+          workspaceCwd: request.workspaceCwd,
+          projectName: request.projectName
+        })
+      } else {
+        // A sessionId was given but there's no workspaceCwd to LOAD the session, and it isn't already in
+        // memory. A persisted binding may exist that we can't see, so installing would silently bypass
+        // it and target the default env. Refuse rather than fall back — no silent default. (Real callers
+        // always send workspaceCwd; this only guards a malformed/legacy request that names a session.)
+        bindingSession = this.sessions.get(request.sessionId)
+        if (!bindingSession) {
+          return {
+            ok: false,
+            needsRestart: false,
+            log: '',
+            error:
+              'RUNTIME_SESSION_UNAVAILABLE: cannot resolve this session to honor its runtime binding ' +
+              '(no workspaceCwd to load it). Retry with the notebook session context so any bound ' +
+              'runtime is applied instead of silently installing into the default environment.'
+          }
+        }
+      }
+    }
+    // No sessionId at all -> a caller with no session context -> the language default env (unchanged).
     const binding = bindingSession
       ? bindingSession.runtimeBindings.get(request.language)
       : undefined
@@ -1852,6 +1879,23 @@ class NotebookRuntimeService {
       }
     }
 
+    // Refuse if recovery left the install target prefix blocked (an unknown-liveness orphan may still be
+    // writing it) — installing into a possibly-live env could corrupt it. Checked for every binding
+    // kind, since even an external install journals this prefix as its target. Returned as a structured
+    // error (not thrown) to match managePackages' other refusals — a tool call shouldn't surface a raw
+    // exception.
+    if (this.blockedPrefixes.has(envPrefix(runtimeRoot, envName))) {
+      return {
+        ok: false,
+        needsRestart: false,
+        log: '',
+        error:
+          `RUNTIME_RECOVERY_BLOCKED: the ${request.language} environment is recovering from an ` +
+          'interrupted operation whose process could not be confirmed stopped. Restart the app to ' +
+          're-check and recover it before installing packages.'
+      }
+    }
+
     // Journal the install so a process death mid-install (killed conda/pip, half-applied packages) is
     // reconciled at next startup by flagging this runtime repair-required — an interrupted install is
     // never silently assumed to have succeeded. runtimeId is the bound runtime's identity (its envId)
@@ -1897,8 +1941,15 @@ class NotebookRuntimeService {
       await journal.complete(operationId).catch(() => undefined)
     }
     // A completed install of this runtime clears any prior repair-required flag: re-running the install
-    // to completion IS the repair, so the runtime returns to a known-good state.
-    if (result.ok) clearRepairRequired(runtimeRoot, repairRuntimeId)
+    // to completion IS the repair, so the runtime returns to a known-good state. Clearing the disk flag
+    // alone isn't enough — bindings that were resolved while repair-required (in THIS and OTHER sessions)
+    // are still held in memory as unavailable/repair-required and would keep refusing execution until a
+    // rebind/reload. Restore every matching binding to active and refresh its UI so the repaired runtime
+    // is usable immediately, everywhere.
+    if (result.ok) {
+      clearRepairRequired(runtimeRoot, repairRuntimeId)
+      this.restoreRepairedBindings(repairRuntimeId)
+    }
 
     // R installs/uninstalls don't take effect in a live R session (attached namespaces, held DLLs), so
     // flag the env for a restart prompt and refresh every session's env view. Python needs no restart.
@@ -1934,6 +1985,9 @@ class NotebookRuntimeService {
         // Let startup recovery finish before creating a prefix: its cleanup/verify must not race a
         // fresh create writing into <root>/envs (same barrier materialize/install use).
         await this.ensureRecovered()
+        // Refuse if recovery left this env's prefix blocked (an unknown-liveness orphan may still hold
+        // it) — creating over a possibly-live prefix could corrupt it.
+        this.assertPrefixRecoverable(envPrefix(getRuntimeRoot(this.options.dataRoot), name))
         // Serialize create against installs / other env ops on the same env (design D4 / review A).
         return this.envLock.withInstall(name, async () => {
           await manager.createNamedEnvironment(name, language, request.packages)
@@ -2024,6 +2078,30 @@ class NotebookRuntimeService {
     if (this.recoveryComplete) await this.recoveryComplete
   }
 
+  // Throws if `prefix` is one recovery couldn't confirm free of a live orphan (see blockedPrefixes).
+  // Called by every path that would WRITE an env prefix, so an unknown-liveness orphan actually blocks
+  // the write this session instead of only leaving a journal entry for next boot.
+  private assertPrefixRecoverable(prefix: string): void {
+    if (this.blockedPrefixes.has(prefix)) {
+      throw new Error(
+        `RUNTIME_RECOVERY_BLOCKED: a previous operation on "${prefix}" was interrupted and its worker ` +
+          'process could not be confirmed stopped, so writing this environment now could corrupt it. ' +
+          'Restart the app to re-check and recover it, then try again.'
+      )
+    }
+  }
+
+  // Whether the app-managed default env for a language is currently recovery-blocked (see above). Public
+  // so the env-IPC UI provision/repair handlers — which build the default env via the provisioner, not
+  // through this service — can refuse before touching that prefix.
+  isDefaultEnvRecoveryBlocked(language: NotebookLanguage): boolean {
+    const prefix = envPrefix(
+      getRuntimeRoot(this.options.dataRoot),
+      language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
+    )
+    return this.blockedPrefixes.has(prefix)
+  }
+
   private async runRecovery(): Promise<void> {
     const journal = RuntimeOperationJournal.forPath(
       operationJournalPath(getRuntimeRoot(this.options.dataRoot))
@@ -2058,21 +2136,21 @@ class NotebookRuntimeService {
           addRepairRequired(getRuntimeRoot(this.options.dataRoot), record.runtimeId)
       },
       // liveness 'unknown' (couldn't confirm the child died — e.g. Windows with a recorded start time):
-      // flag the operation's runtime repair-required so it stays UNAVAILABLE even after the recovery
-      // barrier opens. A possibly-live orphan may still be writing this prefix, so execution/install/
-      // materialize on it must refuse until a later startup can reconcile (pid gone/verifiable) and a
-      // successful re-run clears the flag — rather than racing the survivor.
+      // a possibly-live orphan may still be writing this operation's env prefix. Block that PREFIX for
+      // the rest of this process's life so any write to it (default materialize, package install,
+      // named-env create, UI provision/repair) refuses — rather than racing the survivor once the
+      // recovery barrier opens. Keyed by targetPath (the prefix the op writes), which materialize/
+      // upgrade/install all carry and which is exactly what the write paths check via
+      // assertPrefixRecoverable — unlike a repair-required flag, whose env/interpreter-id key does not
+      // match the materialize op's env-NAME runtimeId (so that flag never fired for the default env, and
+      // install is deliberately allowed while repair-required anyway). The journal entry is retained, so
+      // a later restart re-runs recovery and, once the pid is gone/verifiable, reconciles + unblocks.
       //
-      // This meaningfully blocks the ENV-mutating kinds (materialize/upgrade/install), whose runtimeId
-      // is an env/interpreter id that isRepairRequired() checks at bind + default-run resolution. A
-      // 'download' op's runtimeId is a PACK id (never bound), so the flag is inert for it — but a
-      // download needs no such block: each fetch stages into its own unique mkdtemp('.incoming-') dir
-      // and commits by atomic rename, so an orphaned download's staging can't corrupt a fresh fetch, and
-      // a later startup reaps the leftover. So keying on runtimeId is correct for every case that can
-      // actually be raced.
+      // A 'download' op needs no block: each fetch stages into its own unique mkdtemp('.incoming-') dir
+      // and commits by atomic rename, so an orphaned download can't corrupt a fresh fetch (a later
+      // startup reaps the leftover). Its targetPath is that staging dir, which nothing else writes.
       blockUnknownChildTarget: async (record) => {
-        if (record.runtimeId)
-          addRepairRequired(getRuntimeRoot(this.options.dataRoot), record.runtimeId)
+        if (record.targetPath) this.blockedPrefixes.add(record.targetPath)
       }
     })
   }
@@ -2380,6 +2458,29 @@ class NotebookRuntimeService {
   // Broadcasts state invalidation so the renderer can reload run.json and in-memory cell data.
   private notifyNotebookChanged(session: RuntimeSession): void {
     this.options.callbacks?.onNotebookChanged?.(this.toSessionReference(session))
+  }
+
+  // After a repair install clears the repair-required flag, bring every in-memory binding for that
+  // runtime (across ALL sessions) back to active — they were held unavailable/repair-required from when
+  // they were resolved, and clearing only the disk flag would leave them refusing execution until a
+  // rebind. Persisted state needs no rewrite: it stores the binding without the transient repair status
+  // (that status is recomputed from the disk flag on reload, which is now cleared). Notifies each
+  // touched session's UI so the runtime shows usable again immediately.
+  private restoreRepairedBindings(runtimeId: string): void {
+    for (const session of this.sessions.values()) {
+      let changed = false
+      for (const [language, binding] of session.runtimeBindings) {
+        if (binding.runtimeId === runtimeId && binding.reason === 'repair-required') {
+          session.runtimeBindings.set(language, {
+            ...binding,
+            status: 'active',
+            reason: undefined
+          })
+          changed = true
+        }
+      }
+      if (changed) this.notifyNotebookChanged(session)
+    }
   }
 
   // Adds notebook roots and kernel metadata to the run returned to MCP callers.

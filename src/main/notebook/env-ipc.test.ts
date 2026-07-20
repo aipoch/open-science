@@ -101,6 +101,26 @@ describe('createNotebookEnvHandlers', () => {
     expect(order).toEqual(['recovery', 'repair'])
   })
 
+  it('UI provision/repair refuses when the default env is recovery-blocked', async () => {
+    // After recovery leaves the default prefix blocked (an unknown-liveness orphan may still hold it),
+    // a UI provision/repair must refuse rather than materialize over it. The guard runs AFTER
+    // waitForRecovery so the blocked set is populated.
+    const provisioner = fakeProvisioner()
+    const assertProvisionAllowed = vi.fn((lang: string) => {
+      if (lang === 'python') throw new Error('RUNTIME_RECOVERY_BLOCKED: python is recovering')
+    })
+    const handlers = createNotebookEnvHandlers(provisioner, async () => {}, assertProvisionAllowed)
+
+    await expect(handlers.provision('python', () => {})).rejects.toThrow(/RUNTIME_RECOVERY_BLOCKED/)
+    await expect(handlers.repair('python', () => {})).rejects.toThrow(/RUNTIME_RECOVERY_BLOCKED/)
+    // The provisioner is never touched when blocked.
+    expect(provisioner.provisionPython).not.toHaveBeenCalled()
+    expect(provisioner.repair).not.toHaveBeenCalled()
+    // A non-blocked language still provisions.
+    await handlers.provision('r', () => {})
+    expect(provisioner.provisionR).toHaveBeenCalledOnce()
+  })
+
   it('serializes concurrent provisioning calls so a second call does not start a conflicting run', async () => {
     let resolveFirst: (() => void) | undefined
     const started: string[] = []

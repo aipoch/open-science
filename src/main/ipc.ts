@@ -37,6 +37,7 @@ import { effectiveMirrorAsync } from './notebook/mirror-probe'
 import { createProductionProvisioner, type RuntimeProvisioner } from './notebook/provisioner'
 import { runtimeRoot } from './notebook/runtime-paths'
 import type { NotebookEnvironmentManager } from './notebook/runtime-service'
+import type { NotebookLanguage } from '../shared/notebook'
 import { prepareExternalPythonRuntime } from './notebook/venv-overlay'
 import {
   createDefaultPreviewStateRepository,
@@ -375,10 +376,25 @@ const registerIpcHandlers = async ({
     .recoverInterruptedOperations()
     .catch((error) => console.error('Notebook operation recovery failed:', error))
   const waitForRecovery = (): Promise<void> => notebookService.ensureRecovered()
+  // Lets UI provision/repair refuse when recovery left the default env's prefix blocked (an
+  // unknown-liveness orphan may still be writing it) — throws with an actionable message.
+  const assertProvisionAllowed = (language: NotebookLanguage): void => {
+    if (notebookService.isDefaultEnvRecoveryBlocked(language)) {
+      throw new Error(
+        `The ${language} runtime is recovering from an interrupted operation whose process could not be ` +
+          'confirmed stopped. Restart the app to re-check and recover it before setting it up again.'
+      )
+    }
+  }
 
   // Always register the handlers (serialized is undefined when the provisioner could not be built). The
   // recovery barrier is threaded in so the startup gate and UI provision/repair await recovery first.
-  registerNotebookEnvIpcHandlers(serialized, provisioningRoot, waitForRecovery)
+  registerNotebookEnvIpcHandlers(
+    serialized,
+    provisioningRoot,
+    waitForRecovery,
+    assertProvisionAllowed
+  )
   if (provisioner && serialized) {
     // Back the notebook service's manage_environments tool with the same provisioner that owns the env
     // gate (it is a DefaultRuntimeProvisioner, which implements createNamedEnvironment/listEnvironments/

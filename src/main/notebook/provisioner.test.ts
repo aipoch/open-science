@@ -480,7 +480,7 @@ describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
   })
 
   it('holds the shared pkgs cache lock, so a concurrent exclusive repair cannot run mid-create', async () => {
-    // Regression (F7): named-env create extracts into the shared pkgs cache but did not take the lock,
+    // Regression: named-env create extracts into the shared pkgs cache but did not take the lock,
     // so a corrupt-cache repair (cache-exclusive) could delete an incomplete extraction it was
     // producing. The create must hold the shared lock across its runArgv.
     const root = makeRoot()

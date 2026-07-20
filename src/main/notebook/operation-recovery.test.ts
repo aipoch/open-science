@@ -173,12 +173,19 @@ describe('defaultOperationChildLiveness (tri-state pid-reuse guard)', () => {
   // Whether THIS environment can actually verify a pid's start time via `ps`. It can't on Windows (no
   // ps) and can't in a locked-down sandbox where `ps -o etime` is denied ("operation not permitted") —
   // in both, defaultOperationChildLiveness must return 'unknown' rather than guess. We probe it directly
-  // (a live pid whose recorded start time is "now" resolves 'alive' only when ps works) so the assertion
-  // below tracks the real capability instead of assuming it from process.platform. Keeps the test green
-  // on Windows AND in a ps-restricted sandbox, per the repo's sandbox-safe test rule.
+  // (a live pid whose recorded start time matches the pid's real start resolves 'alive' only when ps
+  // works) so the assertion below tracks the real capability instead of assuming it from
+  // process.platform. Keeps the test green on Windows AND in a ps-restricted sandbox, per the repo's
+  // sandbox-safe test rule.
+  //
+  // childStartedAt MUST be this worker's real start (Date.now() - uptime*1000), NOT Date.now(): the
+  // guard compares the recorded value against the start time `ps` reports and only says 'alive' within
+  // PID_REUSE_TOLERANCE_MS (10s). Passing Date.now() drifts by uptime*1000, so once the worker has run
+  // >10s the probe would wrongly read 'dead' and conclude ps is unavailable — flaky on slow/long workers.
+  // Using the real start keeps the delta ~0 so a working ps resolves 'alive' regardless of worker age.
   const canVerifyPidStartTime = async (): Promise<boolean> =>
     (await defaultOperationChildLiveness(
-      record({ childPid: process.pid, childStartedAt: Date.now() })
+      record({ childPid: process.pid, childStartedAt: Date.now() - process.uptime() * 1000 })
     )) === 'alive'
 
   it('classifies a live pid whose start time is far from childStartedAt as REUSED when ps is available, else unknown', async () => {
