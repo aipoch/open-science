@@ -1363,7 +1363,10 @@ describe('SettingsService: skills', () => {
       codexDetectDeps: {
         env: { PATH: dirname(adapterPath) },
         homePath: '/home',
-        platform: 'linux',
+        // Detection walks PATH with the host's path rules; this test's adapterPath/PATH are real
+        // on-disk host paths, so mock the host platform (a fixed 'linux' shreds a Windows drive letter
+        // like C:\… when splitting PATH on ':' , so detection would never match the file it created).
+        platform: process.platform,
         isRunnable: (path) => Promise.resolve(path === adapterPath),
         getAdapterVersion: () => Promise.resolve('codex-acp 1.1.4'),
         getCodexVersion: () => Promise.resolve(undefined),
