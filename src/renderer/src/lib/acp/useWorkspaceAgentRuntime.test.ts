@@ -297,6 +297,27 @@ describe('workspace agent message sending', () => {
     )
   })
 
+  it('leaves a new conversation cwd unset so main can allocate a managed workspace', async () => {
+    const runtime = {
+      state: { ...createSnapshot(), cwd: 'C:\\Users\\example' },
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'transport-session-1',
+        cwd: 'E:\\OpenScience\\workspaces\\workspace-1'
+      }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      text: 'Clone a repository',
+      projectId: 'project-1',
+      projectName: 'project-1'
+    })
+
+    expect(runtime.createSession).toHaveBeenCalledWith(undefined, 'project-1', 'ask')
+  })
+
   it('sends attachments when creating a new runtime session', async () => {
     const attachment = createAttachment()
     const finalizedAttachment = createAttachment({
@@ -473,6 +494,33 @@ describe('workspace agent message sending', () => {
         })
       ]
     })
+  })
+
+  it('does not fall back to the runtime home directory when retrying managed workspace creation', async () => {
+    const runtime = {
+      state: { ...createSnapshot(), cwd: 'C:\\Users\\example' },
+      createSession: vi.fn().mockResolvedValue(undefined),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    const first = await sendWorkspaceMessage(runtime, {
+      text: 'Clone the repository',
+      projectId: 'project-1',
+      projectName: 'project-1'
+    })
+    await flushRuntimeTasks()
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: first?.sessionId,
+      text: 'Try again',
+      projectId: 'project-1',
+      projectName: 'project-1'
+    })
+
+    expect(runtime.createSession).toHaveBeenNthCalledWith(1, undefined, 'project-1', 'ask')
+    expect(runtime.createSession).toHaveBeenNthCalledWith(2, undefined, 'project-1', 'ask')
   })
 
   it('does not submit another prompt for a session that already owns a run', async () => {

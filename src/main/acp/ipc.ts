@@ -1,4 +1,7 @@
+import { randomUUID } from 'node:crypto'
+import { mkdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
+import { join } from 'node:path'
 
 import { app, ipcMain } from 'electron'
 
@@ -46,6 +49,15 @@ type AcpIpcOptions = AcpIpcArtifacts & {
 // Sends one runtime payload to every currently open renderer window.
 const broadcast = <Payload>(channel: string, payload: Payload): void => {
   broadcastToRenderers(channel, payload)
+}
+
+// Gives every new conversation an isolated working directory under the relocatable data root.
+// Persisted sessions keep this returned path as their cwd, so resumes return to the same workspace.
+const createManagedSessionWorkspace = async (): Promise<string> => {
+  const workspace = join(resolveDataRoot(), 'workspaces', randomUUID())
+
+  await mkdir(workspace, { recursive: true })
+  return workspace
 }
 
 // Creates the shared runtime instance used by all ACP IPC handlers and artifact claims.
@@ -117,9 +129,13 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntime => {
     runtime.connect(request)
   )
   ipcMain.handle('acp:disconnect', () => runtime.disconnect())
-  ipcMain.handle('acp:create-session', async (_event, request: AcpCreateSessionRequest) =>
-    runtime.createSession(request)
-  )
+  ipcMain.handle('acp:create-session', async (_event, request: AcpCreateSessionRequest) => {
+    const sessionRequest = request.cwd?.trim()
+      ? request
+      : { ...request, cwd: await createManagedSessionWorkspace() }
+
+    return runtime.createSession(sessionRequest)
+  })
   ipcMain.handle('acp:resume-session', async (_event, request: AcpResumeSessionRequest) =>
     runtime.resumeSession(request)
   )

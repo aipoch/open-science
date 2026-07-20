@@ -26,6 +26,7 @@ import {
 } from './migration-service'
 import { availableBytes, computeStorageUsage } from './usage'
 import { broadcastToRenderers } from '../renderer-broadcast'
+import { RELOCATABLE_DATA_DIRS } from './data-directories'
 
 type SessionSource = { projectName: string; sessionId: string }
 
@@ -103,9 +104,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
 
       const configRoot = resolveConfigRoot()
       const legacyInPlace = !storedSettings.dataRoot && samePath(dataRoot, configRoot)
-      const hasUserData = ['artifacts', 'notebooks', 'uploads'].some((dir) =>
-        existsSync(join(configRoot, dir))
-      )
+      const hasUserData = RELOCATABLE_DATA_DIRS.some((dir) => existsSync(join(configRoot, dir)))
       legacyDataMovePrompt =
         legacyInPlace && hasUserData && storedSettings.legacyDataMovePromptDismissedAt === undefined
     } catch (err) {

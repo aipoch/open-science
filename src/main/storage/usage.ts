@@ -1,12 +1,18 @@
 import { readdir, stat, statfs } from 'node:fs/promises'
 import { join } from 'node:path'
 
-export type UsageCategoryKey = 'artifacts' | 'uploads' | 'runtime' | 'notebooks'
+export type UsageCategoryKey = 'artifacts' | 'uploads' | 'runtime' | 'notebooks' | 'workspaces'
 export type UsageChild = { name: string; bytes: number }
 export type UsageCategory = { key: UsageCategoryKey; bytes: number; children?: UsageChild[] }
 export type StorageUsage = { categories: UsageCategory[]; totalBytes: number }
 
-const CATEGORY_KEYS: UsageCategoryKey[] = ['artifacts', 'uploads', 'runtime', 'notebooks']
+const CATEGORY_KEYS: UsageCategoryKey[] = [
+  'artifacts',
+  'uploads',
+  'runtime',
+  'notebooks',
+  'workspaces'
+]
 
 // Recursively sums file sizes under `dir`. Missing dirs contribute 0; symlinks are
 // skipped (not followed) to avoid cycles and double-counting.

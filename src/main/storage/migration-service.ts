@@ -20,16 +20,14 @@ import {
   type MigrationMarker
 } from './migration-marker'
 import { waitForDataRootWriters } from './migration-state'
+import { RELOCATABLE_DATA_DIRS } from './data-directories'
 
-// All top-level dirs under a data root. Used elsewhere (usage breakdown, legacy detection) to
-// enumerate what a data root actually holds; no longer consulted by classifyDataRoot itself (see
-// below - adopt is now keyed off the `OpenScience` marker subdir, not these).
-export const DATA_ROOT_DIRS = ['artifacts', 'notebooks', 'runtime', 'uploads'] as const
+export { DATA_ROOT_DIRS } from './data-directories'
 
-// Dirs physically moved during a migration. runtime/ is intentionally EXCLUDED: it holds
-// agent-installed conda/venv environments with hardcoded absolute paths (non-relocatable), so it
-// is left in place and rebuilt on demand at the new root instead of being copied. See design §17.
-export const MIGRATED_DIRS = ['artifacts', 'notebooks', 'uploads'] as const
+// Session workspaces contain user files and cloned repositories, so they move with artifacts,
+// notebooks, and uploads. runtime/ is intentionally excluded because its environments can contain
+// hardcoded absolute paths, so it is rebuilt on demand at the new root. See design §17.
+export const MIGRATED_DIRS = RELOCATABLE_DATA_DIRS
 
 export type ValidateResult = { ok: true } | { ok: false; error: string }
 
@@ -144,12 +142,12 @@ export const classifyDataRoot = async (
   }
 
   // Look one level into the existing target to classify it (design §21.5). Classify by USER data
-  // only (MIGRATED_DIRS = artifacts/notebooks/uploads) — `runtime/` is a rebuildable environment,
+  // only (MIGRATED_DIRS = artifacts/notebooks/uploads/workspaces) — `runtime/` is rebuildable,
   // NOT user data, so it is ignored entirely: it counts neither as "our data" (→ adopt) nor as
   // foreign content (→ invalid). Without this, a leftover runtime/ (e.g. after a prior move that
   // excludes runtime) would make a data-less folder look adoptable and silently switch to an empty
   // workspace.
-  //   - contains any of artifacts/notebooks/uploads -> adopt (looks like our data; recovery/reuse).
+  //   - contains any migrated user-data dir -> adopt (looks like our data; recovery/reuse).
   //     "Any", not "all": a real data folder can lack some (no uploads yet, etc.).
   //   - empty, OR holds only runtime/ -> move: safe to populate.
   //   - has other non-data content (foreign files/dirs) -> invalid: a folder that merely shares the
