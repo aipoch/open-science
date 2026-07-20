@@ -914,4 +914,33 @@ describe('ReviewerCard — stale review', () => {
 
     expect(container.textContent).not.toContain('(outdated)')
   })
+
+  it('offers a Re-run button on a stale review that fires onRerun with the review', async () => {
+    const review = makeReview({ outcome: 'pass', checks: [], stale: true })
+    const onRerun = vi.fn()
+    await act(async () => {
+      root.render(<ReviewerCard review={review} onRerun={onRerun} />)
+    })
+
+    const notice = container.querySelector('[data-testid="reviewer-stale-notice"]')
+    expect(notice).not.toBeNull()
+    const rerunButton = [...notice!.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('Re-run review')
+    )
+    expect(rerunButton).toBeTruthy()
+
+    await act(async () => {
+      rerunButton!.click()
+    })
+    expect(onRerun).toHaveBeenCalledWith(review)
+  })
+
+  it('shows no Re-run affordance for a non-stale review', async () => {
+    const review = makeReview({ outcome: 'pass', checks: [] })
+    await act(async () => {
+      root.render(<ReviewerCard review={review} onRerun={vi.fn()} />)
+    })
+
+    expect(container.querySelector('[data-testid="reviewer-stale-notice"]')).toBeNull()
+  })
 })

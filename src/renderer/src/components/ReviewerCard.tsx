@@ -21,6 +21,8 @@ type ReviewerCardProps = {
   className?: string
   // Called when the user clicks "Go to transcript" on any item card.
   onGoToTranscript?: (intent: GoToTranscriptIntent) => void
+  // Called when the user asks to re-run a stale review (its turn changed after it ran).
+  onRerun?: (review: ReviewWithChecks) => void
 }
 
 // Status badge styles (pass/warn/fail).
@@ -159,7 +161,8 @@ const CheckCard = ({
 export const ReviewerCard = ({
   review,
   className,
-  onGoToTranscript
+  onGoToTranscript,
+  onRerun
 }: ReviewerCardProps): React.JSX.Element => {
   const [expanded, setExpanded] = useState(false)
 
@@ -268,6 +271,27 @@ export const ReviewerCard = ({
           </span>
         )}
       </button>
+
+      {/* Stale notice + explicit re-run: the verdict above may no longer describe the turn (an artifact
+          was edited after the review ran). This is the actionable refresh path for THIS review's turn —
+          including earlier turns that the composer's "Request review" (last-turn only) cannot reach. */}
+      {isStale && (
+        <div
+          className="mt-2 flex items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1"
+          data-testid="reviewer-stale-notice"
+        >
+          <span className="text-[11px] text-amber-800">Turn changed after this review ran.</span>
+          {onRerun && (
+            <button
+              type="button"
+              className="shrink-0 rounded border border-amber-300 px-2 py-0.5 text-[11px] text-amber-800 hover:bg-amber-100 transition-colors"
+              onClick={() => onRerun(review)}
+            >
+              Re-run review
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Expanded error detail: full message in a scrollable monospace block (kept out of the status bar). */}
       {hasErrorDetail && expanded && (
