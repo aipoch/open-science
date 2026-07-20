@@ -328,6 +328,10 @@ type OpenScienceAPI = {
     // Bookmark folders for the file browser Go-to/Pin feature, persisted in settings JSON.
     bookmarksGet: (providerId: string) => Promise<string[]>
     bookmarksSet: (providerId: string, folders: string[]) => Promise<void>
+    // Fires when a compute call needs user approval (runs before any SSH is made).
+    onApprovalRequest: (listener: (request: ComputeApprovalRequest) => void) => () => void
+    // Renderer sends back the user's decision (once / conversation / project / deny).
+    respondApproval: (request: { id: string; decision: ComputeApprovalDecision }) => Promise<void>
   }
   preview: {
     load: (request: LoadPreviewStateRequest) => Promise<PersistedPreviewState | null>

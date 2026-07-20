@@ -1,14 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import { readBookmarks, writeBookmarks } from './remote-fs'
-import type { StoredSettings } from '../main/settings/types'
-import { SETTINGS_FILE_VERSION } from './settings'
+import type { ComputeBookmarkStore } from './settings'
 
-// Build a minimal StoredSettings fixture for round-trip testing.
-const emptySettings = (): StoredSettings => ({
-  version: SETTINGS_FILE_VERSION,
-  providers: []
-})
+// Build a minimal bookmark-store fixture for round-trip testing. The helpers operate on the shared
+// ComputeBookmarkStore slice (which the main-process StoredSettings structurally satisfies), so the
+// test stays within the shared layer rather than reaching into src/main.
+const emptySettings = (): ComputeBookmarkStore => ({})
 
 describe('readBookmarks / writeBookmarks', () => {
   it('returns an empty array when no bookmarks are stored', () => {

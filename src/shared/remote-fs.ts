@@ -2,7 +2,7 @@
 // These are the stable contracts consumed by the main-process ComputeService, IPC handlers, and renderer.
 // No I/O: all functions are pure and directly unit-testable.
 
-import type { StoredSettings } from '../main/settings/types'
+import type { ComputeBookmarkStore } from './settings'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -229,7 +229,7 @@ export const parseFindListing = (stdout: string): RemoteDirEntry[] => {
 
 // Reads the pinned bookmark folders for a provider from settings.
 // Returns an empty array when no bookmarks are stored for the given provider.
-export const readBookmarks = (settings: StoredSettings, providerId: string): string[] => {
+export const readBookmarks = (settings: ComputeBookmarkStore, providerId: string): string[] => {
   const store = settings.computeBookmarks
   if (!store) return []
   const folders = store[providerId]
@@ -238,12 +238,13 @@ export const readBookmarks = (settings: StoredSettings, providerId: string): str
 }
 
 // Returns a new settings object with the bookmark folders for a provider replaced.
-// Does not mutate the input.
-export const writeBookmarks = (
-  settings: StoredSettings,
+// Does not mutate the input. Generic over T so callers passing the full StoredSettings get the
+// same type back (only the computeBookmarks slice is touched).
+export const writeBookmarks = <T extends ComputeBookmarkStore>(
+  settings: T,
   providerId: string,
   folders: string[]
-): StoredSettings => {
+): T => {
   const existing: Record<string, string[]> = settings.computeBookmarks ?? {}
   return {
     ...settings,

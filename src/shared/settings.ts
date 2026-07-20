@@ -780,3 +780,8 @@ export type ConnectorApprovalRequest = {
 }
 export type ApprovalDecision = 'allow' | 'deny'
 export type RespondApprovalRequest = { id: string; decision: ApprovalDecision }
+
+// Minimal settings slice the remote-file-browser bookmark helpers depend on. Declared here in
+// src/shared (not src/main) so src/shared/remote-fs.ts stays within the shared layer — the full
+// StoredSettings in src/main structurally satisfies this shape.
+export type ComputeBookmarkStore = { computeBookmarks?: Record<string, string[]> }
