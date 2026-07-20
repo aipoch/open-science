@@ -392,7 +392,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
   // lands atomically with setDataRoot, in the same step as the relaunch: App.tsx's startup gate
   // reads onboardingCompletedAt, and flipping it from the renderer before this IPC resolves would
   // swap the wizard for Home (showing the OLD data root, and burying any failure below). Settings-
-  // adopt omits it (onboarding has already completed). Order is load-bearing: classify ->
+  // adopt omits it (onboarding has already completed). Order is load-bearing: classify -> mkdir ->
   // setDataRoot -> [markOnboardingComplete] -> relaunch. On an invalid parent, none of these run.
   ipcMain.handle(
     'storage:set-data-root-and-relaunch',
