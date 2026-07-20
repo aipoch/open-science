@@ -37,6 +37,7 @@ import type {
   DetailsAuthor,
   ProbeResult
 } from '../shared/compute'
+import type { DirListing } from '../shared/remote-fs'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
   AppendNotebookCodeCellRequest,
@@ -301,6 +302,11 @@ interface OpenScienceAPI {
     onApprovalRequest(listener: (request: ComputeApprovalRequest) => void): () => void
     // Renderer sends back the user's decision (once / conversation / project / deny).
     respondApproval(request: { id: string; decision: ComputeApprovalDecision }): Promise<void>
+    // Lists a remote directory (browse experience).
+    listDir(providerId: string, path: string): Promise<DirListing>
+    // Bookmark folders for the file browser Go-to/Pin feature, persisted in settings JSON.
+    bookmarksGet(providerId: string): Promise<string[]>
+    bookmarksSet(providerId: string, folders: string[]): Promise<void>
   }
   preview: {
     load(request: LoadPreviewStateRequest): Promise<PersistedPreviewState | null>

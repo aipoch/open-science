@@ -39,6 +39,7 @@ import type {
   DetailsAuthor,
   ProbeResult
 } from '../shared/compute'
+import type { DirListing } from '../shared/remote-fs'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
   AppendNotebookCodeCellRequest,
@@ -317,6 +318,11 @@ type OpenScienceAPI = {
     scratchSet: (providerId: string, path: string) => Promise<void>
     // Concurrent job limit: store 1..500 (not enforced in Phase 1).
     concurrencySet: (providerId: string, limit: number) => Promise<void>
+    // Lists a remote directory (browse experience).
+    listDir: (providerId: string, path: string) => Promise<DirListing>
+    // Bookmark folders for the file browser Go-to/Pin feature, persisted in settings JSON.
+    bookmarksGet: (providerId: string) => Promise<string[]>
+    bookmarksSet: (providerId: string, folders: string[]) => Promise<void>
   }
   preview: {
     load: (request: LoadPreviewStateRequest) => Promise<PersistedPreviewState | null>
@@ -696,7 +702,13 @@ const api: OpenScienceAPI = {
       onIpcMessage<ComputeApprovalRequest>('compute:approval-request', listener),
     // Renderer sends back the user's decision (once / conversation / project / deny).
     respondApproval: (request: { id: string; decision: ComputeApprovalDecision }) =>
-      ipcRenderer.invoke('compute:approval-respond', request) as Promise<void>
+      ipcRenderer.invoke('compute:approval-respond', request) as Promise<void>,
+    listDir: (providerId, path) =>
+      ipcRenderer.invoke('compute:list-dir', providerId, path) as Promise<DirListing>,
+    bookmarksGet: (providerId) =>
+      ipcRenderer.invoke('compute:bookmarks:get', providerId) as Promise<string[]>,
+    bookmarksSet: (providerId, folders) =>
+      ipcRenderer.invoke('compute:bookmarks:set', providerId, folders) as Promise<void>
   },
   preview: {
     // Per-project preview panel state, persisted alongside projects in SQLite.

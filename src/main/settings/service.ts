@@ -1743,6 +1743,19 @@ class SettingsService {
     return available
   }
 
+  // Returns the bookmark folders for a provider. Used by the remote file browser Go-to dropdown.
+  async getComputeBookmarks(providerId: string): Promise<string[]> {
+    const settings = await this.repository.getSettings()
+    const store = settings.computeBookmarks ?? {}
+    const folders = store[providerId]
+    return Array.isArray(folders) ? folders.filter((f): f is string => typeof f === 'string') : []
+  }
+
+  // Sets the bookmark folders for a provider. Replaces the full array for that provider.
+  async setComputeBookmarks(providerId: string, folders: string[]): Promise<void> {
+    await this.repository.setComputeBookmarks(providerId, folders)
+  }
+
   // Builds the spawn env for the active provider, read fresh so switching takes effect on reconnect.
   async resolveActiveSpawnConfig(): Promise<AgentSpawnConfig> {
     const settings = await this.repository.getSettings()

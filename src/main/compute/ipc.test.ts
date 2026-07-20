@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ComputeHost, CreateComputeHostRequest } from '../../shared/compute'
+import type { DirListing } from '../../shared/remote-fs'
 import type { ComputeService } from './compute-service'
 import { createComputeHandlers } from './ipc'
 import type { ComputeHostRepository } from './repository'
@@ -101,6 +102,22 @@ describe('compute handlers', () => {
     expect(probe).toHaveBeenCalledWith('ssh:biowulf')
     expect(result.ok).toBe(true)
     expect(result.cpus).toBe(64)
+  })
+
+  it('listDir delegates to the injected ComputeService', async () => {
+    const listing: DirListing = {
+      entries: [{ name: 'data', isDirectory: true, size: 0, mtimeMs: 1704067200000 }],
+      truncated: false,
+      roots: { home: '/home/user', scratch: '/scratch/user' },
+      resolvedPath: '/home/user/projects'
+    }
+    const listDir = vi.fn(() => Promise.resolve(listing))
+    const handlers = createComputeHandlers(mockRepository({}), undefined, mockService({ listDir }))
+
+    const result = await handlers.listDir('ssh:biowulf', '/home/user/projects')
+    expect(listDir).toHaveBeenCalledWith('ssh:biowulf', '/home/user/projects')
+    expect(result.entries).toHaveLength(1)
+    expect(result.resolvedPath).toBe('/home/user/projects')
   })
 })
 

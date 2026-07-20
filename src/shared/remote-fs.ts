@@ -88,6 +88,8 @@ export const validateRemotePath = (path: string): 'outside_roots' | undefined =>
 type RawError = {
   code?: string
   message?: string
+  // stderr text from exec runner (no POSIX code available on this path)
+  stderr?: string
 }
 
 type ClassifiedError = {
@@ -97,12 +99,15 @@ type ClassifiedError = {
 }
 
 // Maps an sftp/ssh raw error to the RemoteKind taxonomy.
-// The classifier inspects both the error code and the message for known ssh patterns.
+// The classifier inspects both the error code and the message/stderr for known ssh patterns.
+// POSIX codes take precedence; when unavailable (exec runner path), stderr text is used as fallback.
 export const classifyRemoteError = (raw: RawError): ClassifiedError => {
   const code = raw.code ?? ''
   const msg = (raw.message ?? '').toLowerCase()
+  // stderr text from exec runner (no POSIX code on this path)
+  const stderr = (raw.stderr ?? '').toLowerCase()
 
-  // POSIX filesystem codes.
+  // POSIX filesystem codes — checked first, highest priority.
   if (code === 'ENOENT') return { remoteKind: 'not_found', retry_after_user_action: false }
   if (code === 'EACCES' || code === 'EPERM')
     return { remoteKind: 'permission', retry_after_user_action: false }
@@ -110,16 +115,32 @@ export const classifyRemoteError = (raw: RawError): ClassifiedError => {
   if (code === 'EISDIR') return { remoteKind: 'not_a_file', retry_after_user_action: false }
 
   // SSH transport failures — these all require user action (fix connectivity / keys).
+  // Checked against both message and stderr since exec runner surfaces errors in stderr.
+  const combinedText = `${msg} ${stderr}`
   const isConnectionError =
-    (msg.includes('255') && msg.includes('exit')) ||
-    msg.includes('timed out') ||
-    msg.includes('timeout') ||
-    msg.includes('kex') ||
-    msg.includes('permission denied (publickey') ||
-    msg.includes('connection refused') ||
-    msg.includes('no route to host')
+    (combinedText.includes('255') && combinedText.includes('exit')) ||
+    combinedText.includes('timed out') ||
+    combinedText.includes('timeout') ||
+    combinedText.includes('kex') ||
+    combinedText.includes('permission denied (publickey') ||
+    combinedText.includes('connection refused') ||
+    combinedText.includes('no route to host')
 
   if (isConnectionError) return { remoteKind: 'connection', retry_after_user_action: true }
+
+  // Stderr text fallbacks for exec runner path (no POSIX code available).
+  // Order matters: check more specific patterns before "permission denied" to avoid misclassifying
+  // "permission denied (publickey)" which was already handled above as connection.
+  const stderrLower = stderr || msg
+  if (stderrLower.includes('no such file or directory'))
+    return { remoteKind: 'not_found', retry_after_user_action: false }
+  if (stderrLower.includes('not a directory'))
+    return { remoteKind: 'not_a_directory', retry_after_user_action: false }
+  if (stderrLower.includes('is a directory'))
+    return { remoteKind: 'not_a_file', retry_after_user_action: false }
+  // "permission denied" without "(publickey)" is a filesystem permission error.
+  if (stderrLower.includes('permission denied'))
+    return { remoteKind: 'permission', retry_after_user_action: false }
 
   return { remoteKind: 'other', retry_after_user_action: false }
 }
@@ -130,6 +151,63 @@ export const classifyRemoteError = (raw: RawError): ClassifiedError => {
 
 // Converts sftp readdir's native mtime (whole seconds) to milliseconds.
 export const mtimeSecondsToMs = (sec: number): number => sec * 1000
+
+// ---------------------------------------------------------------------------
+// Directory listing parser
+// ---------------------------------------------------------------------------
+
+// Parses the NUL-delimited output of:
+//   find . -maxdepth 1 -mindepth 1 -printf '%Y\t%s\t%T@\t%f\0'
+//
+// Each record is: <type>\t<size>\t<mtime_float>\t<name>\0
+//   %Y = file type following symlinks (f=regular, d=directory, l=broken symlink, etc.)
+//   %s = size in bytes
+//   %T@ = mtime as floating-point seconds since epoch
+//   %f = filename (last path component; may contain spaces but not NUL)
+//
+// Returns an array of RemoteDirEntry. Malformed records are silently skipped.
+export const parseFindListing = (stdout: string): RemoteDirEntry[] => {
+  if (!stdout) return []
+
+  const entries: RemoteDirEntry[] = []
+
+  // Records are NUL-terminated; split and drop the trailing empty string.
+  const records = stdout.split('\0').filter(Boolean)
+
+  for (const record of records) {
+    // Split on the first three tabs only; the name (4th field) may itself contain tabs.
+    const firstTab = record.indexOf('\t')
+    if (firstTab === -1) continue
+
+    const secondTab = record.indexOf('\t', firstTab + 1)
+    if (secondTab === -1) continue
+
+    const thirdTab = record.indexOf('\t', secondTab + 1)
+    if (thirdTab === -1) continue
+
+    const type = record.slice(0, firstTab)
+    const sizeStr = record.slice(firstTab + 1, secondTab)
+    const mtimeStr = record.slice(secondTab + 1, thirdTab)
+    const name = record.slice(thirdTab + 1)
+
+    if (!name) continue
+
+    const size = Number(sizeStr)
+    const mtimeSec = Number(mtimeStr)
+
+    if (!Number.isFinite(size) || !Number.isFinite(mtimeSec)) continue
+
+    entries.push({
+      name,
+      isDirectory: type === 'd',
+      size,
+      // Float seconds * 1000 → ms; Math.round avoids floating-point drift.
+      mtimeMs: Math.round(mtimeSec * 1000)
+    })
+  }
+
+  return entries
+}
 
 // ---------------------------------------------------------------------------
 // Bookmark helpers (settings JSON, keyed by provider_id)

@@ -6,6 +6,8 @@ import type {
   ProbeResult
 } from '../../shared/compute'
 import { DETAILS_DOC_MAX_LENGTH } from '../../shared/compute'
+import type { DirListing, RemoteFsError } from '../../shared/remote-fs'
+import { classifyRemoteError, parseFindListing } from '../../shared/remote-fs'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeHostRepository } from './repository'
 import type { SshRunner } from './ssh-runner'
@@ -25,6 +27,17 @@ const CALL_COMMAND_DEFAULT_TIMEOUT_MS = 60_000
 // Maximum bytes captured per stream for call_command (design.md §5). Prevents `cat big_file` from
 // filling memory or the RPC response buffer.
 const CALL_COMMAND_MAX_OUTPUT_BYTES = 64 * 1024
+
+// Maximum bytes for listDir output. 5000 entries × ~100 bytes each ≈ 500KB; set to ~2MB for safety.
+// The default 64KB would truncate large directories before hitting the 5000-entry limit.
+const LIST_DIR_MAX_OUTPUT_BYTES = 2 * 1024 * 1024
+
+// Hard upper limit on directory entries returned by listDir. When a directory has more entries
+// than this, truncated=true is set and only the first MAX_LIST_ENTRIES items are returned.
+const MAX_LIST_ENTRIES = 5000
+
+// Timeout for listDir. Directories with many files can take a few seconds; 30s is generous.
+const LIST_DIR_TIMEOUT_MS = 30_000
 
 // Short command preview shown in the approval card when the full command is long.
 const COMMAND_PREVIEW_MAX_LEN = 120
@@ -334,6 +347,105 @@ export class ComputeService {
     }
 
     await this.repository.updateConcurrencyLimit(providerId, limit)
+  }
+
+  // Lists the contents of a remote directory using find -printf via the existing exec SshRunner.
+  // A single SSH round-trip collects: realpath (resolves ..), echo $HOME, and find output.
+  // Returns a DirListing with entries sorted directories-first then alphabetically, plus roots and
+  // resolvedPath metadata. Throws an Error with a .remoteFsError property on failure.
+  async listDir(providerId: string, path: string): Promise<DirListing> {
+    const host = await this.repository.get(providerId)
+    if (!host) {
+      throw new Error(`No compute host found with provider id "${providerId}".`)
+    }
+
+    let target
+    try {
+      target = await resolveSshTarget(host.sshAlias, host.sshOverrides)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      const fsErr = new Error(msg) as Error & {
+        remoteFsError: RemoteFsError & { retry_after_user_action: boolean }
+      }
+      fsErr.remoteFsError = { detail: msg, remoteKind: 'connection', retry_after_user_action: true }
+      throw fsErr
+    }
+
+    // One round-trip: realpath → cd → echo $HOME → find -printf (NUL-separated).
+    // Stdout format: <resolvedPath>\n<home>\n<find_output>
+    // %Y = file type following symlinks (d for dir, f for file, l for broken symlink, etc.)
+    // %s = size in bytes; %T@ = mtime as float seconds; %f = filename (last component)
+    const quotedPath = JSON.stringify(path)
+    const remoteCmd = [
+      `realpath ${quotedPath} 2>/dev/null || echo ${quotedPath}`,
+      `cd ${quotedPath} 2>&1 || true`,
+      'echo "$HOME"',
+      `find . -maxdepth 1 -mindepth 1 -printf '%Y\\t%s\\t%T@\\t%f\\0' 2>/dev/null`
+    ].join('\n')
+
+    const runResult = await this.runner.run(target, remoteCmd, {
+      timeoutMs: LIST_DIR_TIMEOUT_MS,
+      loginShell: false,
+      maxOutputBytes: LIST_DIR_MAX_OUTPUT_BYTES
+    })
+
+    // Connection-level failure.
+    if (runResult.timedOut || runResult.exitCode === 255) {
+      const tail = errorTail(runResult.stderr, runResult.stdout)
+      const fsErr = new Error(tail || 'Connection failed') as Error & {
+        remoteFsError: RemoteFsError & { retry_after_user_action: boolean }
+      }
+      fsErr.remoteFsError = {
+        detail: tail || 'SSH connection failed.',
+        remoteKind: 'connection',
+        retry_after_user_action: true
+      }
+      throw fsErr
+    }
+
+    // Non-connection failure: classify via stderr text.
+    if (runResult.exitCode !== 0 && runResult.stderr) {
+      const classified = classifyRemoteError({ stderr: runResult.stderr })
+      const fsErr = new Error(runResult.stderr) as Error & {
+        remoteFsError: RemoteFsError & { retry_after_user_action: boolean }
+      }
+      fsErr.remoteFsError = {
+        detail: runResult.stderr,
+        remoteKind: classified.remoteKind,
+        retry_after_user_action: classified.retry_after_user_action
+      }
+      throw fsErr
+    }
+
+    // Parse the composite stdout: first line = resolvedPath, second line = home, rest = find output.
+    const nlIdx1 = runResult.stdout.indexOf('\n')
+    const nlIdx2 = runResult.stdout.indexOf('\n', nlIdx1 + 1)
+
+    const resolvedPath = nlIdx1 !== -1 ? runResult.stdout.slice(0, nlIdx1).trim() : path
+    const home = nlIdx2 !== -1 ? runResult.stdout.slice(nlIdx1 + 1, nlIdx2).trim() : ''
+    const findOutput = nlIdx2 !== -1 ? runResult.stdout.slice(nlIdx2 + 1) : ''
+
+    // Parse, sort, and apply 5000-entry hard limit.
+    const parsed = parseFindListing(findOutput)
+
+    // Sort: directories first, then files; each group alphabetical (case-sensitive, matching ls).
+    parsed.sort((a, b) => {
+      if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
+      return a.name.localeCompare(b.name)
+    })
+
+    const truncated = parsed.length > MAX_LIST_ENTRIES
+    const entries = truncated ? parsed.slice(0, MAX_LIST_ENTRIES) : parsed
+
+    return {
+      entries,
+      truncated,
+      roots: {
+        home: home || '~',
+        scratch: host.scratchRoot ?? undefined
+      },
+      resolvedPath: resolvedPath || path
+    }
   }
 
   // Executes a short remote command on the SSH host, preceded by an approval gate (design.md §6).

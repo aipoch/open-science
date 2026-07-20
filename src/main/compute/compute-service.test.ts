@@ -790,6 +790,236 @@ describe('ComputeService.callCommand', () => {
 })
 
 // ---------------------------------------------------------------------------
+// ComputeService.listDir — fake SshRunner
+// ---------------------------------------------------------------------------
+
+// Helper to build a single NUL-terminated find -printf record.
+const findRecord = (type: string, size: number, mtime: number, name: string): string =>
+  `${type}\t${size}\t${mtime}\t${name}\0`
+
+// Build a mock stdout for listDir: realpath\nhome\nfind_output
+const buildListDirStdout = (resolvedPath: string, home: string, findOutput: string): string =>
+  `${resolvedPath}\n${home}\n${findOutput}`
+
+describe('ComputeService.listDir', () => {
+  it('resolves path, home, scratch from stdout and returns sorted entries', async () => {
+    const findOut = [
+      findRecord('f', 2048, 1704067200.0, 'zebra.txt'),
+      findRecord('d', 0, 1704067200.0, 'beta'),
+      findRecord('f', 512, 1704067200.0, 'alpha.txt'),
+      findRecord('d', 0, 1704067200.0, 'alpha')
+    ].join('')
+    const stdout = buildListDirStdout('/resolved/path', '/home/user', findOut)
+
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout,
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo(sampleHost({ scratchRoot: '/scratch/user' }))
+    const service = new ComputeService(runner, repo)
+
+    const result = await service.listDir('ssh:biowulf', '/some/path')
+
+    expect(result.resolvedPath).toBe('/resolved/path')
+    expect(result.roots.home).toBe('/home/user')
+    expect(result.roots.scratch).toBe('/scratch/user')
+    expect(result.truncated).toBe(false)
+    expect(result.entries.map((e) => e.name)).toEqual(['alpha', 'beta', 'alpha.txt', 'zebra.txt'])
+    expect(result.entries[0]?.isDirectory).toBe(true)
+    expect(result.entries[2]?.isDirectory).toBe(false)
+  })
+
+  it('truncates at 5000 entries and sets truncated=true', async () => {
+    const findOut = Array.from({ length: 5001 }, (_, i) =>
+      findRecord('f', i, 1704067200.0, `file${String(i).padStart(5, '0')}.txt`)
+    ).join('')
+    const stdout = buildListDirStdout('/path', '/home/user', findOut)
+
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout,
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo)
+
+    const result = await service.listDir('ssh:biowulf', '/path')
+
+    expect(result.truncated).toBe(true)
+    expect(result.entries).toHaveLength(5000)
+  })
+
+  it('sets truncated=false when exactly 5000 entries', async () => {
+    const findOut = Array.from({ length: 5000 }, (_, i) =>
+      findRecord('f', i, 1704067200.0, `file${i}.txt`)
+    ).join('')
+    const stdout = buildListDirStdout('/path', '/home/user', findOut)
+
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout,
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo)
+
+    const result = await service.listDir('ssh:biowulf', '/path')
+
+    expect(result.truncated).toBe(false)
+    expect(result.entries).toHaveLength(5000)
+  })
+
+  it('returns empty entries for an empty directory', async () => {
+    const stdout = buildListDirStdout('/path', '/home/user', '')
+
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout,
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo)
+
+    const result = await service.listDir('ssh:biowulf', '/path')
+
+    expect(result.entries).toEqual([])
+    expect(result.truncated).toBe(false)
+  })
+
+  it('omits roots.scratch when host has no scratchRoot', async () => {
+    const stdout = buildListDirStdout('/path', '/home/user', '')
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout,
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo(sampleHost({ scratchRoot: undefined }))
+    const service = new ComputeService(runner, repo)
+
+    const result = await service.listDir('ssh:biowulf', '/path')
+
+    expect(result.roots.scratch).toBeUndefined()
+    expect(result.roots.home).toBe('/home/user')
+  })
+
+  it('passes maxOutputBytes ~2MB to the runner', async () => {
+    const runMock = vi.fn(() =>
+      Promise.resolve({
+        exitCode: 0,
+        stdout: buildListDirStdout('/path', '/home/user', ''),
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+    )
+    const runner: SshRunner = { run: runMock }
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo)
+
+    await service.listDir('ssh:biowulf', '/path')
+
+    const opts = (
+      runMock.mock.calls[0] as unknown as [unknown, unknown, { maxOutputBytes?: number }]
+    )?.[2]
+    expect(opts?.maxOutputBytes).toBeGreaterThanOrEqual(1024 * 1024)
+  })
+
+  it('throws not_found when stderr says no such file', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'realpath: /no/such/path: No such file or directory',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo)
+
+    const err = await service.listDir('ssh:biowulf', '/no/such/path').catch((e) => e)
+    expect(err.remoteFsError?.remoteKind).toBe('not_found')
+  })
+
+  it('throws connection on ssh exit 255', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 255,
+      stdout: '',
+      stderr: 'ssh: connect to host biowulf port 22: Connection refused',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo)
+
+    const err = await service.listDir('ssh:biowulf', '/path').catch((e) => e)
+    expect(err.remoteFsError?.remoteKind).toBe('connection')
+    expect(err.remoteFsError?.retry_after_user_action).toBe(true)
+  })
+
+  it('throws when the host does not exist', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '/p\n/h\n',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo(null)
+    const service = new ComputeService(runner, repo)
+
+    await expect(service.listDir('ssh:nonexistent', '/path')).rejects.toThrow(
+      /not found|no compute host/i
+    )
+  })
+
+  it('converts float mtime to milliseconds', async () => {
+    const findOut = findRecord('f', 1024, 1704067200.5, 'data.csv')
+    const stdout = buildListDirStdout('/path', '/home/user', findOut)
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout,
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo)
+
+    const result = await service.listDir('ssh:biowulf', '/path')
+
+    expect(result.entries[0]?.mtimeMs).toBe(1704067200500)
+  })
+
+  it('handles names with spaces', async () => {
+    const findOut = findRecord('f', 100, 1704067200.0, 'my file with spaces.txt')
+    const stdout = buildListDirStdout('/path', '/home/user', findOut)
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout,
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo)
+
+    const result = await service.listDir('ssh:biowulf', '/path')
+
+    expect(result.entries[0]?.name).toBe('my file with spaces.txt')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // ComputeService.list — issue 06
 // ---------------------------------------------------------------------------
 

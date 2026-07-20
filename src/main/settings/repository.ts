@@ -878,6 +878,18 @@ class SettingsRepository {
     })
   }
 
+  // Sets the bookmark folders for a provider_id in settings.computeBookmarks. Replaces the full
+  // array for that provider; pass [] to clear. Used by the remote file browser Go-to/Pin feature.
+  async setComputeBookmarks(providerId: string, folders: string[]): Promise<StoredSettings> {
+    return this.mutate((settings) => ({
+      ...settings,
+      computeBookmarks: {
+        ...(settings.computeBookmarks ?? {}),
+        [providerId]: folders
+      }
+    }))
+  }
+
   // Read-modify-write over the connectors block, seeding an empty block on first mutation.
   private mutateConnectors(fn: (connectors: StoredConnectors) => void): Promise<StoredSettings> {
     return this.mutate((settings) => {

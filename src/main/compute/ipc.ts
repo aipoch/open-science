@@ -11,6 +11,7 @@ import type {
   DetailsAuthor,
   ProbeResult
 } from '../../shared/compute'
+import type { DirListing } from '../../shared/remote-fs'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { resolveStorageRoot } from '../storage-root'
 import { SettingsRepository } from '../settings/repository'
@@ -27,7 +28,7 @@ import { join } from 'node:path'
 // ssh-config parser so the IPC surface stays easy to unit test (aligns with projects/ipc.ts). Issue 01:
 // host record CRUD + ssh-config alias listing. Issue 02 adds probe. Issue 03 adds
 // details/scratch/concurrency. Issue 04 adds callCommand + the approval broker wiring.
-// Issue 06 adds list (via ComputeService) and skill doc sync.
+// Issue 05 (browse) adds listDir. Issue 06 adds list (via ComputeService) and skill doc sync.
 type ComputeHandlers = {
   list: () => Promise<ComputeHost[]>
   get: (providerId: string) => Promise<ComputeHost | null>
@@ -49,6 +50,8 @@ type ComputeHandlers = {
   scratchSet: (providerId: string, path: string) => Promise<void>
   // Concurrent job limit: store 1..500 (not enforced in Phase 1).
   concurrencySet: (providerId: string, limit: number) => Promise<void>
+  // Lists the contents of a remote directory (non-approval, metadata only).
+  listDir: (providerId: string, path: string) => Promise<DirListing>
   // The compute service instance, exposed so the notebook RPC server can wire computeCall.
   computeService: ComputeService
   // Responds to a pending approval request from the renderer. Decision now includes
@@ -123,6 +126,7 @@ const createComputeHandlers = (
       service.replaceDetails(providerId, { text, oldText, author }),
     scratchSet: (providerId, path) => service.setScratchRoot(providerId, path),
     concurrencySet: (providerId, limit) => service.setConcurrencyLimit(providerId, limit),
+    listDir: (providerId, path) => service.listDir(providerId, path),
     computeService: service,
     approvalRespond: (id, decision) => broker.respond(id, decision)
   }
@@ -187,6 +191,10 @@ const registerComputeIpcHandlers = (
   )
   ipcMain.handle('compute:concurrency:set', (_event, providerId: string, limit: number) =>
     handlers.concurrencySet(providerId, limit)
+  )
+  // Lists a remote directory (browse experience, issue 05).
+  ipcMain.handle('compute:list-dir', (_event, providerId: string, path: string) =>
+    handlers.listDir(providerId, path)
   )
   // Renderer responds to an in-flight approval card (issue 04/05). Decision now carries the
   // chosen scope: 'once' | 'conversation' | 'project' | 'deny'.

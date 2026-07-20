@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
+import { FileBrowserModal } from './FileBrowserModal'
 
 // The compute panel sub-view, driven by the settings navigation history. The add form and host detail
 // are separate components owned by SettingsPage; this panel renders the list + header banner only.
@@ -38,11 +39,13 @@ const probedLabel = (host: ComputeHost): string | null => {
 const HostCard = ({
   host,
   onOpen,
-  onDelete
+  onDelete,
+  onBrowse
 }: {
   host: ComputeHost
   onOpen: () => void
   onDelete: () => void
+  onBrowse: () => void
 }): React.JSX.Element => {
   const probed = host.probeResult
   const status: 'connected' | 'failed' | 'none' = probed
@@ -86,7 +89,7 @@ const HostCard = ({
       </button>
 
       <TooltipProvider delayDuration={200}>
-        {/* File browsing is coming soon (folder icon is greyed out / disabled in Phase 1). */}
+        {/* File browser: enabled when host has been probed and is reachable. */}
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="inline-flex">
@@ -94,15 +97,27 @@ const HostCard = ({
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                disabled
-                aria-label="Browse files (coming soon)"
-                className="shrink-0 text-muted-foreground/50"
+                disabled={status !== 'connected'}
+                onClick={onBrowse}
+                aria-label={
+                  status === 'connected'
+                    ? `Browse files on ${host.displayName}`
+                    : 'Host must be probed and reachable to browse files'
+                }
+                className={cn(
+                  'shrink-0',
+                  status === 'connected'
+                    ? 'text-muted-foreground hover:text-foreground'
+                    : 'text-muted-foreground/50'
+                )}
               >
                 <Folder className="size-4" aria-hidden="true" />
               </Button>
             </span>
           </TooltipTrigger>
-          <TooltipContent>File browsing coming soon</TooltipContent>
+          <TooltipContent>
+            {status === 'connected' ? 'Browse files' : 'Probe the host first to enable browsing'}
+          </TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -147,6 +162,9 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
 
   // A short-lived confirmation message shown after a delete (the prototype's "confirmation toast").
   const [toast, setToast] = useState<string | undefined>(undefined)
+
+  // File browser modal state
+  const [browserProviderId, setBrowserProviderId] = useState<string | undefined>(undefined)
 
   useEffect(() => {
     void loadHosts()
@@ -216,10 +234,18 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
               host={host}
               onOpen={() => onNavigate({ kind: 'detail', providerId: host.providerId })}
               onDelete={() => void handleDelete(host)}
+              onBrowse={() => setBrowserProviderId(host.providerId)}
             />
           ))
         )}
       </div>
+
+      {/* File browser modal — opened when a host folder button is clicked */}
+      <FileBrowserModal
+        open={browserProviderId !== undefined}
+        onClose={() => setBrowserProviderId(undefined)}
+        initialProviderId={browserProviderId}
+      />
     </div>
   )
 }
