@@ -163,6 +163,9 @@ const createDefaultNotebookRuntimeService = (): NotebookRuntimeService => {
     dataRoot,
     projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
     repository: new NotebookRunRepository(dataRoot),
+    // Region default for manage_packages when no mirror is configured; the configured override is
+    // wired in main/ipc.ts via setPackageMirrorResolver once the settings service is constructed.
+    locale: app.getLocale(),
     callbacks: {
       onNotebookAvailable: (event) => broadcast('notebook:available', event),
       onNotebookChanged: (event) => broadcast('notebook:changed', event)
