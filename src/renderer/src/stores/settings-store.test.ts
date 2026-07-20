@@ -6,6 +6,7 @@ import type {
   ValidateProviderResult,
   ConnectorView
 } from '../../../shared/settings'
+import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../../shared/settings'
 import {
   createInitialSettingsState,
   selectProviderModelOptions,
@@ -260,9 +261,9 @@ describe('settings store: persistProvider', () => {
 
   it('returns the fixed Codex provider id when the built-in already exists', async () => {
     const builtIn = {
-      ...providerView('builtin-codex-shared'),
+      ...providerView(CODEX_SUBSCRIPTION_PROVIDER_ID),
       type: 'codex-shared' as const,
-      name: 'Existing Codex profile',
+      name: 'Codex subscription',
       model: undefined,
       models: [],
       hasKey: false
@@ -277,7 +278,7 @@ describe('settings store: persistProvider', () => {
         name: 'ignored',
         apiEndpoints: ['responses']
       })
-    ).resolves.toBe('builtin-codex-shared')
+    ).resolves.toBe(CODEX_SUBSCRIPTION_PROVIDER_ID)
   })
 })
 
