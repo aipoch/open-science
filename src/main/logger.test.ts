@@ -458,6 +458,29 @@ describe('logger: errorLogFields', () => {
     expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
   })
 
+  it('bounds total work on a shared DAG (fan-out) so it cannot expand combinatorially', () => {
+    // A diamond: each level references the SAME child 1000 times. Only ~3000 input references, but a
+    // naive per-node cap would still re-expand the shared subtree on every reference — ~1e9 output
+    // nodes. The global node budget must keep this fast and finite.
+    const leaf = { v: 1 }
+    const level1 = new Array(1000).fill(leaf)
+    const level2 = new Array(1000).fill(level1)
+    const level3 = new Array(1000).fill(level2)
+    const err = Object.assign(new Error('dag'), { data: level3 })
+
+    const start = Date.now()
+    const fields = errorLogFields(err)
+    const elapsed = Date.now() - start
+
+    // Returns quickly and produces a bounded, serializable record with a truncation marker somewhere.
+    expect(elapsed).toBeLessThan(1000)
+    const line = formatLine('error', 'x', 'y', fields)
+    expect(() => JSON.parse(line)).not.toThrow()
+    expect(line).toContain('[truncated: budget exceeded]')
+    // Sanity bound: the serialized size is bounded (well under what ~1e9 nodes would be).
+    expect(line.length).toBeLessThan(2_000_000)
+  })
+
   it('marks an array with a non-integer reported length as "[unreadable]"', () => {
     const arr = new Proxy([] as unknown[], {
       get(target, prop, receiver) {

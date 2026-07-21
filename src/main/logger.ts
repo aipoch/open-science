@@ -60,6 +60,15 @@ const MAX_SANITIZE_DEPTH = 12
 // hostile Proxy can report anything — iterating it would block or OOM the main process, which the depth
 // limit does not prevent. Beyond the cap we stop and append a truncation marker.
 const MAX_ARRAY_ELEMENTS = 1000
+// Global bound on total nodes produced per sanitize call. The per-array cap and depth limit bound a
+// single path, but a shared DAG (a diamond re-expanded on every reference after seen.delete) can still
+// blow up combinatorially — e.g. three nested Array(1000).fill(child) is ~3000 input refs but ~1e9
+// output nodes. This budget is threaded through the whole traversal and, once spent, truncates.
+const MAX_TOTAL_NODES = 10000
+
+// Mutable node budget shared across one errorLogFields call so total output work is bounded regardless
+// of reference sharing.
+type Budget = { remaining: number }
 
 // Sentinel distinguishing a property whose read *threw* (a hostile getter/Proxy) from one that is
 // genuinely absent/undefined, so the former can be surfaced as "[unreadable]" instead of silently
@@ -109,7 +118,12 @@ const safeToString = (value: unknown): string => {
 // circular marker. Error instances are unwrapped at every depth (their fields are non-enumerable, so a
 // nested Error would otherwise serialize to `{}`); bigint/function/symbol are stringified since
 // JSON.stringify cannot represent them.
-const toLogSafe = (value: unknown, seen: Set<object>, depth: number): unknown => {
+const toLogSafe = (value: unknown, seen: Set<object>, depth: number, budget: Budget): unknown => {
+  // Charge one node per value visited so total output is bounded across the whole traversal — this is
+  // what stops a shared DAG from expanding combinatorially even though each single path is capped.
+  if (budget.remaining <= 0) return '[truncated: budget exceeded]'
+  budget.remaining -= 1
+
   const type = typeof value
   if (type === 'bigint') return `${value as bigint}n`
   if (type === 'symbol') return safeToString(value)
@@ -134,7 +148,7 @@ const toLogSafe = (value: unknown, seen: Set<object>, depth: number): unknown =>
     if (depth >= MAX_SANITIZE_DEPTH) return '[max depth]'
     seen.add(value as object)
     try {
-      if (value instanceof Error) return formatError(value, seen, depth)
+      if (value instanceof Error) return formatError(value, seen, depth, budget)
       if (Array.isArray(value)) {
         // Build a fresh plain array by index rather than value.map: map respects Symbol.species (a
         // hijacked constructor could produce an object with a throwing toJSON) and a throwing index
@@ -152,8 +166,14 @@ const toLogSafe = (value: unknown, seen: Set<object>, depth: number): unknown =>
         const cap = Math.min(rawLength, MAX_ARRAY_ELEMENTS)
         const items: unknown[] = []
         for (let index = 0; index < cap; index += 1) {
+          if (budget.remaining <= 0) {
+            items.push('[truncated: budget exceeded]')
+            break
+          }
           const raw = safeRead(value as object, String(index))
-          items.push(raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, depth + 1))
+          items.push(
+            raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, depth + 1, budget)
+          )
         }
         if (rawLength > cap) items.push(`[+${rawLength - cap} more]`)
 
@@ -164,8 +184,12 @@ const toLogSafe = (value: unknown, seen: Set<object>, depth: number): unknown =>
       if (keys === undefined) return UNREADABLE_MARKER
       const out = nullProtoRecord()
       for (const key of keys) {
+        if (budget.remaining <= 0) {
+          out['[truncated]'] = '[truncated: budget exceeded]'
+          break
+        }
         const raw = safeRead(value as object, key)
-        out[key] = raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, depth + 1)
+        out[key] = raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, depth + 1, budget)
       }
 
       return out
@@ -181,10 +205,16 @@ const toLogSafe = (value: unknown, seen: Set<object>, depth: number): unknown =>
 
 // Resolves a safeRead result for a value slot: throwing read → marker, genuinely absent → the caller's
 // default, otherwise the (total) sanitized value.
-const sanitizeSlot = (raw: unknown, seen: Set<object>, depth: number, absent: unknown): unknown => {
+const sanitizeSlot = (
+  raw: unknown,
+  seen: Set<object>,
+  depth: number,
+  absent: unknown,
+  budget: Budget
+): unknown => {
   if (raw === UNREADABLE) return UNREADABLE_MARKER
   if (raw === undefined) return absent
-  return toLogSafe(raw, seen, depth)
+  return toLogSafe(raw, seen, depth, budget)
 }
 
 // Formats one Error into a flat, JSON-safe record: message under `error`, plus stack, the common
@@ -193,7 +223,12 @@ const sanitizeSlot = (raw: unknown, seen: Set<object>, depth: number, absent: un
 // Every field — message and stack included — is read through safeRead, and each detail/cause value runs
 // through the total toLogSafe, so a single throwing accessor degrades just that field to "[unreadable]"
 // while the other still-readable fields survive.
-const formatError = (error: Error, seen: Set<object>, depth: number): Record<string, unknown> => {
+const formatError = (
+  error: Error,
+  seen: Set<object>,
+  depth: number,
+  budget: Budget
+): Record<string, unknown> => {
   const rawMessage = safeRead(error, 'message')
   const rawStack = safeRead(error, 'stack')
   const fields: Record<string, unknown> = {
@@ -215,11 +250,11 @@ const formatError = (error: Error, seen: Set<object>, depth: number): Record<str
 
   for (const key of ERROR_DETAIL_KEYS) {
     const detail = safeRead(error, key)
-    if (detail !== undefined) fields[key] = sanitizeSlot(detail, seen, depth + 1, undefined)
+    if (detail !== undefined) fields[key] = sanitizeSlot(detail, seen, depth + 1, undefined, budget)
   }
 
   const cause = safeRead(error, 'cause')
-  if (cause !== undefined) fields.cause = sanitizeSlot(cause, seen, depth + 1, undefined)
+  if (cause !== undefined) fields.cause = sanitizeSlot(cause, seen, depth + 1, undefined, budget)
 
   return fields
 }
@@ -247,11 +282,14 @@ const bestEffortMessage = (error: unknown): string => {
 const errorLogFields = (error: unknown): Record<string, unknown> => {
   try {
     const seen = new Set<object>()
+    // One budget for the whole call, so total output is bounded even when the same node is referenced
+    // (and thus re-expanded) many times across a shared DAG.
+    const budget: Budget = { remaining: MAX_TOTAL_NODES }
 
     if (error instanceof Error) {
       seen.add(error)
 
-      return formatError(error, seen, 0)
+      return formatError(error, seen, 0, budget)
     }
 
     // A thrown non-Error object (e.g. a JSON-RPC error `{ code, message, data }`): keep its own fields
@@ -271,8 +309,12 @@ const errorLogFields = (error: unknown): Record<string, unknown> => {
       if (keys === undefined) return { error: errorText }
       const safe = nullProtoRecord()
       for (const key of keys) {
+        if (budget.remaining <= 0) {
+          safe['[truncated]'] = '[truncated: budget exceeded]'
+          break
+        }
         const raw = safeRead(error, key)
-        safe[key] = raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, 1)
+        safe[key] = raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, 1, budget)
       }
 
       return { error: errorText, ...safe }
