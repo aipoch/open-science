@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
-import { createReadStream } from 'node:fs'
+import { createReadStream, type Dirent } from 'node:fs'
 import {
   chmod,
   cp,
@@ -775,16 +775,21 @@ export const installManagedCodex = async ({
   return { result: { installId, ok: false, error: lastError } }
 }
 
+// Backups are always directories named `codex-managed.backup-<uuid>` (see replaceDirectory) —
+// match that exact shape so uninstall never deletes look-alike entries sharing the prefix.
+const ORPHANED_BACKUP_PATTERN =
+  /^codex-managed\.backup-[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/
+
 export const uninstallManagedCodex = async (dataRoot: string): Promise<void> => {
   await rm(managedCodexRoot(dataRoot), { recursive: true, force: true }).catch(() => undefined)
-  // Failed installs can leave orphaned `codex-managed.backup-*` dirs (retained for manual
-  // recovery) — uninstall removes them along with the managed tree.
-  const entries = await readdir(dataRoot).catch(() => [] as string[])
+  // Failed installs can leave orphaned backups behind (retained for manual recovery) —
+  // uninstall removes them along with the managed tree.
+  const entries = await readdir(dataRoot, { withFileTypes: true }).catch(() => [] as Dirent[])
   await Promise.all(
     entries
-      .filter((entry) => entry.startsWith('codex-managed.backup-'))
+      .filter((entry) => entry.isDirectory() && ORPHANED_BACKUP_PATTERN.test(entry.name))
       .map((entry) =>
-        rm(join(dataRoot, entry), { recursive: true, force: true }).catch(() => undefined)
+        rm(join(dataRoot, entry.name), { recursive: true, force: true }).catch(() => undefined)
       )
   )
 }

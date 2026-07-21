@@ -1069,19 +1069,28 @@ describe('installManagedCodex', () => {
     }
   })
 
-  it('uninstall also removes orphaned backup dirs left behind by failed installs', async () => {
+  it('uninstall removes only UUID-shaped backup dirs left behind by failed installs', async () => {
     root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
     await mkdir(join(managedCodexRoot(root), 'adapter', 'dist'), { recursive: true })
     await writeFile(managedCodexAdapterEntry(root), 'adapter')
-    const orphanBackup = `${managedCodexRoot(root)}.backup-orphan`
+    // Production backups are always directories named `<root>.backup-<uuid>`.
+    const orphanBackup = `${managedCodexRoot(root)}.backup-123e4567-e89b-42d3-a456-426614174000`
     await mkdir(orphanBackup, { recursive: true })
     await writeFile(join(orphanBackup, 'stranded-runtime'), 'stuck')
+    // Look-alikes sharing the prefix must survive: a non-UUID dir and a UUID-named plain file.
+    const notOurs = `${managedCodexRoot(root)}.backup-not-ours`
+    await mkdir(notOurs, { recursive: true })
+    await writeFile(join(notOurs, 'keep-me'), 'not-ours')
+    const uuidFile = `${managedCodexRoot(root)}.backup-223e4567-e89b-42d3-a456-426614174000`
+    await writeFile(uuidFile, 'not-a-dir')
     await writeFile(join(root, 'unrelated-runtime'), 'keep-me')
 
     await uninstallManagedCodex(root)
 
     await expect(readFile(managedCodexAdapterEntry(root))).rejects.toThrow()
     await expect(readFile(join(orphanBackup, 'stranded-runtime'))).rejects.toThrow()
+    expect(await readFile(join(notOurs, 'keep-me'), 'utf8')).toBe('not-ours')
+    expect(await readFile(uuidFile, 'utf8')).toBe('not-a-dir')
     expect(await readFile(join(root, 'unrelated-runtime'), 'utf8')).toBe('keep-me')
   })
 
