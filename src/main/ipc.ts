@@ -6,7 +6,9 @@ import { app, ipcMain } from 'electron'
 import { createDefaultNotebookRuntimeService, registerAcpIpcHandlers } from './acp/ipc'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
-import { registerComputeIpcHandlers } from './compute/ipc'
+import { registerComputeIpcHandlers, broadcastJobUpdated, toJobSummary } from './compute/ipc'
+import { JobPoller } from './compute/job-poller'
+import { SystemSshRunner } from './compute/ssh-runner'
 import { wireConnectorReload } from './connector-reload'
 import { ApprovalBroker } from './connectors/approval-broker'
 import { toCustomMcpConfig, selectEnabledCustomServers } from './connectors/custom-mcp-bootstrap'
@@ -223,7 +225,19 @@ const registerIpcHandlers = async ({
   // Register compute IPC handlers early so computeService can be wired into the notebook RPC server.
   // The approval broker in compute/ipc.ts broadcasts via BrowserWindow.getAllWindows(), which requires
   // Electron to be ready — this is always the case here since we're inside registerIpcHandlers.
-  const { computeService } = registerComputeIpcHandlers()
+  const { computeService, jobRepository } = registerComputeIpcHandlers()
+  // Start the JobPoller wired to broadcastJobUpdated so every state/tail change is pushed to all
+  // renderer windows via 'compute:job-updated' (Phase 3d, design.md §9 + §15.3).
+  const jobPoller = new JobPoller({
+    runner: new SystemSshRunner(),
+    hostRepository: computeService.getHostRepository(),
+    jobRepository,
+    onJobUpdated: (job) => {
+      const summary = toJobSummary(job, job.provider_id)
+      broadcastJobUpdated(summary)
+    }
+  })
+  jobPoller.start()
   const notebookRpcServer = new NotebookLocalRpcServer(notebookService, {
     connectorService,
     computeService
