@@ -173,7 +173,12 @@ describe('computeCall RPC', () => {
   })
 
   it('routes computeCall op=download to compute service download (session-cache)', async () => {
-    const fakeLocalFile = { path: '/tmp/cs-session-abc/results.csv', name: 'results.csv', size: 1024, mimeType: 'text/csv' }
+    const fakeLocalFile = {
+      path: '/tmp/cs-session-abc/results.csv',
+      name: 'results.csv',
+      size: 1024,
+      mimeType: 'text/csv'
+    }
     const fakeCompute = {
       callCommand: async () => ({}),
       download: async (providerId: string, remotePath: string, dest: { kind: string }) => ({
@@ -194,7 +199,9 @@ describe('computeCall RPC', () => {
       })
     })
     expect(res.status).toBe(200)
-    const body = (await res.json()) as { result: typeof fakeLocalFile & { _args: Record<string, unknown> } }
+    const body = (await res.json()) as {
+      result: typeof fakeLocalFile & { _args: Record<string, unknown> }
+    }
     expect(body.result.name).toBe('results.csv')
     expect(body.result._args.providerId).toBe('ssh:biowulf')
     expect(body.result._args.remotePath).toBe('/remote/results.csv')
@@ -206,7 +213,9 @@ describe('computeCall RPC', () => {
     err.code = 'download_denied'
     const fakeCompute = {
       callCommand: async () => ({}),
-      download: async () => { throw err }
+      download: async () => {
+        throw err
+      }
     }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       computeService: fakeCompute as never

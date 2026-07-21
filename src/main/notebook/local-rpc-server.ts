@@ -44,6 +44,21 @@ type NotebookLocalRpcServerOptions = {
       dest: { kind: 'session-cache' },
       context?: { sessionId: string; projectId: string }
     ): Promise<unknown>
+    submitJob(
+      providerId: string,
+      intent: string,
+      command: string,
+      options: {
+        environment?: string
+        resourceRequest?: string
+        inputManifest?: string
+        outputManifest?: string
+        harvestConfig?: string
+        timeoutSeconds?: number
+      },
+      context: { sessionId: string; projectId: string }
+    ): Promise<unknown>
+    getJobStatus(jobId: string): Promise<unknown>
   }
 }
 
@@ -268,7 +283,55 @@ class NotebookLocalRpcServer {
         const sessionId = typeof params.session_id === 'string' ? params.session_id : undefined
         const projectId = typeof params.project_id === 'string' ? params.project_id : undefined
         const context = sessionId && projectId ? { sessionId, projectId } : undefined
-        return this.computeService.download(providerId, remotePath, { kind: 'session-cache' }, context)
+        return this.computeService.download(
+          providerId,
+          remotePath,
+          { kind: 'session-cache' },
+          context
+        )
+      }
+
+      // op='submit_job' — non-blocking job submission (design.md §3a).
+      // Approval fires inside ComputeService.submitJob() before any DB write or SSH.
+      if (op === 'submit_job') {
+        const providerId = typeof params.provider_id === 'string' ? params.provider_id : ''
+        const intent = typeof params.intent === 'string' ? params.intent : ''
+        const command = typeof params.command === 'string' ? params.command : ''
+        const sessionId = typeof params.session_id === 'string' ? params.session_id : ''
+        const projectId = typeof params.project_id === 'string' ? params.project_id : ''
+        const options = {
+          environment: typeof params.environment === 'string' ? params.environment : undefined,
+          resourceRequest: isRecord(params.resources)
+            ? JSON.stringify(params.resources)
+            : undefined,
+          inputManifest: Array.isArray(params.inputs) ? JSON.stringify(params.inputs) : undefined,
+          outputManifest: Array.isArray(params.outputs)
+            ? JSON.stringify(params.outputs)
+            : undefined,
+          harvestConfig: isRecord(params.harvest) ? JSON.stringify(params.harvest) : undefined,
+          timeoutSeconds:
+            typeof params.timeout_seconds === 'number' ? params.timeout_seconds : undefined
+        }
+        try {
+          return await this.computeService.submitJob(providerId, intent, command, options, {
+            sessionId,
+            projectId
+          })
+        } catch (err) {
+          // Re-throw compute call errors as structured error objects so the JS shim can parse them.
+          if (err instanceof Error && 'computeCallError' in err) {
+            throw new Error(
+              JSON.stringify((err as Error & { computeCallError: unknown }).computeCallError)
+            )
+          }
+          throw err
+        }
+      }
+
+      // op='job_status' — non-blocking read from DB (no SSH) (design.md §3a).
+      if (op === 'job_status') {
+        const jobId = typeof params.job_id === 'string' ? params.job_id : ''
+        return this.computeService.getJobStatus(jobId)
       }
 
       throw new Error(`Unknown computeCall op: ${op}`)

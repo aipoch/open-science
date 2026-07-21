@@ -9,7 +9,8 @@ import type {
   ComputeHost,
   DetailsAuthor,
   ExecResult,
-  ProbeResult
+  ProbeResult,
+  SubmitJobResult
 } from '../../shared/compute'
 import { DETAILS_DOC_MAX_LENGTH } from '../../shared/compute'
 import type { DirListing, DownloadDest, LocalFile, RemoteFsError } from '../../shared/remote-fs'
@@ -29,6 +30,8 @@ import {
   shellSingleQuote,
   validateImportPath
 } from './scp-runner'
+import type { ComputeJobRepository } from './job-repository'
+import { computeRemoteWorkdir, dispatchJob, hashCommand } from './job-dispatcher'
 
 // Probe timeout for the full bundle — individual commands share one connection but each gets this
 // budget. Set generously so slow clusters don't abort, but short enough for a responsive UI (30s).
@@ -167,6 +170,12 @@ const buildDetailsSkeleton = (probe: ProbeResult): string => {
   return lines.join('\n')
 }
 
+// Maximum timeout seconds allowed for a job (7 days). Commands above this are rejected.
+const JOB_MAX_TIMEOUT_SECONDS = 7 * 24 * 3600
+
+// Default timeout when not specified (24 hours).
+const JOB_DEFAULT_TIMEOUT_SECONDS = 24 * 3600
+
 // ComputeService owns probe logic. It is injected with a SshRunner (for testability) and a
 // repository (for persistence). It does NOT write detailsDoc — only probeResult, shape, and
 // scratchRoot (when applicable). See design.md §4 for the probe/Details distinction.
@@ -174,6 +183,7 @@ const buildDetailsSkeleton = (probe: ProbeResult): string => {
 // (unit tests that don't exercise the approval path omit it).
 // scpRunner is optional: when omitted a SystemScpRunner is used (production default).
 // overrideDownloadsDir is optional: when supplied, used as the OS Downloads dir (for tests).
+// jobRepository is optional: when omitted, submitJob will throw (for tests that don't need it).
 export class ComputeService {
   private readonly scpRunner: ScpRunner
 
@@ -182,7 +192,9 @@ export class ComputeService {
     private readonly repository: ComputeHostRepository,
     private readonly approvalBroker?: ComputeApprovalBroker,
     scpRunner?: ScpRunner,
-    private readonly overrideDownloadsDir?: string
+    private readonly overrideDownloadsDir?: string,
+    private readonly jobRepository?: ComputeJobRepository,
+    private readonly onJobUpdated?: (job: import('../../shared/compute').ComputeJob) => void
   ) {
     this.scpRunner = scpRunner ?? new SystemScpRunner()
   }
@@ -933,5 +945,168 @@ export class ComputeService {
   ): Promise<number> {
     const { size } = await this._statRemote(host, target, remotePath)
     return size
+  }
+
+  // Submits a remote compute job asynchronously (design.md §4, §5).
+  //
+  // Flow:
+  //   1. Validate host exists and timeout is within bounds.
+  //   2. Pre-generate a job_id (not yet in DB).
+  //   3. Fire approval gate (before any DB write or SSH).
+  //   4. On approval: write ComputeJob row (status=submitted) + trigger background dispatch.
+  //   5. Return { job_id, provider_id, status:'submitted', remote_workdir } immediately.
+  //
+  // The background dispatcher transitions the job to running (or error) without blocking this call.
+  async submitJob(
+    providerId: string,
+    intent: string,
+    command: string,
+    options: {
+      environment?: string
+      resourceRequest?: string
+      inputManifest?: string
+      outputManifest?: string
+      harvestConfig?: string
+      timeoutSeconds?: number
+    },
+    context: { sessionId: string; projectId: string }
+  ): Promise<SubmitJobResult> {
+    if (!this.jobRepository) {
+      throw new Error('ComputeJobRepository is required to call submitJob.')
+    }
+
+    const host = await this.repository.get(providerId)
+    if (!host) {
+      throw new Error(`No compute host found with provider id "${providerId}".`)
+    }
+
+    // Validate timeout bounds.
+    const rawTimeout = options.timeoutSeconds
+    if (rawTimeout !== undefined) {
+      if (!Number.isInteger(rawTimeout) || rawTimeout <= 0) {
+        const err = new Error(
+          `timeout_seconds must be a positive integer (got ${rawTimeout}).`
+        ) as Error & { computeCallError: ComputeCallError }
+        err.computeCallError = {
+          error_code: 'timeout',
+          message: `timeout_seconds must be a positive integer.`,
+          retry_after_user_action: false
+        }
+        throw err
+      }
+      if (rawTimeout > JOB_MAX_TIMEOUT_SECONDS) {
+        const err = new Error(
+          `timeout_seconds ${rawTimeout} exceeds the 7-day maximum. Use a scheduler driver for multi-day jobs.`
+        ) as Error & { computeCallError: ComputeCallError }
+        err.computeCallError = {
+          error_code: 'timeout',
+          message: `timeout_seconds exceeds the 7-day (${JOB_MAX_TIMEOUT_SECONDS}s) maximum.`,
+          retry_after_user_action: false
+        }
+        throw err
+      }
+    }
+    const timeoutSeconds = rawTimeout ?? JOB_DEFAULT_TIMEOUT_SECONDS
+
+    // Pre-generate job_id for the approval card's remote_workdir preview.
+    const jobId = randomUUID()
+    const remoteWorkdir = computeRemoteWorkdir(host.scratchRoot, jobId)
+
+    // ── APPROVAL GATE (must fire before any DB write or SSH) ──────────────────────
+    if (!this.approvalBroker) {
+      throw new Error('ComputeApprovalBroker is required to call submitJob.')
+    }
+
+    const commandPreview =
+      command.length > COMMAND_PREVIEW_MAX_LEN
+        ? `${command.slice(0, COMMAND_PREVIEW_MAX_LEN)}…`
+        : command
+
+    const approvalInfo = {
+      provider_id: host.providerId,
+      provider_name: host.displayName,
+      shape: host.shape,
+      intent,
+      command_preview: commandPreview,
+      command_full: command,
+      timeout_seconds: timeoutSeconds,
+      remote_workdir: remoteWorkdir
+    }
+
+    const decision = await this.approvalBroker.requestWithContext(approvalInfo, {
+      sessionId: context.sessionId,
+      projectId: context.projectId,
+      operation: 'submit_job'
+    })
+
+    if (decision === 'deny') {
+      const err = new Error(
+        `Job submission approval was denied for host "${host.displayName}".`
+      ) as Error & { computeCallError: ComputeCallError }
+      err.computeCallError = {
+        error_code: 'approval_denied',
+        message: `Approval denied for submit_job on ${host.displayName}.`,
+        retry_after_user_action: false
+      }
+      throw err
+    }
+
+    // ── WRITE JOB ROW ──────────────────────────────────────────────────────────────
+    const commandHash = hashCommand(command)
+
+    await this.jobRepository.create({
+      id: jobId,
+      providerId: host.providerId,
+      shape: host.shape,
+      sessionId: context.sessionId,
+      projectId: context.projectId,
+      intent,
+      command,
+      commandHash,
+      environment: options.environment,
+      resourceRequest: options.resourceRequest,
+      inputManifest: options.inputManifest,
+      outputManifest: options.outputManifest,
+      harvestConfig: options.harvestConfig,
+      timeoutSeconds,
+      remoteWorkdir
+    })
+
+    // ── BACKGROUND DISPATCH (non-blocking) ────────────────────────────────────────
+    // Fire-and-forget. Errors are persisted to the job row by the dispatcher.
+    void dispatchJob(jobId, {
+      runner: this.runner,
+      hostRepository: this.repository,
+      jobRepository: this.jobRepository,
+      onJobUpdated: this.onJobUpdated
+    })
+
+    return {
+      job_id: jobId,
+      provider_id: host.providerId,
+      status: 'submitted',
+      remote_workdir: remoteWorkdir
+    }
+  }
+
+  // Returns the lightweight status shape for a job. Does not make any SSH call.
+  async getJobStatus(jobId: string): Promise<import('../../shared/compute').JobStatusResult> {
+    if (!this.jobRepository) {
+      throw new Error('ComputeJobRepository is required to call getJobStatus.')
+    }
+
+    const job = await this.jobRepository.get(jobId)
+    if (!job) {
+      throw new Error(`No compute job found with id "${jobId}".`)
+    }
+
+    return {
+      job_id: job.job_id,
+      status: job.status,
+      exit_code: job.exit_code,
+      stdout_tail: job.stdout_tail,
+      stderr_tail: job.stderr_tail,
+      remote_workdir: job.remote_workdir
+    }
   }
 }

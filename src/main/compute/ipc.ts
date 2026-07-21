@@ -133,7 +133,9 @@ const createComputeHandlers = (
     concurrencySet: (providerId, limit) => service.setConcurrencyLimit(providerId, limit),
     listDir: (providerId, path) => service.listDir(providerId, path),
     download: (providerId, remotePath, dest) => service.download(providerId, remotePath, dest),
-    revealInFolder: (filePath) => { shell.showItemInFolder(filePath) },
+    revealInFolder: (filePath) => {
+      shell.showItemInFolder(filePath)
+    },
     computeService: service,
     approvalRespond: (id, decision) => broker.respond(id, decision)
   }

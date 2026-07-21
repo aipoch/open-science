@@ -105,6 +105,7 @@ export type ComputeApprovalDecision = ComputeApprovalScope | 'deny'
 // provider_name is the human-readable display name; shape is the host topology string.
 // For call_command: command_preview + command_full are set.
 // For download: remote_path is set instead of command fields.
+// For submit_job (Phase 3a): command_preview + command_full + submit_job-specific fields are set.
 export type ComputeApprovalRequest = {
   id: string
   provider_id: string
@@ -116,4 +117,73 @@ export type ComputeApprovalRequest = {
   command_full?: string
   // download field (present for op=download).
   remote_path?: string
+  // submit_job fields (present for op=submit_job, Phase 3a).
+  inputs_summary?: string
+  resources?: string
+  timeout_seconds?: number
+  remote_workdir?: string
 }
+
+// The job status values for the Phase 3a state machine. 'queued' is reserved for Phase 3c.
+export type ComputeJobStatus = 'submitted' | 'running' | 'success' | 'failed' | 'timeout' | 'error'
+
+// A compute job record, normalized for cross-process sharing (main → renderer via IPC, main → repl
+// via JSON RPC). Timestamps are epoch milliseconds; JSON columns are parsed at the repository
+// boundary to their respective types.
+export type ComputeJob = {
+  job_id: string
+  provider_id: string
+  shape: string
+  session_id: string
+  project_id: string
+  status: ComputeJobStatus
+  intent: string
+  command: string
+  command_hash: string
+  environment: string | undefined
+  resource_request: string | undefined
+  input_manifest: string | undefined
+  output_manifest: string | undefined
+  harvest_config: string | undefined
+  timeout_seconds: number | undefined
+  remote_workdir: string | undefined
+  remote_handle: string | undefined
+  exit_code: number | undefined
+  stdout_tail: string | undefined
+  stderr_tail: string | undefined
+  error_code: string | undefined
+  created_at: number
+  submitted_at: number | undefined
+  started_at: number | undefined
+  finished_at: number | undefined
+  harvested_at: number | undefined
+}
+
+// Lightweight job status shape returned by attach_job().status() and the job_status computeCall op.
+// Only the fields needed for the agent to track job progress are included.
+export type JobStatusResult = {
+  job_id: string
+  status: ComputeJobStatus
+  exit_code: number | undefined
+  stdout_tail: string | undefined
+  stderr_tail: string | undefined
+  remote_workdir: string | undefined
+}
+
+// Result returned by submit_job (immediate, before dispatch completes). remote_workdir is
+// deterministically computed from the job_id before any SSH connection is made.
+export type SubmitJobResult = {
+  job_id: string
+  provider_id: string
+  status: 'submitted'
+  remote_workdir: string
+}
+
+// Error codes for compute jobs (Phase 3a subset of spec §12).
+export type ComputeJobErrorCode =
+  | 'approval_denied'
+  | 'host_unreachable'
+  | 'dispatch_failed'
+  | 'job_failed'
+  | 'timeout'
+  | 'process_vanished'

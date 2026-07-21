@@ -109,6 +109,10 @@ const hostCompute = {
   // login_shell defaults to true (loads the login shell so module/conda PATH is visible), timeout_seconds
   // is optional (the service applies its own default when omitted). Session/project context is threaded
   // from the spawn env so the approval broker can remember a grant for this conversation/project.
+  //
+  // submit_job: non-blocking job submission — returns {job_id, provider_id, status:'submitted',
+  // remote_workdir} immediately, before any SSH. Background dispatch runs the job detached.
+  // attach_job: returns a handle with .status() to read job state from DB without SSH.
   create(providerId) {
     return {
       provider_id: providerId,
@@ -123,6 +127,36 @@ const hostCompute = {
           session_id: COMPUTE_SESSION_ID,
           project_id: COMPUTE_PROJECT_NAME
         })
+      },
+
+      // Non-blocking job submission. Returns immediately with job_id + remote_workdir.
+      // options: { environment?, resources?, inputs?, outputs?, timeout_seconds?, harvest? }
+      // Session/project context is always threaded from spawn env for grant-scope memory.
+      async submit_job(intent, command, options = {}) {
+        return computeRpc({
+          op: 'submit_job',
+          provider_id: providerId,
+          intent,
+          command,
+          environment: options.environment,
+          resources: options.resources,
+          inputs: options.inputs,
+          outputs: options.outputs,
+          timeout_seconds: options.timeout_seconds,
+          harvest: options.harvest,
+          session_id: COMPUTE_SESSION_ID,
+          project_id: COMPUTE_PROJECT_NAME
+        })
+      },
+
+      // Attaches to an existing job by job_id. .status() reads from DB only (no SSH).
+      attach_job(jobId) {
+        return {
+          job_id: jobId,
+          async status() {
+            return computeRpc({ op: 'job_status', job_id: jobId })
+          }
+        }
       }
     }
   },

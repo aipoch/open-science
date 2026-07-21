@@ -107,6 +107,45 @@ const COMPUTE_HOST_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ComputeHost" (
 // output) and guarded with IF NOT EXISTS so re-running ensure is idempotent.
 const COMPUTE_HOST_PROVIDER_ID_INDEX_DDL = `CREATE UNIQUE INDEX IF NOT EXISTS "ComputeHost_providerId_key" ON "ComputeHost"("providerId")`
 
+// Compute jobs (Phase 3a, compute-jobs issue 01). Pure-additive table — references nothing and
+// nothing references it. Tracks the full job lifecycle from submitted through terminal states.
+// Harvest columns (harvestedAt, outputManifest) are created now but filled in Phase 3b only.
+// Security: command stored for audit; commandHash for dedup; no credentials ever stored.
+const COMPUTE_JOB_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ComputeJob" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "providerId" TEXT NOT NULL,
+    "shape" TEXT NOT NULL,
+    "sessionId" TEXT NOT NULL,
+    "projectId" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'submitted',
+    "intent" TEXT NOT NULL,
+    "command" TEXT NOT NULL,
+    "commandHash" TEXT NOT NULL,
+    "environment" TEXT,
+    "resourceRequest" TEXT,
+    "inputManifest" TEXT,
+    "outputManifest" TEXT,
+    "harvestConfig" TEXT,
+    "timeoutSeconds" INTEGER,
+    "remoteWorkdir" TEXT,
+    "remoteHandle" TEXT,
+    "exitCode" INTEGER,
+    "stdoutTail" TEXT,
+    "stderrTail" TEXT,
+    "errorCode" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "submittedAt" DATETIME,
+    "startedAt" DATETIME,
+    "finishedAt" DATETIME,
+    "harvestedAt" DATETIME
+);`
+
+// Indexes for ComputeJob: by providerId (per-host poller queries), sessionId (UI list), status
+// (finding non-terminal jobs on restart). IF NOT EXISTS makes re-runs idempotent.
+const COMPUTE_JOB_PROVIDER_INDEX_DDL = `CREATE INDEX IF NOT EXISTS "ComputeJob_providerId_idx" ON "ComputeJob"("providerId")`
+const COMPUTE_JOB_SESSION_INDEX_DDL = `CREATE INDEX IF NOT EXISTS "ComputeJob_sessionId_idx" ON "ComputeJob"("sessionId")`
+const COMPUTE_JOB_STATUS_INDEX_DDL = `CREATE INDEX IF NOT EXISTS "ComputeJob_status_idx" ON "ComputeJob"("status")`
+
 // Builds a client bound to the SQLite file under the given storage root. Not a singleton, so tests can
 // point separate clients at temp directories. Backslashes are normalized so the file: URL is valid on
 // Windows (Prisma's SQLite connector expects forward slashes).
@@ -139,6 +178,13 @@ const ensureProjectSchema = async (client: PrismaClient): Promise<void> => {
   // are safe to (re)run on any existing DB without disturbing the reviewer/project tables above.
   await client.$executeRawUnsafe(COMPUTE_HOST_TABLE_DDL)
   await client.$executeRawUnsafe(COMPUTE_HOST_PROVIDER_ID_INDEX_DDL)
+
+  // Compute jobs (compute-jobs issue 01, Phase 3a): pure-additive table + three indexes.
+  // IF NOT EXISTS makes each statement safe to re-run on any pre-existing DB.
+  await client.$executeRawUnsafe(COMPUTE_JOB_TABLE_DDL)
+  await client.$executeRawUnsafe(COMPUTE_JOB_PROVIDER_INDEX_DDL)
+  await client.$executeRawUnsafe(COMPUTE_JOB_SESSION_INDEX_DDL)
+  await client.$executeRawUnsafe(COMPUTE_JOB_STATUS_INDEX_DDL)
 }
 
 let clientPromise: Promise<PrismaClient> | undefined
