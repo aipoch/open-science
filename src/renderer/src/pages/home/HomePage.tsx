@@ -1,6 +1,5 @@
 import {
   Archive,
-  Building2,
   CircleAlert,
   Clock,
   MoreVertical,
@@ -256,13 +255,7 @@ const HomePage = (): React.JSX.Element => {
             >
               <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
             </button>
-            <button
-              type="button"
-              aria-label="Account"
-              className="inline-flex size-9 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000"
-            >
-              <Building2 className="size-4" strokeWidth={2} aria-hidden="true" />
-            </button>
+            {/* Account button hidden for now; restore when the account flow lands. */}
             <Button
               variant="outline"
               size="sm"
