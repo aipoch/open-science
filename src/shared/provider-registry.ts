@@ -20,6 +20,7 @@ export type OfficialVendorId =
   | 'minimax'
   | 'stepfun'
   | 'xiaomimimo'
+  | 'sensenova'
   | 'openrouter'
 
 // A selectable endpoint for vendors that publish more than one host — e.g. a Global vs. China region
@@ -276,6 +277,22 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     modelsListUrl: 'https://api.xiaomimimo.com/v1/models',
     models: ['mimo-v2.5-pro', 'mimo-v2.5']
     // Xiaomi MiMo's chat models are text-only, so no `multimodal` rule (image input stays disabled).
+  },
+  {
+    id: 'sensenova',
+    label: 'SenseNova',
+    // SenseTime's SenseNova serves both routes on one host: the Anthropic-compatible /v1/messages
+    // at the bare root and the OpenAI-compatible /v1/chat/completions under /v1. The same model ids
+    // work on both. No modelsListUrl: the live /v1/models list also serves the image-generation-only
+    // sensenova-u1-fast (POST /v1/images/generations, not a chat model), and the refresh has no
+    // modality filter — so the catalog stays curated to the two chat ids.
+    apiEndpoints: ['anthropic', 'openai'],
+    baseUrl: 'https://token.sensenova.cn',
+    openaiBaseUrl: 'https://token.sensenova.cn/v1',
+    apiKeyUrl: 'https://platform.sensenova.cn/token-plan',
+    models: ['sensenova-6.7-flash-lite', 'deepseek-v4-flash'],
+    // Only sensenova-6.7-flash-lite accepts image input; deepseek-v4-flash is text-only.
+    multimodal: { multimodalModels: ['sensenova-6.7-flash-lite'] }
   },
   // OpenRouter is an aggregation gateway (many vendors behind one key), so it sits last in the picker.
   {
