@@ -195,6 +195,99 @@ describe('logger: errorLogFields', () => {
     expect(fields.b).toEqual({ id: 1 })
   })
 
+  it('stringifies bigint / function / symbol values that JSON.stringify cannot represent', () => {
+    const fields = errorLogFields(
+      Object.assign(new Error('boom'), {
+        data: {
+          big: 10n,
+          fn: function handler() {
+            return 1
+          },
+          sym: Symbol('s')
+        }
+      })
+    ) as { data: { big: string; fn: string; sym: string } }
+
+    expect(fields.data.big).toBe('10n')
+    expect(fields.data.fn).toBe('[function handler]')
+    expect(fields.data.sym).toBe('Symbol(s)')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('serializes a valid Date to ISO and never throws on an invalid Date', () => {
+    const valid = errorLogFields(Object.assign(new Error('e'), { data: new Date(0) })) as {
+      data: string
+    }
+    expect(valid.data).toBe('1970-01-01T00:00:00.000Z')
+
+    const invalid = errorLogFields(
+      Object.assign(new Error('e'), { data: new Date('not-a-date') })
+    ) as { data: string }
+    expect(invalid.data).toBe('[invalid date]')
+  })
+
+  it('degrades a throwing getter to a marker while keeping sibling fields', () => {
+    const data = { ok: 'kept' }
+    Object.defineProperty(data, 'boom', {
+      enumerable: true,
+      get() {
+        throw new Error('getter blew up')
+      }
+    })
+    const fields = errorLogFields(Object.assign(new Error('e'), { data })) as {
+      data: { ok: string; boom: string }
+    }
+
+    expect(fields.data.ok).toBe('kept')
+    expect(fields.data.boom).toBe('[unreadable]')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('never throws on a Proxy whose ownKeys/get traps throw', () => {
+    const hostile = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error('ownKeys trap')
+        },
+        get() {
+          throw new Error('get trap')
+        }
+      }
+    )
+
+    // Directly thrown hostile object, and nested inside a normal error's data — neither may throw.
+    expect(() => errorLogFields(hostile)).not.toThrow()
+    const nested = errorLogFields(Object.assign(new Error('e'), { data: hostile }))
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', nested))).not.toThrow()
+  })
+
+  it('bounds recursion depth on a deeply nested (non-cyclic) structure', () => {
+    let deep: Record<string, unknown> = { leaf: true }
+    for (let i = 0; i < 50; i += 1) deep = { next: deep }
+
+    const fields = errorLogFields(Object.assign(new Error('e'), { data: deep }))
+    const line = formatLine('error', 'x', 'y', fields)
+    expect(() => JSON.parse(line)).not.toThrow()
+    // The depth marker appears somewhere in the truncated chain rather than the whole thing being dropped.
+    expect(line).toContain('[max depth]')
+  })
+
+  it('returns a fixed fallback (never throws) when message access itself throws', () => {
+    const hostile = {}
+    Object.defineProperty(hostile, 'message', {
+      enumerable: true,
+      get() {
+        throw new Error('message trap')
+      }
+    })
+
+    const fields = errorLogFields(hostile)
+    // The message getter throws during field enumeration; the field degrades but the call still returns.
+    expect(fields).toBeTypeOf('object')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
   it('keeps a thrown plain object’s own fields instead of "[object Object]"', () => {
     const fields = errorLogFields({ code: -32603, message: 'Internal error', data: { x: 1 } })
 

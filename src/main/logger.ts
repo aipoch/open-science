@@ -53,27 +53,53 @@ const ERROR_DETAIL_KEYS = ['name', 'code', 'data', 'errno', 'syscall', 'path'] a
 // Marker substituted for a value that points back to one of its own ancestors, so the sanitized output
 // is always acyclic (and therefore always JSON-serializable).
 const CIRCULAR_MARKER = '[circular]'
+// Belt-and-suspenders bound on recursion depth: a pathological (non-cyclic but enormous) structure or a
+// hostile object can't blow the stack or spin unbounded before the ancestor set would catch a true cycle.
+const MAX_SANITIZE_DEPTH = 12
+
+// Reads own-property keys defensively — an exotic Proxy can throw from its ownKeys trap.
+const safeKeys = (value: object): string[] => {
+  try {
+    return Object.keys(value)
+  } catch {
+    return []
+  }
+}
 
 // Recursively converts any value into a JSON-safe, acyclic structure. `seen` holds the *ancestor path*
 // only (entries are removed on the way back up), so a value referenced twice in sibling positions is
 // kept both times — only a real back-reference to an ancestor becomes the marker. Error instances are
 // unwrapped at every depth (their fields are non-enumerable, so a nested Error would otherwise serialize
-// to `{}`); bigint/function/symbol are stringified since JSON.stringify cannot represent them.
-const toLogSafe = (value: unknown, seen: Set<object>): unknown => {
+// to `{}`); bigint/function/symbol are stringified since JSON.stringify cannot represent them. Every
+// property read is guarded so a throwing getter or a hostile Proxy degrades one field to a marker rather
+// than aborting the whole record.
+const toLogSafe = (value: unknown, seen: Set<object>, depth: number): unknown => {
   if (typeof value === 'bigint') return `${value}n`
   if (typeof value === 'function') return `[function ${value.name || 'anonymous'}]`
   if (typeof value === 'symbol') return value.toString()
   if (value === null || typeof value !== 'object') return value
-  if (value instanceof Date) return value.toISOString()
+  if (value instanceof Date) {
+    // An invalid Date throws from toISOString(); guard so it can't take the whole log line down.
+    const time = value.getTime()
+    return Number.isNaN(time) ? '[invalid date]' : value.toISOString()
+  }
 
   if (seen.has(value)) return CIRCULAR_MARKER
+  if (depth >= MAX_SANITIZE_DEPTH) return '[max depth]'
   seen.add(value)
   try {
-    if (value instanceof Error) return formatError(value, seen)
-    if (Array.isArray(value)) return value.map((item) => toLogSafe(item, seen))
+    if (value instanceof Error) return formatError(value, seen, depth)
+    if (Array.isArray(value)) return value.map((item) => toLogSafe(item, seen, depth + 1))
 
     const out: Record<string, unknown> = {}
-    for (const [key, item] of Object.entries(value)) out[key] = toLogSafe(item, seen)
+    for (const key of safeKeys(value)) {
+      try {
+        out[key] = toLogSafe((value as Record<string, unknown>)[key], seen, depth + 1)
+      } catch {
+        // A getter/Proxy that throws on read: keep the other fields, mark just this one.
+        out[key] = '[unreadable]'
+      }
+    }
 
     return out
   } finally {
@@ -81,21 +107,43 @@ const toLogSafe = (value: unknown, seen: Set<object>): unknown => {
   }
 }
 
+// Reads one own property defensively (a getter may throw), returning undefined on failure.
+const safeRead = (value: object, key: string): unknown => {
+  try {
+    return (value as Record<string, unknown>)[key]
+  } catch {
+    return undefined
+  }
+}
+
 // Formats one Error into a flat, JSON-safe record: message under `error`, plus stack, the common
 // diagnostic detail keys, and a (recursively sanitized) cause. The caller must have already added
 // `error` to `seen`, so a cause that points back to it becomes the circular marker rather than recursing.
-const formatError = (error: Error, seen: Set<object>): Record<string, unknown> => {
-  const fields: Record<string, unknown> = { error: error.message, stack: error.stack }
-  const own = error as unknown as Record<string, unknown>
-
-  for (const key of ERROR_DETAIL_KEYS) {
-    if (own[key] !== undefined) fields[key] = toLogSafe(own[key], seen)
+const formatError = (error: Error, seen: Set<object>, depth: number): Record<string, unknown> => {
+  const fields: Record<string, unknown> = {
+    error: typeof error.message === 'string' ? error.message : String(safeRead(error, 'message')),
+    stack: typeof error.stack === 'string' ? error.stack : undefined
   }
 
-  const cause = (error as { cause?: unknown }).cause
-  if (cause !== undefined) fields.cause = toLogSafe(cause, seen)
+  for (const key of ERROR_DETAIL_KEYS) {
+    const detail = safeRead(error, key)
+    if (detail !== undefined) fields[key] = toLogSafe(detail, seen, depth + 1)
+  }
+
+  const cause = safeRead(error, 'cause')
+  if (cause !== undefined) fields.cause = toLogSafe(cause, seen, depth + 1)
 
   return fields
+}
+
+// Best-effort message extraction used only when the full sanitizer itself fails — never throws.
+const bestEffortMessage = (error: unknown): string => {
+  try {
+    if (error instanceof Error && typeof error.message === 'string') return error.message
+    return String(error)
+  } catch {
+    return 'unserializable error'
+  }
 }
 
 // Expands an unknown thrown value into a log-safe record for nesting inside a larger context object.
@@ -103,31 +151,44 @@ const formatError = (error: Error, seen: Set<object>): Record<string, unknown> =
 // to `{}` because its fields are non-enumerable — losing the message, stack, and (worse) the code/data
 // that name the real cause. Spread the result into the log context so all of it survives:
 //   log.error('connect failed', { ...errorLogFields(err), framework })
-// The result is guaranteed acyclic and JSON-serializable: every branch runs through toLogSafe, which
-// unwraps nested Errors at any depth and replaces any cycle — in a cause chain, in RequestError.data, or
-// in a directly-thrown object — with a marker, so formatLine can never fall back to `[unserializable]`
-// and drop the whole record.
+// The result is guaranteed acyclic and JSON-serializable, and this function never throws: every branch
+// runs through toLogSafe (which unwraps nested Errors, breaks any cycle — in a cause chain, in
+// RequestError.data, or a directly-thrown object — bounds depth, and guards every property read), and an
+// outer guard converts even a total failure into a fixed fallback rather than losing the caller's log
+// line or masking the original error.
 const errorLogFields = (error: unknown): Record<string, unknown> => {
-  const seen = new Set<object>()
+  try {
+    const seen = new Set<object>()
 
-  if (error instanceof Error) {
-    seen.add(error)
+    if (error instanceof Error) {
+      seen.add(error)
 
-    return formatError(error, seen)
+      return formatError(error, seen, 0)
+    }
+
+    // A thrown non-Error object (e.g. a JSON-RPC error `{ code, message, data }`): keep its own fields
+    // rather than collapsing to "[object Object]" the way String() would.
+    if (error !== null && typeof error === 'object') {
+      seen.add(error)
+      const safe: Record<string, unknown> = {}
+      for (const key of safeKeys(error)) {
+        try {
+          safe[key] = toLogSafe((error as Record<string, unknown>)[key], seen, 1)
+        } catch {
+          safe[key] = '[unreadable]'
+        }
+      }
+      const message = safeRead(error, 'message')
+
+      return { error: typeof message === 'string' ? message : '[object]', ...safe }
+    }
+
+    return { error: String(error) }
+  } catch {
+    // The sanitizer itself failed (a deeply hostile getter/Proxy). Never throw into the caller's log
+    // call — a degraded record beats a lost log line plus a masked original error.
+    return { error: bestEffortMessage(error), serializationFailed: true }
   }
-
-  // A thrown non-Error object (e.g. a JSON-RPC error `{ code, message, data }`): keep its own fields
-  // rather than collapsing to "[object Object]" the way String() would.
-  if (error !== null && typeof error === 'object') {
-    const record = error as Record<string, unknown>
-    seen.add(record)
-    const safe: Record<string, unknown> = {}
-    for (const [key, item] of Object.entries(record)) safe[key] = toLogSafe(item, seen)
-
-    return { error: typeof record.message === 'string' ? record.message : '[object]', ...safe }
-  }
-
-  return { error: String(error) }
 }
 
 const formatLine = (level: LogLevel, scope: string, message: string, data?: unknown): string => {

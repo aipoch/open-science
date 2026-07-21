@@ -3785,11 +3785,15 @@ describe('ACP runtime — connect failure logging', () => {
     expect(data.framework).toBe('opencode')
   })
 
-  it('logs "agent connection abandoned" when a real async resolveBackend is superseded by a public disconnect()', async () => {
+  it('logs "agent connection abandoned" when a real async resolveBackend is superseded mid-resolution by a public disconnect()', async () => {
     warnLogSpy.mockClear()
     errorLogSpy.mockClear()
     const process = new FakeAgentProcess()
     process.pid = 3434
+    let signalEntered: () => void = () => undefined
+    const enteredResolver = new Promise<void>((resolvePromise) => {
+      signalEntered = resolvePromise
+    })
     let releaseBackend: () => void = () => undefined
     const backendGate = new Promise<void>((resolvePromise) => {
       releaseBackend = resolvePromise
@@ -3798,9 +3802,11 @@ describe('ACP runtime — connect failure logging', () => {
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
-      // A genuinely async backend resolution: it parks until the test has superseded the connect via the
-      // public disconnect() API, then returns a real framework whose spawn yields the fake process.
+      // A genuinely async backend resolution that signals once entered, then parks. The test only
+      // supersedes AFTER the connect is inside the resolver (past the pre-spawn teardown + generation
+      // assertion), so the supersede is detected post-spawn and the child is captured in the log.
       resolveBackend: async () => {
+        signalEntered()
         await backendGate
 
         return {
@@ -3812,27 +3818,87 @@ describe('ACP runtime — connect failure logging', () => {
     })
 
     const createPromise = runtime.createSession({ cwd: '/workspace' })
-    // Overlapping teardown while the first connect is still awaiting its backend: bumps the generation
-    // through the real disconnect path, so the parked connect must abandon once it resumes.
+    await enteredResolver
+    // Overlapping teardown while the connect is parked inside resolveBackend: bumps the generation via
+    // the real disconnect path. Only after that do we release the gate so the resolver returns.
     await runtime.disconnect()
     releaseBackend()
 
     await expect(createPromise).rejects.toThrow(/superseded|shutting down/i)
 
-    // The overlapping disconnect bumps the generation, so the parked connect is abandoned once it
-    // resumes (here at the pre-spawn generation assertion — the real overlapping-connect timing). The
-    // key guarantees: it logs as *abandoned* (a warning), carries the target cwd + framework, and does
-    // NOT also raise the error-level "failed" record.
+    // The connect resumes, spawns the child, then detects the supersede and abandons it. Key guarantees:
+    // logged as *abandoned* (a warning) with the spawned child's pid + target cwd/framework, and NOT
+    // also raised as the error-level "failed" record.
     const abandoned = warnLogSpy.mock.calls.find(
       ([message]) => message === 'agent connection abandoned (superseded or shutting down)'
     )
     expect(abandoned).toBeDefined()
-    const data = abandoned?.[1] as { cwd: string; framework: string }
+    const data = abandoned?.[1] as { cwd: string; framework: string; agentProcessPid: number }
     expect(data.cwd).toBe(resolve('/workspace'))
     expect(data.framework).toBe('claude-code')
+    expect(data.agentProcessPid).toBe(3434)
     expect(errorLogSpy.mock.calls.some(([message]) => message === 'agent connection failed')).toBe(
       false
     )
+  })
+
+  it('labels a non-Error spawn throw with the resolved framework and re-throws the original value', async () => {
+    errorLogSpy.mockClear()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: {
+          ...opencodeFramework,
+          spawn: () => {
+            // A non-Error throwable: the old mutate-the-throwable tagging couldn't attach to this at
+            // all, so the framework label would have fallen back to the (wrong) previous backend.
+            throw 'raw string spawn failure'
+          }
+        },
+        executablePath: '/bin/opencode',
+        env: {}
+      })
+    })
+
+    // The original value (not an Error, not a wrapper) must propagate unchanged.
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toBe(
+      'raw string spawn failure'
+    )
+
+    const call = errorLogSpy.mock.calls.find(([message]) => message === 'agent connection failed')
+    expect(call).toBeDefined()
+    const data = call?.[1] as { error: string; framework: string }
+    expect(data.error).toBe('raw string spawn failure')
+    expect(data.framework).toBe('opencode')
+  })
+
+  it('does not mutate a frozen spawn Error, still labels the framework, and re-throws it verbatim', async () => {
+    errorLogSpy.mockClear()
+    const frozen = Object.freeze(new Error('frozen spawn failure'))
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: {
+          ...opencodeFramework,
+          spawn: () => {
+            throw frozen
+          }
+        },
+        executablePath: '/bin/opencode',
+        env: {}
+      })
+    })
+
+    // The old approach assigned a tag onto the throwable — a TypeError on a frozen Error, masking the
+    // real failure. The wrapper leaves it untouched and re-throws the exact same object.
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toBe(frozen)
+    expect(Object.isFrozen(frozen)).toBe(true)
+    expect((frozen as unknown as { spawnFramework?: unknown }).spawnFramework).toBeUndefined()
+
+    const call = errorLogSpy.mock.calls.find(([message]) => message === 'agent connection failed')
+    expect((call?.[1] as { framework: string }).framework).toBe('opencode')
   })
 })
 
@@ -3850,10 +3916,67 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
     await runtime.createSession({ cwd: '/workspace' })
 
     const messages = infoLogSpy.mock.calls.map(([message]) => message)
+    // Every stage of a successful createSession leaves a breadcrumb, in order.
     expect(messages).toContain('createSession: starting')
+    expect(messages).toContain('createSession: ensureConnected')
     expect(messages).toContain('ensureConnected: attempting connection')
     expect(messages).toContain('ensureConnected: connection established')
+    expect(messages).toContain('createSession: createMcpServers')
+    expect(messages).toContain('createSession: buildSession')
+    expect(messages).toContain('createSession: configurePermissionProfile')
+    expect(messages).toContain('createSession: applySessionModel')
     expect(messages).toContain('createSession: completed successfully')
+  })
+
+  it('logs "createSession: failed" and "ensureConnected: connect failed" when the connection fails', async () => {
+    errorLogSpy.mockClear()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => {
+        throw new Error('spawn boom')
+      }
+    })
+
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(/spawn boom/)
+
+    const messages = errorLogSpy.mock.calls.map(([message]) => message)
+    // The failure surfaces at each layer that owns a diagnostic log: the connect, the ensureConnected
+    // wrapper, and createSession itself.
+    expect(messages).toContain('agent connection failed')
+    expect(messages).toContain('ensureConnected: connect failed')
+    expect(messages).toContain('createSession: failed')
+    const createFailure = errorLogSpy.mock.calls.find(
+      ([message]) => message === 'createSession: failed'
+    )
+    expect((createFailure?.[1] as { error: string }).error).toBe('spawn boom')
+  })
+
+  it('logs "createSession: configurePermissionProfile failed" with the full error when the profile setup throws', async () => {
+    errorLogSpy.mockClear()
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['perm-fail-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    // Force the permission-profile step to throw after the session is built.
+    const boom = Object.assign(new Error('permission setup failed'), { code: 'EPERM' })
+    vi.spyOn(
+      runtime as unknown as { configurePermissionProfile: () => Promise<void> },
+      'configurePermissionProfile'
+    ).mockRejectedValueOnce(boom)
+
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toBe(boom)
+
+    const call = errorLogSpy.mock.calls.find(
+      ([message]) => message === 'createSession: configurePermissionProfile failed'
+    )
+    expect(call).toBeDefined()
+    const data = call?.[1] as { error: string; code: string }
+    expect(data.error).toBe('permission setup failed')
+    expect(data.code).toBe('EPERM')
   })
 
   it('logs the resolved backend (executable + env keys, values omitted) and the spawned pid', async () => {

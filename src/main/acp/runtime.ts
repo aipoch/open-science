@@ -235,26 +235,15 @@ const errorMessage = (error: unknown): string => {
   return String(error)
 }
 
-// Carries the framework a failed spawn targeted, so connectFresh can label the failure with the backend
-// it actually tried to launch even when the spawn threw before returning a process.
-const SPAWN_FRAMEWORK_KEY = 'spawnFramework'
-
-const taggedSpawnError = (error: unknown, framework: AgentFramework['id']): unknown => {
-  if (error instanceof Error) {
-    ;(error as unknown as Record<string, unknown>)[SPAWN_FRAMEWORK_KEY] = framework
-
-    return error
-  }
-
-  return error
-}
-
-const spawnErrorFramework = (error: unknown): AgentFramework['id'] | undefined => {
-  if (error === null || typeof error !== 'object') return undefined
-
-  const value = (error as Record<string, unknown>)[SPAWN_FRAMEWORK_KEY]
-
-  return typeof value === 'string' ? (value as AgentFramework['id']) : undefined
+// Internal wrapper thrown when framework.spawn() fails, carrying the framework the spawn targeted so
+// connectFresh can label the failure with the right backend. It never mutates the original throwable
+// (which may be a frozen/non-extensible Error, a write-rejecting Proxy, or a non-Error value) and holds
+// the original `cause` verbatim so connectFresh can re-throw exactly what was thrown.
+class SpawnFailure {
+  constructor(
+    readonly framework: AgentFramework['id'],
+    readonly cause: unknown
+  ) {}
 }
 
 const log = createLogger('acp')
@@ -665,16 +654,20 @@ class AcpRuntime {
         text: `ACP protocol ${initResult.protocolVersion}`
       })
       this.setStatus('connected')
-    } catch (error) {
+    } catch (thrown) {
+      // A spawn failure arrives wrapped so it can name the framework it targeted without mutating the
+      // original throwable; unwrap to the real cause (logged and re-thrown) and prefer its framework
+      // (the process never returned to update spawnedFramework). Every other failure is its own cause.
+      const isSpawnFailure = thrown instanceof SpawnFailure
+      const cause = isSpawnFailure ? thrown.cause : thrown
       // Shared process context so both the abandoned and the failed paths name the child — including the
       // superseded-during-spawn case, where the local `agentProcess` holds the child this.agentProcess
-      // never received. A spawn-throw carries the framework it targeted (the process never returned to
-      // update spawnedFramework), so prefer that tag when present.
+      // never received.
       const processFields = {
         cwd,
         generation,
         currentGeneration: this.connectionGeneration,
-        framework: spawnErrorFramework(error) ?? spawnedFramework,
+        framework: isSpawnFailure ? thrown.framework : spawnedFramework,
         shuttingDown: this.shuttingDown,
         agentProcessPid: agentProcess?.pid,
         agentProcessKilled: agentProcess?.killed
@@ -685,14 +678,14 @@ class AcpRuntime {
         // skips the error handling below, so log here too — these late-spawn/teardown races are exactly
         // the failures that are otherwise invisible.
         log.warn('agent connection abandoned (superseded or shutting down)', {
-          ...errorLogFields(error),
+          ...errorLogFields(cause),
           ...processFields
         })
-        throw error
+        throw cause
       }
 
-      this.error = errorMessage(error)
-      log.error('agent connection failed', { ...errorLogFields(error), ...processFields })
+      this.error = errorMessage(cause)
+      log.error('agent connection failed', { ...errorLogFields(cause), ...processFields })
       this.pushEvent({
         kind: 'error',
         level: 'error',
@@ -702,7 +695,7 @@ class AcpRuntime {
       await this.disconnectCurrent(false)
       this.status = 'error'
       this.emitState()
-      throw error
+      throw cause
     }
 
     return this.getSnapshot()
@@ -743,7 +736,7 @@ class AcpRuntime {
           normalizePermissionProfile(request.permissionProfile)
         )
       } catch (error) {
-        log.error('createSession: configurePermissionProfile failed', error)
+        log.error('createSession: configurePermissionProfile failed', errorLogFields(error))
         session.dispose()
         throw error
       }
@@ -772,7 +765,7 @@ class AcpRuntime {
       log.info('createSession: completed successfully', { sessionId: session.sessionId })
       return { sessionId: session.sessionId, cwd: sessionCwd, frameworkId: this.framework.id }
     } catch (error) {
-      log.error('createSession: failed', error)
+      log.error('createSession: failed', errorLogFields(error))
       throw error
     }
   }
@@ -1313,10 +1306,10 @@ class AcpRuntime {
         args: backend.args ?? []
       })
     } catch (error) {
-      // Tag the failure with the framework this spawn targeted: the connect-level catch would otherwise
-      // fall back to this.framework.id, which is already this backend but could be moved by an
-      // overlapping reconnect before the log is written.
-      throw taggedSpawnError(error, backend.framework.id)
+      // Wrap (never mutate) the failure with the framework this spawn targeted: the connect-level catch
+      // would otherwise fall back to this.framework.id, which an overlapping reconnect could move before
+      // the log is written. connectFresh unwraps this and re-throws the original `error` value.
+      throw new SpawnFailure(backend.framework.id, error)
     }
 
     log.info('agent process spawned', {
