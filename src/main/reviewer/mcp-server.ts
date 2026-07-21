@@ -16,7 +16,12 @@ import { z } from 'zod'
 
 import type { McpServer } from '@agentclientprotocol/sdk'
 
-import { REVIEWER_MCP_SERVER_NAME, type NewCheck, type TurnScope } from '../../shared/reviewer'
+import {
+  REVIEWER_MCP_SERVER_NAME,
+  REVIEWER_MCP_TOOLS,
+  type NewCheck,
+  type TurnScope
+} from '../../shared/reviewer'
 import { assertBlockInScope, type ReviewerHostServer } from './host-sdk'
 import { createLogger } from '../logger'
 
@@ -163,7 +168,7 @@ export class ReviewerMcpServer {
   private _endpoint: string | undefined
   private readonly transports = new Map<string, StreamableHTTPServerTransport>()
   private readonly trackedFindingIds: ReadonlySet<string>
-  private findingsSubmitted = false
+  private findingsSubmissionState: 'idle' | 'submitting' | 'submitted' = 'idle'
 
   constructor(
     private readonly scope: TurnScope,
@@ -226,7 +231,7 @@ export class ReviewerMcpServer {
 
     if (this.evidence) {
       server.registerTool(
-        'read_turn',
+        REVIEWER_MCP_TOOLS.readTurn,
         {
           title: 'Read audited turn',
           description:
@@ -240,7 +245,7 @@ export class ReviewerMcpServer {
       )
 
       server.registerTool(
-        'query_execution_log',
+        REVIEWER_MCP_TOOLS.queryExecutionLog,
         {
           title: 'Read audited execution log',
           description:
@@ -267,7 +272,7 @@ export class ReviewerMcpServer {
       )
 
       server.registerTool(
-        'read_artifact',
+        REVIEWER_MCP_TOOLS.readArtifact,
         {
           title: 'Read audited artifact',
           description:
@@ -290,7 +295,7 @@ export class ReviewerMcpServer {
     }
 
     server.registerTool(
-      'submit_findings',
+      REVIEWER_MCP_TOOLS.submitFindings,
       {
         title: 'Submit review checks',
         description:
@@ -301,7 +306,7 @@ export class ReviewerMcpServer {
         inputSchema: submitFindingsInputSchema.shape
       },
       async (input) => {
-        if (this.findingsSubmitted) {
+        if (this.findingsSubmissionState !== 'idle') {
           return {
             content: [
               { type: 'text', text: 'Validation error: submit_findings was already called.' }
@@ -348,8 +353,14 @@ export class ReviewerMcpServer {
           }
         }
 
-        await this.onSubmitFindings(newChecks, this.scope, {})
-        this.findingsSubmitted = true
+        this.findingsSubmissionState = 'submitting'
+        try {
+          await this.onSubmitFindings(newChecks, this.scope, {})
+          this.findingsSubmissionState = 'submitted'
+        } catch (error) {
+          this.findingsSubmissionState = 'idle'
+          throw error
+        }
 
         return {
           content: [

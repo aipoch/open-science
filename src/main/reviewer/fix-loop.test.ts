@@ -489,6 +489,87 @@ describe('fix loop: all-pass on re-review ends the loop (resolved)', () => {
 
     await client.$disconnect()
   })
+
+  it('waits for a complete correction message before starting re-review', async () => {
+    const process = new FakeAgentProcess()
+    const shared = makeSharedSession(makeSession())
+    let correctionPolls = 0
+
+    startFixLoopFakeAgent(
+      process,
+      {
+        mainSessionId: 'main-session-1',
+        initialChecks: [
+          {
+            status: 'fail',
+            claim: 'Agent claimed 42 results',
+            evidence: 'Tool output shows 0 results',
+            locator: { blockRef: { blockIndex: 1 }, contentHash: 'abc123' }
+          }
+        ],
+        reReviewChecksByRound: [
+          [
+            {
+              status: 'pass',
+              claim: 'Agent claimed 42 results',
+              evidence: 'Correction confirmed: results now correct'
+            }
+          ]
+        ]
+      },
+      shared
+    )
+
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    const client = createProjectDbClient(temporaryRoot!)
+    await ensureProjectSchema(client)
+    const repository = new ReviewRepository(() => Promise.resolve(client))
+
+    await runReview({
+      sessionId: 'session-1',
+      turnMessageId: 'msg-2',
+      projectId: 'project-1',
+      getSession: () => {
+        const session = shared.getSession()
+        const correction = session.messages.find((message) => message.id === 'correction-msg-1')
+        if (!correction) return session
+
+        correctionPolls++
+        if (correctionPolls > 1) return session
+
+        return {
+          ...session,
+          messages: session.messages.map((message) =>
+            message.id === correction.id
+              ? { ...message, status: 'error', content: 'Partial correction was interrupted.' }
+              : message
+          )
+        }
+      },
+      reviewRepository: repository,
+      acpRuntime: runtime,
+      artifactStorageRoot: temporaryRoot!,
+      mainSessionId: 'main-session-1'
+    })
+
+    expect(correctionPolls).toBeGreaterThanOrEqual(2)
+    const reviews = await repository.getReviewsForSession('session-1')
+    expect(
+      reviews.some((review) =>
+        review.checks.some(
+          (check) => check.claim === 'Agent claimed 42 results' && check.resolution === 'resolved'
+        )
+      )
+    ).toBe(true)
+
+    await client.$disconnect()
+  })
 })
 
 describe('fix loop: newly discovered issues remain in the automatic remediation loop', () => {

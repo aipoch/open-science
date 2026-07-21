@@ -297,7 +297,8 @@ const startPermissionProbeAgent = (
     newSessionId: string
     toolCallId: string
     toolTitle: string
-    toolKind?: 'other' | 'execute'
+    toolKind?: 'other' | 'execute' | 'read' | null
+    providerToolName?: string
     permissionOptions?: Array<{
       optionId: string
       name: string
@@ -333,8 +334,11 @@ const startPermissionProbeAgent = (
         toolCall: {
           toolCallId: options.toolCallId,
           title: options.toolTitle,
-          kind: options.toolKind ?? 'other',
-          status: 'pending'
+          status: 'pending',
+          ...(options.toolKind === null ? {} : { kind: options.toolKind ?? 'other' }),
+          ...(options.providerToolName
+            ? { _meta: { claudeCode: { toolName: options.providerToolName } } }
+            : {})
         },
         options: options.permissionOptions ?? [
           { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }
@@ -2301,7 +2305,8 @@ describe('ACP runtime session management', () => {
     startPermissionProbeAgent(process, {
       newSessionId: 'reviewer-session-1',
       toolCallId: 'reviewer-mcp',
-      toolTitle: 'open-science-reviewer_submit_findings'
+      toolTitle: 'Submit review checks',
+      providerToolName: 'open-science-reviewer_submit_findings'
     })
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
@@ -2324,6 +2329,7 @@ describe('ACP runtime session management', () => {
     })
     expect(session.sessionId).toBe('reviewer-session-1')
     expect(mcpServerNamesMap(runtime).has('reviewer-session-1')).toBe(true)
+    expect(sessionFrameworksMap(runtime).get('reviewer-session-1')).toBe('claude-code')
 
     // Drive a tool-call permission request through the reviewer session (auto-approved by the runtime).
     await session.prompt([{ type: 'text', text: 'review this turn' }])
@@ -2333,6 +2339,93 @@ describe('ACP runtime session management', () => {
     // Disposing the reviewer session unregisters its MCP names.
     runtime.disposeReviewerSession(session)
     expect(mcpServerNamesMap(runtime).has('reviewer-session-1')).toBe(false)
+    expect(sessionFrameworksMap(runtime).has('reviewer-session-1')).toBe(false)
+  })
+
+  it.each([null, 'read'] as const)(
+    'auto-approves an exact reviewer provider tool identity with kind %s',
+    async (toolKind) => {
+      const process = new FakeAgentProcess()
+      let permissionResponse: unknown
+      startPermissionProbeAgent(process, {
+        newSessionId: 'reviewer-session-1',
+        toolCallId: `reviewer-provider-identity-${toolKind ?? 'missing'}`,
+        toolTitle: 'Read audited turn',
+        toolKind,
+        providerToolName: 'mcp__open-science-reviewer__read_turn',
+        permissionOptions: [
+          { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+          { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+        ],
+        onPermissionResponse: (response) => {
+          permissionResponse = response
+        }
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process)
+      })
+
+      const { session } = await runtime.buildReviewerSession({
+        cwd: '/workspace',
+        mcpServers: [
+          {
+            type: 'http',
+            name: 'open-science-reviewer',
+            url: 'http://127.0.0.1:1/mcp',
+            headers: []
+          }
+        ]
+      })
+      await session.prompt([{ type: 'text', text: 'read the audited turn' }])
+
+      expect(permissionResponse).toEqual({
+        outcome: { outcome: 'selected', optionId: 'allow-once' }
+      })
+      runtime.disposeReviewerSession(session)
+    }
+  )
+
+  it('auto-approves an exact opencode reviewer tool title when provider metadata is absent', async () => {
+    const process = new FakeAgentProcess()
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'reviewer-session-1',
+      toolCallId: 'reviewer-opencode-identity',
+      toolTitle: 'open-science-reviewer_read_turn',
+      permissionOptions: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+      ],
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework
+    })
+
+    const { session } = await runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        {
+          type: 'http',
+          name: 'open-science-reviewer',
+          url: 'http://127.0.0.1:1/mcp',
+          headers: []
+        }
+      ]
+    })
+    await session.prompt([{ type: 'text', text: 'read the audited turn' }])
+
+    expect(permissionResponse).toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    runtime.disposeReviewerSession(session)
   })
 
   it('refuses a non-loopback reviewer MCP before starting an agent connection', async () => {
@@ -2401,6 +2494,90 @@ describe('ACP runtime session management', () => {
     // It is generically recognized as MCP for audit logging, but the reviewer gate rejects it because
     // its namespace does not exactly match open-science-reviewer.
     expect(auditedIsMcp('reviewer-foreign-mcp')).toBe(true)
+    runtime.disposeReviewerSession(session)
+  })
+
+  it('rejects opencode provider tools that spoof an exact reviewer MCP method title', async () => {
+    const process = new FakeAgentProcess()
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'reviewer-session-1',
+      toolCallId: 'reviewer-spoofed-execute',
+      toolTitle: 'open-science-reviewer_read_turn',
+      toolKind: 'other',
+      providerToolName: 'Bash',
+      permissionOptions: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+      ],
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework
+    })
+
+    const { session } = await runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        {
+          type: 'http',
+          name: 'open-science-reviewer',
+          url: 'http://127.0.0.1:1/mcp',
+          headers: []
+        }
+      ]
+    })
+    await session.prompt([{ type: 'text', text: 'attempt a spoofed execute call' }])
+
+    expect(permissionResponse).toEqual({
+      outcome: { outcome: 'selected', optionId: 'reject-once' }
+    })
+    runtime.disposeReviewerSession(session)
+  })
+
+  it('rejects unknown tools inside the reviewer MCP namespace', async () => {
+    const process = new FakeAgentProcess()
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'reviewer-session-1',
+      toolCallId: 'reviewer-unknown-method',
+      toolTitle: 'mcp__open-science-reviewer__run_shell',
+      providerToolName: 'mcp__open-science-reviewer__run_shell',
+      permissionOptions: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+      ],
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const { session } = await runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        {
+          type: 'http',
+          name: 'open-science-reviewer',
+          url: 'http://127.0.0.1:1/mcp',
+          headers: []
+        }
+      ]
+    })
+    await session.prompt([{ type: 'text', text: 'attempt an unknown reviewer tool' }])
+
+    expect(permissionResponse).toEqual({
+      outcome: { outcome: 'selected', optionId: 'reject-once' }
+    })
     runtime.disposeReviewerSession(session)
   })
 

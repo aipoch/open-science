@@ -629,6 +629,75 @@ describe('ReviewerMcpServer HTTP transport', () => {
     }
   })
 
+  it('accepts exactly one of two concurrent submit_findings calls', async () => {
+    let submissionsStarted = 0
+    let releaseSubmission: (() => void) | undefined
+    const submissionGate = new Promise<void>((resolve) => {
+      releaseSubmission = resolve
+    })
+    const releaseTimer = setTimeout(() => releaseSubmission?.(), 100)
+    const onSubmit = vi.fn(async () => {
+      submissionsStarted++
+      if (submissionsStarted === 2) releaseSubmission?.()
+      await submissionGate
+    })
+    const server = new ReviewerMcpServer(scope, onSubmit)
+    const { endpoint, token } = await server.start()
+
+    try {
+      const { sessionId, headers } = await initialize(endpoint, token)
+      const calls = await Promise.all([
+        callTool(endpoint, sessionId, headers, 'submit_findings', { checks: [] }, 2),
+        callTool(endpoint, sessionId, headers, 'submit_findings', { checks: [] }, 3)
+      ])
+
+      expect(calls.map((call) => call.result?.isError === true).sort()).toEqual([false, true])
+      expect(calls.find((call) => call.result?.isError)?.result?.content?.[0]?.text).toContain(
+        'already called'
+      )
+      expect(onSubmit).toHaveBeenCalledTimes(1)
+    } finally {
+      clearTimeout(releaseTimer)
+      releaseSubmission?.()
+      await server.stop()
+    }
+  })
+
+  it('allows submit_findings to retry after the submission handler fails', async () => {
+    const onSubmit = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('persistence failed'))
+      .mockResolvedValueOnce(undefined)
+    const server = new ReviewerMcpServer(scope, onSubmit)
+    const { endpoint, token } = await server.start()
+
+    try {
+      const { sessionId, headers } = await initialize(endpoint, token)
+      const failed = await callTool(
+        endpoint,
+        sessionId,
+        headers,
+        'submit_findings',
+        { checks: [] },
+        2
+      )
+      expect(failed.result?.isError).toBe(true)
+
+      const retry = await callTool(
+        endpoint,
+        sessionId,
+        headers,
+        'submit_findings',
+        { checks: [] },
+        3
+      )
+      expect(retry.result?.isError).not.toBe(true)
+      expect(onSubmit).toHaveBeenCalledTimes(2)
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('rejects submit_findings with a summary field (schema-level validation)', async () => {
     // The MCP SDK may strip unknown fields before passing to the handler, but the schema
     // itself rejects summary. Verify at the schema level (the HTTP transport test for this

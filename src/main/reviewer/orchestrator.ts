@@ -387,7 +387,10 @@ const waitForCorrectionAgentMessage = async (options: {
 
     const latest = await options.getSession(options.sessionId)
     const correction = latest?.messages.find(
-      (message) => !options.messageIdsBefore.has(message.id) && message.role === 'agent'
+      (message) =>
+        !options.messageIdsBefore.has(message.id) &&
+        message.role === 'agent' &&
+        message.status === 'complete'
     )
     if (latest && correction) return { session: latest, message: correction }
 

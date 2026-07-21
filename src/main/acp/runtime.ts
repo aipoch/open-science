@@ -92,7 +92,7 @@ import type { UploadRepository } from '../uploads/repository'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, ArtifactReference } from '../../shared/artifacts'
 import { isMediaOverflowError } from '../../shared/media-overflow'
-import { REVIEWER_MCP_SERVER_NAME } from '../../shared/reviewer'
+import { REVIEWER_MCP_SERVER_NAME, REVIEWER_MCP_TOOLS } from '../../shared/reviewer'
 import {
   buildImageContentData,
   canInlineImageInSession,
@@ -256,6 +256,16 @@ class SpawnFailure {
 }
 
 const log = createLogger('acp')
+
+const REVIEWER_MCP_OPENCODE_TOOL_NAMES = new Set(
+  Object.values(REVIEWER_MCP_TOOLS).map((toolName) => `${REVIEWER_MCP_SERVER_NAME}_${toolName}`)
+)
+const REVIEWER_MCP_PROVIDER_TOOL_NAMES = new Set([
+  ...REVIEWER_MCP_OPENCODE_TOOL_NAMES,
+  ...Object.values(REVIEWER_MCP_TOOLS).map(
+    (toolName) => `mcp__${REVIEWER_MCP_SERVER_NAME}__${toolName}`
+  )
+])
 
 // Logs an error without ever throwing back into the caller. Used on failure paths where a throwing
 // logger (or a hostile payload) must never mask the original error being handled/re-thrown.
@@ -2553,7 +2563,11 @@ class AcpRuntime {
       // Approve only their dedicated, scope-bounded MCP. Bash, filesystem, network, other MCP servers,
       // and unknown tools are rejected without involving the renderer.
       if (this.reviewerSessionIds.has(params.sessionId)) {
-        return this.resolveReviewerPermission(params, mcpServerNames)
+        return this.resolveReviewerPermission(
+          params,
+          mcpServerNames,
+          this.sessionFrameworks.get(params.sessionId)
+        )
       }
 
       if (!this.sessions.has(appSessionId)) {
@@ -2587,18 +2601,23 @@ class AcpRuntime {
   // uses a one-shot reject when offered and otherwise cancels; it never falls through to an allow option.
   private resolveReviewerPermission(
     params: RequestPermissionRequest,
-    mcpServerNames: readonly string[]
+    mcpServerNames: readonly string[],
+    frameworkId: string | undefined
   ): RequestPermissionResponse {
     const toolName = extractProviderToolName(params.toolCall)
-    const belongsToReviewerMcp = (name: string | null | undefined): boolean =>
-      name != null &&
-      (name === REVIEWER_MCP_SERVER_NAME ||
-        name.startsWith(`${REVIEWER_MCP_SERVER_NAME}_`) ||
-        name.startsWith(`mcp__${REVIEWER_MCP_SERVER_NAME}__`))
+    const reportedTitle = params.toolCall.title
+    const opencodeToolName =
+      toolName == null &&
+      frameworkId === 'opencode' &&
+      typeof reportedTitle === 'string' &&
+      REVIEWER_MCP_OPENCODE_TOOL_NAMES.has(reportedTitle)
+        ? reportedTitle
+        : undefined
     const isReviewerMcp =
       mcpServerNames.length === 1 &&
       mcpServerNames[0] === REVIEWER_MCP_SERVER_NAME &&
-      (belongsToReviewerMcp(params.toolCall.title) || belongsToReviewerMcp(toolName))
+      ((toolName != null && REVIEWER_MCP_PROVIDER_TOOL_NAMES.has(toolName)) ||
+        opencodeToolName != null)
 
     if (!isReviewerMcp) {
       const rejectOption =
@@ -2867,8 +2886,9 @@ class AcpRuntime {
   }
 
   private clearReviewerSessionState(): void {
-    for (const reviewerCwd of this.reviewerSessionDirectories.values()) {
+    for (const [sessionId, reviewerCwd] of this.reviewerSessionDirectories) {
       this.removeReviewerDirectory(reviewerCwd)
+      this.sessionFrameworks.delete(sessionId)
     }
     this.reviewerSessionDirectories.clear()
     this.reviewerSessionIds.clear()
@@ -2977,6 +2997,7 @@ class AcpRuntime {
       this.reviewerSessionIds.add(session.sessionId)
       this.reviewerSessionDirectories.set(session.sessionId, reviewerCwd)
       this.sessionMcpServerNames.set(session.sessionId, mcpServerNames)
+      this.sessionFrameworks.set(session.sessionId, this.framework.id)
 
       return { session, promptPrefix: setup.promptPrefix }
     } catch (error) {
@@ -2990,6 +3011,7 @@ class AcpRuntime {
   disposeReviewerSession(session: import('@agentclientprotocol/sdk').ActiveSession): void {
     this.reviewerSessionIds.delete(session.sessionId)
     this.sessionMcpServerNames.delete(session.sessionId)
+    this.sessionFrameworks.delete(session.sessionId)
     const reviewerCwd = this.reviewerSessionDirectories.get(session.sessionId)
     this.reviewerSessionDirectories.delete(session.sessionId)
     session.dispose()

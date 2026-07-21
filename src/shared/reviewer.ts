@@ -55,6 +55,12 @@ export type ReviewOutcome = 'pass' | 'flagged'
 // The only MCP server an unattended reviewer session may use. Keeping the name in shared code lets
 // the orchestrator and ACP permission gate enforce the same allowlist without importing each other.
 export const REVIEWER_MCP_SERVER_NAME = 'open-science-reviewer'
+export const REVIEWER_MCP_TOOLS = {
+  readTurn: 'read_turn',
+  queryExecutionLog: 'query_execution_log',
+  readArtifact: 'read_artifact',
+  submitFindings: 'submit_findings'
+} as const
 
 // The check status: pass = verified and ok; warn = minor issue; fail = serious issue.
 // No 'inconclusive' — use 'warn' with appropriate evidence when verification is uncertain.
