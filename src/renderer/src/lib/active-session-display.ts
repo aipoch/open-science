@@ -22,6 +22,11 @@ export const truncateLabel = (text: string): string =>
 // the renderer stores. Resolves both here so every "running session" surface (close/quit confirm,
 // storage migration) shows names, not ids. Falls back progressively so a row is never blank:
 // project name -> cwd basename -> the project id main sent.
+//
+// Known limitation (cosmetic, self-healing): if the session isn't in THIS renderer's store — a
+// session started from another Web UI client, or the brief post-reload window before hydration — the
+// project name still resolves via info.projectId against the project store (and the row stays
+// clickable), but the title column degrades to the raw session id until the store catches up.
 export const resolveActiveSessionDisplay = (info: ActiveSessionInfo): ActiveSessionDisplay => {
   const session = useSessionStore.getState().sessions.find((entry) => entry.id === info.sessionId)
   const projectId = session?.projectId ?? info.projectId
