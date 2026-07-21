@@ -110,8 +110,9 @@ Every commit subject must follow Conventional Commits with a scope:
 This format is checked for every commit in a pull request.
 
 Use the same standard type prefixes listed under [Branch names](#branch-names).
-The scope should be a short, lowercase, hyphen-separated name for the affected
-area.
+The scope should be a short, hyphen-separated name for the affected area that
+starts with a lowercase letter; uppercase is allowed inside for proper nouns
+and technical terms (for example `macOS`).
 
 ```text
 feat(projects): add sidebar filter
@@ -119,7 +120,9 @@ fix(notebook): prevent kernel startup timeout
 ci(review): unify automated AI reviews
 ```
 
-- Write a clear, lowercase, imperative-mood description.
+- Write a clear, imperative-mood description that starts with a lowercase
+  letter; uppercase is allowed inside for proper nouns and technical terms (for
+  example `detect user-installed CRAN R on Windows`).
 - Keep the subject concise; use the body to explain the _why_ when it is not
   obvious from the diff.
 - Add `!` before the colon and a `BREAKING CHANGE:` footer for breaking changes,
