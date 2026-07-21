@@ -13,8 +13,9 @@ import xiaomimimoLogo from '@/assets/provider-icons/xiaomimimo.svg'
 import type { OfficialVendorId } from '../../../../shared/provider-registry'
 
 // Official vendor brand marks, bundled as assets. Both Kimi providers (the general Moonshot platform
-// and Kimi For Coding) share the one Kimi mark. Any vendor without an entry falls back to a neutral
-// glyph rather than a made-up logo. Custom uses a plus-in-circle and local Claude a laptop.
+// and Kimi For Coding) share the one Kimi mark, and both GLM providers (pay-as-you-go Zhipu and the
+// GLM Coding Plan) share the one GLM mark. Any vendor without an entry falls back to a neutral glyph
+// rather than a made-up logo. Custom uses a plus-in-circle and local Claude a laptop.
 const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   openai: openaiLogo,
   anthropic: claudeLogo,
@@ -22,6 +23,7 @@ const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   minimax: minimaxLogo,
   stepfun: stepfunLogo,
   zhipu: zhipuLogo,
+  glmcodingplan: zhipuLogo,
   kimi: kimiLogo,
   kimiforcode: kimiLogo,
   openrouter: openrouterLogo,

@@ -59,6 +59,32 @@ describe('provider registry', () => {
     )
   })
 
+  it('routes the GLM Coding Plan through the /api/coding OpenAI path, per region', () => {
+    expect(vendorHasRegions('glmcodingplan')).toBe(true)
+    expect(resolveVendorApiEndpoints('glmcodingplan')).toEqual(['anthropic', 'openai'])
+    // The Anthropic route is unchanged from pay-as-you-go GLM.
+    expect(resolveVendorBaseUrl('glmcodingplan', 'global')).toBe('https://api.z.ai/api/anthropic')
+    expect(resolveVendorBaseUrl('glmcodingplan', 'china')).toBe(
+      'https://open.bigmodel.cn/api/anthropic'
+    )
+    // The OpenAI route swaps /api/paas/v4 for the coding-plan /api/coding/paas/v4.
+    expect(resolveVendorOpenAiBaseUrl('glmcodingplan', 'global')).toBe(
+      'https://api.z.ai/api/coding/paas/v4'
+    )
+    expect(resolveVendorOpenAiBaseUrl('glmcodingplan', 'china')).toBe(
+      'https://open.bigmodel.cn/api/coding/paas/v4'
+    )
+    // Quota-based plan: fixed catalog, no live model-list refresh.
+    expect(resolveVendorModelsUrl('glmcodingplan')).toBeUndefined()
+    expect(defaultVendorModel('glmcodingplan')).toBe('glm-5.2')
+    // The coding plan drops GLM's vision variant, so it serves no multimodal model.
+    expect(isVendorModelMultimodal('glmcodingplan', 'glm-5v-turbo')).toBe(false)
+    expect(isVendorModelMultimodal('glmcodingplan', 'glm-5.2')).toBe(false)
+    // Each region points at its own subscription console.
+    expect(resolveVendorApiKeyUrl('glmcodingplan', 'global')).toBe('https://z.ai/subscribe')
+    expect(resolveVendorApiKeyUrl('glmcodingplan', 'china')).toBe('https://bigmodel.cn/glm-coding')
+  })
+
   it('exposes the first catalog entry as the default model', () => {
     expect(defaultVendorModel('openai')).toBe('gpt-5.6-sol')
     expect(defaultVendorModel('zhipu')).toBe('glm-5.2')

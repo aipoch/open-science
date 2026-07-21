@@ -14,6 +14,7 @@ export type OfficialVendorId =
   | 'anthropic'
   | 'deepseek'
   | 'zhipu'
+  | 'glmcodingplan'
   | 'kimi'
   | 'kimiforcode'
   | 'minimax'
@@ -153,6 +154,34 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     // GLM marks vision variants with a `v` after the major version (e.g. glm-5v-turbo); the pattern
     // also covers future `Nv` ids the live refresh may surface.
     multimodal: { multimodalModelPattern: /glm-\d+v/i }
+  },
+  {
+    id: 'glmcodingplan',
+    label: 'GLM Coding Plan',
+    // The GLM Coding Plan subscription (Z.AI's z.ai/subscribe, BigModel's glm-coding): a quota-based
+    // plan that reuses GLM's regions but routes the OpenAI path through `/api/coding/paas/v4` instead
+    // of `/api/paas/v4`. The Anthropic route (`/api/anthropic`) is unchanged from the pay-as-you-go
+    // GLM endpoint. Quota-based catalogs ship a fixed model list and expose no live model list.
+    apiEndpoints: ['anthropic', 'openai'],
+    regions: [
+      {
+        id: 'global',
+        label: 'Global (Z.AI)',
+        baseUrl: 'https://api.z.ai/api/anthropic',
+        openaiBaseUrl: 'https://api.z.ai/api/coding/paas/v4',
+        apiKeyUrl: 'https://z.ai/subscribe'
+      },
+      {
+        id: 'china',
+        label: 'China (BigModel)',
+        baseUrl: 'https://open.bigmodel.cn/api/anthropic',
+        openaiBaseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
+        apiKeyUrl: 'https://bigmodel.cn/glm-coding'
+      }
+    ],
+    // The coding plan does not serve GLM's vision variant, so glm-5v-turbo is omitted and there is no
+    // `multimodal` rule (image input stays disabled for this endpoint).
+    models: ['glm-5.2', 'glm-5.1', 'glm-5', 'glm-5-turbo']
   },
   {
     id: 'kimi',
