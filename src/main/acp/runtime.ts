@@ -226,16 +226,16 @@ const LARGE_DATA_FILE_SYSTEM_PROMPT_APPEND = [
   '</open_science_large_file_instructions>'
 ].join('\n')
 
-// Converts unknown thrown values into user-visible error text. Total: a hostile message getter or a
-// throwing String() coercion (e.g. a Proxy-wrapped Error) must not escape, or it would replace the
-// original failure and, when called before a log, lose the record entirely.
+// Converts unknown thrown values into user-visible error text. Total AND always returns a string: a
+// hostile message getter or a throwing String() coercion (e.g. a Proxy-wrapped Error) must not escape,
+// and a non-string message (object/bigint/Symbol/undefined) must be coerced — this text flows into the
+// state snapshot and event payloads that get structured-cloned to the renderer, where a raw Symbol or
+// throwing value would break the broadcast.
 const errorMessage = (error: unknown): string => {
   try {
-    if (error instanceof Error) {
-      return error.message
-    }
+    const raw = error instanceof Error ? (error as { message?: unknown }).message : error
 
-    return String(error)
+    return typeof raw === 'string' ? raw : String(raw)
   } catch {
     return 'unknown error'
   }
@@ -663,54 +663,84 @@ class AcpRuntime {
     } catch (thrown) {
       // A spawn failure arrives wrapped so it can name the framework it targeted without mutating the
       // original throwable; unwrap to the real cause (logged and re-thrown) and prefer its framework
-      // (the process never returned to update spawnedFramework). Every other failure is its own cause.
-      const isSpawnFailure = thrown instanceof SpawnFailure
-      const cause = isSpawnFailure ? thrown.cause : thrown
-      // Shared process context so both the abandoned and the failed paths name the child — including the
-      // superseded-during-spawn case, where the local `agentProcess` holds the child this.agentProcess
-      // never received.
-      const processFields = {
-        cwd,
-        generation,
-        currentGeneration: this.connectionGeneration,
-        framework: isSpawnFailure ? thrown.framework : spawnedFramework,
-        shuttingDown: this.shuttingDown,
-        agentProcessPid: agentProcess?.pid,
-        agentProcessKilled: agentProcess?.killed
-      }
-
-      if (generation !== this.connectionGeneration) {
-        // Superseded (a newer reconnect bumped the generation) or shutting down: the fast-path re-throw
-        // skips the error handling below, so log here too — these late-spawn/teardown races are exactly
-        // the failures that are otherwise invisible.
-        log.warn('agent connection abandoned (superseded or shutting down)', {
-          ...errorLogFields(cause),
-          ...processFields
-        })
-        throw cause
-      }
-
-      this.error = errorMessage(cause)
-      log.error('agent connection failed', { ...errorLogFields(cause), ...processFields })
-      this.pushEvent({
-        kind: 'error',
-        level: 'error',
-        title: 'Connection failed',
-        text: this.error
-      })
-      // Cleanup must not mask the original failure: a throw from session.dispose(), connection.close(),
-      // or a teardown hook is logged with context but never replaces `cause`, and the error status +
-      // re-throw of the original value always run.
+      // (the process never returned to update spawnedFramework). `instanceof` is guarded because a
+      // hostile thrown value's getPrototypeOf trap could otherwise throw here. Every other failure is
+      // its own cause.
+      let spawnFailure: SpawnFailure | undefined
       try {
-        await this.disconnectCurrent(false)
-      } catch (cleanupError) {
-        log.error('agent connection cleanup failed', {
-          ...errorLogFields(cleanupError),
-          ...processFields
-        })
+        if (thrown instanceof SpawnFailure) spawnFailure = thrown
+      } catch {
+        spawnFailure = undefined
       }
-      this.status = 'error'
-      this.emitState()
+      const cause = spawnFailure ? spawnFailure.cause : thrown
+
+      // The entire failure-handling body is best-effort: logging, notification sinks (pushEvent/
+      // emitState), and cleanup are each isolated so that whatever throws — a hostile error value, a
+      // renderer broadcast, or a teardown hook — the original `cause` is still re-thrown below and never
+      // replaced by a handling-time error.
+      try {
+        // Shared process context so both the abandoned and the failed paths name the child — including
+        // the superseded-during-spawn case, where the local `agentProcess` holds the child
+        // this.agentProcess never received.
+        const processFields = {
+          cwd,
+          generation,
+          currentGeneration: this.connectionGeneration,
+          framework: spawnFailure ? spawnFailure.framework : spawnedFramework,
+          shuttingDown: this.shuttingDown,
+          agentProcessPid: agentProcess?.pid,
+          agentProcessKilled: agentProcess?.killed
+        }
+
+        if (generation !== this.connectionGeneration) {
+          // Superseded (a newer reconnect bumped the generation) or shutting down: the fast-path re-throw
+          // skips the error handling below, so log here too — these late-spawn/teardown races are exactly
+          // the failures that are otherwise invisible.
+          log.warn('agent connection abandoned (superseded or shutting down)', {
+            ...errorLogFields(cause),
+            ...processFields
+          })
+        } else {
+          this.error = errorMessage(cause)
+          log.error('agent connection failed', { ...errorLogFields(cause), ...processFields })
+          // A notification sink that throws synchronously must not skip cleanup or the re-throw.
+          try {
+            this.pushEvent({
+              kind: 'error',
+              level: 'error',
+              title: 'Connection failed',
+              text: this.error
+            })
+          } catch (notifyError) {
+            log.error('agent connection failure notification failed', errorLogFields(notifyError))
+          }
+          // Cleanup must not mask the original failure: a throw from session.dispose(),
+          // connection.close(), or a teardown hook is logged with context but never replaces `cause`.
+          try {
+            await this.disconnectCurrent(false)
+          } catch (cleanupError) {
+            log.error('agent connection cleanup failed', {
+              ...errorLogFields(cleanupError),
+              ...processFields
+            })
+          }
+          this.status = 'error'
+          try {
+            this.emitState()
+          } catch (notifyError) {
+            log.error('agent connection emitState failed', errorLogFields(notifyError))
+          }
+        }
+      } catch (handlingError) {
+        // Last-resort guard: even the logger threw. Swallow it (best-effort re-log) so the original
+        // cause below is what propagates.
+        try {
+          log.error('error while handling agent connection failure', errorLogFields(handlingError))
+        } catch {
+          /* nothing more we can safely do */
+        }
+      }
+
       throw cause
     }
 

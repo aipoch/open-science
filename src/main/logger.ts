@@ -57,6 +57,12 @@ const CIRCULAR_MARKER = '[circular]'
 // hostile object can't blow the stack or spin unbounded before the ancestor set would catch a true cycle.
 const MAX_SANITIZE_DEPTH = 12
 
+// Sentinel distinguishing a property whose read *threw* (a hostile getter/Proxy) from one that is
+// genuinely absent/undefined, so the former can be surfaced as "[unreadable]" instead of silently
+// dropped. A module-private symbol so it can never collide with a real value.
+const UNREADABLE = Symbol('unreadable')
+const UNREADABLE_MARKER = '[unreadable]'
+
 // Reads own-property keys defensively — an exotic Proxy can throw from its ownKeys trap.
 const safeKeys = (value: object): string[] => {
   try {
@@ -66,53 +72,13 @@ const safeKeys = (value: object): string[] => {
   }
 }
 
-// Recursively converts any value into a JSON-safe, acyclic structure. `seen` holds the *ancestor path*
-// only (entries are removed on the way back up), so a value referenced twice in sibling positions is
-// kept both times — only a real back-reference to an ancestor becomes the marker. Error instances are
-// unwrapped at every depth (their fields are non-enumerable, so a nested Error would otherwise serialize
-// to `{}`); bigint/function/symbol are stringified since JSON.stringify cannot represent them. Every
-// property read is guarded so a throwing getter or a hostile Proxy degrades one field to a marker rather
-// than aborting the whole record.
-const toLogSafe = (value: unknown, seen: Set<object>, depth: number): unknown => {
-  if (typeof value === 'bigint') return `${value}n`
-  if (typeof value === 'function') return `[function ${value.name || 'anonymous'}]`
-  if (typeof value === 'symbol') return value.toString()
-  if (value === null || typeof value !== 'object') return value
-  if (value instanceof Date) {
-    // An invalid Date throws from toISOString(); guard so it can't take the whole log line down.
-    const time = value.getTime()
-    return Number.isNaN(time) ? '[invalid date]' : value.toISOString()
-  }
-
-  if (seen.has(value)) return CIRCULAR_MARKER
-  if (depth >= MAX_SANITIZE_DEPTH) return '[max depth]'
-  seen.add(value)
-  try {
-    if (value instanceof Error) return formatError(value, seen, depth)
-    if (Array.isArray(value)) return value.map((item) => toLogSafe(item, seen, depth + 1))
-
-    const out: Record<string, unknown> = {}
-    for (const key of safeKeys(value)) {
-      try {
-        out[key] = toLogSafe((value as Record<string, unknown>)[key], seen, depth + 1)
-      } catch {
-        // A getter/Proxy that throws on read: keep the other fields, mark just this one.
-        out[key] = '[unreadable]'
-      }
-    }
-
-    return out
-  } finally {
-    seen.delete(value)
-  }
-}
-
-// Reads one own property defensively (a getter may throw), returning undefined on failure.
+// Reads one own property defensively (a getter/Proxy may throw), returning the UNREADABLE sentinel on
+// failure so callers can tell a throwing read apart from a genuine `undefined`.
 const safeRead = (value: object, key: string): unknown => {
   try {
     return (value as Record<string, unknown>)[key]
   } catch {
-    return undefined
+    return UNREADABLE
   }
 }
 
@@ -125,32 +91,96 @@ const safeToString = (value: unknown): string => {
   }
 }
 
+// Recursively converts any value into a JSON-safe, acyclic structure. Total: it never throws — any
+// hostile trap (`instanceof`/getPrototypeOf, a throwing `.name`, ownKeys, a getter) degrades to a marker.
+// `seen` holds the *ancestor path* only (entries are removed on the way back up), so a value referenced
+// twice in sibling positions is kept both times — only a real back-reference to an ancestor becomes the
+// circular marker. Error instances are unwrapped at every depth (their fields are non-enumerable, so a
+// nested Error would otherwise serialize to `{}`); bigint/function/symbol are stringified since
+// JSON.stringify cannot represent them.
+const toLogSafe = (value: unknown, seen: Set<object>, depth: number): unknown => {
+  const type = typeof value
+  if (type === 'bigint') return `${value as bigint}n`
+  if (type === 'symbol') return safeToString(value)
+  if (type === 'function') {
+    // A function's `name` can be a throwing getter on an exotic object.
+    const name = safeRead(value as object, 'name')
+    return `[function ${typeof name === 'string' && name ? name : 'anonymous'}]`
+  }
+  if (value === null || type !== 'object') return value
+
+  try {
+    if (value instanceof Date) {
+      // An invalid Date throws from toISOString(); guard so it can't take the whole log line down.
+      const time = value.getTime()
+      return Number.isNaN(time) ? '[invalid date]' : value.toISOString()
+    }
+
+    if (seen.has(value as object)) return CIRCULAR_MARKER
+    if (depth >= MAX_SANITIZE_DEPTH) return '[max depth]'
+    seen.add(value as object)
+    try {
+      if (value instanceof Error) return formatError(value, seen, depth)
+      if (Array.isArray(value)) return value.map((item) => toLogSafe(item, seen, depth + 1))
+
+      const out: Record<string, unknown> = {}
+      for (const key of safeKeys(value as object)) {
+        const raw = safeRead(value as object, key)
+        out[key] = raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, depth + 1)
+      }
+
+      return out
+    } finally {
+      seen.delete(value as object)
+    }
+  } catch {
+    // Any residual hostile trap (e.g. `instanceof` triggering a throwing getPrototypeOf): degrade this
+    // node alone rather than propagating and dropping its readable siblings.
+    return UNREADABLE_MARKER
+  }
+}
+
+// Resolves a safeRead result for a value slot: throwing read → marker, genuinely absent → the caller's
+// default, otherwise the (total) sanitized value.
+const sanitizeSlot = (raw: unknown, seen: Set<object>, depth: number, absent: unknown): unknown => {
+  if (raw === UNREADABLE) return UNREADABLE_MARKER
+  if (raw === undefined) return absent
+  return toLogSafe(raw, seen, depth)
+}
+
 // Formats one Error into a flat, JSON-safe record: message under `error`, plus stack, the common
 // diagnostic detail keys, and a (recursively sanitized) cause. The caller must have already added
 // `error` to `seen`, so a cause that points back to it becomes the circular marker rather than recursing.
-// Every field — message and stack included — is read through safeRead so a single throwing accessor
-// degrades just that field rather than sending the whole Error to the outer fallback (which would drop
-// the still-readable code/data/cause).
+// Every field — message and stack included — is read through safeRead, and each detail/cause value runs
+// through the total toLogSafe, so a single throwing accessor degrades just that field to "[unreadable]"
+// while the other still-readable fields survive.
 const formatError = (error: Error, seen: Set<object>, depth: number): Record<string, unknown> => {
   const rawMessage = safeRead(error, 'message')
   const rawStack = safeRead(error, 'stack')
   const fields: Record<string, unknown> = {
     error:
-      typeof rawMessage === 'string'
-        ? rawMessage
-        : rawMessage === undefined
-          ? ''
-          : safeToString(rawMessage),
-    stack: typeof rawStack === 'string' ? rawStack : undefined
+      rawMessage === UNREADABLE
+        ? UNREADABLE_MARKER
+        : typeof rawMessage === 'string'
+          ? rawMessage
+          : rawMessage === undefined
+            ? ''
+            : safeToString(rawMessage),
+    stack:
+      rawStack === UNREADABLE
+        ? UNREADABLE_MARKER
+        : typeof rawStack === 'string'
+          ? rawStack
+          : undefined
   }
 
   for (const key of ERROR_DETAIL_KEYS) {
     const detail = safeRead(error, key)
-    if (detail !== undefined) fields[key] = toLogSafe(detail, seen, depth + 1)
+    if (detail !== undefined) fields[key] = sanitizeSlot(detail, seen, depth + 1, undefined)
   }
 
   const cause = safeRead(error, 'cause')
-  if (cause !== undefined) fields.cause = toLogSafe(cause, seen, depth + 1)
+  if (cause !== undefined) fields.cause = sanitizeSlot(cause, seen, depth + 1, undefined)
 
   return fields
 }
@@ -191,18 +221,15 @@ const errorLogFields = (error: unknown): Record<string, unknown> => {
       seen.add(error)
       const safe: Record<string, unknown> = {}
       for (const key of safeKeys(error)) {
-        try {
-          safe[key] = toLogSafe((error as Record<string, unknown>)[key], seen, 1)
-        } catch {
-          safe[key] = '[unreadable]'
-        }
+        const raw = safeRead(error, key)
+        safe[key] = raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, 1)
       }
       const message = safeRead(error, 'message')
 
       return { error: typeof message === 'string' ? message : '[object]', ...safe }
     }
 
-    return { error: String(error) }
+    return { error: safeToString(error) }
   } catch {
     // The sanitizer itself failed (a deeply hostile getter/Proxy). Never throw into the caller's log
     // call — a degraded record beats a lost log line plus a masked original error.

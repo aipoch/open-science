@@ -293,9 +293,55 @@ describe('logger: errorLogFields', () => {
       serializationFailed?: boolean
     }
     expect(fields.serializationFailed).toBeUndefined()
-    expect(fields.error).toBe('')
+    // A read that *throws* is surfaced as the marker (distinct from a genuinely empty/absent message).
+    expect(fields.error).toBe('[unreadable]')
     expect(fields.code).toBe('EHOSTILE')
     expect(fields.data).toEqual({ detail: 'kept' })
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('distinguishes a genuinely absent message ("") from an unreadable one ("[unreadable]")', () => {
+    // Absent message: empty string, not the marker.
+    const noMessage = new Error()
+    Object.defineProperty(noMessage, 'message', { value: undefined, configurable: true })
+    expect((errorLogFields(noMessage) as { error: string }).error).toBe('')
+  })
+
+  it('degrades a throwing detail (data) getter to the marker while keeping other fields', () => {
+    const err = new Error('outer') as Error & { code?: string }
+    err.code = 'EKEEP'
+    Object.defineProperty(err, 'data', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        throw new Error('data trap')
+      }
+    })
+
+    const fields = errorLogFields(err) as { error: string; code: string; data: string }
+    // The whole Error must not collapse to the outer fallback: message + code survive, only data degrades.
+    expect(fields.error).toBe('outer')
+    expect(fields.code).toBe('EKEEP')
+    expect(fields.data).toBe('[unreadable]')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('degrades a hostile nested value without dropping its readable siblings', () => {
+    // data.bad is a Proxy whose getPrototypeOf trap throws (so sanitizing it throws internally); data.ok
+    // must still survive as a normal field.
+    const bad = new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw new Error('nested proto trap')
+        }
+      }
+    )
+    const err = Object.assign(new Error('e'), { data: { ok: 'survives', bad } })
+
+    const fields = errorLogFields(err) as { data: { ok: string; bad: string } }
+    expect(fields.data.ok).toBe('survives')
+    expect(fields.data.bad).toBe('[unreadable]')
     expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
   })
 

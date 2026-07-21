@@ -3654,10 +3654,11 @@ describe('ACP runtime — agent process lifecycle logging', () => {
 
     const call = errorLogSpy.mock.calls.find(([message]) => message === 'agent process error event')
     expect(call).toBeDefined()
-    const data = call?.[1] as { error: string; framework: string; pid: number }
+    const data = call?.[1] as { error: string; framework: string; pid: number; status: string }
     expect(data.error).toBe('EPIPE')
     expect(data.framework).toBe('claude-code')
     expect(data.pid).toBe(9090)
+    expect(data.status).toBe('connected')
   })
 
   it('logs agent stderr with the framework the process was spawned under', async () => {
@@ -3675,9 +3676,16 @@ describe('ACP runtime — agent process lifecycle logging', () => {
 
     const call = warnLogSpy.mock.calls.find(([message]) => message === 'agent stderr')
     expect(call).toBeDefined()
-    const data = call?.[1] as { text: string; framework: string }
+    const data = call?.[1] as {
+      text: string
+      framework: string
+      status: string
+      sessionCount: number
+    }
     expect(data.text).toBe('provider auth failed')
     expect(data.framework).toBe('claude-code')
+    expect(data.status).toBe('connected')
+    expect(data.sessionCount).toBe(1)
   })
 
   it('labels a late stderr with the framework captured at bind time, not the current one', async () => {
@@ -3913,19 +3921,45 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
       spawnAgent: () => asAgentProcess(process)
     })
 
-    await runtime.createSession({ cwd: '/workspace' })
+    const session = await runtime.createSession({
+      cwd: '/workspace',
+      projectName: 'my-project'
+    })
 
-    const messages = infoLogSpy.mock.calls.map(([message]) => message)
-    // Every stage of a successful createSession leaves a breadcrumb, in order.
-    expect(messages).toContain('createSession: starting')
-    expect(messages).toContain('createSession: ensureConnected')
-    expect(messages).toContain('ensureConnected: attempting connection')
-    expect(messages).toContain('ensureConnected: connection established')
-    expect(messages).toContain('createSession: createMcpServers')
-    expect(messages).toContain('createSession: buildSession')
-    expect(messages).toContain('createSession: configurePermissionProfile')
-    expect(messages).toContain('createSession: applySessionModel')
-    expect(messages).toContain('createSession: completed successfully')
+    // Helper: fetch a breadcrumb's payload by message.
+    const payloadOf = (message: string): Record<string, unknown> | undefined =>
+      infoLogSpy.mock.calls.find(([m]) => m === message)?.[1] as Record<string, unknown> | undefined
+
+    // Every stage of a successful createSession leaves a breadcrumb, and each carries the context that
+    // makes it useful for diagnosis — not just the message name.
+    expect(payloadOf('createSession: starting')).toMatchObject({
+      request: { cwd: '/workspace', projectName: 'my-project' }
+    })
+    expect(payloadOf('createSession: ensureConnected')).toMatchObject({
+      sessionCwd: resolve('/workspace'),
+      projectName: 'my-project'
+    })
+    const mcpBreadcrumb = payloadOf('createSession: createMcpServers')
+    expect(typeof mcpBreadcrumb?.artifactSessionId).toBe('string')
+    expect(typeof mcpBreadcrumb?.notebookSessionId).toBe('string')
+    expect(typeof (payloadOf('createSession: buildSession')?.mcpServersCount as number)).toBe(
+      'number'
+    )
+    expect(payloadOf('createSession: configurePermissionProfile')).toMatchObject({
+      sessionId: session.sessionId
+    })
+    expect(payloadOf('createSession: applySessionModel')).toMatchObject({
+      sessionId: session.sessionId
+    })
+    expect(payloadOf('createSession: completed successfully')).toMatchObject({
+      sessionId: session.sessionId
+    })
+    expect(payloadOf('ensureConnected: attempting connection')).toMatchObject({
+      cwd: resolve('/workspace')
+    })
+    expect(payloadOf('ensureConnected: connection established')).toMatchObject({
+      cwd: resolve('/workspace')
+    })
   })
 
   it('logs "createSession: failed" and "ensureConnected: connect failed" when the connection fails', async () => {
@@ -4030,8 +4064,14 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
       /ACP connection failed/
     )
 
-    const messages = errorLogSpy.mock.calls.map(([message]) => message)
-    expect(messages).toContain('ensureConnected: connection is null after connect')
+    const call = errorLogSpy.mock.calls.find(
+      ([message]) => message === 'ensureConnected: connection is null after connect'
+    )
+    expect(call).toBeDefined()
+    // The branch carries the target cwd + current status, not just the message.
+    const data = call?.[1] as { cwd: string; status: string }
+    expect(data.cwd).toBe(resolve('/workspace'))
+    expect(typeof data.status).toBe('string')
   })
 
   it('does not let a cleanup failure mask the original connection error', async () => {
@@ -4054,9 +4094,53 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
     // The rejection is the ORIGINAL spawn failure, not the cleanup error.
     await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(/spawn boom/)
 
-    const messages = errorLogSpy.mock.calls.map(([message]) => message)
-    // Both the original failure and the (non-masking) cleanup failure are recorded.
-    expect(messages).toContain('agent connection failed')
-    expect(messages).toContain('agent connection cleanup failed')
+    // Both the original failure and the (non-masking) cleanup failure are recorded with context.
+    const failed = errorLogSpy.mock.calls.find(([message]) => message === 'agent connection failed')
+    expect((failed?.[1] as { error: string }).error).toBe('spawn boom')
+    const cleanup = errorLogSpy.mock.calls.find(
+      ([message]) => message === 'agent connection cleanup failed'
+    )
+    expect(cleanup).toBeDefined()
+    const cleanupData = cleanup?.[1] as { error: string; framework: string; cwd: string }
+    expect(cleanupData.error).toBe('cleanup boom')
+    expect(cleanupData.framework).toBe('claude-code')
+    expect(cleanupData.cwd).toBe(resolve('/workspace'))
+  })
+
+  it('survives a hostile Error (throwing message getter) through the real connectFresh path', async () => {
+    errorLogSpy.mockClear()
+    // An Error whose message getter throws — the kind of value errorMessage/errorLogFields must tolerate
+    // when it flows through connectFresh's catch into the snapshot + event text.
+    const hostile = new Error('placeholder')
+    Object.defineProperty(hostile, 'message', {
+      configurable: true,
+      get() {
+        throw new Error('message getter trap')
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: {
+          ...claudeCodeFramework,
+          spawn: () => {
+            throw hostile
+          }
+        },
+        executablePath: '/bin/agent',
+        env: {}
+      })
+    })
+
+    // The original hostile value propagates unchanged; handling it must not throw a different error.
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toBe(hostile)
+
+    // The failure is still logged (message degraded to the marker, framework intact), and the snapshot's
+    // error is a safe string — never a raw throwing value that would break the renderer broadcast.
+    const failed = errorLogSpy.mock.calls.find(([message]) => message === 'agent connection failed')
+    expect(failed).toBeDefined()
+    expect((failed?.[1] as { error: string; framework: string }).framework).toBe('claude-code')
+    expect(typeof runtime.getSnapshot().error).toBe('string')
   })
 })
