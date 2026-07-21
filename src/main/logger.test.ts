@@ -481,6 +481,62 @@ describe('logger: errorLogFields', () => {
     expect(line.length).toBeLessThan(2_000_000)
   })
 
+  it('bounds a shared DAG of throwing getters (marker slots must also spend budget)', () => {
+    // Every element read throws, so each slot takes the "[unreadable]" marker path (never entering the
+    // node recursion). If markers were free, this shared array would re-expand across the DAG without
+    // limit; charging per slot keeps it bounded.
+    const throwingChild: unknown[] = new Array(1000)
+    for (let i = 0; i < 1000; i += 1) {
+      Object.defineProperty(throwingChild, i, {
+        enumerable: true,
+        configurable: true,
+        get() {
+          throw new Error(`index ${i} trap`)
+        }
+      })
+    }
+    const level2 = new Array(1000).fill(throwingChild)
+    const level3 = new Array(1000).fill(level2)
+    const err = Object.assign(new Error('throwing-dag'), { data: level3 })
+
+    const start = Date.now()
+    const fields = errorLogFields(err)
+    const elapsed = Date.now() - start
+    expect(elapsed).toBeLessThan(1000)
+
+    const line = formatLine('error', 'x', 'y', fields)
+    expect(() => JSON.parse(line)).not.toThrow()
+    // Both the degraded-field marker and the budget-truncation marker appear, and the output is bounded.
+    expect(line).toContain('[unreadable]')
+    expect(line).toContain('[truncated: budget exceeded]')
+    expect(line.length).toBeLessThan(2_000_000)
+  })
+
+  it('bounds an object whose every key getter throws (marker slots spend budget) and caps key count', () => {
+    // A single object with far more throwing-getter keys than the budget: it must not spin unbounded,
+    // and the produced field count is capped.
+    const hostile: Record<string, unknown> = {}
+    for (let i = 0; i < 5000; i += 1) {
+      Object.defineProperty(hostile, `k${i}`, {
+        enumerable: true,
+        configurable: true,
+        get() {
+          throw new Error(`key ${i} trap`)
+        }
+      })
+    }
+    const fields = errorLogFields(Object.assign(new Error('e'), { data: hostile })) as {
+      data: Record<string, unknown>
+    }
+
+    // Key processing is capped at MAX_OBJECT_KEYS (1000), so the record has at most that many fields
+    // plus the truncation marker — never all 5000.
+    const producedKeys = Object.keys(fields.data)
+    expect(producedKeys.length).toBeLessThanOrEqual(1001)
+    expect(fields.data['[truncated]']).toBeDefined()
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
   it('marks an array with a non-integer reported length as "[unreadable]"', () => {
     const arr = new Proxy([] as unknown[], {
       get(target, prop, receiver) {

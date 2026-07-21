@@ -60,6 +60,8 @@ const MAX_SANITIZE_DEPTH = 12
 // hostile Proxy can report anything — iterating it would block or OOM the main process, which the depth
 // limit does not prevent. Beyond the cap we stop and append a truncation marker.
 const MAX_ARRAY_ELEMENTS = 1000
+// Upper bound on own keys walked per object node (a hostile ownKeys can enumerate very many).
+const MAX_OBJECT_KEYS = 1000
 // Global bound on total nodes produced per sanitize call. The per-array cap and depth limit bound a
 // single path, but a shared DAG (a diamond re-expanded on every reference after seen.delete) can still
 // blow up combinatorially — e.g. three nested Array(1000).fill(child) is ~3000 input refs but ~1e9
@@ -170,6 +172,10 @@ const toLogSafe = (value: unknown, seen: Set<object>, depth: number, budget: Bud
             items.push('[truncated: budget exceeded]')
             break
           }
+          // Charge one unit for THIS slot before reading, so an element whose read throws (marker path,
+          // which never enters toLogSafe) still costs budget — otherwise a shared array of throwing
+          // getters could be re-expanded across a DAG for free.
+          budget.remaining -= 1
           const raw = safeRead(value as object, String(index))
           items.push(
             raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, depth + 1, budget)
@@ -183,14 +189,21 @@ const toLogSafe = (value: unknown, seen: Set<object>, depth: number, budget: Bud
       const keys = safeKeys(value as object)
       if (keys === undefined) return UNREADABLE_MARKER
       const out = nullProtoRecord()
-      for (const key of keys) {
+      // Cap the number of keys walked: Object.keys already materialized them, but processing an
+      // unbounded count (hostile Proxy ownKeys) still needs a ceiling.
+      const cappedKeys = keys.length > MAX_OBJECT_KEYS ? keys.slice(0, MAX_OBJECT_KEYS) : keys
+      for (const key of cappedKeys) {
         if (budget.remaining <= 0) {
           out['[truncated]'] = '[truncated: budget exceeded]'
           break
         }
+        // Charge per slot (see the array note): a key whose read throws must still cost budget.
+        budget.remaining -= 1
         const raw = safeRead(value as object, key)
         out[key] = raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, depth + 1, budget)
       }
+      if (keys.length > cappedKeys.length)
+        out['[truncated]'] = `[+${keys.length - cappedKeys.length} more keys]`
 
       return out
     } finally {
@@ -308,13 +321,20 @@ const errorLogFields = (error: unknown): Record<string, unknown> => {
               : '[object]'
       if (keys === undefined) return { error: errorText }
       const safe = nullProtoRecord()
-      for (const key of keys) {
+      const cappedKeys = keys.length > MAX_OBJECT_KEYS ? keys.slice(0, MAX_OBJECT_KEYS) : keys
+      for (const key of cappedKeys) {
         if (budget.remaining <= 0) {
           safe['[truncated]'] = '[truncated: budget exceeded]'
           break
         }
+        // Charge per slot so an all-throwing-getter object still spends budget (marker path skips
+        // toLogSafe), keeping a shared-DAG re-expansion bounded.
+        budget.remaining -= 1
         const raw = safeRead(error, key)
         safe[key] = raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, 1, budget)
+      }
+      if (keys.length > cappedKeys.length) {
+        safe['[truncated]'] = `[+${keys.length - cappedKeys.length} more keys]`
       }
 
       return { error: errorText, ...safe }
