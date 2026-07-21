@@ -191,3 +191,27 @@ export type ComputeJobErrorCode =
   | 'job_failed'
   | 'timeout'
   | 'process_vanished'
+
+// Lightweight job summary returned by the renderer IPC `compute:jobs:list` and broadcast via
+// `compute:job-updated`. Contains the fields the UI needs for badge + job feed display. The host
+// display_name is denormalized here so the renderer never needs a separate host lookup.
+// Shape defined in design.md §9 and issue 05 Interfaces.
+export type JobSummary = {
+  job_id: string
+  provider_id: string
+  // Human-readable host name, denormalized from ComputeHost.displayName at query time.
+  display_name: string
+  shape: string
+  // Session the job was submitted in — needed for the renderer store to filter by active session.
+  session_id: string
+  status: ComputeJobStatus
+  intent: string
+  created_at: number
+  started_at: number | undefined
+  finished_at: number | undefined
+  exit_code: number | undefined
+  error_code: string | undefined
+  remote_workdir: string | undefined
+  stdout_tail: string | undefined
+  stderr_tail: string | undefined
+}

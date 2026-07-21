@@ -159,6 +159,19 @@ export class ComputeJobRepository {
     return toJob(row)
   }
 
+  // Returns all jobs for a session, newest-first. Optionally filtered by status values.
+  async findBySession(sessionId: string, statuses?: string[]): Promise<ComputeJob[]> {
+    const client = await this.getClient()
+    const rows = await client.computeJob.findMany({
+      where: {
+        sessionId,
+        ...(statuses && statuses.length > 0 ? { status: { in: statuses } } : {})
+      },
+      orderBy: { createdAt: 'desc' }
+    })
+    return rows.map(toJob)
+  }
+
   // Checks if a provider has any non-terminal jobs (used by delete guard on ComputeHost).
   async hasActiveJobsForProvider(providerId: string): Promise<boolean> {
     const client = await this.getClient()

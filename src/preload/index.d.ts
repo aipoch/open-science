@@ -35,6 +35,7 @@ import type {
   CreateComputeHostRequest,
   DeleteComputeHostRequest,
   DetailsAuthor,
+  JobSummary,
   ProbeResult
 } from '../shared/compute'
 import type { DirListing, DownloadDest, LocalFile } from '../shared/remote-fs'
@@ -311,6 +312,10 @@ interface OpenScienceAPI {
     // Bookmark folders for the file browser Go-to/Pin feature, persisted in settings JSON.
     bookmarksGet(providerId: string): Promise<string[]>
     bookmarksSet(providerId: string, folders: string[]): Promise<void>
+    // Returns all jobs for a session as JobSummary[], optionally filtered by status (Phase 3d).
+    jobsList(filter: { sessionId: string; status?: string[] }): Promise<JobSummary[]>
+    // Fires when a job's status or tail changes (broadcast from the main-process poller).
+    onJobUpdated(listener: (job: JobSummary) => void): () => void
   }
   preview: {
     load(request: LoadPreviewStateRequest): Promise<PersistedPreviewState | null>

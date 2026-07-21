@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { ComputeHost, CreateComputeHostRequest } from '../../shared/compute'
+import type { ComputeHost, ComputeJob, CreateComputeHostRequest } from '../../shared/compute'
 import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs'
 import type { ComputeService } from './compute-service'
-import { createComputeHandlers } from './ipc'
+import { createComputeHandlers, toJobSummary } from './ipc'
+import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 
 const sampleHost = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
@@ -152,6 +153,134 @@ describe('compute handlers', () => {
     const result = await handlers.download('ssh:biowulf', '/remote/results.csv', dest)
     expect(download).toHaveBeenCalledWith('ssh:biowulf', '/remote/results.csv', dest)
     expect(result.artifactId).toBe('some-uuid')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// jobsList IPC handler — issue 05 (renderer job feed)
+// ---------------------------------------------------------------------------
+
+describe('compute handlers — jobsList', () => {
+  // Minimal ComputeJob fixture for the repository double.
+  const makeJob = (overrides: Partial<ComputeJob> = {}): ComputeJob => ({
+    job_id: 'job-1',
+    provider_id: 'ssh:biowulf',
+    shape: 'direct_ssh',
+    session_id: 'sess-abc',
+    project_id: 'proj-1',
+    status: 'running',
+    intent: 'Smoke test',
+    command: 'echo hi',
+    command_hash: 'deadbeef',
+    environment: undefined,
+    resource_request: undefined,
+    input_manifest: undefined,
+    output_manifest: undefined,
+    harvest_config: undefined,
+    timeout_seconds: undefined,
+    remote_workdir: '~/.openscience/jobs/job-1',
+    remote_handle: undefined,
+    exit_code: undefined,
+    stdout_tail: undefined,
+    stderr_tail: undefined,
+    error_code: undefined,
+    created_at: 1000,
+    submitted_at: undefined,
+    started_at: undefined,
+    finished_at: undefined,
+    harvested_at: undefined,
+    ...overrides
+  })
+
+  const mockJobRepository = (impl: Partial<ComputeJobRepository>): ComputeJobRepository =>
+    impl as ComputeJobRepository
+
+  it('returns JobSummary[] for a session with denormalized display_name', async () => {
+    const host = sampleHost({ providerId: 'ssh:biowulf', displayName: 'Biowulf HPC' })
+    const list = vi.fn().mockResolvedValue([host])
+    const job = makeJob({ session_id: 'sess-1' })
+    const findBySession = vi.fn().mockResolvedValue([job])
+
+    const handlers = createComputeHandlers(
+      mockRepository({ list }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepository({ findBySession })
+    )
+
+    const result = await handlers.jobsList({ sessionId: 'sess-1' })
+
+    expect(result).toHaveLength(1)
+    expect(result[0]!.job_id).toBe('job-1')
+    expect(result[0]!.display_name).toBe('Biowulf HPC')
+    expect(result[0]!.session_id).toBe('sess-1')
+    expect(findBySession).toHaveBeenCalledWith('sess-1', undefined)
+  })
+
+  it('returns empty array when no jobRepository is injected', async () => {
+    const handlers = createComputeHandlers(mockRepository({}))
+    const result = await handlers.jobsList({ sessionId: 'sess-1' })
+    expect(result).toHaveLength(0)
+  })
+
+  it('falls back to provider_id for display_name when host is not found', async () => {
+    const list = vi.fn().mockResolvedValue([]) // no host registered
+    const findBySession = vi.fn().mockResolvedValue([makeJob()])
+    const handlers = createComputeHandlers(
+      mockRepository({ list }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepository({ findBySession })
+    )
+
+    const result = await handlers.jobsList({ sessionId: 'sess-1' })
+    expect(result[0]!.display_name).toBe('ssh:biowulf')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// toJobSummary — issue 05 (session_id field propagation)
+// ---------------------------------------------------------------------------
+
+describe('toJobSummary', () => {
+  it('includes session_id from the source ComputeJob', () => {
+    const job: ComputeJob = {
+      job_id: 'j',
+      provider_id: 'ssh:x',
+      shape: 'direct_ssh',
+      session_id: 'sess-99',
+      project_id: 'proj',
+      status: 'running',
+      intent: 'test',
+      command: 'echo',
+      command_hash: 'abc',
+      environment: undefined,
+      resource_request: undefined,
+      input_manifest: undefined,
+      output_manifest: undefined,
+      harvest_config: undefined,
+      timeout_seconds: undefined,
+      remote_workdir: undefined,
+      remote_handle: undefined,
+      exit_code: undefined,
+      stdout_tail: undefined,
+      stderr_tail: undefined,
+      error_code: undefined,
+      created_at: 0,
+      submitted_at: undefined,
+      started_at: undefined,
+      finished_at: undefined,
+      harvested_at: undefined
+    }
+    const summary = toJobSummary(job, 'My host')
+    expect(summary.session_id).toBe('sess-99')
+    expect(summary.display_name).toBe('My host')
   })
 })
 

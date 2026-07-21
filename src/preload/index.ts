@@ -37,6 +37,7 @@ import type {
   CreateComputeHostRequest,
   DeleteComputeHostRequest,
   DetailsAuthor,
+  JobSummary,
   ProbeResult
 } from '../shared/compute'
 import type { DirListing, DownloadDest, LocalFile } from '../shared/remote-fs'
@@ -332,6 +333,10 @@ type OpenScienceAPI = {
     onApprovalRequest: (listener: (request: ComputeApprovalRequest) => void) => () => void
     // Renderer sends back the user's decision (once / conversation / project / deny).
     respondApproval: (request: { id: string; decision: ComputeApprovalDecision }) => Promise<void>
+    // Returns all jobs for a session as JobSummary[], optionally filtered by status (Phase 3d).
+    jobsList: (filter: { sessionId: string; status?: string[] }) => Promise<JobSummary[]>
+    // Fires when a job's status or tail changes (broadcast from the main-process poller).
+    onJobUpdated: (listener: (job: JobSummary) => void) => () => void
   }
   preview: {
     load: (request: LoadPreviewStateRequest) => Promise<PersistedPreviewState | null>
@@ -721,7 +726,13 @@ const api: OpenScienceAPI = {
     bookmarksGet: (providerId) =>
       ipcRenderer.invoke('compute:bookmarks:get', providerId) as Promise<string[]>,
     bookmarksSet: (providerId, folders) =>
-      ipcRenderer.invoke('compute:bookmarks:set', providerId, folders) as Promise<void>
+      ipcRenderer.invoke('compute:bookmarks:set', providerId, folders) as Promise<void>,
+    // Returns all jobs for a session as JobSummary[], optionally filtered by status (Phase 3d).
+    jobsList: (filter: { sessionId: string; status?: string[] }) =>
+      ipcRenderer.invoke('compute:jobs:list', filter) as Promise<JobSummary[]>,
+    // Fires when a job's status or tail changes (broadcast from the main-process poller).
+    onJobUpdated: (listener: (job: JobSummary) => void) =>
+      onIpcMessage<JobSummary>('compute:job-updated', listener)
   },
   preview: {
     // Per-project preview panel state, persisted alongside projects in SQLite.
