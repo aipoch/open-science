@@ -387,6 +387,39 @@ describe('runEnvironmentCheck', () => {
     })
   })
 
+  it('omits the version when a paired native CLI has no resolvable version', async () => {
+    // Regression (spec P2): a paired external adapter can set nativeCliFound=true without a version
+    // (the path probe missed the binary but the handshake proved it works). The summary must not
+    // render "Codex CLI undefined is installed."
+    const result = await runEnvironmentCheck({
+      storageRoot: '/data',
+      agentFrameworkId: 'codex',
+      frameworks: [
+        {
+          id: 'codex',
+          label: 'Codex',
+          runtime: {
+            found: true,
+            codexComponents: {
+              nativeCliFound: true,
+              nativeCliPath: undefined,
+              nativeCliVersion: undefined,
+              adapterFound: true,
+              adapterPath: '/opt/tools/codex-acp',
+              adapterVersion: '1.1.4'
+            }
+          }
+        }
+      ],
+      encryptionAvailable: true,
+      deps: baseDeps()
+    })
+
+    const nativeCheck = result.checks.find((check) => check.label === 'Codex native CLI')
+    expect(nativeCheck?.status).toBe('passed')
+    expect(nativeCheck?.summary).toBe('Codex CLI is installed.')
+  })
+
   it('shows both Codex components as passed when both are found', async () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/data',

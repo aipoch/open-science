@@ -380,10 +380,10 @@ const createDefaultDetectDeps = (): CodexDetectDeps => {
 // an adapter could pass its handshake by resolving codex through the augmented PATH while this probe,
 // scanning only the narrower raw PATH, reported the native CLI as missing and blocked Continue.
 const detectNativeCodex = async (
-  deps: Pick<
-    CodexDetectDeps,
-    'platform' | 'env' | 'homePath' | 'getCodexVersion' | 'resolveNpmBinDirs' | 'extraDirs'
-  > = createDefaultDetectDeps()
+  deps: Pick<CodexDetectDeps, 'platform' | 'env' | 'getCodexVersion'> &
+    Partial<
+      Pick<CodexDetectDeps, 'homePath' | 'resolveNpmBinDirs' | 'extraDirs'>
+    > = createDefaultDetectDeps()
 ): Promise<{ path: string; version: string } | undefined> => {
   const p = pathFor(deps.platform)
   const wellKnown: string[] = []

@@ -318,7 +318,9 @@ const runEnvironmentCheck = async ({
         label: 'Codex native CLI',
         status: nativeCliFound ? 'passed' : isSelected ? 'failed' : 'warning',
         summary: nativeCliFound
-          ? `Codex CLI ${nativeCliVersion} is installed.`
+          ? nativeCliVersion
+            ? `Codex CLI ${nativeCliVersion} is installed.`
+            : 'Codex CLI is installed.'
           : isSelected
             ? 'Native Codex CLI is not installed.'
             : 'Native Codex CLI is not installed (optional — only needed if you switch to Codex).',
