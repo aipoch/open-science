@@ -64,14 +64,18 @@ const appendFilenameSuffix = (filename: string, suffix: number): string => {
 }
 
 // Rejects direct traversal and absolute-path escapes before and after canonicalization.
-const assertPathInsideRoot = (rootPath: string, filePath: string): void => {
+const assertPathInsideRoot = (
+  rootPath: string,
+  filePath: string,
+  errorMessage = 'Upload file is outside upload storage.'
+): void => {
   const relativePath = relative(rootPath, filePath)
 
   if (relativePath === '' || relativePath === '..' || relativePath.startsWith(`..${sep}`)) {
-    throw new Error('Upload file is outside upload storage.')
+    throw new Error(errorMessage)
   }
   if (isAbsolute(relativePath)) {
-    throw new Error('Upload file is outside upload storage.')
+    throw new Error(errorMessage)
   }
 }
 
@@ -144,16 +148,17 @@ class UploadRepository {
   // Deletes an app-managed upload after resolving the caller path through the trust boundary.
   async deleteUpload(request: DeleteUploadRequest): Promise<void> {
     try {
-      await rm(await this.resolveManagedUploadPath(request), { force: true })
+      const filePath = await this.resolveManagedUploadPath(request)
+      const pendingRoot = await realpath(this.getSessionUploadDir(PENDING_UPLOAD_SESSION_ID))
+
+      // The renderer API is intentionally staged-only. Finalized uploads are session-owned bytes and
+      // must survive logical session/project deletion, so their paths are rejected at this boundary.
+      assertPathInsideRoot(pendingRoot, filePath, 'Upload file is outside pending upload storage.')
+      await rm(filePath, { force: true })
     } catch (error) {
       if (isMissingFileError(error)) return
       throw error
     }
-  }
-
-  async deleteSessionUploads(sessionId: string): Promise<void> {
-    const directory = this.getSessionUploadDir(assertSafePathSegment(sessionId))
-    await rm(directory, { recursive: true, force: true })
   }
 
   // Resolves a renderer-provided upload path only after root and symlink checks pass.

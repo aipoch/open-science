@@ -131,6 +131,8 @@ export type PersistedChatSession = {
   activeRun?: PersistedActiveRun
   error?: string
   artifacts?: PersistedArtifact[]
+  // Incremented only when finalized file metadata changes; text streaming leaves it untouched.
+  filesRevision?: number
   createdAt: number
   updatedAt: number
 }
@@ -666,6 +668,10 @@ const sanitizeSession = (session: unknown): PersistedChatSession | undefined => 
     sanitized.agentFrameworkId = agentFrameworkId
   }
   if (artifacts.length > 0) sanitized.artifacts = artifacts
+  const filesRevision = asNumber(session.filesRevision)
+  if (filesRevision !== undefined && Number.isInteger(filesRevision) && filesRevision >= 0) {
+    sanitized.filesRevision = filesRevision
+  }
   if (activities.length > 0) sanitized.activities = activities
 
   return sanitizeSessionMessageImages(normalizeSessionAfterRestore(sanitized))
@@ -732,10 +738,6 @@ export type LoadAllSessionsResult = {
 export type DeleteSessionRequest = {
   projectId: string
   sessionId: string
-}
-
-export type DeleteProjectSessionsRequest = {
-  projectId: string
 }
 
 export type SaveSessionManifestRequest = {

@@ -161,7 +161,7 @@ describe('renderer session persistence bridge', () => {
     expect(api.saveSession).not.toHaveBeenCalled()
   })
 
-  it('deletes sessions that were removed from the store', async () => {
+  it('does not infer durable deletion from sessions removed from the store', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
       content: 'First',
@@ -177,10 +177,7 @@ describe('renderer session persistence bridge', () => {
 
     await save(useSessionStore.getState())
 
-    expect(api.deleteSession).toHaveBeenCalledWith({
-      projectId: 'project-a',
-      sessionId: 'session-1'
-    })
+    expect(api.deleteSession).not.toHaveBeenCalled()
   })
 
   it('writes the manifest when the selection changes to a persisted session', async () => {

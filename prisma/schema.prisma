@@ -1,13 +1,12 @@
 // Prisma schema for the project data layer.
 //
-// Scope (per plan docs/project-session-storage-plan.md): the SQLite DB holds project-scoped relational
-// data — Project, its preview state, and reviewer results (Review/Finding). Sessions, messages, and
-// artifacts stay on disk (see src/shared/session-persistence.ts) and are NOT modeled here. At runtime
-// the datasource url is supplied programmatically (see prisma-client.ts) so the DB lives under the app
-// storage root; DATABASE_URL here only serves the Prisma CLI.
+// Sessions and messages stay on disk (see src/shared/session-persistence.ts). SQLite stores projects,
+// preview state, reviewer results, and a query projection of app-managed files; file bytes remain on
+// disk. At runtime the datasource url is supplied programmatically (see prisma-client.ts), so DATABASE_URL
+// is CLI-only.
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   // Generate query engines for both macOS architectures so the x64 build can be cross-packaged on an
   // Apple Silicon CI runner (the scarce Intel `macos-13` runner is no longer needed). "native" is the
   // build host's engine (darwin-arm64 on mac CI, the distro engine on Linux); "darwin" adds x64 mac.
@@ -79,4 +78,50 @@ model Finding {
   sortIndex         Int     @default(0)
   reflagCount       Int     @default(0)
   review            Review  @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+}
+
+model ProjectDeletionIntent {
+  projectId String   @id
+  createdAt DateTime @default(now())
+}
+
+model ManagedFile {
+  seq               Int       @id @default(autoincrement())
+  source            String
+  sourceFileId      String
+  projectId         String
+  sessionId         String
+  messageId         String?
+  displayName       String
+  storageKey        String
+  mimeType          String?
+  sizeBytes         BigInt
+  mtimeMs           BigInt?
+  sortAtMs          BigInt
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+  deleteOperationId String?
+
+  @@unique([projectId, source, sourceFileId])
+  @@unique([projectId, source, storageKey])
+  @@index([projectId, deletedAt, sortAtMs, seq])
+  @@index([projectId, source, deletedAt, sortAtMs, seq])
+  @@index([projectId, sessionId, source, deletedAt, sortAtMs, seq])
+  @@index([sessionId, deletedAt])
+}
+
+model ManagedFileSessionSync {
+  projectId         String
+  sessionId         String
+  filesRevision     Int
+  groupSortAtMs     BigInt
+  artifactCount     Int       @default(0)
+  uploadCount       Int       @default(0)
+  syncedAt          DateTime  @default(now())
+  deletedAt         DateTime?
+  deleteOperationId String?
+
+  @@id([projectId, sessionId])
+  @@index([projectId, deletedAt, groupSortAtMs, sessionId])
 }

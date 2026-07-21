@@ -12,6 +12,8 @@ import {
   type ChatMessage,
   type ChatSession
 } from '@/stores/session-store'
+import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
+import type { ProjectFilesChangedEvent, ProjectFileItem } from '../../../../shared/project-files'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 
 const createMessage = (overrides: Partial<ChatMessage>): ChatMessage => ({
@@ -190,12 +192,98 @@ describe('buildProjectFileLibrary', () => {
   })
 })
 
+describe('project file preview reader', () => {
+  it('shares a four-request limit and deduplicates in-flight reads across batches', async () => {
+    const { createKeyedRequestReader } = await import('./project-file-preview-queue')
+    type TestTarget = { id: string; cacheKey: string }
+    let active = 0
+    let maxActive = 0
+    const read = vi.fn(async (target: TestTarget) => {
+      active += 1
+      maxActive = Math.max(maxActive, active)
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      active -= 1
+      return { id: target.id, cacheKey: target.cacheKey, preview: undefined }
+    })
+    const reader = createKeyedRequestReader(read, (target) => target.cacheKey, 4)
+    const targets = Array.from({ length: 7 }, (_, index) => ({
+      id: `artifact-${index}`,
+      cacheKey: `artifact-${index}:v1`
+    }))
+
+    const firstBatch = targets.slice(0, 4).map(reader)
+    await Promise.resolve()
+    const secondBatch = [...targets.slice(4).map(reader), reader(targets[0])]
+    await Promise.all([...firstBatch, ...secondBatch])
+
+    expect(maxActive).toBe(4)
+    expect(read).toHaveBeenCalledTimes(7)
+  })
+
+  it('skips stale queued work before reading the next project', async () => {
+    const { createKeyedRequestReader } = await import('./project-file-preview-queue')
+    type TestTarget = { id: string; projectId: string }
+    const expensiveReads: string[] = []
+    const reader = createKeyedRequestReader(
+      async (target: TestTarget) => {
+        expensiveReads.push(target.id)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        return target.id
+      },
+      (target) => `${target.projectId}:${target.id}`,
+      4,
+      {
+        getGenerationKey: (target) => target.projectId,
+        createCanceledResult: (target) => target.id
+      }
+    )
+    const oldRequests = Array.from({ length: 10 }, (_, index) =>
+      reader({ id: `old-${index}`, projectId: 'old-project' })
+    )
+    await Promise.resolve()
+    const newRequest = reader({ id: 'new', projectId: 'new-project' })
+
+    await Promise.all([...oldRequests, newRequest])
+
+    expect(expensiveReads).toEqual(['old-0', 'old-1', 'old-2', 'old-3', 'new'])
+  })
+
+  it('cancels a large inactive queue without growing the call stack', async () => {
+    const { createKeyedRequestReader } = await import('./project-file-preview-queue')
+    type TestTarget = { id: string; projectId: string }
+    let releaseActive!: () => void
+    const activeGate = new Promise<void>((resolve) => {
+      releaseActive = resolve
+    })
+    const read = vi.fn(async (target: TestTarget) => {
+      if (target.id === 'active') await activeGate
+      return target.id
+    })
+    const reader = createKeyedRequestReader(read, (target) => target.id, 1, {
+      getGenerationKey: (target) => target.projectId,
+      createCanceledResult: (target) => target.id
+    })
+    reader.setActiveKeys(new Set(['active']))
+    const active = reader({ id: 'active', projectId: 'project-1' })
+    const queued = Array.from({ length: 5_000 }, (_, index) =>
+      reader({ id: `queued-${index}`, projectId: 'project-1' })
+    )
+    reader.setActiveKeys(new Set())
+
+    releaseActive()
+    await expect(Promise.all([active, ...queued])).resolves.toHaveLength(5_001)
+    expect(read).toHaveBeenCalledOnce()
+  })
+})
+
 describe('ProjectFilesView', () => {
   let container: HTMLDivElement
   let root: Root
+  let projectFilesChangedListener: ((event: ProjectFilesChangedEvent) => void) | undefined
 
   beforeEach(() => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    projectFilesChangedListener = undefined
     container = document.createElement('div')
     document.body.appendChild(container)
     window.api = {
@@ -246,16 +334,98 @@ describe('ProjectFilesView', () => {
     const { useSessionStore } = await import('@/stores/session-store')
     const { useNavigationStore } = await import('@/stores/navigation-store')
     const { ProjectFilesView } = await import('./ProjectFilesView')
+    const { buildProjectFileLibrary } = await import('./project-files-library')
 
     useSessionStore.setState({
       ...createInitialSessionState(),
       sessions
     })
+    const getLibrary = (): ReturnType<typeof buildProjectFileLibrary> =>
+      buildProjectFileLibrary(
+        useSessionStore.getState().sessions.filter((session) => session.projectId === 'default')
+      )
+    const toUploadItem = (
+      file: ReturnType<typeof getLibrary>['uploadFiles'][number]
+    ): ProjectFileItem => ({
+      id: file.id,
+      source: 'upload',
+      sourceFileId: file.attachment.id,
+      projectId: 'default',
+      sessionId: file.sessionId,
+      name: file.name,
+      path: file.attachment.path,
+      mimeType: file.attachment.mimeType,
+      size: file.size,
+      mtimeMs: file.timestamp,
+      sortAtMs: file.timestamp
+    })
+    const toArtifactItem = (
+      file: ReturnType<typeof getLibrary>['artifactGroups'][number]['files'][number],
+      sessionId: string
+    ): ProjectFileItem => ({
+      id: file.id,
+      source: 'artifact',
+      sourceFileId: file.id,
+      projectId: 'default',
+      sessionId,
+      name: file.name,
+      path: file.artifact.path,
+      mimeType: file.artifact.mimeType,
+      size: file.size ?? 0,
+      mtimeMs: file.artifact.mtimeMs,
+      sortAtMs: file.artifact.mtimeMs ?? 0
+    })
+
+    window.api.projectFiles = {
+      getOverview: vi.fn(async () => {
+        const library = getLibrary()
+        const artifactCount = library.artifactGroups.reduce(
+          (total, group) => total + group.files.length,
+          0
+        )
+
+        return {
+          totalCount: library.uploadFiles.length + artifactCount,
+          uploadCount: library.uploadFiles.length,
+          artifactCount,
+          artifactGroupCount: library.artifactGroups.length,
+          isIndexComplete: true
+        }
+      }),
+      listFiles: vi.fn(async (request) => {
+        const library = getLibrary()
+        const items =
+          request.collection.kind === 'uploads'
+            ? library.uploadFiles.map(toUploadItem)
+            : (library.artifactGroups
+                .find((group) => group.sessionId === request.collection.sessionId)
+                ?.files.map((file) => toArtifactItem(file, request.collection.sessionId)) ?? [])
+
+        return { items, totalCount: items.length }
+      }),
+      listArtifactGroups: vi.fn(async () => {
+        const groups = getLibrary().artifactGroups
+        return {
+          items: groups.map((group) => ({
+            sessionId: group.sessionId,
+            artifactCount: group.files.length
+          })),
+          totalCount: groups.length
+        }
+      }),
+      repairIndex: vi.fn().mockResolvedValue(undefined),
+      onChanged: vi.fn((listener) => {
+        projectFilesChangedListener = listener
+        return () => undefined
+      })
+    }
     // The view lists only the active project's files; test sessions use the 'default' projectId.
     useNavigationStore.setState({ view: 'workspace', activeProjectId: 'default' })
     root = createRoot(container)
     await act(async () => {
       root.render(strict ? <StrictMode>{<ProjectFilesView />}</StrictMode> : <ProjectFilesView />)
+      await Promise.resolve()
+      await Promise.resolve()
     })
   }
 
@@ -264,6 +434,47 @@ describe('ProjectFilesView', () => {
 
     expect(container.querySelector('[data-testid="files-view"]')).not.toBeNull()
     expect(container.textContent).toContain('No files yet')
+  })
+
+  it('shows an actionable incomplete-index state instead of an empty state', async () => {
+    await renderView([])
+    const repairIndex = vi.fn().mockResolvedValue(undefined)
+    Object.assign(window.api.projectFiles, { repairIndex })
+    vi.mocked(window.api.projectFiles.getOverview).mockResolvedValue({
+      totalCount: 0,
+      uploadCount: 0,
+      artifactCount: 0,
+      artifactGroupCount: 0,
+      isIndexComplete: false
+    })
+    vi.mocked(window.api.projectFiles.listFiles).mockResolvedValue({ items: [], totalCount: 0 })
+    vi.mocked(window.api.projectFiles.listArtifactGroups).mockResolvedValue({
+      items: [],
+      totalCount: 0
+    })
+
+    await act(async () => {
+      projectFilesChangedListener?.({
+        projectId: 'default',
+        sources: ['artifact', 'upload'],
+        kind: 'reset'
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(container.textContent).toContain('Some files could not be indexed yet.')
+    expect(container.textContent).not.toContain('No files yet')
+    const retry = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Retry indexing project files"]'
+    )
+    expect(retry?.getAttribute('data-size')).toBe('xs')
+
+    await act(async () => {
+      retry?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+    expect(repairIndex).toHaveBeenCalledWith({ projectId: 'default' })
   })
 
   it('renders uploaded files under Your uploads without a session group', async () => {
@@ -348,6 +559,349 @@ describe('ProjectFilesView', () => {
       path: '/workspace/report.pdf',
       suggestedName: 'report.pdf'
     })
+  })
+
+  it('uses compact soft-fill manual load controls in the all view', async () => {
+    await renderView([createSession({ id: 'session-1', title: 'Session A' })])
+    const createFile = (source: ProjectFileItem['source'], index: number): ProjectFileItem => ({
+      id: source === 'upload' ? `upload:upload-${index}` : `artifact-${index}`,
+      source,
+      sourceFileId: `${source}-${index}`,
+      projectId: 'default',
+      sessionId: 'session-1',
+      name: `${source}-${index}.bin`,
+      path: `/${source}s/${source}-${index}.bin`,
+      mimeType: 'application/octet-stream',
+      size: 10,
+      sortAtMs: 100 - index
+    })
+    const uploadFiles = Array.from({ length: 40 }, (_, index) => createFile('upload', index))
+    const artifactFiles = Array.from({ length: 40 }, (_, index) => createFile('artifact', index))
+
+    vi.mocked(window.api.projectFiles.getOverview).mockResolvedValue({
+      totalCount: 80,
+      uploadCount: 40,
+      artifactCount: 40,
+      artifactGroupCount: 1,
+      isIndexComplete: true
+    })
+    vi.mocked(window.api.projectFiles.listArtifactGroups).mockResolvedValue({
+      items: [{ sessionId: 'session-1', artifactCount: 40 }],
+      nextCursor: 'groups-next',
+      totalCount: 1
+    })
+    vi.mocked(window.api.projectFiles.listFiles).mockImplementation(async (request) => {
+      const files = request.collection.kind === 'uploads' ? uploadFiles : artifactFiles
+      return request.cursor
+        ? { items: files.slice(20), totalCount: 40 }
+        : {
+            items: files.slice(0, 20),
+            nextCursor: `${request.collection.kind}-next`,
+            totalCount: 40
+          }
+    })
+
+    await act(async () => {
+      projectFilesChangedListener?.({
+        projectId: 'default',
+        sources: ['artifact', 'upload'],
+        kind: 'reset'
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(container.querySelectorAll('[aria-label^="Preview uploaded file"]')).toHaveLength(20)
+    expect(container.querySelectorAll('[aria-label^="Preview generated file"]')).toHaveLength(20)
+    let uploadButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Load more uploaded files"]'
+    )
+    let sessionButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Load more files from Session A"]'
+    )
+    expect(uploadButton?.getAttribute('data-size')).toBe('xs')
+    expect(sessionButton?.getAttribute('data-size')).toBe('xs')
+    const sessionGroupsButton = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent === 'Load more sessions')
+    for (const button of [uploadButton, sessionButton, sessionGroupsButton]) {
+      expect(button?.getAttribute('data-variant')).toBe('ghost')
+      expect(button?.className).toContain('bg-bg-200')
+      expect(button?.className).toContain('text-text-100')
+      expect(button?.className).toContain('hover:bg-bg-300')
+      expect(button?.className).toContain('hover:text-text-000')
+    }
+
+    const firstPageRequestCount = vi.mocked(window.api.projectFiles.listFiles).mock.calls.length
+    await act(async () => {
+      clickDropdownTrigger(
+        container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')
+      )
+    })
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[data-filter-id="uploads"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+    expect(container.querySelectorAll('[aria-label^="Preview uploaded file"]')).toHaveLength(20)
+    expect(window.api.projectFiles.listFiles).toHaveBeenCalledTimes(firstPageRequestCount)
+    expect(container.querySelector('[aria-label="Load more uploaded files"]')).not.toBeNull()
+
+    await act(async () => {
+      clickDropdownTrigger(
+        container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')
+      )
+    })
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[data-filter-id="all"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    uploadButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Load more uploaded files"]'
+    )
+    sessionButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Load more files from Session A"]'
+    )
+
+    await act(async () => {
+      uploadButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      sessionButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(container.querySelectorAll('[aria-label^="Preview uploaded file"]')).toHaveLength(40)
+    expect(container.querySelectorAll('[aria-label^="Preview generated file"]')).toHaveLength(40)
+    expect(container.querySelectorAll('[data-testid="project-files-end"]')).toHaveLength(2)
+  })
+
+  it('uses scroll loading and shows the terminal state in upload and session filters', async () => {
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        private readonly callback: IntersectionObserverCallback
+
+        constructor(callback: IntersectionObserverCallback) {
+          this.callback = callback
+        }
+
+        observe = (): void => {
+          const observer = this as unknown as IntersectionObserver
+          queueMicrotask(() =>
+            this.callback([{ isIntersecting: true } as IntersectionObserverEntry], observer)
+          )
+        }
+        disconnect = vi.fn()
+        unobserve = vi.fn()
+        takeRecords = (): IntersectionObserverEntry[] => []
+      }
+    )
+    await renderView([createSession({ id: 'session-1', title: 'Session A' })])
+    const createFile = (source: ProjectFileItem['source'], index: number): ProjectFileItem => ({
+      id: source === 'upload' ? `upload:upload-${index}` : `artifact-${index}`,
+      source,
+      sourceFileId: `${source}-${index}`,
+      projectId: 'default',
+      sessionId: 'session-1',
+      name: `${source}-${index}.bin`,
+      path: `/${source}s/${source}-${index}.bin`,
+      mimeType: 'application/octet-stream',
+      size: 10,
+      sortAtMs: 100 - index
+    })
+    const uploadFiles = Array.from({ length: 40 }, (_, index) => createFile('upload', index))
+    const artifactFiles = Array.from({ length: 40 }, (_, index) => createFile('artifact', index))
+
+    vi.mocked(window.api.projectFiles.getOverview).mockResolvedValue({
+      totalCount: 80,
+      uploadCount: 40,
+      artifactCount: 40,
+      artifactGroupCount: 1,
+      isIndexComplete: true
+    })
+    vi.mocked(window.api.projectFiles.listArtifactGroups).mockResolvedValue({
+      items: [{ sessionId: 'session-1', artifactCount: 40 }],
+      totalCount: 1
+    })
+    vi.mocked(window.api.projectFiles.listFiles).mockImplementation(async (request) => {
+      const files = request.collection.kind === 'uploads' ? uploadFiles : artifactFiles
+      return request.cursor
+        ? { items: files.slice(20), totalCount: 40 }
+        : {
+            items: files.slice(0, 20),
+            nextCursor: `${request.collection.kind}-next`,
+            totalCount: 40
+          }
+    })
+
+    await act(async () => {
+      projectFilesChangedListener?.({
+        projectId: 'default',
+        sources: ['artifact', 'upload'],
+        kind: 'reset'
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const selectFilter = async (filterId: string): Promise<void> => {
+      await act(async () => {
+        clickDropdownTrigger(
+          container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')
+        )
+      })
+      await act(async () => {
+        document.body
+          .querySelector<HTMLButtonElement>(`[data-filter-id="${filterId}"]`)
+          ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+    }
+
+    await selectFilter('uploads')
+    expect(container.querySelectorAll('[aria-label^="Preview uploaded file"]')).toHaveLength(40)
+    expect(container.querySelector('[aria-label="Load more uploaded files"]')).toBeNull()
+    expect(container.querySelectorAll('[data-testid="project-files-end"]')).toHaveLength(1)
+
+    await selectFilter('session:session-1')
+    expect(container.querySelectorAll('[aria-label^="Preview generated file"]')).toHaveLength(40)
+    expect(container.querySelector('[aria-label="Load more files from Session A"]')).toBeNull()
+    expect(container.querySelectorAll('[data-testid="project-files-end"]')).toHaveLength(1)
+
+    await selectFilter('all')
+    expect(container.querySelectorAll('[aria-label^="Preview uploaded file"]')).toHaveLength(20)
+    expect(container.querySelectorAll('[aria-label^="Preview generated file"]')).toHaveLength(20)
+    expect(container.querySelector('[aria-label="Load more uploaded files"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Load more files from Session A"]')).not.toBeNull()
+
+    const fileRequestCount = vi.mocked(window.api.projectFiles.listFiles).mock.calls.length
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[aria-label="Load more uploaded files"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      container
+        .querySelector<HTMLButtonElement>('[aria-label="Load more files from Session A"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(container.querySelectorAll('[aria-label^="Preview uploaded file"]')).toHaveLength(40)
+    expect(container.querySelectorAll('[aria-label^="Preview generated file"]')).toHaveLength(40)
+    expect(window.api.projectFiles.listFiles).toHaveBeenCalledTimes(fileRequestCount)
+    expect(container.querySelectorAll('[data-testid="project-files-end"]')).toHaveLength(2)
+  })
+
+  it('loads the next upload page when the filtered sentinel intersects', async () => {
+    let triggerIntersection: (() => void) | undefined
+    const observedTargets: Element[] = []
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        private readonly callback: IntersectionObserverCallback
+
+        constructor(callback: IntersectionObserverCallback) {
+          this.callback = callback
+        }
+
+        observe = (target: Element): void => {
+          observedTargets.push(target)
+          if (target.getAttribute('data-testid') === 'upload-page-sentinel') {
+            const observer = this as unknown as IntersectionObserver
+            triggerIntersection = () =>
+              this.callback([{ isIntersecting: true } as IntersectionObserverEntry], observer)
+          }
+        }
+        disconnect = vi.fn()
+        unobserve = vi.fn()
+        takeRecords = (): IntersectionObserverEntry[] => []
+      }
+    )
+    await renderView([])
+    const uploadFiles: ProjectFileItem[] = Array.from({ length: 60 }, (_, index) => ({
+      id: `upload:upload-${index}`,
+      source: 'upload',
+      sourceFileId: `upload-${index}`,
+      projectId: 'default',
+      sessionId: 'session-1',
+      name: `upload-${index}.bin`,
+      path: `/uploads/upload-${index}.bin`,
+      mimeType: 'application/octet-stream',
+      size: 10,
+      sortAtMs: 100 - index
+    }))
+    vi.mocked(window.api.projectFiles.getOverview).mockResolvedValue({
+      totalCount: 60,
+      uploadCount: 60,
+      artifactCount: 0,
+      artifactGroupCount: 0,
+      isIndexComplete: true
+    })
+    vi.mocked(window.api.projectFiles.listFiles).mockImplementation(async (request) => {
+      if (!request.cursor) {
+        return { items: uploadFiles.slice(0, 20), nextCursor: 'uploads-next-1', totalCount: 60 }
+      }
+      if (request.cursor === 'uploads-next-1') {
+        return { items: uploadFiles.slice(20, 40), nextCursor: 'uploads-next-2', totalCount: 60 }
+      }
+      return { items: uploadFiles.slice(40), totalCount: 60 }
+    })
+
+    await act(async () => {
+      projectFilesChangedListener?.({
+        projectId: 'default',
+        sources: ['upload'],
+        kind: 'reset'
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    const firstPageRequestCount = vi.mocked(window.api.projectFiles.listFiles).mock.calls.length
+    const selectFilter = async (filterId: string): Promise<void> => {
+      await act(async () => {
+        clickDropdownTrigger(
+          container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')
+        )
+      })
+      await act(async () => {
+        document.body
+          .querySelector<HTMLButtonElement>(`[data-filter-id="${filterId}"]`)
+          ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+    }
+    await selectFilter('uploads')
+
+    expect(container.querySelectorAll('[aria-label^="Preview uploaded file"]')).toHaveLength(20)
+    expect(window.api.projectFiles.listFiles).toHaveBeenCalledTimes(firstPageRequestCount)
+    expect(triggerIntersection).toBeTypeOf('function')
+    expect(observedTargets).toContain(
+      container.querySelector('[data-testid="upload-page-sentinel"]')
+    )
+
+    const staleIntersection = triggerIntersection
+    await selectFilter('all')
+    await act(async () => {
+      staleIntersection?.()
+      await Promise.resolve()
+    })
+    expect(window.api.projectFiles.listFiles).toHaveBeenCalledTimes(firstPageRequestCount)
+
+    await selectFilter('uploads')
+    await act(async () => {
+      triggerIntersection?.()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(container.querySelectorAll('[aria-label^="Preview uploaded file"]')).toHaveLength(40)
+    expect(window.api.projectFiles.listFiles).toHaveBeenCalledTimes(firstPageRequestCount + 1)
+    expect(container.querySelectorAll('[data-testid="project-files-end"]')).toHaveLength(0)
+
+    await act(async () => {
+      triggerIntersection?.()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(container.querySelectorAll('[aria-label^="Preview uploaded file"]')).toHaveLength(60)
+    expect(window.api.projectFiles.listFiles).toHaveBeenCalledTimes(firstPageRequestCount + 2)
+    expect(container.querySelectorAll('[data-testid="project-files-end"]')).toHaveLength(1)
   })
 
   it('opens a filter menu without This computer entries', async () => {
@@ -508,6 +1062,411 @@ describe('ProjectFilesView', () => {
     expect(container.textContent).not.toContain('a.png')
   })
 
+  it('keeps a later-page session filter active across an index refresh', async () => {
+    const sessions = Array.from({ length: 11 }, (_, index) =>
+      createSession({
+        id: `session-${index + 1}`,
+        title: `Session ${index + 1}`,
+        artifacts: [
+          {
+            id: `artifact-${index + 1}`,
+            kind: 'managed-file',
+            path: `/workspace/file-${index + 1}.png`,
+            fileUrl: `file:///workspace/file-${index + 1}.png`,
+            name: `file-${index + 1}.png`,
+            mimeType: 'image/png',
+            size: 1024,
+            mtimeMs: 1710000002000 + index
+          }
+        ]
+      })
+    )
+    await renderView(sessions)
+
+    await act(async () => {
+      clickDropdownTrigger(
+        container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')
+      )
+    })
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[data-filter-id="session:session-11"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+    expect(container.textContent).toContain('file-11.png')
+
+    vi.mocked(window.api.projectFiles.listArtifactGroups).mockResolvedValue({
+      items: sessions.slice(0, 10).map((session) => ({
+        sessionId: session.id,
+        artifactCount: 1
+      })),
+      totalCount: 11
+    })
+    await act(async () => {
+      projectFilesChangedListener?.({
+        projectId: 'default',
+        sessionId: 'session-11',
+        sources: ['artifact'],
+        kind: 'upsert'
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(container.textContent).toContain('Session 11')
+    expect(container.textContent).toContain('file-11.png')
+    expect(container.textContent).not.toContain('file-1.png')
+  })
+
+  it('returns to All when the selected session loses its final artifact', async () => {
+    await renderView([
+      createSession({
+        messages: [createMessage({ role: 'agent', artifactIds: ['artifact-1'] })],
+        artifacts: [
+          {
+            id: 'artifact-1',
+            kind: 'managed-file',
+            path: '/workspace/result.png',
+            fileUrl: 'file:///workspace/result.png',
+            name: 'result.png',
+            mimeType: 'image/png',
+            size: 1024,
+            mtimeMs: 1710000002000
+          }
+        ]
+      })
+    ])
+
+    await act(async () => {
+      clickDropdownTrigger(
+        container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')
+      )
+    })
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[data-filter-id="session:session-1"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+    expect(container.textContent).toContain('result.png')
+
+    const { useSessionStore } = await import('@/stores/session-store')
+    await act(async () => {
+      useSessionStore.getState().replaceMessageArtifacts({
+        sessionId: 'session-1',
+        messageId: 'message-1',
+        artifacts: []
+      })
+      projectFilesChangedListener?.({
+        projectId: 'default',
+        sessionId: 'session-1',
+        sources: ['artifact'],
+        kind: 'upsert'
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')?.textContent
+    ).toContain('Artifacts')
+    expect(container.textContent).not.toContain('Analysis session')
+    expect(container.textContent).toContain('No files yet')
+  })
+
+  it('allows filtering a DB group whose session title is not hydrated', async () => {
+    await renderView([])
+    vi.mocked(window.api.projectFiles.getOverview).mockResolvedValue({
+      totalCount: 1,
+      uploadCount: 0,
+      artifactCount: 1,
+      artifactGroupCount: 1,
+      isIndexComplete: true
+    })
+    vi.mocked(window.api.projectFiles.listArtifactGroups).mockResolvedValue({
+      items: [{ sessionId: 'orphan-session', artifactCount: 1 }],
+      totalCount: 1
+    })
+    vi.mocked(window.api.projectFiles.listFiles).mockImplementation(async (request) => ({
+      items:
+        request.collection.kind === 'sessionArtifacts'
+          ? [
+              {
+                id: 'orphan-artifact',
+                source: 'artifact',
+                sourceFileId: 'orphan-artifact',
+                projectId: 'default',
+                sessionId: 'orphan-session',
+                name: 'orphan.txt',
+                path: '/artifacts/orphan.txt',
+                size: 10,
+                sortAtMs: 10
+              }
+            ]
+          : [],
+      totalCount: request.collection.kind === 'sessionArtifacts' ? 1 : 0
+    }))
+    await act(async () => {
+      projectFilesChangedListener?.({
+        projectId: 'default',
+        sources: ['artifact'],
+        kind: 'reset'
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      clickDropdownTrigger(
+        container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')
+      )
+    })
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[data-filter-id="session:orphan-session"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    expect(container.textContent).toContain('Session orphan-s')
+    expect(container.textContent).toContain('orphan.txt')
+
+    vi.mocked(window.api.projectFiles.getOverview).mockResolvedValue({
+      totalCount: 0,
+      uploadCount: 0,
+      artifactCount: 0,
+      artifactGroupCount: 0,
+      isIndexComplete: true
+    })
+    vi.mocked(window.api.projectFiles.listArtifactGroups).mockResolvedValue({
+      items: [],
+      totalCount: 0
+    })
+    vi.mocked(window.api.projectFiles.listFiles).mockResolvedValue({ items: [], totalCount: 0 })
+    await act(async () => {
+      projectFilesChangedListener?.({
+        projectId: 'default',
+        sessionId: 'orphan-session',
+        sources: ['artifact'],
+        kind: 'delete'
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')?.textContent
+    ).toContain('Artifacts')
+  })
+
+  it('clears an unhydrated session filter after reset confirms its index rows are gone', async () => {
+    await renderView([])
+    let hasOrphanGroup = true
+    const orphanFile: ProjectFileItem = {
+      id: 'orphan-artifact',
+      source: 'artifact',
+      sourceFileId: 'orphan-artifact',
+      projectId: 'default',
+      sessionId: 'orphan-session',
+      name: 'orphan.txt',
+      path: '/artifacts/orphan.txt',
+      size: 10,
+      sortAtMs: 10
+    }
+    vi.mocked(window.api.projectFiles.getOverview).mockImplementation(async () => ({
+      totalCount: hasOrphanGroup ? 1 : 0,
+      uploadCount: 0,
+      artifactCount: hasOrphanGroup ? 1 : 0,
+      artifactGroupCount: hasOrphanGroup ? 1 : 0,
+      isIndexComplete: true
+    }))
+    vi.mocked(window.api.projectFiles.listArtifactGroups).mockImplementation(async () => ({
+      items: hasOrphanGroup ? [{ sessionId: 'orphan-session', artifactCount: 1 }] : [],
+      totalCount: hasOrphanGroup ? 1 : 0
+    }))
+    vi.mocked(window.api.projectFiles.listFiles).mockImplementation(async (request) => ({
+      items: hasOrphanGroup && request.collection.kind === 'sessionArtifacts' ? [orphanFile] : [],
+      totalCount: hasOrphanGroup && request.collection.kind === 'sessionArtifacts' ? 1 : 0
+    }))
+
+    await act(async () => {
+      projectFilesChangedListener?.({
+        projectId: 'default',
+        sources: ['artifact'],
+        kind: 'reset'
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    await act(async () => {
+      clickDropdownTrigger(
+        container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')
+      )
+    })
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[data-filter-id="session:orphan-session"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(container.textContent).toContain('orphan.txt')
+
+    hasOrphanGroup = false
+    await act(async () => {
+      projectFilesChangedListener?.({
+        projectId: 'default',
+        sources: ['artifact'],
+        kind: 'reset'
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')?.textContent
+    ).toContain('Artifacts')
+    expect(container.textContent).not.toContain('Session orphan-s')
+  })
+
+  it('resets filter and scroll position when the active project changes', async () => {
+    await renderView([
+      createSession({
+        messages: [createMessage({ uploads: [createUpload()] })]
+      })
+    ])
+    const scrollContainer = container.querySelector<HTMLElement>(
+      '[data-testid="project-files-scroll"]'
+    )
+    if (scrollContainer) scrollContainer.scrollTop = 240
+
+    await act(async () => {
+      clickDropdownTrigger(
+        container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')
+      )
+    })
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[data-filter-id="uploads"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    const { useNavigationStore } = await import('@/stores/navigation-store')
+    await act(async () => {
+      useNavigationStore.setState({ activeProjectId: 'other-project' })
+      await Promise.resolve()
+    })
+
+    const nextScrollContainer = container.querySelector<HTMLElement>(
+      '[data-testid="project-files-scroll"]'
+    )
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')?.textContent
+    ).toContain('Artifacts')
+    expect(nextScrollContainer).not.toBe(scrollContainer)
+    expect(nextScrollContainer?.scrollTop).toBe(0)
+  })
+
+  it('drops queued thumbnail reads from the previous project during a project switch', async () => {
+    const oldReadResolvers: Array<() => void> = []
+    vi.mocked(window.api.uploads.readPreview).mockImplementation(
+      ({ path }) =>
+        new Promise((resolve) => {
+          if (path.startsWith('/uploads/old-')) {
+            oldReadResolvers.push(() =>
+              resolve({
+                content: 'old',
+                encoding: 'utf8',
+                size: 3,
+                truncated: false
+              })
+            )
+            return
+          }
+
+          resolve({
+            content: 'new',
+            encoding: 'utf8',
+            size: 3,
+            truncated: false
+          })
+        })
+    )
+    const oldUploads = Array.from({ length: 10 }, (_, index) =>
+      createUpload({
+        id: `old-${index}`,
+        name: `old-${index}.txt`,
+        originalName: `old-${index}.txt`,
+        path: `/uploads/old-${index}.txt`,
+        mimeType: 'text/plain'
+      })
+    )
+    await renderView([createSession({ messages: [createMessage({ uploads: oldUploads })] })])
+
+    expect(
+      vi
+        .mocked(window.api.uploads.readPreview)
+        .mock.calls.filter(([request]) => request.maxBytes !== 1)
+    ).toHaveLength(4)
+    const newFile: ProjectFileItem = {
+      id: 'new-upload',
+      source: 'upload',
+      sourceFileId: 'new-upload',
+      projectId: 'other-project',
+      sessionId: 'other-session',
+      name: 'new.txt',
+      path: '/uploads/new.txt',
+      mimeType: 'text/plain',
+      size: 3,
+      sortAtMs: 10
+    }
+    vi.mocked(window.api.projectFiles.getOverview).mockResolvedValue({
+      totalCount: 1,
+      uploadCount: 1,
+      artifactCount: 0,
+      artifactGroupCount: 0,
+      isIndexComplete: true
+    })
+    vi.mocked(window.api.projectFiles.listFiles).mockImplementation(async (request) => ({
+      items: request.projectId === 'other-project' ? [newFile] : [],
+      totalCount: request.projectId === 'other-project' ? 1 : 0
+    }))
+    vi.mocked(window.api.projectFiles.listArtifactGroups).mockResolvedValue({
+      items: [],
+      totalCount: 0
+    })
+
+    const { useNavigationStore } = await import('@/stores/navigation-store')
+    await act(async () => {
+      useNavigationStore.setState({ activeProjectId: 'other-project' })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(container.textContent).toContain('new.txt')
+    expect(
+      vi
+        .mocked(window.api.uploads.readPreview)
+        .mock.calls.filter(([request]) => request.maxBytes !== 1)
+    ).toHaveLength(4)
+
+    await act(async () => {
+      oldReadResolvers.forEach((resolve) => resolve())
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(
+      vi
+        .mocked(window.api.uploads.readPreview)
+        .mock.calls.filter(([request]) => request.maxBytes !== 1)
+    ).toHaveLength(5)
+    expect(
+      vi
+        .mocked(window.api.uploads.readPreview)
+        .mock.calls.filter(([request]) => request.maxBytes !== 1)
+        .at(-1)?.[0]
+    ).toEqual(expect.objectContaining({ path: '/uploads/new.txt' }))
+  })
+
   it('shows wrapped size metadata and relative file timestamps', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(1710007202000)
 
@@ -632,6 +1591,11 @@ describe('ProjectFilesView', () => {
     const { useSessionStore } = await import('@/stores/session-store')
     await act(async () => {
       useSessionStore.setState({ sessions: [createImageSession(8192, 1710000003000)] })
+      projectFilesChangedListener?.({
+        projectId: 'default',
+        sources: ['artifact'],
+        kind: 'reset'
+      })
       await Promise.resolve()
       await Promise.resolve()
     })
@@ -792,6 +1756,69 @@ describe('ProjectFilesView', () => {
     expect(container.textContent).toContain('Missing')
   })
 
+  it('keeps previews for every currently rendered file beyond the hidden cache limit', async () => {
+    await renderView([])
+    const uploads: ProjectFileItem[] = Array.from({ length: 97 }, (_, index) => ({
+      id: `upload:upload-${index}`,
+      source: 'upload',
+      sourceFileId: `upload-${index}`,
+      projectId: 'default',
+      sessionId: 'session-1',
+      name: `upload-${index}.png`,
+      path: `/uploads/upload-${index}.png`,
+      mimeType: 'image/png',
+      size: 10,
+      sortAtMs: 100 - index
+    }))
+    let readCount = 0
+    vi.mocked(window.api.uploads.readPreview).mockImplementation(() => {
+      readCount += 1
+      if (readCount > uploads.length) return new Promise(() => undefined)
+      return Promise.resolve({
+        content: 'aW1hZ2U=',
+        encoding: 'base64',
+        size: 5,
+        truncated: false
+      })
+    })
+    vi.mocked(window.api.projectFiles.getOverview).mockResolvedValue({
+      totalCount: uploads.length,
+      uploadCount: uploads.length,
+      artifactCount: 0,
+      artifactGroupCount: 0,
+      isIndexComplete: true
+    })
+    vi.mocked(window.api.projectFiles.listFiles).mockResolvedValue({
+      items: uploads,
+      totalCount: uploads.length
+    })
+
+    await act(async () => {
+      projectFilesChangedListener?.({
+        projectId: 'default',
+        sources: ['upload'],
+        kind: 'reset'
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    await act(async () => {
+      clickDropdownTrigger(
+        container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')
+      )
+    })
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[data-filter-id="uploads"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+
+    expect(window.api.uploads.readPreview).toHaveBeenCalledTimes(uploads.length)
+    expect(container.querySelectorAll('img[alt^="Preview of upload-"]')).toHaveLength(
+      uploads.length
+    )
+  })
+
   it('uses the same text preview capability for generated files and uploads', async () => {
     const treePreview = {
       content: '(sample_a:0.1,sample_b:0.2);',
@@ -906,6 +1933,12 @@ describe('ProjectFilesView', () => {
           })
         ]
       })
+      projectFilesChangedListener?.({
+        projectId: 'default',
+        sessionId: 'session-1',
+        sources: ['upload'],
+        kind: 'upsert'
+      })
       await Promise.resolve()
       await Promise.resolve()
     })
@@ -981,6 +2014,12 @@ describe('ProjectFilesView', () => {
           })
         ]
       })
+      projectFilesChangedListener?.({
+        projectId: 'default',
+        sessionId: 'session-1',
+        sources: ['upload'],
+        kind: 'upsert'
+      })
       await Promise.resolve()
     })
 
@@ -988,6 +2027,123 @@ describe('ProjectFilesView', () => {
       expect.objectContaining({ path: '/uploads/session-1/results.csv', encoding: 'utf8' })
     )
     expect(container.textContent).not.toContain('legacy_column')
+  })
+
+  it('does not read a changed upload preview while its section is collapsed', async () => {
+    await renderView([
+      createSession({
+        messages: [
+          createMessage({
+            uploads: [
+              createUpload({
+                name: 'results.csv',
+                originalName: 'results.csv',
+                path: '/uploads/session-1/results.csv',
+                mimeType: 'text/csv',
+                size: 21
+              })
+            ]
+          })
+        ]
+      })
+    ])
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(
+      vi
+        .mocked(window.api.uploads.readPreview)
+        .mock.calls.filter(([request]) => request.maxBytes !== 1)
+    ).toHaveLength(1)
+
+    const uploadsHeader = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) =>
+        button.textContent?.includes('Your uploads') && button.hasAttribute('aria-expanded')
+    )
+    expect(uploadsHeader).toBeDefined()
+    await act(async () => uploadsHeader?.click())
+
+    const { useSessionStore } = await import('@/stores/session-store')
+    await act(async () => {
+      useSessionStore.getState().replaceMessageUploads({
+        sessionId: 'session-1',
+        messageId: 'message-1',
+        uploads: [
+          createUpload({
+            name: 'results.csv',
+            originalName: 'results.csv',
+            path: '/uploads/session-1/results-v2.csv',
+            mimeType: 'text/csv',
+            size: 22
+          })
+        ]
+      })
+      projectFilesChangedListener?.({
+        projectId: 'default',
+        sessionId: 'session-1',
+        sources: ['upload'],
+        kind: 'upsert'
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(
+      vi
+        .mocked(window.api.uploads.readPreview)
+        .mock.calls.filter(([request]) => request.maxBytes !== 1)
+    ).toHaveLength(1)
+  })
+
+  it('cancels queued upload preview reads after the section is collapsed', async () => {
+    const previewResolvers: Array<(preview: ArtifactPreviewResult) => void> = []
+    vi.mocked(window.api.uploads.readPreview).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          previewResolvers.push(resolve)
+        })
+    )
+    const uploads = Array.from({ length: 6 }, (_, index) =>
+      createUpload({
+        id: `upload-${index}`,
+        name: `result-${index}.txt`,
+        originalName: `result-${index}.txt`,
+        path: `/uploads/session-1/result-${index}.txt`,
+        mimeType: 'text/plain',
+        size: 12
+      })
+    )
+    await renderView([createSession({ messages: [createMessage({ uploads })] })])
+    expect(
+      vi
+        .mocked(window.api.uploads.readPreview)
+        .mock.calls.filter(([request]) => request.maxBytes !== 1)
+    ).toHaveLength(4)
+
+    const uploadsHeader = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) =>
+        button.textContent?.includes('Your uploads') && button.hasAttribute('aria-expanded')
+    )
+    await act(async () => uploadsHeader?.click())
+    await act(async () => {
+      for (const resolve of previewResolvers) {
+        resolve({
+          content: 'dXBsb2FkLWltYWdl',
+          encoding: 'base64',
+          size: 12,
+          truncated: false
+        })
+      }
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(
+      vi
+        .mocked(window.api.uploads.readPreview)
+        .mock.calls.filter(([request]) => request.maxBytes !== 1)
+    ).toHaveLength(4)
   })
 
   it('middle-truncates file names in the card style while preserving the extension', async () => {
@@ -1152,6 +2308,17 @@ describe('ProjectFilesView', () => {
         ]
       })
     ])
+    const artifactSentinel = container.querySelector(
+      '[data-testid="artifact-page-sentinel:session-1"]'
+    )
+    await act(async () => {
+      observed.get(artifactSentinel as Element)?.(
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
     const first = container.querySelector('[aria-label="Preview generated file first.txt"]')
     const second = container.querySelector('[aria-label="Preview generated file second.txt"]')
 

@@ -166,59 +166,17 @@ describe('upload repository', () => {
     )
   })
 
-  it("deletes an entire session's upload directory from disk", async () => {
+  it('rejects deletion of finalized uploads while keeping their bytes readable', async () => {
     const root = await createStorageRoot()
     const repository = new UploadRepository(root)
     const [staged] = await repository.stageFiles({
-      files: [{ name: 'notes.txt', content: Buffer.from('bye session').toString('base64') }]
+      files: [{ name: 'keep.txt', content: Buffer.from('durable upload').toString('base64') }]
     })
-    const [finalized] = await repository.finalizePendingSessionUploads('session-9', [staged])
-    const sessionDir = join(root, 'uploads', 'default-project', 'session-9')
+    const [finalized] = await repository.finalizePendingSessionUploads('session-1', [staged])
 
-    // The finalized file (and its directory) exist before removal.
-    await expect(readFile(finalized.path, 'utf8')).resolves.toBe('bye session')
-    await expect(stat(sessionDir)).resolves.toBeDefined()
-
-    await repository.deleteSessionUploads('session-9')
-
-    await expect(stat(sessionDir)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(stat(finalized.path)).rejects.toMatchObject({ code: 'ENOENT' })
-  })
-
-  it('is idempotent: removing an already-removed session does not throw', async () => {
-    const root = await createStorageRoot()
-    const repository = new UploadRepository(root)
-    const [staged] = await repository.stageFiles({
-      files: [{ name: 'notes.txt', content: Buffer.from('data').toString('base64') }]
-    })
-    await repository.finalizePendingSessionUploads('session-idem', [staged])
-
-    await repository.deleteSessionUploads('session-idem')
-    // A second call for a session whose directory no longer exists must be a silent no-op.
-    await expect(repository.deleteSessionUploads('session-idem')).resolves.toBeUndefined()
-    // A session that never existed is also a no-op.
-    await expect(repository.deleteSessionUploads('never-existed')).resolves.toBeUndefined()
-  })
-
-  it('rejects illegal session ids and never deletes outside the session directory', async () => {
-    const root = await createStorageRoot()
-    const repository = new UploadRepository(root)
-    // Seed a sibling upload that a traversal attempt would target if the guard were missing.
-    const [sibling] = await repository.stageFiles({
-      files: [{ name: 'keep.txt', content: Buffer.from('keep me').toString('base64') }]
-    })
-    const [finalized] = await repository.finalizePendingSessionUploads('neighbor', [sibling])
-    const projectDir = join(root, 'uploads', 'default-project')
-
-    for (const illegalId of ['..', 'a/b', 'a\\b', '']) {
-      // assertSafePathSegment rejects any id that could escape uploads/<project>/<session>.
-      await expect(repository.deleteSessionUploads(illegalId)).rejects.toThrow(
-        /Invalid upload path segment/
-      )
-    }
-
-    // Nothing outside the (never-touched) session directory was removed.
-    await expect(readFile(finalized.path, 'utf8')).resolves.toBe('keep me')
-    await expect(stat(projectDir)).resolves.toBeDefined()
+    await expect(repository.deleteUpload({ path: finalized.path })).rejects.toThrow(
+      /outside pending upload storage/
+    )
+    await expect(readFile(finalized.path, 'utf8')).resolves.toBe('durable upload')
   })
 })

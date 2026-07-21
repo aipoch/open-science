@@ -233,6 +233,22 @@ describe('normalizeSessionFile with activities', () => {
     expect(session?.permissionProfile).toBe('ask')
   })
 
+  it('preserves a valid files revision and ignores malformed revisions', () => {
+    const current = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      filesRevision: 7
+    })
+    const malformed = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      filesRevision: -1
+    })
+
+    expect(current?.filesRevision).toBe(7)
+    expect(malformed?.filesRevision).toBeUndefined()
+  })
+
   it('keeps known approval profiles and safely defaults unknown values', () => {
     const full = normalizeSessionFile({
       ...createSessionWithActivity(undefined),

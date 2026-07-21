@@ -141,7 +141,7 @@ describe('WorkspacePage draft preservation', () => {
     runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a', messageId: 'm1' })
     runtime.deleteRuntimeSession.mockImplementation((id: string) => {
       useSessionStore.getState().deleteSession(id)
-      return Promise.resolve()
+      return Promise.resolve(true)
     })
     deleteUpload.mockResolvedValue(undefined)
 
@@ -357,5 +357,31 @@ describe('WorkspacePage draft preservation', () => {
     expect(deleteUpload).toHaveBeenCalledWith({ path: attachmentB.path })
     expect(runtime.deleteRuntimeSession).toHaveBeenCalledWith('sess-b')
     expect(conversationProps.draftDoc).toEqual(emptyDoc)
+  })
+
+  it('keeps a stored draft and its staged files when session deletion fails', async () => {
+    await renderPage()
+
+    await openSession('sess-b')
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('keep draft B'))
+    })
+    const attachmentB = createAttachment('att-keep')
+    await stageAttachment(attachmentB)
+    await openSession('sess-a')
+    runtime.deleteRuntimeSession.mockResolvedValueOnce(false)
+
+    const sessionB = useSessionStore.getState().sessions.find((session) => session.id === 'sess-b')!
+    await act(async () => {
+      sidebarProps.onDeleteSession(sessionB)
+    })
+    await act(async () => {
+      deleteDialogProps.onConfirmDelete()
+    })
+
+    expect(deleteUpload).not.toHaveBeenCalled()
+    await openSession('sess-b')
+    expect(conversationProps.draftDoc).toEqual(textDoc('keep draft B'))
+    expect(conversationProps.attachments).toEqual([attachmentB])
   })
 })

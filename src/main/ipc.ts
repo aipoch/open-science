@@ -46,9 +46,16 @@ import {
 } from './projects/ipc'
 import { registerReviewerIpcHandlers } from './reviewer/ipc'
 import {
+  createDefaultReviewRepository,
   createDefaultSessionRepository,
   registerSessionPersistenceIpcHandlers
 } from './session-persistence/ipc'
+import { registerProjectFilesIpcHandlers } from './project-files/ipc'
+import { createManagedFileIndexRepository } from './project-files/repository'
+import { ProjectDeletionCoordinator } from './projects/deletion-coordinator'
+import { getProjectDbClient } from './projects/prisma-client'
+import { SessionPersistenceCoordinator } from './session-persistence/coordinator'
+import { type SessionPersistenceBackend } from './session-persistence/ipc'
 import { tryDecryptKey } from './settings/crypto'
 import { registerSettingsIpcHandlers } from './settings/ipc'
 import { getAppClaudeConfigDir } from './settings/provider-env'
@@ -183,6 +190,49 @@ const registerIpcHandlers = async ({
   const previewResources = new ManagedPreviewResources({
     resolvePath: resolveManagedFilePath
   })
+
+  // Construct one storage/index/deletion graph for every related IPC surface. Sharing these instances
+  // is essential: separate coordinators would have independent queues and recovery gates.
+  const configRoot = resolveStorageRoot()
+  const projectFilesRepository = createManagedFileIndexRepository(
+    getProjectDbClient,
+    configRoot,
+    resolveDataRoot()
+  )
+  const sessionPersistenceCoordinator = new SessionPersistenceCoordinator(
+    sessionRepository,
+    projectFilesRepository,
+    (event) => broadcastToRenderers('project-files:changed', event)
+  )
+  const reviewRepository = createDefaultReviewRepository()
+  const projectDeletionCoordinator = new ProjectDeletionCoordinator(
+    projectRepository,
+    sessionPersistenceCoordinator,
+    previewStateRepository,
+    reviewRepository
+  )
+  const sessionPersistenceBackend: SessionPersistenceBackend = {
+    loadAll: async () => {
+      await projectDeletionCoordinator.recoverPendingDeletions()
+      return sessionPersistenceCoordinator.loadAll()
+    },
+    saveSession: async (session) => {
+      await projectDeletionCoordinator.recoverPendingDeletions()
+      return sessionPersistenceCoordinator.saveSession(session)
+    },
+    deleteSession: async (projectId, sessionId) => {
+      await projectDeletionCoordinator.recoverPendingDeletions()
+      return sessionPersistenceCoordinator.deleteSession(projectId, sessionId)
+    },
+    deleteProjectSessions: async (projectId) => {
+      await projectDeletionCoordinator.recoverPendingDeletions()
+      return sessionPersistenceCoordinator.deleteProjectSessions(projectId)
+    },
+    saveManifest: async (request) => {
+      await projectDeletionCoordinator.recoverPendingDeletions()
+      return sessionPersistenceCoordinator.saveManifest(request)
+    }
+  }
   const notebookService = createDefaultNotebookRuntimeService()
 
   // Read fresh on every call so a future connectors-settings mutation (Plan 2 UI) only needs to call
@@ -417,10 +467,13 @@ const registerIpcHandlers = async ({
     runtimeRef.current ? runtimeRef.current.getActiveArtifactRunIds() : []
   )
   registerUploadIpcHandlers(uploadRepository)
-  registerSessionPersistenceIpcHandlers(sessionRepository, undefined, (sessionId) =>
-    uploadRepository.deleteSessionUploads(sessionId)
+  registerSessionPersistenceIpcHandlers(sessionPersistenceBackend, reviewRepository)
+  registerProjectFilesIpcHandlers(
+    projectFilesRepository,
+    sessionPersistenceCoordinator,
+    projectDeletionCoordinator
   )
-  registerProjectIpcHandlers(projectRepository, previewStateRepository)
+  registerProjectIpcHandlers(projectRepository, previewStateRepository, projectDeletionCoordinator)
   // Wire the reviewer backend into the app lifecycle: installs ipcMain.handle('reviewer:run', ...)
   // and 'reviewer:get-for-session' so the renderer's fire-and-forget reviewer calls resolve to
   // real handlers instead of no-ops. Passing the already-constructed AcpRuntime so the reviewer

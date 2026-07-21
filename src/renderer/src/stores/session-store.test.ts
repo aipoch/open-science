@@ -161,6 +161,13 @@ describe('session store', () => {
       uploads: [finalizedUpload]
     })
 
+    const finalizedSession = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().replaceMessageUploads({
+      sessionId: 'transport-session-1',
+      messageId: pending?.messageId ?? '',
+      uploads: [finalizedUpload]
+    })
+
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       id: 'transport-session-1',
       title: 'Attached first.png',
@@ -178,6 +185,29 @@ describe('session store', () => {
         })
       ]
     })
+    expect(finalizedSession.filesRevision).toBe(1)
+    expect(useSessionStore.getState().sessions[0]).toBe(finalizedSession)
+  })
+
+  it('increments the file revision when removing a message with finalized uploads', () => {
+    const pending = useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Analyze',
+      attachments: [createUploadAttachment()]
+    })
+    const finalizedUpload = createUploadAttachment({
+      sessionId: 'transport-session-1',
+      path: '/Users/example/.open-science/uploads/default-project/transport-session-1/first.png'
+    })
+    useSessionStore.getState().replaceMessageUploads({
+      sessionId: 'transport-session-1',
+      messageId: pending?.messageId ?? '',
+      uploads: [finalizedUpload]
+    })
+
+    useSessionStore.getState().removeMessage('transport-session-1', pending?.messageId ?? '')
+
+    expect(useSessionStore.getState().sessions[0].filesRevision).toBe(2)
   })
 
   it('binds a pending session to the runtime session id without rewriting the prompt', () => {
@@ -968,20 +998,21 @@ describe('session store', () => {
       artifacts: [createArtifactFile()]
     })
 
+    const finalizedArtifacts = [
+      createArtifactFile({
+        id: 'transport-session-1:message-1:result.txt',
+        sessionId: 'transport-session-1',
+        messageId: 'message-1',
+        runId: undefined,
+        path: '/Users/example/.open-science/artifacts/default-project/transport-session-1/message-1/result.txt',
+        fileUrl:
+          'file:///Users/example/.open-science/artifacts/default-project/transport-session-1/message-1/result.txt'
+      })
+    ]
     useSessionStore.getState().replaceMessageArtifacts({
       sessionId: 'transport-session-1',
       messageId: attached?.messageId ?? '',
-      artifacts: [
-        createArtifactFile({
-          id: 'transport-session-1:message-1:result.txt',
-          sessionId: 'transport-session-1',
-          messageId: 'message-1',
-          runId: undefined,
-          path: '/Users/example/.open-science/artifacts/default-project/transport-session-1/message-1/result.txt',
-          fileUrl:
-            'file:///Users/example/.open-science/artifacts/default-project/transport-session-1/message-1/result.txt'
-        })
-      ]
+      artifacts: finalizedArtifacts
     })
 
     const session = useSessionStore.getState().sessions[0]
@@ -991,6 +1022,14 @@ describe('session store', () => {
     expect(session.artifacts?.map((artifact) => artifact.id)).toEqual([
       'transport-session-1:message-1:result.txt'
     ])
+    expect(session.filesRevision).toBe(1)
+
+    useSessionStore.getState().replaceMessageArtifacts({
+      sessionId: 'transport-session-1',
+      messageId: attached?.messageId ?? '',
+      artifacts: finalizedArtifacts
+    })
+    expect(useSessionStore.getState().sessions[0]).toBe(session)
   })
 
   it('replaces pending artifact metadata with an empty finalized artifact list', () => {

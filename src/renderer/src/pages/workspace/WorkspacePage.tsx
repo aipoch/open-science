@@ -656,19 +656,20 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     if (!sessionToDelete) return
 
     const deletedSessionId = sessionToDelete.id
+    const isActiveSession = deletedSessionId === selectedSessionId
+    const storedDraft = composerDraftsRef.current[deletedSessionId]
+    const abandonedAttachments = storedDraft?.attachments ?? (isActiveSession ? attachments : [])
 
     setSessionToDelete(undefined)
-    // The session's unsent draft is abandoned, so drop it and delete its now-orphaned staged files.
-    const storedDraft = composerDraftsRef.current[deletedSessionId]
-    if (storedDraft) deleteAttachmentFiles(storedDraft.attachments)
-    delete composerDraftsRef.current[deletedSessionId]
-    // The active session's live draft is not in the map yet, so clear and delete its files directly.
-    if (deletedSessionId === selectedSessionId) {
-      deleteAttachmentFiles(attachments)
-      setAttachments([])
-      setDraftDoc(emptyDoc)
-    }
-    void deleteRuntimeSession(deletedSessionId)
+    // Staged bytes and local draft state are owned by the session until runtime and durable deletion
+    // both succeed. The store's successful deletion updates selection and lets the draft effect load
+    // the fallback session without clearing that replacement draft here.
+    void deleteRuntimeSession(deletedSessionId).then((deleted) => {
+      if (!deleted) return
+
+      delete composerDraftsRef.current[deletedSessionId]
+      deleteAttachmentFiles(abandonedAttachments)
+    })
   }
 
   // Closes the delete dialog without changing runtime or store state.
