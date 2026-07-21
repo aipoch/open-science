@@ -954,18 +954,20 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                         <ReasoningEffortSelect />
                       </SettingsRow>
 
-                      <ProviderList
-                        providers={visibleProviders}
-                        activeProviderId={activeProviderId}
-                        busyProviderId={busyProviderId}
-                        onEdit={openEdit}
-                        onDelete={(provider) => void deleteProvider(provider.id)}
-                        onTest={(provider) => void handleTest(provider)}
-                        isCodexLoginPending={isCodexLoginPending}
-                        onCancelCodexLogin={() => void cancelCodexLogin()}
-                        onLoginIsolatedCodex={() => void handleCodexLogin()}
-                        onLogoutIsolatedCodex={() => void handleCodexLogout()}
-                      />
+                      <div className="mt-3">
+                        <ProviderList
+                          providers={visibleProviders}
+                          activeProviderId={activeProviderId}
+                          busyProviderId={busyProviderId}
+                          onEdit={openEdit}
+                          onDelete={(provider) => void deleteProvider(provider.id)}
+                          onTest={(provider) => void handleTest(provider)}
+                          isCodexLoginPending={isCodexLoginPending}
+                          onCancelCodexLogin={() => void cancelCodexLogin()}
+                          onLoginIsolatedCodex={() => void handleCodexLogin()}
+                          onLogoutIsolatedCodex={() => void handleCodexLogout()}
+                        />
+                      </div>
                       {providerTestError ? (
                         <p className="text-sm text-destructive" role="alert">
                           {providerTestError}

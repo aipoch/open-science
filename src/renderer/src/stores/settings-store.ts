@@ -734,12 +734,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     }
   },
 
-  // Sets the reasoning-effort level; main reconnects so subsequent requests run at it. Surfaces
-  // failures to the console instead of silently reverting the selector (mirrors setAgentFramework).
+  // Sets the reasoning-effort level; main reconnects so subsequent requests run at it. The IPC round
+  // trip includes that reconnect, which is too slow to gate the selector on — apply the pick
+  // optimistically, reconcile from the returned snapshot, and revert if the write fails.
   setReasoningEffort: async (effort) => {
+    const previous = get().reasoningEffort
+    set({ reasoningEffort: effort })
+
     try {
       set(applySnapshot(await window.api.settings.setReasoningEffort({ effort })))
     } catch (error) {
+      set({ reasoningEffort: previous })
       console.error('Failed to set reasoning effort', error)
     }
   },

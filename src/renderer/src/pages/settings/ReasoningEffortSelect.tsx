@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { ReasoningEffort } from '../../../../shared/settings'
@@ -18,6 +20,9 @@ const REASONING_EFFORT_OPTIONS: { value: ReasoningEffort; label: string }[] = [
 const ReasoningEffortSelect = (): React.JSX.Element => {
   const reasoningEffort = useSettingsStore((state) => state.reasoningEffort)
   const setReasoningEffort = useSettingsStore((state) => state.setReasoningEffort)
+  // The slide is a click affordance: enable it only after the user interacts, so the thumb never
+  // sweeps across on first paint when the persisted level loads.
+  const [interactive, setInteractive] = useState(false)
   const selectedIndex = Math.max(
     0,
     REASONING_EFFORT_OPTIONS.findIndex((option) => option.value === reasoningEffort)
@@ -31,7 +36,10 @@ const ReasoningEffortSelect = (): React.JSX.Element => {
     >
       <span
         aria-hidden="true"
-        className="absolute inset-y-0.5 left-0.5 w-14 rounded-md bg-card shadow-sm transition-transform duration-150 motion-reduce:transition-none"
+        className={cn(
+          'absolute inset-y-0.5 left-0.5 w-16 rounded-md bg-card shadow-sm',
+          interactive && 'transition-transform duration-150 motion-reduce:transition-none'
+        )}
         style={{ transform: `translateX(${selectedIndex * 100}%)` }}
       />
       {REASONING_EFFORT_OPTIONS.map((option) => (
@@ -40,9 +48,12 @@ const ReasoningEffortSelect = (): React.JSX.Element => {
           type="button"
           role="radio"
           aria-checked={reasoningEffort === option.value}
-          onClick={() => void setReasoningEffort(option.value)}
+          onClick={() => {
+            setInteractive(true)
+            void setReasoningEffort(option.value)
+          }}
           className={cn(
-            'relative z-10 flex h-7 w-14 items-center justify-center rounded-md text-xs font-medium transition-colors motion-reduce:transition-none',
+            'relative z-10 flex h-7 w-16 items-center justify-center rounded-md text-xs font-medium transition-colors motion-reduce:transition-none',
             reasoningEffort === option.value
               ? 'text-foreground'
               : 'text-muted-foreground hover:text-foreground'

@@ -1076,7 +1076,26 @@ describe('settings store: setReasoningEffort', () => {
     expect(useSettingsStore.getState().reasoningEffort).toBe('high')
   })
 
-  it('keeps the current level and logs when main rejects', async () => {
+  it('applies the picked level optimistically before main confirms', async () => {
+    let resolveIpc: (value: SettingsSnapshot) => void = () => undefined
+    api.setReasoningEffort.mockImplementation(
+      () =>
+        new Promise<SettingsSnapshot>((resolve) => {
+          resolveIpc = resolve
+        })
+    )
+
+    const pending = useSettingsStore.getState().setReasoningEffort('max')
+
+    // The selector must not wait for the reconnect-bearing IPC round trip.
+    expect(useSettingsStore.getState().reasoningEffort).toBe('max')
+
+    resolveIpc({ ...snapshot([]), reasoningEffort: 'max' })
+    await pending
+    expect(useSettingsStore.getState().reasoningEffort).toBe('max')
+  })
+
+  it('reverts to the previous level and logs when main rejects', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     api.setReasoningEffort.mockRejectedValue(new Error('ipc down'))
 
