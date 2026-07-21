@@ -43,6 +43,9 @@ jobs:
           ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
           ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
           CLAUDE_CODE_ATTRIBUTION_HEADER: ${{ vars.CLAUDE_CODE_ATTRIBUTION_HEADER }}
+          # Long 1M-context runs have errored out mid-review through the relay gateway; cap the
+          # window at 200k so Claude Code auto-compacts instead of failing the whole run.
+          CLAUDE_CODE_DISABLE_1M_CONTEXT: '1'
         with:
           # The action validates this input before it starts Claude Code. The custom gateway still
           # uses ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL from the environment above.
@@ -73,8 +76,14 @@ jobs:
             **Impact:** and **Recommendation:** labels. If no architectural or integration issues
             are found, write **No architectural or integration issues found.** Be concise.
 
+            Budget at most 10 tool calls: inspect the diff, read only files directly affected by
+            the change, then post the review. Do not explore the wider repository.
+
             Post the review as a PR comment via `gh pr comment`.
+          # Cap agentic turns so a slow gateway cannot stretch a review indefinitely; the prompt
+          # budgets fewer calls, so hitting the cap means the run was already unhealthy.
           claude_args: |
+            --max-turns 15
             --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Read,Grep,Glob"
 
   codex_review:
