@@ -4286,8 +4286,10 @@ describe('ACP runtime — failure-path robustness (errorMessage coercion + sync-
       errorLogSpy.mockReset()
     }
 
-    // A throwing logger must not skip the failure-handling side effects.
-    expect(disconnectSpy).toHaveBeenCalled()
+    // A throwing logger must not skip the failure-handling side effects. disconnectCurrent runs twice:
+    // once in the pre-connect teardown and once in the catch-path cleanup — asserting exactly two proves
+    // the catch cleanup actually ran (dropping it would leave only the pre-connect call).
+    expect(disconnectSpy).toHaveBeenCalledTimes(2)
     expect(statuses).toContain('error')
   })
 

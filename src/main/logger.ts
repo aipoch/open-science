@@ -56,12 +56,21 @@ const CIRCULAR_MARKER = '[circular]'
 // Belt-and-suspenders bound on recursion depth: a pathological (non-cyclic but enormous) structure or a
 // hostile object can't blow the stack or spin unbounded before the ancestor set would catch a true cycle.
 const MAX_SANITIZE_DEPTH = 12
+// Upper bound on array elements walked per node. A real array can report length 2**32-1 (sparse), and a
+// hostile Proxy can report anything — iterating it would block or OOM the main process, which the depth
+// limit does not prevent. Beyond the cap we stop and append a truncation marker.
+const MAX_ARRAY_ELEMENTS = 1000
 
 // Sentinel distinguishing a property whose read *threw* (a hostile getter/Proxy) from one that is
 // genuinely absent/undefined, so the former can be surfaced as "[unreadable]" instead of silently
 // dropped. A module-private symbol so it can never collide with a real value.
 const UNREADABLE = Symbol('unreadable')
 const UNREADABLE_MARKER = '[unreadable]'
+
+// A record with no prototype, so assigning a key literally named "__proto__" creates an own data field
+// (a diagnostic value worth keeping) instead of mutating the object's prototype and vanishing.
+const nullProtoRecord = (): Record<string, unknown> =>
+  Object.create(null) as Record<string, unknown>
 
 // Reads own-property keys defensively — an exotic Proxy can throw from its ownKeys trap. Returns
 // undefined (not []) on failure so the caller can surface the node as "[unreadable]" rather than an
@@ -134,22 +143,26 @@ const toLogSafe = (value: unknown, seen: Set<object>, depth: number): unknown =>
         // A throwing length getter means the node itself is unreadable — surface that rather than
         // silently rendering an empty array.
         if (rawLength === UNREADABLE) return UNREADABLE_MARKER
-        const length =
-          typeof rawLength === 'number' && Number.isFinite(rawLength) && rawLength >= 0
-            ? rawLength
-            : 0
+        // A real array length is a non-negative integer; anything else is a hostile Proxy — don't trust
+        // it enough to iterate.
+        if (typeof rawLength !== 'number' || !Number.isInteger(rawLength) || rawLength < 0) {
+          return UNREADABLE_MARKER
+        }
+        // Cap iteration so a huge (real sparse array or hostile) length can't hang/OOM the process.
+        const cap = Math.min(rawLength, MAX_ARRAY_ELEMENTS)
         const items: unknown[] = []
-        for (let index = 0; index < length; index += 1) {
+        for (let index = 0; index < cap; index += 1) {
           const raw = safeRead(value as object, String(index))
           items.push(raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, depth + 1))
         }
+        if (rawLength > cap) items.push(`[+${rawLength - cap} more]`)
 
         return items
       }
 
       const keys = safeKeys(value as object)
       if (keys === undefined) return UNREADABLE_MARKER
-      const out: Record<string, unknown> = {}
+      const out = nullProtoRecord()
       for (const key of keys) {
         const raw = safeRead(value as object, key)
         out[key] = raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, depth + 1)
@@ -256,7 +269,7 @@ const errorLogFields = (error: unknown): Record<string, unknown> => {
               ? UNREADABLE_MARKER
               : '[object]'
       if (keys === undefined) return { error: errorText }
-      const safe: Record<string, unknown> = {}
+      const safe = nullProtoRecord()
       for (const key of keys) {
         const raw = safeRead(error, key)
         safe[key] = raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, 1)

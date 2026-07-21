@@ -436,6 +436,64 @@ describe('logger: errorLogFields', () => {
     expect(line).not.toContain('[unserializable]')
   })
 
+  it('caps a hostile huge array length without hanging, appending a truncation marker', () => {
+    // A Proxy reporting a giant length must NOT be iterated in full — that would block/OOM the process.
+    const huge = 2 ** 31
+    const arr = new Proxy([] as unknown[], {
+      get(target, prop, receiver) {
+        if (prop === 'length') return huge
+        if (typeof prop === 'string' && /^\d+$/.test(prop)) return `item-${prop}`
+        return Reflect.get(target, prop, receiver)
+      }
+    })
+    const err = Object.assign(new Error('e'), { data: arr })
+
+    const start = Date.now()
+    const fields = errorLogFields(err) as { data: unknown[] }
+    // Bounded work: returns near-instantly, capped element count plus one truncation marker.
+    expect(Date.now() - start).toBeLessThan(1000)
+    expect(fields.data.length).toBe(1001)
+    expect(fields.data[0]).toBe('item-0')
+    expect(fields.data[1000]).toBe(`[+${huge - 1000} more]`)
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('marks an array with a non-integer reported length as "[unreadable]"', () => {
+    const arr = new Proxy([] as unknown[], {
+      get(target, prop, receiver) {
+        if (prop === 'length') return 3.5
+        return Reflect.get(target, prop, receiver)
+      }
+    })
+    const err = Object.assign(new Error('e'), { data: arr })
+
+    expect((errorLogFields(err) as { data: string }).data).toBe('[unreadable]')
+  })
+
+  it('preserves an own "__proto__" data field instead of mutating the prototype', () => {
+    // Nested object with an own __proto__ key, plus a directly-thrown object with one.
+    const nested = JSON.parse('{"__proto__": {"polluted": true}, "keep": 1}') as Record<
+      string,
+      unknown
+    >
+    const err = Object.assign(new Error('e'), { data: nested })
+    const fields = errorLogFields(err) as { data: Record<string, unknown> }
+    expect(fields.data.keep).toBe(1)
+    // The __proto__ value is kept as an own field, and the record's prototype is untouched.
+    expect(Object.prototype.hasOwnProperty.call(fields.data, '__proto__')).toBe(true)
+    expect((fields.data as { polluted?: unknown }).polluted).toBeUndefined()
+    const line = formatLine('error', 'x', 'y', fields)
+    expect(line).toContain('__proto__')
+    expect(() => JSON.parse(line)).not.toThrow()
+
+    const thrown = JSON.parse('{"__proto__": {"x": 1}, "message": "boom"}') as Record<
+      string,
+      unknown
+    >
+    const topFields = errorLogFields(thrown)
+    expect(Object.prototype.hasOwnProperty.call(topFields, '__proto__')).toBe(true)
+  })
+
   it('does not trust an overridden Date.toISOString that returns a non-string', () => {
     const date = new Date(0)
     // A hostile override that would otherwise put a bigint into the record and break JSON.stringify.
