@@ -37,7 +37,7 @@ npm run dev
 ## Project Structure
 
 This is an Electron application built with electron-vite, React, and TypeScript.
-The three process layers live under `src/`:
+Three runtime process layers and a shared module live under `src/`:
 
 - `src/main/` — Electron main process (ACP runtime, session persistence,
   artifacts, notebook, projects, IPC handlers).
@@ -81,7 +81,8 @@ Use one of these standard type prefixes:
 ### Coding style
 
 - Match the style of the surrounding code — naming, structure, and idioms.
-- Formatting is handled by Prettier; run `npm run format` before committing.
+- Formatting is handled by Prettier. `npm run format` is optional; review its
+  changes before committing because it rewrites files across the repository.
 - Linting is enforced by ESLint; run `npm run lint`.
 - Keep user-facing strings, comments, and documentation in English.
 
@@ -93,7 +94,6 @@ Before opening a pull request, run all of these and make sure they pass:
 npm run typecheck   # TypeScript type checking (node + web)
 npm run lint        # ESLint
 npm run test        # Vitest unit tests
-npm run format      # Prettier (writes formatting fixes)
 ```
 
 Pull requests are expected to keep type checking, linting, and the test suite
@@ -107,8 +107,11 @@ Every commit subject must follow Conventional Commits with a scope:
 <type>(<scope>): <description>
 ```
 
+This format is checked for every commit in a pull request.
+
 Use the same standard type prefixes listed under [Branch names](#branch-names).
-The scope should be a short, lowercase name for the affected area.
+The scope should be a short, lowercase, hyphen-separated name for the affected
+area.
 
 ```text
 feat(projects): add sidebar filter
@@ -127,7 +130,26 @@ ci(review): unify automated AI reviews
 - Use the same `<type>(<scope>): <description>` format for the pull request
   title, for example `feat(projects): add sidebar filter`.
 - Reference any related issue in the description.
-- Describe what changed and why, and call out anything reviewers should focus on.
+- For behavior-changing work, use a concise description so reviewers can assess
+  the intent, scope, and validation before reading the diff. Use the following
+  structure where it is applicable:
+
+  ```md
+  ## Problem
+
+  ## Proposed change
+
+  ## Scope and non-goals
+
+  ## Acceptance criteria and validation
+
+  ## Review focus
+  ```
+- For architectural changes, data flows, state transitions, or interactions
+  across multiple components, consider adding a Mermaid diagram when it makes
+  the design easier to understand and review.
+- Small documentation, maintenance, and narrowly scoped fixes may use a concise
+  summary, but should still state the expected behavior and validation.
 - Keep PRs reasonably small and scoped so they are easy to review.
 - Ensure the required checks above pass.
 - Merge pull requests using **squash merge only**. The squash commit subject must
