@@ -8,10 +8,11 @@ import type { ComputeHost } from '../../shared/compute'
 // the connector mcp-* skill dirs so Claude Code discovers it as `remote-compute-ssh/SKILL.md`.
 const COMPUTE_SKILL_DIR = 'remote-compute-ssh'
 
-// Renders the Phase-1 skill doc. Includes the list of currently registered hosts so agents see
+// Renders the compute skill doc. Includes the list of currently registered hosts so agents see
 // them from context without needing to call list() first (design.md §5 "物化").
-// Only teaches Phase-1 capabilities (list/create/call_command/compute_details). All Phase-2+
-// operations (submit_job/harvest/wait_for_notification/save_artifacts/download) are excluded.
+// Covers Phase-1 capabilities (list/create/call_command/compute_details) and Phase-3a
+// async job submission (submit_job/attach_job/list_compute). Harvest, notifications, and artifact
+// management (Phase 3b+) are excluded.
 export const renderComputeSkillDoc = (hosts: ComputeHost[]): string => {
   const hostLines =
     hosts.length === 0
@@ -31,9 +32,10 @@ description: Discover and use SSH compute hosts. Load when you need to run remot
 license: Apache-2.0
 ---
 
-This skill covers Phase-1 remote compute capabilities: listing hosts, creating handles,
-running short remote commands, and reading/writing host knowledge docs. Phase-2 operations
-(job submission, output collection, notifications, and artifact management) are not available yet.
+This skill covers Phase-1 remote compute capabilities (listing hosts, creating handles,
+running short remote commands, reading/writing host knowledge docs) and Phase-3a async job
+submission (submit_job, attach_job, list_compute). Harvest, notifications, and artifact
+management (Phase 3b+) are not yet available.
 
 **Where host.compute runs:** \`host.compute\` lives ONLY on the control-plane REPL kernel — run
 every example below with the \`repl_execute\` tool (JavaScript), the same kernel that hosts
@@ -46,7 +48,7 @@ ${hostLines}
 
 Run \`await host.compute.list()\` via \`repl_execute\` to refresh this list at runtime.
 
-## API reference (Phase 1)
+## API reference (Phase 1 — short commands)
 
 \`\`\`javascript
 // List all registered hosts (returns [{provider_id, display_name, shape, status}])
@@ -76,13 +78,68 @@ await host.compute.details('ssh:<alias>', {
 })
 \`\`\`
 
-## Typical first-contact workflow
+## API reference (Phase 3a — async job submission)
 
-1. \`await host.compute.details(provider_id, { mode: 'read' })\` — a \`## Resources\` skeleton means
-   first contact; populated sections mean prior sessions did the legwork, trust them.
-2. Bind once: \`const c = host.compute.create(provider_id)\`.
-3. Run one batched probe: \`await c.call_command('id; module avail 2>&1 | head -40', '<intent>')\`.
-4. Append what you learned via \`await host.compute.details(..., { mode: 'append' })\`.
+Use \`submit_job\` for long-running computations (minutes to hours). It returns immediately with a
+\`job_id\`; the system dispatches the job in the background. Poll with \`attach_job(job_id).status()\`.
+
+\`\`\`javascript
+// List the session's active compute hosts (set via the ≡ host selector)
+const activeHosts = await host.compute.list_compute()
+// returns [{provider_id, display_name, shape, status}] for currently enabled hosts
+
+// Submit a non-blocking job — returns immediately without waiting for the command to finish
+const c = host.compute.create('ssh:<alias>')
+const job = await c.submit_job(
+  '<one-line intent for the approval card>',  // shown in the approval card
+  '<shell command>',                           // command to run remotely
+  {
+    timeout_seconds: 3600  // optional; default 24 h, max 7 days
+    // environment, resources, inputs, outputs, harvest — available but not executed until Phase 3b+
+  }
+)
+// job → { job_id, provider_id, status: 'submitted', remote_workdir }
+
+// Check job status (non-blocking DB read — no SSH)
+const handle = c.attach_job(job.job_id)
+const status = await handle.status()
+// status → { job_id, status, exit_code, stdout_tail, stderr_tail, remote_workdir }
+// status values: 'submitted' | 'running' | 'success' | 'failed' | 'timeout' | 'error'
+\`\`\`
+
+### Typical async job workflow
+
+\`\`\`javascript
+// 1. Submit the job (approval card appears; returns immediately after approval)
+const c = host.compute.create('ssh:biowulf')
+const job = await c.submit_job('run alignment', 'bash align.sh', { timeout_seconds: 7200 })
+
+// 2. Poll until done (15 s poller tick — check every 30 s to be safe)
+let s = await c.attach_job(job.job_id).status()
+while (s.status === 'submitted' || s.status === 'running') {
+  // wait between checks in your workflow
+  s = await c.attach_job(job.job_id).status()
+}
+
+// 3. Inspect the result
+if (s.status === 'success') {
+  // stdout_tail / stderr_tail hold the last 64 KB; full logs are in remote_workdir
+} else {
+  // s.status is 'failed' | 'timeout' | 'error'
+  // s.stderr_tail usually contains the error message
+}
+\`\`\`
+
+### submit_job / status error codes
+
+| status | meaning |
+|--------|---------|
+| \`submitted\` | accepted; background dispatch in progress |
+| \`running\` | remote process confirmed alive (pid recorded) |
+| \`success\` | exit code 0 |
+| \`failed\` | non-zero exit (error_code: \`job_failed\`) or process vanished (\`process_vanished\`) |
+| \`timeout\` | exceeded \`timeout_seconds\` |
+| \`error\` | never reached the remote host (\`host_unreachable\` / \`dispatch_failed\`) |
 
 ## call_command error handling
 
@@ -100,6 +157,14 @@ try {
   }
 }
 \`\`\`
+
+## Typical first-contact workflow
+
+1. \`await host.compute.details(provider_id, { mode: 'read' })\` — a \`## Resources\` skeleton means
+   first contact; populated sections mean prior sessions did the legwork, trust them.
+2. Bind once: \`const c = host.compute.create(provider_id)\`.
+3. Run one batched probe: \`await c.call_command('id; module avail 2>&1 | head -40', '<intent>')\`.
+4. Append what you learned via \`await host.compute.details(..., { mode: 'append' })\`.
 
 ## What to record in the knowledge doc
 

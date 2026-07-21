@@ -27,6 +27,7 @@ import { SystemSshRunner } from './ssh-runner'
 import { syncComputeSkillDoc } from './skill-doc'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { join } from 'node:path'
+import type { ComputeJobRepository } from './job-repository'
 
 // IPC channel names for the renderer job feed (Phase 3d, issue 05).
 export const COMPUTE_JOBS_LIST_CHANNEL = 'compute:jobs:list'
@@ -153,6 +154,15 @@ const createComputeHandlers = (
       return host
     },
     delete: async (providerId) => {
+      if (jobRepository) {
+        const hasActive = await jobRepository.hasActiveJobsForProvider(providerId)
+        if (hasActive) {
+          throw new Error(
+            `Cannot delete host "${providerId}": it has submitted or running jobs. ` +
+              `Wait for those jobs to reach a terminal state before deleting the host.`
+          )
+        }
+      }
       await repository.delete(providerId)
       syncSkillDocAfterMutation(onSkillDocSync)
     },

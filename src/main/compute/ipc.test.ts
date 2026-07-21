@@ -33,6 +33,10 @@ const mockRepository = (impl: Partial<ComputeHostRepository>): ComputeHostReposi
 // A minimal ComputeService double.
 const mockService = (impl: Partial<ComputeService>): ComputeService => impl as ComputeService
 
+// A minimal ComputeJobRepository double.
+const mockJobRepo = (impl: Partial<ComputeJobRepository>): ComputeJobRepository =>
+  impl as ComputeJobRepository
+
 describe('compute handlers', () => {
   it('list delegates to the repository', async () => {
     const list = vi.fn(() => Promise.resolve([sampleHost()]))
@@ -241,6 +245,61 @@ describe('compute handlers — jobsList', () => {
 
     const result = await handlers.jobsList({ sessionId: 'sess-1' })
     expect(result[0]!.display_name).toBe('ssh:biowulf')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Host delete guard — issue 04
+// ---------------------------------------------------------------------------
+
+describe('host delete guard', () => {
+  it('rejects deletion when host has submitted/running jobs', async () => {
+    const del = vi.fn(() => Promise.resolve())
+    const list = vi.fn(() => Promise.resolve([]))
+    const hasActive = vi.fn(() => Promise.resolve(true))
+    const handlers = createComputeHandlers(
+      mockRepository({ delete: del, list }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({ hasActiveJobsForProvider: hasActive })
+    )
+
+    await expect(handlers.delete('ssh:biowulf')).rejects.toThrow(
+      /cannot delete.*submitted.*running/i
+    )
+    expect(del).not.toHaveBeenCalled()
+    expect(hasActive).toHaveBeenCalledWith('ssh:biowulf')
+  })
+
+  it('allows deletion when host has only terminal jobs (job rows are preserved)', async () => {
+    const del = vi.fn(() => Promise.resolve())
+    const list = vi.fn(() => Promise.resolve([]))
+    const hasActive = vi.fn(() => Promise.resolve(false))
+    const handlers = createComputeHandlers(
+      mockRepository({ delete: del, list }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({ hasActiveJobsForProvider: hasActive })
+    )
+
+    await handlers.delete('ssh:biowulf')
+    expect(del).toHaveBeenCalledWith('ssh:biowulf')
+    expect(hasActive).toHaveBeenCalledWith('ssh:biowulf')
+  })
+
+  it('allows deletion when no jobRepository is provided (backward compatibility)', async () => {
+    const del = vi.fn(() => Promise.resolve())
+    const list = vi.fn(() => Promise.resolve([]))
+    const handlers = createComputeHandlers(mockRepository({ delete: del, list }))
+
+    await handlers.delete('ssh:biowulf')
+    expect(del).toHaveBeenCalledWith('ssh:biowulf')
   })
 })
 
