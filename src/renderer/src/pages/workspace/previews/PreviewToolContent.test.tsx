@@ -92,7 +92,11 @@ describe('PreviewToolContent', () => {
           notebook: {
             sessionId: 'notebook-session',
             projectName: 'Project',
-            workspaceCwd: '/workspace'
+            workspaceCwd: '/workspace',
+            notebookSessionRoot: '/data/notebooks/Project/notebook-session',
+            dataRoot: '/data',
+            runtimeRoot: '/data/runtime',
+            runJsonPath: '/data/notebooks/Project/notebook-session/run.json'
           }
         })
       )
