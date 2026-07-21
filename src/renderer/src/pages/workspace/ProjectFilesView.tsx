@@ -73,6 +73,8 @@ type FilePageLoadMode = 'manual' | 'scroll'
 
 const PREVIEW_READ_CONCURRENCY = 4
 const MAX_PREVIEW_CACHE_ENTRIES = 96
+// Keeps manual pagination recognizable without the outline competing with the surrounding file tiles.
+const loadMoreButtonClassName = 'bg-bg-200 text-text-100 hover:bg-bg-300 hover:text-text-000'
 
 const MINUTE_MS = 60 * 1000
 const HOUR_MS = 60 * MINUTE_MS
@@ -427,8 +429,9 @@ const FilePageFooter = ({
     <div className="flex justify-center px-4 py-2">
       <Button
         type="button"
-        variant="outline"
+        variant="ghost"
         size="xs"
+        className={loadMoreButtonClassName}
         aria-label={loadMoreLabel}
         disabled={page.isLoading}
         onClick={onLoadMore}
@@ -1189,8 +1192,9 @@ const ProjectFilesViewContent = ({
               <div className="flex justify-center px-4 py-2">
                 <Button
                   type="button"
-                  variant="outline"
+                  variant="ghost"
                   size="xs"
+                  className={loadMoreButtonClassName}
                   onClick={() => void index.loadMoreGroups()}
                 >
                   Load more sessions

@@ -561,7 +561,7 @@ describe('ProjectFilesView', () => {
     })
   })
 
-  it('uses compact manual load controls for uploads and each session in the all view', async () => {
+  it('uses compact soft-fill manual load controls in the all view', async () => {
     await renderView([createSession({ id: 'session-1', title: 'Session A' })])
     const createFile = (source: ProjectFileItem['source'], index: number): ProjectFileItem => ({
       id: source === 'upload' ? `upload:upload-${index}` : `artifact-${index}`,
@@ -587,6 +587,7 @@ describe('ProjectFilesView', () => {
     })
     vi.mocked(window.api.projectFiles.listArtifactGroups).mockResolvedValue({
       items: [{ sessionId: 'session-1', artifactCount: 40 }],
+      nextCursor: 'groups-next',
       totalCount: 1
     })
     vi.mocked(window.api.projectFiles.listFiles).mockImplementation(async (request) => {
@@ -620,6 +621,16 @@ describe('ProjectFilesView', () => {
     )
     expect(uploadButton?.getAttribute('data-size')).toBe('xs')
     expect(sessionButton?.getAttribute('data-size')).toBe('xs')
+    const sessionGroupsButton = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent === 'Load more sessions')
+    for (const button of [uploadButton, sessionButton, sessionGroupsButton]) {
+      expect(button?.getAttribute('data-variant')).toBe('ghost')
+      expect(button?.className).toContain('bg-bg-200')
+      expect(button?.className).toContain('text-text-100')
+      expect(button?.className).toContain('hover:bg-bg-300')
+      expect(button?.className).toContain('hover:text-text-000')
+    }
 
     const firstPageRequestCount = vi.mocked(window.api.projectFiles.listFiles).mock.calls.length
     await act(async () => {
