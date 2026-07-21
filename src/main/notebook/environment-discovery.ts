@@ -241,6 +241,40 @@ export const defaultCandidatePaths =
     // Windows Python launcher: `py -0p` lists installed interpreters' paths.
     if (language === 'python' && isWin()) for (const p of await pyLauncherPaths()) found.add(p)
 
+    // Windows CRAN R standard installations: check Program Files and user-local directories for versioned
+    // R installs (R-x.y.z). CRAN R doesn't register with a launcher like Python's `py`, so we enumerate
+    // the standard install roots directly. Each version may have 64-bit (bin/x64/R.exe, most common) or
+    // fallback (bin/R.exe) layouts.
+    if (language === 'r' && isWin()) {
+      const home = homedir()
+      const programFiles = [
+        process.env.ProgramFiles ?? 'C:\\Program Files',
+        process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)',
+        join(process.env.LOCALAPPDATA ?? join(home, 'AppData', 'Local'), 'Programs')
+      ]
+      for (const root of programFiles) {
+        const rRoot = join(root, 'R')
+        try {
+          for (const ver of readdirSync(rRoot)) {
+            if (!/^R-\d+\.\d+\.\d+$/.test(ver)) continue
+            // Try 64-bit first (standard since R 4.2), then fallback to bin/R.exe.
+            const candidates = [
+              join(rRoot, ver, 'bin', 'x64', 'R.exe'),
+              join(rRoot, ver, 'bin', 'R.exe')
+            ]
+            for (const p of candidates) {
+              if (existsSync(p)) {
+                found.add(p)
+                break
+              }
+            }
+          }
+        } catch {
+          // R root doesn't exist
+        }
+      }
+    }
+
     // The app's own envs under runtime/envs: the default(s) AND any agent-created named env, so a conda
     // env the agent made with manage_environments is discovered and therefore bindable. Scan every
     // subdir for THIS language's interpreter; classify() labels default -> app-managed, named ->

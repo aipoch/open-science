@@ -215,3 +215,145 @@ describe('defaultCandidatePaths (targeted enumeration)', () => {
     rmSync(root, { recursive: true, force: true })
   })
 })
+
+describe('defaultCandidatePaths Windows CRAN R detection', () => {
+  it('discovers standard CRAN R installations in Program Files', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'os-cran-'))
+    const programFiles = join(root, 'Program Files', 'R')
+    const r443Dir = join(programFiles, 'R-4.4.3', 'bin', 'x64')
+    mkdirSync(r443Dir, { recursive: true })
+    writeFileSync(join(r443Dir, 'R.exe'), 'x')
+    writeFileSync(join(r443Dir, 'Rscript.exe'), 'x')
+
+    // Override env to point to our fake Program Files and mock Windows platform
+    const originalEnv = process.env.ProgramFiles
+    const originalPlatform = process.platform
+    process.env.ProgramFiles = join(root, 'Program Files')
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    try {
+      const paths = await defaultCandidatePaths(root)('r')
+      expect(paths).toContain(join(r443Dir, 'R.exe'))
+      expect(paths).not.toContain(join(r443Dir, 'Rscript.exe'))
+    } finally {
+      process.env.ProgramFiles = originalEnv
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('discovers multiple R versions and prefers 64-bit over fallback layout', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'os-multi-r-'))
+    const programFiles = join(root, 'Program Files', 'R')
+
+    // R 4.4.3 with 64-bit layout
+    const r443x64 = join(programFiles, 'R-4.4.3', 'bin', 'x64')
+    mkdirSync(r443x64, { recursive: true })
+    writeFileSync(join(r443x64, 'R.exe'), 'x')
+
+    // R 4.3.0 with fallback layout only
+    const r430bin = join(programFiles, 'R-4.3.0', 'bin')
+    mkdirSync(r430bin, { recursive: true })
+    writeFileSync(join(r430bin, 'R.exe'), 'x')
+
+    const originalEnv = process.env.ProgramFiles
+    const originalPlatform = process.platform
+    process.env.ProgramFiles = join(root, 'Program Files')
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    try {
+      const paths = await defaultCandidatePaths(root)('r')
+      expect(paths).toContain(join(r443x64, 'R.exe'))
+      expect(paths).toContain(join(r430bin, 'R.exe'))
+      expect(paths.length).toBeGreaterThanOrEqual(2)
+    } finally {
+      process.env.ProgramFiles = originalEnv
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('checks Program Files (x86) and LOCALAPPDATA for R installations', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'os-r-paths-'))
+    const programFilesx86 = join(root, 'Program Files (x86)', 'R')
+    const localAppData = join(root, 'AppData', 'Local', 'Programs', 'R')
+
+    // 32-bit R in Program Files (x86)
+    const r32bit = join(programFilesx86, 'R-4.2.0', 'bin')
+    mkdirSync(r32bit, { recursive: true })
+    writeFileSync(join(r32bit, 'R.exe'), 'x')
+
+    // User-local R in LOCALAPPDATA
+    const rLocal = join(localAppData, 'R-4.4.0', 'bin', 'x64')
+    mkdirSync(rLocal, { recursive: true })
+    writeFileSync(join(rLocal, 'R.exe'), 'x')
+
+    const original86 = process.env['ProgramFiles(x86)']
+    const originalLocal = process.env.LOCALAPPDATA
+    const originalPlatform = process.platform
+    process.env['ProgramFiles(x86)'] = join(root, 'Program Files (x86)')
+    process.env.LOCALAPPDATA = join(root, 'AppData', 'Local')
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    try {
+      const paths = await defaultCandidatePaths(root)('r')
+      expect(paths).toContain(join(r32bit, 'R.exe'))
+      expect(paths).toContain(join(rLocal, 'R.exe'))
+    } finally {
+      if (original86 !== undefined) process.env['ProgramFiles(x86)'] = original86
+      else delete process.env['ProgramFiles(x86)']
+      if (originalLocal !== undefined) process.env.LOCALAPPDATA = originalLocal
+      else delete process.env.LOCALAPPDATA
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('ignores non-versioned directories in R root', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'os-r-invalid-'))
+    const programFiles = join(root, 'Program Files', 'R')
+
+    // Valid R version
+    const rValid = join(programFiles, 'R-4.4.1', 'bin', 'x64')
+    mkdirSync(rValid, { recursive: true })
+    writeFileSync(join(rValid, 'R.exe'), 'x')
+
+    // Invalid directory names (should be skipped)
+    mkdirSync(join(programFiles, 'docs'), { recursive: true })
+    mkdirSync(join(programFiles, 'R-alpha'), { recursive: true })
+    mkdirSync(join(programFiles, '4.4.1'), { recursive: true })
+
+    const originalEnv = process.env.ProgramFiles
+    const originalPlatform = process.platform
+    process.env.ProgramFiles = join(root, 'Program Files')
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    try {
+      const paths = await defaultCandidatePaths(root)('r')
+      expect(paths).toContain(join(rValid, 'R.exe'))
+      expect(paths.filter((p) => p.includes('docs')).length).toBe(0)
+      expect(paths.filter((p) => p.includes('R-alpha')).length).toBe(0)
+    } finally {
+      process.env.ProgramFiles = originalEnv
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not run CRAN R detection for Python or on non-Windows platforms', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'os-no-r-'))
+    const programFiles = join(root, 'Program Files', 'R')
+    mkdirSync(join(programFiles, 'R-4.4.3', 'bin', 'x64'), { recursive: true })
+    writeFileSync(join(programFiles, 'R-4.4.3', 'bin', 'x64', 'R.exe'), 'x')
+
+    const originalEnv = process.env.ProgramFiles
+    const originalPlatform = process.platform
+    process.env.ProgramFiles = join(root, 'Program Files')
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    try {
+      // Python should not scan R paths
+      const pythonPaths = await defaultCandidatePaths(root)('python')
+      expect(pythonPaths.filter((p) => p.includes('R-4.4.3')).length).toBe(0)
+    } finally {
+      process.env.ProgramFiles = originalEnv
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
