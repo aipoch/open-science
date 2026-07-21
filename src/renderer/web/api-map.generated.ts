@@ -28,6 +28,8 @@ export const WEB_INVOKE_CHANNELS = {
   'compute.detailsGet': 'compute:details:get',
   'compute.detailsSave': 'compute:details:save',
   'compute.download': 'compute:download',
+  'compute.enabledHostsGet': 'compute:enabled-hosts:get',
+  'compute.enabledHostsSet': 'compute:enabled-hosts:set',
   'compute.get': 'compute:get',
   'compute.jobsList': 'compute:jobs:list',
   'compute.list': 'compute:list',

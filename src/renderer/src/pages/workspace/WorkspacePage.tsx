@@ -129,6 +129,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const clearSelection = useSessionStore((state) => state.clearSelection)
   const renameSession = useSessionStore((state) => state.renameSession)
   const setAutoReviewEnabled = useSessionStore((state) => state.setAutoReviewEnabled)
+  const setEnabledComputeHosts = useSessionStore((state) => state.setEnabledComputeHosts)
   const setFixLoopActive = useSessionStore((state) => state.setFixLoopActive)
   // Only sessions belonging to the active project are shown in this workspace.
   const sessions = useMemo(
@@ -209,6 +210,8 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const activeAutoReviewEnabled = activeSession
     ? activeSession.autoReviewEnabled === true
     : newConversationAutoReviewEnabled
+  // Per-session enabled compute hosts (providerIds like "ssh:<alias>"). Empty when no host is selected.
+  const activeEnabledComputeHosts = activeSession?.enabledComputeHosts ?? []
   // True while any review for the active session is in the 'running' lifecycle.
   // Using a shallow comparison via reviewsBySession to avoid new array reference on every render.
   const activeSessionId = activeSession?.id
@@ -470,6 +473,21 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     }
   }, [activeSessionId, activeSessionCwd, activeSessionProjectId])
 
+  // Sync the active session's enabled compute hosts to the main-process registry when switching
+  // sessions. The registry is the runtime source for list_compute RPC ops; the session JSON is the
+  // durable source. Toggle updates also sync directly in handleComputeHostToggle.
+  useEffect(() => {
+    if (!activeSessionId) return
+    // Read from store snapshot to avoid stale closure on activeEnabledComputeHosts.
+    const session = useSessionStore.getState().sessions.find((s) => s.id === activeSessionId)
+    void window.api.compute
+      .enabledHostsSet(activeSessionId, session?.enabledComputeHosts ?? [])
+      .catch((err: unknown) => {
+        console.warn('Failed to sync enabled compute hosts to registry', err)
+      })
+    // Only re-run when the active session changes (session switch). Toggle handler syncs directly.
+  }, [activeSessionId])
+
   // Resizable drag/collapse state is mirrored back into the transient preview workbench store.
   const syncPreviewPanelResize = (
     panelSize: PanelSize,
@@ -728,6 +746,23 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     setAutoReviewEnabled(activeSession.id, enabled)
   }
 
+  // Enables or disables a compute host for the active session (single-select semantics).
+  // Enabling one host replaces any existing selection; disabling clears the set.
+  // Updates both the session store (durable, via session JSON) and the main-process runtime
+  // registry (ephemeral cache consumed by list_compute RPC ops in the repl kernel).
+  const handleComputeHostToggle = (providerId: string, enabled: boolean): void => {
+    if (!activeSession) return
+    const sessionId = activeSession.id
+    // Single-select: enable one host ↔ clear all others; disabling clears the selection entirely.
+    const newEnabledHosts = enabled ? [providerId] : []
+    setEnabledComputeHosts(sessionId, newEnabledHosts)
+    // Keep the main-process registry in sync immediately so list_compute() reflects the change
+    // without waiting for the next session-switch effect.
+    void window.api.compute.enabledHostsSet(sessionId, newEnabledHosts).catch((err: unknown) => {
+      console.warn('Failed to sync enabled compute hosts to registry', err)
+    })
+  }
+
   // Manually triggers a review of the last completed turn, bypassing autoReviewEnabled and the
   // suppressAutoReviewOnceFor loop guard. Disabled logic is enforced by isRequestReviewDisabled.
   const requestManualReview = (): void => {
@@ -828,6 +863,8 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
             onRevokePermissionGrant={revokeActivePermissionGrant}
             onClearPermissionGrants={clearActivePermissionGrants}
             onAutoReviewToggle={changeAutoReviewEnabled}
+            enabledComputeHosts={activeEnabledComputeHosts}
+            onComputeHostToggle={handleComputeHostToggle}
             onRequestReview={requestManualReview}
             isRequestReviewDisabled={isRequestReviewDisabled}
           />

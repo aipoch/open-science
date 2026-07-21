@@ -27,7 +27,7 @@ import { SystemSshRunner } from './ssh-runner'
 import { syncComputeSkillDoc } from './skill-doc'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { join } from 'node:path'
-import type { ComputeJobRepository } from './job-repository'
+import { EnabledComputeHostsRegistry, enabledComputeHostsRegistry } from './enabled-hosts-registry'
 
 // IPC channel names for the renderer job feed (Phase 3d, issue 05).
 export const COMPUTE_JOBS_LIST_CHANNEL = 'compute:jobs:list'
@@ -213,6 +213,7 @@ const registerComputeIpcHandlers = (
   computeService: ComputeService
   jobRepository: ComputeJobRepository
   hostRepository: ComputeHostRepository
+  enabledComputeHostsRegistry: EnabledComputeHostsRegistry
 } => {
   const storageRoot = resolveStorageRoot()
   const skillsDir = join(getAppClaudeConfigDir(storageRoot), 'skills')
@@ -293,13 +294,31 @@ const registerComputeIpcHandlers = (
     (_event, filter: { sessionId: string; status?: string[] }) => handlers.jobsList(filter)
   )
 
-  return { computeService: handlers.computeService, jobRepository, hostRepository: repository }
+  // Per-session enabled compute hosts (issue 06). The renderer owns the durable state (session
+  // JSON); the main-process registry is the runtime cache consulted by list_compute RPC ops.
+  ipcMain.handle('compute:enabled-hosts:get', (_event, sessionId: string): string[] =>
+    enabledComputeHostsRegistry.get(sessionId)
+  )
+  ipcMain.handle(
+    'compute:enabled-hosts:set',
+    (_event, sessionId: string, providerIds: string[]): void => {
+      enabledComputeHostsRegistry.set(sessionId, providerIds)
+    }
+  )
+
+  return {
+    computeService: handlers.computeService,
+    jobRepository,
+    hostRepository: repository,
+    enabledComputeHostsRegistry
+  }
 }
 
 export {
   createComputeHandlers,
   createDefaultComputeHostRepository,
   createDefaultComputeJobRepository,
-  registerComputeIpcHandlers
+  registerComputeIpcHandlers,
+  enabledComputeHostsRegistry
 }
 export type { ComputeHandlers, SkillDocSyncer }

@@ -54,6 +54,10 @@ vi.mock('./ComposerAutoReviewToggle', () => ({
   ComposerAutoReviewToggle: (): null => null
 }))
 
+vi.mock('./ComputeHostSelector', () => ({
+  ComputeHostSelector: (): null => null
+}))
+
 vi.mock('./WorkspaceMessageScroller', () => ({
   WorkspaceMessageScroller: (): null => null
 }))
@@ -99,6 +103,8 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
         onClearPermissionGrants={vi.fn()}
         autoReviewEnabled={true}
         onAutoReviewToggle={vi.fn()}
+        enabledComputeHosts={[]}
+        onComputeHostToggle={vi.fn()}
         onRequestReview={vi.fn()}
         isRequestReviewDisabled={false}
         {...props}

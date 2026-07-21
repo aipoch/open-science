@@ -59,6 +59,8 @@ type NotebookLocalRpcServerOptions = {
       context: { sessionId: string; projectId: string }
     ): Promise<unknown>
     getJobStatus(jobId: string): Promise<unknown>
+    // Returns the provider ids of compute hosts enabled for the given session (issue 06).
+    getEnabledComputeHosts(sessionId: string): string[]
   }
 }
 
@@ -332,6 +334,15 @@ class NotebookLocalRpcServer {
       if (op === 'job_status') {
         const jobId = typeof params.job_id === 'string' ? params.job_id : ''
         return this.computeService.getJobStatus(jobId)
+      }
+
+      // op='list_compute' — returns session-enabled hosts (design.md §15.1, issue 06).
+      // Differs from op='list' (all registered hosts): this returns only hosts the user enabled for
+      // this conversation via the ComputeHostSelector. Session id comes from COMPUTE_SESSION_ID in
+      // the repl spawn env (same passthrough used by submit_job / call_command).
+      if (op === 'list_compute') {
+        const sessionId = typeof params.session_id === 'string' ? params.session_id : ''
+        return this.computeService.getEnabledComputeHosts(sessionId)
       }
 
       throw new Error(`Unknown computeCall op: ${op}`)

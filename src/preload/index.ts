@@ -337,6 +337,10 @@ type OpenScienceAPI = {
     jobsList: (filter: { sessionId: string; status?: string[] }) => Promise<JobSummary[]>
     // Fires when a job's status or tail changes (broadcast from the main-process poller).
     onJobUpdated: (listener: (job: JobSummary) => void) => () => void
+    // Per-session enabled compute hosts (issue 06). The renderer owns durable state (session JSON);
+    // the main-process registry is the runtime cache for list_compute RPC ops.
+    enabledHostsGet: (sessionId: string) => Promise<string[]>
+    enabledHostsSet: (sessionId: string, providerIds: string[]) => Promise<void>
   }
   preview: {
     load: (request: LoadPreviewStateRequest) => Promise<PersistedPreviewState | null>
@@ -732,7 +736,11 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('compute:jobs:list', filter) as Promise<JobSummary[]>,
     // Fires when a job's status or tail changes (broadcast from the main-process poller).
     onJobUpdated: (listener: (job: JobSummary) => void) =>
-      onIpcMessage<JobSummary>('compute:job-updated', listener)
+      onIpcMessage<JobSummary>('compute:job-updated', listener),
+    enabledHostsGet: (sessionId) =>
+      ipcRenderer.invoke('compute:enabled-hosts:get', sessionId) as Promise<string[]>,
+    enabledHostsSet: (sessionId, providerIds) =>
+      ipcRenderer.invoke('compute:enabled-hosts:set', sessionId, providerIds) as Promise<void>
   },
   preview: {
     // Per-project preview panel state, persisted alongside projects in SQLite.

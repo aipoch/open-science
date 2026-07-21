@@ -277,4 +277,31 @@ describe('normalizeSessionFile with activities', () => {
     expect(legacy?.autoReviewEnabled).toBe(false)
     expect(corrupt?.autoReviewEnabled).toBe(false)
   })
+
+  it('round-trips enabledComputeHosts and filters out invalid values', () => {
+    const base = { ...createSessionWithActivity(undefined), activities: undefined }
+
+    // Valid ssh: prefixed provider ids survive the round-trip.
+    const withHosts = normalizeSessionFile({
+      ...base,
+      enabledComputeHosts: ['ssh:cluster-1', 'ssh:gpu-box']
+    })
+    // Missing field (older sessions written before issue 06) → absent in output.
+    const legacy = normalizeSessionFile({ ...base })
+    // Non-ssh: strings are filtered out; only valid provider ids survive.
+    const mixedValid = normalizeSessionFile({
+      ...base,
+      enabledComputeHosts: ['ssh:valid', 'not-ssh', '', 42]
+    })
+    // All invalid → field is absent (not an empty array).
+    const allInvalid = normalizeSessionFile({
+      ...base,
+      enabledComputeHosts: ['no-prefix', 123]
+    })
+
+    expect(withHosts?.enabledComputeHosts).toEqual(['ssh:cluster-1', 'ssh:gpu-box'])
+    expect(legacy?.enabledComputeHosts).toBeUndefined()
+    expect(mixedValid?.enabledComputeHosts).toEqual(['ssh:valid'])
+    expect(allInvalid?.enabledComputeHosts).toBeUndefined()
+  })
 })

@@ -225,7 +225,12 @@ const registerIpcHandlers = async ({
   // Register compute IPC handlers early so computeService can be wired into the notebook RPC server.
   // The approval broker in compute/ipc.ts broadcasts via BrowserWindow.getAllWindows(), which requires
   // Electron to be ready — this is always the case here since we're inside registerIpcHandlers.
-  const { computeService, jobRepository, hostRepository } = registerComputeIpcHandlers()
+  const {
+    computeService,
+    jobRepository,
+    hostRepository,
+    enabledComputeHostsRegistry: hostsRegistry
+  } = registerComputeIpcHandlers()
   // Start the JobPoller wired to broadcastJobUpdated so every state/tail change is pushed to all
   // renderer windows via 'compute:job-updated' (Phase 3d, design.md §9 + §15.3).
   const jobPoller = new JobPoller({
@@ -246,9 +251,15 @@ const registerIpcHandlers = async ({
     }
   })
   jobPoller.start()
+  // Augment computeService with getEnabledComputeHosts so the RPC server can serve list_compute.
+  // The spread preserves all ComputeService methods; the added method surfaces the registry lookup.
+  const computeServiceWithRegistry = {
+    ...computeService,
+    getEnabledComputeHosts: (sessionId: string): string[] => hostsRegistry.get(sessionId)
+  } as typeof computeService & { getEnabledComputeHosts(sessionId: string): string[] }
   const notebookRpcServer = new NotebookLocalRpcServer(notebookService, {
     connectorService,
-    computeService
+    computeService: computeServiceWithRegistry
   })
   // The RPC server needs the runtime service to dispatch to, and the runtime service needs the RPC
   // server's (lazily-started) connection for host.mcp() env injection — wire the second half here to
