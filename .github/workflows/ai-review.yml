@@ -16,6 +16,7 @@ on:
 
 jobs:
   claude_review:
+    # Keep this name in sync with ai-review-labels.yml, which recognizes successful reviewers.
     name: Claude architecture review
     if: >-
       ${{ vars.ENABLE_CLAUDE_REVIEW != 'false' &&
@@ -75,6 +76,7 @@ jobs:
             --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Read,Grep,Glob"
 
   codex_review:
+    # Keep this name in sync with ai-review-labels.yml, which recognizes successful reviewers.
     name: Codex correctness review
     if: >-
       ${{ github.event.action == 'opened' &&
