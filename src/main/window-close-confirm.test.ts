@@ -25,9 +25,12 @@ const makeHarness = (
   choose: (choice: CloseConfirmResponse['choice']) => void
   reply: (payload: CloseConfirmResponse) => void
   fireGone: () => void
+  fireHang: () => void
+  fireRecover: () => void
 } => {
   let responder: ((payload: CloseConfirmResponse) => void) | undefined
   let goneCb: (() => void) | undefined
+  let hangCbs: { onHang: () => void; onRecover: () => void } | undefined
   const sent: CloseConfirmRequest[] = []
   const nativeFallback = vi.fn(async (): Promise<CloseConfirmChoice> => 'quit')
   const deps: CloseConfirmDeps = {
@@ -45,9 +48,16 @@ const makeHarness = (
         goneCb = undefined
       }
     },
+    onRendererUnresponsive: (cbs) => {
+      hangCbs = cbs
+      return () => {
+        hangCbs = undefined
+      }
+    },
     nativeFallback,
     newRequestId: () => 'req-1',
     ackTimeoutMs: 10,
+    hangGraceMs: 10,
     ...overrides
   }
   return {
@@ -57,9 +67,14 @@ const makeHarness = (
     ack: () => responder?.({ requestId: 'req-1', ack: true }),
     choose: (choice: CloseConfirmResponse['choice']) => responder?.({ requestId: 'req-1', choice }),
     reply: (payload: CloseConfirmResponse) => responder?.(payload),
-    fireGone: () => goneCb?.()
+    fireGone: () => goneCb?.(),
+    fireHang: () => hangCbs?.onHang(),
+    fireRecover: () => hangCbs?.onRecover()
   }
 }
+
+// Resolves after `ms` real milliseconds so a test can outlast a short ackTimeoutMs/hangGraceMs timer.
+const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 describe('createCloseConfirm', () => {
   it('resolves quit immediately for the quit variant with no running work (no IPC)', async () => {
@@ -119,5 +134,36 @@ describe('createCloseConfirm', () => {
 
     const trayHarness = makeHarness({ isRendererAvailable: () => false, nativeFallback: rejecting })
     await expect(trayHarness.confirm('close-to-tray', [session])).resolves.toBe('minimize')
+  })
+
+  it('falls back after the grace period when an ACKed modal stays unresponsive', async () => {
+    const h = makeHarness({ ackTimeoutMs: 10_000, hangGraceMs: 10 })
+    const pending = h.confirm('quit', [session])
+    h.ack()
+    h.fireHang()
+    // The grace timer is armed but hasn't elapsed yet, so no fallback has fired.
+    expect(h.nativeFallback).not.toHaveBeenCalled()
+    await expect(pending).resolves.toBe('quit')
+    expect(h.nativeFallback).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not fall back when a hung modal becomes responsive again before the grace elapses', async () => {
+    const h = makeHarness({ ackTimeoutMs: 10_000, hangGraceMs: 10 })
+    const pending = h.confirm('quit', [session])
+    h.ack()
+    h.fireHang()
+    h.fireRecover()
+    await wait(30) // outlast the (cancelled) grace timer
+    expect(h.nativeFallback).not.toHaveBeenCalled()
+    h.choose('cancel')
+    await expect(pending).resolves.toBe('cancel')
+  })
+
+  it('ignores a hang before ack: the ack timer still owns the pre-ack window', async () => {
+    const h = makeHarness({ ackTimeoutMs: 10, hangGraceMs: 10_000 })
+    const pending = h.confirm('quit', [session])
+    h.fireHang() // pre-ack: must not arm the (10s) hang timer
+    await expect(pending).resolves.toBe('quit') // resolved by the 10ms ack timeout, not the hang path
+    expect(h.nativeFallback).toHaveBeenCalledTimes(1)
   })
 })
