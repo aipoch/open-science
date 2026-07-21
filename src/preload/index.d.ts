@@ -36,12 +36,21 @@ import type {
   NotebookChangedEvent,
   ExecuteNotebookCodeRequest,
   FinishNotebookCodeCellRequest,
+  NotebookLanguage,
   NotebookRunSummary,
   NotebookSessionReference,
   NotebookSessionRequest,
   NotebookSessionState,
   RunNotebookCellRequest
 } from '../shared/notebook'
+import type { ProvisionProgress, ProvisionStatus } from '../shared/notebook-env'
+import type {
+  DiscoveredInterpreter,
+  RuntimeEnablement,
+  RuntimeUsage,
+  RuntimeSelection,
+  RuntimeSurvey
+} from '../shared/notebook-runtime'
 import type {
   DeletePreviewStateRequest,
   LoadPreviewStateRequest,
@@ -88,6 +97,7 @@ import type {
   RefreshProviderModelsRequest,
   RefreshProviderModelsResult,
   SetActiveProviderRequest,
+  SetPackageMirrorRequest,
   SetAgentFrameworkRequest,
   SetSkillEnabledRequest,
   SettingsSnapshot,
@@ -121,6 +131,7 @@ import type {
   ValidateProviderRequest,
   ValidateProviderResult
 } from '../shared/settings'
+import type { PackageMirror } from '../shared/mirror'
 import type {
   ActiveSessionInfo,
   DataRootInspection,
@@ -204,6 +215,8 @@ interface OpenScienceAPI {
       request: RefreshProviderModelsRequest
     ): Promise<RefreshProviderModelsResult>
     markOnboardingComplete(): Promise<SettingsSnapshot>
+    getPackageMirror(): Promise<PackageMirror>
+    setPackageMirror(request: SetPackageMirrorRequest): Promise<PackageMirror>
     listSkills(): Promise<SkillView[]>
     getSkillDetail(id: string): Promise<SkillDetailView>
     setSkillEnabled(request: SetSkillEnabledRequest): Promise<SkillView[]>
@@ -320,6 +333,47 @@ interface OpenScienceAPI {
     shutdown(request: NotebookSessionRequest): Promise<{ sessionId: string; status: 'shutdown' }>
     onAvailable(listener: AcpListener<NotebookAvailableEvent>): RemoveListener
     onChanged(listener: AcpListener<NotebookChangedEvent>): RemoveListener
+  }
+  notebookEnv: {
+    getStatus(): Promise<ProvisionStatus>
+    provision(lang: NotebookLanguage): Promise<void>
+    repair(lang: NotebookLanguage): Promise<void>
+    cancel(): Promise<void>
+    onProgress(listener: (progress: ProvisionProgress) => void): RemoveListener
+  }
+  runtime: {
+    // Per-language runtime picture (persisted choice + a survey of the managed and external sources).
+    survey(): Promise<RuntimeSurvey[]>
+    // Persists (or clears, when selection is null) one language's choice; returns its refreshed survey.
+    setSelection(
+      language: NotebookLanguage,
+      selection: RuntimeSelection | null
+    ): Promise<RuntimeSurvey>
+    // Opens the native file picker to choose an interpreter; resolves null on cancel.
+    pickInterpreter(): Promise<string | null>
+    // v4: every detected interpreter per language (Settings cards).
+    listEnvironments(): Promise<{ python: DiscoveredInterpreter[]; r: DiscoveredInterpreter[] }>
+    // v4: the persisted per-language enablement, so cards reflect the saved state on load.
+    getEnablement(language: NotebookLanguage): Promise<RuntimeEnablement>
+    // WS11: live-session usage of a runtime (running/idle/dormant), for the disable-impact warning.
+    describeUsage(language: NotebookLanguage, envId: string): Promise<RuntimeUsage>
+    // v4: set one env's enabled override; rejects (throws) if it would disable the last enabled env
+    // for the language. Returns the refreshed per-language enablement.
+    setEnvironmentEnabled(
+      language: NotebookLanguage,
+      envId: string,
+      enabled: boolean,
+      force?: boolean
+    ): Promise<RuntimeEnablement>
+    // v4: set one env's high-risk package-install authorization. Returns the refreshed enablement.
+    setInstallAuthorized(
+      language: NotebookLanguage,
+      envId: string,
+      authorized: boolean
+    ): Promise<RuntimeEnablement>
+    // v4: add/remove a manually-picked interpreter path in the discovery catalog; returns the list.
+    registerInterpreter(language: NotebookLanguage, path: string): Promise<string[]>
+    unregisterInterpreter(language: NotebookLanguage, path: string): Promise<string[]>
   }
   storage: {
     getInfo(): Promise<StorageInfo>

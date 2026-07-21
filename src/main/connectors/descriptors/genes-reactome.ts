@@ -161,7 +161,7 @@ export const GENES_REACTOME_TOOLS: ToolDescriptor[] = [
     returns:
       'compact {tool, reactome_version, id_type, species, resource, include_disease, n_input, genes:{identifier:{found, n_lowlevel_pathways, pathways:[{stId,name,species}]}}}; full replaces each pathways[] with full stats {stId,name,species,low_level,in_disease,entities:{total,found,ratio,p_value,fdr},reactions:{total,found,ratio}} and adds batch_summary {n_input, n_found, n_not_found, identifiers_not_found, distinct_lowlevel_pathways, batch_pathways_found}.',
     example:
-      'result = host.mcp("genes", "map_reactome_pathways", {"identifiers": ["TP53", "EGFR", "BRCA1"], "id_type": "symbol"})',
+      'const result = await host.mcp("genes", "map_reactome_pathways", {"identifiers": ["TP53", "EGFR", "BRCA1"], "id_type": "symbol"})',
     run: async (_ctx, a) => {
       const rawIds = a.identifiers
       if (!Array.isArray(rawIds)) throw new Error('identifiers must be an array of strings')

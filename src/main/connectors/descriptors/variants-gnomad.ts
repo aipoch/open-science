@@ -473,7 +473,7 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ found: bool, variant_id: str, dataset: str, variant: null | { variant_id, dataset, reference_genome, chrom, pos, ref, alt, rsids: [str], exome: { ac, an, af, homozygote_count, hemizygote_count, filters }|null, genome: {...}|null } }`. `exome`/`genome` are null where the dataset has no such call set (e.g. r3 is genome-only).',
     example:
-      'result = host.mcp("variants", "get_variant", {"variant_id": "19-44908822-C-T", "dataset": "gnomad_r4"})',
+      'const result = await host.mcp("variants", "get_variant", {"variant_id": "19-44908822-C-T", "dataset": "gnomad_r4"})',
     run: async (ctx, a) => {
       const variantId = String(a.variant_id)
       const dataset = checkDataset(String(a.dataset ?? DEFAULT_DATASET), DATASETS)
@@ -504,7 +504,7 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ query: str, dataset: str, n_matches: int, variant_ids: [str] }` — `variant_ids` sorted. Empty list when nothing matches.',
     example:
-      'result = host.mcp("variants", "search_variants", {"query": "rs7412", "dataset": "gnomad_r4"})',
+      'const result = await host.mcp("variants", "search_variants", {"query": "rs7412", "dataset": "gnomad_r4"})',
     run: async (ctx, a) => {
       const query = String(a.query)
       const dataset = checkDataset(String(a.dataset ?? DEFAULT_DATASET), DATASETS)
@@ -529,7 +529,7 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ gene_id: str|null, symbol: str, chrom: str, start: int, stop: int, dataset: str, n_variants: int, variants: [ { variant_id, pos, ref, alt, rsids: [str], exome: { ac, an, af }|null, genome: {...}|null } ] }`, rows sorted by (pos, variant_id). Unknown gene returns `gene_id: null`, an echoed `gene_query`, and an empty `variants` list.',
     example:
-      'result = host.mcp("variants", "gene_variants", {"gene_symbol": "APOE", "dataset": "gnomad_r4"})',
+      'const result = await host.mcp("variants", "gene_variants", {"gene_symbol": "APOE", "dataset": "gnomad_r4"})',
     run: async (ctx, a) => {
       const { symbol, geneId } = geneArgs(a)
       const dataset = checkDataset(String(a.dataset ?? DEFAULT_DATASET), DATASETS)
@@ -573,7 +573,8 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ found: bool, gene_id: str|null, symbol: str, canonical_transcript_id: str, chrom: str, start: int, stop: int, strand: str, constraint: { exp_lof, obs_lof, oe_lof, oe_lof_lower, oe_lof_upper, exp_mis, obs_mis, oe_mis, oe_mis_lower, oe_mis_upper, exp_syn, obs_syn, oe_syn, oe_syn_lower, oe_syn_upper, pli, lof_z, mis_z, syn_z }|null }`. Unknown gene returns `found: false`, an echoed `gene_query`, and `constraint: null`.',
-    example: 'result = host.mcp("variants", "gene_constraint", {"gene_symbol": "TP53"})',
+    example:
+      'const result = await host.mcp("variants", "gene_constraint", {"gene_symbol": "TP53"})',
     run: async (ctx, a) => {
       const { symbol, geneId } = geneArgs(a)
       const data = gqlData(await postGql(ctx, GENE_CONSTRAINT_QUERY, { symbol, geneId }))
@@ -609,7 +610,7 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ chrom: str, start: int, stop: int, dataset: str, n_variants: int, variants: [...] }` with the same lean variant rows as `gene_variants`, sorted by (pos, variant_id).',
     example:
-      'result = host.mcp("variants", "region_variants", {"chrom": "1", "start": 55039475, "stop": 55064852, "dataset": "gnomad_r4"})',
+      'const result = await host.mcp("variants", "region_variants", {"chrom": "1", "start": 55039475, "stop": 55064852, "dataset": "gnomad_r4"})',
     run: async (ctx, a) => {
       const chrom = String(a.chrom)
       const start = clampInt(a.start, 0)
@@ -644,7 +645,7 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ source_variant_id: str, source_build: str, n_results: int, results: [ { source: { variant_id, reference_genome }, liftover: { variant_id, reference_genome }, datasets: [str] } ] }`, sorted by liftover variant_id. `n_results: 0` when the ID does not lift over in that direction.',
     example:
-      'result = host.mcp("variants", "liftover_variant", {"variant_id": "1-55516888-G-GA", "source_build": "GRCh37"})',
+      'const result = await host.mcp("variants", "liftover_variant", {"variant_id": "1-55516888-G-GA", "source_build": "GRCh37"})',
     run: async (ctx, a) => {
       const variantId = String(a.variant_id)
       const sourceBuild = String(a.source_build ?? 'GRCh37')
@@ -685,7 +686,8 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ gene_id: str|null, symbol: str, clinvar_release_date: str, n_variants: int, variants: [ { variant_id, clinvar_variation_id, clinical_significance, gold_stars, review_status, major_consequence, pos, transcript_id, in_gnomad } ] }`, sorted by (pos, variant_id). Unknown gene returns `gene_id: null`, an echoed `gene_query`, and an empty `variants` list.',
-    example: 'result = host.mcp("variants", "clinvar_variants", {"gene_symbol": "BRCA1"})',
+    example:
+      'const result = await host.mcp("variants", "clinvar_variants", {"gene_symbol": "BRCA1"})',
     run: async (ctx, a) => {
       const { symbol, geneId } = geneArgs(a)
       const data = gqlData(await postGql(ctx, CLINVAR_VARIANTS_QUERY, { symbol, geneId }))
@@ -727,7 +729,7 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ gene_id: str|null, symbol: str, dataset: str, n_variants: int, variants: [...] }`; rows carry SV `variant_id`, `type`, position/length, allele counts/frequencies, `filters`, and per-gene `consequence`/`major_consequence`, sorted by variant_id. Unknown gene returns `gene_id: null`, an echoed `gene_query`, and an empty list.',
     example:
-      'result = host.mcp("variants", "structural_variants", {"gene_symbol": "TP53", "dataset": "gnomad_sv_r4"})',
+      'const result = await host.mcp("variants", "structural_variants", {"gene_symbol": "TP53", "dataset": "gnomad_sv_r4"})',
     run: async (ctx, a) => {
       const { symbol, geneId } = geneArgs(a)
       const dataset = checkDataset(String(a.dataset ?? DEFAULT_SV_DATASET), SV_DATASETS)
@@ -774,7 +776,7 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ found: bool, sv_id: str, dataset: str, structural_variant: null | { variant_id, chrom, pos, end, chrom2, pos2, type, length, ac, an, af, homozygote_count, hemizygote_count, filters, qual, consequences: [ { consequence, genes: [str] } ], algorithms: [str], evidence: [str], dataset } }`. Null when not found.',
     example:
-      'result = host.mcp("variants", "get_structural_variant", {"sv_id": "DEL_CHR17_A5250EA9", "dataset": "gnomad_sv_r4"})',
+      'const result = await host.mcp("variants", "get_structural_variant", {"sv_id": "DEL_CHR17_A5250EA9", "dataset": "gnomad_sv_r4"})',
     run: async (ctx, a) => {
       const svId = String(a.sv_id)
       const dataset = checkDataset(String(a.dataset ?? DEFAULT_SV_DATASET), SV_DATASETS)
@@ -804,7 +806,7 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ gene_id+symbol | region: "M:start-stop", dataset: str, n_variants: int, variants: [ { variant_id, pos, ac_het, ac_hom, an, max_heteroplasmy, filters } ] }`, sorted by (pos, variant_id). Unknown gene returns `gene_id: null`, an echoed `gene_query`, and an empty list.',
     example:
-      'result = host.mcp("variants", "mitochondrial_variants", {"gene_symbol": "MT-TL1", "dataset": "gnomad_r4"})',
+      'const result = await host.mcp("variants", "mitochondrial_variants", {"gene_symbol": "MT-TL1", "dataset": "gnomad_r4"})',
     run: async (ctx, a) => {
       const dataset = checkDataset(String(a.dataset ?? DEFAULT_DATASET), DATASETS)
       const hasStart = a.region_start != null

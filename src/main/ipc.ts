@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-import { ipcMain } from 'electron'
+import { app, ipcMain } from 'electron'
 
 import { createDefaultNotebookRuntimeService, registerAcpIpcHandlers } from './acp/ipc'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
@@ -21,11 +21,24 @@ import { BackendShutdownCoordinator, UPDATE_SHUTDOWN_BUDGET_MS } from './lifecyc
 import { registerLogsIpcHandlers } from './logs-ipc'
 import { registerWindowIpcHandlers } from './window-ipc'
 import { createLogger } from './logger'
+import {
+  broadcastNotebookEnvProgress,
+  registerNotebookEnvIpcHandlers,
+  serializeProvisioner
+} from './notebook/env-ipc'
 import { registerManagedPreviewIpcHandlers } from './managed-preview-ipc'
 import { registerManagedPreviewProtocol } from './managed-preview-protocol'
 import { ManagedPreviewResources } from './managed-preview-resources'
 import { registerNotebookIpcHandlers } from './notebook/ipc'
+import { registerRuntimeIpcHandlers } from './notebook/runtime-ipc'
+import { getRuntimeRoot } from './notebook/repository'
 import { NotebookLocalRpcServer } from './notebook/local-rpc-server'
+import { effectiveMirrorAsync } from './notebook/mirror-probe'
+import { createProductionProvisioner, type RuntimeProvisioner } from './notebook/provisioner'
+import { runtimeRoot } from './notebook/runtime-paths'
+import type { NotebookEnvironmentManager } from './notebook/runtime-service'
+import type { NotebookLanguage } from '../shared/notebook'
+import { prepareExternalPythonRuntime } from './notebook/venv-overlay'
 import {
   createDefaultPreviewStateRepository,
   createDefaultProjectRepository,
@@ -109,7 +122,9 @@ const refreshConnectorSkillDocs = async (
   }
 }
 
-// Registers every main-process IPC surface used by the renderer.
+// Registers every main-process IPC surface used by the renderer. Async because the notebook-env gate
+// needs the configured package mirror, read from disk; callers await this before creating the main
+// window so every IPC channel (incl. notebook-env) is registered before the renderer can call it.
 const registerIpcHandlers = async ({
   mainEntryPath
 }: IpcRegistrationOptions): Promise<{
@@ -259,6 +274,20 @@ const registerIpcHandlers = async ({
   // server's (lazily-started) connection for host.mcp() env injection — wire the second half here to
   // avoid a construction cycle.
   notebookService.setMcpRpcConnectionResolver(() => notebookRpcServer.ensureStarted())
+  // Same construction-order constraint as the RPC connection above: the runtime service is created
+  // before the settings service, so the package-mirror lookup is wired in after the fact.
+  notebookService.setPackageMirrorResolver(() => settingsService.getPackageMirror())
+  // v4 per-language enablement (which discovered runtimes the agent may bind). Same construction-order
+  // reason as above; unwired -> the provenance defaults keep the enable gate closed for BYO envs.
+  notebookService.setRuntimeEnablementResolver((language) =>
+    settingsService.getRuntimeEnablement(language)
+  )
+  // Fold the manually-added interpreter catalog into the service's discovery too, so an interpreter
+  // added via "Add interpreter…" (not on PATH) is bindable by the agent and survives a restart instead
+  // of resolving to 'missing'. Same construction-order reason as the resolvers above.
+  notebookService.setManualInterpretersResolver((language) =>
+    settingsService.getManualInterpreters(language)
+  )
 
   // The renderer's approval card responds here; the broker resolves the held connector call.
   ipcMain.handle(
@@ -333,8 +362,100 @@ const registerIpcHandlers = async ({
       )
   })
   registerNotebookIpcHandlers(notebookService)
+  // Runtime selection UI (Settings/Onboarding): survey managed+external per language, persist the
+  // choice, and pick an interpreter file. The runtime root MUST match the executor/service's
+  // (getRuntimeRoot(<dataRoot>)); read lazily so a data-root switch is reflected without re-register.
+  registerRuntimeIpcHandlers({
+    settingsService,
+    runtimeRoot: () => getRuntimeRoot(resolveDataRoot()),
+    // WS10: revoke a disabled runtime from any live session bound to it (mark binding unavailable).
+    onRuntimeDisabled: (language, envId, force) =>
+      notebookService.revokeRuntime(language, envId, { force }),
+    // WS11: live-session usage of a runtime, for the disable-impact warning.
+    describeRuntimeUsage: (language, envId) =>
+      notebookService.describeRuntimeUsage(language, envId),
+    prepareExternalPython: async (selection, root) => {
+      const configuredMirror = await settingsService.getPackageMirror()
+      const mirror = await effectiveMirrorAsync(configuredMirror, app.getLocale())
+      await prepareExternalPythonRuntime(selection, root, {
+        pypiIndex: mirror.pypiIndex,
+        caBundle: mirror.caBundle
+      })
+    }
+  })
   registerManagedPreviewIpcHandlers(previewResources)
   registerManagedPreviewProtocol(previewResources)
+
+  // Resolve the shared conda base under the app data root (relocatable, where the runtime install
+  // lives) and start the env readiness gate. The conda channel comes from the effective package mirror
+  // (configured override, else the region default from locale). Runtime packs use the official CDN base
+  // with OPEN_SCIENCE_ENV_CDN_BASE available for private/self-hosted deployments.
+  const provisioningRoot = runtimeRoot(resolveDataRoot())
+  // Build the provisioner separately from registering the IPC surface: if construction fails (e.g.
+  // micromamba missing in dev), `provisioner` stays undefined but the notebook-env handlers are STILL
+  // registered below (as unavailable stubs), so the renderer gets an actionable "runtime unavailable"
+  // status/error instead of a hard "No handler registered for notebook-env:provision" crash.
+  let provisioner: ReturnType<typeof createProductionProvisioner> | undefined
+  let serialized: RuntimeProvisioner | undefined
+  try {
+    const configuredMirror = await settingsService.getPackageMirror()
+    const mirror = await effectiveMirrorAsync(configuredMirror, app.getLocale())
+    provisioner = createProductionProvisioner({
+      root: provisioningRoot,
+      channel: mirror.condaChannel ?? process.env.OPEN_SCIENCE_CONDA_CHANNEL ?? 'conda-forge',
+      caBundle: mirror.caBundle,
+      micromamba: { resourcesPath: process.resourcesPath }
+    })
+    // One serialized wrapper shared by the startup gate and the notebook service's on-demand default
+    // provisioning, so a concurrent build of the same default env (UI R-tab + an agent R run) can't
+    // race the provisioner's shared in-flight flag; materialize is also idempotent as a backstop.
+    serialized = serializeProvisioner(provisioner)
+  } catch (error) {
+    // micromamba missing (e.g. dev without a staged binary): the notebook env stays unprovisioned and
+    // the UI surfaces "runtime unavailable" rather than crashing startup or dropping the IPC handlers.
+    console.error('Notebook environment provisioning unavailable:', error)
+  }
+  // Crash recovery (WS13): reconcile any runtime operation the previous process left in flight (orphan
+  // download staging, a half-built prefix, an interrupted install). Kicked off HERE — before the env
+  // IPC gate below — so recoverInterruptedOperations() publishes its barrier synchronously and every
+  // prefix-touching path (the startup gate's restore/upgrade/repair, UI provision/repair, named-env
+  // create, on-demand materialize, install) can await it and never race recovery's cleanup/delete.
+  // Fire-and-forget so a slow/failed recovery never blocks IPC registration; the barrier itself is what
+  // actually orders the prefix work.
+  void notebookService
+    .recoverInterruptedOperations()
+    .catch((error) => console.error('Notebook operation recovery failed:', error))
+  const waitForRecovery = (): Promise<void> => notebookService.ensureRecovered()
+  // Lets UI provision/repair refuse when recovery left the default env's prefix blocked (an
+  // unknown-liveness orphan may still be writing it) — throws with an actionable message.
+  const assertProvisionAllowed = (language: NotebookLanguage): void => {
+    if (notebookService.isDefaultEnvRecoveryBlocked(language)) {
+      throw new Error(
+        `The ${language} runtime is recovering from an interrupted operation whose process could not be ` +
+          'confirmed stopped. Restart the app to re-check and recover it before setting it up again.'
+      )
+    }
+  }
+
+  // Always register the handlers (serialized is undefined when the provisioner could not be built). The
+  // recovery barrier is threaded in so the startup gate and UI provision/repair await recovery first.
+  registerNotebookEnvIpcHandlers(
+    serialized,
+    provisioningRoot,
+    waitForRecovery,
+    assertProvisionAllowed
+  )
+  if (provisioner && serialized) {
+    // Back the notebook service's manage_environments tool with the same provisioner that owns the env
+    // gate (it is a DefaultRuntimeProvisioner, which implements createNamedEnvironment/listEnvironments/
+    // removeEnvironment). Wired after construction like the mcp/mirror resolvers above.
+    notebookService.setEnvironmentManager(provisioner as unknown as NotebookEnvironmentManager)
+    // On first agent use of a not-yet-built default env, build it from the offline bundle (via the
+    // shared serialized provisioner) instead of erroring — keeps R lazy but avoids the agent creating
+    // a redundant named env.
+    notebookService.setDefaultEnvProvisioner(serialized, broadcastNotebookEnvProgress)
+  }
+
   // Registered after the acp/notebook handlers exist: migration needs to interrupt both runtimes.
   registerStorageIpcHandlers({
     runtime,

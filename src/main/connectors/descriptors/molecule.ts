@@ -107,7 +107,7 @@ export const MOLECULE_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "valid": bool, "molfile": str, "smiles": str, "formula": str, "molecular_weight": float, "heavy_atom_count": int, "filename_suggestion": str }` on success. On an unparseable structure: `{ "valid": false, "error": str }`. `molfile` is the canonical MDL molblock; `smiles` is the canonical SMILES; `molecular_weight` is the average (relative) weight; `heavy_atom_count` excludes implicit hydrogens.',
     example:
-      'result = host.mcp("molecule", "render_molecule", {"smiles": "CC(=O)Oc1ccccc1C(=O)O", "filename": "aspirin"})',
+      'const result = await host.mcp("molecule", "render_molecule", {"smiles": "CC(=O)Oc1ccccc1C(=O)O", "filename": "aspirin"})',
     run: async (_ctx: ToolContext, args: Record<string, unknown>): Promise<unknown> =>
       renderMoleculeStructure(args)
   },
@@ -120,7 +120,7 @@ export const MOLECULE_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "valid": bool, "artifact_id": str, "filename": str, "smiles": str, "formula": str, "molecular_weight": float, "heavy_atom_count": int }` on success. On an unparseable structure: `{ "valid": false, "error": str }`. The saved .mol artifact opens automatically in the preview panel.',
     example:
-      'result = host.mcp("molecule", "preview_molecule", {"smiles": "CC(=O)Oc1ccccc1C(=O)O", "filename": "aspirin"})',
+      'const result = await host.mcp("molecule", "preview_molecule", {"smiles": "CC(=O)Oc1ccccc1C(=O)O", "filename": "aspirin"})',
     // The real write + preview is performed by the app runtime via ConnectorService.localToolHandlers;
     // this run() only fires if the tool is reached outside the app (e.g. an isolated engine test).
     run: async (): Promise<unknown> => {

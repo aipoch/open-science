@@ -79,13 +79,16 @@ jobs:
           # comes from the schema's binaryTargets, pruned per-arch in the build job. This avoids the
           # scarce Intel macos-13 runner. Windows' engine is query_engine-windows.dll.node (no `lib`
           # prefix, .dll.node not .so/.dylib). engine_keep = substring of the engine file to keep.
+          # subdir/bin_os/bin_arch drive the notebook runtime staging step: `subdir` is the conda
+          # platform whose micromamba + offline bundle to fetch, and bin_os/bin_arch are the
+          # resources/bin/<os>/<arch> path electron-builder.yml reads the micromamba binary from.
           mac='[
-            {"name":"macos-arm64","os":"macos-14","platform":"mac","eb_args":"--mac --arm64","engine_keep":"darwin-arm64"},
-            {"name":"macos-x64","os":"macos-14","platform":"mac","eb_args":"--mac --x64","engine_keep":"darwin.dylib"}
+            {"name":"macos-arm64","os":"macos-14","platform":"mac","eb_args":"--mac --arm64","engine_keep":"darwin-arm64","subdir":"osx-arm64","bin_os":"mac","bin_arch":"arm64"},
+            {"name":"macos-x64","os":"macos-14","platform":"mac","eb_args":"--mac --x64","engine_keep":"darwin.dylib","subdir":"osx-64","bin_os":"mac","bin_arch":"x64"}
           ]'
           rest='[
-            {"name":"linux-x64","os":"ubuntu-latest","platform":"linux","eb_args":"--linux","engine_keep":".so.node"},
-            {"name":"windows-x64","os":"windows-latest","platform":"win","eb_args":"--win --x64","engine_keep":"windows.dll"}
+            {"name":"linux-x64","os":"ubuntu-latest","platform":"linux","eb_args":"--linux","engine_keep":".so.node","subdir":"linux-64","bin_os":"linux","bin_arch":"x64"},
+            {"name":"windows-x64","os":"windows-latest","platform":"win","eb_args":"--win --x64","engine_keep":"windows.dll","subdir":"win-64","bin_os":"win","bin_arch":"x64"}
           ]'
           if [ "${{ inputs.mac_only }}" = "true" ]; then
             include=$(jq -c '.' <<<"$mac")
@@ -120,6 +123,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Installers do not carry a managed-runtime bundle. Stable/nightly builds therefore fail closed
+      # unless the exact immutable manifest required by this app version and platform is already live
+      # on the official CDN. The notarization dry-run skips this release-readiness gate.
+      - name: Verify managed runtime bundle is published
+        if: ${{ !inputs.skip_verify }}
+        env:
+          OPEN_SCIENCE_ENV_CDN_BASE: https://statics.aipoch.com/open-science
+        run: node scripts/verify-runtime-bundle.mjs "${{ matrix.subdir }}"
+
       # The schema's binaryTargets generates Prisma engines for several platforms; keep only the one
       # this build ships so each installer stays lean. Fails loudly if the expected engine is missing.
       # The glob is `*query_engine-*` (not `libquery_engine-*`) so it also matches Windows' engine,
@@ -138,6 +150,27 @@ jobs:
           done
           echo "remaining engines:"; ls -1 node_modules/.prisma/client/*query_engine-* 2>/dev/null || true
           [ "$found" = 1 ] || { echo "::error::no Prisma engine matching '$keep' was generated"; exit 1; }
+
+      # Stage the notebook runtime resources electron-builder.yml ships as extraResources, BEFORE the
+      # package+sign step so the mach-O micromamba is signed/notarized along with the app: the
+      # micromamba binary -> resources/bin/<os>/<arch>/ (REQUIRED — electron-builder's extraResources
+      # `from` would fail without it; fetched from the public micro.mamba.pm).
+      #
+      # NOTE: the installer does not bake in the runtime packs. Default envs are fetched on demand
+      # from the immutable runtime bundle published by stage-runtime-bundle.yml; a developer can
+      # still provide OPEN_SCIENCE_ENV_BUNDLE_DIR for a dropped-in local pack.
+      - name: Stage notebook runtime resources
+        shell: bash
+        run: |
+          name=micromamba
+          [ "${{ matrix.subdir }}" = "win-64" ] && name=micromamba.exe
+          # Pass the pinned version explicitly so the intent is visible in CI. Read it from the single
+          # source of truth (scripts/micromamba-versions.json) to avoid drifting from the digests the
+          # script verifies against.
+          export MICROMAMBA_VERSION=$(node -p "require('./scripts/micromamba-versions.json').version")
+          echo "using pinned micromamba $MICROMAMBA_VERSION"
+          node scripts/fetch-micromamba.mjs "${{ matrix.subdir }}" \
+            "resources/bin/${{ matrix.bin_os }}/${{ matrix.bin_arch }}/$name"
 
       # Build the renderer + main (incl. typecheck), then package with electron-builder.
       #

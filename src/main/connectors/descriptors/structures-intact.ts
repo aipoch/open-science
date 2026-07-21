@@ -386,7 +386,7 @@ export const STRUCTURES_INTACT_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ query, min_mi_score, max_mi_score, total_elements, n_records, records_truncated, n_records_returned, records: [{ interaction_ac, binary_interaction_id, ac_a, ac_b, id_a, id_b, id_a_database, id_b_database, molecule_a, molecule_b, species_a, species_b, taxid_a, taxid_b, interaction_type, interaction_type_mi, detection_method, detection_method_mi, experimental_role_a, experimental_role_b, host_organism, expansion_method, mi_score, negative, pubmed_id, first_author, source_database }] }`. `n_records` is the true count-verified total; `records` is capped at max_records_returned (records_truncated=true when the sweep was larger), sorted by descending mi_score. `records` is `[]` when nothing matches. Throws when the sweep count fails to verify.',
     example:
-      'result = host.mcp("structures", "intact_fetch_interactions", {"query": "P04637", "min_mi_score": 0.45, "interactor_species": ["Homo sapiens"], "max_records_returned": 200})',
+      'const result = await host.mcp("structures", "intact_fetch_interactions", {"query": "P04637", "min_mi_score": 0.45, "interactor_species": ["Homo sapiens"], "max_records_returned": 200})',
     run: async (ctx, a): Promise<Record<string, unknown>> => {
       const query = String(a.query)
       const minMi = num(a.min_mi_score, 0)
@@ -421,7 +421,8 @@ export const STRUCTURES_INTACT_TOOLS: ToolDescriptor[] = [
     required: ['query'],
     returns:
       '`{ query, n_matches, interactors: [{ interactor_ac, preferred_identifier, name, species, taxid, interactor_type, interaction_count }] }` — all matches, sorted by interactor_ac. `interactors` is `[]` and `n_matches` is 0 when nothing resolves.',
-    example: 'result = host.mcp("structures", "intact_get_interactor", {"query": "P04637"})',
+    example:
+      'const result = await host.mcp("structures", "intact_get_interactor", {"query": "P04637"})',
     run: async (ctx, a): Promise<Record<string, unknown>> => {
       const query = String(a.query)
       const matches = (await resolveInteractors(ctx, query)).sort((x, y) =>
@@ -447,7 +448,7 @@ export const STRUCTURES_INTACT_TOOLS: ToolDescriptor[] = [
     returns:
       "`{ interaction_ac, short_label, type: {name, mi}, detection_method: {name, mi}, host_organism, negative, publication: {pubmed_id, title, journal, publication_date, authors}, xrefs: [{database, database_mi, identifier, qualifier}], annotations: [{topic, topic_mi, description}], parameters, confidences, participants?: [{participant_ac, short_label, identifier, identifier_database, description, type, species, taxid, biological_role, experimental_role, detection_methods}], n_participants? }`. Unknown AC -> `{ interaction_ac, error: 'not_found' }`.",
     example:
-      'result = host.mcp("structures", "intact_get_interaction_details", {"interaction_ac": "EBI-15635490", "include_participants": True})',
+      'const result = await host.mcp("structures", "intact_get_interaction_details", {"interaction_ac": "EBI-15635490", "include_participants": True})',
     run: async (ctx, a): Promise<Record<string, unknown>> => {
       const interactionAc = String(a.interaction_ac)
       const includeParticipants = a.include_participants !== false
@@ -557,7 +558,7 @@ export const STRUCTURES_INTACT_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ seeds, min_mi_score, n_nodes, nodes: [id...], n_edges, edges: [slim_record + {origin}], seed_sweeps: {seed: {total_elements, n_records}}, expansion: {max_interactors_expanded, n_partners, expanded: [id...], not_expanded: [id...], complete} }`. `nodes` are sorted identifiers; `edges` are sorted by descending mi_score; `expansion.complete=false` means partner-partner edges beyond the cap may exist.',
     example:
-      'result = host.mcp("structures", "intact_build_network", {"seed_accessions": ["P04637", "Q00987"], "min_mi_score": 0.45, "max_interactors_expanded": 25})',
+      'const result = await host.mcp("structures", "intact_build_network", {"seed_accessions": ["P04637", "Q00987"], "min_mi_score": 0.45, "max_interactors_expanded": 25})',
     run: async (ctx, a): Promise<Record<string, unknown>> => {
       const seeds = Array.from(new Set(speciesList(a.seed_accessions))) /* dedupe, keep order */
       const minMi = num(a.min_mi_score, 0.45)

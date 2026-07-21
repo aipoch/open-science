@@ -67,6 +67,29 @@ export const findPythonCommand = async (
   return undefined
 }
 
+// Probes a SPECIFIC interpreter invocation (`<command> <baseArgs...> --version`) and returns its
+// Python-3 version string, or undefined if it is not a runnable Python 3. Used to VALIDATE a
+// user-selected interpreter path before reporting it runnable — existence on disk is not enough
+// (it could be python2, or not python at all).
+export const probeInterpreterVersion = async (
+  command: string,
+  baseArgs: string[] = [],
+  deps: { platform?: NodeJS.Platform } = {}
+): Promise<string | undefined> => {
+  const platform = deps.platform ?? process.platform
+  try {
+    const { stdout, stderr } = await execFileAsync(command, [...baseArgs, '--version'], {
+      timeout: 10_000,
+      shell: platform === 'win32',
+      windowsHide: true
+    })
+    const output = `${stdout}\n${stderr}`
+    return isPython3Version(output) ? output.trim().replace(/^Python\s+/i, '') : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export { isPython3Version }
 
 // Resolves the first usable interpreter. Falls back to the platform's preferred command when none

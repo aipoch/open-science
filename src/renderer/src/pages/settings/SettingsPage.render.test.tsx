@@ -76,7 +76,9 @@ const installApi = (): void => {
         ],
         customServers: [],
         ncbi: { hasApiKey: false }
-      })
+      }),
+      getPackageMirror: vi.fn().mockResolvedValue({}),
+      setPackageMirror: vi.fn().mockResolvedValue({})
     },
     acp: {
       getState: vi.fn().mockResolvedValue({ promptInFlightSessionIds: [] }),
@@ -146,7 +148,8 @@ describe('SettingsPage layout', () => {
     expect(dialog?.getAttribute('data-slot')).toBe('settings-surface')
     expect(dialog?.className).toContain('overscroll-contain')
 
-    // Left navigation grouped as Capabilities (Skills) and Workspace (Model, Storage, General).
+    // Left navigation grouped as Capabilities (Skills, Connectors, Network) and Workspace (Model,
+    // Runtimes, Storage, General).
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
     expect(nav?.className).toContain('bg-background')
@@ -154,12 +157,14 @@ describe('SettingsPage layout', () => {
     expect(nav?.textContent).toContain('Capabilities')
     expect(nav?.textContent).toContain('Workspace')
     const navItems = nav?.querySelectorAll('li') ?? []
-    expect(navItems).toHaveLength(5)
+    expect(navItems).toHaveLength(7)
     expect(navItems[0]?.textContent).toContain('Skills')
     expect(navItems[1]?.textContent).toContain('Connectors')
-    expect(navItems[2]?.textContent).toContain('Model')
-    expect(navItems[3]?.textContent).toContain('Storage')
-    expect(navItems[4]?.textContent).toContain('General')
+    expect(navItems[2]?.textContent).toContain('Network')
+    expect(navItems[3]?.textContent).toContain('Model')
+    expect(navItems[4]?.textContent).toContain('Runtimes')
+    expect(navItems[5]?.textContent).toContain('Storage')
+    expect(navItems[6]?.textContent).toContain('General')
     // Model is the default active panel.
     expect(nav?.querySelector('[aria-current="page"]')?.textContent).toContain('Model')
 
@@ -290,6 +295,59 @@ describe('SettingsPage layout', () => {
     ).toHaveBeenCalled()
     expect(document.body.textContent).toContain('Chemistry')
     expect(document.body.textContent).toContain('Contact email')
+  })
+
+  it('switches to the Network panel, configures a mirror, and saves it', async () => {
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+
+    const networkTab = Array.from(
+      document.body.querySelectorAll('nav[aria-label="Settings"] button')
+    ).find((button) => /network/i.test(button.textContent ?? '')) as HTMLButtonElement | undefined
+    expect(networkTab).not.toBeUndefined()
+
+    await act(async () => {
+      networkTab?.click()
+    })
+
+    // Unconfigured by default (the mocked getSettings snapshot has no packageMirror).
+    expect(document.body.textContent).toContain('Not configured')
+
+    const configureButton = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Configure')
+    await act(async () => {
+      configureButton?.click()
+    })
+
+    const condaInput = document.body.querySelector<HTMLInputElement>('#mirror-conda-channel')
+    expect(condaInput).not.toBeNull()
+    await act(async () => {
+      condaInput?.dispatchEvent(new Event('focus'))
+      Object.defineProperty(condaInput, 'value', {
+        value: 'https://mirror.example/conda',
+        writable: true
+      })
+      condaInput?.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    const saveButton = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save'
+    )
+    await act(async () => {
+      saveButton?.click()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(
+      (window as unknown as { api: { settings: { setPackageMirror: ReturnType<typeof vi.fn> } } })
+        .api.settings.setPackageMirror
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({ condaChannel: 'https://mirror.example/conda' })
+    )
   })
 
   it('shows a breadcrumb in the header when a skill detail is open, and returns on breadcrumb click', async () => {

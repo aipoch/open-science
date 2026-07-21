@@ -13,6 +13,9 @@ import {
   resolveDataRoot,
   samePath
 } from '../storage-root'
+import { resolveMicromamba } from '../notebook/micromamba'
+import { captureMicromamba } from '../notebook/provisioner-runtime'
+import { exportRuntimeLocks } from '../notebook/runtime-relocation'
 import { detectActiveSessions } from './detect-active'
 import { isDataRootMissing } from './path-presence'
 import { beginMigration, clearMigrationPending, endMigrationCopy } from './migration-state'
@@ -27,6 +30,7 @@ import {
 } from './migration-service'
 import { availableBytes, computeStorageUsage } from './usage'
 import { broadcastToRenderers } from '../renderer-broadcast'
+import { RELOCATABLE_DATA_DIRS } from './data-directories'
 
 type SessionSource = { projectName: string; sessionId: string }
 
@@ -104,9 +108,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
 
       const configRoot = resolveConfigRoot()
       const legacyInPlace = !storedSettings.dataRoot && samePath(dataRoot, configRoot)
-      const hasUserData = ['artifacts', 'notebooks', 'uploads'].some((dir) =>
-        existsSync(join(configRoot, dir))
-      )
+      const hasUserData = RELOCATABLE_DATA_DIRS.some((dir) => existsSync(join(configRoot, dir)))
       legacyDataMovePrompt =
         legacyInPlace && hasUserData && storedSettings.legacyDataMovePromptDismissedAt === undefined
     } catch (err) {
@@ -187,7 +189,14 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
           {
             currentDataRoot: resolveDataRoot(),
             runtime: deps.runtime,
-            notebook: deps.notebook
+            notebook: deps.notebook,
+            // Preserve the runtime across the move by exporting each env to an offline lock at the
+            // new root; the copied pkgs cache lets the provisioner rebuild them offline on relaunch.
+            exportRuntimeLocks: (fromDataRoot, toDataRoot) =>
+              exportRuntimeLocks(fromDataRoot, toDataRoot, {
+                mm: resolveMicromamba({ resourcesPath: process.resourcesPath }),
+                capture: captureMicromamba
+              })
           },
           request.parent,
           {

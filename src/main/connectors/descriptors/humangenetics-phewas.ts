@@ -286,7 +286,7 @@ export const HUMANGENETICS_PHEWAS_TOOLS: ToolDescriptor[] = [
       'List the public PheWeb PheWAS portals this server can query, with genome build and capability registry. Returns {instances:{key:{label, base_url, genome_build, capabilities, notes}}}. capabilities name the endpoints each instance exposes: variant (phewas_variant), gene (phewas_finngen_gene), phenotypes (phewas_list_phenotypes), autocomplete (phewas_search_phenotypes). NOTE the build split: FinnGen R12 variant IDs are GRCh38; BioBank Japan (pheweb.jp) is GRCh37/hg19 — liftover coordinates before cross-querying.',
     input: { type: 'object', properties: {} },
     returns: '{instances:{key:{label, base_url, genome_build, capabilities, notes}}}.',
-    example: 'result = host.mcp("human_genetics", "phewas_instances", {})',
+    example: 'const result = await host.mcp("human_genetics", "phewas_instances", {})',
     run: async () => ({ instances: PHEWEB_INSTANCES })
   },
   {
@@ -307,7 +307,7 @@ export const HUMANGENETICS_PHEWAS_TOOLS: ToolDescriptor[] = [
     returns:
       '{instance, genome_build, variant (normalized chrom-pos-ref-alt), variant_meta{chrom, pos, ref, alt, rsids[], nearest_genes[], gnomad|null}, total, returned, truncated, phenotypes[]}.',
     example:
-      'result = host.mcp("human_genetics", "phewas_variant", {"instance": "finngen", "variant": "19-44908822-C-T", "max_phenos": 50})',
+      'const result = await host.mcp("human_genetics", "phewas_variant", {"instance": "finngen", "variant": "19-44908822-C-T", "max_phenos": 50})',
     run: async (ctx, a) => {
       const key = String(a.instance)
       const inst = requireInstance(key)
@@ -383,7 +383,7 @@ export const HUMANGENETICS_PHEWAS_TOOLS: ToolDescriptor[] = [
     returns:
       '{instance:"finngen", genome_build:"GRCh38", gene_symbol, total, returned, truncated, phenotypes[<phewas_variant row> + variant:{chrom, pos, ref, alt, varid, rsids[]}]}.',
     example:
-      'result = host.mcp("human_genetics", "phewas_finngen_gene", {"gene_symbol": "PCSK9", "max_phenos": 50})',
+      'const result = await host.mcp("human_genetics", "phewas_finngen_gene", {"gene_symbol": "PCSK9", "max_phenos": 50})',
     run: async (ctx, a) => {
       const inst = PHEWEB_INSTANCES.finngen
       const sym = String(a.gene_symbol).trim()
@@ -436,7 +436,7 @@ export const HUMANGENETICS_PHEWAS_TOOLS: ToolDescriptor[] = [
     returns:
       '{instance, total, returned, truncated, phenotypes[{phenocode, phenostring, category, num_cases, num_controls, num_gw_significant}]} sorted by phenocode.',
     example:
-      'result = host.mcp("human_genetics", "phewas_list_phenotypes", {"instance": "finngen", "max_records": 3000})',
+      'const result = await host.mcp("human_genetics", "phewas_list_phenotypes", {"instance": "finngen", "max_records": 3000})',
     run: async (ctx, a) => {
       const key = a.instance != null ? String(a.instance) : 'finngen'
       const inst = requireInstance(key)
@@ -479,7 +479,7 @@ export const HUMANGENETICS_PHEWAS_TOOLS: ToolDescriptor[] = [
     required: ['query'],
     returns: '{instance, query, total, returned, truncated, matches[{display, phenocode, url}]}.',
     example:
-      'result = host.mcp("human_genetics", "phewas_search_phenotypes", {"query": "diabetes", "instance": "finngen"})',
+      'const result = await host.mcp("human_genetics", "phewas_search_phenotypes", {"query": "diabetes", "instance": "finngen"})',
     run: async (ctx, a) => {
       const key = a.instance != null ? String(a.instance) : 'finngen'
       const inst = requireInstance(key)

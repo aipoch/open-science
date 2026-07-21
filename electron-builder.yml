@@ -52,6 +52,8 @@ asarUnpack:
 # the client + generated code as plain files under Contents/Resources/node_modules; Node's normal
 # directory walk from app.asar finds them there. (@prisma/client v6 has zero runtime deps, so the
 # client + .prisma pair is self-contained.)
+# The micromamba binary is added per-platform below (mac/win/linux extraResources), not here, so
+# the two extraResources lists don't collide.
 extraResources:
   - from: node_modules/.prisma
     to: node_modules/.prisma
@@ -73,6 +75,11 @@ win:
   target:
     - nsis
     - zip
+  extraResources:
+    # Staged per-arch micromamba binary, copied to the resources root (Task 2's resolveMicromamba
+    # looks for it there via process.resourcesPath).
+    - from: resources/bin/win/${arch}/micromamba.exe
+      to: micromamba.exe
 nsis:
   artifactName: ${name}-${version}-win-${arch}-setup.${ext}
   shortcutName: ${productName}
@@ -94,6 +101,12 @@ mac:
     NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
     NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
   notarize: false
+  extraResources:
+    # Ship the ad-hoc-signed micromamba mach-O at Contents/Resources/micromamba, where
+    # resolveMicromamba() finds it via process.resourcesPath. Envs materialize in ~/.open-science
+    # (never in the signed .app), so only this one binary needs signing (spec §10).
+    - from: resources/bin/mac/${arch}/micromamba
+      to: micromamba
 dmg:
   artifactName: ${name}-${version}-mac-${arch}.${ext}
 linux:
@@ -104,6 +117,11 @@ linux:
     - deb
   maintainer: aipoch
   category: Utility
+  extraResources:
+    # Staged per-arch micromamba binary, copied to the resources root (Task 2's resolveMicromamba
+    # looks for it there via process.resourcesPath).
+    - from: resources/bin/linux/${arch}/micromamba
+      to: micromamba
 appImage:
   artifactName: ${name}-${version}-linux-${arch}.${ext}
 npmRebuild: false

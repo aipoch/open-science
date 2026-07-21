@@ -279,10 +279,18 @@ const startPendingSessionPrompt = (
       return
     }
 
+    const sessionCwd = createdSession.cwd ?? cwd
+    if (!sessionCwd) {
+      useSessionStore
+        .getState()
+        .failRun(pending.sessionId, 'Agent session did not return a workspace.')
+      return
+    }
+
     const bound = useSessionStore.getState().bindPendingSession({
       pendingSessionId: pending.sessionId,
       sessionId: runtimeSessionId,
-      cwd: createdSession.cwd ?? cwd ?? runtime.state.cwd,
+      cwd: sessionCwd,
       agentFrameworkId: createdSession.frameworkId
     })
 
@@ -358,7 +366,7 @@ const sendWorkspaceMessage = async (
     const sessionProjectName = projectName ?? currentSession?.projectId
 
     if (currentSession?.isPending) {
-      const retryCwd = targetCwd ?? currentSession.cwd ?? runtime.state.cwd
+      const retryCwd = targetCwd || currentSession.cwd || undefined
       const appended = useSessionStore.getState().appendUserMessage({
         sessionId: currentSession.id,
         content,
@@ -515,7 +523,7 @@ const sendWorkspaceMessage = async (
     content,
     attachments,
     parts,
-    cwd: targetCwd ?? runtime.state.cwd,
+    cwd: targetCwd,
     projectId,
     permissionProfile
   })
@@ -528,7 +536,7 @@ const sendWorkspaceMessage = async (
     pending,
     content,
     attachments,
-    targetCwd ?? runtime.state.cwd,
+    targetCwd,
     projectName,
     permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
     forcedSkillIds,
