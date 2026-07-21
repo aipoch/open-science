@@ -3,6 +3,7 @@
 // bridge the model to the contenteditable editor.
 
 import type { ArtifactReference } from '../../../../../shared/artifacts'
+import type { MessagePart } from '../../../../../shared/session-persistence'
 
 // One artifact/upload reference chip in the composer doc. Mirrors ArtifactReference plus the DOM
 // label; `source` distinguishes a user upload from a generated output for the runtime resolver.
@@ -73,6 +74,25 @@ export const docArtifactCount = (doc: ComposerDoc): number =>
 // Hydrate a plain-text draft into a single text node; empty text yields the empty doc.
 export const docFromText = (text: string): ComposerDoc =>
   text === '' ? emptyDoc : { nodes: [{ type: 'text', text }] }
+
+// Rebuild a draft doc from a sent user message's structured parts, restoring skill/artifact chips
+// so re-editing the message round-trips mentions instead of flattening them into plain text.
+export const docFromMessageParts = (parts: MessagePart[]): ComposerDoc => {
+  const nodes: ComposerNode[] = parts.map((part) => {
+    if (part.type === 'text') return { type: 'text', text: part.text }
+    if (part.type === 'skill') return { type: 'skill', id: part.id, name: part.name }
+    return {
+      type: 'artifact',
+      id: part.id,
+      name: part.name,
+      path: part.path,
+      source: part.source,
+      versionId: part.versionId
+    }
+  })
+
+  return nodes.length === 0 ? emptyDoc : { nodes }
+}
 
 // A doc is empty when it has no chips and no non-whitespace text.
 export const docIsEmpty = (doc: ComposerDoc): boolean =>

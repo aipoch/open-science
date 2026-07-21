@@ -30,7 +30,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { cn } from '@/lib/utils'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatMessage, ChatSession } from '@/stores/session-store'
 
 import { ComposerEditor } from './composer/ComposerEditor'
 import { docToSkillIds, type ComposerDoc } from './composer/composer-doc'
@@ -109,6 +109,9 @@ type ConversationPanelProps = {
   onRequestReview: () => void
   // True when "Request review" should be disabled: no completed turn, already reviewed, or currently reviewing.
   isRequestReviewDisabled: boolean
+  // Editing a sent user prompt reloads it into the composer draft; only allowed once the run settles.
+  canEditMessage: boolean
+  onEditMessage: (message: ChatMessage) => void
 }
 
 // Middle chat surface owns the visible conversation and local message composer UI.
@@ -142,9 +145,13 @@ const ConversationPanel = ({
   onClearPermissionGrants,
   onAutoReviewToggle,
   onRequestReview,
-  isRequestReviewDisabled
+  isRequestReviewDisabled,
+  canEditMessage,
+  onEditMessage
 }: ConversationPanelProps): React.JSX.Element => {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  // Lets the edit-message action move focus into the composer after the draft doc is applied.
+  const composerEditorContainerRef = useRef<HTMLDivElement | null>(null)
   // Local so the interrupted banner can show a spinner and block a double-resume until the request settles.
   const [isResuming, setIsResuming] = useState(false)
 
@@ -170,6 +177,15 @@ const ConversationPanel = ({
   const handleSubmit = (): void => {
     if (!canEditDraft) return
     onSendMessage(docToSkillIds(draftDoc))
+  }
+
+  // Reloads a sent user prompt into the composer draft, then moves focus into the editor so the
+  // adjusted prompt can be resent as a new turn without reaching for the mouse.
+  const handleEditMessage = (message: ChatMessage): void => {
+    onEditMessage(message)
+    window.requestAnimationFrame(() => {
+      composerEditorContainerRef.current?.querySelector<HTMLElement>('[role="textbox"]')?.focus()
+    })
   }
 
   // Converts the hidden file input selection into the shared staging callback.
@@ -222,7 +238,11 @@ const ConversationPanel = ({
           </button>
         </header>
 
-        <WorkspaceMessageScroller activeSession={activeSession} />
+        <WorkspaceMessageScroller
+          activeSession={activeSession}
+          canEditMessage={canEditMessage}
+          onEditMessage={handleEditMessage}
+        />
 
         <div className="relative shrink-0">
           <div
@@ -333,7 +353,7 @@ const ConversationPanel = ({
                         </div>
                       ) : null}
 
-                      <div className="relative min-w-0 flex-1">
+                      <div className="relative min-w-0 flex-1" ref={composerEditorContainerRef}>
                         {/* Draft editing waits for persistence hydration to avoid targeting the wrong session. */}
                         <ComposerEditor
                           doc={draftDoc}

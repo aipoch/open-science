@@ -138,7 +138,13 @@ const createUpload = (overrides: Partial<UploadedAttachment> = {}): UploadedAtta
 const renderScroller = async (session: ChatSession): Promise<string> => {
   const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
 
-  return renderToStaticMarkup(<WorkspaceMessageScroller activeSession={session} />)
+  return renderToStaticMarkup(
+    <WorkspaceMessageScroller
+      activeSession={session}
+      canEditMessage={false}
+      onEditMessage={vi.fn()}
+    />
+  )
 }
 
 describe('WorkspaceMessageScroller loading render', () => {

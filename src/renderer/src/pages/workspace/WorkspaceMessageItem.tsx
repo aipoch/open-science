@@ -3,8 +3,8 @@ import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { cn, formatByteSize } from '@/lib/utils'
 import type { ChatMessage, ChatSession } from '@/stores/session-store'
 import { Collapsible } from 'radix-ui'
-import { FileText, Image as ImageIcon } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { Check, Copy, FileText, Image as ImageIcon, Pencil } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { MessagePart } from '../../../../shared/session-persistence'
 import { getUploadedAttachmentName } from '../../../../shared/uploads'
@@ -30,6 +30,9 @@ type WorkspaceMessageItemProps = {
   onOpenSkillMention: (skillId: string, name: string) => void
   onPreviewMentionArtifact: (part: ArtifactMentionPart) => void
   artifacts?: MessageArtifact[]
+  // Edit reloads the prompt into the composer draft; only enabled once the session's run settles.
+  canEditMessage?: boolean
+  onEditMessage?: (message: ChatMessage) => void
 }
 
 const ARTIFACT_GALLERY_VISIBLE_COUNT = 5
@@ -40,6 +43,11 @@ const artifactGalleryClassName = 'grid max-w-full grid-cols-[repeat(auto-fill,12
 
 const userMessageBubbleClassName =
   'max-w-[90%] break-words rounded-2xl bg-bg-300 px-3.5 py-2 text-sm text-message-user-text md:max-w-[min(85%,56rem)] md:px-4 md:py-2.5 md:text-[15px]'
+// Hover actions (copy / edit) sit to the left of the user bubble, revealed on row hover or focus.
+const userMessageActionsClassName =
+  'flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100'
+const userMessageActionButtonClassName =
+  'flex size-6 items-center justify-center rounded-md text-text-300 transition-colors duration-200 ease-out hover:bg-bg-200 hover:text-text-100 disabled:cursor-not-allowed disabled:opacity-50'
 // Staged uploads render as gray file pills inside the sent bubble.
 const uploadedAttachmentButtonClassName =
   'inline-flex max-w-full items-center gap-1.5 rounded-md border border-border-200 bg-bg-200 px-2 py-0.5 text-left text-[13px] leading-5 text-text-000 transition-colors hover:bg-bg-000 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-200/60'
@@ -334,10 +342,31 @@ const WorkspaceMessageItem = ({
   onPreviewUploadAttachment,
   onOpenSkillMention,
   onPreviewMentionArtifact,
+  canEditMessage = false,
+  onEditMessage,
   artifacts = []
 }: WorkspaceMessageItemProps): React.JSX.Element => {
   const isUserMessage = message.role === 'user'
   const uploads = message.uploads ?? []
+  const [copied, setCopied] = useState(false)
+  const copyResetTimeoutRef = useRef<number | null>(null)
+
+  // Clear a pending copied-state reset so it never fires setState after unmount.
+  useEffect(
+    () => () => {
+      if (copyResetTimeoutRef.current !== null) window.clearTimeout(copyResetTimeoutRef.current)
+    },
+    []
+  )
+
+  // Copies the prompt text and briefly swaps the icon to confirm the clipboard write succeeded.
+  const handleCopyMessage = (): void => {
+    void navigator.clipboard.writeText(message.content).then(() => {
+      setCopied(true)
+      if (copyResetTimeoutRef.current !== null) window.clearTimeout(copyResetTimeoutRef.current)
+      copyResetTimeoutRef.current = window.setTimeout(() => setCopied(false), 2000)
+    })
+  }
 
   return (
     <MessageScrollerItem
@@ -349,7 +378,31 @@ const WorkspaceMessageItem = ({
       <div className="px-4 pb-1 pt-5 md:px-6">
         {/* User prompts stay compact; assistant responses remain a readable transcript surface. */}
         {isUserMessage ? (
-          <div className="flex justify-end">
+          <div className="group flex items-center justify-end gap-1">
+            {/* Copy/edit actions ride to the left of the user bubble, surfaced on hover or focus. */}
+            <div className={userMessageActionsClassName}>
+              <button
+                type="button"
+                className={userMessageActionButtonClassName}
+                aria-label={copied ? 'Copied' : 'Copy message'}
+                onClick={handleCopyMessage}
+              >
+                {copied ? (
+                  <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                ) : (
+                  <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                )}
+              </button>
+              <button
+                type="button"
+                className={userMessageActionButtonClassName}
+                aria-label="Edit message"
+                disabled={!canEditMessage}
+                onClick={() => onEditMessage?.(message)}
+              >
+                <Pencil className="size-3.5" strokeWidth={2} aria-hidden="true" />
+              </button>
+            </div>
             <div className={userMessageBubbleClassName}>
               <MessageUploadAttachmentList
                 attachments={uploads}

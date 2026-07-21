@@ -32,6 +32,9 @@ import type { GoToTranscriptIntent, ReviewWithChecks } from '../../../../shared/
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
+  // Gates the per-message edit action; the handler reloads a user prompt into the composer draft.
+  canEditMessage: boolean
+  onEditMessage: (message: ChatSession['messages'][number]) => void
 }
 
 type SessionScopedActivityGroupState = {
@@ -94,7 +97,9 @@ const openSessionReviewer = (sessionId: string, intent: GoToTranscriptIntent): v
 
 // Owns transcript scrolling and session-scoped expansion state for activity groups.
 const WorkspaceMessageScroller = ({
-  activeSession
+  activeSession,
+  canEditMessage,
+  onEditMessage
 }: WorkspaceMessageScrollerProps): React.JSX.Element => {
   const currentSessionId = activeSession?.id
   const getReviewForTurn = useReviewStore((state) => state.getReviewForTurn)
@@ -315,6 +320,8 @@ const WorkspaceMessageScroller = ({
                         onPreviewUploadAttachment={onPreviewUploadAttachment}
                         onOpenSkillMention={onOpenSkillMention}
                         onPreviewMentionArtifact={onPreviewMentionArtifact}
+                        canEditMessage={canEditMessage}
+                        onEditMessage={onEditMessage}
                         artifacts={artifacts}
                       />
                       {review ? (

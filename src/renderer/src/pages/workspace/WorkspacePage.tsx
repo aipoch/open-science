@@ -19,7 +19,7 @@ import {
   PROJECT_FILES_PREVIEW_ID,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatMessage, ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
 import { useReviewStore } from '@/stores/review-store'
 import {
@@ -31,6 +31,8 @@ import type { StageUploadFile, UploadedAttachment } from '../../../../shared/upl
 
 import { planComposerAttachmentIntake } from './composer-attachment-intake'
 import {
+  docFromMessageParts,
+  docFromText,
   docIsEmpty,
   docToArtifactRefs,
   docToText,
@@ -256,6 +258,14 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     !activeSession?.fixLoopActive &&
     // Auto-recovery drops the session to idle while it resets context and replays the transcript; block
     // sends in that window so a manual prompt can't race the recovery resend into the same session.
+    !activeSession?.compacting
+  // Re-editing a sent prompt is allowed under the same settled-run conditions as sending, so the
+  // resent prompt can never overlap an in-flight turn, permission wait, fix loop, or compaction.
+  const canEditMessage =
+    isSessionPersistenceReady &&
+    activeSession?.status !== 'running' &&
+    activeSession?.status !== 'waiting-permission' &&
+    !activeSession?.fixLoopActive &&
     !activeSession?.compacting
   const canChangePermissionProfile =
     isSessionPersistenceReady &&
@@ -571,6 +581,16 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     })
   }
 
+  // Reloads a sent user prompt into the composer draft, restoring structured mention chips when the
+  // message carries them. The current draft is replaced, matching the resend-as-new-turn semantics.
+  const editSentMessage = (message: ChatMessage): void => {
+    setDraftDoc(
+      message.parts && message.parts.length > 0
+        ? docFromMessageParts(message.parts)
+        : docFromText(message.content)
+    )
+  }
+
   // Sends the current draft only after hydration so restored selection cannot overwrite intent.
   // ConversationPanel owns preventDefault and passes the skills picked as inline chips.
   const sendCurrentMessage = (forcedSkillIds: string[]): void => {
@@ -831,6 +851,8 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
             onAutoReviewToggle={changeAutoReviewEnabled}
             onRequestReview={requestManualReview}
             isRequestReviewDisabled={isRequestReviewDisabled}
+            canEditMessage={canEditMessage}
+            onEditMessage={editSentMessage}
           />
 
           <ResizableHandle

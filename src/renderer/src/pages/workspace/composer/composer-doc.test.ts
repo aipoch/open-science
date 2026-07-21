@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyDocToDom,
   docArtifactCount,
+  docFromMessageParts,
   docFromText,
   docIsEmpty,
   docToArtifactRefs,
@@ -246,5 +247,60 @@ describe('applyDocToDom + domToDoc round-trip', () => {
     expect(chip?.getAttribute('data-mention-filename')).toBe('fig.png')
     expect(chip?.getAttribute('contenteditable')).toBe('false')
     expect(chip?.textContent).toBe('@fig.png')
+  })
+})
+
+describe('docFromMessageParts', () => {
+  it('restores text, skill, and artifact chips from a sent message parts list', () => {
+    const doc = docFromMessageParts([
+      { type: 'text', text: 'Run ' },
+      { type: 'skill', id: 'skill-forecast', name: 'forecast' },
+      { type: 'text', text: ' on ' },
+      {
+        type: 'artifact',
+        id: 'artifact-1',
+        name: 'clinical trial03.pdf',
+        path: '/p/clinical trial03.pdf',
+        source: 'artifact',
+        versionId: 'v2'
+      }
+    ])
+
+    expect(doc).toEqual({
+      nodes: [
+        { type: 'text', text: 'Run ' },
+        { type: 'skill', id: 'skill-forecast', name: 'forecast' },
+        { type: 'text', text: ' on ' },
+        {
+          type: 'artifact',
+          id: 'artifact-1',
+          name: 'clinical trial03.pdf',
+          path: '/p/clinical trial03.pdf',
+          source: 'artifact',
+          versionId: 'v2'
+        }
+      ]
+    })
+  })
+
+  it('reproduces the sent message text when rendered back to plain text', () => {
+    const doc = docFromMessageParts([
+      { type: 'text', text: 'Run ' },
+      { type: 'skill', id: 'skill-forecast', name: 'forecast' },
+      { type: 'text', text: ' on ' },
+      {
+        type: 'artifact',
+        id: 'artifact-1',
+        name: 'clinical trial03.pdf',
+        path: '/p/clinical trial03.pdf',
+        source: 'artifact'
+      }
+    ])
+
+    expect(docToText(doc)).toBe('Run /forecast on @clinical trial03.pdf')
+  })
+
+  it('returns the empty doc for an empty parts list', () => {
+    expect(docFromMessageParts([])).toEqual(emptyDoc)
   })
 })

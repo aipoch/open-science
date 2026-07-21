@@ -147,7 +147,13 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
 
     root = createRoot(container)
     await act(async () => {
-      root.render(<WorkspaceMessageScroller activeSession={session} />)
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={session}
+          canEditMessage={false}
+          onEditMessage={vi.fn()}
+        />
+      )
     })
 
     const card = container.querySelector<HTMLButtonElement>(
@@ -204,7 +210,13 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
 
     root = createRoot(container)
     await act(async () => {
-      root.render(<WorkspaceMessageScroller activeSession={session} />)
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={session}
+          canEditMessage={false}
+          onEditMessage={vi.fn()}
+        />
+      )
     })
 
     const card = container.querySelector<HTMLButtonElement>(
@@ -235,7 +247,13 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
 
     root = createRoot(container)
     await act(async () => {
-      root.render(<WorkspaceMessageScroller activeSession={session} />)
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={session}
+          canEditMessage={false}
+          onEditMessage={vi.fn()}
+        />
+      )
     })
 
     const uploadButton = container.querySelector<HTMLButtonElement>(
@@ -303,7 +321,13 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
 
     root = createRoot(container)
     await act(async () => {
-      root.render(<WorkspaceMessageScroller activeSession={session} />)
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={session}
+          canEditMessage={false}
+          onEditMessage={vi.fn()}
+        />
+      )
     })
     expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
 
