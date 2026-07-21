@@ -1511,13 +1511,20 @@ class SettingsService {
     return { ...result, applied: true }
   }
 
-  async logoutIsolatedCodex(): Promise<SettingsSnapshot> {
-    await this.codexAuth.logoutIsolated()
+  async logoutIsolatedCodex(): Promise<ValidateProviderResult> {
+    const status = await this.codexAuth.logoutIsolated()
+
+    // A sign-out is confirmed only when the adapter acknowledged it cleanly, which is the only path
+    // that sets no message. A timeout or capability failure leaves the status ambiguous — the
+    // credential may still be in the isolated home — so we preserve the verified markers and surface
+    // the failure rather than falsely reporting the account as signed out.
+    const succeeded = status.authenticated === false && status.message === undefined
+
     const settings = await this.repository.getSettings()
     const provider = settings.providers.find(
       (candidate) => candidate.id === codexSubscriptionProviderIdentity().id
     )
-    if (provider) {
+    if (provider && succeeded) {
       await this.repository.upsertProvider({
         ...provider,
         lastValidatedAt: undefined,
@@ -1525,7 +1532,15 @@ class SettingsService {
       })
     }
 
-    return this.getSettingsView()
+    if (!succeeded) {
+      return {
+        ok: false,
+        category: status.message?.toLowerCase().includes('timed out') ? 'timeout' : 'unknown',
+        message: status.message ?? 'Codex sign-out did not complete.'
+      }
+    }
+
+    return { ok: true, category: 'ok' }
   }
 
   // Activates a provider and the model to run within it. An omitted/unknown model falls back to the

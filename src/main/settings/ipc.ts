@@ -181,13 +181,19 @@ const registerSettingsIpcHandlers = ({
     return result
   })
   ipcMain.handle('settings:logout-isolated-codex', async () => {
-    const snapshot = await service.logoutIsolatedCodex()
+    const result = await service.logoutIsolatedCodex()
 
-    if (snapshot.activeProviderId === CODEX_SUBSCRIPTION_PROVIDER_ID) {
-      onActiveProviderChanged?.()
+    // Reconnect only when the sign-out actually cleared the credential. A timed-out sign-out leaves
+    // it in place, so forcing the live agent to reconnect would just re-authenticate against the
+    // credential we failed to remove.
+    if (result.ok) {
+      const snapshot = await service.getSettingsView()
+      if (snapshot.activeProviderId === CODEX_SUBSCRIPTION_PROVIDER_ID) {
+        onActiveProviderChanged?.()
+      }
     }
 
-    return snapshot
+    return result
   })
   ipcMain.handle(
     'settings:refresh-provider-models',

@@ -402,6 +402,65 @@ describe('SettingsService: providers', () => {
     expect(stored.lastValidationFailure).toBeUndefined()
   })
 
+  it('preserves the verified markers when isolated sign-out times out', async () => {
+    // The P1 fix: a timed-out sign-out never called logout(), so the credential may still be in the
+    // isolated home. Clearing lastValidatedAt would falsely mark the provider as signed out while
+    // the credential is usable — instead preserve the verified state and return the failure so the
+    // user knows to retry.
+    const codexAuth = {
+      getStatus: vi.fn(),
+      loginIsolated: vi.fn().mockResolvedValue({
+        mode: 'isolated',
+        supported: true,
+        authenticated: true
+      }),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn().mockResolvedValue({
+        mode: 'isolated',
+        supported: true,
+        authenticated: false,
+        message: 'Codex sign-out timed out.'
+      })
+    }
+    const service = createService(undefined, { codexAuth })
+    await service.upsertProvider({ type: 'codex-isolated' })
+    await service.loginIsolatedCodex()
+
+    const result = await service.logoutIsolatedCodex()
+
+    expect(result).toEqual({ ok: false, category: 'timeout', message: 'Codex sign-out timed out.' })
+    const stored = (await repository.getSettings()).providers[0]
+    expect(stored.lastValidatedAt).toBeGreaterThan(0)
+    expect(stored.lastValidationFailure).toBeUndefined()
+  })
+
+  it('returns success when isolated sign-out completes cleanly', async () => {
+    const codexAuth = {
+      getStatus: vi.fn(),
+      loginIsolated: vi.fn().mockResolvedValue({
+        mode: 'isolated',
+        supported: true,
+        authenticated: true
+      }),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn().mockResolvedValue({
+        mode: 'isolated',
+        supported: true,
+        authenticated: false
+      })
+    }
+    const service = createService(undefined, { codexAuth })
+    await service.upsertProvider({ type: 'codex-isolated' })
+    await service.loginIsolatedCodex()
+
+    const result = await service.logoutIsolatedCodex()
+
+    expect(result).toEqual({ ok: true, category: 'ok' })
+    const stored = (await repository.getSettings()).providers[0]
+    expect(stored.lastValidatedAt).toBeUndefined()
+    expect(stored.lastValidationFailure).toBeUndefined()
+  })
+
   it('encrypts the key on upsert and never exposes plaintext in the view', async () => {
     const service = createService()
 

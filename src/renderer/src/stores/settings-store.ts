@@ -156,7 +156,9 @@ type SettingsStore = SettingsStoreData & {
   // The explicit isolated sign-in — the only flow that opens the browser login. Resolves with the
   // recorded outcome so callers can react (onboarding advances only on success).
   loginIsolatedCodex: () => Promise<ValidateProviderResult>
-  logoutIsolatedCodex: () => Promise<void>
+  // The explicit isolated sign-out. Resolves with the outcome so callers can surface a failure
+  // (e.g. a timeout where the credential may still be in place) rather than silently succeeding.
+  logoutIsolatedCodex: () => Promise<ValidateProviderResult>
   // Fetches a saved provider's live model list from the vendor and refreshes the cache on success.
   refreshProviderModels: (providerId: string) => Promise<RefreshProviderModelsResult>
   // Activates a provider and, optionally, a specific model within it (composer model switch). An
@@ -671,8 +673,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   },
 
   logoutIsolatedCodex: async () => {
-    set(applySnapshot(await window.api.settings.logoutIsolatedCodex()))
+    const result = await window.api.settings.logoutIsolatedCodex()
+    // Refresh the snapshot regardless of outcome: a failed sign-out preserves the verified markers
+    // on the provider (credential still in place), a successful one clears them. Either way the
+    // store must reflect the true stored state rather than a stale cached view.
+    set(applySnapshot(await window.api.settings.getSettings()))
     await get().refreshPreflight()
+    return result
   },
 
   // Fetches a provider's live models from the vendor; on success the persisted list is reflected here.

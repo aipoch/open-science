@@ -214,7 +214,7 @@ interface OpenScienceAPI {
     validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult>
     cancelCodexLogin(): Promise<void>
     loginIsolatedCodex(): Promise<ValidateProviderResult>
-    logoutIsolatedCodex(): Promise<SettingsSnapshot>
+    logoutIsolatedCodex(): Promise<ValidateProviderResult>
     refreshProviderModels(
       request: RefreshProviderModelsRequest
     ): Promise<RefreshProviderModelsResult>

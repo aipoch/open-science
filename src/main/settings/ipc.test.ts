@@ -163,7 +163,8 @@ describe('settings IPC handlers', () => {
   it('reconnects the active Codex subscription after isolated logout', async () => {
     handlers.clear()
     const service = createFakeService()
-    service.logoutIsolatedCodex.mockResolvedValue({
+    service.logoutIsolatedCodex.mockResolvedValue({ ok: true, category: 'ok' })
+    service.getSettingsView.mockResolvedValue({
       claude: {},
       providers: [],
       activeProviderId: CODEX_SUBSCRIPTION_PROVIDER_ID
@@ -177,6 +178,28 @@ describe('settings IPC handlers', () => {
     await invoke('settings:logout-isolated-codex')
 
     expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+  })
+
+  it('does not reconnect when isolated logout times out', async () => {
+    // Reconnecting when the sign-out timed out would re-authenticate with the credential that is
+    // still in place — the opposite of what the user intended. Skip the reconnect so the live
+    // agent keeps its existing session until a retry clears the credential.
+    handlers.clear()
+    const service = createFakeService()
+    service.logoutIsolatedCodex.mockResolvedValue({
+      ok: false,
+      category: 'timeout',
+      message: 'Codex sign-out timed out.'
+    })
+    const onActiveProviderChanged = vi.fn()
+    registerSettingsIpcHandlers({
+      service: asService(service),
+      onActiveProviderChanged
+    })
+
+    await invoke('settings:logout-isolated-codex')
+
+    expect(onActiveProviderChanged).not.toHaveBeenCalled()
   })
 
   it('reconnects the active provider only when the isolated login was actually applied', async () => {

@@ -559,6 +559,21 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
     }
   }
 
+  const handleCodexLogout = async (): Promise<void> => {
+    setProviderTestError(undefined)
+
+    try {
+      const result = await logoutIsolatedCodex()
+      // A timeout or other failure leaves the credential in place; surface the reason so the user
+      // knows to retry rather than assuming they are signed out.
+      if (!result.ok) {
+        setProviderTestError(result.message ?? 'Codex sign-out did not complete. Try again.')
+      }
+    } catch (error) {
+      setProviderTestError(error instanceof Error ? error.message : 'Could not sign out of Codex.')
+    }
+  }
+
   // A pending sign-in lives in the main process for up to five minutes — outliving this dialog, which
   // stays mounted (only its `open` flag flips). Closing Settings mid-flow would orphan the flow (no
   // cancel affordance on reopen), so tear it down together with the dialog.
@@ -934,7 +949,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                         isCodexLoginPending={isCodexLoginPending}
                         onCancelCodexLogin={() => void cancelCodexLogin()}
                         onLoginIsolatedCodex={() => void handleCodexLogin()}
-                        onLogoutIsolatedCodex={() => void logoutIsolatedCodex()}
+                        onLogoutIsolatedCodex={() => void handleCodexLogout()}
                       />
                       {providerTestError ? (
                         <p className="text-sm text-destructive" role="alert">
