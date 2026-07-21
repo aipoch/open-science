@@ -2074,12 +2074,12 @@ describe('resolveInputs — workspace source', () => {
 })
 
 describe('resolveInputs — artifact source', () => {
-  it('resolves an artifact id via ArtifactResolver to a local path', async () => {
+  it('resolves an absolute artifact-store path via ArtifactResolver to a local path', async () => {
     const resolver = {
       resolveArtifactPath: vi.fn(async () => '/storage/artifacts/sess/run/model.pkl')
     }
     const { entries, inputsSummary } = await resolveInputs(
-      [{ src: '{{artifact:sess:run:model.pkl}}', dst_filename: 'model.pkl' }],
+      [{ src: '/storage/artifacts/sess/run/model.pkl', dst_filename: 'model.pkl' }],
       undefined,
       resolver
     )
@@ -2090,13 +2090,15 @@ describe('resolveInputs — artifact source', () => {
       dstFilename: 'model.pkl'
     })
     expect(inputsSummary).toBe('1 input: model.pkl')
-    expect(resolver.resolveArtifactPath).toHaveBeenCalledWith('sess:run:model.pkl')
+    expect(resolver.resolveArtifactPath).toHaveBeenCalledWith(
+      '/storage/artifacts/sess/run/model.pkl'
+    )
   })
 
-  it('throws when artifactResolver is missing for an artifact src', async () => {
+  it('throws when artifactResolver is missing for an absolute (artifact) src', async () => {
     await expect(
       resolveInputs(
-        [{ src: '{{artifact:sess:run:model.pkl}}', dst_filename: 'model.pkl' }],
+        [{ src: '/storage/artifacts/sess/run/model.pkl', dst_filename: 'model.pkl' }],
         undefined,
         undefined
       )
@@ -2170,7 +2172,7 @@ describe('resolveInputs — mixed inputs summary', () => {
     const { entries, inputsSummary } = await resolveInputs(
       [
         { src: 'data.csv', dst_filename: 'data.csv' },
-        { src: '{{artifact:s:r:model.pkl}}', dst_filename: 'model.pkl' },
+        { src: '/storage/artifacts/s/r/model.pkl', dst_filename: 'model.pkl' },
         { remote_path: '/scratch/ref.fa', dst_filename: 'ref.fa' }
       ],
       '/workspace',

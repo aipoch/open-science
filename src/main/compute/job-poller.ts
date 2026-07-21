@@ -6,6 +6,7 @@ import type { ComputeHostRepository } from './repository'
 import type { SshRunner } from './ssh-runner'
 import { resolveSshTarget } from './ssh-runner'
 import { quoteRemotePath, type RemoteHandle } from './job-dispatcher'
+import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
 
 // Polling interval: 15 seconds (design.md §8).
 export const POLL_INTERVAL_MS = 15_000
@@ -38,6 +39,9 @@ export type JobPollerDeps = {
   clearInterval?: (handle: ReturnType<typeof setInterval>) => void
   // Injectable nonce generator for tests (defaults to a random per-tick hex string).
   makeNonce?: () => string
+  // Shared with the dispatcher so the poller can tell a job that is still actively dispatching
+  // (in-flight in this process) from one orphaned by an app restart. Defaults to the shared tracker.
+  dispatchTracker?: DispatchTracker
 }
 
 // Per-job vanish counter (lives here because the poller is the only thing that increments it).
@@ -54,11 +58,14 @@ export class JobPoller {
   private readonly clearIntervalFn: (handle: ReturnType<typeof setInterval>) => void
   // Injectable nonce generator (tests override for deterministic marker matching).
   private readonly makeNonceFn: () => string
+  // Shared dispatch tracker (see JobPollerDeps.dispatchTracker).
+  private readonly dispatchTracker: DispatchTracker
 
   constructor(private readonly deps: JobPollerDeps) {
     this.setIntervalFn = deps.setInterval ?? ((fn, ms) => setInterval(fn, ms))
     this.clearIntervalFn = deps.clearInterval ?? ((h) => clearInterval(h))
     this.makeNonceFn = deps.makeNonce ?? (() => randomBytes(12).toString('hex') + '_')
+    this.dispatchTracker = deps.dispatchTracker ?? sharedDispatchTracker
   }
 
   // Starts the poller. Polls once immediately (picks up jobs that were running before restart),
@@ -100,12 +107,18 @@ export class JobPoller {
 
   // Polls all jobs for one provider in a single SSH round-trip (where possible).
   private async _pollProvider(providerId: string, jobs: ComputeJob[]): Promise<void> {
-    // Handle jobs stuck in 'submitted' with no pid (app restart interrupted dispatch).
-    // Per design.md §8: mark them error/dispatch_failed immediately.
+    // Handle jobs stuck in 'submitted' with no pid. A job sits in this state for the whole dispatch
+    // window (mkdir + input staging + launch), and input staging can scp GB-scale files for up to
+    // 30 min. So 'submitted'+no-handle does NOT by itself mean a failed dispatch: it only means a
+    // failed dispatch if no dispatch is actively running for it in this process. The shared
+    // DispatchTracker disambiguates — an untracked such job was orphaned by an app restart and is
+    // marked error/dispatch_failed (design.md §8 boundary 3); a tracked one is still dispatching and
+    // is left alone until the dispatcher writes its terminal or running state.
     const noHandle: ComputeJob[] = []
     const withHandle: ComputeJob[] = []
     for (const job of jobs) {
       if (job.status === 'submitted' && !job.remote_handle) {
+        if (this.dispatchTracker.has(job.job_id)) continue // still dispatching — not orphaned
         noHandle.push(job)
       } else {
         withHandle.push(job)
@@ -395,17 +408,22 @@ export class JobPoller {
 
     if (job.status !== 'running') {
       // Transition to running if still in submitted (shouldn't happen but guard).
+      // Clear any stale lastPollError: a successful poll proves connectivity is healthy again
+      // (schema.prisma: "Cleared on the next successful poll").
       const updated = await this.deps.jobRepository.update(job.job_id, {
         status: 'running',
         stdoutTail: stdoutTail || null,
-        stderrTail: stderrTail || null
+        stderrTail: stderrTail || null,
+        lastPollError: null
       })
       this.deps.onJobUpdated?.(updated)
     } else {
-      // Just update tails.
+      // Just update tails. Also clear any stale lastPollError now that this poll succeeded, so a
+      // transient SSH blip's error banner does not stick to a healthy running job forever.
       const updated = await this.deps.jobRepository.update(job.job_id, {
         stdoutTail: stdoutTail || null,
-        stderrTail: stderrTail || null
+        stderrTail: stderrTail || null,
+        lastPollError: null
       })
       this.deps.onJobUpdated?.(updated)
     }

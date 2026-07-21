@@ -6,7 +6,7 @@ import { app, ipcMain } from 'electron'
 import { createDefaultNotebookRuntimeService, registerAcpIpcHandlers } from './acp/ipc'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
-import { registerComputeIpcHandlers, broadcastJobUpdated, toJobSummary } from './compute/ipc'
+import { registerComputeIpcHandlers, createJobUpdatedBroadcaster } from './compute/ipc'
 import { attachEnabledComputeHosts } from './compute/enabled-hosts-registry'
 import { JobPoller } from './compute/job-poller'
 import { SystemSshRunner } from './compute/ssh-runner'
@@ -226,30 +226,25 @@ const registerIpcHandlers = async ({
   // Register compute IPC handlers early so computeService can be wired into the notebook RPC server.
   // The approval broker in compute/ipc.ts broadcasts via BrowserWindow.getAllWindows(), which requires
   // Electron to be ready — this is always the case here since we're inside registerIpcHandlers.
+  // Adapt the artifact repository to the ArtifactResolver shape so job input staging can upload
+  // absolute artifact-store paths (validated to stay inside the store by resolveManagedFilePath).
+  const computeArtifactResolver = {
+    resolveArtifactPath: (path: string) => artifactRepository.resolveManagedFilePath({ path })
+  }
   const {
     computeService,
     jobRepository,
     hostRepository,
     enabledComputeHostsRegistry: hostsRegistry
-  } = registerComputeIpcHandlers()
-  // Start the JobPoller wired to broadcastJobUpdated so every state/tail change is pushed to all
-  // renderer windows via 'compute:job-updated' (Phase 3d, design.md §9 + §15.3).
+  } = registerComputeIpcHandlers(undefined, undefined, computeArtifactResolver)
+  // Start the JobPoller wired to the shared broadcaster so every state/tail change is pushed to all
+  // renderer windows via 'compute:job-updated' (Phase 3d, design.md §9 + §15.3). The dispatcher
+  // (inside ComputeService) uses the same hook, so submitted→running/error transitions broadcast too.
   const jobPoller = new JobPoller({
     runner: new SystemSshRunner(),
     hostRepository,
     jobRepository,
-    onJobUpdated: (job) => {
-      // Look up the host display name asynchronously, then broadcast. Fire-and-forget: a transient
-      // failure to fetch the host just falls back to the provider_id string — the broadcast always happens.
-      void hostRepository
-        .get(job.provider_id)
-        .then((host) => {
-          broadcastJobUpdated(toJobSummary(job, host?.displayName ?? job.provider_id))
-        })
-        .catch(() => {
-          broadcastJobUpdated(toJobSummary(job, job.provider_id))
-        })
-    }
+    onJobUpdated: createJobUpdatedBroadcaster(hostRepository)
   })
   jobPoller.start()
   // Augment computeService with getEnabledComputeHosts so the RPC server can serve list_compute.

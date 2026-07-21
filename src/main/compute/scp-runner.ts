@@ -11,7 +11,8 @@ import { join } from 'node:path'
 import type { ResolvedSshTarget } from './ssh-runner'
 
 // Glob metacharacters that must not appear in an import path (prevents shell expansion).
-const GLOB_CHARS = /[*?[\]{}\\]/
+// Exported so other compute modules (e.g. job input validation) share one source of truth.
+export const GLOB_CHARS = /[*?[\]{}\\]/
 
 // Shell-dangerous characters that must not appear in a path used as an scp remote spec.
 // Traditional scp (pre-OpenSSH-9 SCP/RCP protocol) passes the remote path through a remote
@@ -22,8 +23,9 @@ const GLOB_CHARS = /[*?[\]{}\\]/
 // rare filenames containing `$` etc. on the transfer path — an acceptable trade for a security
 // boundary. Directory browsing (listDir) does NOT use this; it single-quotes for the ssh-exec
 // shell we fully control, preserving the ability to browse such names.
+// Exported so other compute modules (e.g. job input validation) share one source of truth.
 // eslint-disable-next-line no-control-regex
-const SHELL_UNSAFE_CHARS = /[$`;|&<>()"'\x00-\x1f\x7f]/
+export const SHELL_UNSAFE_CHARS = /[$`;|&<>()"'\x00-\x1f\x7f]/
 
 // Wraps a string in single quotes for safe embedding in a shell command we author (ssh-exec).
 // Inside single quotes the shell performs no expansion at all; the only character needing special

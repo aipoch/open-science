@@ -5,6 +5,7 @@ import type { ComputeHostRepository } from './repository'
 import type { ComputeJobRepository } from './job-repository'
 import type { SshRunner, ResolvedSshTarget } from './ssh-runner'
 import { JobPoller } from './job-poller'
+import { DispatchTracker } from './dispatch-tracker'
 
 // Mock resolveSshTarget at module level so all tests bypass the real ssh -G call.
 vi.mock('./ssh-runner', async (importOriginal) => {
@@ -145,6 +146,51 @@ describe('JobPoller', () => {
       expect.objectContaining({ status: 'success', exitCode: 0 })
     )
     expect(onJobUpdated).toHaveBeenCalled()
+  })
+
+  it('clears a stale lastPollError on a successful poll of a still-running job', async () => {
+    // A running job that previously recorded a transient SSH error must have that error cleared once
+    // a poll succeeds again (schema.prisma: "Cleared on the next successful poll"). Regression for
+    // sprint review finding #4.
+    const job = makeJob({ status: 'running', last_poll_error: 'ssh: connect timed out' })
+    const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      get: vi.fn(() => Promise.resolve(job)),
+      update
+    } as unknown as ComputeJobRepository
+    const hostRepo = {
+      get: vi.fn(() => Promise.resolve(sampleHost()))
+    } as unknown as ComputeHostRepository
+
+    // Process alive, no exit_code yet → job stays running, tails update.
+    const pollOutput = withNonce([
+      'JOB_START:job-1',
+      'alive:1',
+      '',
+      'still going\n',
+      'STDOUT_END:job-1',
+      '',
+      'STDERR_END:job-1'
+    ])
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: pollOutput,
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+
+    const poller = new JobPoller({
+      runner,
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      makeNonce: () => NONCE
+    })
+
+    await poller.tick()
+
+    expect(update).toHaveBeenCalledWith('job-1', expect.objectContaining({ lastPollError: null }))
   })
 
   it('transitions job to failed when exit_code != 0', async () => {
@@ -576,7 +622,8 @@ describe('JobPoller', () => {
   })
 
   it('marks submitted job without pid as error/dispatch_failed on restart', async () => {
-    // A submitted job with no remote_handle = dispatch was interrupted by app restart.
+    // A submitted job with no remote_handle AND no in-flight dispatch = dispatch was interrupted by
+    // an app restart (the tracker is empty after a restart). Mark it error/dispatch_failed.
     const job = makeJob({ status: 'submitted', remote_handle: undefined })
     const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
     const jobRepo = {
@@ -594,7 +641,13 @@ describe('JobPoller', () => {
       truncated: false,
       timedOut: false
     })
-    const poller = new JobPoller({ runner, hostRepository: hostRepo, jobRepository: jobRepo })
+    // Fresh tracker with nothing in flight simulates the post-restart state.
+    const poller = new JobPoller({
+      runner,
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      dispatchTracker: new DispatchTracker()
+    })
 
     await poller.tick()
 
@@ -606,6 +659,42 @@ describe('JobPoller', () => {
         stderrTail: 'dispatch interrupted by restart'
       })
     )
+  })
+
+  it('does NOT flag a submitted+no-handle job whose dispatch is still in flight', async () => {
+    // A job staging large inputs sits in submitted+no-handle across many ticks. Because its dispatch
+    // is tracked as in-flight, the poller must leave it alone (no dispatch_failed flip). Regression
+    // for the staging-window race (sprint review finding #2).
+    const job = makeJob({ status: 'submitted', remote_handle: undefined })
+    const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      update
+    } as unknown as ComputeJobRepository
+    const hostRepo = {
+      get: vi.fn(() => Promise.resolve(sampleHost()))
+    } as unknown as ComputeHostRepository
+
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const tracker = new DispatchTracker()
+    tracker.begin('job-1') // dispatch actively running for this job
+    const poller = new JobPoller({
+      runner,
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      dispatchTracker: tracker
+    })
+
+    await poller.tick()
+
+    // Job must not be touched at all — no status flip, no SSH round-trip for it.
+    expect(update).not.toHaveBeenCalled()
   })
 
   it('does not tick when there are no non-terminal jobs', async () => {

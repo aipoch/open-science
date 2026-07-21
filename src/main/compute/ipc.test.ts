@@ -394,3 +394,45 @@ describe('skill doc sync on create/delete', () => {
     await expect(handlers.create({ sshAlias: 'biowulf' })).resolves.toBeDefined()
   })
 })
+
+// Regression for sprint review finding #3: the production ComputeService (built when no service is
+// injected) must receive the jobRepository so agent submit_job works at runtime. Previously it was
+// constructed with only (runner, repository, broker), so submit_job threw "ComputeJobRepository is
+// required" — invisible to tests that injected a fake service.
+describe('production ComputeService wiring (finding #3)', () => {
+  it('wires jobRepository into the real ComputeService so submitJob passes the deps guard', async () => {
+    // No injected service → createComputeHandlers builds a real ComputeService with the jobRepository.
+    // A repository that returns no host makes submitJob fail AT THE HOST LOOKUP (after the
+    // jobRepository guard), proving the jobRepository dependency was wired through.
+    const get = vi.fn(() => Promise.resolve(null))
+    const handlers = createComputeHandlers(
+      mockRepository({ get }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({})
+    )
+
+    await expect(
+      handlers.computeService.submitJob(
+        'ssh:absent',
+        'smoke',
+        'echo hi',
+        {},
+        { sessionId: 's', projectId: 'p' }
+      )
+    ).rejects.toThrow(/No compute host found/)
+    // The key assertion: it did NOT throw the jobRepository-missing error.
+    await expect(
+      handlers.computeService.submitJob(
+        'ssh:absent',
+        'smoke',
+        'echo hi',
+        {},
+        { sessionId: 's', projectId: 'p' }
+      )
+    ).rejects.not.toThrow(/ComputeJobRepository is required/)
+  })
+})

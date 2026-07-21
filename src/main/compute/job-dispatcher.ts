@@ -8,6 +8,7 @@ import { resolveSshTarget } from './ssh-runner'
 import type { ScpRunner } from './scp-runner'
 import { SystemScpRunner, runScpUpload } from './scp-runner'
 import { shellSingleQuote } from './scp-runner'
+import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
 
 // Maximum number of bytes for the per-job dispatch SSH command (enough for base64 of large scripts).
 const DISPATCH_MAX_OUTPUT_BYTES = 4 * 1024
@@ -110,11 +111,26 @@ export type DispatcherDeps = {
   jobRepository: ComputeJobRepository
   // Optional broadcast hook for Phase 3d renderer IPC; no-op when omitted (Phase 3a).
   onJobUpdated?: (job: ComputeJob) => void
+  // Tracks this dispatch as in-flight so the poller won't mistake a job that is still staging
+  // inputs for a restart-orphaned one. Defaults to the process-wide shared tracker.
+  dispatchTracker?: DispatchTracker
 }
 
 // Dispatches one job to its remote host asynchronously (not awaited by submit_job RPC).
 // Transitions: submitted → running (success) or error (any failure).
 export async function dispatchJob(jobId: string, deps: DispatcherDeps): Promise<void> {
+  const tracker = deps.dispatchTracker ?? sharedDispatchTracker
+  // Mark in-flight synchronously (before the first await) so the poller can never observe this job
+  // as untracked while its dispatch is genuinely running. Cleared in the finally below.
+  tracker.begin(jobId)
+  try {
+    await dispatchJobInner(jobId, deps)
+  } finally {
+    tracker.end(jobId)
+  }
+}
+
+async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<void> {
   const { runner, hostRepository, jobRepository, onJobUpdated } = deps
   const scpRunner = deps.scpRunner ?? new SystemScpRunner()
 

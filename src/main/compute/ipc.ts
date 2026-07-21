@@ -19,7 +19,7 @@ import { resolveStorageRoot } from '../storage-root'
 import { SettingsRepository } from '../settings/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { ComputeApprovalBroker } from './compute-approval-broker'
-import { ComputeService } from './compute-service'
+import { ComputeService, type ArtifactResolver } from './compute-service'
 import { ComputeHostRepository } from './repository'
 import { ComputeJobRepository } from './job-repository'
 import { readSshConfigHostAliases } from './ssh-config'
@@ -108,7 +108,9 @@ const createComputeHandlers = (
   injectedBroker?: ComputeApprovalBroker,
   onSkillDocSync?: SkillDocSyncer,
   settingsRepository?: SettingsRepository,
-  jobRepository?: ComputeJobRepository
+  jobRepository?: ComputeJobRepository,
+  onJobUpdated?: (job: ComputeJob) => void,
+  artifactResolver?: ArtifactResolver
 ): ComputeHandlers => {
   // The broadcast function sends approval requests to all renderer windows. In tests, callers
   // inject a fake broker so this function is never called directly.
@@ -131,7 +133,22 @@ const createComputeHandlers = (
         : undefined
     })
 
-  const service = injectedService ?? new ComputeService(new SystemSshRunner(), repository, broker)
+  // Construct the production service with the full job dependency set so agent submit_job works and
+  // dispatcher status transitions (submitted→running/error) broadcast to the renderer. Positional
+  // args match the ComputeService constructor: (runner, repository, broker, scpRunner,
+  // overrideDownloadsDir, jobRepository, onJobUpdated, artifactResolver).
+  const service =
+    injectedService ??
+    new ComputeService(
+      new SystemSshRunner(),
+      repository,
+      broker,
+      undefined,
+      undefined,
+      jobRepository,
+      onJobUpdated,
+      artifactResolver
+    )
 
   // Re-syncs the skill doc after a create or delete. Runs fire-and-forget — a failure to write
   // the skill doc never rolls back the host mutation (the doc is best-effort, like connector docs).
@@ -205,10 +222,30 @@ export const broadcastJobUpdated = (summary: JobSummary): void => {
   broadcastToRenderers(COMPUTE_JOB_UPDATED_CHANNEL, summary)
 }
 
+// Builds the onJobUpdated hook shared by the JobPoller (poll transitions/tails) and the
+// ComputeService/dispatcher (submitted→running→error transitions). Looks up the host display name
+// asynchronously, then broadcasts. Fire-and-forget: a transient failure to fetch the host falls
+// back to the provider_id string so the broadcast always happens.
+export const createJobUpdatedBroadcaster =
+  (hostRepository: ComputeHostRepository): ((job: ComputeJob) => void) =>
+  (job) => {
+    void hostRepository
+      .get(job.provider_id)
+      .then((host) => {
+        broadcastJobUpdated(toJobSummary(job, host?.displayName ?? job.provider_id))
+      })
+      .catch(() => {
+        broadcastJobUpdated(toJobSummary(job, job.provider_id))
+      })
+  }
+
 // Registers the renderer-callable compute host commands.
 const registerComputeIpcHandlers = (
   repository = createDefaultComputeHostRepository(),
-  jobRepository = createDefaultComputeJobRepository()
+  jobRepository = createDefaultComputeJobRepository(),
+  // Resolves artifact-store paths for job input staging. Optional: when omitted, artifact inputs
+  // (absolute src) throw a clear error while workspace and remote_path inputs still work.
+  artifactResolver?: ArtifactResolver
 ): {
   computeService: ComputeService
   jobRepository: ComputeJobRepository
@@ -224,6 +261,9 @@ const registerComputeIpcHandlers = (
   // Share the settings repository with the broker so project grants are persisted (issue 05).
   const settingsRepo = new SettingsRepository(storageRoot)
 
+  // Broadcast dispatcher status transitions to the renderer, same hook shape as the JobPoller uses.
+  const onJobUpdated = createJobUpdatedBroadcaster(repository)
+
   const handlers = createComputeHandlers(
     repository,
     undefined,
@@ -231,7 +271,9 @@ const registerComputeIpcHandlers = (
     undefined,
     skillDocSyncer,
     settingsRepo,
-    jobRepository
+    jobRepository,
+    onJobUpdated,
+    artifactResolver
   )
 
   // Write the initial skill doc at startup so agents see the host list from the first session.

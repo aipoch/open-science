@@ -21,8 +21,10 @@ import type { SshRunner } from './ssh-runner'
 import { resolveSshTarget } from './ssh-runner'
 import type { ScpRunner } from './scp-runner'
 import {
+  GLOB_CHARS,
   MAX_DOWNLOAD_BYTES,
   MAX_IMPORT_BYTES,
+  SHELL_UNSAFE_CHARS,
   SystemScpRunner,
   inferMimeType,
   resolveDestFilename,
@@ -172,22 +174,13 @@ const buildDetailsSkeleton = (probe: ProbeResult): string => {
 }
 
 // Raw input spec as submitted by the agent (before resolution to local paths).
-// Three kinds per design.md §7:
-//   workspace: {src:"workspace/some/path", dst_filename:"name.csv"}
-//   artifact:  {src:"{{artifact:SESSION:RUN:name.csv}}", dst_filename:"name.csv"}
-//   remote:    {remote_path:"/abs/path", dst_filename?:"name.csv"}
+// Three kinds:
+//   workspace: {src:"relative/path.csv", dst_filename:"name.csv"}        — relative to session cwd
+//   artifact:  {src:"/storage/artifacts/.../name.csv", dst_filename:...} — absolute artifact-store path
+//   remote:    {remote_path:"/abs/path", dst_filename?:"name.csv"}       — symlinked, not uploaded
 export type RawInputSpec =
-  | { src: string; dst_filename: string } // workspace or artifact (distinguished by src prefix)
+  | { src: string; dst_filename: string } // workspace (relative) or artifact (absolute) — see resolveInputs
   | { remote_path: string; dst_filename?: string }
-
-// Artifact src pattern: {{artifact:ID}} where ID is the opaque artifact id string.
-const ARTIFACT_SRC_RE = /^\{\{artifact:(.+)\}\}$/
-
-// Shell-unsafe and glob characters reused from scp-runner (same set, kept in sync here to avoid
-// importing scp-runner's private const). See scp-runner.ts for the rationale.
-// eslint-disable-next-line no-control-regex
-const SHELL_UNSAFE_CHARS_RE = /[$`;|&<>()"'\x00-\x1f\x7f]/
-const GLOB_CHARS_RE = /[*?[\]{}\\]/
 
 // Validates a dst_filename: must be a bare filename with no path separators.
 const assertBareName = (name: string, label: string): void => {
@@ -209,17 +202,22 @@ const resolveWorkspacePath = (workspaceCwd: string, srcPath: string): string => 
   return resolved
 }
 
-// ArtifactRepository interface needed for input staging.
-// We only need to resolve an artifact id → local absolute path.
+// Resolves an artifact-store path to a validated local absolute path. Backed in production by
+// ArtifactRepository.resolveManagedFilePath, which enforces that the path stays inside the artifact
+// store root (security boundary) and follows symlinks safely. This product addresses artifacts by
+// path (the ArtifactFile.path an agent already holds), not by an opaque id — see design note below.
 export interface ArtifactResolver {
-  resolveArtifactPath(artifactId: string): Promise<string>
+  resolveArtifactPath(path: string): Promise<string>
 }
 
 // Validates and resolves raw input specs into staged manifest entries.
-// workspace/path → resolveWorkspacePath → StagedInputEntry{kind:'upload', localPath}
-// {{artifact:ID}} → artifactResolver → StagedInputEntry{kind:'upload', localPath}
-// remote_path → validate absolute + no unsafe/glob chars → StagedInputEntry{kind:'symlink'}
-// Returns [entries, inputs_summary].
+//   relative src   → resolveWorkspacePath  → StagedInputEntry{kind:'upload', localPath}
+//   absolute src   → artifactResolver       → StagedInputEntry{kind:'upload', localPath}
+//   remote_path    → validate absolute + no unsafe/glob chars → StagedInputEntry{kind:'symlink'}
+// An absolute `src` is an artifact-store path (validated to stay inside the store by the resolver);
+// a relative `src` is resolved against the session workspace cwd. remote_path inputs use their own
+// key, so within the src branch absolute-vs-relative is an unambiguous discriminator. Returns
+// [entries, inputs_summary].
 export const resolveInputs = async (
   rawInputs: RawInputSpec[],
   workspaceCwd: string | undefined,
@@ -235,10 +233,10 @@ export const resolveInputs = async (
       if (!rp.startsWith('/')) {
         throw new Error(`remote_path must be an absolute path (got "${rp}")`)
       }
-      if (GLOB_CHARS_RE.test(rp)) {
+      if (GLOB_CHARS.test(rp)) {
         throw new Error(`remote_path must not contain glob characters (got "${rp}")`)
       }
-      if (SHELL_UNSAFE_CHARS_RE.test(rp)) {
+      if (SHELL_UNSAFE_CHARS.test(rp)) {
         throw new Error(`remote_path must not contain shell-unsafe characters (got "${rp}")`)
       }
       const dstFilename = raw.dst_filename ?? basename(rp)
@@ -246,22 +244,20 @@ export const resolveInputs = async (
       entries.push({ kind: 'symlink', remotePath: rp, dstFilename, label: rp })
       summaryParts.push(`${dstFilename} (symlink)`)
     } else {
-      // src-based input: workspace or artifact.
+      // src-based input: absolute → artifact store, relative → workspace.
       const { src, dst_filename: dstFilename } = raw
       assertBareName(dstFilename, `src "${src}"`)
 
-      const artifactMatch = ARTIFACT_SRC_RE.exec(src)
-      if (artifactMatch) {
-        // Artifact source.
-        const artifactId = artifactMatch[1]!
+      if (isAbsolute(src)) {
+        // Artifact-store path. The resolver enforces it stays inside the artifact store root.
         if (!artifactResolver) {
           throw new Error(`Cannot resolve artifact "${src}": ArtifactResolver is not available`)
         }
-        const localPath = await artifactResolver.resolveArtifactPath(artifactId)
+        const localPath = await artifactResolver.resolveArtifactPath(src)
         entries.push({ kind: 'upload', localPath, dstFilename, label: src })
         summaryParts.push(dstFilename)
       } else {
-        // Workspace source.
+        // Workspace-relative path.
         if (!workspaceCwd) {
           throw new Error(`Cannot resolve workspace path "${src}": workspace_cwd is not available`)
         }

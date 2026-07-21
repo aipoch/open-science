@@ -14,6 +14,7 @@ import {
   computeRemoteWorkdir,
   quoteRemotePath
 } from './job-dispatcher'
+import { DispatchTracker } from './dispatch-tracker'
 
 // Mock resolveSshTarget at module level so all tests bypass the real ssh -G call.
 vi.mock('./ssh-runner', async (importOriginal) => {
@@ -215,6 +216,58 @@ describe('dispatchJob', () => {
     const handle = JSON.parse(updateCall.remoteHandle as string)
     expect(handle.pid).toBe(12345)
     expect(onJobUpdated).toHaveBeenCalled()
+  })
+
+  it('marks the job in-flight in the tracker during dispatch and clears it afterward', async () => {
+    const job = makeJob()
+    const tracker = new DispatchTracker()
+    let seenInFlightDuringUpdate = false
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: '12345\n',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    // Observe the tracker state at the moment the terminal update is written — it must still be
+    // in-flight then (the finally clears it only after dispatchJobInner returns).
+    const update = vi.fn((_id: string, updates: unknown) => {
+      seenInFlightDuringUpdate = tracker.has('job-1')
+      return Promise.resolve({ ...job, ...(updates as object), job_id: _id })
+    })
+    const repo = {
+      get: vi.fn(() => Promise.resolve(job)),
+      update
+    } as unknown as ComputeJobRepository
+
+    await dispatchJob(job.job_id, {
+      runner,
+      hostRepository: makeHostRepo(sampleHost()) as unknown as ComputeHostRepository,
+      jobRepository: repo,
+      dispatchTracker: tracker
+    })
+
+    expect(seenInFlightDuringUpdate).toBe(true)
+    expect(tracker.has('job-1')).toBe(false) // cleared in finally
+  })
+
+  it('clears the in-flight tracker even when dispatch throws', async () => {
+    const job = makeJob()
+    const tracker = new DispatchTracker()
+    // A runner that throws simulates an unexpected error mid-dispatch.
+    const runner: SshRunner = { run: vi.fn(() => Promise.reject(new Error('boom'))) }
+    const { repo } = makeJobRepo(job)
+
+    await expect(
+      dispatchJob(job.job_id, {
+        runner,
+        hostRepository: makeHostRepo(sampleHost()) as unknown as ComputeHostRepository,
+        jobRepository: repo as unknown as ComputeJobRepository,
+        dispatchTracker: tracker
+      })
+    ).rejects.toThrow('boom')
+
+    expect(tracker.has('job-1')).toBe(false)
   })
 
   it('does not double-quote a leading ~ in the dispatch command (tilde must expand)', async () => {
