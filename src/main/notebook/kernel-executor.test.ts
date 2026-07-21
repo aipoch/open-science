@@ -742,6 +742,31 @@ describe('NotebookKernelExecutor spawn env', () => {
     expect(env.OPEN_SCIENCE_R_ENV_PREFIX).toBeUndefined()
     expect(env.PATH).toBe(process.env.PATH)
   })
+
+  it('activates an external Windows conda R interpreter with its own DLL paths', () => {
+    const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE, platform: 'win32' })
+    const prefix = 'C:\\Users\\HM\\miniforge3\\envs\\analysis'
+    const request = {
+      ...baseRequest('/tmp/os-r-external-conda-path'),
+      code: 'x',
+      resolvedInterpreter: {
+        command: `${prefix}\\Lib\\R\\bin\\Rscript.exe`,
+        condaPrefix: prefix
+      }
+    }
+    const buildEnv = (executor as unknown as { buildEnv: BuildEnvFn }).buildEnv.bind(executor)
+    const env = buildEnv('r', request, '/tmp/figs')
+
+    expect(env.OPEN_SCIENCE_R_ENV_PREFIX).toBe(prefix)
+    expect(env.PATH?.split(';').slice(0, 6)).toEqual([
+      win32.normalize(prefix),
+      win32.join(prefix, 'Library', 'mingw-w64', 'bin'),
+      win32.join(prefix, 'Library', 'usr', 'bin'),
+      win32.join(prefix, 'Library', 'bin'),
+      win32.join(prefix, 'Scripts'),
+      win32.join(prefix, 'bin')
+    ])
+  })
 })
 
 // -- shutdown() reaped guarantee vs. in-flight teardowns (the Windows update-install gate). ----------

@@ -157,6 +157,45 @@ describe('NotebookPreview env gate (mounted)', () => {
 
     expect(container.querySelector('[data-testid="notebook-env-gate"]')).toBeNull()
   })
+
+  it('only covers the session whose automatic Python preparation failed', () => {
+    const failedStatus: ProvisionStatus = {
+      pythonReady: false,
+      rReady: false,
+      version: 1,
+      provisioning: false
+    }
+    const failedProgress = {
+      phase: 'error',
+      message: 'Python download failed',
+      progress: 0,
+      scope: 'python' as const
+    }
+    useNotebookEnvStore.setState({
+      status: failedStatus,
+      ui: deriveProvisionUi(
+        failedStatus,
+        undefined,
+        { ...failedProgress, sessionId: 'session-2' },
+        failedProgress.message
+      )
+    })
+
+    act(() => root.render(<NotebookPreview item={item} />))
+    expect(container.querySelector('[data-testid="notebook-env-gate"]')).toBeNull()
+
+    act(() => {
+      useNotebookEnvStore.setState({
+        ui: deriveProvisionUi(
+          failedStatus,
+          undefined,
+          { ...failedProgress, sessionId: 'session-1' },
+          failedProgress.message
+        )
+      })
+    })
+    expect(container.querySelector('[data-testid="notebook-env-gate"]')).not.toBeNull()
+  })
 })
 
 // Minimal NotebookRunRecord builder, mirroring SessionNotebookDialog.render.test.tsx's makeRun.

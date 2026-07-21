@@ -21,7 +21,7 @@ export type ProvisionUiState =
       progress: number
       sessionId?: string
     }
-  | { kind: 'error'; message: string }
+  | { kind: 'error'; message: string; scope?: PreparingScope; sessionId?: string }
 
 // Pure mapping from the mirrored main-process state to the UI state. `scope` is the renderer's last
 // explicit provision request (undefined for an auto upgrade); `error` is the last failed attempt.
@@ -45,7 +45,15 @@ export function deriveProvisionUi(
   }
   // A failed attempt only counts as a blocking error while python itself is missing; an R failure
   // leaves Python usable, so it does not surface as an app-level error.
-  if (error && !status.pythonReady) return { kind: 'error', message: error }
+  if (error && !status.pythonReady) {
+    const failedProgress = progress?.phase === 'error' ? progress : undefined
+    return {
+      kind: 'error',
+      message: error,
+      ...(failedProgress?.scope ? { scope: failedProgress.scope } : {}),
+      ...(failedProgress?.sessionId ? { sessionId: failedProgress.sessionId } : {})
+    }
+  }
   return { kind: 'ready' }
 }
 
@@ -56,7 +64,7 @@ export function notebookGated(
   ui: ProvisionUiState,
   sessionId?: string
 ): boolean {
-  if (ui.kind === 'preparing' && ui.sessionId && sessionId && ui.sessionId !== sessionId) {
+  if (ui.kind !== 'ready' && ui.sessionId && sessionId && ui.sessionId !== sessionId) {
     return false
   }
   if (!status.pythonReady) return true

@@ -99,7 +99,7 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
     provision: async (lang) => {
       const bridge = window.api?.notebookEnv
       const scope: ProvisionScope = lang
-      applyUi({ scope, error: undefined })
+      applyUi({ scope, progress: undefined, error: undefined })
       if (!bridge) return
       try {
         await bridge.provision(lang)

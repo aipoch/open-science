@@ -2891,6 +2891,39 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(provisionR).not.toHaveBeenCalled()
   })
 
+  it('carries an external Windows conda R own activation prefix into execution', async () => {
+    const root = await createStorageRoot()
+    const executions: NotebookExecutionRequest[] = []
+    const prefix = 'C:\\Users\\HM\\miniforge3\\envs\\analysis'
+    const windowsCondaR: DiscoveredInterpreter = {
+      language: 'r',
+      provenance: 'user-own',
+      envId: `${prefix}\\Lib\\R\\bin\\R.exe`,
+      interpreterPath: `${prefix}\\Lib\\R\\bin\\R.exe`,
+      label: 'analysis',
+      version: '4.4.3',
+      runnable: true
+    }
+    const service = bindingService(root, {
+      discovered: [windowsCondaR],
+      enablement: { enabled: { [windowsCondaR.envId]: true }, installAuthorized: {} },
+      executions
+    })
+
+    await service.bindRuntime({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'r',
+      runtimeId: windowsCondaR.envId
+    })
+    await service.execute({ sessionId: 's', workspaceCwd: root, code: '1', language: 'r' })
+
+    expect(executions[0].resolvedInterpreter).toMatchObject({
+      command: `${prefix}\\Lib\\R\\bin\\Rscript.exe`,
+      condaPrefix: prefix
+    })
+  })
+
   it('binds an agent-created named env and runs cells in it via the managed conda path', async () => {
     const root = await createStorageRoot()
     const executions: NotebookExecutionRequest[] = []

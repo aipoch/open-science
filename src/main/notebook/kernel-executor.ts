@@ -198,7 +198,7 @@ const resolveProcessKey = (request: NotebookExecutionRequest): ProcessKey => {
 // still exactly ONE proc per (kind, env), matching the (kind, env)-keyed status/lock tracking upstream.
 const interpreterIdentity = (request: NotebookExecutionRequest): string => {
   const ri = request.resolvedInterpreter
-  return ri ? [ri.command, ...(ri.args ?? [])].join('\n') : ''
+  return ri ? [ri.command, ...(ri.args ?? []), ri.condaPrefix ?? ''].join('\n') : ''
 }
 
 // Converts process, spawn, timeout, and loop errors into normal notebook execution results.
@@ -513,10 +513,15 @@ class NotebookKernelExecutor implements NotebookExecutor {
   ): NodeJS.ProcessEnv {
     // A resolved interpreter is user-owned (BYO/overlay). Never put app-managed conda DLLs ahead of
     // it: on Windows that can load an incompatible BLAS/compiler runtime into the external R process.
+    // An external Windows conda R instead carries its OWN verified prefix from runtime discovery.
     const rEnvPrefix =
-      kind === 'r' && !request.resolvedInterpreter
-        ? envPrefix(request.runtimeRoot, resolveRequestEnv(kind, request))
-        : undefined
+      kind !== 'r'
+        ? undefined
+        : request.resolvedInterpreter
+          ? this.platform === 'win32'
+            ? request.resolvedInterpreter.condaPrefix
+            : undefined
+          : envPrefix(request.runtimeRoot, resolveRequestEnv(kind, request))
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       // Force a non-interactive matplotlib backend so plt.show() never opens a GUI window in this

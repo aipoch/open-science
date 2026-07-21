@@ -121,6 +121,26 @@ describe('notebookGated', () => {
     expect(notebookGated(s, ui, 'session-b')).toBe(false)
   })
 
+  it('does not gate a different session after session-scoped Python preparation fails', () => {
+    const s = status({ provisioning: false })
+    const ui = deriveProvisionUi(
+      s,
+      undefined,
+      {
+        phase: 'error',
+        message: 'Python download failed',
+        progress: 0,
+        scope: 'python',
+        sessionId: 'session-a'
+      },
+      'Python download failed'
+    )
+
+    expect(ui).toMatchObject({ kind: 'error', scope: 'python', sessionId: 'session-a' })
+    expect(notebookGated(s, ui, 'session-a')).toBe(true)
+    expect(notebookGated(s, ui, 'session-b')).toBe(false)
+  })
+
   it('does not gate when ready', () => {
     const s = status({ pythonReady: true })
     expect(notebookGated(s, deriveProvisionUi(s, undefined, undefined, undefined))).toBe(false)
