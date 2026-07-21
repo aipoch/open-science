@@ -153,6 +153,57 @@ describe('CodexAuthController', () => {
     }
   })
 
+  it('signs in and out of a chat-gpt-less isolated profile that already holds a credential', async () => {
+    // Regression: loginIsolated/logoutIsolated must not gate on the chat-gpt capability before reading
+    // status, mirroring getStatus. An isolated home carrying an api-key/gateway credential on a build
+    // that never advertises chat-gpt must still report authenticated and stay sign-out-able.
+    for (const type of ['api-key', 'gateway'] as const) {
+      const credentialed = session({
+        initialize: vi.fn().mockResolvedValue({ authMethods: [{ id: 'api-key' }] }),
+        status: vi.fn().mockResolvedValue({ type })
+      })
+      const controller = new CodexAuthController({
+        openSession: vi.fn().mockResolvedValue(credentialed)
+      })
+
+      await expect(controller.loginIsolated()).resolves.toEqual({
+        mode: 'isolated',
+        supported: true,
+        authenticated: true
+      })
+      // No ChatGPT browser flow: the existing credential is exactly what the runtime would use.
+      expect(credentialed.authenticateChatGpt).not.toHaveBeenCalled()
+
+      await expect(controller.logoutIsolated()).resolves.toEqual({
+        mode: 'isolated',
+        supported: true,
+        authenticated: false
+      })
+      expect(vi.mocked(credentialed.logout)).toHaveBeenCalledOnce()
+    }
+  })
+
+  it('still reports a capability failure for a signed-out chat-gpt-less isolated profile', async () => {
+    // The gate remains for the genuine case: signed out AND no ChatGPT login means nothing to do.
+    const signedOut = session({
+      initialize: vi.fn().mockResolvedValue({ authMethods: [{ id: 'api-key' }] }),
+      status: vi.fn().mockResolvedValue({ type: 'unauthenticated' })
+    })
+    const controller = new CodexAuthController({
+      openSession: vi.fn().mockResolvedValue(signedOut)
+    })
+
+    await expect(controller.loginIsolated()).resolves.toEqual({
+      mode: 'isolated',
+      supported: false,
+      authenticated: false,
+      message: 'The installed codex-acp does not advertise ChatGPT authentication.'
+    })
+    expect(signedOut.authenticateChatGpt).not.toHaveBeenCalled()
+    await expect(controller.logoutIsolated()).resolves.toMatchObject({ supported: false })
+    expect(signedOut.logout).not.toHaveBeenCalled()
+  })
+
   it('reports an unauthenticated but chat-gpt-capable profile as supported, not a capability failure', async () => {
     const signedOut = session({ status: vi.fn().mockResolvedValue({ type: 'unauthenticated' }) })
     const controller = new CodexAuthController({

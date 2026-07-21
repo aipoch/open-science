@@ -198,13 +198,14 @@ export class CodexAuthController {
       authSession = await waitForOperation(sessionPromise, abort.signal)
       const initialized = await waitForOperation(authSession.initialize(), abort.signal)
       const supported = initialized.authMethods?.some((method) => method.id === 'chat-gpt') ?? false
-      if (!supported) return capabilityFailure('isolated')
 
+      // Read credential status before the capability gate, mirroring getStatus. An api-key/gateway
+      // credential already in the app-managed isolated home is exactly what the runtime would use, so
+      // any usable credential short-circuits the browser flow — even on a build that never advertises
+      // chat-gpt. Only a signed-out profile on such a build has nothing to do: the capability failure.
       const current = await waitForOperation(authSession.status(), abort.signal)
-      // api-key/gateway credentials short-circuit the browser flow here too: the isolated home is
-      // app-managed and holds exactly what the runtime would use, so any usable credential already
-      // present means no re-login is needed.
       if (!isAuthenticated(current)) {
+        if (!supported) return capabilityFailure('isolated')
         await waitForOperation(authSession.authenticateChatGpt(), abort.signal)
       }
 
@@ -242,7 +243,12 @@ export class CodexAuthController {
     try {
       const initialized = await authSession.initialize()
       const supported = initialized.authMethods?.some((method) => method.id === 'chat-gpt') ?? false
-      if (!supported) return capabilityFailure('isolated')
+
+      // Clear whatever credential the isolated home holds, mirroring getStatus/loginIsolated: an
+      // api-key/gateway login must be sign-out-able even on a build that never advertises chat-gpt.
+      // Only a signed-out profile on such a build has nothing to clear — the capability failure.
+      const current = await authSession.status()
+      if (!isAuthenticated(current) && !supported) return capabilityFailure('isolated')
 
       await authSession.logout()
       return { mode: 'isolated', supported: true, authenticated: false }
