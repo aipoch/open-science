@@ -190,6 +190,19 @@ describe('artifact MCP server', () => {
     ).rejects.toThrow(/active artifact run/)
   })
 
+  it('rejects a bare filename with no source/content outside a notebook turn', async () => {
+    // Without a notebook data dir in the handoff there is no base to resolve a bare filename against,
+    // so the convenience default must NOT silently fall back to the MCP process cwd — keep the clear
+    // contract error (an artifacts-enabled, notebook-disabled session hits this path).
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+    const environment = await createEnvironment(root, { runId: 'run-1' })
+
+    await expect(
+      writeArtifactFileForCurrentRun(repository, environment, { filename: 'plot.svg' })
+    ).rejects.toThrow(/requires source or content/i)
+  })
+
   it('builds an ACP stdio MCP server config for the artifact tool process', () => {
     const config = createArtifactMcpServerConfig({
       command: '/Applications/Open Science.app/Contents/MacOS/Open Science',

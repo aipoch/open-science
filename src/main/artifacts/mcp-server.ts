@@ -104,7 +104,12 @@ const readCurrentRunContext = async (currentRunFile: string): Promise<ArtifactRu
 }
 
 // Normalizes the legacy content/encoding shape and the new source shape into one repository input.
-const normalizeArtifactToolWriteInput = (input: ArtifactToolWriteInput): ArtifactWriteSource => {
+// relativeBaseDir is the notebook kernel cwd for this turn (undefined outside a notebook turn); it
+// decides whether the bare-filename convenience default is meaningful.
+const normalizeArtifactToolWriteInput = (
+  input: ArtifactToolWriteInput,
+  relativeBaseDir: string | undefined
+): ArtifactWriteSource => {
   if (input.source) return input.source
 
   if (typeof input.content === 'string') {
@@ -115,9 +120,17 @@ const normalizeArtifactToolWriteInput = (input: ArtifactToolWriteInput): Artifac
     }
   }
 
-  // Neither source nor inline content: treat the display filename as a local path. Resolved against
-  // the notebook data dir (the kernel cwd), so a plain `write_artifact_file(filename: "plot.png")`
-  // right after `plt.savefig("plot.png")` just works — the common case needs no path at all.
+  // Neither source nor inline content. The bare-filename default only makes sense when there is a
+  // notebook data dir to resolve it against (kernel cwd): `write_artifact_file(filename: "plot.png")`
+  // right after `plt.savefig("plot.png")` just works. Outside a notebook turn there is no base, so a
+  // bare filename would silently resolve against the MCP process cwd and fail the allow-root check —
+  // keep the explicit contract error instead so the caller learns what to pass.
+  if (!relativeBaseDir) {
+    throw new Error(
+      'write_artifact_file requires source or content when no notebook session data dir is available.'
+    )
+  }
+
   return { kind: 'localPath', path: input.filename }
 }
 
@@ -128,7 +141,7 @@ const writeArtifactFileForCurrentRun = async (
   input: ArtifactToolWriteInput
 ): Promise<ArtifactFile> => {
   const context = await readCurrentRunContext(environment.currentRunFile)
-  const source = normalizeArtifactToolWriteInput(input)
+  const source = normalizeArtifactToolWriteInput(input, context.notebookDataDir)
 
   return repository.writePendingFile(
     {
