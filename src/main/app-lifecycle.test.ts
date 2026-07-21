@@ -403,56 +403,78 @@ describe('installAppLifecycle', () => {
     expect(app.exit).not.toHaveBeenCalled()
   })
 
-  it('recreates the window on cancel when there is no tray and no surviving window (non-darwin)', async () => {
-    // No-tray Windows/Linux orphan guard: X destroyed the window, window-all-closed issued the quit,
-    // the user cancelled — without recreating, the kept app would have no tray and no window (no UI).
-    const sessions: ActiveSessionInfo[] = [{ projectName: 'demo', sessionId: 's1', kind: 'agent' }]
-    const confirmClose = vi.fn(async (): Promise<CloseConfirmChoice> => 'cancel')
+  const cancelSessions: ActiveSessionInfo[] = [
+    { projectId: 'demo', sessionId: 's1', kind: 'agent' }
+  ]
+
+  it.each(['win32', 'linux'] as const)(
+    'recreates the destroyed window on cancel when there is no tray (%s)',
+    async (platform) => {
+      // No-tray orphan guard: X destroyed the window, window-all-closed issued the quit, the user
+      // cancelled — without recreating, the kept app would have no tray and no window (no UI).
+      const { app, windows } = setup({
+        platform,
+        trayHost: false,
+        detectActiveSessions: () => cancelSessions,
+        confirmClose: async (): Promise<CloseConfirmChoice> => 'cancel'
+      })
+      expect(windows).toHaveLength(1)
+      windows[0].destroyed = true // X destroyed it before the window-all-closed quit
+
+      app.emit('before-quit')
+      await flush()
+
+      expect(windows).toHaveLength(2)
+      expect(windows[1].destroyed).toBe(false)
+    }
+  )
+
+  it('does not fabricate a window on cancel in headless mode (window never existed)', async () => {
+    // Regression: headless web mode runs with createInitialWindow:false and no tray; the orphan guard
+    // must key off a destroyed *existing* window, not platform+tray, or it would conjure a window here.
     const { app, windows } = setup({
       platform: 'win32',
       trayHost: false,
       createInitialWindow: false,
-      detectActiveSessions: () => sessions,
-      confirmClose
+      detectActiveSessions: () => cancelSessions,
+      confirmClose: async (): Promise<CloseConfirmChoice> => 'cancel'
     })
     expect(windows).toHaveLength(0)
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(windows).toHaveLength(0)
+  })
+
+  it('does not recreate the window on cancel when a tray is present', async () => {
+    const { app, windows } = setup({
+      platform: 'win32',
+      trayHost: true,
+      detectActiveSessions: () => cancelSessions,
+      confirmClose: async (): Promise<CloseConfirmChoice> => 'cancel'
+    })
+    windows[0].destroyed = true
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(windows).toHaveLength(1) // no new window created
+  })
+
+  it('does not recreate the window on cancel on macOS (resident is its convention)', async () => {
+    const { app, windows } = setup({
+      platform: 'darwin',
+      trayHost: false,
+      detectActiveSessions: () => cancelSessions,
+      confirmClose: async (): Promise<CloseConfirmChoice> => 'cancel'
+    })
+    windows[0].destroyed = true
 
     app.emit('before-quit')
     await flush()
 
     expect(windows).toHaveLength(1)
-  })
-
-  it('does not recreate the window on cancel when a tray is present', async () => {
-    const sessions: ActiveSessionInfo[] = [{ projectName: 'demo', sessionId: 's1', kind: 'agent' }]
-    const { app, windows } = setup({
-      platform: 'win32',
-      trayHost: true,
-      createInitialWindow: false,
-      detectActiveSessions: () => sessions,
-      confirmClose: async (): Promise<CloseConfirmChoice> => 'cancel'
-    })
-
-    app.emit('before-quit')
-    await flush()
-
-    expect(windows).toHaveLength(0)
-  })
-
-  it('does not recreate the window on cancel on macOS (resident is its convention)', async () => {
-    const sessions: ActiveSessionInfo[] = [{ projectName: 'demo', sessionId: 's1', kind: 'agent' }]
-    const { app, windows } = setup({
-      platform: 'darwin',
-      trayHost: false,
-      createInitialWindow: false,
-      detectActiveSessions: () => sessions,
-      confirmClose: async (): Promise<CloseConfirmChoice> => 'cancel'
-    })
-
-    app.emit('before-quit')
-    await flush()
-
-    expect(windows).toHaveLength(0)
   })
 
   it('before-quit skips confirmation once quit is already confirmed (no double dialog)', async () => {

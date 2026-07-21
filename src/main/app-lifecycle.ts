@@ -157,9 +157,14 @@ export const installAppLifecycle = (deps: AppLifecycleDeps): { showMainWindow: (
           }
           // Cancel with no tray and no surviving window would strand the app with no UI (no-tray
           // Windows/Linux: X destroys the window -> window-all-closed quit -> Cancel): recreate the
-          // window so the app the user chose to keep stays reachable. macOS is exempt —
-          // window-closed-but-resident is its dock convention.
-          if (platform !== 'darwin' && !trayBox.current) showMainWindow()
+          // window so the app the user chose to keep stays reachable. Gate on a window that existed
+          // and is now destroyed, NOT on platform+tray alone — headless web mode legitimately runs
+          // with no window (mainWindow never created) and must not have one fabricated here. macOS is
+          // exempt: window-closed-but-resident is its dock convention. The non-darwin/no-tray pair
+          // mirrors the window-all-closed quit path that produced this quit.
+          if (platform !== 'darwin' && !trayBox.current && mainWindow && mainWindow.isDestroyed()) {
+            showMainWindow()
+          }
         })
         .finally(() => {
           confirmInFlight = false

@@ -83,6 +83,11 @@ export const createCloseConfirm = (
         resolve(choice)
       }
 
+      // Known limitation (cosmetic): when a fallback settles the confirm, a modal the renderer had
+      // already shown (ack path) stays on screen. A late click on it is dropped — the response
+      // listener is removed and `settled` guards it — so it merely closes locally with no effect.
+      // Fully dismissing it would need a main->renderer dismiss message; not worth the protocol
+      // surface for a rare hang/timeout case.
       const startFallback = (): void => {
         if (fallbackStarted) return
         fallbackStarted = true
@@ -105,7 +110,9 @@ export const createCloseConfirm = (
 
       // A sustained hang AFTER ack: the pre-ack window is already covered by ackTimer, and the modal
       // legitimately waits on the user, so only arm the grace timer once the renderer actually reports
-      // 'unresponsive'; a paired 'responsive' cancels it.
+      // 'unresponsive'; a paired 'responsive' cancels it. This chain is deliberately separate from
+      // onRenderGone: a crash/reload never emits 'responsive' (recovery is same-process only), so a
+      // reloaded renderer is covered by render-process-gone -> startFallback, not by this timer.
       const offHang = deps.onRendererUnresponsive?.({
         onHang: () => {
           if (!acked || settled) return
