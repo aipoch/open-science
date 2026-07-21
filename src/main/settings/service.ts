@@ -1482,26 +1482,29 @@ class SettingsService {
     const provider = settings.providers.find(
       (candidate) => candidate.id === codexSubscriptionProviderIdentity().id
     )
-    if (provider) {
-      await this.repository.upsertProvider(
-        result.ok
-          ? {
-              ...provider,
-              lastValidatedAt: Date.now(),
-              lastValidationFailure: undefined
+    // The provider can be edited while the browser flow is open. Unless the stored record is still
+    // the isolated subscription the login was started for, the outcome is stale and discarded —
+    // recording it could stamp a switched-to-shared (and unauthenticated) profile as verified.
+    if (provider?.type !== 'codex-isolated') return result
+
+    await this.repository.upsertProvider(
+      result.ok
+        ? {
+            ...provider,
+            lastValidatedAt: Date.now(),
+            lastValidationFailure: undefined
+          }
+        : {
+            ...provider,
+            lastValidatedAt: undefined,
+            lastValidationFailure: {
+              at: Date.now(),
+              category: result.category,
+              status: result.status,
+              message: result.message
             }
-          : {
-              ...provider,
-              lastValidatedAt: undefined,
-              lastValidationFailure: {
-                at: Date.now(),
-                category: result.category,
-                status: result.status,
-                message: result.message
-              }
-            }
-      )
-    }
+          }
+    )
 
     return result
   }

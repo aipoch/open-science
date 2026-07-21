@@ -832,4 +832,83 @@ describe('SettingsPage Codex framework', () => {
       'The Codex adapter does not support authentication status.'
     )
   })
+
+  it('cancels a pending isolated sign-in when the dialog closes mid-flow', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    const provider = {
+      id: 'builtin-codex-subscription',
+      type: 'codex-isolated',
+      name: 'Codex subscription',
+      apiEndpoints: ['responses'],
+      models: [],
+      supportsImageInput: true,
+      hasKey: false,
+      needsKey: false
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue({
+      claude: {},
+      opencode: {},
+      codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
+      providers: [provider],
+      agentFrameworkId: 'codex',
+      agentFrameworks: frameworks,
+      claudeManaged: false,
+      opencodeManaged: false,
+      codexManaged: true
+    })
+    // The browser flow never settles on its own; closing the dialog is what cancels it.
+    api.settings.loginIsolatedCodex = vi.fn(() => new Promise(() => undefined))
+    api.settings.cancelCodexLogin = vi.fn().mockResolvedValue(undefined)
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    const signIn = document.body.querySelector<HTMLButtonElement>('[aria-label="Sign in"]')
+    await act(async () => signIn?.click())
+    expect(document.body.querySelector('[aria-label="Cancel sign-in"]')).not.toBeNull()
+
+    await act(async () => {
+      root.render(<SettingsPage open={false} onClose={vi.fn()} />)
+    })
+
+    expect(api.settings.cancelCodexLogin).toHaveBeenCalledOnce()
+  })
+
+  it('surfaces isolated sign-in failures instead of leaving an unhandled rejection', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    const provider = {
+      id: 'builtin-codex-subscription',
+      type: 'codex-isolated',
+      name: 'Codex subscription',
+      apiEndpoints: ['responses'],
+      models: [],
+      supportsImageInput: true,
+      hasKey: false,
+      needsKey: false
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue({
+      claude: {},
+      opencode: {},
+      codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
+      providers: [provider],
+      agentFrameworkId: 'codex',
+      agentFrameworks: frameworks,
+      claudeManaged: false,
+      opencodeManaged: false,
+      codexManaged: true
+    })
+    api.settings.loginIsolatedCodex = vi
+      .fn()
+      .mockRejectedValue(new Error('The Codex adapter failed to spawn.'))
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    const signIn = document.body.querySelector<HTMLButtonElement>('[aria-label="Sign in"]')
+    await act(async () => signIn?.click())
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'The Codex adapter failed to spawn.'
+    )
+  })
 })

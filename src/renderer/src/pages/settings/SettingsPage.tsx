@@ -544,16 +544,27 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   }
 
   // The explicit isolated sign-in: opens the browser login and records the outcome on the provider,
-  // so the card flips to verified (or shows the failure reason) when the flow settles.
+  // so the card flips to verified (or shows the failure reason) when the flow settles. Infrastructure
+  // failures (adapter spawn, IPC) surface through the same error line a failed test uses.
   const handleCodexLogin = async (): Promise<void> => {
     setIsCodexLoginPending(true)
+    setProviderTestError(undefined)
 
     try {
       await loginIsolatedCodex()
+    } catch (error) {
+      setProviderTestError(error instanceof Error ? error.message : 'Could not sign in to Codex.')
     } finally {
       setIsCodexLoginPending(false)
     }
   }
+
+  // A pending sign-in lives in the main process for up to five minutes — outliving this dialog, which
+  // stays mounted (only its `open` flag flips). Closing Settings mid-flow would orphan the flow (no
+  // cancel affordance on reopen), so tear it down together with the dialog.
+  useEffect(() => {
+    if (!open && isCodexLoginPending) void cancelCodexLogin()
+  }, [open, isCodexLoginPending, cancelCodexLogin])
 
   return (
     <Dialog.Root open={open} onOpenChange={(next) => (next ? undefined : onClose())}>

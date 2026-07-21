@@ -294,6 +294,41 @@ describe('SettingsService: providers', () => {
     })
   })
 
+  it('discards the sign-in outcome when the provider was switched to shared mid-flow', async () => {
+    let resolveLogin!: (status: {
+      mode: 'isolated'
+      supported: boolean
+      authenticated: boolean
+    }) => void
+    const codexAuth: CodexAuthControllerPort = {
+      getStatus: vi.fn(),
+      loginIsolated: vi.fn(
+        () =>
+          new Promise<{ mode: 'isolated'; supported: boolean; authenticated: boolean }>(
+            (resolve) => {
+              resolveLogin = resolve
+            }
+          )
+      ),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn()
+    }
+    const service = createService(undefined, { codexAuth })
+    await service.upsertProvider({ type: 'codex-isolated' })
+
+    // The provider is switched to shared while the browser flow is still open; the success landing
+    // afterwards must not stamp the (unauthenticated) shared profile as verified.
+    const pending = service.loginIsolatedCodex()
+    await service.upsertProvider({ type: 'codex-shared' })
+    resolveLogin({ mode: 'isolated', supported: true, authenticated: true })
+
+    await expect(pending).resolves.toMatchObject({ ok: true })
+    const stored = (await repository.getSettings()).providers[0]
+    expect(stored.type).toBe('codex-shared')
+    expect(stored.lastValidatedAt).toBeUndefined()
+    expect(stored.lastValidationFailure).toBeUndefined()
+  })
+
   it('keeps the Codex account default when a subscription is activated without a model', async () => {
     const service = createService()
     const provider = (await service.upsertProvider({ type: 'codex-shared' })).providers[0]
