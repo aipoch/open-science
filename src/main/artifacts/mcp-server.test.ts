@@ -87,6 +87,28 @@ describe('artifact MCP server', () => {
     await expect(readFile(artifact.path, 'utf8')).resolves.toBe('<svg />')
   })
 
+  it('treats a bare filename with no source as a localPath under the notebook data dir', async () => {
+    // The common flow: plt.savefig("plot.svg") in the kernel cwd, then write_artifact_file with just
+    // the filename. No source/content and no rebuilt path — it must resolve against notebookDataDir.
+    const root = await createStorageRoot()
+    const dataDir = join(root, 'notebook-session', 'data')
+    await mkdir(dataDir, { recursive: true })
+    await writeFile(join(dataDir, 'plot.svg'), '<svg />', 'utf8')
+    const repository = new ArtifactRepository(root)
+    const environment = {
+      ...(await createEnvironment(root)),
+      allowedImportRoots: [dataDir],
+      notebookDataDir: dataDir
+    }
+
+    const artifact = await writeArtifactFileForCurrentRun(repository, environment, {
+      filename: 'plot.svg',
+      mimeType: 'image/svg+xml'
+    })
+
+    await expect(readFile(artifact.path, 'utf8')).resolves.toBe('<svg />')
+  })
+
   it('rejects writes when no active run context is available', async () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)
@@ -157,7 +179,38 @@ describe('artifact MCP server', () => {
       projectName: 'default-project',
       sessionId: 'session-1',
       currentRunFile: '/tmp/current-run.json',
-      allowedImportRoots: ['/Users/example/workspace', '/Users/example/.open-science/notebooks']
+      allowedImportRoots: ['/Users/example/workspace', '/Users/example/.open-science/notebooks'],
+      notebookDataDir: undefined
     })
+  })
+
+  it('passes the notebook data dir through the config and back from the process env', () => {
+    const dataDir = '/Users/example/.open-science/notebooks/default-project/session-1/data'
+    const config = createArtifactMcpServerConfig({
+      command: '/app/bin',
+      entryPath: '/app/out/main/index.js',
+      storageRoot: '/Users/example/.open-science',
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      currentRunFile: '/tmp/current-run.json',
+      allowedImportRoots: ['/Users/example/workspace'],
+      notebookDataDir: dataDir
+    })
+
+    expect(config.env).toContainEqual({
+      name: 'OPEN_SCIENCE_ARTIFACT_NOTEBOOK_DATA_DIR',
+      value: dataDir
+    })
+
+    expect(
+      createArtifactMcpEnvironmentFromProcess({
+        OPEN_SCIENCE_ARTIFACT_STORAGE_ROOT: '/Users/example/.open-science',
+        OPEN_SCIENCE_ARTIFACT_PROJECT_NAME: 'default-project',
+        OPEN_SCIENCE_ARTIFACT_SESSION_ID: 'session-1',
+        OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE: '/tmp/current-run.json',
+        OPEN_SCIENCE_ARTIFACT_ALLOWED_IMPORT_ROOTS: JSON.stringify(['/Users/example/workspace']),
+        OPEN_SCIENCE_ARTIFACT_NOTEBOOK_DATA_DIR: dataDir
+      }).notebookDataDir
+    ).toBe(dataDir)
   })
 })

@@ -43,6 +43,10 @@ type ArtifactMetadata = {
 
 type ArtifactRepositoryWriteOptions = {
   allowedImportRoots?: string[]
+  // Base directory a RELATIVE localPath is resolved against — the notebook kernel's cwd (the session
+  // data dir). Lets the agent pass the same bare filename it saved (e.g. "plot.png") instead of
+  // rebuilding a brittle absolute path. Absolute paths ignore this (path.resolve drops the base).
+  relativeBaseDir?: string
 }
 
 // Accepts only path segments that cannot escape the managed artifact layout.
@@ -132,15 +136,24 @@ const importRootsError = (filePath: string, allowedImportRoots: string[]): Error
 
 const resolveAllowedImportFilePath = async (
   filePath: string,
-  allowedImportRoots: string[]
+  allowedImportRoots: string[],
+  relativeBaseDir?: string
 ): Promise<string> => {
   if (allowedImportRoots.length === 0) {
     throw importRootsError(filePath, allowedImportRoots)
   }
 
+  // Resolve a relative path against the notebook data dir (the kernel's cwd) when provided, so a bare
+  // "plot.png" points at the file the agent just saved — not the MCP process's own cwd. An absolute
+  // path is unaffected: path.resolve ignores earlier segments once it hits an absolute one.
+  const requestedPath =
+    relativeBaseDir && !isAbsolute(filePath)
+      ? resolve(relativeBaseDir, filePath)
+      : resolve(filePath)
+
   let resolvedFilePath: string
   try {
-    resolvedFilePath = await realpath(resolve(filePath))
+    resolvedFilePath = await realpath(requestedPath)
   } catch (error) {
     if (isMissingFileError(error)) {
       throw new Error(
@@ -212,7 +225,8 @@ class ArtifactRepository {
       if (request.source.kind === 'localPath') {
         const sourcePath = await resolveAllowedImportFilePath(
           request.source.path,
-          options.allowedImportRoots ?? []
+          options.allowedImportRoots ?? [],
+          options.relativeBaseDir
         )
 
         await copyFile(sourcePath, temporaryPath)

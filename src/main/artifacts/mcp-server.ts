@@ -20,6 +20,9 @@ type ArtifactMcpEnvironment = {
   sessionId: string
   currentRunFile: string
   allowedImportRoots: string[]
+  // The notebook kernel's cwd (session data dir). A relative localPath / bare filename is resolved
+  // against this, so the agent can pass the same name it saved instead of rebuilding an absolute path.
+  notebookDataDir?: string
 }
 
 type ArtifactMcpServerConfigRequest = ArtifactMcpEnvironment & {
@@ -58,7 +61,7 @@ const writeArtifactFileToolSchema = {
           .string()
           .min(1)
           .describe(
-            'Absolute path to an ALREADY-SAVED file inside the notebook session workspace (e.g. under OPEN_SCIENCE_NOTEBOOK_DATA_DIR). The file must exist before you call this — the app copies it.'
+            'Path to an ALREADY-SAVED file. A bare filename or a relative path (e.g. "plot.png") is resolved against the notebook session data dir (the kernel cwd) — pass the same name you saved with. An absolute path also works. Do NOT rebuild a path from OPEN_SCIENCE_NOTEBOOK_DIR; the kernel cwd is the data dir. The file must exist before you call this — the app copies it.'
           )
       })
     ])
@@ -96,7 +99,10 @@ const normalizeArtifactToolWriteInput = (input: ArtifactToolWriteInput): Artifac
     }
   }
 
-  throw new Error('Artifact write requires either source or content.')
+  // Neither source nor inline content: treat the display filename as a local path. Resolved against
+  // the notebook data dir (the kernel cwd), so a plain `write_artifact_file(filename: "plot.png")`
+  // right after `plt.savefig("plot.png")` just works — the common case needs no path at all.
+  return { kind: 'localPath', path: input.filename }
 }
 
 // Writes one tool call into the current pending run selected by the main process.
@@ -118,7 +124,8 @@ const writeArtifactFileForCurrentRun = async (
       source
     },
     {
-      allowedImportRoots: environment.allowedImportRoots
+      allowedImportRoots: environment.allowedImportRoots,
+      relativeBaseDir: environment.notebookDataDir
     }
   )
 }
@@ -138,7 +145,7 @@ const createArtifactMcpServer = (
     {
       title: 'Write artifact file',
       description:
-        'Attach a file this turn generated as a downloadable artifact (chart, image, report, CSV, archive, …). The file must ALREADY EXIST on disk before you call this. Provide `filename` plus a `source`: either {kind:"localPath", path} pointing at an already-saved file inside the notebook session workspace — save it first (e.g. plt.savefig(...) under OPEN_SCIENCE_NOTEBOOK_DATA_DIR) then pass that absolute path — or {kind:"inline", content} for small in-memory text. The app copies the file and assigns session/message ownership; do not call this before the file is written.',
+        'Attach a file this turn generated as a downloadable artifact (chart, image, report, CSV, archive, …). The file must ALREADY EXIST on disk before you call this. Simplest use inside a notebook: save with a relative name (e.g. plt.savefig("plot.png") / R png("plot.png")) then call this with just `filename: "plot.png"` — the app resolves it against the notebook session data dir (the kernel cwd) and copies it. You may also pass an explicit `source`: {kind:"localPath", path} where path is a bare filename, a path relative to the notebook data dir, or an absolute path to an already-saved file; or {kind:"inline", content} for small in-memory text. The app assigns session/message ownership; do not call this before the file is written.',
       inputSchema: writeArtifactFileToolSchema
     },
     async (input) => {
@@ -167,7 +174,8 @@ const createArtifactMcpServerConfig = ({
   projectName,
   sessionId,
   currentRunFile,
-  allowedImportRoots
+  allowedImportRoots,
+  notebookDataDir
 }: ArtifactMcpServerConfigRequest): McpServerStdio => ({
   name: ARTIFACT_MCP_SERVER_NAME,
   command,
@@ -181,7 +189,10 @@ const createArtifactMcpServerConfig = ({
     {
       name: 'OPEN_SCIENCE_ARTIFACT_ALLOWED_IMPORT_ROOTS',
       value: JSON.stringify(allowedImportRoots)
-    }
+    },
+    ...(notebookDataDir
+      ? [{ name: 'OPEN_SCIENCE_ARTIFACT_NOTEBOOK_DATA_DIR', value: notebookDataDir }]
+      : [])
   ]
 })
 
@@ -210,7 +221,8 @@ const createArtifactMcpEnvironmentFromProcess = (
   projectName: requireEnvironmentVariable(env, 'OPEN_SCIENCE_ARTIFACT_PROJECT_NAME'),
   sessionId: requireEnvironmentVariable(env, 'OPEN_SCIENCE_ARTIFACT_SESSION_ID'),
   currentRunFile: requireEnvironmentVariable(env, 'OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE'),
-  allowedImportRoots: parseAllowedImportRoots(env.OPEN_SCIENCE_ARTIFACT_ALLOWED_IMPORT_ROOTS)
+  allowedImportRoots: parseAllowedImportRoots(env.OPEN_SCIENCE_ARTIFACT_ALLOWED_IMPORT_ROOTS),
+  notebookDataDir: env.OPEN_SCIENCE_ARTIFACT_NOTEBOOK_DATA_DIR || undefined
 })
 
 // Runs only the artifact MCP server; Electron app modules are intentionally not loaded in this mode.

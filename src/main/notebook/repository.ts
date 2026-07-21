@@ -389,7 +389,13 @@ class NotebookRunRepository {
   }
 }
 
-export { NotebookRunRepository, getNotebookRunJsonPath, getNotebookSessionRoot, getRuntimeRoot }
+export {
+  NotebookRunRepository,
+  getNotebookDataRoot,
+  getNotebookRunJsonPath,
+  getNotebookSessionRoot,
+  getRuntimeRoot
+}
 export type {
   AppendNotebookRunRequest,
   LoadNotebookRunDocumentRequest,

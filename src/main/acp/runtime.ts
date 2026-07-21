@@ -83,7 +83,7 @@ import {
   type NotebookMcpEnvironment,
   type NotebookRpcConnection
 } from '../notebook/mcp-server'
-import { getNotebookSessionRoot } from '../notebook/repository'
+import { getNotebookDataRoot, getNotebookSessionRoot } from '../notebook/repository'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { withDataRootWrite } from '../storage/migration-state'
@@ -2188,9 +2188,14 @@ class AcpRuntime {
   ): ArtifactMcpEnvironment | undefined {
     if (!this.artifactOptions || !artifactSessionId) return undefined
 
+    const hasNotebook = Boolean(this.notebookOptions && notebookSessionId)
+    // The notebook kernel's cwd — where relative artifact paths (and bare filenames) resolve.
+    const notebookDataDir = hasNotebook
+      ? getNotebookDataRoot(this.artifactOptions.dataRoot, projectName, notebookSessionId)
+      : undefined
     const allowedImportRoots = [
       sessionCwd,
-      ...(this.notebookOptions && notebookSessionId
+      ...(hasNotebook
         ? [getNotebookSessionRoot(this.artifactOptions.dataRoot, projectName, notebookSessionId)]
         : [])
     ]
@@ -2200,7 +2205,8 @@ class AcpRuntime {
       projectName,
       sessionId: artifactSessionId,
       currentRunFile: this.getArtifactCurrentRunFile(artifactSessionId, projectName),
-      allowedImportRoots
+      allowedImportRoots,
+      notebookDataDir
     }
   }
 

@@ -112,6 +112,52 @@ describe('artifact repository', () => {
     await expect(readFile(sourcePath)).resolves.toEqual(Buffer.from([1, 2, 3]))
   })
 
+  it('resolves a relative local source path against the notebook data dir base', async () => {
+    // The agent saves with a relative name (plt.savefig("plot.png")) inside the kernel cwd; passing
+    // that bare name must resolve against the data dir, not the MCP process cwd.
+    const root = await createStorageRoot()
+    const dataDir = join(root, 'notebook-session', 'data')
+    await mkdir(dataDir, { recursive: true })
+    await writeFile(join(dataDir, 'plot.png'), Buffer.from([9, 8, 7]))
+
+    const repository = new ArtifactRepository(root)
+    const artifact = await repository.writePendingFile(
+      {
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        filename: 'plot.png',
+        source: { kind: 'localPath', path: 'plot.png' }
+      },
+      { allowedImportRoots: [dataDir], relativeBaseDir: dataDir }
+    )
+
+    await expect(readFile(artifact.path)).resolves.toEqual(Buffer.from([9, 8, 7]))
+  })
+
+  it('still honors an absolute local source path when a relative base is set', async () => {
+    // path.resolve drops the base for an absolute path, so an explicit absolute path keeps working.
+    const root = await createStorageRoot()
+    const dataDir = join(root, 'notebook-session', 'data')
+    const sourcePath = join(dataDir, 'chart.png')
+    await mkdir(dataDir, { recursive: true })
+    await writeFile(sourcePath, Buffer.from([4, 5, 6]))
+
+    const repository = new ArtifactRepository(root)
+    const artifact = await repository.writePendingFile(
+      {
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        filename: 'chart.png',
+        source: { kind: 'localPath', path: sourcePath }
+      },
+      { allowedImportRoots: [dataDir], relativeBaseDir: dataDir }
+    )
+
+    await expect(readFile(artifact.path)).resolves.toEqual(Buffer.from([4, 5, 6]))
+  })
+
   it('rejects local source files outside allowed import roots', async () => {
     const root = await createStorageRoot()
     const allowedRoot = join(root, 'notebook-session')
