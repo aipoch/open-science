@@ -18,6 +18,7 @@ import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useComputeStore } from '@/stores/compute-store'
+import { useSessionJobStore } from '@/stores/session-job-store'
 import { useUpdateStore } from '@/stores/update-store'
 
 const App = (): React.JSX.Element | null => {
@@ -36,6 +37,7 @@ const App = (): React.JSX.Element | null => {
   const closeSettings = useSettingsStore((state) => state.closeSettings)
   const enqueueApproval = useSettingsStore((state) => state.enqueueApproval)
   const enqueueComputeApproval = useComputeStore((state) => state.enqueueApproval)
+  const applyJobUpdate = useSessionJobStore((state) => state.applyUpdate)
   const initUpdates = useUpdateStore((state) => state.init)
   const initEnv = useNotebookEnvStore((state) => state.init)
   const envUi = useNotebookEnvStore((state) => state.ui)
@@ -86,6 +88,10 @@ const App = (): React.JSX.Element | null => {
     () => window.api.compute.onApprovalRequest(enqueueComputeApproval),
     [enqueueComputeApproval]
   )
+
+  // Subscribe once to job-updated broadcasts so the session job feed stays live for the badge and
+  // inline job rows. Updates are applied globally — the store filters by sessionId at query time.
+  useEffect(() => window.api.compute.onJobUpdated(applyJobUpdate), [applyJobUpdate])
 
   // Load the project list once on startup so Home can render immediately after hydration.
   useEffect(() => {

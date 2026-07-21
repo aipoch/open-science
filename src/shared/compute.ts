@@ -198,6 +198,8 @@ export type JobSummary = {
   // Human-readable host name, denormalized from ComputeHost.displayName at query time.
   display_name: string
   shape: string
+  // Session the job was submitted in — needed for the renderer store to filter by active session.
+  session_id: string
   status: ComputeJobStatus
   intent: string
   created_at: number

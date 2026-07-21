@@ -39,6 +39,7 @@ export const toJobSummary = (job: ComputeJob, displayName: string): JobSummary =
   provider_id: job.provider_id,
   display_name: displayName,
   shape: job.shape,
+  session_id: job.session_id,
   status: job.status,
   intent: job.intent,
   created_at: job.created_at,
@@ -198,7 +199,11 @@ export const broadcastJobUpdated = (summary: JobSummary): void => {
 const registerComputeIpcHandlers = (
   repository = createDefaultComputeHostRepository(),
   jobRepository = createDefaultComputeJobRepository()
-): { computeService: ComputeService; jobRepository: ComputeJobRepository } => {
+): {
+  computeService: ComputeService
+  jobRepository: ComputeJobRepository
+  hostRepository: ComputeHostRepository
+} => {
   const storageRoot = resolveStorageRoot()
   const skillsDir = join(getAppClaudeConfigDir(storageRoot), 'skills')
 
@@ -278,7 +283,7 @@ const registerComputeIpcHandlers = (
     (_event, filter: { sessionId: string; status?: string[] }) => handlers.jobsList(filter)
   )
 
-  return { computeService: handlers.computeService, jobRepository }
+  return { computeService: handlers.computeService, jobRepository, hostRepository: repository }
 }
 
 export {

@@ -225,16 +225,24 @@ const registerIpcHandlers = async ({
   // Register compute IPC handlers early so computeService can be wired into the notebook RPC server.
   // The approval broker in compute/ipc.ts broadcasts via BrowserWindow.getAllWindows(), which requires
   // Electron to be ready — this is always the case here since we're inside registerIpcHandlers.
-  const { computeService, jobRepository } = registerComputeIpcHandlers()
+  const { computeService, jobRepository, hostRepository } = registerComputeIpcHandlers()
   // Start the JobPoller wired to broadcastJobUpdated so every state/tail change is pushed to all
   // renderer windows via 'compute:job-updated' (Phase 3d, design.md §9 + §15.3).
   const jobPoller = new JobPoller({
     runner: new SystemSshRunner(),
-    hostRepository: computeService.getHostRepository(),
+    hostRepository,
     jobRepository,
     onJobUpdated: (job) => {
-      const summary = toJobSummary(job, job.provider_id)
-      broadcastJobUpdated(summary)
+      // Look up the host display name asynchronously, then broadcast. Fire-and-forget: a transient
+      // failure to fetch the host just falls back to the provider_id string — the broadcast always happens.
+      void hostRepository
+        .get(job.provider_id)
+        .then((host) => {
+          broadcastJobUpdated(toJobSummary(job, host?.displayName ?? job.provider_id))
+        })
+        .catch(() => {
+          broadcastJobUpdated(toJobSummary(job, job.provider_id))
+        })
     }
   })
   jobPoller.start()
