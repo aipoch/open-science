@@ -47,7 +47,10 @@ jobs:
   apply_type_labels:
     name: Apply type labels
     # Adding an existing label is a no-op, so this job also heals labels removed by hand.
-    if: ${{ github.event_name == 'pull_request_target' }}
+    # Body-only edits cannot change the type, so 'edited' events without a title change skip it.
+    if: >-
+      ${{ github.event_name == 'pull_request_target' &&
+          (github.event.action != 'edited' || github.event.changes.title) }}
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -158,7 +161,9 @@ jobs:
             // Contract with ai-review.yml: jobName must match the reviewer job's `name:` field,
             // and header plus the '**Verdict: mergeable|needs changes**' line must match the
             // format each reviewer's prompt requires for its pull request comment. A rename or
-            // prompt-format change on either side silently disables labeling.
+            // prompt-format change on either side silently disables labeling. Verdicts are read
+            // via issues.listComments, so reviewers must post timeline comments (as `gh pr
+            // comment` / issues.createComment does), not pull request reviews.
             const reviewers = [
               { jobName: 'Claude architecture review', header: '## Claude Architecture Review' },
               { jobName: 'Codex correctness review', header: '## Codex Correctness Review' },
@@ -196,7 +201,10 @@ jobs:
             }
 
             if (present.length === 0) {
-              core.notice('Skipping labels because no AI review job ran in this workflow run.');
+              // Usually means the job-name contract with ai-review.yml drifted, so warn loudly;
+              // fail closed because a stale ready-to-merge label must not survive this state.
+              core.warning('No recognized AI review job ran in this workflow run; check the contract.');
+              await removeReadyLabel();
               return;
             }
 
