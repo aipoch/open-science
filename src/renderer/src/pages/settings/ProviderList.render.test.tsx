@@ -41,7 +41,12 @@ const renderList = (
   providers: ProviderView[],
   activeId?: string,
   busyId?: string,
-  callbacks: { onCancel?: () => void; onLogout?: () => void } = {}
+  callbacks: {
+    onCancel?: () => void
+    onLogin?: () => void
+    onLogout?: () => void
+    isCodexLoginPending?: boolean
+  } = {}
 ): void => {
   act(() => {
     root.render(
@@ -52,7 +57,9 @@ const renderList = (
         onEdit={noop}
         onDelete={noop}
         onTest={noop}
+        isCodexLoginPending={callbacks.isCodexLoginPending}
         onCancelCodexLogin={callbacks.onCancel}
+        onLoginIsolatedCodex={callbacks.onLogin}
         onLogoutIsolatedCodex={callbacks.onLogout}
       />
     )
@@ -259,8 +266,9 @@ describe('ProviderList', () => {
     expect(container.textContent).toContain('Codex subscription')
   })
 
-  it('offers cancel during isolated sign-in and sign out after validation', () => {
+  it('offers sign in for an unverified isolated provider, cancel while pending, sign out after', () => {
     const onCancel = vi.fn()
+    const onLogin = vi.fn()
     const onLogout = vi.fn()
     const isolated = provider({
       id: 'builtin-codex-isolated',
@@ -269,16 +277,28 @@ describe('ProviderList', () => {
       models: [],
       model: undefined,
       maskedKey: undefined,
-      hasKey: false
+      hasKey: false,
+      lastValidatedAt: undefined
     })
 
-    renderList([isolated], undefined, isolated.id, { onCancel, onLogout })
+    // Not signed in yet: the explicit sign-in action is offered alongside the read-only check.
+    renderList([isolated], undefined, undefined, { onLogin })
+    act(() => buttonByLabel('Sign in')?.click())
+    expect(onLogin).toHaveBeenCalledOnce()
+    expect(buttonByLabel('Check Codex login')).toBeDefined()
+
+    // While the browser login is open: cancel replaces the check and no second sign-in is offered.
+    renderList([isolated], undefined, undefined, { onCancel, isCodexLoginPending: true })
     act(() => buttonByLabel('Cancel sign-in')?.click())
     expect(onCancel).toHaveBeenCalledOnce()
+    expect(buttonByLabel('Sign in')).toBeUndefined()
+    expect(buttonByLabel('Check Codex login')).toBeUndefined()
 
-    renderList([isolated], undefined, undefined, { onCancel, onLogout })
+    // Signed in (verified): sign-in goes away, sign out is offered.
+    renderList([{ ...isolated, lastValidatedAt: 1 }], undefined, undefined, { onLogout })
     act(() => buttonByLabel('Sign out')?.click())
     expect(onLogout).toHaveBeenCalledOnce()
+    expect(buttonByLabel('Sign in')).toBeUndefined()
     expect(buttonByLabel('Edit')).toBeDefined()
     expect(buttonByLabel('Delete')).toBeDefined()
   })

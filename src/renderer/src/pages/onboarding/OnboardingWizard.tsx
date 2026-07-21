@@ -146,6 +146,9 @@ const OnboardingWizard = (): React.JSX.Element => {
   const closeEnvironmentRepair = useSettingsStore((state) => state.closeEnvironmentRepair)
   const installClaude = useSettingsStore((state) => state.installClaude)
   const saveAndActivateProvider = useSettingsStore((state) => state.saveAndActivateProvider)
+  const persistProvider = useSettingsStore((state) => state.persistProvider)
+  const setActiveProvider = useSettingsStore((state) => state.setActiveProvider)
+  const loginIsolatedCodex = useSettingsStore((state) => state.loginIsolatedCodex)
   const cancelCodexLogin = useSettingsStore((state) => state.cancelCodexLogin)
   const completeOnboarding = useSettingsStore((state) => state.completeOnboarding)
 
@@ -398,6 +401,25 @@ const OnboardingWizard = (): React.JSX.Element => {
     setValidationMessage(undefined)
 
     try {
+      if (formValue.type === 'codex-isolated') {
+        // Isolated sign-in is explicit: persist the provider first, then run the browser login.
+        // Persisting alone never pops a browser; a cancelled login keeps the provider saved but
+        // unverified, so the user can retry without re-entering anything.
+        const providerId = await persistProvider(toUpsertRequest(formValue))
+        const validation = await loginIsolatedCodex()
+
+        setValidationOk(validation.ok)
+        setValidationMessage(describeValidation(validation))
+
+        if (validation.ok) {
+          if (providerId) await setActiveProvider(providerId)
+          // Location is the last step now: it decides completeOnboarding vs. the relaunch, once the
+          // user confirms (or keeps) a location there.
+          setStep('location')
+        }
+        return
+      }
+
       const { validation } = await saveAndActivateProvider(toUpsertRequest(formValue))
 
       setValidationOk(validation.ok)

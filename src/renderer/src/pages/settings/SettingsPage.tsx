@@ -186,6 +186,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const deleteProvider = useSettingsStore((state) => state.deleteProvider)
   const validateProvider = useSettingsStore((state) => state.validateProvider)
   const cancelCodexLogin = useSettingsStore((state) => state.cancelCodexLogin)
+  const loginIsolatedCodex = useSettingsStore((state) => state.loginIsolatedCodex)
   const logoutIsolatedCodex = useSettingsStore((state) => state.logoutIsolatedCodex)
   const refreshProviderModels = useSettingsStore((state) => state.refreshProviderModels)
   const pendingSkillId = useSettingsStore((state) => state.pendingSkillId)
@@ -216,6 +217,8 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const [statusMessage, setStatusMessage] = useState<string | undefined>(undefined)
   const [statusOk, setStatusOk] = useState(false)
   const [busyProviderId, setBusyProviderId] = useState<string | undefined>(undefined)
+  // True while the explicit isolated Codex sign-in is open in the browser; drives the cancel action.
+  const [isCodexLoginPending, setIsCodexLoginPending] = useState(false)
   const [providerTestError, setProviderTestError] = useState<string | undefined>(undefined)
 
   // Refresh settings whenever the dialog opens so external changes are reflected.
@@ -537,6 +540,18 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
       )
     } finally {
       setBusyProviderId(undefined)
+    }
+  }
+
+  // The explicit isolated sign-in: opens the browser login and records the outcome on the provider,
+  // so the card flips to verified (or shows the failure reason) when the flow settles.
+  const handleCodexLogin = async (): Promise<void> => {
+    setIsCodexLoginPending(true)
+
+    try {
+      await loginIsolatedCodex()
+    } finally {
+      setIsCodexLoginPending(false)
     }
   }
 
@@ -905,7 +920,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                         onEdit={openEdit}
                         onDelete={(provider) => void deleteProvider(provider.id)}
                         onTest={(provider) => void handleTest(provider)}
+                        isCodexLoginPending={isCodexLoginPending}
                         onCancelCodexLogin={() => void cancelCodexLogin()}
+                        onLoginIsolatedCodex={() => void handleCodexLogin()}
                         onLogoutIsolatedCodex={() => void logoutIsolatedCodex()}
                       />
                       {providerTestError ? (

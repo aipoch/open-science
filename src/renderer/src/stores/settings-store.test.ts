@@ -30,6 +30,7 @@ type SettingsApi = {
   upsertProvider: ReturnType<typeof vi.fn>
   validateProvider: ReturnType<typeof vi.fn>
   cancelCodexLogin: ReturnType<typeof vi.fn>
+  loginIsolatedCodex: ReturnType<typeof vi.fn>
   logoutIsolatedCodex: ReturnType<typeof vi.fn>
   refreshProviderModels: ReturnType<typeof vi.fn>
   setActiveProvider: ReturnType<typeof vi.fn>
@@ -128,6 +129,7 @@ beforeEach(() => {
     upsertProvider: vi.fn(),
     validateProvider: vi.fn(),
     cancelCodexLogin: vi.fn().mockResolvedValue(undefined),
+    loginIsolatedCodex: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
     logoutIsolatedCodex: vi.fn().mockResolvedValue(snapshot([])),
     refreshProviderModels: vi.fn(),
     setActiveProvider: vi.fn().mockImplementation((request: { id: string }) => {
@@ -321,6 +323,23 @@ describe('settings store: saveProvider keeps a provider whose test fails', () =>
     expect(result.validation.ok).toBe(false)
     expect(result.providerId).toBe('p_existing')
     expect(api.deleteProvider).not.toHaveBeenCalled()
+  })
+})
+
+describe('settings store: loginIsolatedCodex', () => {
+  it('returns the sign-in outcome and refreshes the snapshot so the result lands on the card', async () => {
+    api.loginIsolatedCodex.mockResolvedValue({
+      ok: false,
+      category: 'auth',
+      message: 'Codex sign-in was cancelled.'
+    } as ValidateProviderResult)
+    api.getSettings.mockResolvedValue(snapshot([providerView('p_codex')]))
+
+    const result = await useSettingsStore.getState().loginIsolatedCodex()
+
+    expect(result).toMatchObject({ ok: false, category: 'auth' })
+    expect(api.getSettings).toHaveBeenCalled()
+    expect(useSettingsStore.getState().providers).toHaveLength(1)
   })
 })
 

@@ -159,6 +159,19 @@ const registerSettingsIpcHandlers = ({
     service.validateProvider(request)
   )
   ipcMain.handle('settings:cancel-codex-login', () => service.cancelCodexLogin())
+  ipcMain.handle('settings:login-isolated-codex', async () => {
+    const result = await service.loginIsolatedCodex()
+
+    // A fresh login changes the credentials the live agent relies on; reconnect so it picks them up.
+    if (
+      result.ok &&
+      (await service.getSettingsView()).activeProviderId === CODEX_SUBSCRIPTION_PROVIDER_ID
+    ) {
+      onActiveProviderChanged?.()
+    }
+
+    return result
+  })
   ipcMain.handle('settings:logout-isolated-codex', async () => {
     const snapshot = await service.logoutIsolatedCodex()
 

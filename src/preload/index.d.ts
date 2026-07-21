@@ -213,6 +213,7 @@ interface OpenScienceAPI {
     setAgentFramework(request: SetAgentFrameworkRequest): Promise<SettingsSnapshot>
     validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult>
     cancelCodexLogin(): Promise<void>
+    loginIsolatedCodex(): Promise<ValidateProviderResult>
     logoutIsolatedCodex(): Promise<SettingsSnapshot>
     refreshProviderModels(
       request: RefreshProviderModelsRequest

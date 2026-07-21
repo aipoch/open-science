@@ -95,6 +95,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.isNpmAvailable': 'settings:npm-available',
   'settings.listConnectors': 'settings:list-connectors',
   'settings.listSkills': 'settings:list-skills',
+  'settings.loginIsolatedCodex': 'settings:login-isolated-codex',
   'settings.logoutIsolatedCodex': 'settings:logout-isolated-codex',
   'settings.markOnboardingComplete': 'settings:mark-onboarding-complete',
   'settings.previewSkillZip': 'settings:preview-skill-zip',

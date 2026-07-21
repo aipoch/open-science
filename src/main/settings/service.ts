@@ -1472,6 +1472,40 @@ class SettingsService {
     this.codexAuth.cancelLogin()
   }
 
+  // The explicit isolated sign-in — the only path that opens the browser login. Saving or testing a
+  // provider never does. The outcome is recorded like a validation result, so the provider card shows
+  // the verified check on success or the unverified warning (with the reason) on failure.
+  async loginIsolatedCodex(): Promise<ValidateProviderResult> {
+    const result = this.codexAuthValidationResult(await this.codexAuth.loginIsolated())
+
+    const settings = await this.repository.getSettings()
+    const provider = settings.providers.find(
+      (candidate) => candidate.id === codexSubscriptionProviderIdentity().id
+    )
+    if (provider) {
+      await this.repository.upsertProvider(
+        result.ok
+          ? {
+              ...provider,
+              lastValidatedAt: Date.now(),
+              lastValidationFailure: undefined
+            }
+          : {
+              ...provider,
+              lastValidatedAt: undefined,
+              lastValidationFailure: {
+                at: Date.now(),
+                category: result.category,
+                status: result.status,
+                message: result.message
+              }
+            }
+      )
+    }
+
+    return result
+  }
+
   async logoutIsolatedCodex(): Promise<SettingsSnapshot> {
     await this.codexAuth.logoutIsolated()
     const settings = await this.repository.getSettings()
@@ -1519,9 +1553,13 @@ class SettingsService {
 
     const result = isCodexSubscriptionProvider(resolved.provider.type)
       ? this.codexAuthValidationResult(
-          await (resolved.provider.type === 'codex-shared'
-            ? this.codexAuth.getStatus('shared')
-            : this.codexAuth.loginIsolated())
+          // Validation is a read-only status check in both modes: signing in is a separate explicit
+          // action (loginIsolatedCodex), so testing or saving a provider never pops a browser the
+          // user didn't ask for.
+          await this.codexAuth.getStatus(
+            resolved.provider.type === 'codex-shared' ? 'shared' : 'isolated'
+          ),
+          'Not signed in. Use Sign in to connect your ChatGPT account.'
         )
       : await validateProvider(resolved.provider, {
           runClaudeProbe:
@@ -1568,7 +1606,10 @@ class SettingsService {
     return result
   }
 
-  private codexAuthValidationResult(status: CodexAuthStatus): ValidateProviderResult {
+  private codexAuthValidationResult(
+    status: CodexAuthStatus,
+    isolatedFallback = 'Codex sign-in did not complete.'
+  ): ValidateProviderResult {
     if (status.authenticated) return { ok: true, category: 'ok' }
 
     return {
@@ -1582,7 +1623,7 @@ class SettingsService {
         status.message ??
         (status.mode === 'shared'
           ? 'No existing Codex login was found. Run `codex login` or use the isolated Open Science login.'
-          : 'Codex sign-in did not complete.')
+          : isolatedFallback)
     }
   }
 

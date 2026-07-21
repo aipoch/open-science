@@ -192,7 +192,7 @@ describe('SettingsService: providers', () => {
     expect((await repository.getSettings()).providers).toEqual([])
   })
 
-  it('validates shared and isolated subscriptions through their distinct ACP auth flows', async () => {
+  it('validates shared and isolated subscriptions through read-only status checks', async () => {
     const codexAuth: CodexAuthControllerPort = {
       getStatus: vi.fn().mockResolvedValue({
         mode: 'shared',
@@ -218,10 +218,80 @@ describe('SettingsService: providers', () => {
       service.validateProvider({ providerId: CODEX_ISOLATED_PROVIDER_ID })
     ).resolves.toMatchObject({ ok: true })
     expect(codexAuth.getStatus).toHaveBeenCalledWith('shared')
-    expect(codexAuth.loginIsolated).toHaveBeenCalledOnce()
+    expect(codexAuth.getStatus).toHaveBeenCalledWith('isolated')
+    // Validation never opens the browser login; that is the explicit sign-in action's job.
+    expect(codexAuth.loginIsolated).not.toHaveBeenCalled()
 
     const stored = await repository.getSettings()
     expect(stored.providers.every((provider) => provider.lastValidatedAt !== undefined)).toBe(true)
+  })
+
+  it('reports an unauthenticated isolated status without triggering sign-in', async () => {
+    const codexAuth: CodexAuthControllerPort = {
+      getStatus: vi.fn().mockResolvedValue({
+        mode: 'isolated',
+        supported: true,
+        authenticated: false
+      }),
+      loginIsolated: vi.fn(),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn()
+    }
+    const service = createService(undefined, { codexAuth })
+    await service.upsertProvider({ type: 'codex-isolated' })
+
+    const result = await service.validateProvider({ providerId: CODEX_ISOLATED_PROVIDER_ID })
+
+    expect(result).toMatchObject({
+      ok: false,
+      category: 'auth',
+      message: 'Not signed in. Use Sign in to connect your ChatGPT account.'
+    })
+    expect(codexAuth.loginIsolated).not.toHaveBeenCalled()
+    expect((await repository.getSettings()).providers[0].lastValidationFailure).toMatchObject({
+      category: 'auth'
+    })
+  })
+
+  it('records the explicit isolated sign-in outcome on the provider', async () => {
+    const codexAuth: CodexAuthControllerPort = {
+      getStatus: vi.fn(),
+      loginIsolated: vi.fn().mockResolvedValue({
+        mode: 'isolated',
+        supported: true,
+        authenticated: true
+      }),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn()
+    }
+    const service = createService(undefined, { codexAuth })
+    await service.upsertProvider({ type: 'codex-isolated' })
+
+    await expect(service.loginIsolatedCodex()).resolves.toMatchObject({
+      ok: true,
+      category: 'ok'
+    })
+    expect((await repository.getSettings()).providers[0].lastValidatedAt).toBeDefined()
+
+    // A failed attempt (e.g. the user dismisses the browser flow) clears the verified stamp and
+    // records the reason, so the card flags the provider as unverified until a retry succeeds.
+    codexAuth.loginIsolated = vi.fn().mockResolvedValue({
+      mode: 'isolated',
+      supported: true,
+      authenticated: false,
+      message: 'Codex sign-in was cancelled.'
+    })
+    await expect(service.loginIsolatedCodex()).resolves.toMatchObject({
+      ok: false,
+      category: 'auth',
+      message: 'Codex sign-in was cancelled.'
+    })
+    const stored = (await repository.getSettings()).providers[0]
+    expect(stored.lastValidatedAt).toBeUndefined()
+    expect(stored.lastValidationFailure).toMatchObject({
+      category: 'auth',
+      message: 'Codex sign-in was cancelled.'
+    })
   })
 
   it('keeps the Codex account default when a subscription is activated without a model', async () => {
@@ -282,7 +352,7 @@ describe('SettingsService: providers', () => {
     }
     const service = createService(undefined, { codexAuth })
     await service.upsertProvider({ type: 'codex-isolated' })
-    await service.validateProvider({ providerId: CODEX_ISOLATED_PROVIDER_ID })
+    await service.loginIsolatedCodex()
 
     service.cancelCodexLogin()
     await service.logoutIsolatedCodex()

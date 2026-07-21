@@ -78,6 +78,30 @@ describe('CodexAuthController', () => {
     })
   })
 
+  it('treats api-key and gateway profiles as authenticated', async () => {
+    for (const type of ['api-key', 'gateway'] as const) {
+      const apiKeySession = session({
+        status: vi.fn().mockResolvedValue({ type })
+      })
+      const controller = new CodexAuthController({
+        openSession: vi.fn().mockResolvedValue(apiKeySession)
+      })
+
+      await expect(controller.getStatus('shared')).resolves.toEqual({
+        mode: 'shared',
+        supported: true,
+        authenticated: true
+      })
+
+      await expect(controller.loginIsolated()).resolves.toEqual({
+        mode: 'isolated',
+        supported: true,
+        authenticated: true
+      })
+      expect(apiKeySession.authenticateChatGpt).not.toHaveBeenCalled()
+    }
+  })
+
   it('signs into the isolated profile and confirms the resulting account', async () => {
     const isolated = session({
       status: vi

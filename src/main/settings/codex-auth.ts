@@ -94,6 +94,12 @@ const capabilityFailure = (mode: CodexAuthMode): CodexAuthStatus => ({
   message: 'The installed codex-acp does not advertise ChatGPT authentication.'
 })
 
+// Any stored credential counts as authenticated, not just a ChatGPT login: a profile holding an
+// API key (or gateway auth) runs fine at runtime, so reporting it as signed out would be a false
+// negative that blocks an otherwise working provider.
+const isAuthenticated = (status: CodexAuthenticationStatus): boolean =>
+  status.type === 'chat-gpt' || status.type === 'api-key' || status.type === 'gateway'
+
 const toPublicStatus = (
   mode: CodexAuthMode,
   supported: boolean,
@@ -103,7 +109,7 @@ const toPublicStatus = (
     ? {
         mode,
         supported: true,
-        authenticated: status.type === 'chat-gpt'
+        authenticated: isAuthenticated(status)
       }
     : capabilityFailure(mode)
 
@@ -158,7 +164,7 @@ export class CodexAuthController {
       if (!supported) return capabilityFailure('isolated')
 
       const current = await waitForOperation(authSession.status(), abort.signal)
-      if (current.type !== 'chat-gpt') {
+      if (!isAuthenticated(current)) {
         await waitForOperation(authSession.authenticateChatGpt(), abort.signal)
       }
 

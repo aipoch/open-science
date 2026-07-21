@@ -1,4 +1,14 @@
-import { CircleCheck, LogOut, Pencil, PlugZap, Route, TriangleAlert, Trash2, X } from 'lucide-react'
+import {
+  CircleCheck,
+  LogIn,
+  LogOut,
+  Pencil,
+  PlugZap,
+  Route,
+  TriangleAlert,
+  Trash2,
+  X
+} from 'lucide-react'
 
 import type {
   ChatApiEndpoint,
@@ -26,7 +36,10 @@ type ProviderListProps = {
   onEdit: (provider: ProviderView) => void
   onDelete: (provider: ProviderView) => void
   onTest: (provider: ProviderView) => void
+  // True while the explicit isolated sign-in flow is open in the browser (cancellable).
+  isCodexLoginPending?: boolean
   onCancelCodexLogin?: () => void
+  onLoginIsolatedCodex?: () => void
   onLogoutIsolatedCodex?: () => void
 }
 
@@ -81,7 +94,9 @@ const ProviderList = ({
   onEdit,
   onDelete,
   onTest,
+  isCodexLoginPending = false,
   onCancelCodexLogin,
+  onLoginIsolatedCodex,
   onLogoutIsolatedCodex
 }: ProviderListProps): React.JSX.Element => {
   if (providers.length === 0) {
@@ -227,7 +242,7 @@ const ProviderList = ({
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
-                  {provider.type === 'codex-isolated' && isBusy ? (
+                  {provider.type === 'codex-isolated' && isCodexLoginPending ? (
                     <SettingsIconAction
                       label="Cancel sign-in"
                       icon={X}
@@ -243,6 +258,15 @@ const ProviderList = ({
                       className="border border-border text-foreground"
                     />
                   )}
+                  {provider.type === 'codex-isolated' && !isVerified && !isCodexLoginPending ? (
+                    <SettingsIconAction
+                      label="Sign in"
+                      icon={LogIn}
+                      onClick={() => onLoginIsolatedCodex?.()}
+                      disabled={isBusy}
+                      className="border border-border text-foreground"
+                    />
+                  ) : null}
                   {provider.type === 'codex-isolated' && isVerified ? (
                     <SettingsIconAction
                       label="Sign out"
