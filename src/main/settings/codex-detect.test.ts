@@ -408,6 +408,57 @@ describe('detectNativeCodex', () => {
 
     expect(result).toBeUndefined()
   })
+
+  it('finds native Codex in augmented Homebrew dir even when absent from raw PATH', async () => {
+    // Regression: the ACP smoke test resolves codex through an augmented PATH that includes
+    // /opt/homebrew/bin. detectNativeCodex must search the same dirs so a successful adapter
+    // handshake never disagrees with the independent native-CLI probe (which would block Continue).
+    const { detectNativeCodex } = await import('./codex-detect')
+    const result = await detectNativeCodex({
+      platform: 'darwin',
+      env: { PATH: '/usr/bin' }, // raw PATH does NOT include /opt/homebrew/bin
+      homePath: '/Users/test',
+      getCodexVersion: (path) =>
+        path === '/opt/homebrew/bin/codex'
+          ? Promise.resolve('codex-cli 0.144.2')
+          : Promise.resolve(undefined),
+      resolveNpmBinDirs: () => Promise.resolve([])
+    })
+
+    expect(result).toEqual({ path: '/opt/homebrew/bin/codex', version: '0.144.2' })
+  })
+
+  it('finds native Codex in an npm global bin dir', async () => {
+    const { detectNativeCodex } = await import('./codex-detect')
+    const result = await detectNativeCodex({
+      platform: 'linux',
+      env: { PATH: '/usr/bin' },
+      homePath: '/home/user',
+      getCodexVersion: (path) =>
+        path === '/home/user/.npm-global/bin/codex'
+          ? Promise.resolve('codex-cli 0.144.2')
+          : Promise.resolve(undefined),
+      resolveNpmBinDirs: () => Promise.resolve(['/home/user/.npm-global/bin'])
+    })
+
+    expect(result).toEqual({ path: '/home/user/.npm-global/bin/codex', version: '0.144.2' })
+  })
+
+  it('finds native Codex in ~/.local/bin via homePath', async () => {
+    const { detectNativeCodex } = await import('./codex-detect')
+    const result = await detectNativeCodex({
+      platform: 'linux',
+      env: { PATH: '/usr/bin' },
+      homePath: '/home/user',
+      getCodexVersion: (path) =>
+        path === '/home/user/.local/bin/codex'
+          ? Promise.resolve('codex-cli 0.144.2')
+          : Promise.resolve(undefined),
+      resolveNpmBinDirs: () => Promise.resolve([])
+    })
+
+    expect(result).toEqual({ path: '/home/user/.local/bin/codex', version: '0.144.2' })
+  })
 })
 
 describe('detectCodexComponents', () => {

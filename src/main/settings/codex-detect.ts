@@ -374,8 +374,16 @@ const createDefaultDetectDeps = (): CodexDetectDeps => {
 
 // Checks for a native Codex CLI when the adapter is missing. Used to provide accurate diagnostic
 // messages distinguishing "adapter missing" from "Codex not installed at all".
+//
+// Searches the SAME directory set that collectCandidateDirs + the ACP smoke test use (raw PATH plus
+// the augmented well-known dirs: ~/.local/bin, Homebrew, /usr/local, npm global bin). Without this,
+// an adapter could pass its handshake by resolving codex through the augmented PATH while this probe,
+// scanning only the narrower raw PATH, reported the native CLI as missing and blocked Continue.
 const detectNativeCodex = async (
-  deps: Pick<CodexDetectDeps, 'platform' | 'env' | 'getCodexVersion'> = createDefaultDetectDeps()
+  deps: Pick<
+    CodexDetectDeps,
+    'platform' | 'env' | 'homePath' | 'getCodexVersion' | 'resolveNpmBinDirs' | 'extraDirs'
+  > = createDefaultDetectDeps()
 ): Promise<{ path: string; version: string } | undefined> => {
   const p = pathFor(deps.platform)
   const wellKnown: string[] = []
@@ -390,10 +398,29 @@ const detectNativeCodex = async (
     }
   }
 
-  // Also check PATH
+  // Search raw PATH plus the augmented dirs, mirroring collectCandidateDirs so this probe agrees
+  // with the adapter's own codex resolution during the smoke test.
   const pathDirs = (deps.env.PATH ?? '').split(p.delimiter).filter(Boolean)
+  const npmDirs = deps.resolveNpmBinDirs ? await deps.resolveNpmBinDirs().catch(() => []) : []
+  const augmentedDirs =
+    deps.platform === 'win32'
+      ? deps.env.APPDATA
+        ? [p.join(deps.env.APPDATA, 'npm')]
+        : []
+      : ['/opt/homebrew/bin', '/usr/local/bin']
+
+  const searchDirs = Array.from(
+    new Set([
+      ...pathDirs,
+      p.join(deps.homePath ?? '', '.local', 'bin'),
+      ...(deps.extraDirs ?? []),
+      ...augmentedDirs,
+      ...npmDirs
+    ])
+  ).filter(Boolean)
+
   const names = deps.platform === 'win32' ? ['codex.exe', 'codex.cmd', 'codex'] : ['codex']
-  const pathCandidates = pathDirs.flatMap((dir) => names.map((name) => p.join(dir, name)))
+  const pathCandidates = searchDirs.flatMap((dir) => names.map((name) => p.join(dir, name)))
 
   const candidates = Array.from(new Set([...wellKnown, ...pathCandidates]))
 

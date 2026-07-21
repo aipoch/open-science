@@ -904,16 +904,18 @@ class SettingsService {
       await this.repository.setCodexInfo({ ...cached, ...cachedVersions })
 
       // Build codexComponents even for successful detection so onboarding shows separate rows.
-      // For non-managed cached adapters without a stored nativePath, probe independently.
       let nativeCliFound = !!cached.nativePath
       let nativeCliPath = cached.nativePath
       let nativeCliVersion = cachedVersions.nativeVersion
 
       if (!cached.nativePath) {
+        // A non-managed adapter only gets cached after passing the full smoke test, so a working
+        // native CLI exists. Trust that (mirroring the fresh-detect branch) rather than letting a
+        // narrow probe miss it and block Continue. The probe just enriches the path/version.
+        nativeCliFound = true
         const { detectNativeCodex } = await import('./codex-detect')
         const nativeCodex = await detectNativeCodex(this.codexDetectDeps)
         if (nativeCodex) {
-          nativeCliFound = true
           nativeCliPath = nativeCodex.path
           nativeCliVersion = nativeCodex.version
         }
@@ -953,12 +955,14 @@ class SettingsService {
       let nativeCliVersion = detected.managedCodexVersion
 
       if (!detected.managedCodexPath) {
-        // Non-managed adapter passed smoke test, which means a native CLI exists somewhere.
-        // Try to find it independently for display purposes.
+        // Non-managed adapter passed the ACP smoke test, which proves a working native CLI exists
+        // (the handshake spawns a real session). Trust that: mark native as found even if the
+        // independent probe below can't pinpoint the exact path, so a successful pairing never
+        // blocks Continue. The probe only enriches the display with a concrete path/version.
+        nativeCliFound = true
         const { detectNativeCodex } = await import('./codex-detect')
         const nativeCodex = await detectNativeCodex(this.codexDetectDeps)
         if (nativeCodex) {
-          nativeCliFound = true
           nativeCliPath = nativeCodex.path
           nativeCliVersion = nativeCodex.version
         }

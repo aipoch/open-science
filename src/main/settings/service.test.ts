@@ -68,6 +68,11 @@ const createService = (
     // When set, opencode detection resolves this path/version; otherwise it finds nothing.
     opencodeDetected?: { path: string; version: string }
     codexDetected?: { path: string; version: string; nativePath?: string; nativeVersion?: string }
+    // Simulates an external native Codex CLI reachable only via the augmented PATH (e.g. Homebrew),
+    // so getCodexVersion resolves for this path even though it's not the managed nativePath.
+    codexExternalNative?: { path: string; version: string }
+    // When false, the ACP smoke test fails (adapter present but can't initialize).
+    codexSmokeOk?: boolean
   } = {}
 ): InstanceType<typeof SettingsService> =>
   new SettingsService({
@@ -116,9 +121,11 @@ const createService = (
         Promise.resolve(
           path === options.codexDetected?.nativePath
             ? options.codexDetected.nativeVersion
-            : undefined
+            : path === options.codexExternalNative?.path
+              ? options.codexExternalNative.version
+              : undefined
         ),
-      smokeInitialize: () => Promise.resolve(true),
+      smokeInitialize: () => Promise.resolve(options.codexSmokeOk ?? true),
       resolveNpmBinDirs: () => Promise.resolve([]),
       managedAdapterPath: options.codexDetected?.nativePath
         ? options.codexDetected.path
@@ -591,6 +598,71 @@ describe('SettingsService: preflight & spawn config', () => {
       nativeVersion: '0.144.6'
     })
     expect(await service.getPreflight()).toMatchObject({ codexReady: true, agentReady: true })
+  })
+
+  it('reports both Codex components ready for an external adapter whose native CLI is on the augmented PATH', async () => {
+    // Regression (spec P1): an external adapter pairs successfully via the augmented PATH, but the
+    // independent native-CLI probe must search the SAME dirs (/usr/local/bin here) so it agrees with
+    // the smoke test. Otherwise native CLI would show missing and block Continue.
+    await repository.setAgentFramework('codex')
+    const service = createService(undefined, {
+      codexDetected: { path: '/opt/tools/codex-acp', version: 'codex-acp 1.1.4' },
+      codexExternalNative: { path: '/usr/local/bin/codex', version: 'codex-cli 0.144.6' }
+    })
+
+    const result = await service.checkEnvironment()
+    const agentRows = result.checks.filter((check) => check.id === 'agent')
+    const codexRows = agentRows.filter((row) => row.label.startsWith('Codex'))
+
+    expect(codexRows.map((row) => `${row.label}:${row.status}`)).toEqual([
+      'Codex native CLI:passed',
+      'Codex ACP adapter:passed'
+    ])
+    const nativeRow = codexRows.find((row) => row.label === 'Codex native CLI')
+    expect(nativeRow?.detail).toBe('/usr/local/bin/codex')
+    expect(result.ready).toBe(true)
+  })
+
+  it('trusts a paired external adapter for native readiness even when the path probe misses it', async () => {
+    // Regression (spec P1): the ACP handshake proves a working native CLI exists. If the independent
+    // probe can't pinpoint it (unusual install dir), native CLI must still count as found so a
+    // successful pairing never blocks Continue.
+    await repository.setAgentFramework('codex')
+    const service = createService(undefined, {
+      codexDetected: { path: '/opt/tools/codex-acp', version: 'codex-acp 1.1.4' }
+      // No codexExternalNative: probe finds nothing, but smoke test passed.
+    })
+
+    const result = await service.checkEnvironment()
+    const codexRows = result.checks
+      .filter((check) => check.id === 'agent')
+      .filter((row) => row.label.startsWith('Codex'))
+
+    expect(codexRows.map((row) => `${row.label}:${row.status}`)).toEqual([
+      'Codex native CLI:passed',
+      'Codex ACP adapter:passed'
+    ])
+    expect(result.ready).toBe(true)
+  })
+
+  it('marks the Codex adapter row failed when it is present but fails the ACP handshake', async () => {
+    // Regression (spec P1): an adapter whose --version succeeds but whose ACP initialize fails must
+    // surface as failed, not "ready". Full detection returns nothing, so component-level detection
+    // records adapterFound=true with a smoke-test-failed reason that the UI must honor.
+    await repository.setAgentFramework('codex')
+    const service = createService(undefined, {
+      codexDetected: { path: '/opt/tools/codex-acp', version: 'codex-acp 1.1.4' },
+      codexSmokeOk: false
+    })
+
+    const result = await service.checkEnvironment()
+    const adapterRow = result.checks.find(
+      (check) => check.id === 'agent' && check.label === 'Codex ACP adapter'
+    )
+
+    expect(adapterRow?.status).toBe('failed')
+    expect(adapterRow?.summary).toContain('failed to initialize')
+    expect(result.ready).toBe(false)
   })
 
   it('does not mark an app-managed Codex pair ready when its native binary is broken', async () => {
