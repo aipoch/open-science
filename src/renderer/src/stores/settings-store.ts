@@ -2,12 +2,16 @@ import { create } from 'zustand'
 
 import type { OfficialVendorId } from '../../../shared/provider-registry'
 import { providerValidationFailed } from '../../../shared/settings'
+import type { PackageMirror } from '../../../shared/mirror'
+import { isMirrorConfigured } from '../pages/settings/mirror-view'
 import type {
   ClaudeDetectResult,
   ClaudeInfo,
   ClaudeInstallProgressEvent,
   ClaudeInstallResult,
   ClaudeInstallSource,
+  CodexInfo,
+  CodexInstallSource,
   EnvironmentCheckResult,
   ManagedClaudeRegistry,
   Preflight,
@@ -59,10 +63,12 @@ type SettingsStoreData = {
   agentFrameworks: AgentFrameworkView[]
   // Detected opencode executable, for the framework-aware detection card.
   opencode: OpencodeInfo
+  codex: CodexInfo
   // Whether each framework's detected runtime is the app-managed install (only these can be uninstalled
   // in-app). Mirrored from the main-process snapshot; a PATH/npm binary reads false.
   claudeManaged: boolean
   opencodeManaged: boolean
+  codexManaged: boolean
   onboardingCompletedAt: number | undefined
   // Bundled skills with their enabled state, loaded lazily when the Skills panel opens.
   skills: SkillView[]
@@ -92,6 +98,7 @@ type SettingsStoreData = {
   envCheckGeneration: number
   isDetectingClaude: boolean
   isDetectingOpencode: boolean
+  isDetectingCodex: boolean
   isInstalling: boolean
   installLogs: string[]
   // Latest progress tick driving the install progress bar; null when no install is active.
@@ -106,6 +113,8 @@ type SettingsStoreData = {
   isSettingsOpen: boolean
   // Skill to land on when the dialog opens from a skill mention; consumed once its detail is seeded.
   pendingSkillId?: string
+  // Configured package mirror (conda/pip); undefined means public hosts (unconfigured).
+  packageMirror?: PackageMirror
 }
 
 type SettingsStore = SettingsStoreData & {
@@ -115,16 +124,19 @@ type SettingsStore = SettingsStoreData & {
   detectClaude: () => Promise<ClaudeDetectResult>
   // Detects the opencode executable and refreshes its status card.
   detectOpencode: () => Promise<void>
+  detectCodex: () => Promise<void>
   installClaude: (
     source: ClaudeInstallSource,
     managedRegistry?: ManagedClaudeRegistry
   ) => Promise<ClaudeInstallResult>
   // App-managed OpenCode install; shares the install progress/log state with installClaude.
   installOpencode: (source?: ClaudeInstallSource) => Promise<ClaudeInstallResult>
+  installCodex: (source?: CodexInstallSource) => Promise<ClaudeInstallResult>
   // Removes the app-managed runtime for a framework (guarded main-side to app-managed installs) and
   // applies the refreshed snapshot; main reconnects the agent so the next prompt uses the new state.
   uninstallClaude: () => Promise<void>
   uninstallOpencode: () => Promise<void>
+  uninstallCodex: () => Promise<void>
   clearInstallLogs: () => void
   openEnvironmentRepair: () => void
   closeEnvironmentRepair: () => void
@@ -205,11 +217,14 @@ type SettingsStore = SettingsStoreData & {
   respondApproval: (id: string, decision: ApprovalDecision) => Promise<void>
   // Persists the first-run completion marker and caches it so the startup gate falls through to Home.
   completeOnboarding: () => Promise<void>
+  // Persists the package mirror config; caches it as undefined when cleared back to unconfigured.
+  setPackageMirror: (mirror: PackageMirror) => Promise<void>
 }
 
 const createInitialPreflight = (): Preflight => ({
   claudeReady: false,
   opencodeReady: false,
+  codexReady: false,
   agentFrameworkId: 'claude-code',
   agentReady: false,
   activeProviderReady: false
@@ -224,8 +239,10 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   agentFrameworkId: 'claude-code',
   agentFrameworks: [],
   opencode: {},
+  codex: {},
   claudeManaged: false,
   opencodeManaged: false,
+  codexManaged: false,
   onboardingCompletedAt: undefined,
   skills: [],
   connectors: [],
@@ -242,13 +259,15 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   envCheckGeneration: 0,
   isDetectingClaude: false,
   isDetectingOpencode: false,
+  isDetectingCodex: false,
   isInstalling: false,
   installLogs: [],
   installProgress: null,
   installError: undefined,
   isEnvironmentRepairOpen: false,
   isSettingsOpen: false,
-  pendingSkillId: undefined
+  pendingSkillId: undefined,
+  packageMirror: undefined
 })
 
 // Applies a fresh main-process snapshot to the renderer cache.
@@ -257,12 +276,15 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   activeProviderId: snapshot.activeProviderId,
   activeModel: snapshot.activeModel,
   providers: snapshot.providers,
+  onboardingCompletedAt: snapshot.onboardingCompletedAt,
+  packageMirror: isMirrorConfigured(snapshot.packageMirror) ? snapshot.packageMirror : undefined,
   agentFrameworkId: snapshot.agentFrameworkId,
   agentFrameworks: snapshot.agentFrameworks,
   opencode: snapshot.opencode,
+  codex: snapshot.codex ?? {},
   claudeManaged: snapshot.claudeManaged,
   opencodeManaged: snapshot.opencodeManaged,
-  onboardingCompletedAt: snapshot.onboardingCompletedAt
+  codexManaged: snapshot.codexManaged ?? false
 })
 
 // Stable fallback reference so the selector returns the same array identity across renders
@@ -513,6 +535,28 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     }
   },
 
+  installCodex: async (source = 'managed') => {
+    set({ isInstalling: true, installLogs: [], installProgress: null, installError: undefined })
+    const unsubscribe = window.api.settings.onInstallLog((event) => {
+      if (event.kind === 'progress') set({ installProgress: event })
+      else set((state) => ({ installLogs: [...state.installLogs, event.chunk] }))
+    })
+
+    try {
+      const result = await window.api.settings.installCodex({ source })
+      set(applySnapshot(await window.api.settings.getSettings()))
+      await get().refreshPreflight()
+      set({ installError: result.ok ? undefined : (result.error ?? 'Install failed.') })
+      return result
+    } catch (error) {
+      set({ installError: error instanceof Error ? error.message : 'Install failed.' })
+      throw error
+    } finally {
+      unsubscribe()
+      set({ isInstalling: false, installProgress: null })
+    }
+  },
+
   // Removes the app-managed Claude runtime; main deletes it, re-detects, and may auto-switch the active
   // framework. Applies the refreshed snapshot and re-evaluates the readiness gate.
   uninstallClaude: async () => {
@@ -523,6 +567,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   // Removes the app-managed OpenCode runtime, mirroring uninstallClaude.
   uninstallOpencode: async () => {
     set(applySnapshot(await window.api.settings.uninstallOpencode()))
+    await get().refreshPreflight()
+  },
+
+  uninstallCodex: async () => {
+    set(applySnapshot(await window.api.settings.uninstallCodex()))
     await get().refreshPreflight()
   },
 
@@ -567,11 +616,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     return { providerId, validation }
   },
 
-  // Persists a provider draft, validates it, and activates it only when validation passes.
+  // Persists a provider draft, validates it, and activates it. The connectivity probe is advisory,
+  // not a gate: a provider that saved is activated even if the probe failed (e.g. a custom Responses
+  // gateway the probe can't reach or that rejects the minimal ping), so it can be configured in and
+  // tested live. The validation result is still recorded and surfaced as an "unverified" warning.
   saveAndActivateProvider: async (request) => {
     const result = await get().saveProvider(request)
 
-    if (result.validation.ok && result.providerId) {
+    if (result.providerId) {
       await get().setActiveProvider(result.providerId)
     }
 
@@ -626,6 +678,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       // check is reflected right away, then refresh the readiness gate the install prompt keys off.
       if (id === 'opencode') {
         await get().detectOpencode()
+      } else if (id === 'codex') {
+        await get().detectCodex()
       } else {
         await get().detectClaude()
       }
@@ -643,6 +697,16 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       set(applySnapshot(await window.api.settings.detectOpencode()))
     } finally {
       set({ isDetectingOpencode: false })
+    }
+  },
+
+  detectCodex: async () => {
+    set({ isDetectingCodex: true })
+
+    try {
+      set(applySnapshot(await window.api.settings.detectCodex()))
+    } finally {
+      set({ isDetectingCodex: false })
     }
   },
 
@@ -807,6 +871,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const snapshot = await window.api.settings.markOnboardingComplete()
 
     set(applySnapshot(snapshot))
+  },
+
+  setPackageMirror: async (mirror) => {
+    const saved = await window.api.settings.setPackageMirror(mirror)
+    set({ packageMirror: isMirrorConfigured(saved) ? saved : undefined })
   }
 }))
 

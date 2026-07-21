@@ -7,7 +7,7 @@ const hasVisibleAgentMessageAfterPrompt = (session: ChatSession, promptIndex: nu
       (message) =>
         message.role === 'agent' &&
         message.responseToMessageId === session.activeRun?.promptMessageId &&
-        message.content.trim().length > 0
+        (message.content.trim().length > 0 || Boolean(message.images?.length))
     )
 
 // The loading row is derived UI state: it belongs to the active run, not persisted history.

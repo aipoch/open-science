@@ -69,6 +69,28 @@ describe('settings repository', () => {
     expect(settings.opencodeVersion).toBe('1.18.3')
   })
 
+  it('persists the Codex adapter and paired native runtime across a sanitized read', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    await repository.setAgentFramework('codex')
+    await repository.setCodexInfo({
+      resolvedPath: '/data/codex-acp/dist/index.js',
+      version: '1.1.4',
+      nativePath: '/data/codex-acp/vendor/codex',
+      nativeVersion: '0.144.6'
+    })
+
+    expect(await repository.getSettings()).toMatchObject({
+      agentFrameworkId: 'codex',
+      codex: {
+        resolvedPath: '/data/codex-acp/dist/index.js',
+        version: '1.1.4',
+        nativePath: '/data/codex-acp/vendor/codex',
+        nativeVersion: '0.144.6'
+      }
+    })
+  })
+
   it('replaces a provider in place on upsert by id', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 
@@ -300,6 +322,118 @@ describe('settings repository', () => {
   })
 })
 
+describe('sanitizeSettings notebookRuntimes', () => {
+  it('keeps a valid per-language selection and coerces external flags', () => {
+    const result = sanitizeSettings({
+      version: 2,
+      providers: [],
+      notebookRuntimes: {
+        python: {
+          source: 'external',
+          interpreterPath: '/usr/bin/python3',
+          interpreterArgs: ['-3', 42],
+          appOwnedOverlay: true,
+          packageInstallAuthorized: 'yes'
+        },
+        r: { source: 'managed' }
+      }
+    })
+    expect(result.notebookRuntimes).toEqual({
+      python: {
+        source: 'external',
+        interpreterPath: '/usr/bin/python3',
+        interpreterArgs: ['-3'], // non-string arg dropped
+        appOwnedOverlay: true,
+        packageInstallAuthorized: false // only literal true authorizes; any other value is read-only
+      },
+      r: { source: 'managed' }
+    })
+  })
+
+  it('drops an external entry with no interpreter path and an unknown source', () => {
+    const result = sanitizeSettings({
+      version: 2,
+      providers: [],
+      notebookRuntimes: {
+        python: { source: 'external', appOwnedOverlay: true, packageInstallAuthorized: true },
+        r: { source: 'bogus' }
+      }
+    })
+    // Nothing valid -> the field stays absent (== use the managed default).
+    expect(result.notebookRuntimes).toBeUndefined()
+  })
+
+  it('rejects an external R selection (R is managed-only in v1) while keeping external python', () => {
+    const result = sanitizeSettings({
+      version: 2,
+      providers: [],
+      notebookRuntimes: {
+        python: {
+          source: 'external',
+          interpreterPath: '/usr/bin/python3',
+          appOwnedOverlay: true,
+          packageInstallAuthorized: true
+        },
+        r: { source: 'external', interpreterPath: '/usr/bin/Rscript', appOwnedOverlay: true }
+      }
+    })
+    expect(result.notebookRuntimes?.python).toMatchObject({ source: 'external' })
+    // External R is dropped; a managed R selection would still be allowed.
+    expect(result.notebookRuntimes?.r).toBeUndefined()
+  })
+})
+
+describe('sanitizeSettings notebookRuntimeEnablement', () => {
+  it('round-trips a valid per-language enablement (both maps)', () => {
+    const result = sanitizeSettings({
+      version: 2,
+      providers: [],
+      notebookRuntimeEnablement: {
+        python: {
+          enabled: { '/usr/bin/python3': true, '/opt/py/bin/python': false },
+          installAuthorized: { '/usr/bin/python3': true }
+        },
+        r: { enabled: { '/usr/bin/R': true }, installAuthorized: {} }
+      }
+    })
+    expect(result.notebookRuntimeEnablement).toEqual({
+      python: {
+        enabled: { '/usr/bin/python3': true, '/opt/py/bin/python': false },
+        installAuthorized: { '/usr/bin/python3': true }
+      },
+      r: { enabled: { '/usr/bin/R': true }, installAuthorized: {} }
+    })
+  })
+
+  it('drops non-boolean values and non-object maps, keeping only clean boolean entries', () => {
+    const result = sanitizeSettings({
+      version: 2,
+      providers: [],
+      notebookRuntimeEnablement: {
+        python: {
+          enabled: { '/a': true, '/b': 'yes', '/c': 1 },
+          installAuthorized: 'nope'
+        }
+      }
+    })
+    expect(result.notebookRuntimeEnablement).toEqual({
+      python: { enabled: { '/a': true }, installAuthorized: {} }
+    })
+  })
+
+  it('drops an entry that sanitizes to empty and the whole field when nothing survives', () => {
+    const result = sanitizeSettings({
+      version: 2,
+      providers: [],
+      notebookRuntimeEnablement: {
+        python: { enabled: { '/a': 42 }, installAuthorized: { '/b': 'x' } },
+        r: 'garbage'
+      }
+    })
+    expect(result.notebookRuntimeEnablement).toBeUndefined()
+  })
+})
+
 describe('settings repository: v2 official providers & activeModel migration', () => {
   it('backfills activeModel from the active provider when a pre-v2 file omits it', async () => {
     const root = await createStorageRoot()
@@ -349,7 +483,7 @@ describe('settings repository: v2 official providers & activeModel migration', (
         version: 2,
         providers: [
           { id: 'ok', type: 'official', name: 'DeepSeek', vendorId: 'deepseek', keyRef: 'enc:x' },
-          { id: 'bad1', type: 'official', name: 'Bogus', vendorId: 'openai', keyRef: 'enc:x' },
+          { id: 'bad1', type: 'official', name: 'Bogus', vendorId: 'unknown', keyRef: 'enc:x' },
           { id: 'bad2', type: 'official', name: 'No vendor', keyRef: 'enc:x' }
         ]
       }),
@@ -405,5 +539,95 @@ describe('settings repository: v2 official providers & activeModel migration', (
     )
 
     expect((await new SettingsRepository(root).getSettings()).disabledSkillIds).toEqual(['a', 'b'])
+  })
+
+  it('persists and clears a per-language runtime selection via setRuntimeSelection', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    const external = {
+      source: 'external' as const,
+      interpreterPath: '/usr/bin/python3',
+      appOwnedOverlay: false,
+      packageInstallAuthorized: true
+    }
+    await repository.setRuntimeSelection('python', external)
+    expect((await repository.getSettings()).notebookRuntimes).toEqual({ python: external })
+
+    // Clearing (null) deletes the language entry and drops the whole map when it becomes empty.
+    await repository.setRuntimeSelection('python', null)
+    expect((await repository.getSettings()).notebookRuntimes).toBeUndefined()
+  })
+
+  it('keeps other languages when one is cleared', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    await repository.setRuntimeSelection('python', { source: 'managed' })
+    await repository.setRuntimeSelection('r', { source: 'managed' })
+    await repository.setRuntimeSelection('python', null)
+
+    expect((await repository.getSettings()).notebookRuntimes).toEqual({ r: { source: 'managed' } })
+  })
+
+  it('rejects an external R selection (managed-only in v1)', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    await expect(
+      repository.setRuntimeSelection('r', {
+        source: 'external',
+        interpreterPath: '/usr/bin/Rscript',
+        appOwnedOverlay: false,
+        packageInstallAuthorized: false
+      })
+    ).rejects.toThrow(/managed/i)
+
+    expect((await repository.getSettings()).notebookRuntimes).toBeUndefined()
+  })
+
+  it('rejects a malformed runtime selection (no interpreter path)', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    await expect(
+      repository.setRuntimeSelection('python', {
+        source: 'external',
+        interpreterPath: '',
+        appOwnedOverlay: false,
+        packageInstallAuthorized: false
+      })
+    ).rejects.toThrow(/invalid/i)
+  })
+
+  it('persists and clears a per-language runtime enablement via setRuntimeEnablement', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    const enablement = {
+      enabled: { '/usr/bin/python3': true },
+      installAuthorized: { '/usr/bin/python3': false }
+    }
+    await repository.setRuntimeEnablement('python', enablement)
+    expect((await repository.getSettings()).notebookRuntimeEnablement).toEqual({
+      python: enablement
+    })
+
+    // An entry that sanitizes to empty deletes the language and drops the map when it becomes empty.
+    await repository.setRuntimeEnablement('python', { enabled: {}, installAuthorized: {} })
+    expect((await repository.getSettings()).notebookRuntimeEnablement).toBeUndefined()
+  })
+
+  it('persists, dedupes, and clears the manual-interpreter catalog via setManualInterpreters', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    // Trim + dedupe on write.
+    await repository.setManualInterpreters('python', [
+      '/opt/py/bin/python3',
+      '  /opt/py/bin/python3  ',
+      '/other/python'
+    ])
+    expect((await repository.getSettings()).notebookManualInterpreters).toEqual({
+      python: ['/opt/py/bin/python3', '/other/python']
+    })
+
+    // An empty list deletes the language and drops the map once empty.
+    await repository.setManualInterpreters('python', [])
+    expect((await repository.getSettings()).notebookManualInterpreters).toBeUndefined()
   })
 })

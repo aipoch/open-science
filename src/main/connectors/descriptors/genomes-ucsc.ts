@@ -138,7 +138,7 @@ export const GENOMES_UCSC_TOOLS: ToolDescriptor[] = [
     returns:
       '{genome, filter_text, n_total, tracks_truncated, tracks:[{track, short_label, long_label, type, group, parent}]} — leaf tracks only, sorted by track name; n_total is the full match count, tracks_truncated flags the max_tracks cap.',
     example:
-      'result = host.mcp("genomes", "ucsc_list_tracks", {"genome": "hg38", "filter_text": "phyloP", "max_tracks": 50})',
+      'const result = await host.mcp("genomes", "ucsc_list_tracks", {"genome": "hg38", "filter_text": "phyloP", "max_tracks": 50})',
     run: async (ctx, a) => {
       const genome = a.genome != null && String(a.genome).trim() !== '' ? String(a.genome) : 'hg38'
       const filterText = a.filter_text != null ? String(a.filter_text) : ''
@@ -186,7 +186,7 @@ export const GENOMES_UCSC_TOOLS: ToolDescriptor[] = [
     returns:
       '{genome, track, chrom, start, end, track_type, items_returned, truncated, rows, dataDownloadUrl?} — rows in the upstream shape; truncated reflects the API maxItemsLimit flag; dataDownloadUrl echoed when the API caps a huge track itself.',
     example:
-      'result = host.mcp("genomes", "ucsc_track_data", {"track": "cpgIslandExt", "chrom": "chr7", "start": 140700000, "end": 140800000, "genome": "hg38"})',
+      'const result = await host.mcp("genomes", "ucsc_track_data", {"track": "cpgIslandExt", "chrom": "chr7", "start": 140700000, "end": 140800000, "genome": "hg38"})',
     run: async (ctx, a) => {
       const genome = a.genome != null && String(a.genome).trim() !== '' ? String(a.genome) : 'hg38'
       const track = String(a.track)
@@ -233,7 +233,7 @@ export const GENOMES_UCSC_TOOLS: ToolDescriptor[] = [
     returns:
       '{genome, track, chrom, start, end, span_bp, n_bases_covered, coverage_fraction, mean, min, max, values?, values_truncated?} — stats are base-span-weighted and clipped to the window; uncovered bases lower coverage_fraction rather than count as zero.',
     example:
-      'result = host.mcp("genomes", "ucsc_conservation", {"chrom": "chr7", "start": 140753330, "end": 140753380, "track": "phyloP100way"})',
+      'const result = await host.mcp("genomes", "ucsc_conservation", {"chrom": "chr7", "start": 140753330, "end": 140753380, "track": "phyloP100way"})',
     run: async (ctx, a) => {
       const genome = a.genome != null && String(a.genome).trim() !== '' ? String(a.genome) : 'hg38'
       const track =
@@ -337,7 +337,7 @@ export const GENOMES_UCSC_TOOLS: ToolDescriptor[] = [
     returns:
       '{genome, track, chrom, start, end, items_returned, truncated, n_factors, factors:[...], clusters:[{name, chrom, chromStart, chromEnd, score, sourceCount}]} — clusters sorted by (chromStart,name); factors is the distinct TF list.',
     example:
-      'result = host.mcp("genomes", "ucsc_tfbs_clusters", {"chrom": "chr7", "start": 140699000, "end": 140760000, "genome": "hg38"})',
+      'const result = await host.mcp("genomes", "ucsc_tfbs_clusters", {"chrom": "chr7", "start": 140699000, "end": 140760000, "genome": "hg38"})',
     run: async (ctx, a) => {
       const genome = a.genome != null && String(a.genome).trim() !== '' ? String(a.genome) : 'hg38'
       const chrom = String(a.chrom)
@@ -406,7 +406,7 @@ export const GENOMES_UCSC_TOOLS: ToolDescriptor[] = [
     returns:
       '{genome, filter_text, chrom_count, n_total, chroms_truncated, chromosomes:[{name, size_bp}]} — chrom_count is the assembly-wide total from the API; n_total is the post-filter count; sorted by size descending.',
     example:
-      'result = host.mcp("genomes", "ucsc_chrom_sizes", {"genome": "hg38", "filter_text": "chr1", "max_chroms": 25})',
+      'const result = await host.mcp("genomes", "ucsc_chrom_sizes", {"genome": "hg38", "filter_text": "chr1", "max_chroms": 25})',
     run: async (ctx, a) => {
       const genome = a.genome != null && String(a.genome).trim() !== '' ? String(a.genome) : 'hg38'
       const filterText = a.filter_text != null ? String(a.filter_text) : ''

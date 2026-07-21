@@ -5,6 +5,7 @@ import {
   createEmptySessionManifest,
   createSessionFile,
   normalizeSessionFile,
+  sanitizeSessionMessageImages,
   normalizeSessionManifest,
   type LoadAllSessionsResult,
   type PersistedChatSession,
@@ -113,9 +114,10 @@ class SessionRepository {
   // Writes through a unique temp file, then atomically replaces the target session file.
   private async writeSession(session: PersistedChatSession): Promise<void> {
     const filePath = this.sessionFilePath(session.projectId, session.id)
+    const sanitizedSession = sanitizeSessionMessageImages(session)
 
     await mkdir(this.projectDir(session.projectId), { recursive: true })
-    await this.atomicWrite(filePath, createSessionFile(encodeSessionDataPaths(session)))
+    await this.atomicWrite(filePath, createSessionFile(encodeSessionDataPaths(sanitizedSession)))
   }
 
   private async writeManifest(request: SaveSessionManifestRequest): Promise<void> {

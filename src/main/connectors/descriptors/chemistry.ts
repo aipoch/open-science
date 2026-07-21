@@ -203,7 +203,7 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "query": str, "namespace": str, "n_cids_total": int, "truncated": bool, "cids": [int], "properties": [ {...} ] }` — `n_cids_total` is the full match count, `cids` capped at `max_cids`. `cids` is `[]` when nothing matches (not an error). `properties` rows use PubChem 2025 field names (CID, MolecularFormula, MolecularWeight, `SMILES` = isomeric, `ConnectivitySMILES` = stereo-stripped, InChI, InChIKey, IUPACName, XLogP, ExactMass, TPSA, Charge, H-bond/rotatable-bond/heavy-atom counts).',
     example:
-      'result = host.mcp("chemistry", "pubchem_search_compounds", {"query": "aspirin", "max_cids": 25})',
+      'const result = await host.mcp("chemistry", "pubchem_search_compounds", {"query": "aspirin", "max_cids": 25})',
     run: async (ctx, a) => {
       const namespace = String(a.namespace ?? 'name')
       if (!PUBCHEM_NAMESPACES.includes(namespace as (typeof PUBCHEM_NAMESPACES)[number])) {
@@ -244,7 +244,7 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "n_requested": int, "duplicates": [int], "records": [ {...} ], "not_found": [int] }` — one record per distinct CID (repeats disclosed in `duplicates`, first-occurrence order). Each record carries CID, MolecularFormula, MolecularWeight, SMILES (isomeric), ConnectivitySMILES, InChI, InChIKey, IUPACName, XLogP, ExactMass, TPSA, Charge, HBondDonorCount, HBondAcceptorCount, RotatableBondCount, HeavyAtomCount — plus `synonyms`/`n_synonyms_total`/`synonyms_truncated` when `include_synonyms`. CIDs the API does not know appear in `not_found`.',
     example:
-      'result = host.mcp("chemistry", "pubchem_get_compounds", {"cids": [2244, 2519], "include_synonyms": False})',
+      'const result = await host.mcp("chemistry", "pubchem_get_compounds", {"cids": [2244, 2519], "include_synonyms": False})',
     run: async (ctx, a) => {
       const raw = ([] as unknown[]).concat(a.cids as never).map((c) => Number(c))
       if (!raw.length) throw new Error('cids must be non-empty')
@@ -292,7 +292,7 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "smiles": str, "threshold": int, "n_cids": int, "may_be_truncated": bool, "cids": [int], "properties": [ {...} ] }` — CIDs in upstream relevance order (the query compound is usually first). `threshold` is percent Tanimoto. The API does not report an uncapped total, so `may_be_truncated` is true exactly when the cap was filled. `properties` (when `with_properties`) covers the first 10 hits.',
     example:
-      'result = host.mcp("chemistry", "pubchem_similarity_search", {"smiles": "CC(=O)OC1=CC=CC=C1C(=O)O", "threshold": 90})',
+      'const result = await host.mcp("chemistry", "pubchem_similarity_search", {"smiles": "CC(=O)OC1=CC=CC=C1C(=O)O", "threshold": 90})',
     run: async (ctx, a) => {
       const smiles = String(a.smiles).trim()
       if (!smiles) throw new Error('smiles must be non-empty')
@@ -342,7 +342,7 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "cid": int, "active_only": bool, "n_rows_total": int, "truncated": bool, "rows": [ {...} ] }` — each row maps the upstream columns: AID, SID, CID, "Activity Outcome" (Active/Inactive/Unspecified/Inconclusive), "Target Accession", "Target GeneID", "Activity Value [uM]", "Activity Name", "Assay Name", "Assay Type", "PubMed ID". Filtering by `active_only` happens BEFORE the cap, so `n_rows_total` is the true (filtered) count. `rows` is `[]` for compounds with no assay data (not an error).',
     example:
-      'result = host.mcp("chemistry", "pubchem_get_bioassay_summary", {"cid": 2244, "active_only": True})',
+      'const result = await host.mcp("chemistry", "pubchem_get_bioassay_summary", {"cid": 2244, "active_only": True})',
     run: async (ctx, a) => {
       const cid = Number(a.cid)
       const maxRows = Number(a.max_rows ?? 100)
@@ -387,7 +387,7 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
     required: ['cid'],
     returns:
       '`{ "cid": int, "found": bool, "ghs": {...} | null }` — `ghs` is null when PubChem has no GHS section. Otherwise `{ cid, record_title, signals (e.g. ["Danger"]), pictograms (e.g. ["Flammable", "Irritant"]), hazard_statements (H-codes with occurrence percentages), precautionary_statement_codes, notes, n_source_references }`. Percentages in the hazard text show how many indexed sources report each hazard.',
-    example: 'result = host.mcp("chemistry", "pubchem_get_safety", {"cid": 702})',
+    example: 'const result = await host.mcp("chemistry", "pubchem_get_safety", {"cid": 702})',
     run: async (ctx, a) => {
       const cid = Number(a.cid)
       let ghs: unknown = null
@@ -419,7 +419,7 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "term": str, "page": int, "size": int, "api_total": int, "number_pages": int, "results": [ {...} ] }` — `api_total` is ChEBI\'s own hit count (further pages exist iff `api_total > page*size`). Each result: chebi_accession, name, definition, stars (3 = manually curated), formula, charge, mass, monoisotopic_mass, smiles, inchikey, relevance.',
     example:
-      'result = host.mcp("chemistry", "chebi_search", {"term": "caffeine", "max_results": 20})',
+      'const result = await host.mcp("chemistry", "chebi_search", {"term": "caffeine", "max_results": 20})',
     run: async (ctx, a) => {
       const term = String(a.term).trim()
       if (!term) throw new Error('term must be non-empty')
@@ -473,7 +473,8 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
     required: ['chebi_id'],
     returns:
       '`{ chebi_accession, name, definition, stars, formula, charge, mass, monoisotopic_mass, smiles, inchi, inchikey, iupac_names, synonyms, n_synonyms_total, synonyms_truncated, secondary_ids, xrefs ({type, accession, source, url}), n_xrefs_total, xrefs_truncated, roles ({chebi_accession, name, definition}), modified_on, is_released }` — accepts `CHEBI:27732` or bare `27732`; secondary (merged) ids resolve to the primary record. Ontology parents/children live in `chebi_get_ontology`. Unknown ids throw a not-found error.',
-    example: 'result = host.mcp("chemistry", "chebi_get_entity", {"chebi_id": "CHEBI:27732"})',
+    example:
+      'const result = await host.mcp("chemistry", "chebi_get_entity", {"chebi_id": "CHEBI:27732"})',
     run: async (ctx, a) => {
       const num = normalizeChebiId(a.chebi_id)
       const maxSyn = Number(a.max_synonyms ?? 30)
@@ -561,7 +562,7 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ chebi_accession, name, relation_type_filter, outgoing_relations, n_outgoing_total, outgoing_truncated, incoming_relations, n_incoming_total, incoming_truncated }` — each relation `{ relation_type, init_chebi_id, init_name, final_chebi_id, final_name }` reads "init --relation--> final" (for outgoing, init is this entity; for incoming, final is this entity). `max_relations` caps per direction.',
     example:
-      'result = host.mcp("chemistry", "chebi_get_ontology", {"chebi_id": "CHEBI:27732", "relation_type": "has role"})',
+      'const result = await host.mcp("chemistry", "chebi_get_ontology", {"chebi_id": "CHEBI:27732", "relation_type": "has role"})',
     run: async (ctx, a) => {
       const num = normalizeChebiId(a.chebi_id)
       const maxRel = Number(a.max_relations ?? 100)
@@ -625,7 +626,7 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "query": str, "query_type": "chebi"|"ec"|"text", "api_total": int, "n_returned": int, "truncated": bool, "reactions": [ { "rhea_id": str, "equation": str, "status": "Approved"|"Preliminary"|"Obsolete" } ] }` — reactions ordered by rhea_id; `api_total` (a companion COUNT query) is the true match count. A ChEBI id matches reactions with that participant; a full EC matches enzyme reactions (partial ECs like "2.1.1.-" are rejected); anything else is a case-insensitive substring match on equation text.',
     example:
-      'result = host.mcp("chemistry", "rhea_search_reactions", {"query": "caffeine", "limit": 50})',
+      'const result = await host.mcp("chemistry", "rhea_search_reactions", {"query": "caffeine", "limit": 50})',
     run: async (ctx, a) => {
       const q = String(a.query).trim()
       if (!q) throw new Error('query must be non-empty')
@@ -676,7 +677,8 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
     required: ['rhea_id'],
     returns:
       '`{ rhea_id, equation, status, is_transport, is_chemically_balanced, ec_numbers, pubmed_ids, directional_reactions, bidirectional_reaction, left_side, right_side }` — each side lists participants `{ compound_accession, name, coefficient }` (coefficient "1", "2", ... or symbolic "N"/"2n"). Accepts `RHEA:10280` or bare `10280`; unknown ids throw a not-found error.',
-    example: 'result = host.mcp("chemistry", "rhea_get_reaction", {"rhea_id": "10280"})',
+    example:
+      'const result = await host.mcp("chemistry", "rhea_get_reaction", {"rhea_id": "10280"})',
     run: async (ctx, a) => {
       const acc = normalizeRheaId(a.rhea_id)
 
@@ -762,7 +764,7 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "uniprot": str, "affinity_cutoff_nm": num, "n_rows_total": int, "truncated": bool, "rows": [ { target_name, monomer_id, smiles, affinity_type, affinity, pmid, doi } ] }` — only measurements with value <= `affinity_cutoff_nm`. The full match set is downloaded and counted, so `n_rows_total` is the true count; rows are capped at `max_rows`, sorted by (affinity_type, numeric affinity ascending). `affinity` is a STRING (may carry `>`/`<`, in nM). No hits returns `n_rows_total=0`.',
     example:
-      'result = host.mcp("chemistry", "bindingdb_ligands_by_target", {"uniprot": "P00533", "affinity_cutoff_nm": 100})',
+      'const result = await host.mcp("chemistry", "bindingdb_ligands_by_target", {"uniprot": "P00533", "affinity_cutoff_nm": 100})',
     run: async (ctx, a) => {
       const uniprot = String(a.uniprot).trim().toUpperCase()
       if (!UNIPROT_RE.test(uniprot)) throw new Error(`not a UniProt accession: ${uniprot}`)
@@ -817,7 +819,7 @@ export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "smiles": str, "similarity": num, "api_hit_count": int, "n_rows_total": int, "truncated": bool, "rows": [ { monomer_id, smiles, ligand_name, target_name, species, affinity_type, affinity, tanimoto } ] }` — `smiles` per row is the matched analog. `api_hit_count` is the upstream matching-compound count (not row-for-row comparable with `n_rows_total`, which counts per-measurement rows). Rows capped at `max_rows`, sorted by (target_name, affinity_type, numeric affinity). `affinity` is a STRING (may carry `>`/`<`, in nM). No hits returns `n_rows_total=0`.',
     example:
-      'result = host.mcp("chemistry", "bindingdb_targets_by_compound", {"smiles": "CC(=O)OC1=CC=CC=C1C(=O)O", "similarity": 0.85})',
+      'const result = await host.mcp("chemistry", "bindingdb_targets_by_compound", {"smiles": "CC(=O)OC1=CC=CC=C1C(=O)O", "similarity": 0.85})',
     run: async (ctx, a) => {
       const smiles = String(a.smiles).trim()
       if (!smiles) throw new Error('smiles must be non-empty')

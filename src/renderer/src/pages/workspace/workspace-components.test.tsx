@@ -650,10 +650,10 @@ describe('preview workbench integration', () => {
     expect(notebookPreviewSource).toContain("source: 'user'")
     expect(notebookPreviewSource).toContain("inputKind: 'terminal'")
     expect(notebookPreviewSource).toContain(
-      "import { deriveErrorLine, detectCellLanguage, isProblemRunStatus } from './notebook-cell-utils'"
+      "import {\n  resolveRunErrorLine,\n  environmentLabel,\n  isProblemRunStatus,\n  kernelKindLabel,\n  kernelOriginLabel,\n  resolveRunEnvironment,\n  resolveRunKernelKind\n} from './notebook-cell-utils'"
     )
     expect(notebookPreviewSource).toContain('[{index}]')
-    expect(notebookPreviewSource).toContain('detectCellLanguage(run.script)')
+    expect(notebookPreviewSource).toContain('resolveRunKernelKind(run)')
     expect(notebookPreviewSource).not.toContain('aria-label="Refresh notebook"')
     expect(notebookPreviewSource).not.toContain('aria-label="Restart notebook"')
     expect(notebookPreviewSource).not.toContain('text-text-400')

@@ -12,7 +12,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { cn, formatByteSize } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
-import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { useSessionStore } from '@/stores/session-store'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 
@@ -24,12 +24,14 @@ import {
   type ProjectArtifactFileNode,
   type ProjectUploadFileNode
 } from './project-files-library'
+import { useProjectArtifactFiles } from './use-project-artifact-files'
 import {
   createPreviewFileItemFromArtifact,
   createPreviewFileItemFromUpload
 } from './preview-file-item'
 import type { MessageArtifact } from './preview-file-item'
 import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
+import { FilePreviewDialog } from './FilePreviewDialog'
 import { getPreviewThumbnailReadEncoding } from './preview-support'
 import { getPreviewFileReader } from './previews/preview-file-reader'
 import { useNearViewport } from './previews/useNearViewport'
@@ -380,15 +382,22 @@ const ProjectFilesFilterMenu = ({
 const ProjectFilesView = (): React.JSX.Element => {
   const allSessions = useSessionStore((state) => state.sessions)
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
-  const upsertAndActivateItem = usePreviewWorkbenchStore((state) => state.upsertAndActivateItem)
   const [collapsedSectionIds, setCollapsedSectionIds] = useState<Set<string>>(() => new Set())
   const [selectedFilterId, setSelectedFilterId] = useState('all')
+  // Files-tab previews are transient dialog state rather than workbench tabs.
+  const [dialogItem, setDialogItem] = useState<PreviewFileItem | undefined>(undefined)
+
   // Only the active project's sessions contribute files, so the library never mixes projects.
   const sessions = useMemo(
     () => allSessions.filter((session) => session.projectId === activeProjectId),
     [allSessions, activeProjectId]
   )
-  const library = useMemo(() => buildProjectFileLibrary(sessions), [sessions])
+  // On-disk artifacts include files whose owning session was deleted, surfaced as an "Orphaned" group.
+  const diskArtifacts = useProjectArtifactFiles(activeProjectId)
+  const library = useMemo(
+    () => buildProjectFileLibrary(sessions, diskArtifacts),
+    [sessions, diskArtifacts]
+  )
   const totalFileCount =
     library.uploadFiles.length +
     library.artifactGroups.reduce((total, group) => total + group.files.length, 0)
@@ -458,13 +467,15 @@ const ProjectFilesView = (): React.JSX.Element => {
   }
 
   const previewUploadFile = (file: ProjectUploadFileNode): void => {
-    upsertAndActivateItem(createPreviewFileItemFromUpload(file.attachment, file.sessionId))
+    // Preserve the upload source so the shared renderer and download action use its IPC path.
+    setDialogItem(createPreviewFileItemFromUpload(file.attachment, file.sessionId))
   }
 
   const previewArtifactFile = (file: ProjectArtifactFileNode, sessionId: string): void => {
+    // Invalid or deleted artifacts have no preview item and should leave the dialog closed.
     const previewItem = createPreviewFileItemFromArtifact(file.artifact, sessionId)
 
-    if (previewItem) upsertAndActivateItem(previewItem)
+    if (previewItem) setDialogItem(previewItem)
   }
 
   const uploadsCollapsed = collapsedSectionIds.has('uploads')
@@ -558,6 +569,7 @@ const ProjectFilesView = (): React.JSX.Element => {
           </section>
         ) : null}
       </div>
+      <FilePreviewDialog item={dialogItem} onClose={() => setDialogItem(undefined)} />
     </div>
   )
 }

@@ -569,7 +569,7 @@ export const renderOfficeFile = async ({
 
   // Construct explicitly so a failed open still leaves an instance that can be destroyed.
   const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import('@aiden0z/pptx-renderer')
-  let viewerDimensions: PptxViewerDimensions | undefined
+  const viewerDimensionsRef: { current?: PptxViewerDimensions } = {}
   let currentFit: PptxFitMetrics | undefined
   const viewer = new PptxViewer(container, {
     // A fixed width disables the vendor's resize path, which clears and rebuilds every slide.
@@ -581,6 +581,7 @@ export const renderOfficeFile = async ({
     pdfjs: false,
     // Windowed slides can mount after a resize, so apply the latest fit before their next paint.
     onSlideRendered: (_index, element) => {
+      const viewerDimensions = viewerDimensionsRef.current
       const metrics = viewerDimensions ? getPptxFitMetrics(container, viewerDimensions) : currentFit
       if (!metrics) return
 
@@ -588,7 +589,7 @@ export const renderOfficeFile = async ({
       applyPptxSlideFit(element, metrics)
     }
   })
-  viewerDimensions = viewer
+  viewerDimensionsRef.current = viewer
   let disposeFit: OfficeRenderCleanup | undefined
   const destroyViewer = (): void => {
     disposeFit?.()

@@ -11,7 +11,7 @@ import {
   isMissingFileError,
   isOutsideStorageError
 } from './preview-errors'
-import { usePreviewRuntime } from './preview-runtime'
+import { usePreviewRuntime } from './preview-runtime-context'
 
 type PreviewFormatPresentation = {
   badge: string
@@ -241,7 +241,7 @@ export const PreviewUnsupportedContent = ({
         <div className="min-w-0 pt-px">
           <div className="text-[12px] font-medium text-text-000">Preview unavailable</div>
           <p className="mt-0.5 text-[10px] leading-4 text-text-300">
-            This file type isn't supported for preview
+            This file type isn&apos;t supported for preview
           </p>
           <span className="sr-only">{name}</span>
         </div>

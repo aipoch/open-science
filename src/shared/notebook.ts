@@ -1,4 +1,5 @@
 import type { ArtifactFile } from './artifacts'
+import type { NotebookRuntimeBindings } from './notebook-runtime'
 
 export const NOTEBOOKS_DIR = 'notebooks'
 export const NOTEBOOK_RUN_FILE = 'run.json'
@@ -9,9 +10,19 @@ export type NotebookRunSource = 'agent' | 'user'
 // Distinguishes regular notebook cells from terminal submissions in the same history.
 export type NotebookRunInputKind = 'cell' | 'terminal'
 
-// Mirrors the lifecycle of one persisted execution record in run.json.
+// Mirrors the lifecycle of one persisted execution record in run.json. 'interrupted' = the process
+// died (crash / force-quit) while the run was in flight — reconciled from a stale 'running' on the
+// next startup. 'cancelled' = the run was deliberately aborted (e.g. a force-stop disable).
 export type NotebookRunStatus =
-  'queued' | 'running' | 'completed' | 'failed' | 'timeout' | 'interrupted'
+  'queued' | 'running' | 'completed' | 'failed' | 'timeout' | 'interrupted' | 'cancelled'
+
+// Languages a notebook kernel can run in this phase; each runs as a persistent exec-loop process
+// (no ipykernel/IRkernel involved).
+export type NotebookLanguage = 'python' | 'r'
+
+// Identifies which kernel produced a run: python/r are analysis cells, repl/bash are
+// control-plane/shell.
+export type NotebookKernelKind = 'python' | 'r' | 'repl' | 'bash'
 
 // Classifies files that are created inside the notebook session workspace.
 export type NotebookWorkingFileKind =
@@ -37,6 +48,8 @@ export type NotebookOutput =
       name?: string
       message?: string
       traceback: string
+      // 1-based source line of the failing statement, when the kernel can attribute one (R).
+      line?: number
     }
   | {
       type: 'text'
@@ -45,6 +58,12 @@ export type NotebookOutput =
   | {
       type: 'json'
       data: unknown
+    }
+  | {
+      // A mime→payload bundle for rich results (e.g. plots, scalar values). Text mimes are verbatim;
+      // image/png is base64.
+      type: 'display'
+      data: Record<string, string>
     }
 
 export type NotebookWorkingFile = {
@@ -57,12 +76,19 @@ export type NotebookWorkingFile = {
 }
 
 // Captures the interpreter metadata persisted alongside run history.
+// 'idle' is the resting state between runs; 'running' is written around a live cell/control run;
+// 'restarting' covers the window of a restart() in progress; 'terminated' marks a proc dropped for
+// being idle or lost to a crash/hard-timeout (see NotebookKernelExecutor). 'shutdown' remains the
+// explicit user/app-initiated teardown. 'starting' and 'error' are reserved: proc spawn is transient
+// and internal to the executor, and a kernel-level failure currently surfaces as a run-level 'failed'
+// status rather than a distinct kernel state.
 export type NotebookKernelMetadata = {
   language: 'python'
   pythonPath?: string
   kernelName: string
   runtimeRoot: string
-  lastKnownStatus: 'idle' | 'starting' | 'running' | 'error' | 'shutdown'
+  lastKnownStatus:
+    'idle' | 'starting' | 'running' | 'error' | 'shutdown' | 'restarting' | 'terminated'
 }
 
 // Stores one durable notebook execution, including code, output, and generated-file references.
@@ -71,6 +97,9 @@ export type NotebookRunRecord = {
   cellId: string
   source: NotebookRunSource
   inputKind?: NotebookRunInputKind
+  // The kernel that produced this run; python/r are analysis cells, repl/bash are
+  // control-plane/shell.
+  kernelKind: NotebookKernelKind
   script: string
   status: NotebookRunStatus
   startedAt: number
@@ -83,6 +112,11 @@ export type NotebookRunRecord = {
   artifacts: ArtifactFile[]
   workingFiles: NotebookWorkingFile[]
   truncated?: boolean
+  // Named env that produced this run (python/r only; omitted for repl/bash).
+  environment?: string
+  // Why a run ended non-normally. Set to 'app-terminated' when a stale 'running' run is reconciled to
+  // 'interrupted' on the next startup (the process died mid-run). Absent for normal completions.
+  interruptionReason?: 'app-terminated'
 }
 
 // The complete JSON document persisted at each notebook session's run.json path.
@@ -97,12 +131,17 @@ export type NotebookRunDocument = {
   kernel: NotebookKernelMetadata
   runs: NotebookRunRecord[]
   updatedAt: number
+  // v4 persisted per-language session runtime bindings (wire shape), so a session's bound runtime — and
+  // why it may be unavailable — survives an app restart. Reloaded + revalidated on the next session
+  // load (a bound runtime that is no longer enabled/detected becomes unavailable, never a silent
+  // fallback). Absent for sessions that never bound a runtime.
+  runtimeBindings?: NotebookRuntimeBindings
 }
 
 // Represents the editable in-memory cell state shown by the notebook preview.
 export type NotebookCell = {
   id: string
-  language: 'python'
+  language: NotebookLanguage
   code: string
   status: 'idle' | 'receiving-code' | 'running' | 'completed' | 'failed'
   writeId?: string
@@ -116,6 +155,22 @@ export type NotebookWriteLock = {
   cellId: string
   source: NotebookRunSource
   startedAt: number
+}
+
+// Live per-environment kernel status surfaced in state() for the multi-env preview (design D6). One
+// entry per (kind, env) process the session has spawned, keyed by the executor's ProcessKey
+// (`${kind}:${env}` for python/r, `repl` for the control kernel). The coarse `kernelStatus` on the
+// session state stays the DEFAULT env's status for backward compat; this array is the per-env view.
+// In-memory only for now — persisting it into run.json is a separate later task (T8).
+export type NotebookEnvironmentStatus = {
+  processKey: string
+  kind: 'python' | 'r' | 'repl'
+  // Resolved env name for python/r; omitted for the env-agnostic repl kernel.
+  environment?: string
+  status: NotebookKernelMetadata['lastKnownStatus']
+  // Set after an R install/uninstall: the live R session won't see the change until it restarts, so
+  // the preview surfaces a restart prompt. Only R sets this (Python picks up new packages on import).
+  restartRecommended?: boolean
 }
 
 // Renderer-facing snapshot of one shared notebook interpreter session.
@@ -135,6 +190,8 @@ export type NotebookSessionState = {
   activeRunId?: string
   runs: NotebookRunRecord[]
   recentRuns: NotebookRunRecord[]
+  // Live per-(kind, env) kernel status view (design D6); empty until the session spawns a kernel.
+  environments: NotebookEnvironmentStatus[]
 }
 
 // Lightweight session handle used by events and preview tabs to reopen the notebook.
@@ -171,6 +228,9 @@ export type NotebookSessionRequest = {
 export type BeginNotebookCodeCellRequest = NotebookSessionRequest & {
   cellId?: string
   source?: NotebookRunSource
+  language?: NotebookLanguage
+  // Named env to bind this cell to; omitted -> the default env for language.
+  environment?: string
 }
 
 // Appends raw code text to an active write lock.
@@ -192,6 +252,8 @@ export type RunNotebookCellRequest = NotebookSessionRequest & {
   timeoutMs?: number
   source?: NotebookRunSource
   inputKind?: NotebookRunInputKind
+  // Named env to run this cell in; omitted -> the default env for the cell's language.
+  environment?: string
 }
 
 // Convenience request that writes a cell and runs it in one command.
@@ -201,4 +263,22 @@ export type ExecuteNotebookCodeRequest = NotebookSessionRequest & {
   cellId?: string
   source?: NotebookRunSource
   inputKind?: NotebookRunInputKind
+  language?: NotebookLanguage
+  // Named env to execute in; omitted -> the default env for language.
+  environment?: string
+}
+
+// Runs code on the control-plane REPL kernel (JS; the only kernel with host.mcp connector access).
+// Distinct from data cells: no run history, no NotebookLanguage — just code and an optional timeout.
+export type ExecuteNotebookControlRequest = NotebookSessionRequest & {
+  code: string
+  timeoutMs?: number
+}
+
+// Runs one shell command in a fresh, stateless process in the session workspace. Distinct from every
+// other kernel: no persistent process, no run history, no NotebookLanguage — just a command and an
+// optional timeout.
+export type ExecuteShellRequest = NotebookSessionRequest & {
+  command: string
+  timeoutMs?: number
 }

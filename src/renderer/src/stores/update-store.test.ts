@@ -114,6 +114,44 @@ describe('useUpdateStore', () => {
     expect(useUpdateStore.getState().isDialogOpen).toBe(false)
   })
 
+  it('closeDialog cancels an in-flight download', async () => {
+    const cancel = vi.fn(() =>
+      Promise.resolve({ state: 'available', current: '0.2.0', latest: '0.3.0' })
+    )
+    ;(window as unknown as { api: unknown }).api = {
+      update: { onStatus: vi.fn(), onProgress: vi.fn(), cancel }
+    }
+    useUpdateStore.setState({
+      status: { state: 'downloading', current: '0.2.0', latest: '0.3.0', progress: 40 },
+      isDialogOpen: true
+    })
+
+    useUpdateStore.getState().closeDialog()
+    await Promise.resolve()
+
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(useUpdateStore.getState().isDialogOpen).toBe(false)
+    expect(useUpdateStore.getState().status.state).toBe('available')
+  })
+
+  it('closeDialog cancels unconditionally so a not-yet-broadcast download is still aborted', () => {
+    // The 'downloading' broadcast may not have arrived when the user clicks Cancel right after
+    // Download; closeDialog must still call cancel (a main-process no-op when nothing is downloading).
+    const cancel = vi.fn(() => Promise.resolve({ state: 'available', current: '0.2.0' }))
+    ;(window as unknown as { api: unknown }).api = {
+      update: { onStatus: vi.fn(), onProgress: vi.fn(), cancel }
+    }
+    useUpdateStore.setState({
+      status: { state: 'available', current: '0.2.0', latest: '0.3.0' },
+      isDialogOpen: true
+    })
+
+    useUpdateStore.getState().closeDialog()
+
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(useUpdateStore.getState().isDialogOpen).toBe(false)
+  })
+
   it('check stores the returned status', async () => {
     ;(window as unknown as { api: unknown }).api = {
       update: {

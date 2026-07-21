@@ -1,14 +1,22 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-// Reversible fake safeStorage so the NCBI key can be encrypted without an OS keychain.
+const keychain = vi.hoisted(() => ({ available: true }))
+
+// Reversible fake safeStorage so secrets can be encrypted without an OS keychain.
 vi.mock('electron', () => ({
   safeStorage: {
-    isEncryptionAvailable: () => true,
-    encryptString: (plaintext: string) => Buffer.from(`cipher:${plaintext}`, 'utf8'),
-    decryptString: (buffer: Buffer) => buffer.toString('utf8').slice('cipher:'.length)
+    isEncryptionAvailable: () => keychain.available,
+    encryptString: (plaintext: string) => {
+      if (!keychain.available) throw new Error('Encryption is unavailable')
+      return Buffer.from(`cipher:${plaintext}`, 'utf8')
+    },
+    decryptString: (buffer: Buffer) => {
+      if (!keychain.available) throw new Error('Encryption is unavailable')
+      return buffer.toString('utf8').slice('cipher:'.length)
+    }
   },
   app: { getPath: () => '/home', getAppPath: () => '/home/no-such-app-root', isPackaged: false }
 }))
@@ -21,10 +29,13 @@ const { ALL_CONNECTOR_IDS } = await import('../connectors/registry')
 describe('SettingsService connectors', () => {
   let dir: string
   let service: InstanceType<typeof SettingsService>
+  let repository: InstanceType<typeof SettingsRepository>
 
   beforeEach(async () => {
+    keychain.available = true
     dir = await mkdtemp(join(tmpdir(), 'osci-svc-connectors-'))
-    service = new SettingsService({ repository: new SettingsRepository(dir) })
+    repository = new SettingsRepository(dir)
+    service = new SettingsService({ repository })
     return async () => {
       await rm(dir, { recursive: true, force: true })
     }
@@ -159,6 +170,66 @@ describe('SettingsService connectors', () => {
       env: { TOKEN: 'super-secret' }
     })
     expect(JSON.stringify(snapshot)).not.toContain('super-secret')
+    const storedJson = await readFile(join(dir, 'settings.json'), 'utf8')
+    expect(storedJson).not.toContain('super-secret')
+    expect(storedJson).toContain('envRefs')
+    expect(storedJson).toContain('enc:')
+  })
+
+  it('migrates legacy plaintext custom-server secrets when secure storage is available', async () => {
+    await repository.addCustomServer({
+      id: 'legacy',
+      name: 'legacy',
+      transport: 'streamable_http',
+      enabled: true,
+      url: 'https://example.test/mcp',
+      env: { TOKEN: 'legacy-env-secret' },
+      headers: { Authorization: 'legacy-header-secret' }
+    })
+
+    const server = (await service.getConnectors())?.customMcpServers?.[0]
+    expect(server?.env).toEqual({ TOKEN: 'legacy-env-secret' })
+    expect(server?.headers).toEqual({ Authorization: 'legacy-header-secret' })
+
+    const storedJson = await readFile(join(dir, 'settings.json'), 'utf8')
+    expect(storedJson).not.toContain('legacy-env-secret')
+    expect(storedJson).not.toContain('legacy-header-secret')
+    expect(storedJson).toContain('envRefs')
+    expect(storedJson).toContain('headerRefs')
+  })
+
+  it('keeps legacy secrets readable but rejects new secret writes without secure storage', async () => {
+    await repository.addCustomServer({
+      id: 'legacy',
+      name: 'legacy',
+      transport: 'stdio',
+      enabled: true,
+      command: 'old-command',
+      env: { TOKEN: 'keep-me' }
+    })
+    keychain.available = false
+
+    expect((await service.getConnectors())?.customMcpServers?.[0]?.env).toEqual({
+      TOKEN: 'keep-me'
+    })
+    await service.updateCustomServer({
+      id: 'legacy',
+      transport: 'stdio',
+      command: 'new-command'
+    })
+    await expect(
+      service.addCustomServer({
+        name: 'new-secret',
+        transport: 'stdio',
+        command: 'run',
+        env: { TOKEN: 'must-not-persist' }
+      })
+    ).rejects.toThrow(/secure credential storage is unavailable/i)
+
+    const storedJson = await readFile(join(dir, 'settings.json'), 'utf8')
+    expect(storedJson).toContain('keep-me')
+    expect(storedJson).toContain('new-command')
+    expect(storedJson).not.toContain('must-not-persist')
   })
 
   it('edits a custom server, keeping its name and preserving omitted env', async () => {

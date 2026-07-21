@@ -147,4 +147,128 @@ describe('review store', () => {
     expect(useReviewStore.getState().getReviewsForSession('session-1')).toEqual([])
     vi.unstubAllGlobals()
   })
+
+  it('keeps pushed finding data on an equal-timestamp load but still applies the load stale flag', async () => {
+    // A fix loop resolved a finding and pushed it. A focus-load, mid-flight, holds the OLDER snapshot
+    // (finding still open) at the SAME updatedAt (the concerning case) but freshly computed stale=true.
+    const resolvedCheck = makeCheck({ id: 'c1', resolution: 'resolved' })
+    const pushed = makeReview({
+      id: 'review-1',
+      updatedAt: 1_000,
+      checks: [resolvedCheck],
+      stale: false
+    })
+    useReviewStore.getState().handleReviewUpdate({ review: pushed })
+
+    const staleSnapshot = [
+      makeReview({
+        id: 'review-1',
+        updatedAt: 1_000,
+        checks: [makeCheck({ id: 'c1', resolution: 'open' })],
+        stale: true
+      })
+    ]
+    const getForSession = vi.fn().mockResolvedValue(staleSnapshot)
+    vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
+
+    await useReviewStore.getState().loadReviewsForSession('session-1')
+
+    const stored = useReviewStore.getState().getReviewsForSession('session-1')
+    // Finding data is NOT reverted (still resolved), but the freshly-computed stale flag is applied.
+    expect(stored[0]?.checks[0]?.resolution).toBe('resolved')
+    expect(stored[0]?.stale).toBe(true)
+    vi.unstubAllGlobals()
+  })
+
+  it('does not let a stale load overwrite a newer review delivered by a push', async () => {
+    // A push completes the review while a slow focus-load is mid-flight holding an older snapshot.
+    useReviewStore.getState().handleReviewUpdate({
+      review: makeReview({ id: 'review-1', lifecycle: 'complete', updatedAt: 2_000 })
+    })
+
+    const staleSnapshot = [
+      makeReview({ id: 'review-1', lifecycle: 'running', outcome: null, updatedAt: 1_000 })
+    ]
+    const getForSession = vi.fn().mockResolvedValue(staleSnapshot)
+    vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
+
+    await useReviewStore.getState().loadReviewsForSession('session-1')
+
+    // The newer pushed review (updatedAt 2000, complete) survives the merge.
+    const stored = useReviewStore.getState().getReviewsForSession('session-1')
+    expect(stored).toHaveLength(1)
+    expect(stored[0]?.lifecycle).toBe('complete')
+    expect(stored[0]?.updatedAt).toBe(2_000)
+    vi.unstubAllGlobals()
+  })
+
+  it('a plain push inherits the current outdated flag instead of dropping it', async () => {
+    // The review is flagged stale (a load computed it). A later push (e.g. a fix-loop finding change)
+    // carries no stale value — it must not silently clear the known outdated marker.
+    useReviewStore
+      .getState()
+      .handleReviewUpdate({ review: makeReview({ id: 'review-1', stale: true }) })
+
+    useReviewStore.getState().handleReviewUpdate({
+      review: makeReview({ id: 'review-1', checks: [makeCheck()], stale: undefined })
+    })
+
+    expect(useReviewStore.getState().getReviewsForSession('session-1')[0]?.stale).toBe(true)
+  })
+
+  it('a newer load that failed to recompute staleness keeps the existing outdated flag', async () => {
+    useReviewStore
+      .getState()
+      .handleReviewUpdate({ review: makeReview({ id: 'review-1', updatedAt: 1_000, stale: true }) })
+
+    // Newer payload, but stale could not be recomputed (undefined) — must inherit the current true.
+    const newerButUncomputed = [makeReview({ id: 'review-1', updatedAt: 2_000, stale: undefined })]
+    const getForSession = vi.fn().mockResolvedValue(newerButUncomputed)
+    vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
+
+    await useReviewStore.getState().loadReviewsForSession('session-1')
+
+    const stored = useReviewStore.getState().getReviewsForSession('session-1')
+    expect(stored[0]?.updatedAt).toBe(2_000)
+    expect(stored[0]?.stale).toBe(true)
+    vi.unstubAllGlobals()
+  })
+
+  it('a load that recomputed not-stale clears an existing outdated flag', async () => {
+    // The other half of three-state merging: an explicit false (a load that successfully recomputed
+    // and found the review is no longer outdated) must CLEAR a known stale=true, not just inherit it.
+    useReviewStore
+      .getState()
+      .handleReviewUpdate({ review: makeReview({ id: 'review-1', updatedAt: 1_000, stale: true }) })
+
+    const recomputedNotStale = [makeReview({ id: 'review-1', updatedAt: 2_000, stale: false })]
+    const getForSession = vi.fn().mockResolvedValue(recomputedNotStale)
+    vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
+
+    await useReviewStore.getState().loadReviewsForSession('session-1')
+
+    const stored = useReviewStore.getState().getReviewsForSession('session-1')
+    expect(stored[0]?.stale).toBe(false)
+    vi.unstubAllGlobals()
+  })
+
+  it('dedupes concurrent loads for the same session', async () => {
+    let resolveLoad: ((value: ReviewWithChecks[]) => void) | undefined
+    const getForSession = vi.fn().mockReturnValue(
+      new Promise<ReviewWithChecks[]>((resolve) => {
+        resolveLoad = resolve
+      })
+    )
+    vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
+
+    const first = useReviewStore.getState().loadReviewsForSession('session-1')
+    const second = useReviewStore.getState().loadReviewsForSession('session-1')
+
+    resolveLoad?.([makeReview({ id: 'r' })])
+    await Promise.all([first, second])
+
+    // The in-flight guard drops the overlapping second call.
+    expect(getForSession).toHaveBeenCalledTimes(1)
+    vi.unstubAllGlobals()
+  })
 })

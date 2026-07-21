@@ -1,16 +1,9 @@
-import { createContext, Fragment, useCallback, useContext, useMemo, useState } from 'react'
+import { Fragment, useCallback, useMemo, useState } from 'react'
 
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
 import { createPreviewResourceKey } from './preview-resource-key'
-
-type PreviewRuntime = {
-  attempt: number
-  item: PreviewFileItem
-  retry: () => void
-}
-
-const PreviewRuntimeContext = createContext<PreviewRuntime | undefined>(undefined)
+import { PreviewRuntimeContext } from './preview-runtime-context'
 
 // Remounts the active renderer on retry so its existing lifecycle cleanup remains authoritative.
 const PreviewAttemptBoundary = ({
@@ -49,7 +42,4 @@ const PreviewRuntimeBoundary = ({
   )
 }
 
-const usePreviewRuntime = (): PreviewRuntime | undefined => useContext(PreviewRuntimeContext)
-
-export { PreviewRuntimeBoundary, usePreviewRuntime }
-export type { PreviewRuntime }
+export { PreviewRuntimeBoundary }

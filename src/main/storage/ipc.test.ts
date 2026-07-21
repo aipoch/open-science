@@ -171,6 +171,28 @@ describe('storage IPC handlers', () => {
     }
   })
 
+  it('get-info flags legacyDataMovePrompt when a legacy config root contains only workspaces', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'ds-legacy-workspace-home-'))
+    electronHome.path = home
+    try {
+      await mkdir(join(home, '.open-science', 'workspaces', 'session-1'), { recursive: true })
+      initDataRoot(undefined)
+      registerStorageIpcHandlers(fakeDeps())
+
+      const info = (await invoke('storage:get-info')) as {
+        legacyDataMovePrompt: boolean
+        dataRoot: string
+      }
+
+      expect(info.dataRoot).toBe(join(home, '.open-science'))
+      expect(info.legacyDataMovePrompt).toBe(true)
+    } finally {
+      electronHome.path = '/home/user'
+      initDataRoot(undefined)
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
   it('get-info clears legacyDataMovePrompt once the prompt has been dismissed', async () => {
     const home = await mkdtemp(join(tmpdir(), 'ds-legacy-home-'))
     electronHome.path = home
@@ -801,6 +823,47 @@ describe('storage IPC handlers', () => {
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target)
     expect(deps.settingsService.markOnboardingComplete).not.toHaveBeenCalled()
     expect(deps.relaunch).toHaveBeenCalledTimes(1)
+  })
+
+  it('set-data-root-and-relaunch creates the derived target directory for a fresh empty folder', async () => {
+    // Regression: onboarding to a brand-new empty folder persisted settings.dataRoot but never
+    // created `<parent>/OpenScience`, so the next launch's startup guard read the configured-but-
+    // absent root as deleted and wrongly showed "Data folder not found". The handler must mkdir the
+    // target so the recorded root actually exists on disk.
+    initDataRoot(dataRoot)
+    expect(existsSync(target)).toBe(false)
+    const deps = fakeDeps()
+    registerStorageIpcHandlers(deps)
+
+    await expect(
+      invoke('storage:set-data-root-and-relaunch', { parent: targetParent, markOnboarding: true })
+    ).resolves.toEqual({ ok: true })
+
+    expect(existsSync(target)).toBe(true)
+    expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target)
+  })
+
+  it('set-data-root-and-relaunch creates the target before persisting the pointer', async () => {
+    // Ordering guard: if the folder can't be created the pointer must not be recorded, otherwise the
+    // app would relaunch into the same missing-folder state the fix is meant to prevent.
+    initDataRoot(dataRoot)
+    const setDataRoot = vi.fn().mockImplementation(async () => {
+      // The directory must already exist by the time the pointer is persisted.
+      expect(existsSync(target)).toBe(true)
+    })
+    const deps = fakeDeps({
+      settingsService: {
+        setDataRoot,
+        markOnboardingComplete: vi.fn().mockResolvedValue(undefined),
+        dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
+        getStoredSettings: vi.fn().mockResolvedValue({})
+      }
+    })
+    registerStorageIpcHandlers(deps)
+
+    await invoke('storage:set-data-root-and-relaunch', { parent: targetParent })
+
+    expect(setDataRoot).toHaveBeenCalledTimes(1)
   })
 
   it('set-data-root-and-relaunch persists the derived target and relaunches on an adopt parent (no move, no engine)', async () => {

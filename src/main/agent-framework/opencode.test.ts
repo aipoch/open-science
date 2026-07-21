@@ -129,9 +129,34 @@ describe('opencodeFramework.prepareModelConfig', () => {
     expect(config.env?.OPENCODE_CONFIG_CONTENT).not.toContain('"k"')
   })
 
+  it('declares image capability in the pinned layer for a multimodal model', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      {
+        type: 'custom',
+        baseUrl: 'https://gw/v1',
+        model: 'kimi-k3',
+        key: 'k',
+        apiEndpoints: ['openai'],
+        supportsImageInput: true
+      },
+      { storageRoot: '/data', executablePath: '/bin/opencode' }
+    )
+
+    const content = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+    expect(content.provider['openai-compatible'].models).toEqual({
+      'kimi-k3': { attachment: true, modalities: { input: ['text', 'image'] } }
+    })
+  })
+
   it('mirrors the config file provider/model in the OPENCODE_CONFIG_CONTENT layer (no divergence)', () => {
     const config = opencodeFramework.prepareModelConfig(
-      { type: 'custom', baseUrl: 'https://gw/v1', model: 'gpt-x', key: 'k', apiType: 'openai' },
+      {
+        type: 'custom',
+        baseUrl: 'https://gw/v1',
+        model: 'gpt-x',
+        key: 'k',
+        apiEndpoints: ['openai']
+      },
       { storageRoot: '/data', executablePath: '/bin/opencode' }
     )
 
@@ -288,7 +313,7 @@ describe('buildOpencodeConfig', () => {
         baseUrl: 'https://gw/v1',
         model: 'gpt-x',
         key: 'k',
-        apiType: 'openai'
+        apiEndpoints: ['openai']
       })
     )
 
@@ -301,9 +326,48 @@ describe('buildOpencodeConfig', () => {
     expect(config.provider['openai-compatible'].models).toEqual({ 'gpt-x': {} })
     // A 'both' provider prefers OpenAI on opencode (which supports both).
     const both = JSON.parse(
-      buildOpencodeConfig({ type: 'custom', baseUrl: 'https://gw/v1', model: 'm', apiType: 'both' })
+      buildOpencodeConfig({
+        type: 'custom',
+        baseUrl: 'https://gw/v1',
+        model: 'm',
+        apiEndpoints: ['anthropic', 'openai']
+      })
     )
     expect(both.model).toBe('openai-compatible/m')
+  })
+
+  it('declares image capability on the model when it supports image input', () => {
+    // opencode strips image parts for a registered model that does not advertise vision, so a
+    // multimodal model must carry the attachment capability and an image input modality.
+    const config = JSON.parse(
+      buildOpencodeConfig({
+        type: 'custom',
+        baseUrl: 'https://gw/v1',
+        model: 'kimi-k3',
+        key: 'k',
+        apiEndpoints: ['openai'],
+        supportsImageInput: true
+      })
+    )
+
+    expect(config.provider['openai-compatible'].models).toEqual({
+      'kimi-k3': { attachment: true, modalities: { input: ['text', 'image'] } }
+    })
+  })
+
+  it('leaves a text-only model without image capability', () => {
+    const config = JSON.parse(
+      buildOpencodeConfig({
+        type: 'custom',
+        baseUrl: 'https://gw/v1',
+        model: 'deepseek-v4-flash',
+        key: 'k',
+        apiEndpoints: ['openai'],
+        supportsImageInput: false
+      })
+    )
+
+    expect(config.provider['openai-compatible'].models).toEqual({ 'deepseek-v4-flash': {} })
   })
 
   it('uses the OpenAI base for a dual-endpoint vendor, not its Anthropic base (DeepSeek)', () => {
@@ -311,17 +375,50 @@ describe('buildOpencodeConfig', () => {
       buildOpencodeConfig({
         type: 'custom',
         baseUrl: 'https://api.deepseek.com/anthropic',
-        openaiBaseUrl: 'https://api.deepseek.com',
+        openaiBaseUrl: 'https://api.deepseek.com/v1',
         model: 'deepseek-v4-pro',
         key: 'sk-ds',
-        apiType: 'both'
+        apiEndpoints: ['anthropic', 'openai']
       })
     )
 
-    // 'both' → OpenAI on opencode, pointed at the OpenAI base with /v1 (the @ai-sdk/openai-compatible
-    // client appends /chat/completions), not the /anthropic route.
+    // 'both' → OpenAI on opencode, pointed at the vendor's exact OpenAI base (the
+    // @ai-sdk/openai-compatible client appends /chat/completions), not the /anthropic route.
     expect(config.model).toBe('openai-compatible/deepseek-v4-pro')
     expect(config.provider['openai-compatible'].options.baseURL).toBe('https://api.deepseek.com/v1')
+  })
+
+  it('points a GLM dual-endpoint vendor at its verbatim OpenAI base (/api/paas/v4, not /v1)', () => {
+    const config = JSON.parse(
+      buildOpencodeConfig({
+        type: 'custom',
+        baseUrl: 'https://api.z.ai/api/anthropic',
+        openaiBaseUrl: 'https://api.z.ai/api/paas/v4',
+        model: 'glm-5.2',
+        key: 'k',
+        apiEndpoints: ['anthropic', 'openai']
+      })
+    )
+
+    // 'both' → OpenAI on opencode. The @ai-sdk/openai-compatible client appends /chat/completions to
+    // baseURL, so it must be the vendor's exact versioned base — not a hard-coded /v1.
+    expect(config.model).toBe('openai-compatible/glm-5.2')
+    expect(config.provider['openai-compatible'].options.baseURL).toBe(
+      'https://api.z.ai/api/paas/v4'
+    )
+  })
+
+  it('normalizes a custom OpenAI root-with-path to <root>/v1', () => {
+    const config = JSON.parse(
+      buildOpencodeConfig({
+        type: 'custom',
+        baseUrl: 'https://host/proxy',
+        model: 'm',
+        apiEndpoints: ['openai']
+      })
+    )
+
+    expect(config.provider['openai-compatible'].options.baseURL).toBe('https://host/proxy/v1')
   })
 
   it('normalizes a custom OpenAI base to end at /v1 (no doubling)', () => {
@@ -330,7 +427,7 @@ describe('buildOpencodeConfig', () => {
         type: 'custom',
         baseUrl: 'https://gw.example',
         model: 'm',
-        apiType: 'openai'
+        apiEndpoints: ['openai']
       })
     )
     expect(rooted.provider['openai-compatible'].options.baseURL).toBe('https://gw.example/v1')
@@ -340,7 +437,7 @@ describe('buildOpencodeConfig', () => {
         type: 'custom',
         baseUrl: 'https://gw.example/v1',
         model: 'm',
-        apiType: 'openai'
+        apiEndpoints: ['openai']
       })
     )
     expect(withV1.provider['openai-compatible'].options.baseURL).toBe('https://gw.example/v1')

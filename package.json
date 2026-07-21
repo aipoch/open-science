@@ -1,7 +1,7 @@
 {
   "name": "open-science",
   "productName": "Open Science",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Open Science — an open-source, model-agnostic AI workbench for scientific discovery.",
   "main": "./out/main/index.js",
   "author": "aipoch",
@@ -32,11 +32,13 @@
     "build:mac": "npm run build:web && electron-vite build && electron-builder --mac",
     "build:linux": "npm run build:web && electron-vite build && electron-builder --linux",
     "build:win": "npm run build:web && electron-vite build && electron-builder --win",
+    "stage-default-envs": "node scripts/stage-default-envs.mjs",
     "predev": "node scripts/dev-app-branding.cjs"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.58.1",
     "@agentclientprotocol/sdk": "^1.2.1",
+    "@bokuweb/zstd-wasm": "^0.0.27",
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
@@ -45,6 +47,7 @@
     "js-yaml": "^4.1.0",
     "openchemlib": "^9.24.0",
     "pdfjs-dist": "5.4.624",
+    "tar": "^7.5.20",
     "ws": "^8.21.1",
     "zod": "^4.4.3"
   },

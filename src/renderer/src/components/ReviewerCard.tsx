@@ -21,6 +21,10 @@ type ReviewerCardProps = {
   className?: string
   // Called when the user clicks "Go to transcript" on any item card.
   onGoToTranscript?: (intent: GoToTranscriptIntent) => void
+  // Called when the user asks to re-run a stale review (its turn changed after it ran). Resolves to
+  // whether a review actually started; a false result (e.g. session load failed) releases the button
+  // latch so the turn stays retriable.
+  onRerun?: (review: ReviewWithChecks) => Promise<boolean>
 }
 
 // Status badge styles (pass/warn/fail).
@@ -159,9 +163,19 @@ const CheckCard = ({
 export const ReviewerCard = ({
   review,
   className,
-  onGoToTranscript
+  onGoToTranscript,
+  onRerun
 }: ReviewerCardProps): React.JSX.Element => {
   const [expanded, setExpanded] = useState(false)
+  // Latches on the first Re-run click so the button can't fire twice. Reset whenever the review updates
+  // (a fresh review row arrived, or its lifecycle/timestamp changed) so a later re-stale review can be
+  // re-run again. setState-during-render pattern, matching the composer popup's query reset.
+  const [rerunRequested, setRerunRequested] = useState(false)
+  const [lastReviewStamp, setLastReviewStamp] = useState(review.updatedAt)
+  if (lastReviewStamp !== review.updatedAt) {
+    setLastReviewStamp(review.updatedAt)
+    setRerunRequested(false)
+  }
 
   const isRunning = review.lifecycle === 'running'
   const isError = review.lifecycle === 'error'
@@ -188,20 +202,30 @@ export const ReviewerCard = ({
   const canExpand = (isComplete && totalCheckCount > 0) || hasErrorDetail
   const isFlagged = isComplete && hasWarnOrFail
 
+  // The turn changed after this review ran (e.g. an artifact was edited) — the verdict may not
+  // describe the current turn. Computed at load time (see flagStaleReviews); only meaningful for a
+  // completed review, since running/error reviews have no verdict to go stale.
+  const isStale = isComplete && review.stale === true
+
   // Compact summary line.
   const summaryText = (): string => {
     if (isRunning) return 'Reviewing…'
     if (isError) return 'Review error'
-    if (isComplete && !hasWarnOrFail) return 'No issues found'
-    if (isComplete && hasWarnOrFail)
-      return `${warnFailCount} finding${warnFailCount === 1 ? '' : 's'}`
+    if (isComplete && !hasWarnOrFail)
+      return isStale ? 'No issues found (outdated)' : 'No issues found'
+    if (isComplete && hasWarnOrFail) {
+      const base = `${warnFailCount} finding${warnFailCount === 1 ? '' : 's'}`
+      return isStale ? `${base} (outdated)` : base
+    }
     return 'Review pending'
   }
 
-  // Status icon.
+  // Status icon. A stale complete review always shows the warning icon (amber), even a stale pass —
+  // the point is "this verdict may not reflect the turn anymore", not the original outcome.
   const statusIcon = ((): React.JSX.Element => {
     if (isRunning) return <Loader className="h-3 w-3 animate-spin text-text-400" />
     if (isError) return <AlertTriangle className="h-3 w-3 text-yellow-500" />
+    if (isStale) return <AlertTriangle className="h-3 w-3 text-amber-500" />
     if (isComplete && !hasWarnOrFail) return <ShieldCheck className="h-3 w-3 text-green-600" />
     if (isComplete && hasWarnOrFail) return <AlertTriangle className="h-3 w-3 text-red-500" />
     return <Loader className="h-3 w-3 text-text-400" />
@@ -258,6 +282,37 @@ export const ReviewerCard = ({
           </span>
         )}
       </button>
+
+      {/* Stale notice + explicit re-run: the verdict above may no longer describe the turn (an artifact
+          was edited after the review ran). This is the actionable refresh path for THIS review's turn —
+          including earlier turns that the composer's "Request review" (last-turn only) cannot reach. */}
+      {isStale && (
+        <div
+          className="mt-2 flex items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1"
+          data-testid="reviewer-stale-notice"
+        >
+          <span className="text-[11px] text-amber-800">Turn changed after this review ran.</span>
+          {onRerun && (
+            <button
+              type="button"
+              // Disable immediately on click so a double-click (or an impatient second click before the
+              // review flips to 'running') can't launch two reviews; main also dedups concurrent runs.
+              disabled={rerunRequested}
+              className="shrink-0 rounded border border-amber-300 px-2 py-0.5 text-[11px] text-amber-800 hover:bg-amber-100 transition-colors disabled:cursor-default disabled:opacity-50"
+              onClick={() => {
+                setRerunRequested(true)
+                // Release the latch if no review actually started (e.g. the session couldn't load), so
+                // the button stays usable; on success the running-review push clears it via updatedAt.
+                void onRerun(review).then((started) => {
+                  if (!started) setRerunRequested(false)
+                })
+              }}
+            >
+              {rerunRequested ? 'Re-running…' : 'Re-run review'}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Expanded error detail: full message in a scrollable monospace block (kept out of the status bar). */}
       {hasErrorDetail && expanded && (

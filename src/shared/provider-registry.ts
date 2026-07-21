@@ -1,21 +1,23 @@
-// Built-in catalog of official model vendors. Each vendor exposes an Anthropic-compatible endpoint
-// (so it drives the bundled `claude` runtime through ANTHROPIC_BASE_URL) plus a list of model names
-// the composer offers once the user adds a key. Unlike a custom provider (one user-typed model), an
-// official vendor contributes many selectable (provider, model) options from a fixed base URL.
+// Built-in catalog of official model vendors. Each vendor exposes a documented API endpoint plus a
+// list of model names the composer offers once the user adds a key. Unlike a custom provider (one
+// user-typed model), an official vendor contributes many selectable (provider, model) options from a
+// fixed base URL.
 //
 // This is plain data shared by main and renderer. Model catalogs and base URLs are the kind of thing
 // that shifts over time — update the lists here as vendors publish new models. Only vendors with a
-// documented Anthropic-compatible endpoint belong here (e.g. OpenAI's native API does not qualify).
+// documented endpoint belongs here, including native Responses providers.
 
-import type { ProviderApiType } from './settings'
+import type { ChatApiEndpoint } from './settings'
 
 export type OfficialVendorId =
+  | 'openai'
   | 'anthropic'
   | 'deepseek'
   | 'zhipu'
-  | 'minimax'
   | 'kimi'
   | 'kimiforcode'
+  | 'minimax'
+  | 'stepfun'
   | 'xiaomimimo'
   | 'openrouter'
 
@@ -39,16 +41,34 @@ export type OfficialVendor = {
   id: OfficialVendorId
   // Human-readable name shown in the provider-type picker and composer group headings.
   label: string
-  // Which chat API this vendor's endpoint speaks; drives per-framework availability. Absent ⇒
-  // 'anthropic' (every shipped vendor today exposes an Anthropic /v1/messages route).
-  apiType?: ProviderApiType
-  // Anthropic-compatible model ids offered in the composer once a key is stored. First entry is the
-  // default selection when the vendor is first added.
+  // Which chat APIs this vendor serves; drives per-framework availability. Absent ⇒ ['anthropic']
+  // for legacy Anthropic-compatible vendor entries. A dual-endpoint vendor lists both, e.g.
+  // ['anthropic', 'openai'].
+  apiEndpoints?: readonly ChatApiEndpoint[]
+  // Model ids offered in the composer once a key is stored. First entry is the default selection when
+  // the vendor is first added.
   models: string[]
+  // Models this vendor is known (via our own dev testing, before release) NOT to drive cleanly over
+  // the Codex Responses->Chat bridge. Ships with the app so such models are greyed in the picker
+  // rather than user-tested. Absent/empty ⇒ every listed model is bridge-compatible.
+  bridgeUnsupportedModels?: readonly string[]
+  // Describes which of this vendor's models accept image input (multimodal vision). Absent ⇒ the vendor
+  // has no vision models. This must cover live-fetched ids too — a vendor that refreshes its catalog can
+  // surface a vision model not in the bundled `models` array — so it is a rule, not a static id list:
+  //   - allMultimodal: true       — every model this vendor serves supports vision (e.g. Claude, GPT-5+)
+  //   - multimodalModelPattern    — a RegExp matched against the model id (e.g. GLM's `v` vision variants)
+  //   - multimodalModels          — an explicit id list, for catalogs where vision is an unpredictable
+  //                                 subset (e.g. OpenRouter's cross-vendor slugs)
+  // Precedence when resolving support: allMultimodal → pattern → explicit list.
+  multimodal?: {
+    allMultimodal?: boolean
+    multimodalModelPattern?: RegExp
+    multimodalModels?: readonly string[]
+  }
   // Single-endpoint vendors set `baseUrl`; multi-region vendors set `regions` instead (never both).
-  // `baseUrl` is the Anthropic /v1/messages route; `openaiBaseUrl` is the vendor's separate OpenAI
-  // /v1/chat/completions root (they differ — e.g. DeepSeek serves Anthropic under `/anthropic` and
-  // OpenAI at the bare root). Set both only for a vendor whose apiType is 'both'.
+  // For dual-endpoint vendors, `baseUrl` is the Anthropic /v1/messages route and `openaiBaseUrl` is the
+  // separate OpenAI /v1/chat/completions root. Set both only for a vendor whose apiEndpoints include
+  // 'openai'.
   baseUrl?: string
   openaiBaseUrl?: string
   regions?: VendorRegion[]
@@ -59,11 +79,24 @@ export type OfficialVendor = {
   modelsListUrl?: string
 }
 
-// The shipped vendor set. All endpoints are the vendors' own Anthropic-compatible routes.
+// The shipped vendor set. Each entry owns its endpoint and catalog; model lists are intentionally
+// conservative so a vendor's unrelated model types do not appear in the composer.
 export const OFFICIAL_VENDORS: OfficialVendor[] = [
   {
+    id: 'openai',
+    label: 'OpenAI',
+    apiEndpoints: ['responses'],
+    baseUrl: 'https://api.openai.com',
+    apiKeyUrl: 'https://platform.openai.com/api-keys',
+    // The API exposes a broader mixed catalog (embeddings, image, and audio models); keep the coding
+    // catalog curated here instead of importing every id from /v1/models.
+    models: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini'],
+    // The curated coding catalog is all GPT-5+, which is vision-capable across the board.
+    multimodal: { allMultimodal: true }
+  },
+  {
     id: 'anthropic',
-    label: 'Claude',
+    label: 'Anthropic',
     baseUrl: 'https://api.anthropic.com',
     apiKeyUrl: 'https://console.anthropic.com/settings/keys',
     modelsListUrl: 'https://api.anthropic.com/v1/models',
@@ -73,41 +106,83 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       'claude-opus-4-8[1m]',
       'claude-sonnet-5',
       'claude-haiku-4-5-20251001'
-    ]
+    ],
+    // Every current Claude model is vision-capable, including any surfaced by the live model-list
+    // refresh above — so this is a blanket rule, not the four bundled ids.
+    multimodal: { allMultimodal: true }
   },
   {
     id: 'deepseek',
     label: 'DeepSeek',
     // DeepSeek exposes both routes: Anthropic /v1/messages under `/anthropic`, and the OpenAI-compatible
-    // /v1/chat/completions at the bare root. The same model ids work on both, so it's safe to prefer
-    // OpenAI where the framework supports it (e.g. OpenCode).
-    apiType: 'both',
+    // route under `/v1`. The same model ids work on both, so it's safe to prefer OpenAI where the
+    // framework supports it (e.g. OpenCode). openaiBaseUrl is the exact version-carrying base clients
+    // append `/chat/completions` to.
+    apiEndpoints: ['anthropic', 'openai'],
     baseUrl: 'https://api.deepseek.com/anthropic',
-    openaiBaseUrl: 'https://api.deepseek.com',
+    openaiBaseUrl: 'https://api.deepseek.com/v1',
     apiKeyUrl: 'https://platform.deepseek.com/api_keys',
     modelsListUrl: 'https://api.deepseek.com/v1/models',
     models: ['deepseek-v4-pro', 'deepseek-v4-pro[1m]', 'deepseek-v4-flash']
+    // DeepSeek's chat models are text-only, so no `multimodal` rule (image input stays disabled).
   },
   {
     id: 'zhipu',
     label: 'Zhipu AI (GLM)',
     // GLM serves overseas from Z.AI and mainland China from BigModel (智谱) — different hosts and
-    // separate consoles, so they are distinct endpoints rather than one base URL.
+    // separate consoles, so they are distinct endpoints rather than one base URL. Each region also
+    // publishes an OpenAI-compatible route under `/api/paas/v4` (not `/v1`), so Codex can bridge it.
+    apiEndpoints: ['anthropic', 'openai'],
     regions: [
       {
         id: 'global',
         label: 'Global (Z.AI)',
         baseUrl: 'https://api.z.ai/api/anthropic',
+        openaiBaseUrl: 'https://api.z.ai/api/paas/v4',
         apiKeyUrl: 'https://z.ai'
       },
       {
         id: 'china',
         label: 'China (BigModel)',
         baseUrl: 'https://open.bigmodel.cn/api/anthropic',
+        openaiBaseUrl: 'https://open.bigmodel.cn/api/paas/v4',
         apiKeyUrl: 'https://open.bigmodel.cn/usercenter/apikeys'
       }
     ],
-    models: ['glm-5.2', 'glm-5.1', 'glm-5', 'glm-5v-turbo', 'glm-5-turbo']
+    models: ['glm-5.2', 'glm-5.1', 'glm-5', 'glm-5v-turbo', 'glm-5-turbo'],
+    // GLM marks vision variants with a `v` after the major version (e.g. glm-5v-turbo); the pattern
+    // also covers future `Nv` ids the live refresh may surface.
+    multimodal: { multimodalModelPattern: /glm-\d+v/i }
+  },
+  {
+    id: 'kimi',
+    label: 'Kimi (Moonshot)',
+    // Moonshot serves both routes on one host: Anthropic /v1/messages under `/anthropic` and the
+    // OpenAI-compatible /v1/chat/completions under `/v1` (see the live model list below). `both` lets
+    // Codex drive it through the Responses->Chat bridge.
+    apiEndpoints: ['anthropic', 'openai'],
+    baseUrl: 'https://api.moonshot.cn/anthropic',
+    openaiBaseUrl: 'https://api.moonshot.cn/v1',
+    apiKeyUrl: 'https://platform.kimi.com/console',
+    modelsListUrl: 'https://api.moonshot.cn/v1/models',
+    models: ['kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6', 'kimi-k2.5'],
+    // Vision arrives with the k3 generation; older k2.x chat models are text-only.
+    multimodal: { multimodalModels: ['kimi-k3'] }
+  },
+  {
+    id: 'kimiforcode',
+    label: 'Kimi For Coding',
+    // The Kimi Code subscription endpoint: quota-based models (billed against a periodically refreshing
+    // quota rather than per token), so it ships a fixed catalog and exposes no live model list. It
+    // serves both the Anthropic route and the OpenAI-compatible /v1/chat/completions under `/coding/v1`
+    // (Kimi documents this plan for Codex and OpenCode), so `both` lets Codex bridge it.
+    apiEndpoints: ['anthropic', 'openai'],
+    baseUrl: 'https://api.kimi.com/coding',
+    openaiBaseUrl: 'https://api.kimi.com/coding/v1',
+    apiKeyUrl: 'https://www.kimi.com/code/docs',
+    models: ['kimi-k3', 'kimi-for-coding', 'kimi-for-coding-highspeed'],
+    // Only the k3 model in this plan is vision-capable; the coding-tuned ids are text-only.
+    multimodal: { multimodalModels: ['kimi-k3'] }
   },
   {
     id: 'minimax',
@@ -127,37 +202,51 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       }
     ],
     models: ['MiniMax-M3', 'MiniMax-M3[1m]', 'MiniMax-M2.7', 'MiniMax-M2.5']
+    // MiniMax's chat models are text-only, so no `multimodal` rule (image input stays disabled).
   },
   {
-    id: 'kimi',
-    label: 'Kimi (Moonshot)',
-    // Moonshot's Anthropic-compatible route for the general Kimi platform. Models are billed per token
-    // and can be refreshed from the live list endpoint below.
-    baseUrl: 'https://api.moonshot.cn/anthropic',
-    apiKeyUrl: 'https://platform.kimi.com/console',
-    modelsListUrl: 'https://api.moonshot.cn/v1/models',
-    models: ['kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6', 'kimi-k2.5']
-  },
-  {
-    id: 'kimiforcode',
-    label: 'Kimi For Coding',
-    // The Kimi Code subscription endpoint: quota-based models (billed against a periodically refreshing
-    // quota rather than per token), so it ships a fixed catalog and exposes no live model list.
-    baseUrl: 'https://api.kimi.com/coding',
-    apiKeyUrl: 'https://www.kimi.com/code/docs',
-    models: ['kimi-k3', 'kimi-for-coding', 'kimi-for-coding-highspeed']
+    id: 'stepfun',
+    label: 'StepFun',
+    // StepFun serves all three routes on one host per region — Anthropic /v1/messages, the
+    // OpenAI-compatible /v1/chat/completions, and OpenAI Responses /v1/responses — from an overseas
+    // console (.ai) and a mainland-China one (.com). `baseUrl` is the bare root (the Anthropic client
+    // appends /v1/messages); `openaiBaseUrl` is the /v1 base clients append /chat/completions to, and
+    // the Responses probe derives /v1/responses from it.
+    apiEndpoints: ['anthropic', 'openai', 'responses'],
+    regions: [
+      {
+        id: 'global',
+        label: 'Global',
+        baseUrl: 'https://api.stepfun.ai',
+        openaiBaseUrl: 'https://api.stepfun.ai/v1',
+        apiKeyUrl: 'https://platform.stepfun.ai/interface-key',
+        modelsListUrl: 'https://api.stepfun.ai/v1/models'
+      },
+      {
+        id: 'china',
+        label: 'China',
+        baseUrl: 'https://api.stepfun.com',
+        openaiBaseUrl: 'https://api.stepfun.com/v1',
+        apiKeyUrl: 'https://platform.stepfun.com/interface-key',
+        modelsListUrl: 'https://api.stepfun.com/v1/models'
+      }
+    ],
+    models: ['step-3.7-flash', 'step-3.5-flash'],
+    // step-3.7-flash is multimodal (vision); step-3.5-flash is text-only.
+    multimodal: { multimodalModels: ['step-3.7-flash'] }
   },
   {
     id: 'xiaomimimo',
     label: 'Xiaomi MIMO',
     // Xiaomi MiMo exposes both routes: Anthropic /v1/messages under `/anthropic` and the OpenAI-compatible
     // /v1/chat/completions under `/v1`. The same model ids work on both.
-    apiType: 'both',
+    apiEndpoints: ['anthropic', 'openai'],
     baseUrl: 'https://api.xiaomimimo.com/anthropic',
     openaiBaseUrl: 'https://api.xiaomimimo.com/v1',
     apiKeyUrl: 'https://platform.xiaomimimo.com/console/api-keys',
     modelsListUrl: 'https://api.xiaomimimo.com/v1/models',
     models: ['mimo-v2.5-pro', 'mimo-v2.5']
+    // Xiaomi MiMo's chat models are text-only, so no `multimodal` rule (image input stays disabled).
   },
   // OpenRouter is an aggregation gateway (many vendors behind one key), so it sits last in the picker.
   {
@@ -167,7 +256,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     // /v1/chat/completions under `/api/v1`. Its live catalog is 300+ ids, so this ships a curated set of
     // the top models across vendors (no modelsListUrl) rather than a "refresh from vendor" that would
     // flood the model picker. Model slugs use OpenRouter's `vendor/model` form.
-    apiType: 'both',
+    apiEndpoints: ['anthropic', 'openai'],
     baseUrl: 'https://openrouter.ai/api',
     openaiBaseUrl: 'https://openrouter.ai/api/v1',
     apiKeyUrl: 'https://openrouter.ai/workspaces/default/keys',
@@ -194,7 +283,30 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       'z-ai/glm-5.2',
       'moonshotai/kimi-k3',
       'qwen/qwen3.7-max'
-    ]
+    ],
+    // OpenRouter's catalog is curated (no live refresh), and vision support is an unpredictable subset
+    // across vendors — so it is an explicit id list rather than a blanket rule or pattern. The
+    // text-only members (gpt-5.3-codex, deepseek-v4-pro, glm-5.2) are intentionally omitted.
+    multimodal: {
+      multimodalModels: [
+        'anthropic/claude-opus-4.8',
+        'anthropic/claude-sonnet-5',
+        'anthropic/claude-haiku-4.5',
+        'openai/gpt-5.6-terra-pro',
+        'openai/gpt-5.6-terra',
+        'openai/gpt-5.6-sol-pro',
+        'openai/gpt-5.6-sol',
+        'openai/gpt-5.6-luna-pro',
+        'openai/gpt-5.6-luna',
+        'openai/gpt-5.5-pro',
+        'openai/gpt-5.5',
+        'google/gemini-3.1-pro-preview',
+        'google/gemini-3.5-flash',
+        'x-ai/grok-4.5',
+        'moonshotai/kimi-k3',
+        'qwen/qwen3.7-max'
+      ]
+    }
   }
 ]
 
@@ -290,10 +402,48 @@ export const resolveVendorModelsUrl = (
 export const defaultVendorModel = (id: OfficialVendorId): string | undefined =>
   VENDORS_BY_ID.get(id)?.models[0]
 
-// The chat API a vendor speaks, defaulting to Anthropic /v1/messages when unset.
-export const resolveVendorApiType = (id: OfficialVendorId): ProviderApiType =>
-  VENDORS_BY_ID.get(id)?.apiType ?? 'anthropic'
+// The chat APIs a vendor speaks, defaulting to Anthropic /v1/messages when unset.
+export const resolveVendorApiEndpoints = (id: OfficialVendorId): ChatApiEndpoint[] => {
+  const endpoints = VENDORS_BY_ID.get(id)?.apiEndpoints
+  return endpoints && endpoints.length > 0 ? [...endpoints] : ['anthropic']
+}
+
+// Models a vendor is statically known not to drive over the Codex Responses->Chat bridge (see
+// OfficialVendor.bridgeUnsupportedModels). Empty for every vendor whose whole catalog converts.
+export const resolveVendorBridgeUnsupportedModels = (id: OfficialVendorId): readonly string[] =>
+  VENDORS_BY_ID.get(id)?.bridgeUnsupportedModels ?? []
+
+// Static, ships-with-the-app check: whether a model can be driven over the Codex Responses->Chat
+// bridge. Only meaningful for the bridged (openai) path; callers gate it behind the Codex framework.
+// Custom providers (no vendorId) are assumed compatible — their key is what gets tested, not the model.
+export const isModelBridgeSupported = (
+  provider: { vendorId?: OfficialVendorId },
+  model: string | undefined
+): boolean =>
+  !provider.vendorId || model === undefined
+    ? true
+    : !resolveVendorBridgeUnsupportedModels(provider.vendorId).includes(model)
 
 // Whether a vendor needs a region choice (more than one endpoint).
 export const vendorHasRegions = (id: OfficialVendorId): boolean =>
   (VENDORS_BY_ID.get(id)?.regions?.length ?? 0) > 0
+
+// Whether a specific model from an official vendor accepts image input (multimodal vision). Resolves
+// the vendor's `multimodal` rule with allMultimodal → pattern → explicit-list precedence, so it works
+// for live-fetched ids too (a blanket vendor like Claude returns true for any model, not just the
+// bundled four). Returns false for an unknown/absent vendor, an empty model id, or a vendor with no
+// `multimodal` rule at all.
+export const isVendorModelMultimodal = (
+  vendorId: OfficialVendorId,
+  modelId: string | undefined
+): boolean => {
+  if (!modelId) return false
+
+  const rule = VENDORS_BY_ID.get(vendorId)?.multimodal
+  if (!rule) return false
+
+  if (rule.allMultimodal) return true
+  if (rule.multimodalModelPattern?.test(modelId)) return true
+
+  return rule.multimodalModels?.includes(modelId) ?? false
+}

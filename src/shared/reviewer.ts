@@ -108,6 +108,10 @@ export type Review = {
   reviewerLog: ReviewerLogEntry[]
   createdAt: number
   updatedAt: number
+  // Transient (never persisted): set at load time when the turn's current scope no longer matches the
+  // scope this review was run against — e.g. an artifact was edited after the review completed. The UI
+  // uses it to stop presenting a stale "No issues found" as current. Computed by re-resolving the scope.
+  stale?: boolean
 }
 
 // A Review with its checks eagerly loaded, as returned by getReviewsForSession.
@@ -168,11 +172,57 @@ export type ReviewRunRequest = {
   mainSessionId?: string
   // Provider/model tag recorded on the Review row (e.g. 'claude-opus-4-5'). Falls back to ''.
   model?: string
+  // Turn whose content is actually audited, when it differs from turnMessageId (the grouping id).
+  // Defaults to turnMessageId. Used when re-running a fix-loop review: the review row is grouped under
+  // the original turn (turnMessageId), but its scope belongs to the correction turn (scopeTurnMessageId)
+  // — re-running must re-audit that correction turn, not the original.
+  scopeTurnMessageId?: string
+  // Who requested the run. 'auto' (post-turn auto-review) is idempotent per turn: main refuses to start
+  // a second review for a turn that already has one, which is the atomic guarantee against duplicate
+  // runs from concurrent entry points. 'manual' (Request review / stale/error Re-run) intentionally
+  // bypasses that check so the user can force a fresh review. Defaults to 'manual' when omitted.
+  origin?: ReviewRunOrigin
 }
+
+// Distinguishes an automatic post-turn review from a user-initiated one — see ReviewRunRequest.origin.
+export type ReviewRunOrigin = 'auto' | 'manual'
 
 // IPC: pushed to renderer when a review's lifecycle/outcome/checks change.
 export type ReviewUpdateEvent = {
   review: ReviewWithChecks
+}
+
+// Why a review did not start (set on ReviewRunResult when started is false). The auto-review caller
+// uses this to decide whether a retry could help:
+//   - 'already-in-flight': a run for this turn is already active → the turn IS being handled; retrying
+//     would launch a DUPLICATE review/fix-loop once the in-flight lock releases. Never retry.
+//   - 'not-found': the session wasn't on disk. A brand-new session persists via an async queue, so
+//     this can be a transient race the retry catches once the write lands. Retryable.
+//   - 'load-failed': the session store read threw (transient DB/FS). Retryable; creates no Review row.
+//   - 'run-failed': runReview threw before the running row was pushed (scope resolution / DB insert).
+//     A genuine failure, not a race — leave it to the user's manual Re-run rather than auto-retrying.
+//   - 'already-reviewed': an auto-origin request for a turn that already has a review. This is main's
+//     atomic per-turn idempotency verdict (checked after the in-flight key is reserved), so the turn is
+//     definitively handled — never retry. Manual re-runs bypass this and never receive it.
+//   - 'idempotency-check-failed': the auto per-turn idempotency lookup itself threw, so main cannot
+//     confirm the turn is un-reviewed. Fail-closed — start nothing — but retryable: a retry re-runs the
+//     lookup, which may succeed (and then either proceed or return already-reviewed). Never risk a
+//     duplicate by proceeding on an unverified check.
+export type ReviewRunNotStartedReason =
+  | 'already-in-flight'
+  | 'not-found'
+  | 'load-failed'
+  | 'run-failed'
+  | 'already-reviewed'
+  | 'idempotency-check-failed'
+
+// IPC: result of reviewer:run. `started` is false when the run could not begin — no Review row is
+// created in that case, so the caller (e.g. a stale-review Re-run) can release its pending state and
+// leave the turn retriable. `reason` (present only when started is false) says WHY, so the auto path
+// can retry a persistence-race cause without retrying an already-in-flight turn into a duplicate run.
+export type ReviewRunResult = {
+  started: boolean
+  reason?: ReviewRunNotStartedReason
 }
 
 // Navigation intent emitted when the user clicks "Go to transcript" on a warn/fail check.

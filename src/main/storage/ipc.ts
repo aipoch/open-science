@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs'
+import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { app, dialog, ipcMain } from 'electron'
@@ -12,6 +13,9 @@ import {
   resolveDataRoot,
   samePath
 } from '../storage-root'
+import { resolveMicromamba } from '../notebook/micromamba'
+import { captureMicromamba } from '../notebook/provisioner-runtime'
+import { exportRuntimeLocks } from '../notebook/runtime-relocation'
 import { detectActiveSessions } from './detect-active'
 import { isDataRootMissing } from './path-presence'
 import { beginMigration, clearMigrationPending, endMigrationCopy } from './migration-state'
@@ -26,6 +30,7 @@ import {
 } from './migration-service'
 import { availableBytes, computeStorageUsage } from './usage'
 import { broadcastToRenderers } from '../renderer-broadcast'
+import { RELOCATABLE_DATA_DIRS } from './data-directories'
 
 type SessionSource = { projectName: string; sessionId: string }
 
@@ -103,9 +108,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
 
       const configRoot = resolveConfigRoot()
       const legacyInPlace = !storedSettings.dataRoot && samePath(dataRoot, configRoot)
-      const hasUserData = ['artifacts', 'notebooks', 'uploads'].some((dir) =>
-        existsSync(join(configRoot, dir))
-      )
+      const hasUserData = RELOCATABLE_DATA_DIRS.some((dir) => existsSync(join(configRoot, dir)))
       legacyDataMovePrompt =
         legacyInPlace && hasUserData && storedSettings.legacyDataMovePromptDismissedAt === undefined
     } catch (err) {
@@ -186,7 +189,14 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
           {
             currentDataRoot: resolveDataRoot(),
             runtime: deps.runtime,
-            notebook: deps.notebook
+            notebook: deps.notebook,
+            // Preserve the runtime across the move by exporting each env to an offline lock at the
+            // new root; the copied pkgs cache lets the provisioner rebuild them offline on relaunch.
+            exportRuntimeLocks: (fromDataRoot, toDataRoot) =>
+              exportRuntimeLocks(fromDataRoot, toDataRoot, {
+                mm: resolveMicromamba({ resourcesPath: process.resourcesPath }),
+                capture: captureMicromamba
+              })
           },
           request.parent,
           {
@@ -391,7 +401,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
   // lands atomically with setDataRoot, in the same step as the relaunch: App.tsx's startup gate
   // reads onboardingCompletedAt, and flipping it from the renderer before this IPC resolves would
   // swap the wizard for Home (showing the OLD data root, and burying any failure below). Settings-
-  // adopt omits it (onboarding has already completed). Order is load-bearing: classify ->
+  // adopt omits it (onboarding has already completed). Order is load-bearing: classify -> mkdir ->
   // setDataRoot -> [markOnboardingComplete] -> relaunch. On an invalid parent, none of these run.
   ipcMain.handle(
     'storage:set-data-root-and-relaunch',
@@ -406,6 +416,13 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
         }
 
         const target = dataRootForPicked(request.parent)
+        // Create the data root now, before persisting the pointer. Unlike storage:migrate there is no
+        // copy phase to mkdir it, so a fresh onboarding folder ('move') would be recorded in
+        // settings.dataRoot without ever existing on disk - and the next launch's startup guard would
+        // read that explicitly-configured-but-absent root as deleted and wrongly show "Data folder not
+        // found". For an 'adopt' target the folder already exists, so this is a no-op. classifyDataRoot
+        // has already proven the parent writable, so failure here is genuinely unexpected.
+        await mkdir(target, { recursive: true })
         await deps.settingsService.setDataRoot(target)
         if (request.markOnboarding) {
           await deps.settingsService.markOnboardingComplete()

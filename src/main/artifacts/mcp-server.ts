@@ -230,6 +230,7 @@ export {
   createArtifactMcpServer,
   createArtifactMcpServerConfig,
   runArtifactMcpServer,
+  writeArtifactFileToolSchema,
   writeArtifactFileForCurrentRun
 }
 export type { ArtifactMcpEnvironment, ArtifactToolWriteInput }

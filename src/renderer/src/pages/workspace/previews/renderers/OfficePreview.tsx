@@ -17,7 +17,7 @@ import {
   type OfficeRenderStatus
 } from '../office-renderers'
 import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
-import { usePreviewRuntime } from '../preview-runtime'
+import { usePreviewRuntime } from '../preview-runtime-context'
 import type { PreviewFileRendererProps } from '../preview-types'
 
 export const OFFICE_PREVIEW_TIMEOUT_MS = 30_000

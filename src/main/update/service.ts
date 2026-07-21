@@ -45,6 +45,15 @@ const installerFileName = (url: string): string => {
 // renderer stores stay in sync. All I/O is injectable for tests; production reads Electron/OS.
 export class UpdateService implements UpdateStrategy {
   private status: UpdateStatus
+  // Aborts the in-flight installer download; held so cancel() can stop it. Cleared once download settles.
+  private downloadAbort?: AbortController
+  // The current download()'s lifecycle promise, resolved only after downloadInstaller has fully settled
+  // (including its partial-file rm cleanup on abort). A retry awaits this so an aborted download's
+  // deferred rm can't delete a same-path retry's freshly written installer.
+  private downloadLifecycle?: Promise<void>
+  // Monotonic id per started download; the finally only clears downloadLifecycle when it is still the
+  // latest, so an older (drained) download can't clear a newer one's lifecycle.
+  private downloadGeneration = 0
   private readonly fetchImpl?: typeof fetch
   private readonly platform: NodeJS.Platform
   private readonly arch: string
@@ -127,6 +136,11 @@ export class UpdateService implements UpdateStrategy {
   }
 
   async download(): Promise<UpdateStatus> {
+    // An active download is in flight; ignore repeat clicks / concurrent renderers. The abort claim
+    // below is synchronous (before any await) so this guard and a cancel() during the drain both target
+    // a consistent slot — a cancel while a retry is still draining must abort it, not be a no-op.
+    if (this.downloadAbort) return this.status
+
     const { download } = this.status
     if (!download) return this.status
 
@@ -144,23 +158,65 @@ export class UpdateService implements UpdateStrategy {
       return this.status
     }
 
-    // Ask where to save (platform-aware). A cancel leaves the status untouched (stays 'available').
-    const targetPath = await this.promptSavePath(installerFileName(download.url))
-    if (!targetPath) return this.status
+    // Claim the slot synchronously, before any await, so a concurrent download() is rejected and a
+    // cancel() during the drain (below) aborts this download instead of being a no-op.
+    const previous = this.downloadLifecycle
+    const generation = ++this.downloadGeneration
+    const abort = new AbortController()
+    this.downloadAbort = abort
 
-    this.setStatus({ ...this.status, state: 'downloading', progress: 0 })
+    const lifecycle = (async () => {
+      try {
+        // Drain any prior (e.g. just-cancelled) download so its partial-file rm can't delete a same-path
+        // retry's installer. Swallow its outcome — it is owned by its own lifecycle.
+        if (previous) await previous.catch(() => {})
+        // A cancel() during the drain means never start this download.
+        if (abort.signal.aborted) return
+
+        // Ask where to save (platform-aware). A dialog cancel — or a cancel() during the prompt —
+        // leaves the status untouched (stays 'available').
+        const targetPath = await this.promptSavePath(installerFileName(download.url))
+        if (!targetPath || abort.signal.aborted) return
+
+        this.setStatus({ ...this.status, state: 'downloading', progress: 0 })
+        const localPath = await downloadInstaller(download, targetPath, {
+          fetchImpl: this.fetchImpl,
+          onProgress: (percent) => this.broadcast('update:progress', percent),
+          signal: abort.signal
+        })
+        this.setStatus({ ...this.status, state: 'ready', progress: 100, localPath })
+      } catch (error) {
+        // A user cancel aborts the fetch (rejects here); cancel() already reset the status to
+        // 'available', so leave it. Any other failure — including a save-dialog rejection — surfaces as
+        // an error the user can retry from. Caught here so the lifecycle never rejects and can't poison
+        // the next download()'s drain.
+        if (!abort.signal.aborted) {
+          this.setStatus({
+            ...this.status,
+            state: 'error',
+            error: error instanceof Error ? error.message : 'Download failed'
+          })
+        }
+      } finally {
+        if (this.downloadAbort === abort) this.downloadAbort = undefined
+      }
+    })()
+    this.downloadLifecycle = lifecycle
     try {
-      const localPath = await downloadInstaller(download, targetPath, {
-        fetchImpl: this.fetchImpl,
-        onProgress: (percent) => this.broadcast('update:progress', percent)
-      })
-      this.setStatus({ ...this.status, state: 'ready', progress: 100, localPath })
-    } catch (error) {
-      this.setStatus({
-        ...this.status,
-        state: 'error',
-        error: error instanceof Error ? error.message : 'Download failed'
-      })
+      await lifecycle
+    } finally {
+      if (this.downloadGeneration === generation) this.downloadLifecycle = undefined
+    }
+    return this.status
+  }
+
+  // Aborts the in-flight installer download and resets the status to 'available' so the UI leaves the
+  // downloading state. No-op when nothing is downloading.
+  async cancel(): Promise<UpdateStatus> {
+    this.downloadAbort?.abort()
+    this.downloadAbort = undefined
+    if (this.status.state === 'downloading') {
+      this.setStatus({ ...this.status, state: 'available', progress: undefined })
     }
     return this.status
   }

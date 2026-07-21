@@ -10,6 +10,7 @@ import type {
   PreviewSkillZipRequest,
   ScanRepoRequest,
   InstallClaudeRequest,
+  InstallCodexRequest,
   InstallOpencodeRequest,
   ClaudeInstallEvent,
   RefreshProviderModelsRequest,
@@ -22,6 +23,7 @@ import type {
   SetConnectorAutoAllowRequest,
   SetConnectorEnabledRequest,
   SetNcbiCredentialsRequest,
+  SetPackageMirrorRequest,
   SetSkillEnabledRequest,
   SetToolPermissionRequest,
   UpdateSkillRequest,
@@ -68,8 +70,12 @@ const registerSettingsIpcHandlers = ({
   ipcMain.handle('settings:check-environment', () => service.checkEnvironment())
   ipcMain.handle('settings:detect-claude', () => service.detectClaude())
   ipcMain.handle('settings:detect-opencode', () => service.detectOpencode())
+  ipcMain.handle('settings:detect-codex', () => service.detectCodex())
   ipcMain.handle('settings:install-opencode', (_event, request: InstallOpencodeRequest) =>
     service.installOpencode(request, broadcastInstallEvent)
+  )
+  ipcMain.handle('settings:install-codex', (_event, request: InstallCodexRequest) =>
+    service.installCodex(request, broadcastInstallEvent)
   )
 
   ipcMain.handle('settings:install-claude', (_event, request: InstallClaudeRequest) =>
@@ -95,6 +101,14 @@ const registerSettingsIpcHandlers = ({
     return snapshot
   })
 
+  ipcMain.handle('settings:uninstall-codex', async () => {
+    const { snapshot, activeBackendAffected } = await service.uninstallCodex()
+
+    if (activeBackendAffected) onActiveProviderChanged?.()
+
+    return snapshot
+  })
+
   ipcMain.handle('settings:upsert-provider', async (_event, request: UpsertProviderRequest) => {
     const snapshot = await service.upsertProvider(request)
 
@@ -107,9 +121,15 @@ const registerSettingsIpcHandlers = ({
 
     return snapshot
   })
-  ipcMain.handle('settings:delete-provider', (_event, request: DeleteProviderRequest) =>
-    service.deleteProvider(request.id)
-  )
+  ipcMain.handle('settings:delete-provider', async (_event, request: DeleteProviderRequest) => {
+    const before = await service.getSettingsView()
+    const snapshot = await service.deleteProvider(request.id)
+
+    // The live process still holds the decrypted key until it reconnects.
+    if (before.activeProviderId === request.id) onActiveProviderChanged?.()
+
+    return snapshot
+  })
   ipcMain.handle(
     'settings:set-active-provider',
     async (_event, request: SetActiveProviderRequest) => {
@@ -142,6 +162,11 @@ const registerSettingsIpcHandlers = ({
     (_event, request: RefreshProviderModelsRequest) => service.refreshProviderModels(request)
   )
   ipcMain.handle('settings:mark-onboarding-complete', () => service.markOnboardingComplete())
+
+  ipcMain.handle('settings:get-package-mirror', () => service.getPackageMirror())
+  ipcMain.handle('settings:set-package-mirror', (_event, request: SetPackageMirrorRequest) =>
+    service.setPackageMirror(request)
+  )
 
   ipcMain.handle('settings:list-skills', () => service.listSkills())
   ipcMain.handle('settings:get-skill-detail', (_event, id: string) => service.getSkillDetail(id))

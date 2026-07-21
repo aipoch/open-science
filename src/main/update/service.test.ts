@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -154,6 +154,258 @@ describe('UpdateService.download', () => {
 
     expect(status.state).toBe('available')
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('cancel aborts an in-flight download, resets to available, and leaves no partial file', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'svc-'))
+    const target = join(dir, 'installer.dmg')
+    const manifestForCheck = downloadManifest(100, 'irrelevant')
+    let onInstallerFetch: (() => void) | undefined
+    const fetched = new Promise<void>((resolve) => (onInstallerFetch = resolve))
+    // The installer body hangs (one chunk, no end) and errors on abort, mimicking a real fetch.
+    const fetchImpl = ((input: unknown, init?: { signal?: AbortSignal }) => {
+      if (String(input).endsWith('version.json')) {
+        return Promise.resolve(jsonResponse(manifestForCheck))
+      }
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]))
+          init?.signal?.addEventListener('abort', () =>
+            controller.error(new DOMException('The user aborted a request.', 'AbortError'))
+          )
+        }
+      })
+      onInstallerFetch?.()
+      return Promise.resolve(new Response(body, { status: 200 }))
+    }) as unknown as typeof fetch
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn(),
+      promptSavePath: () => Promise.resolve(target)
+    })
+
+    await service.check()
+    const downloading = service.download()
+    await fetched
+    const cancelled = await service.cancel()
+    expect(cancelled.state).toBe('available')
+
+    const final = await downloading
+    expect(final.state).toBe('available')
+    expect(final.error).toBeUndefined()
+    expect(existsSync(target)).toBe(false)
+  })
+
+  it('ignores a second download() while one is already in flight', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'svc-'))
+    const target = join(dir, 'installer.dmg')
+    const manifestForCheck = downloadManifest(100, 'irrelevant')
+    let installerFetches = 0
+    let onInstallerFetch: (() => void) | undefined
+    const fetched = new Promise<void>((resolve) => (onInstallerFetch = resolve))
+    const fetchImpl = ((input: unknown, init?: { signal?: AbortSignal }) => {
+      if (String(input).endsWith('version.json')) {
+        return Promise.resolve(jsonResponse(manifestForCheck))
+      }
+      installerFetches += 1
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]))
+          init?.signal?.addEventListener('abort', () =>
+            controller.error(new DOMException('The user aborted a request.', 'AbortError'))
+          )
+        }
+      })
+      onInstallerFetch?.()
+      return Promise.resolve(new Response(body, { status: 200 }))
+    }) as unknown as typeof fetch
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn(),
+      promptSavePath: () => Promise.resolve(target)
+    })
+
+    await service.check()
+    const first = service.download()
+    await fetched
+    const second = await service.download()
+    expect(second.state).toBe('downloading')
+    expect(installerFetches).toBe(1)
+
+    await service.cancel()
+    await first
+  })
+
+  it('a retry to the SAME path waits for the cancelled download to fully settle before starting', async () => {
+    // Same target for both attempts: the cancelled download's deferred rm(targetPath) would delete the
+    // retry's freshly written installer unless the retry first drains that download's cleanup. Proven
+    // deterministically by holding the first download open and asserting the retry starts NO second
+    // fetch until it is released — a naive retry fetches immediately and later loses its file to the rm.
+    dir = await mkdtemp(join(tmpdir(), 'svc-'))
+    const target = join(dir, 'installer.dmg')
+    const body = Buffer.from('installer-bytes')
+    const manifestForCheck = downloadManifest(
+      body.byteLength,
+      createHash('sha256').update(body).digest('hex')
+    )
+    let installerFetches = 0
+    let onFirstFetch: (() => void) | undefined
+    let errorFirstStream: (() => void) | undefined
+    const firstFetched = new Promise<void>((resolve) => (onFirstFetch = resolve))
+    const fetchImpl = ((input: unknown) => {
+      if (String(input).endsWith('version.json')) {
+        return Promise.resolve(jsonResponse(manifestForCheck))
+      }
+      installerFetches += 1
+      if (installerFetches === 1) {
+        // Hangs after one chunk until we explicitly error it, so the first download (and its rm) only
+        // completes when the test decides — the drain point the retry must respect.
+        const hanging = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array([1, 2, 3]))
+            errorFirstStream = () =>
+              controller.error(new DOMException('The user aborted a request.', 'AbortError'))
+          }
+        })
+        onFirstFetch?.()
+        return Promise.resolve(new Response(hanging, { status: 200 }))
+      }
+      return Promise.resolve(new Response(body, { status: 200 }))
+    }) as unknown as typeof fetch
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn(),
+      promptSavePath: () => Promise.resolve(target)
+    })
+
+    await service.check()
+    const first = service.download()
+    await firstFetched
+    const cancelled = await service.cancel()
+    expect(cancelled.state).toBe('available')
+
+    // Kick off the retry while the cancelled download is still settling.
+    const retry = service.download()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    // The retry must be draining the cancelled download, not racing it: no second fetch yet.
+    expect(installerFetches).toBe(1)
+
+    // Release the first download so it errors and runs its rm cleanup; only now may the retry proceed.
+    errorFirstStream?.()
+    const status = await retry
+    expect(status.state).toBe('ready')
+    expect(installerFetches).toBe(2)
+    // The retry's file, written after the cancelled download's rm, must survive.
+    expect(existsSync(target)).toBe(true)
+    expect(await readFile(target)).toEqual(body)
+
+    const firstFinal = await first
+    expect(firstFinal.error).toBeUndefined()
+  })
+
+  it('a cancel while a retry is still draining aborts it — no hidden download starts', async () => {
+    // Reproduces issue #216's core symptom for the retry path: cancel first, retry (which drains the
+    // cancelled download), then cancel again during that drain. A no-op cancel here would let the retry
+    // start a hidden download after the dialog closed.
+    dir = await mkdtemp(join(tmpdir(), 'svc-'))
+    const target = join(dir, 'installer.dmg')
+    const manifestForCheck = downloadManifest(100, 'irrelevant')
+    let installerFetches = 0
+    let onFirstFetch: (() => void) | undefined
+    let errorFirstStream: (() => void) | undefined
+    const firstFetched = new Promise<void>((resolve) => (onFirstFetch = resolve))
+    const fetchImpl = ((input: unknown) => {
+      if (String(input).endsWith('version.json')) {
+        return Promise.resolve(jsonResponse(manifestForCheck))
+      }
+      installerFetches += 1
+      const hanging = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]))
+          errorFirstStream = () =>
+            controller.error(new DOMException('The user aborted a request.', 'AbortError'))
+        }
+      })
+      onFirstFetch?.()
+      return Promise.resolve(new Response(hanging, { status: 200 }))
+    }) as unknown as typeof fetch
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn(),
+      promptSavePath: () => Promise.resolve(target)
+    })
+
+    await service.check()
+    const first = service.download()
+    await firstFetched
+    expect((await service.cancel()).state).toBe('available')
+
+    // Retry drains the cancelled download; cancel it again while it is still draining.
+    const retry = service.download()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect((await service.cancel()).state).toBe('available')
+
+    // Let the first download settle so the retry's drain unblocks.
+    errorFirstStream?.()
+    const status = await retry
+    expect(status.state).toBe('available')
+    // The retry must NOT have started a second (hidden) download.
+    expect(installerFetches).toBe(1)
+
+    await first
+  })
+
+  it('recovers on a later download() after the save dialog throws (no poisoned lifecycle)', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'svc-'))
+    const target = join(dir, 'installer.dmg')
+    const body = Buffer.from('installer-bytes')
+    const manifestForCheck = downloadManifest(
+      body.byteLength,
+      createHash('sha256').update(body).digest('hex')
+    )
+    const fetchImpl = ((input: unknown) =>
+      String(input).endsWith('version.json')
+        ? Promise.resolve(jsonResponse(manifestForCheck))
+        : Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch
+    let saveCall = 0
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn(),
+      // First prompt throws (e.g. a dialog failure); the second succeeds.
+      promptSavePath: () =>
+        saveCall++ === 0 ? Promise.reject(new Error('dialog failed')) : Promise.resolve(target)
+    })
+
+    await service.check()
+    const failed = await service.download()
+    expect(failed.state).toBe('error')
+    expect(failed.error).toBe('dialog failed')
+
+    // A poisoned lifecycle would rethrow 'dialog failed' here and never reopen the dialog.
+    const retry = await service.download()
+    expect(retry.state).toBe('ready')
+    expect(retry.localPath).toBe(target)
+    expect(existsSync(target)).toBe(true)
   })
 
   it('rejects a download whose URL host differs from the manifest host, without fetching', async () => {

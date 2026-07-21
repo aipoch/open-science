@@ -22,6 +22,24 @@ const baseDeps = (): EnvironmentCheckDeps => ({
 })
 
 describe('runEnvironmentCheck', () => {
+  it('probes the codex-acp package when Codex is selected', async () => {
+    const probeRegistry = vi.fn().mockResolvedValue(20)
+
+    await runEnvironmentCheck({
+      storageRoot: '/data',
+      agentFrameworkId: 'codex',
+      frameworks: [{ id: 'codex', label: 'Codex', runtime: { found: false } }],
+      encryptionAvailable: true,
+      deps: { ...baseDeps(), probeRegistry }
+    })
+
+    expect(probeRegistry).toHaveBeenCalledTimes(2)
+    expect(probeRegistry.mock.calls.map((call) => call[1])).toEqual([
+      '/@agentclientprotocol%2fcodex-acp/latest',
+      '/@agentclientprotocol%2fcodex-acp/latest'
+    ])
+  })
+
   it('selects the fastest reachable trusted registry for a missing runtime', async () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
@@ -177,7 +195,7 @@ describe('runEnvironmentCheck', () => {
     expect(result.canAutoInstall).toBe(false)
   })
 
-  it('keeps missing Python non-blocking while explaining the Notebook limitation', async () => {
+  it('treats a missing system Python as optional (notebooks use the app-managed environment)', async () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
       agentFrameworkId: 'claude-code' as const,
@@ -192,15 +210,16 @@ describe('runEnvironmentCheck', () => {
       deps: { ...baseDeps(), findPython: vi.fn().mockResolvedValue(undefined) }
     })
 
+    // Notebooks use the app-managed environment, so a missing system Python 3 is optional (passed),
+    // not an amber warning that implies the notebook feature is broken.
     expect(result.checks.find((check) => check.id === 'python')).toMatchObject({
-      status: 'warning',
-      summary: expect.stringContaining('Core setup can continue'),
-      detail: expect.stringContaining('Notebook execution will be unavailable')
+      status: 'passed',
+      summary: expect.stringContaining('app-managed Python environment')
     })
     expect(result.ready).toBe(true)
   })
 
-  it('treats unavailable OS key encryption as a non-blocking warning', async () => {
+  it('warns without blocking keyless setup when secure credential storage is unavailable', async () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
       agentFrameworkId: 'claude-code' as const,

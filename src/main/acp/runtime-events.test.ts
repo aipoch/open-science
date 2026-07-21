@@ -1,6 +1,7 @@
 import type { SessionNotification, ToolCallContent } from '@agentclientprotocol/sdk'
 import { describe, expect, it } from 'vitest'
 
+import { MAX_ACP_MESSAGE_IMAGE_BYTES } from '../../shared/acp'
 import { extractToolFailureText, toAcpRuntimeEvent } from './runtime-events'
 
 describe('ACP runtime event normalization', () => {
@@ -26,6 +27,62 @@ describe('ACP runtime event normalization', () => {
       messageId: 'message-1',
       text: 'Hello from Claude'
     })
+  })
+
+  it('preserves bounded assistant image chunks through the runtime fallback transport', () => {
+    const notification: SessionNotification = {
+      sessionId: 'session-1',
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        messageId: 'message-1',
+        content: {
+          type: 'image',
+          mimeType: 'image/png',
+          data: 'AQID'
+        }
+      }
+    }
+
+    const event = toAcpRuntimeEvent(notification, 'event-image', 1710000000000)
+
+    expect(event).toMatchObject({
+      kind: 'message',
+      role: 'assistant',
+      image: { mimeType: 'image/png', data: 'AQID', byteLength: 3 },
+      text: '[open-science:acp-message-image]',
+      raw: {
+        update: {
+          content: { type: 'image', mimeType: 'image/png', data: 'AQID', byteLength: 3 }
+        }
+      }
+    })
+  })
+
+  it('omits unsupported and oversized assistant image data', () => {
+    const createImageNotification = (mimeType: string, data: string): SessionNotification =>
+      ({
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'image', mimeType, data }
+        }
+      }) as SessionNotification
+
+    const unsupported = toAcpRuntimeEvent(
+      createImageNotification('image/svg+xml', 'PHN2Zz4='),
+      'event-svg'
+    )
+    const oversizedData = 'A'.repeat(Math.ceil(((MAX_ACP_MESSAGE_IMAGE_BYTES + 1) * 4) / 3))
+    const oversized = toAcpRuntimeEvent(
+      createImageNotification('image/png', oversizedData),
+      'event-large'
+    )
+
+    expect(unsupported.image).toBeUndefined()
+    expect(unsupported.text).toContain('omitted')
+    expect(JSON.stringify(unsupported.raw)).not.toContain('PHN2Zz4=')
+    expect(oversized.image).toBeUndefined()
+    expect(JSON.stringify(oversized.raw)).not.toContain(oversizedData.slice(0, 100))
   })
 
   it('maps tool calls into compact runtime events', () => {

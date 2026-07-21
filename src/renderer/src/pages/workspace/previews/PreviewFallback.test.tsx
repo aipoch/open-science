@@ -7,7 +7,8 @@ import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
 import { FileWarning } from 'lucide-react'
 import { PreviewFallbackCard, PreviewLoadingContent } from './PreviewFallback'
-import { PreviewRuntimeBoundary, usePreviewRuntime } from './preview-runtime'
+import { PreviewRuntimeBoundary } from './preview-runtime'
+import { usePreviewRuntime } from './preview-runtime-context'
 
 const item: PreviewFileItem = {
   id: 'file-1',

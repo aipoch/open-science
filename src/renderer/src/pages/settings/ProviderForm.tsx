@@ -1,6 +1,7 @@
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { FieldHelp } from '@/components/FieldHelp'
 import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import {
   Select,
   SelectContent,
@@ -55,19 +56,27 @@ const BASE_URL_HELP_CONTENT = (
 )
 
 // Human labels for the provider API format (which chat endpoint the gateway speaks).
-const API_FORMAT_LABELS: Record<'anthropic' | 'openai' | 'both', string> = {
-  anthropic: 'Anthropic (/v1/messages)',
-  openai: 'OpenAI (/v1/chat/completions)',
-  both: 'Both'
+const API_FORMAT_LABELS: Record<ProviderFormValue['apiEndpoint'], string> = {
+  openai: 'Chat Completions API (/v1/chat/completions)',
+  anthropic: 'Messages API (/v1/messages)',
+  responses: 'Responses API (/v1/responses)'
 }
 
 const API_FORMAT_HELP_CONTENT = (
   <>
-    Which chat API this gateway speaks. Claude Code only works with Anthropic{' '}
-    <code>/v1/messages</code>; OpenCode works with either. A provider is only selectable under an
-    agent framework that supports its format.
+    Which chat API this gateway speaks. Claude Code uses <code>/v1/messages</code>, OpenCode accepts
+    Messages or Chat Completions, and Codex uses <code>/v1/responses</code>. A provider is only
+    selectable under an agent framework that supports its format.
   </>
 )
+
+// Custom gateways declare exactly one protocol. Official vendors may serve several endpoints; that
+// multi-endpoint set lives in the registry and is not a selectable custom option.
+const selectableApiFormats = (): ProviderFormValue['apiEndpoint'][] => [
+  'openai',
+  'anthropic',
+  'responses'
+]
 
 const SUPPORTED_MODELS_HELP_CONTENT = (
   <>
@@ -245,22 +254,39 @@ const ProviderForm = ({
               <FieldHelp content={API_FORMAT_HELP_CONTENT} />
             </div>
             <Select
-              value={value.apiType}
-              onValueChange={(apiType) =>
-                onChange({ apiType: apiType as ProviderFormValue['apiType'] })
+              value={value.apiEndpoint}
+              disabled={disabled}
+              onValueChange={(apiEndpoint) =>
+                onChange({ apiEndpoint: apiEndpoint as ProviderFormValue['apiEndpoint'] })
               }
             >
               <SelectTrigger aria-label="API format" disabled={disabled}>
-                <span>{API_FORMAT_LABELS[value.apiType]}</span>
+                <span>{API_FORMAT_LABELS[value.apiEndpoint]}</span>
               </SelectTrigger>
               <SelectContent>
-                {(['anthropic', 'openai', 'both'] as const).map((apiType) => (
-                  <SelectItem key={apiType} value={apiType}>
-                    {API_FORMAT_LABELS[apiType]}
+                {selectableApiFormats().map((apiEndpoint) => (
+                  <SelectItem key={apiEndpoint} value={apiEndpoint}>
+                    {API_FORMAT_LABELS[apiEndpoint]}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="flex items-center justify-between gap-4 border-t border-border-200 pt-3">
+            <label className="space-y-0.5" htmlFor="provider-image-input">
+              <span className="block text-xs font-medium">Image input</span>
+              <span className="block text-xs text-muted-foreground">
+                Enable only when this gateway and model accept image content.
+              </span>
+            </label>
+            <Switch
+              id="provider-image-input"
+              aria-label="Supports image input"
+              checked={value.supportsImageInput}
+              disabled={disabled}
+              onCheckedChange={(supportsImageInput) => onChange({ supportsImageInput })}
+            />
           </div>
 
           {keyField}

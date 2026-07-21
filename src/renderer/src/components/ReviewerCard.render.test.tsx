@@ -884,3 +884,108 @@ describe('ReviewerCard — error card', () => {
     expect(detail?.textContent).toContain('Argument `severity` is missing.')
   })
 })
+
+describe('ReviewerCard — stale review', () => {
+  it('marks a stale pass review as outdated instead of presenting it as current', async () => {
+    const review = makeReview({ outcome: 'pass', checks: [], stale: true })
+    await act(async () => {
+      root.render(<ReviewerCard review={review} />)
+    })
+
+    expect(container.textContent).toContain('No issues found')
+    expect(container.textContent).toContain('(outdated)')
+  })
+
+  it('marks a stale flagged review as outdated', async () => {
+    const review = makeReview({ outcome: 'flagged', checks: [makeCheck()], stale: true })
+    await act(async () => {
+      root.render(<ReviewerCard review={review} />)
+    })
+
+    expect(container.textContent).toContain('1 finding')
+    expect(container.textContent).toContain('(outdated)')
+  })
+
+  it('does not mark a non-stale review as outdated', async () => {
+    const review = makeReview({ outcome: 'pass', checks: [] })
+    await act(async () => {
+      root.render(<ReviewerCard review={review} />)
+    })
+
+    expect(container.textContent).not.toContain('(outdated)')
+  })
+
+  it('offers a Re-run button on a stale review that fires onRerun with the review', async () => {
+    const review = makeReview({ outcome: 'pass', checks: [], stale: true })
+    const onRerun = vi.fn().mockResolvedValue(true)
+    await act(async () => {
+      root.render(<ReviewerCard review={review} onRerun={onRerun} />)
+    })
+
+    const notice = container.querySelector('[data-testid="reviewer-stale-notice"]')
+    expect(notice).not.toBeNull()
+    const rerunButton = [...notice!.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('Re-run review')
+    )
+    expect(rerunButton).toBeTruthy()
+
+    await act(async () => {
+      rerunButton!.click()
+    })
+    expect(onRerun).toHaveBeenCalledWith(review)
+  })
+
+  it('shows no Re-run affordance for a non-stale review', async () => {
+    const review = makeReview({ outcome: 'pass', checks: [] })
+    await act(async () => {
+      root.render(<ReviewerCard review={review} onRerun={vi.fn()} />)
+    })
+
+    expect(container.querySelector('[data-testid="reviewer-stale-notice"]')).toBeNull()
+  })
+
+  it('disables the Re-run button after the first click so a double-click fires once', async () => {
+    const review = makeReview({ outcome: 'pass', checks: [], stale: true })
+    const onRerun = vi.fn().mockResolvedValue(true)
+    await act(async () => {
+      root.render(<ReviewerCard review={review} onRerun={onRerun} />)
+    })
+
+    const notice = container.querySelector('[data-testid="reviewer-stale-notice"]')
+    const rerunButton = [...notice!.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('Re-run')
+    ) as HTMLButtonElement
+
+    // Two separate events (as a real double-click is): the first disables the button before the second.
+    await act(async () => {
+      rerunButton.click()
+    })
+    await act(async () => {
+      rerunButton.click()
+    })
+
+    expect(onRerun).toHaveBeenCalledTimes(1)
+    expect(rerunButton.disabled).toBe(true)
+  })
+
+  it('re-enables the Re-run button when no review actually started', async () => {
+    const review = makeReview({ outcome: 'pass', checks: [], stale: true })
+    // The run could not begin (e.g. session load failed) → resolves false.
+    const onRerun = vi.fn().mockResolvedValue(false)
+    await act(async () => {
+      root.render(<ReviewerCard review={review} onRerun={onRerun} />)
+    })
+
+    const notice = container.querySelector('[data-testid="reviewer-stale-notice"]')
+    const rerunButton = [...notice!.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('Re-run')
+    ) as HTMLButtonElement
+
+    await act(async () => {
+      rerunButton.click()
+    })
+
+    // Latch released: the button is usable again and the notice/turn stays retriable.
+    expect(rerunButton.disabled).toBe(false)
+  })
+})

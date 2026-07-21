@@ -8,6 +8,7 @@ const makeRun = (overrides: Partial<NotebookRunRecord> = {}): NotebookRunRecord 
   runId: 'r1',
   cellId: 'c1',
   source: 'agent',
+  kernelKind: 'python',
   script: 'import os\nimport requests',
   status: 'completed',
   startedAt: 0,
@@ -59,5 +60,50 @@ describe('SessionNotebookContent', () => {
     expect(html).toContain('.ipynb')
     // The only disabled control in the content is the placeholder export button.
     expect(html).toContain('disabled')
+  })
+})
+
+describe('SessionNotebookContent per-kernel tabs', () => {
+  it('renders a tab per present kind and shows the default (python) pane', () => {
+    const pythonRun = makeRun({ runId: 'p1', kernelKind: 'python', script: 'print(1)' })
+    const replRun = makeRun({ runId: 'x1', kernelKind: 'repl', script: 'await host.mcp()' })
+    const bashRun = makeRun({ runId: 'b1', kernelKind: 'bash', script: 'ls -la' })
+
+    const html = renderContent({
+      sessionId: 's1',
+      runs: [pythonRun, replRun, bashRun],
+      status: 'ready'
+    })
+
+    // Cell count counts python/r runs only; repl/bash surface as extra counts.
+    expect(html).toContain('1 agent · 1 cell')
+    expect(html).toContain('1 repl / 1 shell')
+
+    // A switcher tab per present kind (Agent SDK for repl, Bash for bash).
+    expect(html).toContain('data-testid="session-notebook-tab-python"')
+    expect(html).toContain('data-testid="session-notebook-tab-repl"')
+    expect(html).toContain('data-testid="session-notebook-tab-bash"')
+    expect(html).toContain('Agent SDK')
+    expect(html).toContain('Bash')
+
+    // Only the active (default python) pane renders; other kinds sit behind their tabs.
+    expect(html).toContain('data-testid="session-notebook-kernel-python"')
+    expect(html).not.toContain('data-testid="session-notebook-kernel-repl"')
+    expect(html).not.toContain('data-testid="session-notebook-kernel-bash"')
+    // The active python cell carries no origin label (repl/bash cells, which do, are behind tabs).
+    expect(html).not.toContain('data-testid="session-notebook-cell-origin"')
+  })
+
+  it('shows no repl/bash tab for a python-only session', () => {
+    const html = renderContent({
+      sessionId: 's1',
+      runs: [makeRun({ runId: 'p1' }), makeRun({ runId: 'p2' })],
+      status: 'ready'
+    })
+
+    expect(html).toContain('1 agent · 2 cells')
+    expect(html).toContain('data-testid="session-notebook-tab-python"')
+    expect(html).not.toContain('data-testid="session-notebook-tab-repl"')
+    expect(html).not.toContain('data-testid="session-notebook-tab-bash"')
   })
 })

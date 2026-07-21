@@ -66,6 +66,7 @@ const provider = (overrides: Partial<ProviderView>): ProviderView => ({
   type: 'custom',
   name: 'Gateway',
   models: ['m'],
+  supportsImageInput: false,
   hasKey: true,
   needsKey: false,
   ...overrides
@@ -110,7 +111,7 @@ describe('ComposerModelPicker', () => {
     // Claude Code (anthropic-only) + a lone OpenAI-only provider: the picker must not silently vanish.
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
-      providers: [provider({ id: 'p1', apiType: 'openai', models: ['gpt-x'] })]
+      providers: [provider({ id: 'p1', apiEndpoints: ['openai'], models: ['gpt-x'] })]
     })
     render()
 
@@ -119,6 +120,33 @@ describe('ComposerModelPicker', () => {
     const trigger = container.querySelector('[aria-label="No compatible model"]')
     expect(trigger).not.toBeNull()
     expect(trigger?.textContent).toContain('No compatible model')
+  })
+
+  it('treats a Chat provider as bridge-compatible under Codex without a per-model probe', async () => {
+    // Bridge support is static: a custom provider (no vendorId) is always supported, so its models are
+    // selectable under Codex — there is no runtime streaming-function-tool probe gating them.
+    useSettingsStore.setState({
+      agentFrameworkId: 'codex',
+      agentFrameworks: [
+        {
+          id: 'codex',
+          displayName: 'Codex',
+          supportedApiTypes: ['responses'],
+          supportsSkills: true
+        }
+      ],
+      providers: [
+        provider({ id: 'p1', name: 'DeepSeek', apiEndpoints: ['openai'], models: ['ds', 'ds2'] })
+      ]
+    })
+    render()
+
+    // The compatible picker shows (not the "No compatible model" warning), and its models are usable.
+    expect(container.querySelector('[aria-label="No compatible model"]')).toBeNull()
+    const trigger = container.querySelector('[aria-label="Select model"]')
+    expect(trigger).not.toBeNull()
+    await openMenu(trigger!)
+    expect(document.body.textContent).not.toContain('not supported over the Codex')
   })
 
   it('exposes each incompatible provider reason as a focusable, non-actionable menu item', async () => {
@@ -138,7 +166,7 @@ describe('ComposerModelPicker', () => {
         }
       ],
       providers: [
-        provider({ id: 'p1', apiType: 'openai', name: 'OpenAI Gateway', models: ['gpt-x'] })
+        provider({ id: 'p1', apiEndpoints: ['openai'], name: 'OpenAI Gateway', models: ['gpt-x'] })
       ],
       openSettings,
       setActiveProvider
@@ -146,7 +174,7 @@ describe('ComposerModelPicker', () => {
     render()
 
     const expectedReason = incompatibilityReason(
-      { apiType: 'openai', type: 'custom', name: 'OpenAI Gateway' },
+      { apiEndpoints: ['openai'], type: 'custom', name: 'OpenAI Gateway' },
       'Claude Code',
       ['anthropic']
     )
@@ -161,12 +189,15 @@ describe('ComposerModelPicker', () => {
     // 1. Open the dropdown.
     await openMenu(trigger!)
 
-    // 2. The reason lives in a real menu item (reached by arrow-key roving focus), carries the full
-    // reason as visible text, and is marked unselectable.
-    const reasonItem = menuItems().find((el) => el.textContent?.includes(expectedReason))
+    // 2. The reason lives in a real menu item (reached by arrow-key roving focus). The full reason is
+    // exposed to assistive tech via aria-label/title while the visible label stays compact, and the
+    // item is marked unselectable.
+    const reasonItem = menuItems().find((el) => el.getAttribute('aria-label') === expectedReason)
     expect(reasonItem, 'expected a menu item carrying the incompatibility reason').toBeDefined()
-    expect(reasonItem?.textContent).toContain('OpenAI Gateway')
-    expect(reasonItem?.textContent).toContain('Claude Code')
+    expect(reasonItem?.getAttribute('aria-label')).toContain('OpenAI Gateway')
+    expect(reasonItem?.getAttribute('aria-label')).toContain('Claude Code')
+    expect(reasonItem?.getAttribute('title')).toBe(expectedReason)
+    expect(reasonItem?.textContent).toContain('Unavailable for Claude Code')
     expect(reasonItem?.getAttribute('aria-disabled')).toBe('true')
     // A Radix `disabled` item is skipped by roving focus; the reason item must NOT be disabled so a
     // keyboard user can land on it — proven by the absence of the data-disabled marker.
@@ -260,7 +291,7 @@ describe('ComposerModelPicker', () => {
 
   it('explains an endpoint mismatch by route, not by vendor name', () => {
     const reason = incompatibilityReason(
-      { apiType: 'openai', type: 'custom', name: 'OpenAI Gateway' },
+      { apiEndpoints: ['openai'], type: 'custom', name: 'OpenAI Gateway' },
       'Claude Code',
       ['anthropic']
     )
@@ -273,7 +304,7 @@ describe('ComposerModelPicker', () => {
 
   it('explains a local Claude provider is only usable by Claude Code', () => {
     const reason = incompatibilityReason(
-      { apiType: 'anthropic', type: 'claude-default', name: 'Local Claude' },
+      { apiEndpoints: ['anthropic'], type: 'claude-default', name: 'Local Claude' },
       'OpenCode',
       ['anthropic', 'openai']
     )

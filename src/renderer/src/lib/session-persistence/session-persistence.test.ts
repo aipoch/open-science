@@ -9,6 +9,7 @@ import { createInitialSessionState, useSessionStore } from '../../stores/session
 import {
   createStoreSaver,
   loadPersistedSessions,
+  reconcilePendingArtifacts,
   type SessionPersistenceApi
 } from './session-persistence'
 
@@ -44,6 +45,75 @@ const createApi = (overrides: Partial<SessionPersistenceApi> = {}): SessionPersi
 
 beforeEach(() => {
   useSessionStore.setState(createInitialSessionState())
+})
+
+describe('reconcilePendingArtifacts', () => {
+  it('re-finalizes a crash-orphaned pending artifact and replaces the message references', async () => {
+    const pendingPath = '/data/artifacts/proj-1/artifact-session/.pending/run-1/chart.png'
+    useSessionStore.getState().hydrateSessions([
+      createPersistedSession({
+        id: 'session-1',
+        projectId: 'proj-1',
+        messages: [
+          {
+            id: 'message-1',
+            role: 'agent',
+            content: 'done',
+            status: 'complete',
+            eventIds: [],
+            artifactIds: ['artifact-session:run-1:chart.png'],
+            createdAt: 1710000000000,
+            updatedAt: 1710000000000
+          }
+        ],
+        artifacts: [
+          {
+            id: 'artifact-session:run-1:chart.png',
+            kind: 'managed-file',
+            path: pendingPath,
+            name: 'chart.png',
+            mimeType: 'image/png'
+          }
+        ]
+      })
+    ])
+
+    const finalized = {
+      id: 'session-1:message-1:chart.png',
+      projectName: 'proj-1',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      name: 'chart.png',
+      path: '/data/artifacts/proj-1/session-1/message-1/chart.png',
+      fileUrl: 'file:///data/artifacts/proj-1/session-1/message-1/chart.png',
+      mimeType: 'image/png',
+      size: 3,
+      mtimeMs: 1710000000000
+    }
+    const api = { reconcilePendingArtifacts: vi.fn().mockResolvedValue([finalized]) }
+
+    await reconcilePendingArtifacts(api)
+
+    expect(api.reconcilePendingArtifacts).toHaveBeenCalledWith({
+      projectName: 'proj-1',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      pendingPaths: [pendingPath]
+    })
+
+    const session = useSessionStore.getState().sessions.find((item) => item.id === 'session-1')
+    expect(session?.messages[0].artifactIds).toEqual(['session-1:message-1:chart.png'])
+    expect(session?.artifacts?.map((artifact) => artifact.path)).toEqual([finalized.path])
+  })
+
+  it('leaves messages without pending artifacts untouched', async () => {
+    useSessionStore.getState().hydrateSessions([createPersistedSession({ id: 'session-1' })])
+    const api = { reconcilePendingArtifacts: vi.fn() }
+
+    await reconcilePendingArtifacts(api)
+
+    expect(api.reconcilePendingArtifacts).not.toHaveBeenCalled()
+  })
 })
 
 describe('renderer session persistence bridge', () => {

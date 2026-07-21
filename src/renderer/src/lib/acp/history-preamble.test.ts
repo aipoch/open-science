@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildHistoryPreamble } from './history-preamble'
+import { buildHistoryPreamble, buildHistoryReplayMedia } from './history-preamble'
 import type { ChatMessage } from '../../stores/session-store'
 
 const message = (
@@ -68,9 +68,44 @@ describe('buildHistoryPreamble', () => {
     expect(preamble).not.toContain('turn-0 ')
   })
 
-  it('never drops below a single most-recent turn even under a tiny budget', () => {
-    const preamble = buildHistoryPreamble([message({ role: 'user', content: 'a'.repeat(500) })], 10)
+  it('hard-bounds a single oversized latest turn', () => {
+    const budget = 80
+    const preamble = buildHistoryPreamble(
+      [message({ role: 'user', content: `start-${'a'.repeat(500)}-end` })],
+      budget
+    )
+    const transcript = preamble?.split('\n\n').slice(1).join('\n\n') ?? ''
 
-    expect(preamble).toContain('a'.repeat(500))
+    expect(transcript.length).toBeLessThanOrEqual(budget)
+    expect(transcript).toContain('-end')
+    expect(transcript).not.toContain('start-')
+  })
+
+  it('collects bounded recent image uploads and inline assistant images for replay', () => {
+    const media = buildHistoryReplayMedia([
+      message({
+        role: 'user',
+        content: 'look',
+        uploads: [
+          {
+            id: 'u1',
+            sessionId: 's1',
+            name: 'plot.png',
+            originalName: 'plot.png',
+            path: '/uploads/plot.png',
+            mimeType: 'image/png',
+            size: 10
+          }
+        ]
+      }),
+      message({
+        role: 'agent',
+        content: '',
+        images: [{ id: 'i1', mimeType: 'image/png', data: 'aGVsbG8=', byteLength: 5 }]
+      })
+    ])
+
+    expect(media.attachments.map((item) => item.id)).toEqual(['u1'])
+    expect(media.images).toHaveLength(1)
   })
 })

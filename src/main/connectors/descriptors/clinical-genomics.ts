@@ -569,7 +569,8 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ "total": int, "records": [ { "gene_symbol": str, "hgnc_id": str, "disease_label": str, "mondo_id": str, "moi": str, "sop": str, "classification": str, "expert_panel": str, "affiliate_id": str, "animal_model_only": bool, "assertion_id": str } ], "source": str }` — records filtered to the gene (exact, case-insensitive) or the full table when gene is omitted.',
-    example: 'result = host.mcp("clinical_genomics", "clingen_gene_validity", {"gene": "BRCA2"})',
+    example:
+      'const result = await host.mcp("clinical_genomics", "clingen_gene_validity", {"gene": "BRCA2"})',
     url: () => `${CLINGEN_SEARCH}/api/validity`,
     parse: (raw, a) => {
       const d = raw as { total: number; rows: Record<string, unknown>[] }
@@ -607,7 +608,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "total": int, "records": [ { "record_type": "gene"|"region", "symbol": str, "id": str, "cytoband": str, "grch37": str, "grch38": str, "haploinsufficiency": { "code": str, "label": str }|null, "triplosensitivity": {...}|null, "haplo_disease": str, "haplo_mondo": str, "triplo_disease": str, "triplo_mondo": str, "omim": str, "morbid": str } ], "source": str }`.',
     example:
-      'result = host.mcp("clinical_genomics", "clingen_dosage_sensitivity", {"gene": "TP53"})',
+      'const result = await host.mcp("clinical_genomics", "clingen_dosage_sensitivity", {"gene": "TP53"})',
     url: () => `${CLINGEN_SEARCH}/api/dosage`,
     parse: (raw, a) => {
       const d = raw as { total: number; rows: Record<string, unknown>[] }
@@ -655,7 +656,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "adult"?: { "total": int, "records": [...] }, "pediatric"?: { "total": int, "records": [...] }, "source": str }` — one block per requested context; each record has doc_id, genes, disease, outcome, intervention, severity, likelihood, nature_of_intervention, effectiveness, overall_score, release/release_date.',
     example:
-      'result = host.mcp("clinical_genomics", "clingen_actionability", {"gene": "BRCA1", "context": "adult"})',
+      'const result = await host.mcp("clinical_genomics", "clingen_actionability", {"gene": "BRCA1", "context": "adult"})',
     run: async (ctx, a) => {
       const ctxMap: Record<string, string[]> = {
         adult: ['Adult'],
@@ -711,7 +712,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "total": int, "records": [ { "interpretation_id": str, "uuid": str, "caid": str, "clinvar_variation_id": str, "gene_symbol": str, "gene_ncbi_id": str, "condition_id": str, "condition_label": str, "hgvs": [str], "evidence_links": [str], "published_date": str, "guidelines": [ { "guideline": str, "guideline_id": str, "outcome": str, "agents": [ { "agent_id": str, "affiliation": str, "outcome": str, "evidence_codes_met": [str], "evidence_codes_not_met": [str] } ] } ] } ], "query": { <gene|caid|hgvs>: str }, "source": str }`.',
     example:
-      'result = host.mcp("clinical_genomics", "clingen_variant_classifications", {"gene": "BRCA1"})',
+      'const result = await host.mcp("clinical_genomics", "clingen_variant_classifications", {"gene": "BRCA1"})',
     url: (a) => {
       const [param, value] = erepoKey(a)
       const qs = new URLSearchParams({ [param]: value, matchMode: 'exact', matchLimit: 'none' })
@@ -745,7 +746,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "total_count": int, "pages_fetched": int, "records": [ { "id": int, "name": str, "entrezId": int, "fullName": str, "featureAliases": [str], "description": str, "link": str } ], "query": { "mode": "search_genes", "entrez_symbol": str } }`.',
     example:
-      'result = host.mcp("clinical_genomics", "civic_search_genes", {"entrez_symbol": "BRAF"})',
+      'const result = await host.mcp("clinical_genomics", "civic_search_genes", {"entrez_symbol": "BRAF"})',
     run: async (ctx, a) => {
       const out = await civicPaged(
         ctx,
@@ -771,7 +772,8 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     required: ['gene_id'],
     returns:
       '`{ "total_count": int, "pages_fetched": int, "records": [ { "id": int, "name": str, "link": str, "variantAliases": [str], "variantTypes": [{ "id": int, "name": str, "soid": str }], "feature": { "id": int, "name": str }, "singleVariantMolecularProfileId": int, "alleleRegistryId"?: str, "clinvarIds"?: [str], "hgvsDescriptions"?: [str], "coordinates"?: {...} } ], "query": {...} }`.',
-    example: 'result = host.mcp("clinical_genomics", "civic_gene_variants", {"gene_id": 5})',
+    example:
+      'const result = await host.mcp("clinical_genomics", "civic_gene_variants", {"gene_id": 5})',
     run: async (ctx, a) => {
       const out = await civicPaged(
         ctx,
@@ -801,7 +803,8 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     required: ['variant_id'],
     returns:
       '`{ "query": { "mode": "variant", "id": int }, "found": bool, "record": { "id": int, "name": str, "variantTypes": [...], "feature": {...}, "coordinates"?: {...}, ... }|null }`.',
-    example: 'result = host.mcp("clinical_genomics", "civic_get_variant", {"variant_id": 12})',
+    example:
+      'const result = await host.mcp("clinical_genomics", "civic_get_variant", {"variant_id": 12})',
     run: async (ctx, a) => civicSingle(ctx, 'variant', Number(a.variant_id), VARIANT_FIELDS)
   },
   {
@@ -821,7 +824,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "total_count": int, "pages_fetched": int, "records": [ <variant record> ], "query": { "mode": "search_variants", "name": str, "gene_id": int|null } }`.',
     example:
-      'result = host.mcp("clinical_genomics", "civic_search_variants", {"name": "V600", "gene_id": 5})',
+      'const result = await host.mcp("clinical_genomics", "civic_search_variants", {"name": "V600", "gene_id": 5})',
     run: async (ctx, a) => {
       let decls = ', $name: String'
       let refs = ', name: $name'
@@ -854,7 +857,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "query": { "mode": "evidenceItem", "id": int }, "found": bool, "record": { "id": int, "evidenceLevel": str, "evidenceType": str, "evidenceDirection": str, "significance": str, "evidenceRating": int, "disease": {...}, "therapies": [...], "molecularProfile": {...}, "source": {...}, ... }|null }`.',
     example:
-      'result = host.mcp("clinical_genomics", "civic_get_evidence_item", {"evidence_id": 1409})',
+      'const result = await host.mcp("clinical_genomics", "civic_get_evidence_item", {"evidence_id": 1409})',
     run: async (ctx, a) => civicSingle(ctx, 'evidenceItem', Number(a.evidence_id), EVIDENCE_FIELDS)
   },
   {
@@ -866,7 +869,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "total_count": int, "pages_fetched": int, "records": [ <evidence record> ], "query": { "mode": "search_evidence", "filters": {...} } }` — records sorted by ascending evidence id.',
     example:
-      'result = host.mcp("clinical_genomics", "civic_search_evidence", {"disease_name": "melanoma", "evidence_level": "A"})',
+      'const result = await host.mcp("clinical_genomics", "civic_search_evidence", {"disease_name": "melanoma", "evidence_level": "A"})',
     run: async (ctx, a) =>
       civicFilteredSearch(
         ctx,
@@ -891,7 +894,8 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     required: ['assertion_id'],
     returns:
       '`{ "query": { "mode": "assertion", "id": int }, "found": bool, "record": { "id": int, "assertionType": str, "assertionDirection": str, "significance": str, "ampLevel": str, "summary": str, "acmgCodes": [...], "clingenCodes": [...], "disease": {...}, "therapies": [...], "evidenceItemsCount": int, ... }|null }`.',
-    example: 'result = host.mcp("clinical_genomics", "civic_get_assertion", {"assertion_id": 7})',
+    example:
+      'const result = await host.mcp("clinical_genomics", "civic_get_assertion", {"assertion_id": 7})',
     run: async (ctx, a) => civicSingle(ctx, 'assertion', Number(a.assertion_id), ASSERTION_FIELDS)
   },
   {
@@ -903,7 +907,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "total_count": int, "pages_fetched": int, "records": [ <assertion record> ], "query": { "mode": "search_assertions", "filters": {...} } }` — records sorted by ascending assertion id.',
     example:
-      'result = host.mcp("clinical_genomics", "civic_search_assertions", {"disease_name": "melanoma"})',
+      'const result = await host.mcp("clinical_genomics", "civic_search_assertions", {"disease_name": "melanoma"})',
     run: async (ctx, a) =>
       civicFilteredSearch(
         ctx,
@@ -928,7 +932,8 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     required: ['mp_id'],
     returns:
       '`{ "query": { "mode": "molecularProfile", "id": int }, "found": bool, "record": { "id": int, "name": str, "rawName": str, "molecularProfileScore": float, "isComplex": bool, "isMultiVariant": bool, "molecularProfileAliases": [str], "variants": [{ "id": int, "name": str, "feature": {...} }], "evidenceCountsByStatus": {...} }|null }`.',
-    example: 'result = host.mcp("clinical_genomics", "civic_get_molecular_profile", {"mp_id": 12})',
+    example:
+      'const result = await host.mcp("clinical_genomics", "civic_get_molecular_profile", {"mp_id": 12})',
     run: async (ctx, a) =>
       civicSingle(ctx, 'molecularProfile', Number(a.mp_id), MOLECULAR_PROFILE_FIELDS)
   },
@@ -946,7 +951,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "total_count": int, "pages_fetched": int, "records": [ <molecular profile record> ], "query": { "mode": "search_molecular_profiles", "name": str } }`.',
     example:
-      'result = host.mcp("clinical_genomics", "civic_search_molecular_profiles", {"name": "BRAF V600E"})',
+      'const result = await host.mcp("clinical_genomics", "civic_search_molecular_profiles", {"name": "BRAF V600E"})',
     run: async (ctx, a) => {
       const out = await civicPaged(
         ctx,
@@ -977,7 +982,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "total_count": int, "pages_fetched": int, "records": [ { "id": int, "name": str, "displayName": str, "doid": str, "diseaseUrl": str, "diseaseAliases": [str], "link": str } ], "query": { "mode": "search_diseases", "name": str } }`.',
     example:
-      'result = host.mcp("clinical_genomics", "civic_search_diseases", {"name": "melanoma"})',
+      'const result = await host.mcp("clinical_genomics", "civic_search_diseases", {"name": "melanoma"})',
     run: async (ctx, a) => {
       const out = await civicPaged(
         ctx,
@@ -1008,7 +1013,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "total_count": int, "pages_fetched": int, "records": [ { "id": int, "name": str, "ncitId": str, "therapyUrl": str, "therapyAliases": [str], "link": str } ], "query": { "mode": "search_therapies", "name": str } }`.',
     example:
-      'result = host.mcp("clinical_genomics", "civic_search_therapies", {"name": "vemurafenib"})',
+      'const result = await host.mcp("clinical_genomics", "civic_search_therapies", {"name": "vemurafenib"})',
     run: async (ctx, a) => {
       const out = await civicPaged(
         ctx,
@@ -1043,7 +1048,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "data": {...}|null, "attempts": int, "errors"?: [ { "message": str } ] }` — the raw GraphQL data payload; transient HTTP-200 "Internal server error" responses are retried up to 3 attempts before being surfaced in errors.',
     example:
-      'result = host.mcp("clinical_genomics", "open_targets_graphql", {"query": "query($id: String!){ target(ensemblId: $id){ approvedSymbol associatedDiseases{ count } } }", "variables": {"id": "ENSG00000157764"}})',
+      'const result = await host.mcp("clinical_genomics", "open_targets_graphql", {"query": "query($id: String!){ target(ensemblId: $id){ approvedSymbol associatedDiseases{ count } } }", "variables": {"id": "ENSG00000157764"}})',
     run: async (ctx, a) => {
       const variables = asObj(a.variables)
       return otExecute(ctx, String(a.query), Object.keys(variables).length ? variables : undefined)
@@ -1066,7 +1071,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "id": str, "name": str, "drugAndClinicalCandidates": { "count": int, "rows": [ { "id": str, "maxClinicalStage": str, "drug": { "id": str, "name": str, "drugType": str } } ] } }` (rows capped at `size`, default 25), or `{ "errors": [...] }` on GraphQL error / unknown id.',
     example:
-      'result = host.mcp("clinical_genomics", "open_targets_disease_drugs", {"efo_id": "MONDO_0004992", "size": 25})',
+      'const result = await host.mcp("clinical_genomics", "open_targets_disease_drugs", {"efo_id": "MONDO_0004992", "size": 25})',
     run: async (ctx, a) => {
       const size = Number(a.size ?? 25)
       const node = await otQuery(ctx, OT_DISEASE_DRUGS_Q, { id: String(a.efo_id) }, 'disease')
@@ -1092,7 +1097,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "id": str, "name": str, "associatedTargets": { "count": int, "rows": [ { "score": float, "target": { "id": str, "approvedSymbol": str } } ] } }` (up to `size` rows, default 25), or `{ "errors": [...] }` on GraphQL error / unknown id.',
     example:
-      'result = host.mcp("clinical_genomics", "open_targets_disease_targets", {"efo_id": "MONDO_0004992", "size": 25})',
+      'const result = await host.mcp("clinical_genomics", "open_targets_disease_targets", {"efo_id": "MONDO_0004992", "size": 25})',
     run: async (ctx, a) =>
       otQuery(
         ctx,
@@ -1115,7 +1120,7 @@ export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "id": str, "name": str, "drugType": str, "maximumClinicalStage": str, "mechanismsOfAction": { "rows": [ { "mechanismOfAction": str, "actionType": str, "targets": [ { "id": str, "approvedSymbol": str } ] } ] } }`, or `{ "errors": [...] }` on GraphQL error / unknown id.',
     example:
-      'result = host.mcp("clinical_genomics", "open_targets_drug", {"chembl_id": "CHEMBL1201583"})',
+      'const result = await host.mcp("clinical_genomics", "open_targets_drug", {"chembl_id": "CHEMBL1201583"})',
     run: async (ctx, a) => otQuery(ctx, OT_DRUG_Q, { id: String(a.chembl_id) }, 'drug')
   }
 ]

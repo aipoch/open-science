@@ -185,7 +185,7 @@ export const ARXIV_LITERATURE_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ search_query, api_total, start_index, n_records_returned, records_truncated, sort_by, sort_order, records: [ { arxiv_id, version, id_versioned, title, abstract, authors, published, updated, primary_category, categories, doi, journal_ref, comment, abs_url, pdf_url } ] }` — `records_truncated` flags more matches beyond this page; `records` is `[]` when nothing matches.',
     example:
-      'result = host.mcp("literature", "arxiv_search", {"query": "ti:transformer", "category": "cs.LG", "max_results": 10})',
+      'const result = await host.mcp("literature", "arxiv_search", {"query": "ti:transformer", "category": "cs.LG", "max_results": 10})',
     run: async (ctx, a) => {
       // At least one search dimension is required — an empty query is meaningless to arXiv.
       const query = a.query != null ? String(a.query).trim() : ''
@@ -246,7 +246,7 @@ export const ARXIV_LITERATURE_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ n_requested, n_found, duplicates: [str], not_found: [str], records: [ ...same shape as arxiv_search records ] }` — `records` in requested (deduped) order; `not_found` lists requested ids with no matching record.',
     example:
-      'result = host.mcp("literature", "arxiv_get_papers", {"arxiv_ids": ["2103.14030", "1706.03762v5"]})',
+      'const result = await host.mcp("literature", "arxiv_get_papers", {"arxiv_ids": ["2103.14030", "1706.03762v5"]})',
     run: async (ctx, a) => {
       const rawIds = Array.isArray(a.arxiv_ids) ? (a.arxiv_ids as unknown[]).map(String) : []
       if (rawIds.length === 0)

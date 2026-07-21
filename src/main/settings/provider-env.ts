@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 
-import type { ProviderApiType, ProviderType } from '../../shared/settings'
+import type { ChatApiEndpoint, ProviderType } from '../../shared/settings'
 import { normalizeAnthropicBaseUrl } from './base-url'
 
 // Resolves an active provider into the environment overrides that the ACP agent (and the claude
@@ -16,9 +16,12 @@ export type ResolvedProvider = {
   openaiBaseUrl?: string
   model?: string
   key?: string
-  // Which chat API the endpoint speaks; opencode uses it to pick the anthropic vs openai-compatible
-  // provider. Absent ⇒ anthropic.
-  apiType?: ProviderApiType
+  // Which chat APIs the endpoint speaks; opencode uses this to pick anthropic vs openai-compatible.
+  // Absent ⇒ ['anthropic'].
+  apiEndpoints?: readonly ChatApiEndpoint[]
+  // Whether the active model accepts image input. opencode strips image parts for a custom/registered
+  // model whose config does not declare vision, so this is surfaced into its per-model capabilities.
+  supportsImageInput?: boolean
 }
 
 export type ProviderEnvOptions = {

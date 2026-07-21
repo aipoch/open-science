@@ -150,11 +150,56 @@ describe('PreviewPanel', () => {
     expect(titleTail?.className).toContain('max-w-')
     expect(titleTail?.className).toContain('overflow-hidden')
     expect(header?.querySelector(`[aria-label="Download ${name}"]`)).not.toBeNull()
+    expect(
+      header?.querySelector(`[aria-label="Open full screen preview of ${name}"]`)
+    ).not.toBeNull()
     expect(header?.querySelector(`[aria-label="Close preview of ${name}"]`)).not.toBeNull()
     expect(tabBar?.getAttribute('role')).toBe('tablist')
     expect(tabBar?.querySelector('[role="tab"][aria-selected="true"]')).not.toBeNull()
     expect(container.querySelector('[role="tabpanel"]')).not.toBeNull()
     expect(tabBar?.querySelector(`[aria-label="Close preview of ${name}"]`)).not.toBeNull()
+  })
+
+  it('opens and closes a large file preview without removing the workbench tab', async () => {
+    const name = 'report.pdf'
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+      createFileItem({
+        title: name,
+        name,
+        path: `/workspace/${name}`,
+        format: 'pdf'
+      })
+    )
+
+    await renderPanel()
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>(`[aria-label="Open full screen preview of ${name}"]`)
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')
+    expect(dialog).not.toBeNull()
+    expect(dialog?.className).toContain('h-[90vh]')
+    expect(dialog?.className).toContain('w-[90vw]')
+    expect(dialog?.className).toContain('overscroll-contain')
+    expect(dialog?.querySelector('[data-testid="file-content"]')?.textContent).toContain(name)
+    expect(container.querySelector('[data-testid="file-content"]')).toBeNull()
+    expect(dialog?.querySelector(`[aria-label="Open full screen preview of ${name}"]`)).toBeNull()
+
+    await act(async () => {
+      dialog
+        ?.querySelector<HTMLButtonElement>(`[aria-label="Close preview of ${name}"]`)
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: 'item-1',
+      panelState: 'open'
+    })
+    expect(usePreviewWorkbenchStore.getState().items.map((item) => item.id)).toEqual(['item-1'])
   })
 
   it('supports keyboard navigation between preview tabs', async () => {

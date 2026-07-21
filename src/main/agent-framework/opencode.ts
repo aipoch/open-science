@@ -8,7 +8,7 @@ import {
 } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { preferredEndpoint } from '../../shared/settings'
-import { normalizeOpenAiBaseUrl } from '../settings/base-url'
+import { openAiCompletionsBase } from '../settings/base-url'
 import { augmentedPathEnv } from '../settings/shell-path'
 import type { ResolvedProvider } from '../settings/provider-env'
 import type {
@@ -101,19 +101,26 @@ const resolveOpencodeEndpoint = (
   const bareModel = provider.model
   // opencode drives both endpoints; pick the one for this provider (openai wins when it offers both).
   const endpoint =
-    preferredEndpoint(provider.apiType ?? 'anthropic', ['anthropic', 'openai']) ?? 'anthropic'
+    preferredEndpoint(provider.apiEndpoints ?? ['anthropic'], ['anthropic', 'openai']) ??
+    'anthropic'
   const { id: providerId, npm } = OPENCODE_ENDPOINT_PROVIDER[endpoint]
-  // Dual-endpoint vendors (e.g. DeepSeek) serve OpenAI at a different base than Anthropic, so pick the
-  // OpenAI base for the openai endpoint; a single-base provider falls back to baseUrl for both. The
-  // @ai-sdk/openai-compatible client appends `/chat/completions` to baseURL, so normalize it to end at
-  // `/v1` (matching the validator) — a bare root like https://api.deepseek.com would 404 otherwise.
-  const rawBase =
-    endpoint === 'openai' ? (provider.openaiBaseUrl ?? provider.baseUrl) : provider.baseUrl
+  // The @ai-sdk/openai-compatible client appends `/chat/completions` to baseURL, so hand it the
+  // resolved OpenAI completions base — an official vendor's exact versioned base (GLM's /api/paas/v4,
+  // DeepSeek/Kimi /v1), or a custom gateway root normalized to `<root>/v1`. Matches the validator and
+  // bridge. The anthropic endpoint keeps the provider's own baseUrl.
   const baseURL =
-    endpoint === 'openai' && rawBase ? `${normalizeOpenAiBaseUrl(rawBase)}/v1` : rawBase
+    endpoint === 'openai' ? (openAiCompletionsBase(provider) ?? provider.baseUrl) : provider.baseUrl
 
   return { bareModel, providerId, npm, baseURL }
 }
+
+// The opencode per-model capability block. opencode strips image parts before calling the provider for
+// any model whose config does not declare vision — custom and freshly-registered models default to
+// text-only — so a base64 image sent over ACP silently never reaches the provider. A multimodal model
+// must therefore advertise both the attachment capability and an image input modality. Empty (text-only)
+// otherwise, so a non-vision model is never told it can accept images.
+const buildModelCapabilities = (provider: ResolvedProvider): Record<string, unknown> =>
+  provider.supportsImageInput ? { attachment: true, modalities: { input: ['text', 'image'] } } : {}
 
 // The app-authoritative config layer (model + provider block + permission policy) passed verbatim to
 // opencode via OPENCODE_CONFIG_CONTENT, which opencode deep-merges ABOVE both the app-owned global config
@@ -134,7 +141,7 @@ const buildAppConfigContent = (provider: ResolvedProvider): Record<string, unkno
           ...(baseURL ? { baseURL } : {}),
           ...(provider.key ? { apiKey: `{env:${OPENCODE_API_KEY_ENV}}` } : {})
         },
-        ...(bareModel ? { models: { [bareModel]: {} } } : {})
+        ...(bareModel ? { models: { [bareModel]: buildModelCapabilities(provider) } } : {})
       }
     }
   }
@@ -189,8 +196,11 @@ const buildOpencodeConfig = (
           // so the decrypted key is never persisted to opencode.json (see prepareModelConfig).
           ...(provider.key ? { apiKey: `{env:${OPENCODE_API_KEY_ENV}}` } : {})
         },
-        // Register the model so opencode treats a non-catalog id as a real, selectable model.
-        ...(bareModel ? { models: { ...baseModels, [bareModel]: {} } } : {})
+        // Register the model so opencode treats a non-catalog id as a real, selectable model, declaring
+        // its image capability when the active model is multimodal (else opencode strips image parts).
+        ...(bareModel
+          ? { models: { ...baseModels, [bareModel]: buildModelCapabilities(provider) } }
+          : {})
       }
     }
   }

@@ -7,8 +7,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   buildImageContentData,
   canInlineImageInSession,
+  consumeInlineImageBudget,
   extractPdfText,
-  MAX_SESSION_INLINE_IMAGE_BYTES
+  ImageContentError,
+  MAX_IMAGE_PAYLOAD_BYTES,
+  MAX_INLINE_IMAGE_TOTAL_BASE64_BYTES,
+  MAX_SESSION_INLINE_IMAGE_BYTES,
+  type ImageContentData
 } from './attachment-media'
 
 // A configurable fake nativeImage so the >2MB compression path is exercised without an Electron runtime.
@@ -75,6 +80,15 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true })
 })
 
+describe('MAX_IMAGE_PAYLOAD_BYTES', () => {
+  it('stays under the 5MB per-image provider limit after base64 growth', () => {
+    // Anthropic and OpenCode cap a single image near 5MB of base64; base64 inflates raw bytes ~4/3.
+    // Guards against raising the raw cap back to a value whose encoded form exceeds the provider limit.
+    const base64Bytes = Math.ceil(MAX_IMAGE_PAYLOAD_BYTES / 3) * 4
+    expect(base64Bytes).toBeLessThanOrEqual(5 * 1024 * 1024)
+  })
+})
+
 describe('buildImageContentData', () => {
   it('passes small images through untouched as raw base64', async () => {
     const filePath = join(root, 'small.png')
@@ -111,15 +125,98 @@ describe('buildImageContentData', () => {
     expect(result.data).toBe(Buffer.from('png-bytes').toString('base64'))
   })
 
-  it('falls back to raw bytes when the image cannot be decoded', async () => {
+  it('rejects an oversized image that cannot be decoded instead of inlining raw bytes', async () => {
     fakeImage.isEmpty = () => true
     const filePath = join(root, 'broken.jpg')
     const bytes = Buffer.from('not-a-real-image-but-larger-than-threshold')
     await writeFile(filePath, bytes)
 
-    const result = await buildImageContentData(filePath, 'image/jpeg', 3 * 1024 * 1024)
+    await expect(
+      buildImageContentData(filePath, 'image/jpeg', 3 * 1024 * 1024)
+    ).rejects.toMatchObject({
+      name: 'ImageContentError',
+      code: 'IMAGE_DECODE_FAILED',
+      sourceBytes: 3 * 1024 * 1024,
+      limitBytes: MAX_IMAGE_PAYLOAD_BYTES
+    })
+  })
 
-    expect(result).toEqual({ data: bytes.toString('base64'), mimeType: 'image/jpeg' })
+  it('reports image processing failures without falling back to the original file', async () => {
+    createFromPath.mockImplementationOnce(() => {
+      throw new Error('decoder crashed')
+    })
+    const filePath = join(root, 'large.jpg')
+    await writeFile(filePath, Buffer.from('must-not-be-inlined'))
+
+    await expect(
+      buildImageContentData(filePath, 'image/jpeg', 3 * 1024 * 1024)
+    ).rejects.toMatchObject({
+      name: 'ImageContentError',
+      code: 'IMAGE_PROCESSING_FAILED',
+      sourceBytes: 3 * 1024 * 1024,
+      limitBytes: MAX_IMAGE_PAYLOAD_BYTES
+    })
+  })
+
+  it('rejects an image that remains above the hard payload limit after compression', async () => {
+    const oversizedOutput = Buffer.alloc(MAX_IMAGE_PAYLOAD_BYTES + 1)
+    fakeImage.toPNG = () => oversizedOutput
+    fakeImage.toJPEG = () => oversizedOutput
+    const filePath = join(root, 'stubborn.png')
+    await writeFile(filePath, Buffer.from('ignored'))
+
+    await expect(
+      buildImageContentData(filePath, 'image/png', 10 * 1024 * 1024)
+    ).rejects.toMatchObject({
+      name: 'ImageContentError',
+      code: 'IMAGE_PAYLOAD_TOO_LARGE',
+      sourceBytes: 10 * 1024 * 1024,
+      payloadBytes: MAX_IMAGE_PAYLOAD_BYTES + 1,
+      limitBytes: MAX_IMAGE_PAYLOAD_BYTES
+    })
+  })
+})
+
+describe('consumeInlineImageBudget', () => {
+  const imageWithBase64Bytes = (bytes: number): ImageContentData => ({
+    data: 'a'.repeat(bytes),
+    mimeType: 'image/png'
+  })
+
+  it('accumulates actual base64 bytes and image count', () => {
+    const first = consumeInlineImageBudget(
+      { imageCount: 0, base64Bytes: 0 },
+      imageWithBase64Bytes(1024)
+    )
+    const second = consumeInlineImageBudget(first, imageWithBase64Bytes(2048))
+
+    expect(second).toEqual({ imageCount: 2, base64Bytes: 3072 })
+  })
+
+  it('rejects image data that exceeds the total inline request budget', () => {
+    const current = {
+      imageCount: 4,
+      base64Bytes: MAX_INLINE_IMAGE_TOTAL_BASE64_BYTES - 10
+    }
+
+    expect(() => consumeInlineImageBudget(current, imageWithBase64Bytes(11))).toThrowError(
+      expect.objectContaining({
+        code: 'IMAGE_TOTAL_BUDGET_EXCEEDED',
+        payloadBytes: 11,
+        usedBytes: MAX_INLINE_IMAGE_TOTAL_BASE64_BYTES + 1,
+        limitBytes: MAX_INLINE_IMAGE_TOTAL_BASE64_BYTES,
+        imageCount: 5
+      }) as ImageContentError
+    )
+  })
+
+  it('does not reuse the per-message composer cap as a cumulative replay cap', () => {
+    let budget = { imageCount: 0, base64Bytes: 0 }
+    for (let index = 0; index < 11; index += 1) {
+      budget = consumeInlineImageBudget(budget, imageWithBase64Bytes(1))
+    }
+
+    expect(budget).toEqual({ imageCount: 11, base64Bytes: 11 })
   })
 })
 

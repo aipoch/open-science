@@ -22,12 +22,15 @@ import type {
   UpsertProviderRequest
 } from '../../../../shared/settings'
 import { isProviderUsableByFramework } from '../../../../shared/settings'
+import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import { DataRootWarning } from '@/components/DataRootWarning'
 import { ClaudeInstallCard } from '../settings/ClaudeInstallCard'
 import { ClaudeStatusCard } from '../settings/ClaudeStatusCard'
+import { CodexStatusCard } from '../settings/CodexStatusCard'
 import { OpencodeStatusCard } from '../settings/OpencodeStatusCard'
 import { EnvironmentSetupCard } from './EnvironmentSetupCard'
+import { RuntimeChoiceCard } from './RuntimeChoiceCard'
 import { ProviderForm } from '../settings/ProviderForm'
 import {
   createEmptyProviderFormValue,
@@ -35,6 +38,15 @@ import {
   hasProviderFormErrors,
   type ProviderFormValue
 } from '../settings/provider-form-value'
+
+const createCodexProviderFormValue = (): ProviderFormValue =>
+  createEmptyProviderFormValue({
+    type: 'official',
+    name: 'OpenAI',
+    apiEndpoint: 'responses',
+    vendorId: 'openai',
+    model: ''
+  })
 import { describeValidation } from '../settings/validation-message'
 
 // Location is last: it doubles as the wizard's Finish step, so the confirm-restart dialog can
@@ -101,7 +113,8 @@ const toUpsertRequest = (value: ProviderFormValue): UpsertProviderRequest => ({
   vendorId: value.vendorId,
   region: value.region,
   // Persist the chosen API format so an OpenAI-compatible provider is validated + driven correctly.
-  apiType: value.apiType,
+  apiEndpoints: [value.apiEndpoint],
+  supportsImageInput: value.supportsImageInput,
   key: value.key || undefined
 })
 
@@ -112,11 +125,15 @@ const toUpsertRequest = (value: ProviderFormValue): UpsertProviderRequest => ({
 const OnboardingWizard = (): React.JSX.Element => {
   const claude = useSettingsStore((state) => state.claude)
   const opencode = useSettingsStore((state) => state.opencode)
+  const codex = useSettingsStore((state) => state.codex)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const setAgentFramework = useSettingsStore((state) => state.setAgentFramework)
   const isDetectingOpencode = useSettingsStore((state) => state.isDetectingOpencode)
+  const isDetectingCodex = useSettingsStore((state) => state.isDetectingCodex)
+  const detectCodex = useSettingsStore((state) => state.detectCodex)
   const installOpencode = useSettingsStore((state) => state.installOpencode)
+  const installCodex = useSettingsStore((state) => state.installCodex)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
   const preflight = useSettingsStore((state) => state.preflight)
   const isDetectingClaude = useSettingsStore((state) => state.isDetectingClaude)
@@ -140,6 +157,13 @@ const OnboardingWizard = (): React.JSX.Element => {
   const isRecovery = onboardingCompletedAt !== undefined
   // First-time setup always starts on the visible environment summary, even when every check has
   // already passed. The user explicitly continues to model configuration after reviewing it.
+
+  const envInit = useNotebookEnvStore((s) => s.init)
+  // A notebook runtime setup the user started must finish (or be cancelled) before leaving onboarding —
+  // continuing mid-create would strand a half-built env, so it gates Continue below.
+  const envProvisioning = useNotebookEnvStore((s) => s.status.provisioning)
+  const didKickEnv = useRef(false)
+
   const [step, setStep] = useState<WizardStep>('claude')
   const [environmentMode, setEnvironmentMode] = useState<EnvironmentMode>('automatic')
   // The framework switcher stays collapsed once the selected agent is ready; the user reveals it with
@@ -208,6 +232,15 @@ const OnboardingWizard = (): React.JSX.Element => {
     }
   }, [environmentCheck, environmentCheckError, isCheckingEnvironment, checkEnvironment])
 
+  // Detect-only: hydrate the env store so its status/progress row reflects the real managed-python
+  // state, but do NOT auto-provision here. A fresh env is built lazily on first notebook use; an
+  // explicit choose/download step comes later. Guarded so re-renders don't refire it.
+  useEffect(() => {
+    if (didKickEnv.current) return
+    didKickEnv.current = true
+    void envInit()
+  }, [envInit])
+
   // Onboarding always creates a provider, so required fields must be filled before it can continue.
   const formErrors = getProviderFormErrors(formValue)
 
@@ -221,6 +254,7 @@ const OnboardingWizard = (): React.JSX.Element => {
 
   const handleEnvironmentCheck = async (): Promise<void> => {
     setAutomaticInstallError(undefined)
+    if (agentFrameworkId === 'codex') await detectCodex()
     await checkEnvironment()
   }
 
@@ -233,13 +267,20 @@ const OnboardingWizard = (): React.JSX.Element => {
     try {
       // Install the requested framework: the per-card button names its own, the automatic one-click
       // install targets the selected framework.
-      const result =
-        framework === 'opencode'
-          ? await installOpencode(source)
-          : await installClaude(
-              source,
-              source === 'managed' ? environmentCheck?.recommendedRegistry : undefined
-            )
+      let result: ClaudeInstallResult
+      if (framework === 'codex') {
+        if (source === 'official-script') {
+          throw new Error('Codex supports app-managed or npm installation only.')
+        }
+        result = await installCodex(source)
+      } else if (framework === 'opencode') {
+        result = await installOpencode(source)
+      } else {
+        result = await installClaude(
+          source,
+          source === 'managed' ? environmentCheck?.recommendedRegistry : undefined
+        )
+      }
 
       if (!result.ok) {
         setAutomaticInstallError(describeInstallFailure(result))
@@ -279,23 +320,32 @@ const OnboardingWizard = (): React.JSX.Element => {
     void runFrameworkSwitch(id)
   }
 
-  // Prefer whatever's installed during first-time onboarding: Claude Code is the default probe, but if
-  // Claude isn't installed while OpenCode is, switch the selection to OpenCode automatically. Runs once
-  // and never overrides an explicit user choice or a returning user's saved framework.
+  // Prefer an installed runtime during first-time onboarding. Registry order is the stable tie-breaker
+  // (currently Claude Code, OpenCode, then Codex), while an installed current selection always wins.
+  // Runs once and never overrides an explicit user choice or a returning user's saved framework.
   useEffect(() => {
     if (isRecovery || userPickedFramework.current || autoSelectAttempted.current) return
     if (agentFrameworks.length < 2) return
 
-    if (agentFrameworkId === 'claude-code' && !preflight.claudeReady && preflight.opencodeReady) {
+    const readyByFramework: Record<AgentFrameworkId, boolean> = {
+      'claude-code': preflight.claudeReady,
+      opencode: preflight.opencodeReady,
+      codex: preflight.codexReady
+    }
+    if (readyByFramework[agentFrameworkId]) return
+
+    const installedFramework = agentFrameworks.find((framework) => readyByFramework[framework.id])
+    if (installedFramework) {
       autoSelectAttempted.current = true
-      void runFrameworkSwitch('opencode')
+      void runFrameworkSwitch(installedFramework.id)
     }
   }, [
     isRecovery,
-    agentFrameworks.length,
+    agentFrameworks,
     agentFrameworkId,
     preflight.claudeReady,
     preflight.opencodeReady,
+    preflight.codexReady,
     runFrameworkSwitch
   ])
 
@@ -334,7 +384,7 @@ const OnboardingWizard = (): React.JSX.Element => {
     // provider, so onboarding can't finish with a pair the agent can't actually spawn.
     if (
       !isProviderUsableByFramework(
-        { apiType: formValue.apiType, type: formValue.type },
+        { apiEndpoints: [formValue.apiEndpoint], type: formValue.type },
         { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
       )
     ) {
@@ -527,6 +577,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                         id="automatic-environment-panel"
                         role="tabpanel"
                         aria-labelledby="automatic-environment-tab"
+                        className="space-y-5"
                       >
                         <EnvironmentSetupCard
                           environment={environmentCheck}
@@ -540,6 +591,8 @@ const OnboardingWizard = (): React.JSX.Element => {
                           onCheck={() => void handleEnvironmentCheck()}
                           onInstall={() => void handleInstall('managed')}
                         />
+                        {/* Optional, non-blocking: let first-run users pick their own Python. */}
+                        {!isRecovery ? <RuntimeChoiceCard /> : null}
                       </div>
                     ) : (
                       <div
@@ -555,7 +608,20 @@ const OnboardingWizard = (): React.JSX.Element => {
                         </p>
                         {/* Only the selected framework's runtime is shown — it is the one that must be
                             installed to continue. Switch frameworks above to set up the other. */}
-                        {agentFrameworkId === 'opencode' ? (
+                        {agentFrameworkId === 'codex' ? (
+                          <CodexStatusCard
+                            codex={codex}
+                            codexReady={preflight.codexReady}
+                            isDetecting={isDetectingCodex || isCheckingEnvironment}
+                            onDetect={() => void handleEnvironmentCheck()}
+                            isInstalling={isInstalling}
+                            installLogs={installLogs}
+                            installProgress={installProgress}
+                            installError={storeInstallError}
+                            npmAvailable={npmAvailable}
+                            onInstall={(source) => void handleInstall(source, 'codex')}
+                          />
+                        ) : agentFrameworkId === 'opencode' ? (
                           <OpencodeStatusCard
                             opencode={opencode}
                             opencodeReady={preflight.opencodeReady}
@@ -600,7 +666,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                     {/* Agent switcher lives below the detection results. Detection auto-picks the
                         installed runtime, so when the selected agent is ready this collapses to a
                         "Change agent" link; only a not-ready (or explicitly revealed) state shows the
-                        full Claude Code / OpenCode toggle. */}
+                        full framework toggle. */}
                     {agentFrameworks.length > 1 ? (
                       <div className="rounded-lg bg-bg-10 p-3 ring-1 ring-border-200">
                         {preflight.agentReady && !showFrameworkSwitcher ? (
@@ -627,7 +693,10 @@ const OnboardingWizard = (): React.JSX.Element => {
                               Which agent should Open Science use?
                             </span>
                             <div
-                              className="grid grid-cols-2 gap-1 rounded-md bg-bg-000 p-1 ring-1 ring-border-200"
+                              className={cn(
+                                'grid gap-1 rounded-md bg-bg-000 p-1 ring-1 ring-border-200',
+                                agentFrameworks.length >= 3 ? 'grid-cols-3' : 'grid-cols-2'
+                              )}
                               role="radiogroup"
                               aria-label="Agent framework"
                             >
@@ -642,7 +711,8 @@ const OnboardingWizard = (): React.JSX.Element => {
                                     isCheckingEnvironment ||
                                     isInstalling ||
                                     isDetectingClaude ||
-                                    isDetectingOpencode
+                                    isDetectingOpencode ||
+                                    isDetectingCodex
                                   }
                                   className={cn(
                                     'rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-60',
@@ -667,9 +737,11 @@ const OnboardingWizard = (): React.JSX.Element => {
                 </CardContent>
                 <CardFooter className="mt-auto items-center justify-between gap-4 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
                   <p className="text-xs leading-5 text-text-100">
-                    {environmentReady
-                      ? 'All required environment checks passed.'
-                      : 'Complete every required item above to continue.'}
+                    {envProvisioning
+                      ? 'Setting up the notebook runtime — wait for it to finish, or cancel it, to continue.'
+                      : environmentReady
+                        ? 'All required environment checks passed.'
+                        : 'Complete every required item above to continue.'}
                   </p>
                   <Button
                     type="button"
@@ -677,10 +749,21 @@ const OnboardingWizard = (): React.JSX.Element => {
                       if (isRecovery) {
                         closeEnvironmentRepair()
                       } else {
+                        if (
+                          agentFrameworkId === 'codex' &&
+                          !formValue.name &&
+                          !formValue.baseUrl &&
+                          !formValue.model &&
+                          !formValue.key
+                        ) {
+                          setFormValue(createCodexProviderFormValue())
+                        }
                         setStep('provider')
                       }
                     }}
-                    disabled={!environmentReady}
+                    // Also blocked while a user-started runtime setup is in flight: leaving mid-create
+                    // would strand a half-built env (the user can cancel it from the card to proceed).
+                    disabled={!environmentReady || envProvisioning}
                     className="px-4"
                   >
                     {isRecovery ? 'Return to Open Science' : 'Continue'}
@@ -701,8 +784,8 @@ const OnboardingWizard = (): React.JSX.Element => {
                   <section aria-label="Configure model">
                     {!encryptionAvailable ? (
                       <p className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-                        Secure key storage is unavailable on this machine. Your key will be stored
-                        with reduced protection.
+                        Secure key storage is unavailable. API keys cannot be saved until the system
+                        keychain is unlocked or authorized.
                       </p>
                     ) : null}
                     <ProviderForm

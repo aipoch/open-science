@@ -15,7 +15,12 @@ type NotebookLocalRpcServerOptions = {
   token?: string
   host?: string
   connectorService?: {
-    call(server: string, method: string, args: Record<string, unknown>): Promise<unknown>
+    call(
+      server: string,
+      method: string,
+      args: Record<string, unknown>,
+      context?: { sessionId?: string }
+    ): Promise<unknown>
   }
 }
 
@@ -151,13 +156,16 @@ class NotebookLocalRpcServer {
 
   // Maps the narrow RPC method names to strongly-typed runtime service calls.
   private async dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
-    // mcpCall is not session-scoped, so it bypasses assertSessionParams below.
+    // mcpCall carries no runtime routing fields, so it bypasses assertSessionParams below. It does
+    // forward the caller's session id (already alias-resolved above) as call context so a local tool
+    // handler can attribute side effects to the session that invoked it.
     if (method === 'mcpCall') {
       if (!this.connectorService) throw new Error('Connector service is not configured.')
       const server = typeof params.server === 'string' ? params.server : ''
       const toolMethod = typeof params.method === 'string' ? params.method : ''
       const args = isRecord(params.args) ? params.args : {}
-      return this.connectorService.call(server, toolMethod, args)
+      const sessionId = typeof params.sessionId === 'string' ? params.sessionId : undefined
+      return this.connectorService.call(server, toolMethod, args, { sessionId })
     }
 
     assertSessionParams(params)
@@ -171,12 +179,38 @@ class NotebookLocalRpcServer {
         this.service.finishCodeCell(request as unknown as FinishNotebookCodeCellRequest),
       runCell: (request) => this.service.runCell(request as unknown as RunNotebookCellRequest),
       execute: (request) => this.service.execute(request as unknown as ExecuteNotebookCodeRequest),
+      executeControl: (request) =>
+        this.service.executeControl(
+          request as unknown as Parameters<NotebookRuntimeService['executeControl']>[0]
+        ),
+      executeShell: (request) =>
+        this.service.executeShell(
+          request as unknown as Parameters<NotebookRuntimeService['executeShell']>[0]
+        ),
       state: (request) =>
         this.service.state(request as Parameters<NotebookRuntimeService['state']>[0]),
       restart: (request) =>
         this.service.restart(request as Parameters<NotebookRuntimeService['restart']>[0]),
       shutdown: (request) =>
-        this.service.shutdown(request as Parameters<NotebookRuntimeService['shutdown']>[0])
+        this.service.shutdown(request as Parameters<NotebookRuntimeService['shutdown']>[0]),
+      managePackages: (request) =>
+        this.service.managePackages(
+          request as unknown as Parameters<NotebookRuntimeService['managePackages']>[0]
+        ),
+      manageEnvironments: (request) =>
+        this.service.manageEnvironments(
+          request as unknown as Parameters<NotebookRuntimeService['manageEnvironments']>[0]
+        ),
+      listRuntimes: (request) =>
+        this.service.listRuntimes(request as Parameters<NotebookRuntimeService['listRuntimes']>[0]),
+      bindRuntime: (request) =>
+        this.service.bindRuntime(
+          request as unknown as Parameters<NotebookRuntimeService['bindRuntime']>[0]
+        ),
+      switchRuntime: (request) =>
+        this.service.switchRuntime(
+          request as unknown as Parameters<NotebookRuntimeService['switchRuntime']>[0]
+        )
     }
 
     const handler = handlers[method]

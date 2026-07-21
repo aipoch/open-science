@@ -12,6 +12,7 @@ type UpdateStore = {
   openDialog: () => void
   closeDialog: () => void
   download: () => Promise<void>
+  cancel: () => Promise<void>
   apply: () => Promise<void>
 }
 
@@ -50,12 +51,25 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
 
   openDialog: () => set({ isDialogOpen: true }),
 
-  closeDialog: () => set({ isDialogOpen: false }),
+  // Closing the dialog aborts any in-flight download. Cancel a request unconditionally rather than
+  // gating on the local 'downloading' state: right after clicking Download the 'downloading' broadcast
+  // may not have arrived yet, so a guarded call would miss it and leave the download running — the
+  // exact race in issue #216. The main-process cancel() is a no-op when nothing is downloading.
+  closeDialog: () => {
+    void get().cancel()
+    set({ isDialogOpen: false })
+  },
 
   download: async () => {
     const api = window.api?.update
     if (!api) return
     set({ status: await api.download() })
+  },
+
+  cancel: async () => {
+    const cancel = window.api?.update?.cancel
+    if (!cancel) return
+    set({ status: await cancel() })
   },
 
   apply: async () => {

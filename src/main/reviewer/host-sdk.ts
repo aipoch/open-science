@@ -353,7 +353,7 @@ const isLikelyText = (bytes: Buffer): boolean => {
 // Resolves an artifact file path from managed storage, reusing the layout owned by ArtifactRepository:
 // <storageRoot>/artifacts/<projectName>/<sessionId>/<messageId>/<filename>. The version id is the
 // colon-composite <sessionId>:<messageId>:<filename> assigned when the artifact is attached to a turn.
-const resolveArtifactPath = (
+export const resolveArtifactPath = (
   storageRoot: string,
   projectName: string,
   versionId: string

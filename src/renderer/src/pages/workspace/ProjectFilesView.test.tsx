@@ -130,6 +130,64 @@ describe('buildProjectFileLibrary', () => {
       ]
     })
   })
+
+  it('surfaces on-disk artifacts not referenced by any session under an Orphaned group', async () => {
+    const { buildProjectFileLibrary, ORPHANED_ARTIFACTS_GROUP_ID } =
+      await import('./project-files-library')
+    const liveArtifact = {
+      id: 's-live:m1:live.png',
+      projectName: 'proj-1',
+      sessionId: 's-live',
+      name: 'live.png',
+      path: '/artifacts/proj-1/s-live/m1/live.png',
+      fileUrl: 'file:///artifacts/proj-1/s-live/m1/live.png',
+      mimeType: 'image/png',
+      size: 10,
+      mtimeMs: 1710000000000
+    }
+    const orphan = {
+      id: 's-gone:m9:orphan.csv',
+      projectName: 'proj-1',
+      sessionId: 's-gone',
+      name: 'orphan.csv',
+      path: '/artifacts/proj-1/s-gone/m9/orphan.csv',
+      fileUrl: 'file:///artifacts/proj-1/s-gone/m9/orphan.csv',
+      mimeType: 'text/csv',
+      size: 20,
+      mtimeMs: 1710000009000
+    }
+
+    const library = buildProjectFileLibrary(
+      [
+        createSession({
+          id: 's-live',
+          title: 'Live session',
+          artifacts: [
+            {
+              id: liveArtifact.id,
+              kind: 'managed-file',
+              path: liveArtifact.path,
+              fileUrl: liveArtifact.fileUrl,
+              name: liveArtifact.name,
+              mimeType: liveArtifact.mimeType,
+              size: liveArtifact.size,
+              mtimeMs: liveArtifact.mtimeMs
+            }
+          ]
+        })
+      ],
+      // Disk scan returns both the live file and one whose owning session was deleted.
+      [liveArtifact, orphan]
+    )
+
+    // The live session's file is not duplicated into the orphan group.
+    const orphanGroup = library.artifactGroups.find(
+      (group) => group.sessionId === ORPHANED_ARTIFACTS_GROUP_ID
+    )
+    expect(orphanGroup?.title).toBe('Orphaned')
+    expect(orphanGroup?.files.map((file) => file.name)).toEqual(['orphan.csv'])
+    expect(library.artifactGroups.some((group) => group.sessionId === 's-live')).toBe(true)
+  })
 })
 
 describe('ProjectFilesView', () => {
@@ -156,6 +214,7 @@ describe('ProjectFilesView', () => {
         release: vi.fn().mockResolvedValue(undefined)
       },
       artifacts: {
+        listProjectFiles: vi.fn().mockResolvedValue([]),
         readPreview: vi.fn().mockResolvedValue({
           content: 'ZmFrZS1pbWFnZQ==',
           encoding: 'base64',
@@ -980,17 +1039,50 @@ describe('ProjectFilesView', () => {
     expect(previewSurface?.className).toContain('h-[82px]')
   })
 
-  it('opens upload and generated file preview items from their tiles', async () => {
+  it('opens an uploaded file in a large dialog without adding a workbench tab', async () => {
     await renderView([
       createSession({
         id: 'session-1',
-        title: 'Generated session',
         messages: [
           createMessage({
             id: 'message-1',
             uploads: [createUpload()]
           })
-        ],
+        ]
+      })
+    ])
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[aria-label="Preview uploaded file user upload.png"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')
+    expect(dialog).not.toBeNull()
+    expect(dialog?.className).toContain('h-[90vh]')
+    expect(dialog?.className).toContain('w-[90vw]')
+    expect(dialog?.querySelector('[aria-label="Download user upload.png"]')).not.toBeNull()
+    expect(
+      dialog?.querySelector('[aria-label="Open full screen preview of user upload.png"]')
+    ).toBeNull()
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+
+    await act(async () => {
+      dialog
+        ?.querySelector<HTMLButtonElement>('[aria-label="Close preview of user upload.png"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(container.querySelector('[data-testid="files-view"]')).not.toBeNull()
+  })
+
+  it('opens a generated file in a large dialog without adding a workbench tab', async () => {
+    await renderView([
+      createSession({
+        id: 'session-1',
+        title: 'Generated session',
         artifacts: [
           {
             id: 'artifact-1',
@@ -1006,31 +1098,17 @@ describe('ProjectFilesView', () => {
       })
     ])
 
-    const uploadButton = container.querySelector<HTMLButtonElement>(
-      '[aria-label="Preview uploaded file user upload.png"]'
-    )
-    const generatedButton = container.querySelector<HTMLButtonElement>(
-      '[aria-label="Preview generated file tree.png"]'
-    )
-
     await act(async () => {
-      uploadButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
-    await act(async () => {
-      generatedButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      container
+        .querySelector<HTMLButtonElement>('[aria-label="Preview generated file tree.png"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    expect(usePreviewWorkbenchStore.getState().items).toMatchObject([
-      {
-        id: 'upload:upload-1',
-        source: 'upload',
-        name: 'user upload.png'
-      },
-      {
-        id: 'artifact-1',
-        name: 'tree.png'
-      }
-    ])
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')
+    expect(dialog).not.toBeNull()
+    expect(dialog?.querySelector('[aria-label="Download tree.png"]')).not.toBeNull()
+    expect(dialog?.querySelector('[aria-label="Open full screen preview of tree.png"]')).toBeNull()
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
   })
 
   it('does not restart a pending thumbnail read when another tile becomes visible', async () => {

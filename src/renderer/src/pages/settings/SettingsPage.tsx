@@ -2,12 +2,14 @@ import {
   ArrowLeft,
   ArrowRight,
   Cloud,
+  Globe,
   Maximize2,
   Minimize2,
   Plus,
   ScrollText,
   Settings2,
   SlidersHorizontal,
+  TerminalSquare,
   X
 } from 'lucide-react'
 import { Dialog } from 'radix-ui'
@@ -25,9 +27,12 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { ModelFrameworkCompatibilityAlert } from './ModelFrameworkCompatibilityAlert'
 import { ClaudeInstallCard } from './ClaudeInstallCard'
 import { ClaudeStatusCard } from './ClaudeStatusCard'
+import { CodexStatusCard } from './CodexStatusCard'
 import { OpencodeStatusCard } from './OpencodeStatusCard'
 import { GeneralPanel } from './GeneralPanel'
+import { NetworkPanel } from './NetworkPanel'
 import { StoragePanel } from './StoragePanel'
+import { RuntimesPanel } from './RuntimesPanel'
 import { SkillsPanel, type SkillsView } from './SkillsPanel'
 import { ConnectorsPanel, type ConnectorsView } from './ConnectorsPanel'
 import { ConnectorDetailView } from './ConnectorDetailView'
@@ -62,7 +67,8 @@ const toFormValue = (provider: ProviderView): ProviderFormValue =>
     name: provider.name,
     baseUrl: provider.baseUrl ?? '',
     model: provider.model ?? '',
-    apiType: provider.apiType ?? 'anthropic',
+    apiEndpoint: provider.apiEndpoints?.[0] ?? 'anthropic',
+    supportsImageInput: provider.supportsImageInput,
     vendorId: provider.vendorId,
     region: provider.region
   })
@@ -76,7 +82,8 @@ const toUpsertRequest = (
   name: value.name,
   baseUrl: value.baseUrl,
   model: value.model,
-  apiType: value.apiType,
+  apiEndpoints: [value.apiEndpoint],
+  supportsImageInput: value.supportsImageInput,
   vendorId: value.vendorId,
   region: value.region,
   key: value.key || undefined
@@ -84,7 +91,8 @@ const toUpsertRequest = (
 
 // Left-nav panels, grouped in the sidebar. "Capabilities" holds agent extensions (Skills); "Workspace"
 // holds environment/config (Model manages Claude + providers, General holds app settings incl. logs).
-type SettingsPanelId = 'model' | 'skills' | 'connectors' | 'general' | 'storage'
+type SettingsPanelId =
+  'model' | 'skills' | 'connectors' | 'general' | 'storage' | 'network' | 'runtimes'
 
 type SettingsPanel = {
   id: SettingsPanelId
@@ -97,13 +105,15 @@ const SETTINGS_GROUPS: ReadonlyArray<{ label: string; panels: ReadonlyArray<Sett
     label: 'Capabilities',
     panels: [
       { id: 'skills', label: 'Skills', Icon: ScrollText },
-      { id: 'connectors', label: 'Connectors', Icon: ConnectorsNavIcon }
+      { id: 'connectors', label: 'Connectors', Icon: ConnectorsNavIcon },
+      { id: 'network', label: 'Network', Icon: Globe }
     ]
   },
   {
     label: 'Workspace',
     panels: [
       { id: 'model', label: 'Model', Icon: SlidersHorizontal },
+      { id: 'runtimes', label: 'Runtimes', Icon: TerminalSquare },
       { id: 'storage', label: 'Storage', Icon: Cloud },
       { id: 'general', label: 'General', Icon: Settings2 }
     ]
@@ -118,18 +128,23 @@ const SETTINGS_PANELS: ReadonlyArray<SettingsPanel> = SETTINGS_GROUPS.flatMap(
 // One entry in the settings back/forward history: the active panel plus each panel's current sub-view
 // (skills: list / detail / create / edit / import; model: list / create / edit; connectors: list /
 // detail / add / edit). `connectors` is optional so panel switches that don't touch it stay terse.
+// Network panel sub-view: the package-mirror list vs. the configure form (a breadcrumb drill-in).
+type NetworkView = { kind: 'list' | 'configure' }
+
 type NavLocation = {
   panel: SettingsPanelId
   skills: SkillsView
   model: ModelView
   connectors?: ConnectorsView
+  network?: NetworkView
 }
 
 const INITIAL_LOCATION: NavLocation = {
   panel: 'model',
   skills: { kind: 'list' },
   model: { kind: 'list' },
-  connectors: { kind: 'list' }
+  connectors: { kind: 'list' },
+  network: { kind: 'list' }
 }
 
 // App-level model settings surface. Reuses the onboarding cards/form; manages providers (CRUD +
@@ -147,6 +162,10 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const isDetectingOpencode = useSettingsStore((state) => state.isDetectingOpencode)
   const detectOpencode = useSettingsStore((state) => state.detectOpencode)
   const installOpencode = useSettingsStore((state) => state.installOpencode)
+  const codex = useSettingsStore((state) => state.codex)
+  const isDetectingCodex = useSettingsStore((state) => state.isDetectingCodex)
+  const detectCodex = useSettingsStore((state) => state.detectCodex)
+  const installCodex = useSettingsStore((state) => state.installCodex)
   const isInstalling = useSettingsStore((state) => state.isInstalling)
   const installLogs = useSettingsStore((state) => state.installLogs)
   const installProgress = useSettingsStore((state) => state.installProgress)
@@ -155,8 +174,10 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const claudeManaged = useSettingsStore((state) => state.claudeManaged)
   const opencodeManaged = useSettingsStore((state) => state.opencodeManaged)
+  const codexManaged = useSettingsStore((state) => state.codexManaged)
   const uninstallClaude = useSettingsStore((state) => state.uninstallClaude)
   const uninstallOpencode = useSettingsStore((state) => state.uninstallOpencode)
+  const uninstallCodex = useSettingsStore((state) => state.uninstallCodex)
   const load = useSettingsStore((state) => state.load)
   const detectClaude = useSettingsStore((state) => state.detectClaude)
   const installClaude = useSettingsStore((state) => state.installClaude)
@@ -183,7 +204,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const [isRefreshingModels, setIsRefreshingModels] = useState(false)
   // The app-managed runtime pending an uninstall confirmation (null = dialog closed), plus the in-flight
   // flag so the dialog and status cards can show progress and stay locked during removal.
-  const [pendingUninstall, setPendingUninstall] = useState<'claude' | 'opencode' | null>(null)
+  const [pendingUninstall, setPendingUninstall] = useState<'claude' | 'opencode' | 'codex' | null>(
+    null
+  )
   const [isUninstalling, setIsUninstalling] = useState(false)
   // The framework the user picked (via a card) but hasn't confirmed switching to yet.
   const [pendingSwitch, setPendingSwitch] = useState<AgentFrameworkId | null>(null)
@@ -235,17 +258,27 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
     }
   }, [open, agentFrameworkId, opencode?.resolvedPath, isDetectingOpencode, detectOpencode])
 
+  // Codex detection probes the ACP adapter and its paired native runtime. Keep it lazy so opening
+  // settings for another framework does not spawn an unnecessary process.
+  useEffect(() => {
+    if (open && agentFrameworkId === 'codex' && !codex?.resolvedPath && !isDetectingCodex) {
+      void detectCodex()
+    }
+  }, [open, agentFrameworkId, codex?.resolvedPath, isDetectingCodex, detectCodex])
+
   const currentLocation = history[historyIndex]
   const activePanel = currentLocation.panel
   const skillsView = currentLocation.skills
   const modelView = currentLocation.model
   const connectorsView: ConnectorsView = currentLocation.connectors ?? { kind: 'list' }
+  const networkView: NetworkView = currentLocation.network ?? { kind: 'list' }
   const canGoBack = historyIndex > 0
   const canGoForward = historyIndex < history.length - 1
 
   // Pushes a new location, dropping any forward entries.
   const navigate = (location: NavLocation): void => {
     const nextConnectors = location.connectors ?? { kind: 'list' }
+    const nextNetwork = location.network ?? { kind: 'list' }
     if (
       location.panel === activePanel &&
       location.skills.kind === skillsView.kind &&
@@ -256,7 +289,8 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
         ('providerId' in modelView ? modelView.providerId : undefined) &&
       nextConnectors.kind === connectorsView.kind &&
       ('id' in nextConnectors ? nextConnectors.id : undefined) ===
-        ('id' in connectorsView ? connectorsView.id : undefined)
+        ('id' in connectorsView ? connectorsView.id : undefined) &&
+      nextNetwork.kind === networkView.kind
     ) {
       return
     }
@@ -271,6 +305,17 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   // Navigates within the connectors panel (list/detail/add/edit) as a history entry.
   const navigateConnectors = (connectors: ConnectorsView): void =>
     navigate({ panel: 'connectors', skills: skillsView, model: modelView, connectors })
+
+  // Navigates within the network panel (package-mirror list vs. configure) as a history entry, so the
+  // configure form gets a proper "Network / Package mirror" breadcrumb + back/forward.
+  const navigateNetwork = (network: NetworkView): void =>
+    navigate({
+      panel: 'network',
+      skills: skillsView,
+      model: modelView,
+      connectors: connectorsView,
+      network
+    })
 
   // Shared header breadcrumb for a drilled-in sub-view (null when on a panel's list, so the plain
   // panel title shows). Covers both the skills and model panels.
@@ -306,6 +351,18 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
         rootLabel: 'Model',
         rootTo: { panel: 'model', skills: currentLocation.skills, model: { kind: 'list' } },
         leaf: modelView.kind === 'create' ? 'Add provider' : `Edit ${name}`.trim()
+      }
+    }
+    if (activePanel === 'network' && networkView.kind !== 'list') {
+      return {
+        rootLabel: 'Network',
+        rootTo: {
+          panel: 'network',
+          skills: currentLocation.skills,
+          model: currentLocation.model,
+          network: { kind: 'list' }
+        },
+        leaf: 'Package mirror'
       }
     }
     if (activePanel === 'connectors' && connectorsView.kind !== 'list') {
@@ -389,11 +446,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
     setIsUninstalling(true)
 
     try {
-      if (pendingUninstall === 'claude') {
-        await uninstallClaude()
-      } else {
-        await uninstallOpencode()
-      }
+      if (pendingUninstall === 'claude') await uninstallClaude()
+      else if (pendingUninstall === 'opencode') await uninstallOpencode()
+      else await uninstallCodex()
 
       setPendingUninstall(null)
     } finally {
@@ -668,17 +723,20 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                   )
                 ) : activePanel === 'storage' ? (
                   <StoragePanel />
+                ) : activePanel === 'runtimes' ? (
+                  <RuntimesPanel />
+                ) : activePanel === 'network' ? (
+                  <NetworkPanel view={networkView} onNavigate={navigateNetwork} />
                 ) : activePanel === 'general' ? (
                   <GeneralPanel />
                 ) : isProviderFormOpen ? (
                   // Add/edit provider is a secondary page reached via the shared back/forward arrows.
                   <div className="p-5">
-                    {/* Keys are stored with OS encryption; warn (as onboarding does) when the keychain
-                      is unavailable so the reduced-protection fallback is never a silent surprise. */}
+                    {/* Secret writes fail closed when the OS keychain is unavailable. */}
                     {!encryptionAvailable ? (
                       <p className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-                        Secure key storage is unavailable on this machine. Your key will be stored
-                        with reduced protection.
+                        Secure key storage is unavailable. API keys cannot be saved until the system
+                        keychain is unlocked or authorized.
                       </p>
                     ) : null}
                     <ProviderForm
@@ -722,7 +780,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                   <div className="space-y-5 p-5">
                     <ModelFrameworkCompatibilityAlert />
 
-                    {/* The two runtime cards double as the framework selector: pick a card to make it
+                    {/* The runtime cards double as the framework selector: pick a card to make it
                         the active backend (confirmed, since it starts a fresh session). Both are always
                         shown so either app-managed runtime can be detected, installed, or uninstalled —
                         but the active runtime can't be uninstalled (switch to the other one first). */}
@@ -780,6 +838,24 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                           managed={opencodeManaged}
                           isUninstalling={isUninstalling && pendingUninstall === 'opencode'}
                           onUninstall={() => setPendingUninstall('opencode')}
+                        />
+                        <CodexStatusCard
+                          codex={codex}
+                          codexReady={preflight.codexReady}
+                          isDetecting={isDetectingCodex}
+                          onDetect={() => void detectCodex()}
+                          isInstalling={isInstalling}
+                          installLogs={installLogs}
+                          installProgress={installProgress}
+                          installError={installError}
+                          npmAvailable={npmAvailable}
+                          onInstall={(source) => void installCodex(source)}
+                          active={agentFrameworkId === 'codex'}
+                          onSelect={() => requestSwitch('codex')}
+                          selectDisabled={isInstalling || isUninstalling}
+                          managed={codexManaged}
+                          isUninstalling={isUninstalling && pendingUninstall === 'codex'}
+                          onUninstall={() => setPendingUninstall('codex')}
                         />
                         {activeFramework && !activeFramework.supportsSkills ? (
                           <p className="text-xs text-muted-foreground">

@@ -1,6 +1,10 @@
 import type { ContentBlock, SessionNotification, ToolCallContent } from '@agentclientprotocol/sdk'
 
-import type { AcpRuntimeEvent } from '../../shared/acp'
+import {
+  ACP_MESSAGE_IMAGE_EVENT_TEXT,
+  sanitizeAcpMessageImage,
+  type AcpRuntimeEvent
+} from '../../shared/acp'
 
 // Bounds how much of a failed tool's result text reaches the log, so large or sensitive tool output
 // cannot flood it. Tuned to fit a typical error message (e.g. WebFetch's domain-safety preflight).
@@ -83,6 +87,40 @@ const contentToText = (content: ContentBlock): string => {
   }
 }
 
+// Image notifications can carry megabytes of base64. Keep only bounded display data on the event;
+// the internal text sentinel lets the existing runtime projection forward image-only messages.
+const normalizeMessageContent = (
+  content: ContentBlock
+): Pick<AcpRuntimeEvent, 'text' | 'image'> => {
+  if (content.type !== 'image') return { text: contentToText(content) }
+
+  const image = sanitizeAcpMessageImage(content)
+
+  return image
+    ? { image, text: ACP_MESSAGE_IMAGE_EVENT_TEXT }
+    : { text: 'Agent image omitted because its type or size is unsupported.' }
+}
+
+const imageNotificationMetadata = (
+  notification: SessionNotification,
+  image: NonNullable<AcpRuntimeEvent['image']> | undefined
+): unknown => ({
+  sessionId: notification.sessionId,
+  update: {
+    sessionUpdate: notification.update.sessionUpdate,
+    messageId:
+      'messageId' in notification.update ? (notification.update.messageId ?? undefined) : undefined,
+    content: image
+      ? {
+          type: 'image',
+          mimeType: image.mimeType,
+          data: image.data,
+          byteLength: image.byteLength
+        }
+      : { type: 'image', omitted: true }
+  }
+})
+
 // Extracts a bounded, text-only reason from a failed tool call's content for logging. Only text blocks
 // are read (never raw arguments, diffs, or terminal output) and the result is truncated, so a failure is
 // diagnosable without spilling large or sensitive tool output into the log.
@@ -117,22 +155,34 @@ const toAcpRuntimeEvent = (
 
   // Group protocol update variants into the small set of event kinds the UI renders.
   switch (update.sessionUpdate) {
-    case 'agent_message_chunk':
+    case 'agent_message_chunk': {
+      const messageContent = normalizeMessageContent(update.content)
+
       return {
         ...base,
         kind: 'message',
         role: 'assistant',
         messageId: update.messageId ?? undefined,
-        text: contentToText(update.content)
+        ...messageContent,
+        ...(update.content.type === 'image'
+          ? { raw: imageNotificationMetadata(notification, messageContent.image) }
+          : {})
       }
-    case 'user_message_chunk':
+    }
+    case 'user_message_chunk': {
+      const messageContent = normalizeMessageContent(update.content)
+
       return {
         ...base,
         kind: 'message',
         role: 'user',
         messageId: update.messageId ?? undefined,
-        text: contentToText(update.content)
+        ...messageContent,
+        ...(update.content.type === 'image'
+          ? { raw: imageNotificationMetadata(notification, messageContent.image) }
+          : {})
       }
+    }
     case 'agent_thought_chunk':
       return {
         ...base,

@@ -204,6 +204,90 @@ describe('useAcpRuntime value action failures', () => {
   })
 })
 
+describe('useAcpRuntime payload construction', () => {
+  it('forwards the previous framework id into the resume payload for a framework switch', async () => {
+    const { result } = await mountRuntime()
+
+    await act(async () => {
+      await result.current.resumeSession(
+        'session-1',
+        '/workspace/project',
+        'Project',
+        'ask',
+        'opencode'
+      )
+    })
+
+    expect(acpApi.resumeSession).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      cwd: '/workspace/project',
+      projectName: 'Project',
+      permissionProfile: 'ask',
+      previousFrameworkId: 'opencode'
+    })
+  })
+
+  it('includes history preamble/attachments/images and resume fallback when a prompt replays context', async () => {
+    const { result } = await mountRuntime()
+
+    const attachment = { id: 'up-1', name: 'a.txt', mimeType: 'text/plain', size: 1 }
+    const image = { mimeType: 'image/png', data: 'aGVsbG8=' }
+    const resumeFallback = { historyPreamble: 'fallback transcript' }
+
+    await act(async () => {
+      await result.current.sendPrompt(
+        'session-1',
+        'continue',
+        undefined,
+        undefined,
+        undefined,
+        'prior transcript',
+        [attachment] as never,
+        [image] as never,
+        resumeFallback as never
+      )
+    })
+
+    const [payload] = acpApi.sendPrompt.mock.calls[0] as [Record<string, unknown>]
+    expect(payload).toMatchObject({
+      sessionId: 'session-1',
+      text: 'continue',
+      historyPreamble: 'prior transcript',
+      historyAttachments: [attachment],
+      historyImages: [image],
+      resumeFallback
+    })
+  })
+
+  it('omits the history/resume fields entirely when they are absent or empty', async () => {
+    const { result } = await mountRuntime()
+
+    await act(async () => {
+      await result.current.sendPrompt(
+        'session-1',
+        'hello',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        [],
+        []
+      )
+    })
+
+    const [payload] = acpApi.sendPrompt.mock.calls[0] as [Record<string, unknown>]
+    expect(payload).toEqual({ sessionId: 'session-1', text: 'hello', attachments: undefined })
+    for (const field of [
+      'historyPreamble',
+      'historyAttachments',
+      'historyImages',
+      'resumeFallback'
+    ]) {
+      expect(field in payload).toBe(false)
+    }
+  })
+})
+
 describe('useAcpRuntime state subscription', () => {
   it('subscribes on mount, applies pushed snapshots, and unsubscribes on unmount', async () => {
     const { result, unmount } = await mountRuntime()

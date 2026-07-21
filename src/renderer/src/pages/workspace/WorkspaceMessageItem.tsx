@@ -21,6 +21,7 @@ import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProb
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
 type MessageUploadAttachment = NonNullable<ChatMessage['uploads']>[number]
+type MessageImage = NonNullable<ChatMessage['images']>[number]
 type ArtifactMentionPart = Extract<MessagePart, { type: 'artifact' }>
 type WorkspaceMessageItemProps = {
   message: ChatMessage
@@ -52,6 +53,27 @@ const mentionButtonClassName =
 
 const assistantMessageSurfaceClassName =
   'relative w-full max-w-[56rem] text-sm leading-relaxed text-text-000 md:text-[15px]'
+
+// ACP message images are already MIME- and size-checked at runtime and persistence boundaries.
+const MessageImageList = ({ images }: { images: MessageImage[] }): React.JSX.Element | null => {
+  if (images.length === 0) return null
+
+  return (
+    <div className="mt-3 grid max-w-full grid-cols-1 gap-3 sm:grid-cols-2">
+      {images.map((image, index) => (
+        <img
+          key={image.id}
+          src={`data:${image.mimeType};base64,${image.data}`}
+          alt={`Agent-generated image ${index + 1}`}
+          className="max-h-[40rem] w-auto max-w-full rounded-lg border border-border-200 bg-bg-000 object-contain"
+          loading="lazy"
+          decoding="async"
+          draggable={false}
+        />
+      ))}
+    </div>
+  )
+}
 
 // Owns the bounded text data for one message thumbnail only while its card is near the viewport.
 const VisibleArtifactPreview = ({
@@ -349,7 +371,13 @@ const WorkspaceMessageItem = ({
           </div>
         ) : (
           <div className={cn(assistantMessageSurfaceClassName, 'select-text overflow-visible')}>
-            <AgentMarkdown content={message.content} isAnimating={message.status === 'streaming'} />
+            {message.content ? (
+              <AgentMarkdown
+                content={message.content}
+                isAnimating={message.status === 'streaming'}
+              />
+            ) : null}
+            <MessageImageList images={message.images ?? []} />
             <MessageArtifactList onPreviewArtifact={onPreviewArtifact} artifacts={artifacts} />
           </div>
         )}

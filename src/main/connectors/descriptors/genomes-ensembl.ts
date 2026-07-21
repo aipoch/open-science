@@ -180,7 +180,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     required: ['query'],
     returns:
       '{found, query, species, record} — record is the upstream lookup dict (1-based inclusive coords) or null when nothing matches.',
-    example: 'result = host.mcp("genomes", "ensembl_lookup", {"query": "BRAF"})',
+    example: 'const result = await host.mcp("genomes", "ensembl_lookup", {"query": "BRAF"})',
     run: async (ctx, a) => {
       const query = String(a.query).trim()
       const species = String(a.species ?? DEFAULT_SPECIES)
@@ -214,7 +214,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     returns:
       '{stable_id, external_db, n_xrefs, xrefs:[{dbname, db_display_name, primary_id, display_id, description, synonyms, info_type}]} sorted by (dbname, primary_id); unknown id -> n_xrefs:0.',
     example:
-      'result = host.mcp("genomes", "ensembl_xrefs", {"stable_id": "ENSG00000157764", "external_db": "HGNC"})',
+      'const result = await host.mcp("genomes", "ensembl_xrefs", {"stable_id": "ENSG00000157764", "external_db": "HGNC"})',
     run: async (ctx, a) => {
       const stableId = String(a.stable_id).trim()
       const externalDb = strArg(a.external_db) ?? ''
@@ -254,7 +254,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     returns:
       '{query, n_results, results[]} — each result the most-severe-first VEP summary (per-transcript rows sorted HIGH>MODERATE>LOW>MODIFIER and capped, plus per-gene worst impact and colocated variants).',
     example:
-      'result = host.mcp("genomes", "ensembl_vep_variant", {"variant_id": "rs7412", "max_consequences": 25})',
+      'const result = await host.mcp("genomes", "ensembl_vep_variant", {"variant_id": "rs7412", "max_consequences": 25})',
     run: async (ctx, a) => {
       const species = String(a.species ?? DEFAULT_SPECIES)
       const maxConsequences = clampInt(a.max_consequences, 25, 1, 100000)
@@ -301,7 +301,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     returns:
       '{gene_id, gene_symbol, species, homology_type, target_species, target_taxon, n_total, homologies_truncated, homologies:[{type, species, id, protein_id, taxonomy_level, method_link_type}]} sorted by (species,id).',
     example:
-      'result = host.mcp("genomes", "ensembl_homology", {"gene_symbol": "BRAF", "target_species": "mus_musculus"})',
+      'const result = await host.mcp("genomes", "ensembl_homology", {"gene_symbol": "BRAF", "target_species": "mus_musculus"})',
     run: async (ctx, a) => {
       const species = String(a.species ?? DEFAULT_SPECIES)
       const homologyType = String(a.homology_type ?? 'orthologues')
@@ -370,7 +370,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     returns:
       '{found, query, seq_type, id, description, molecule, length, sha256, seq} — seq replaced by seq_omitted:true when byte length exceeds max_bytes; found:false with null fields for unknown stable IDs.',
     example:
-      'result = host.mcp("genomes", "ensembl_sequence", {"stable_id": "ENSP00000288602", "seq_type": "protein"})',
+      'const result = await host.mcp("genomes", "ensembl_sequence", {"stable_id": "ENSP00000288602", "seq_type": "protein"})',
     run: async (ctx, a) => {
       const species = String(a.species ?? DEFAULT_SPECIES)
       const maxBytes = clampInt(a.max_bytes, 400000, 1, 1e9)
@@ -461,7 +461,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     returns:
       '{region, species, feature, n_total, features_truncated, features[]} sorted by (start,id); row shape varies by feature type. Empty regions return n_total:0.',
     example:
-      'result = host.mcp("genomes", "ensembl_overlap_region", {"region": "7:140719327-140925199", "feature": "gene"})',
+      'const result = await host.mcp("genomes", "ensembl_overlap_region", {"region": "7:140719327-140925199", "feature": "gene"})',
     run: async (ctx, a) => {
       const region = String(a.region).trim()
       const species = String(a.species ?? DEFAULT_SPECIES)

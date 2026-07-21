@@ -17,6 +17,7 @@ export const registerUpdateIpcHandlers = (
   ipcMain.handle('update:get-status', (): UpdateStatus => strategy.getStatus())
   ipcMain.handle('update:check', (): Promise<UpdateStatus> => strategy.check())
   ipcMain.handle('update:download', (): Promise<UpdateStatus> => strategy.download())
+  ipcMain.handle('update:cancel', (): Promise<UpdateStatus> => strategy.cancel())
   ipcMain.handle('update:apply', (): Promise<UpdateStatus> => strategy.apply())
   return strategy
 }

@@ -1,14 +1,52 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import type { PreviewToolItem } from '@/stores/preview-workbench-store'
+import { useNotebookEnvStore } from '@/stores/notebook-env-store'
+import { cn } from '@/lib/utils'
 
 import type {
+  NotebookEnvironmentStatus,
+  NotebookKernelKind,
+  NotebookLanguage,
   NotebookRunRecord,
   NotebookSessionReference,
   NotebookSessionState
 } from '../../../../shared/notebook'
+import { EnvProvisionOverlay } from './EnvProvisionOverlay'
+import { shouldProvisionR } from './lazy-r'
+import { notebookGated } from './provisioning-view'
 import { NotebookCodeBlock } from './notebook-code'
-import { deriveErrorLine, detectCellLanguage, isProblemRunStatus } from './notebook-cell-utils'
+import { NotebookRunOutputs } from './NotebookRunOutputs'
+import {
+  resolveRunErrorLine,
+  environmentLabel,
+  isProblemRunStatus,
+  kernelKindLabel,
+  kernelOriginLabel,
+  resolveRunEnvironment,
+  resolveRunKernelKind
+} from './notebook-cell-utils'
+
+// Fixed tab order for the per-kernel switcher.
+const KERNEL_KIND_ORDER: NotebookKernelKind[] = ['python', 'r', 'repl', 'bash']
+
+// Small dot color for the per-env status badge, reusing the divider's busy/idle vocabulary plus a
+// distinct color for the terminal states (design D6).
+const envStatusDotClass = (status: NotebookEnvironmentStatus['status'] | undefined): string => {
+  switch (status) {
+    case 'running':
+    case 'starting':
+    case 'restarting':
+      return 'bg-accent'
+    case 'error':
+      return 'bg-danger-000'
+    case 'terminated':
+    case 'shutdown':
+      return 'bg-text-300'
+    default:
+      return 'bg-text-200'
+  }
+}
 
 export type NotebookPreviewItem = PreviewToolItem & {
   toolKind: 'notebook'
@@ -45,33 +83,6 @@ const getRunOutputText = (run: NotebookRunRecord | undefined): string => {
     .join('\n')
 }
 
-// Renders the captured output for one run: stdout and diagnostics as separate blocks, collapsed by
-// default so long tracebacks don't dominate the cell list.
-const NotebookRunOutput = ({ run }: { run: NotebookRunRecord }): React.JSX.Element | null => {
-  const stdout = run.text.stdout
-  const stderr = [run.text.stderr, run.text.traceback]
-    .filter((value) => value.trim().length > 0)
-    .join('\n')
-
-  if (stdout.trim().length === 0 && stderr.trim().length === 0) return null
-
-  return (
-    <details className="mt-2">
-      <summary className="cursor-pointer text-xs text-text-300 hover:text-text-200">output</summary>
-      {stdout.trim().length > 0 ? (
-        <pre className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap rounded bg-bg-200 p-2 font-mono text-xs text-text-200">
-          {stdout}
-        </pre>
-      ) : null}
-      {stderr.trim().length > 0 ? (
-        <pre className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap rounded bg-bg-200 p-2 font-mono text-xs text-danger-000">
-          {stderr}
-        </pre>
-      ) : null}
-    </details>
-  )
-}
-
 // Displays one durable execution record from run.json in chronological order. The zero-based index
 // is the cell number shown in [n], and a failed run marks the offending line.
 const NotebookRunCell = ({
@@ -82,15 +93,16 @@ const NotebookRunCell = ({
   index: number
 }): React.JSX.Element => {
   const isProblem = isProblemRunStatus(run.status)
-  const errorLine = isProblem ? deriveErrorLine(run.text.traceback) : undefined
-  const language = detectCellLanguage(run.script)
+  const errorLine = isProblem ? resolveRunErrorLine(run) : undefined
+  const kind = resolveRunKernelKind(run)
+  const originLabel = kernelOriginLabel(kind)
 
   return (
     <div className="px-4 py-3" data-testid="notebook-cell">
       <div className="mb-2 flex items-center justify-between text-xs">
         <div className="flex min-w-0 items-center gap-2">
           <span className="font-mono text-text-300">[{index}]</span>
-          <span className="rounded bg-bg-300 px-1.5 py-0.5 text-text-200">{language}</span>
+          <span className="rounded bg-bg-300 px-1.5 py-0.5 text-text-200">{kind}</span>
           {run.source === 'user' ? (
             <span className="rounded bg-accent px-1.5 py-0.5 font-medium text-accent">you</span>
           ) : null}
@@ -104,10 +116,14 @@ const NotebookRunCell = ({
             )
           ) : null}
         </div>
-        <span className="font-mono text-text-300">{language}</span>
+        {originLabel ? (
+          <span className="font-mono text-text-300" data-testid="notebook-cell-origin">
+            {originLabel}
+          </span>
+        ) : null}
       </div>
       <NotebookCodeBlock code={run.script} highlightLine={errorLine} />
-      <NotebookRunOutput run={run} />
+      <NotebookRunOutputs run={run} />
     </div>
   )
 }
@@ -183,6 +199,25 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const [isLoading, setIsLoading] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [isRestarting, setIsRestarting] = useState(false)
+  const [activeKind, setActiveKind] = useState<NotebookKernelKind>('python')
+  // Selected environment within the active python/r pane; undefined lets the effective-env
+  // computation below default to the first (canonical-default-first) environment.
+  const [activeEnv, setActiveEnv] = useState<string | undefined>(undefined)
+
+  // Greys the pane while python is unavailable or an upgrade is running (spec §6.5).
+  const envStatus = useNotebookEnvStore((s) => s.status)
+  const provisionUi = useNotebookEnvStore((s) => s.ui)
+  const retryProvision = useNotebookEnvStore((s) => s.retry)
+  const provision = useNotebookEnvStore((s) => s.provision)
+  const gated = notebookGated(envStatus, provisionUi)
+  const isPreparingR = provisionUi.kind === 'preparing' && provisionUi.scope === 'r'
+
+  // First-time R selection kicks off the lazy ~1GB R download in the background; Python stays
+  // usable throughout (D6 — see lazy-r.ts). R-kernel execution routing is wired later in E5.
+  const onSelectLanguage = (lang: NotebookLanguage): void => {
+    if (shouldProvisionR(envStatus, lang)) void provision('r')
+  }
 
   // Keeps state assignment isolated so load paths and event paths share the same update hook.
   const applyNotebookState = useCallback((nextState: NotebookSessionState): void => {
@@ -259,31 +294,190 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const isAgentWriting = notebookState?.activeWrite?.source === 'agent'
   const isNotebookBusy = isSubmitting || Boolean(notebookState?.activeRunId)
   const isTerminalLocked =
-    isLoading || isSubmitting || isAgentWriting || Boolean(notebookState?.activeRunId)
+    isLoading || isSubmitting || isAgentWriting || Boolean(notebookState?.activeRunId) || gated
   const runs = notebookState?.runs ?? notebookState?.recentRuns ?? []
+
+  // Surface a tab only for kernel kinds that actually produced a run — no default python/r tabs on a
+  // fresh notebook; a kernel's tab appears once it has been used.
+  const kindsWithRuns = new Set(runs.map(resolveRunKernelKind))
+  const visibleKinds = KERNEL_KIND_ORDER.filter((kind) => kindsWithRuns.has(kind))
+  // Default to the first kind (in fixed order) that actually has runs; fall back to python only when
+  // there are no runs at all (so an empty notebook doesn't render a blank non-python pane).
+  const effectiveActiveKind = visibleKinds.includes(activeKind)
+    ? activeKind
+    : (KERNEL_KIND_ORDER.find((kind) => kindsWithRuns.has(kind)) ?? visibleKinds[0] ?? 'python')
+  const kindRuns = runs.filter((run) => resolveRunKernelKind(run) === effectiveActiveKind)
+
+  // Per-environment selector (design D6): only python/r are env-scoped. Distinct env names among
+  // this kind's runs, canonical default first, so the selector (when shown) reads default-first.
+  const isEnvScopedKind = effectiveActiveKind === 'python' || effectiveActiveKind === 'r'
+  const envNames = isEnvScopedKind
+    ? Array.from(
+        new Set(
+          kindRuns.map(resolveRunEnvironment).filter((env): env is string => env !== undefined)
+        )
+      ).sort((a, b) => {
+        const aIsDefault = a === 'default-python' || a === 'default-r'
+        const bIsDefault = b === 'default-python' || b === 'default-r'
+        if (aIsDefault !== bIsDefault) return aIsDefault ? -1 : 1
+        return a.localeCompare(b)
+      })
+    : []
+  // Hide the selector entirely when there's at most one environment — zero visual change for the
+  // common single-default-env case.
+  const showEnvSelector = envNames.length > 1
+  const effectiveActiveEnv = showEnvSelector
+    ? envNames.includes(activeEnv ?? '')
+      ? (activeEnv as string)
+      : envNames[0]
+    : undefined
+  const visibleRuns = showEnvSelector
+    ? kindRuns.filter((run) => resolveRunEnvironment(run) === effectiveActiveEnv)
+    : kindRuns
+
+  // Live status for one env option in the selector, matched by (kind, env) against the per-env
+  // status view (defaulting the env name the same way resolveRunEnvironment does).
+  const envOptionStatus = (envName: string): NotebookEnvironmentStatus['status'] | undefined =>
+    notebookState?.environments.find((entry) => {
+      if (entry.kind !== effectiveActiveKind) return false
+      const entryEnvName =
+        entry.environment ?? (entry.kind === 'r' ? 'default-r' : 'default-python')
+      return entryEnvName === envName
+    })?.status
+
+  // R-only restart prompt: an R install/uninstall flags the active R env until its kernel restarts.
+  const activeEnvName =
+    effectiveActiveEnv ?? (effectiveActiveKind === 'r' ? 'default-r' : 'default-python')
+  const restartRecommended =
+    effectiveActiveKind === 'r' &&
+    (notebookState?.environments.find((entry) => {
+      if (entry.kind !== 'r') return false
+      return (entry.environment ?? 'default-r') === activeEnvName
+    })?.restartRecommended ??
+      false)
+
+  // Restarts the shared interpreter, replacing state with the fresh snapshot so the banner clears.
+  const handleRestart = async (): Promise<void> => {
+    setIsRestarting(true)
+    setActionError(null)
+    try {
+      const next = await window.api.notebook.restart(createNotebookRequest(item.notebook))
+      applyNotebookState(next)
+    } catch (error) {
+      setActionError(getErrorMessage(error))
+    } finally {
+      setIsRestarting(false)
+    }
+  }
 
   return (
     <section
-      className="flex h-full min-w-0 flex-col overflow-hidden bg-bg-000"
+      className="relative flex h-full min-w-0 flex-col overflow-hidden bg-bg-000"
       data-testid="kernel-notebook-pane"
     >
+      {gated ? (
+        <EnvProvisionOverlay ui={provisionUi} onRetry={() => void retryProvision()} />
+      ) : null}
       <header
         className="flex shrink-0 items-center border-b border-border-100 px-2 py-1.5"
         data-testid="kernel-switcher"
       >
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-          <span className="flex shrink-0 items-center gap-1.5 rounded-md bg-bg-300 px-2 py-1 text-xs text-text-000">
-            Python
-          </span>
+          {visibleKinds.map((kind) =>
+            kind === 'r' ? (
+              // R additionally kicks off lazy provisioning on first selection (D6 — see lazy-r.ts).
+              <button
+                key="r"
+                type="button"
+                data-testid="kernel-switcher-r"
+                onClick={() => {
+                  setActiveKind('r')
+                  onSelectLanguage('r')
+                }}
+                className={cn(
+                  'flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors',
+                  effectiveActiveKind === 'r'
+                    ? 'bg-bg-300 text-text-000'
+                    : 'text-text-300 hover:bg-bg-200 hover:text-text-100'
+                )}
+              >
+                {isPreparingR ? 'R (preparing…)' : 'R'}
+              </button>
+            ) : (
+              <button
+                key={kind}
+                type="button"
+                data-testid={`kernel-switcher-${kind}`}
+                onClick={() => setActiveKind(kind)}
+                className={cn(
+                  'flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors',
+                  effectiveActiveKind === kind
+                    ? 'bg-bg-300 text-text-000'
+                    : 'text-text-300 hover:bg-bg-200 hover:text-text-100'
+                )}
+              >
+                {kernelKindLabel(kind)}
+              </button>
+            )
+          )}
         </div>
       </header>
+
+      {showEnvSelector ? (
+        <div
+          className="flex shrink-0 items-center gap-1 border-b border-border-100 px-2 py-1"
+          data-testid="env-selector"
+        >
+          {envNames.map((envName) => (
+            <button
+              key={envName}
+              type="button"
+              data-testid={`env-option-${envName}`}
+              onClick={() => setActiveEnv(envName)}
+              className={cn(
+                'flex shrink-0 items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] transition-colors',
+                effectiveActiveEnv === envName
+                  ? 'bg-bg-200 text-text-100'
+                  : 'text-text-300 hover:bg-bg-200 hover:text-text-100'
+              )}
+            >
+              <span
+                className={cn(
+                  'h-1.5 w-1.5 rounded-full',
+                  envStatusDotClass(envOptionStatus(envName))
+                )}
+                data-testid={`env-option-${envName}-status`}
+              />
+              {environmentLabel(envName)}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {restartRecommended ? (
+        <div
+          className="flex shrink-0 items-center justify-between gap-2 border-b border-border-100 bg-bg-300 px-3 py-1.5 text-[11px] text-text-100"
+          data-testid="r-restart-banner"
+        >
+          <span>Installed R packages need a kernel restart to load.</span>
+          <button
+            type="button"
+            disabled={isRestarting}
+            onClick={() => void handleRestart()}
+            className="shrink-0 rounded-md border border-border-200 px-2 py-0.5 font-medium text-text-100 transition-colors hover:bg-bg-200 disabled:opacity-50"
+            data-testid="r-restart-button"
+          >
+            {isRestarting ? 'Restarting…' : 'Restart R kernel'}
+          </button>
+        </div>
+      ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col" data-testid="operon-notebook-terminal-split">
         <div className="min-h-0 flex-[4_1_0] overflow-visible" data-testid="notebook-cells-panel">
           <div className="flex h-full min-h-0 flex-col overflow-auto">
             <div className="min-h-0 flex-1 overflow-y-auto" data-testid="notebook-cells">
               <div className="divide-y divide-border-100">
-                {runs.map((run, index) => (
+                {visibleRuns.map((run, index) => (
                   <NotebookRunCell key={run.runId} run={run} index={index} />
                 ))}
               </div>

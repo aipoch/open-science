@@ -4,10 +4,17 @@
 
 import { ipcMain } from 'electron'
 
-import type { ReviewWithChecks, ReviewRunRequest, ReviewUpdateEvent } from '../../shared/reviewer'
+import type {
+  ReviewWithChecks,
+  ReviewRunRequest,
+  ReviewRunResult,
+  ReviewUpdateEvent
+} from '../../shared/reviewer'
+import type { PersistedChatSession } from '../../shared/session-persistence'
 import { REVIEWER_IPC } from '../../shared/reviewer'
 import { createLogger } from '../logger'
 import { runReview } from './orchestrator'
+import { flagStaleReviews } from './stale-reviews'
 import { ReviewRepository } from './repository'
 import type { AcpRuntime } from '../acp/runtime'
 import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
@@ -64,7 +71,7 @@ type ReviewerIpcOptions = {
 const registerReviewerIpcHandlers = (
   options: ReviewerIpcOptions
 ): {
-  triggerReview: (request: ReviewRunRequest) => void
+  triggerReview: (request: ReviewRunRequest) => Promise<ReviewRunResult>
 } => {
   const storageRoot = options.storageRoot ?? resolveStorageRoot()
   const dataRoot = options.dataRoot ?? resolveDataRoot()
@@ -75,15 +82,28 @@ const registerReviewerIpcHandlers = (
   // reviewer session id). Entries are created when a fix loop starts and deleted when it ends.
   const fixLoopAbortControllers = new Map<string, AbortController>()
 
+  // Guards against concurrent reviews of the same turn — e.g. a double-clicked "Re-run review" or two
+  // stale cards fired at once. Keyed by `${sessionId}:${turnMessageId}` (the grouping turn), cleared
+  // when the run settles. The renderer also disables its button, but this is the authoritative guard.
+  const inFlightReviewKeys = new Set<string>()
+
   // reviewer:run — trigger a review for a completed turn. Fire-and-forget: the renderer does
   // not await this; it receives reviewer:updated events as the lifecycle progresses.
-  ipcMain.handle(REVIEWER_IPC.RUN, (_event, request: ReviewRunRequest) => {
-    triggerReview(request)
-  })
+  ipcMain.handle(REVIEWER_IPC.RUN, (_event, request: ReviewRunRequest) => triggerReview(request))
 
-  // reviewer:get-for-session — load persisted reviews for a session at startup.
+  // reviewer:get-for-session — load persisted reviews for a session at startup, flagging any whose
+  // audited turn has since changed (e.g. an artifact was edited after the review completed) so the UI
+  // does not present a stale verdict as current.
   ipcMain.handle(REVIEWER_IPC.GET_FOR_SESSION, async (_event, sessionId: string) => {
-    return reviewRepository.getReviewsForSession(sessionId)
+    const reviews = await reviewRepository.getReviewsForSession(sessionId)
+    let session: PersistedChatSession | undefined
+    try {
+      const { sessions } = await sessionRepository.loadAll()
+      session = sessions.find((candidate) => candidate.id === sessionId)
+    } catch {
+      return reviews
+    }
+    return flagStaleReviews(reviews, session, dataRoot)
   })
 
   // reviewer:abort-fix-loop — renderer requests that the active fix loop for a session be aborted.
@@ -98,68 +118,162 @@ const registerReviewerIpcHandlers = (
     }
   })
 
-  const triggerReview = (request: ReviewRunRequest): void => {
-    const { sessionId, turnMessageId, projectId, mainSessionId, model } = request
+  // Returns whether a review actually STARTED. The session is loaded up front (not in the background)
+  // so a load failure — or an already-in-flight run for this turn — is reported as started:false with
+  // NO Review row created. That lets a caller (e.g. the ReviewerCard "Re-run") release its pending
+  // state and leave the turn retriable, instead of us fabricating a non-retriable error review.
+  const triggerReview = async (request: ReviewRunRequest): Promise<ReviewRunResult> => {
+    const { sessionId, turnMessageId, scopeTurnMessageId, projectId, mainSessionId, model } =
+      request
+
+    // Reserve the turn SYNCHRONOUSLY (before any await) so a double-click / multiple stale cards can't
+    // both pass the guard before the key is set. Released on the start-failure paths and, on success,
+    // in the background run's finally.
+    const inFlightKey = `${sessionId}:${turnMessageId}`
+    if (inFlightReviewKeys.has(inFlightKey)) {
+      log.info('review skipped: already in flight for this turn', { sessionId, turnMessageId })
+      // The turn IS being handled by the in-flight run — this is NOT a retry candidate. Retrying
+      // after the lock releases would launch a duplicate review (and possibly a second fix loop).
+      return { started: false, reason: 'already-in-flight' }
+    }
+    inFlightReviewKeys.add(inFlightKey)
+
+    // Atomic per-turn idempotency for auto-review. The in-flight key (reserved synchronously above)
+    // serializes concurrent starts; this DB check — running while we hold that key — covers the other
+    // half: a run by another entry that has already COMPLETED and released its key. main is the single
+    // process every renderer's IPC funnels through, so together they are the real mutex the renderer's
+    // store check could only approximate (that check races across processes). If any review already
+    // exists for this turn, an auto request is a duplicate → refuse. Manual re-runs (Request review,
+    // stale/error Re-run) set origin='manual' and skip this so the user can force a fresh review.
+    if (request.origin === 'auto') {
+      try {
+        const existing = await reviewRepository.getReviewsForSession(sessionId)
+        if (existing.some((review) => review.turnMessageId === turnMessageId)) {
+          inFlightReviewKeys.delete(inFlightKey)
+          log.info('auto review skipped: turn already has a review', { sessionId, turnMessageId })
+          return { started: false, reason: 'already-reviewed' }
+        }
+      } catch (error) {
+        // Fail CLOSED: if the lookup itself threw we cannot confirm the turn is un-reviewed, and
+        // proceeding could create a second review/fix-loop for a turn that already has one — exactly the
+        // cross-entry duplicate this check exists to prevent. Release the lock and report a retryable
+        // failure so the auto path re-runs the (now hopefully recovered) check instead of duplicating.
+        inFlightReviewKeys.delete(inFlightKey)
+        log.warn('auto-review idempotency check failed; refusing to start (fail-closed)', {
+          sessionId,
+          turnMessageId,
+          error: error instanceof Error ? error.message : String(error)
+        })
+        return { started: false, reason: 'idempotency-check-failed' }
+      }
+    }
+
+    let session: PersistedChatSession | undefined
+    try {
+      const { sessions } = await sessionRepository.loadAll()
+      session = sessions.find((s) => s.id === sessionId)
+    } catch (error) {
+      // No Review row exists to update, so surface the failure only as started:false — the renderer
+      // keeps the (stale) card and its Re-run affordance so the user can try again.
+      inFlightReviewKeys.delete(inFlightKey)
+      log.error('review start failed: could not load session', {
+        sessionId,
+        turnMessageId,
+        error: error instanceof Error ? error.message : String(error)
+      })
+      // Transient store read failure — no Review row, lock released. Safe (and worth) retrying.
+      return { started: false, reason: 'load-failed' }
+    }
+
+    // Session load succeeded but the id is gone (deleted between the card render and the click).
+    // Bail out exactly like the load-failure path: release the lock and report started:false with NO
+    // Review row. Falling through to runReview would create a non-retriable error card that replaces
+    // the (stale) card the user was trying to re-run, and an earlier turn has no composer entry to
+    // recover from — so the turn would be stuck. started:false keeps the existing card and its Re-run.
+    if (!session) {
+      inFlightReviewKeys.delete(inFlightKey)
+      log.warn('review start failed: session not found', { sessionId, turnMessageId })
+      // The session may simply not be flushed to disk yet (async persistence queue) — a retry can
+      // catch it once the write lands, so report the race-shaped reason rather than a hard failure.
+      return { started: false, reason: 'not-found' }
+    }
 
     log.info('review triggered', { sessionId, turnMessageId })
 
-    // Load the session from disk in the background so the orchestrator has the full session JSON.
-    void (async () => {
-      try {
-        const { sessions } = await sessionRepository.loadAll()
-        const session = sessions.find((s) => s.id === sessionId)
-
-        // Create an AbortController for this review's fix loop. The controller is registered
-        // before runReview starts so the abort-fix-loop handler can find it immediately.
-        const abortController = new AbortController()
-        const effectiveMainSessionId = mainSessionId ?? sessionId
-
-        await runReview({
-          sessionId,
-          turnMessageId,
-          projectId,
-          mainSessionId,
-          model: model ?? '',
-          getSession: () => session,
-          reviewRepository,
-          acpRuntime: options.acpRuntime,
-          // Artifacts live under the relocatable data root; DB/sessions stay on the config root.
-          artifactStorageRoot: dataRoot,
-          onReviewUpdate: (review: ReviewWithChecks) => {
-            broadcastReviewUpdate({ review })
-          },
-          // Before the correction prompt is sent, suppress the next auto-review for the main
-          // session so the [Auditor] correction turn's stop event does not re-trigger a review.
-          onCorrectionPrompt: () => {
-            if (mainSessionId) {
-              broadcastSuppressNextAutoReview(mainSessionId)
-            }
-          },
-          // If the correction turn fails to send, its stop never arrives — clear the suppression so
-          // the session's next real turn still gets auto-reviewed.
-          onCorrectionFailed: () => {
-            if (mainSessionId) {
-              broadcastSuppressNextAutoReview(mainSessionId, true)
-            }
-          },
-          // Broadcast fix-loop lifecycle events and register/deregister the abort controller.
-          onFixLoopStart: () => {
-            fixLoopAbortControllers.set(effectiveMainSessionId, abortController)
-            broadcastFixLoopStart(effectiveMainSessionId)
-          },
-          onFixLoopEnd: () => {
-            fixLoopAbortControllers.delete(effectiveMainSessionId)
-            broadcastFixLoopEnd(effectiveMainSessionId)
-          },
-          fixLoopAbortSignal: abortController.signal
-        })
-      } catch (error) {
-        log.error('runReview threw unexpectedly', {
-          sessionId,
-          error: error instanceof Error ? error.message : String(error)
-        })
+    // Resolve `started` only once the running Review row has actually been created and pushed
+    // (runReview's onStarted). If runReview fails BEFORE that (scope resolution or the DB insert), it
+    // settles without onStarted → started:false, so the caller (Re-run) stays retriable. The full
+    // review (reviewer session + fix loop) continues in the background regardless.
+    return await new Promise<ReviewRunResult>((resolveStart) => {
+      let settled = false
+      const settle = (result: ReviewRunResult): void => {
+        if (settled) return
+        settled = true
+        resolveStart(result)
       }
-    })()
+
+      // Create an AbortController for this review's fix loop. The controller is registered
+      // before runReview starts so the abort-fix-loop handler can find it immediately.
+      const abortController = new AbortController()
+      const effectiveMainSessionId = mainSessionId ?? sessionId
+
+      void runReview({
+        sessionId,
+        turnMessageId,
+        scopeTurnMessageId,
+        projectId,
+        mainSessionId,
+        model: model ?? '',
+        getSession: () => session,
+        reviewRepository,
+        acpRuntime: options.acpRuntime,
+        // Artifacts live under the relocatable data root; DB/sessions stay on the config root.
+        artifactStorageRoot: dataRoot,
+        onStarted: () => settle({ started: true }),
+        onReviewUpdate: (review: ReviewWithChecks) => {
+          broadcastReviewUpdate({ review })
+        },
+        // Before the correction prompt is sent, suppress the next auto-review for the main
+        // session so the [Auditor] correction turn's stop event does not re-trigger a review.
+        onCorrectionPrompt: () => {
+          if (mainSessionId) {
+            broadcastSuppressNextAutoReview(mainSessionId)
+          }
+        },
+        // If the correction turn fails to send, its stop never arrives — clear the suppression so
+        // the session's next real turn still gets auto-reviewed.
+        onCorrectionFailed: () => {
+          if (mainSessionId) {
+            broadcastSuppressNextAutoReview(mainSessionId, true)
+          }
+        },
+        // Broadcast fix-loop lifecycle events and register/deregister the abort controller.
+        onFixLoopStart: () => {
+          fixLoopAbortControllers.set(effectiveMainSessionId, abortController)
+          broadcastFixLoopStart(effectiveMainSessionId)
+        },
+        onFixLoopEnd: () => {
+          fixLoopAbortControllers.delete(effectiveMainSessionId)
+          broadcastFixLoopEnd(effectiveMainSessionId)
+        },
+        fixLoopAbortSignal: abortController.signal
+      })
+        .catch((error: unknown) => {
+          // runReview records expected failures as lifecycle='error' itself; an unexpected throw here
+          // (e.g. the createReview insert failed before onStarted) is logged and reported as not-started.
+          log.error('runReview threw unexpectedly', {
+            sessionId,
+            turnMessageId,
+            error: error instanceof Error ? error.message : String(error)
+          })
+        })
+        .finally(() => {
+          // If the run ended without ever signalling onStarted, no review actually began — this is a
+          // genuine pre-push failure (scope/insert), not a persistence race, so it is not auto-retried.
+          settle({ started: false, reason: 'run-failed' })
+          inFlightReviewKeys.delete(inFlightKey)
+        })
+    })
   }
 
   return { triggerReview }

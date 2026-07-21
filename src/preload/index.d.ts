@@ -17,8 +17,10 @@ import type {
   ArtifactFile,
   ArtifactPreviewResult,
   FinalizeRunArtifactsRequest,
+  ListProjectArtifactsRequest,
   OpenArtifactFileRequest,
-  ReadArtifactPreviewRequest
+  ReadArtifactPreviewRequest,
+  ReconcilePendingArtifactsRequest
 } from '../shared/artifacts'
 import type {
   SaveBlobFileRequest,
@@ -34,12 +36,21 @@ import type {
   NotebookChangedEvent,
   ExecuteNotebookCodeRequest,
   FinishNotebookCodeCellRequest,
+  NotebookLanguage,
   NotebookRunSummary,
   NotebookSessionReference,
   NotebookSessionRequest,
   NotebookSessionState,
   RunNotebookCellRequest
 } from '../shared/notebook'
+import type { ProvisionProgress, ProvisionStatus } from '../shared/notebook-env'
+import type {
+  DiscoveredInterpreter,
+  RuntimeEnablement,
+  RuntimeUsage,
+  RuntimeSelection,
+  RuntimeSurvey
+} from '../shared/notebook-runtime'
 import type {
   DeletePreviewStateRequest,
   LoadPreviewStateRequest,
@@ -73,11 +84,13 @@ import type {
   DeleteProviderRequest,
   EnvironmentCheckResult,
   InstallClaudeRequest,
+  InstallCodexRequest,
   InstallOpencodeRequest,
   Preflight,
   RefreshProviderModelsRequest,
   RefreshProviderModelsResult,
   SetActiveProviderRequest,
+  SetPackageMirrorRequest,
   SetAgentFrameworkRequest,
   SetSkillEnabledRequest,
   SettingsSnapshot,
@@ -111,6 +124,7 @@ import type {
   ValidateProviderRequest,
   ValidateProviderResult
 } from '../shared/settings'
+import type { PackageMirror } from '../shared/mirror'
 import type {
   ActiveSessionInfo,
   DataRootInspection,
@@ -127,7 +141,12 @@ import type {
   StageUploadFilesRequest,
   UploadedAttachment
 } from '../shared/uploads'
-import type { ReviewWithChecks, ReviewRunRequest, ReviewUpdateEvent } from '../shared/reviewer'
+import type {
+  ReviewWithChecks,
+  ReviewRunRequest,
+  ReviewRunResult,
+  ReviewUpdateEvent
+} from '../shared/reviewer'
 
 type RemoveListener = () => void
 type AcpListener<Payload> = (payload: Payload) => void
@@ -174,10 +193,13 @@ interface OpenScienceAPI {
     checkEnvironment(): Promise<EnvironmentCheckResult>
     detectClaude(): Promise<ClaudeDetectResult>
     detectOpencode(): Promise<SettingsSnapshot>
+    detectCodex(): Promise<SettingsSnapshot>
     installClaude(request: InstallClaudeRequest): Promise<ClaudeInstallResult>
     installOpencode(request: InstallOpencodeRequest): Promise<ClaudeInstallResult>
+    installCodex(request: InstallCodexRequest): Promise<ClaudeInstallResult>
     uninstallClaude(): Promise<SettingsSnapshot>
     uninstallOpencode(): Promise<SettingsSnapshot>
+    uninstallCodex(): Promise<SettingsSnapshot>
     upsertProvider(request: UpsertProviderRequest): Promise<SettingsSnapshot>
     deleteProvider(request: DeleteProviderRequest): Promise<SettingsSnapshot>
     setActiveProvider(request: SetActiveProviderRequest): Promise<SettingsSnapshot>
@@ -187,6 +209,8 @@ interface OpenScienceAPI {
       request: RefreshProviderModelsRequest
     ): Promise<RefreshProviderModelsResult>
     markOnboardingComplete(): Promise<SettingsSnapshot>
+    getPackageMirror(): Promise<PackageMirror>
+    setPackageMirror(request: SetPackageMirrorRequest): Promise<PackageMirror>
     listSkills(): Promise<SkillView[]>
     getSkillDetail(id: string): Promise<SkillDetailView>
     setSkillEnabled(request: SetSkillEnabledRequest): Promise<SkillView[]>
@@ -230,6 +254,7 @@ interface OpenScienceAPI {
     getStatus(): Promise<UpdateStatus>
     check(): Promise<UpdateStatus>
     download(): Promise<UpdateStatus>
+    cancel(): Promise<UpdateStatus>
     apply(): Promise<UpdateStatus>
     onStatus(listener: (status: UpdateStatus) => void): RemoveListener
     onProgress(listener: (percent: number) => void): RemoveListener
@@ -253,6 +278,8 @@ interface OpenScienceAPI {
   }
   artifacts: {
     finalizeRunArtifacts(request: FinalizeRunArtifactsRequest): Promise<ArtifactFile[]>
+    listProjectFiles(request: ListProjectArtifactsRequest): Promise<ArtifactFile[]>
+    reconcilePendingArtifacts(request: ReconcilePendingArtifactsRequest): Promise<ArtifactFile[]>
     openFile(request: OpenArtifactFileRequest): Promise<void>
     readPreview(request: ReadArtifactPreviewRequest): Promise<ArtifactPreviewResult>
   }
@@ -294,6 +321,47 @@ interface OpenScienceAPI {
     onAvailable(listener: AcpListener<NotebookAvailableEvent>): RemoveListener
     onChanged(listener: AcpListener<NotebookChangedEvent>): RemoveListener
   }
+  notebookEnv: {
+    getStatus(): Promise<ProvisionStatus>
+    provision(lang: NotebookLanguage): Promise<void>
+    repair(lang: NotebookLanguage): Promise<void>
+    cancel(): Promise<void>
+    onProgress(listener: (progress: ProvisionProgress) => void): RemoveListener
+  }
+  runtime: {
+    // Per-language runtime picture (persisted choice + a survey of the managed and external sources).
+    survey(): Promise<RuntimeSurvey[]>
+    // Persists (or clears, when selection is null) one language's choice; returns its refreshed survey.
+    setSelection(
+      language: NotebookLanguage,
+      selection: RuntimeSelection | null
+    ): Promise<RuntimeSurvey>
+    // Opens the native file picker to choose an interpreter; resolves null on cancel.
+    pickInterpreter(): Promise<string | null>
+    // v4: every detected interpreter per language (Settings cards).
+    listEnvironments(): Promise<{ python: DiscoveredInterpreter[]; r: DiscoveredInterpreter[] }>
+    // v4: the persisted per-language enablement, so cards reflect the saved state on load.
+    getEnablement(language: NotebookLanguage): Promise<RuntimeEnablement>
+    // WS11: live-session usage of a runtime (running/idle/dormant), for the disable-impact warning.
+    describeUsage(language: NotebookLanguage, envId: string): Promise<RuntimeUsage>
+    // v4: set one env's enabled override; rejects (throws) if it would disable the last enabled env
+    // for the language. Returns the refreshed per-language enablement.
+    setEnvironmentEnabled(
+      language: NotebookLanguage,
+      envId: string,
+      enabled: boolean,
+      force?: boolean
+    ): Promise<RuntimeEnablement>
+    // v4: set one env's high-risk package-install authorization. Returns the refreshed enablement.
+    setInstallAuthorized(
+      language: NotebookLanguage,
+      envId: string,
+      authorized: boolean
+    ): Promise<RuntimeEnablement>
+    // v4: add/remove a manually-picked interpreter path in the discovery catalog; returns the list.
+    registerInterpreter(language: NotebookLanguage, path: string): Promise<string[]>
+    unregisterInterpreter(language: NotebookLanguage, path: string): Promise<string[]>
+  }
   storage: {
     getInfo(): Promise<StorageInfo>
     detectActive(): Promise<ActiveSessionInfo[]>
@@ -322,7 +390,7 @@ interface OpenScienceAPI {
   }
   reviewer: {
     // Trigger a background review for the given turn. Fire-and-forget; updates come via onUpdated.
-    run(request: ReviewRunRequest): Promise<void>
+    run(request: ReviewRunRequest): Promise<ReviewRunResult>
     // Load persisted reviews for a session (called at workspace startup).
     getForSession(sessionId: string): Promise<ReviewWithChecks[]>
     // Subscribe to review lifecycle/findings updates pushed from the main process.

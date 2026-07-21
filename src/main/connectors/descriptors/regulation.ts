@@ -424,7 +424,7 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ total (exact), returned, truncated, accessions: [every matching accession, sorted], experiments: [ report rows: accession, assay_title, assay_term_name, target.label, biosample_ontology.term_name, status, date_released, lab.title ] }`.',
     example:
-      'result = host.mcp("regulation", "encode_search_experiments", {"target": "CTCF", "assay_title": "TF ChIP-seq", "max_rows": 50})',
+      'const result = await host.mcp("regulation", "encode_search_experiments", {"target": "CTCF", "assay_title": "TF ChIP-seq", "max_rows": 50})',
     run: async (_ctx, a) => {
       const filters = withExtraFilters(
         {
@@ -465,7 +465,7 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ total, returned, truncated, accessions: [...], biosamples: [ report rows: accession, biosample_ontology.term_name/classification, organism.scientific_name, status, lab.title, summary, date_created ] }`.',
     example:
-      'result = host.mcp("regulation", "encode_search_biosamples", {"term_name": "K562", "classification": "cell line", "max_rows": 25})',
+      'const result = await host.mcp("regulation", "encode_search_biosamples", {"term_name": "K562", "classification": "cell line", "max_rows": 25})',
     run: async (_ctx, a) => {
       const filters = withExtraFilters(
         {
@@ -506,7 +506,7 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ total, returned, truncated, accessions: [...], files: [ report rows: accession, file_format, output_type, assay_term_name, assembly, dataset, status, file_size, date_created ] }`.',
     example:
-      'result = host.mcp("regulation", "encode_list_files", {"file_format": "bed", "assay_term_name": "ChIP-seq", "biosample_term_name": "K562", "extra_filters": {"output_type": "peaks", "assembly": "GRCh38"}, "max_rows": 50})',
+      'const result = await host.mcp("regulation", "encode_list_files", {"file_format": "bed", "assay_term_name": "ChIP-seq", "biosample_term_name": "K562", "extra_filters": {"output_type": "peaks", "assembly": "GRCh38"}, "max_rows": 50})',
     run: async (_ctx, a) => {
       const filters = withExtraFilters(
         {
@@ -541,7 +541,7 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ record_type: "experiment", accession, status, assay_term_name, assay_title, target_label, biosample_term_name, biosample_classification, biosample_summary, description, lab, award_project, date_released, date_submitted, assembly: [...], bio_replicate_count, tech_replicate_count, replication_type, dbxrefs: [...], doi, uuid }`.',
     example:
-      'result = host.mcp("regulation", "encode_get_experiment", {"accession": "ENCSR000AKP"})',
+      'const result = await host.mcp("regulation", "encode_get_experiment", {"accession": "ENCSR000AKP"})',
     run: async (_ctx, a) => {
       const raw = await encodeFetchJson(
         `${ENCODE}/${encodeURIComponent(String(a.accession))}/?format=json`
@@ -562,7 +562,8 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
     required: ['accession'],
     returns:
       '`{ record_type: "file", accession, status, file_format, file_format_type, output_type, output_category, assay_term_name, assembly, dataset, biological_replicates: [...], file_size, md5sum, content_md5sum, run_type, read_length, lab, date_created, href, uuid }`.',
-    example: 'result = host.mcp("regulation", "encode_get_file", {"accession": "ENCFF002JUR"})',
+    example:
+      'const result = await host.mcp("regulation", "encode_get_file", {"accession": "ENCFF002JUR"})',
     run: async (_ctx, a) => {
       const raw = await encodeFetchJson(
         `${ENCODE}/${encodeURIComponent(String(a.accession))}/?format=json`
@@ -584,7 +585,7 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ record_type: "biosample", accession, status, term_name, classification, organism, donor, source, lab, summary, life_stage, age_display, sex, treatments: [...], genetic_modifications: [...], date_created, uuid }`.',
     example:
-      'result = host.mcp("regulation", "encode_get_biosample", {"accession": "ENCBS013JZP"})',
+      'const result = await host.mcp("regulation", "encode_get_biosample", {"accession": "ENCBS013JZP"})',
     run: async (_ctx, a) => {
       const raw = await encodeFetchJson(
         `${ENCODE}/${encodeURIComponent(String(a.accession))}/?format=json`
@@ -606,7 +607,8 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
     required: ['matrix_id'],
     returns:
       '`{ matrix_id, name, base_id, version, collection, pfm: { A:[...], C:[...], G:[...], T:[...] }, class, family, species: [ { tax_id, name } ], pubmed_ids, uniprot_ids, tax_group, type, sequence_logo, versions_url, sites_url, ... }` — the full immutable JASPAR record.',
-    example: 'result = host.mcp("regulation", "jaspar_get_matrix", {"matrix_id": "MA0002.2"})',
+    example:
+      'const result = await host.mcp("regulation", "jaspar_get_matrix", {"matrix_id": "MA0002.2"})',
     url: (a) => {
       const id = String(a.matrix_id)
       // JASPAR requires a versioned id; a base id ('MA0002') resolves to a redirect list, not a PFM.
@@ -632,7 +634,8 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
     required: ['base_id'],
     returns:
       '`{ count, results: [ { matrix_id, name, base_id, version, collection, sequence_logo, url } ] }`.',
-    example: 'result = host.mcp("regulation", "jaspar_matrix_versions", {"base_id": "MA0002"})',
+    example:
+      'const result = await host.mcp("regulation", "jaspar_matrix_versions", {"base_id": "MA0002"})',
     run: async (ctx, a) => {
       const base = String(a.base_id).split('.')[0]
       return jasparWalk(ctx, `/matrix/${encodeURIComponent(base)}/versions/`, {})
@@ -658,7 +661,7 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ count (exact), returned, truncated, matrices: [ { matrix_id, name, base_id, version, collection, sequence_logo, url } ] }`.',
     example:
-      'result = host.mcp("regulation", "jaspar_list_matrices", {"tax_id": 9606, "collection": "CORE", "version": "latest", "max_rows": 200})',
+      'const result = await host.mcp("regulation", "jaspar_list_matrices", {"tax_id": 9606, "collection": "CORE", "version": "latest", "max_rows": 200})',
     run: async (ctx, a) => {
       const out = await jasparWalk(ctx, '/matrix/', {
         collection: a.collection,
@@ -685,7 +688,7 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
       'List all species with JASPAR profiles (NCBI tax_id + name); count-verified full listing. Use the tax_id values to filter jaspar_list_matrices (e.g. 9606 = Homo sapiens, 10090 = Mus musculus).',
     input: { type: 'object', properties: {} },
     returns: '`{ count, results: [ { tax_id, species, url, matrix_url } ] }`.',
-    example: 'result = host.mcp("regulation", "jaspar_list_species", {})',
+    example: 'const result = await host.mcp("regulation", "jaspar_list_species", {})',
     run: async (ctx) => jasparWalk(ctx, '/species/', {})
   },
   {
@@ -695,7 +698,7 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
       'List all JASPAR taxonomic groups (vertebrates, plants, fungi, insects, ...); count-verified full listing. Use the group names as the tax_group filter of jaspar_list_matrices.',
     input: { type: 'object', properties: {} },
     returns: '`{ count, results: [ { name, url } ] }`.',
-    example: 'result = host.mcp("regulation", "jaspar_list_taxa", {})',
+    example: 'const result = await host.mcp("regulation", "jaspar_list_taxa", {})',
     run: async (ctx) => jasparWalk(ctx, '/taxon/', {})
   },
   {
@@ -705,7 +708,7 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
       'List all JASPAR collections (CORE, UNVALIDATED, ...); count-verified full listing. Use the collection names as the collection filter of jaspar_list_matrices (CORE = curated, non-redundant profiles).',
     input: { type: 'object', properties: {} },
     returns: '`{ count, results: [ { name, url } ] }`.',
-    example: 'result = host.mcp("regulation", "jaspar_list_collections", {})',
+    example: 'const result = await host.mcp("regulation", "jaspar_list_collections", {})',
     run: async (ctx) => jasparWalk(ctx, '/collections/', {})
   },
   {
@@ -715,7 +718,7 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
       'List all JASPAR database releases (year, release number, active flag); count-verified full listing. Record the active release when selecting motifs for reproducibility, or check release history before comparing results across JASPAR versions.',
     input: { type: 'object', properties: {} },
     returns: '`{ count, results: [ { year, release_number, pubmed_id, website, active, url } ] }`.',
-    example: 'result = host.mcp("regulation", "jaspar_list_releases", {})',
+    example: 'const result = await host.mcp("regulation", "jaspar_list_releases", {})',
     run: async (ctx) => jasparWalk(ctx, '/releases/', {})
   },
   // ---- UniBind -------------------------------------------------------------
@@ -739,7 +742,7 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ total (exact), returned, truncated, datasets: [ { tf_id (key for unibind_get_dataset), tf_name, total_peaks (ChIP-seq peak count, NOT TFBS count), identifier, cell_line } ] }`.',
     example:
-      'result = host.mcp("regulation", "unibind_search_tfbs", {"tf_name": "CTCF", "collection": "Robust", "max_rows": 50})',
+      'const result = await host.mcp("regulation", "unibind_search_tfbs", {"tf_name": "CTCF", "collection": "Robust", "max_rows": 50})',
     run: async (ctx, a) => {
       const p = new URLSearchParams()
       for (const [k, v] of Object.entries({
@@ -795,7 +798,7 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ tf_id, tf_name, identifiers: [...], cell_lines: [...], biological_conditions: [...], jaspar_ids: [...], prediction_models: [...], total_peaks, n_models, models: [ { prediction_model, jaspar_id, jaspar_version, total_tfbs, score_threshold, distance_threshold, adj_centrimo_pvalue, bed_url, fasta_url } ] }`.',
     example:
-      'result = host.mcp("regulation", "unibind_get_dataset", {"tf_id": "ENCSR000AUE.A549_lung_carcinoma.CTCF"})',
+      'const result = await host.mcp("regulation", "unibind_get_dataset", {"tf_id": "ENCSR000AUE.A549_lung_carcinoma.CTCF"})',
     url: (a) => `${UNIBIND}/datasets/${encodeURIComponent(String(a.tf_id))}/`,
     parse: (raw) => {
       const d = raw as UnibindDataset
@@ -853,7 +856,7 @@ export const REGULATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ genome, chrom, start, end, collection, tf_name_filter, items_scanned, region_scan_complete, n_matching, returned, truncated, sites: [ { chrom, start, end, strand, dataset, cell_line, tf_name, jaspar_matrix } ] }`.',
     example:
-      'result = host.mcp("regulation", "unibind_tfbs_in_region", {"genome": "hg38", "chrom": "chr1", "start": 1000000, "end": 1010000, "collection": "Robust"})',
+      'const result = await host.mcp("regulation", "unibind_tfbs_in_region", {"genome": "hg38", "chrom": "chr1", "start": 1000000, "end": 1010000, "collection": "Robust"})',
     run: async (ctx, a) => {
       const collection = String(a.collection ?? 'Robust')
       const genome = String(a.genome)
