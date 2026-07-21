@@ -121,6 +121,121 @@ describe('CodexAuthController', () => {
     expect(vi.mocked(isolated.close)).toHaveBeenCalledOnce()
   })
 
+  it('times out while isolated login initialization is stalled', async () => {
+    vi.useFakeTimers()
+    let resolveInitialize!: (value: { authMethods: { id: string }[] }) => void
+    const initialize = new Promise<{ authMethods: { id: string }[] }>((resolve) => {
+      resolveInitialize = resolve
+    })
+    const isolated = session({
+      initialize: vi.fn(() => initialize)
+    })
+    const controller = new CodexAuthController({
+      openSession: vi.fn().mockResolvedValue(isolated),
+      loginTimeoutMs: 10
+    })
+    let outcome: Awaited<ReturnType<CodexAuthController['loginIsolated']>> | undefined
+    const pending = controller.loginIsolated().then((result) => {
+      outcome = result
+    })
+
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(10)
+    await Promise.resolve()
+
+    try {
+      expect(outcome).toEqual({
+        mode: 'isolated',
+        supported: true,
+        authenticated: false,
+        message: 'Codex sign-in timed out after five minutes.'
+      })
+      expect(vi.mocked(isolated.close)).toHaveBeenCalledOnce()
+    } finally {
+      resolveInitialize({ authMethods: [{ id: 'chat-gpt' }] })
+      await pending
+      vi.useRealTimers()
+    }
+  })
+
+  it('times out before an auth session opens and closes the late session', async () => {
+    vi.useFakeTimers()
+    let resolveSession!: (value: CodexAuthSession) => void
+    const sessionPromise = new Promise<CodexAuthSession>((resolve) => {
+      resolveSession = resolve
+    })
+    const isolated = session()
+    const controller = new CodexAuthController({
+      openSession: vi.fn(() => sessionPromise),
+      loginTimeoutMs: 10
+    })
+    let outcome: Awaited<ReturnType<CodexAuthController['loginIsolated']>> | undefined
+    const pending = controller.loginIsolated().then((result) => {
+      outcome = result
+    })
+
+    await vi.advanceTimersByTimeAsync(10)
+    await pending
+
+    try {
+      expect(outcome?.message).toBe('Codex sign-in timed out after five minutes.')
+      resolveSession(isolated)
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(vi.mocked(isolated.close)).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('cancels isolated login while initialization is stalled', async () => {
+    let resolveInitialize!: (value: { authMethods: { id: string }[] }) => void
+    const initialize = new Promise<{ authMethods: { id: string }[] }>((resolve) => {
+      resolveInitialize = resolve
+    })
+    const isolated = session({ initialize: vi.fn(() => initialize) })
+    const controller = new CodexAuthController({
+      openSession: vi.fn().mockResolvedValue(isolated),
+      loginTimeoutMs: 60_000
+    })
+    const pending = controller.loginIsolated()
+    await Promise.resolve()
+
+    controller.cancelLogin()
+
+    await expect(pending).resolves.toEqual({
+      mode: 'isolated',
+      supported: true,
+      authenticated: false,
+      message: 'Codex sign-in was cancelled.'
+    })
+    expect(vi.mocked(isolated.close)).toHaveBeenCalledOnce()
+    resolveInitialize({ authMethods: [{ id: 'chat-gpt' }] })
+  })
+
+  it('cancels isolated login while authentication status is stalled', async () => {
+    let resolveStatus!: (value: { type: 'unauthenticated' }) => void
+    const status = new Promise<{ type: 'unauthenticated' }>((resolve) => {
+      resolveStatus = resolve
+    })
+    const isolated = session({ status: vi.fn(() => status) })
+    const controller = new CodexAuthController({
+      openSession: vi.fn().mockResolvedValue(isolated),
+      loginTimeoutMs: 60_000
+    })
+    const pending = controller.loginIsolated()
+    await vi.waitFor(() => expect(isolated.status).toHaveBeenCalledOnce())
+
+    controller.cancelLogin()
+
+    await expect(pending).resolves.toMatchObject({
+      authenticated: false,
+      message: 'Codex sign-in was cancelled.'
+    })
+    expect(vi.mocked(isolated.close)).toHaveBeenCalledOnce()
+    resolveStatus({ type: 'unauthenticated' })
+  })
+
   it('logs out only the isolated profile', async () => {
     const isolated = session()
     const controller = new CodexAuthController({

@@ -36,17 +36,12 @@ import {
   createEmptyProviderFormValue,
   getProviderFormErrors,
   hasProviderFormErrors,
+  providerKindPatch,
   type ProviderFormValue
 } from '../settings/provider-form-value'
 
 const createCodexProviderFormValue = (): ProviderFormValue =>
-  createEmptyProviderFormValue({
-    type: 'official',
-    name: 'OpenAI',
-    apiEndpoint: 'responses',
-    vendorId: 'openai',
-    model: ''
-  })
+  createEmptyProviderFormValue(providerKindPatch('codex-subscription'))
 import { describeValidation } from '../settings/validation-message'
 
 // Location is last: it doubles as the wizard's Finish step, so the confirm-restart dialog can

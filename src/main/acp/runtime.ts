@@ -366,6 +366,7 @@ class AcpRuntime {
   // Model to apply per session via the ACP model configOption (opencode); undefined for env-driven
   // frameworks (Claude). Refreshed from the resolved backend on each connect.
   private pendingSessionModel: string | undefined
+  private pendingSessionModelRequired = false
   // One-shot ACP authentication material resolved alongside the spawn config. It is cleared after
   // initialize so the decrypted key is not retained by the runtime longer than necessary.
   private pendingAuthentication: ResolvedAgentBackend['authentication']
@@ -515,6 +516,12 @@ class AcpRuntime {
 
     if (!selection) {
       log.info('no matching session model option', { desiredModel: this.pendingSessionModel })
+      if (this.pendingSessionModelRequired) {
+        session.dispose()
+        throw new Error(
+          `The selected model "${this.pendingSessionModel}" is not available for this Codex account.`
+        )
+      }
       return
     }
 
@@ -526,10 +533,17 @@ class AcpRuntime {
       })
       log.info('session model applied', { sessionId: session.sessionId, model: selection.value })
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
       log.warn('set session model failed', {
         sessionId: session.sessionId,
-        error: error instanceof Error ? error.message : String(error)
+        error: message
       })
+      if (this.pendingSessionModelRequired) {
+        session.dispose()
+        throw new Error(
+          `The selected model "${this.pendingSessionModel}" could not be applied: ${message}`
+        )
+      }
     }
   }
 
@@ -1377,6 +1391,7 @@ class AcpRuntime {
     this.bridgeMcpAliasesEnabled =
       backend.framework.id === 'codex' && backend.providerConfiguration !== undefined
     this.pendingSessionModel = backend.sessionModel
+    this.pendingSessionModelRequired = backend.sessionModelRequired ?? false
     this.pendingAuthentication = backend.authentication
     this.pendingProviderConfiguration = backend.providerConfiguration
 

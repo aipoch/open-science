@@ -133,6 +133,9 @@ export type ResolvedAgentBackend = {
   // over the protocol rather than via env (opencode). Undefined ⇒ the framework's env/config drives it
   // (Claude uses ANTHROPIC_MODEL). Applied best-effort: skipped when the agent advertises no match.
   sessionModel?: string
+  // Subscription backends must run the model selected in the UI. When true, a missing/rejected live
+  // model option fails session creation instead of silently using the agent's account default.
+  sessionModelRequired?: boolean
   authentication?: AgentAuthentication
   providerConfiguration?: AgentProviderConfiguration
 }

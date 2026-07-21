@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron'
 
 import {
-  CODEX_ISOLATED_PROVIDER_ID,
+  CODEX_SUBSCRIPTION_PROVIDER_ID,
   type CreateSkillRequest,
   type DeleteProviderRequest,
   type DeleteSkillRequest,
@@ -162,7 +162,7 @@ const registerSettingsIpcHandlers = ({
   ipcMain.handle('settings:logout-isolated-codex', async () => {
     const snapshot = await service.logoutIsolatedCodex()
 
-    if (snapshot.activeProviderId === CODEX_ISOLATED_PROVIDER_ID) {
+    if (snapshot.activeProviderId === CODEX_SUBSCRIPTION_PROVIDER_ID) {
       onActiveProviderChanged?.()
     }
 

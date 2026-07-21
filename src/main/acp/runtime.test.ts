@@ -1,5 +1,5 @@
 import * as acp from '@agentclientprotocol/sdk'
-import type { ContentBlock, SessionModeState } from '@agentclientprotocol/sdk'
+import type { ContentBlock, SessionConfigOption, SessionModeState } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -101,6 +101,8 @@ const startFakeAgent = (
   options: {
     supportsResume?: boolean
     modes?: SessionModeState
+    configOptions?: SessionConfigOption[]
+    rejectSetConfigOption?: boolean
     // When true, the resume handler rejects with the ACP "Resource not found" (-32002) — the signal a
     // replaced agent (e.g. after a provider switch) gives for a session id it does not hold.
     resumeNotFound?: boolean
@@ -174,7 +176,11 @@ const startFakeAgent = (
       const sessionId = sessionIds[sessionIndex]
       sessionIndex += 1
 
-      return { sessionId, modes: options.modes }
+      return {
+        sessionId,
+        modes: options.modes,
+        ...(options.configOptions ? { configOptions: options.configOptions } : {})
+      }
     })
     .onRequest(acp.methods.agent.session.resume, (ctx) => {
       if (options.resumeNotFound) {
@@ -198,6 +204,10 @@ const startFakeAgent = (
       modeChanges.push({ sessionId: ctx.params.sessionId, modeId: ctx.params.modeId })
       actions.push(`mode:${ctx.params.modeId}`)
       return {}
+    })
+    .onRequest(acp.methods.agent.session.setConfigOption, () => {
+      if (options.rejectSetConfigOption) throw acp.RequestError.internalError()
+      return { configOptions: options.configOptions ?? [] }
     })
     .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
       // Flatten text blocks because these tests only exercise plain prompts.
@@ -418,6 +428,70 @@ describe('ACP runtime migration write-gate', () => {
         headers: { authorization: 'Bearer local-token' }
       }
     ])
+  })
+
+  it('rejects session creation when a required subscription model is unavailable', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['subscription-session'], {
+      modes: {
+        currentModeId: 'agent',
+        availableModes: ['read-only', 'agent', 'agent-full-access'].map((id) => ({ id, name: id }))
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codex-acp',
+        env: {},
+        sessionModel: 'gpt-subscription',
+        sessionModelRequired: true
+      }),
+      framework: codexFramework
+    })
+
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(
+      'The selected model "gpt-subscription" is not available for this Codex account.'
+    )
+  })
+
+  it('rejects session creation when a required subscription model cannot be applied', async () => {
+    const process = new FakeAgentProcess()
+    const configOptions = [
+      {
+        type: 'select',
+        id: 'model',
+        name: 'Model',
+        category: 'model',
+        currentValue: 'gpt-default',
+        options: [{ value: 'gpt-subscription', name: 'GPT Subscription' }]
+      } as SessionConfigOption
+    ]
+    startFakeAgent(process, ['subscription-session'], {
+      modes: {
+        currentModeId: 'agent',
+        availableModes: ['read-only', 'agent', 'agent-full-access'].map((id) => ({ id, name: id }))
+      },
+      configOptions,
+      rejectSetConfigOption: true
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codex-acp',
+        env: {},
+        sessionModel: 'gpt-subscription',
+        sessionModelRequired: true
+      }),
+      framework: codexFramework
+    })
+
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(
+      'The selected model "gpt-subscription" could not be applied'
+    )
   })
 
   it('rejects sendPrompt while a data-root migration is pending, then resumes once cleared', async () => {

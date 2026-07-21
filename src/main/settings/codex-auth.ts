@@ -84,6 +84,9 @@ const waitForAbort = (signal: AbortSignal): Promise<never> =>
     )
   })
 
+const waitForOperation = <Value>(operation: Promise<Value>, signal: AbortSignal): Promise<Value> =>
+  Promise.race([operation, waitForAbort(signal)])
+
 const capabilityFailure = (mode: CodexAuthMode): CodexAuthStatus => ({
   mode,
   supported: false,
@@ -143,17 +146,27 @@ export class CodexAuthController {
     let authSession: CodexAuthSession | undefined
 
     try {
-      authSession = await this.openSession('isolated')
-      const initialized = await authSession.initialize()
+      const sessionPromise = this.openSession('isolated')
+      void sessionPromise
+        .then(async (session) => {
+          if (abort.signal.aborted && authSession !== session) await session.close()
+        })
+        .catch(() => undefined)
+      authSession = await waitForOperation(sessionPromise, abort.signal)
+      const initialized = await waitForOperation(authSession.initialize(), abort.signal)
       const supported = initialized.authMethods?.some((method) => method.id === 'chat-gpt') ?? false
       if (!supported) return capabilityFailure('isolated')
 
-      const current = await authSession.status()
+      const current = await waitForOperation(authSession.status(), abort.signal)
       if (current.type !== 'chat-gpt') {
-        await Promise.race([authSession.authenticateChatGpt(), waitForAbort(abort.signal)])
+        await waitForOperation(authSession.authenticateChatGpt(), abort.signal)
       }
 
-      return toPublicStatus('isolated', true, await authSession.status())
+      return toPublicStatus(
+        'isolated',
+        true,
+        await waitForOperation(authSession.status(), abort.signal)
+      )
     } catch (error) {
       if (abort.signal.aborted) {
         return {

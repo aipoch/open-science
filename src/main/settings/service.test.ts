@@ -224,6 +224,38 @@ describe('SettingsService: providers', () => {
     expect(stored.providers.every((provider) => provider.lastValidatedAt !== undefined)).toBe(true)
   })
 
+  it.each([
+    ['codex-shared', 'codex-isolated'],
+    ['codex-isolated', 'codex-shared']
+  ] as const)(
+    'requires fresh validation after switching the Codex subscription from %s to %s',
+    async (initialType, nextType) => {
+      const codexAuth: CodexAuthControllerPort = {
+        getStatus: vi.fn().mockResolvedValue({
+          mode: 'shared',
+          supported: true,
+          authenticated: true
+        }),
+        loginIsolated: vi.fn().mockResolvedValue({
+          mode: 'isolated',
+          supported: true,
+          authenticated: true
+        }),
+        cancelLogin: vi.fn(),
+        logoutIsolated: vi.fn()
+      }
+      const service = createService(undefined, { codexAuth })
+      await service.upsertProvider({ type: initialType })
+      await service.validateProvider({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID })
+      expect((await service.getSettingsView()).providers[0].lastValidatedAt).toBeDefined()
+
+      const snapshot = await service.upsertProvider({ type: nextType })
+
+      expect(snapshot.providers[0].type).toBe(nextType)
+      expect(snapshot.providers[0].lastValidatedAt).toBeUndefined()
+    }
+  )
+
   it('cancels isolated login and clears provider readiness on logout', async () => {
     const codexAuth: CodexAuthControllerPort = {
       getStatus: vi.fn(),
@@ -873,6 +905,7 @@ describe('SettingsService: preflight & spawn config', () => {
 
     expect(backend.backendId).toBe(`codex:builtin-${type}`)
     expect(backend.sessionModel).toBe('gpt-5.6-terra')
+    expect(backend.sessionModelRequired).toBe(true)
     expect(backend.authentication).toBeUndefined()
     expect(backend.providerConfiguration).toBeUndefined()
     expect(backend.env.CODEX_API_KEY).toBeUndefined()

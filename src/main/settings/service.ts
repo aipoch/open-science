@@ -1391,6 +1391,7 @@ class SettingsService {
 
     if (isCodexSubscriptionProvider(request.type)) {
       provider.apiEndpoints = ['responses']
+      credentialsChanged = existing !== undefined && existing.type !== request.type
     } else if (request.type === 'official') {
       // Base URL and model catalog come from the registry; the provider only stores which vendor
       // (and, for multi-region vendors, which endpoint) plus the key.
@@ -2101,6 +2102,9 @@ class SettingsService {
       },
       args: modelConfig.args,
       sessionModel: modelConfig.sessionModel ?? provider.model,
+      ...(framework.id === 'codex' && isCodexSubscriptionProvider(provider.type)
+        ? { sessionModelRequired: true }
+        : {}),
       authentication: modelConfig.authentication,
       providerConfiguration: modelConfig.providerConfiguration
     }

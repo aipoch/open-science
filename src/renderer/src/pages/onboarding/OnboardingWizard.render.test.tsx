@@ -426,7 +426,7 @@ describe('OnboardingWizard', () => {
     expect(checkEnvironment).toHaveBeenCalledOnce()
   })
 
-  it('prefills the API-key OpenAI Responses provider for Codex', async () => {
+  it('prefills the existing Codex subscription profile for Codex', async () => {
     useSettingsStore.setState({
       agentFrameworkId: 'codex',
       preflight: {
@@ -445,12 +445,16 @@ describe('OnboardingWizard', () => {
     })
     await clickButton(/^continue$/i)
 
-    expect(container.querySelector('[aria-label="Provider type"]')?.textContent).toContain('OpenAI')
+    expect(container.querySelector('[aria-label="Provider type"]')?.textContent).toContain(
+      'Codex subscription'
+    )
+    expect(container.querySelector('[aria-label="Codex authentication"]')?.textContent).toContain(
+      'Use existing Codex profile'
+    )
     expect(container.querySelector('[aria-label="Base URL"]')).toBeNull()
     expect(container.querySelector('[aria-label="Model"]')).toBeNull()
     expect(container.querySelector('[aria-label="API format"]')).toBeNull()
-    expect(container.textContent).toContain('gpt-5.6-sol')
-    expect(container.textContent).not.toContain('ChatGPT')
+    expect(container.querySelector('[aria-label="API key"]')).toBeNull()
   })
 
   const twoFrameworks = [

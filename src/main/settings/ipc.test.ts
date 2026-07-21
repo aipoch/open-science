@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
 import type { SettingsService } from './service'
 
 // Capture every ipcMain.handle registration so handlers can be invoked directly in the test.
@@ -154,6 +155,25 @@ describe('settings IPC handlers', () => {
 
     await invoke('settings:logout-isolated-codex')
     expect(service.logoutIsolatedCodex).toHaveBeenCalledOnce()
+  })
+
+  it('reconnects the active Codex subscription after isolated logout', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    service.logoutIsolatedCodex.mockResolvedValue({
+      claude: {},
+      providers: [],
+      activeProviderId: CODEX_SUBSCRIPTION_PROVIDER_ID
+    })
+    const onActiveProviderChanged = vi.fn()
+    registerSettingsIpcHandlers({
+      service: asService(service),
+      onActiveProviderChanged
+    })
+
+    await invoke('settings:logout-isolated-codex')
+
+    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
   })
 
   it('routes mark-onboarding-complete to the service', async () => {
