@@ -3351,6 +3351,148 @@ describe('ACP runtime session management', () => {
     )
   })
 
+  it('tags a slug-only request-size overflow as context-overflow recoverable', async () => {
+    const process = new FakeAgentProcess()
+    const events: Array<{ kind: string; recoverable?: string }> = []
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: () => {
+        // The ACP RequestError shape of a provider-relayed rejection: the message is the generic
+        // wrapper and the real reason lives in data.errorKind (here the HTTP 413 slug), so only the
+        // structured-kind check can recognize the overflow.
+        throw acp.RequestError.internalError({ errorKind: 'request_too_large' }, 'Internal error')
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: {
+        onEvent: (event) => events.push({ kind: event.kind, recoverable: event.recoverable })
+      }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await expect(
+      runtime.sendPrompt({ sessionId: 'remote-session-1', text: 'hi' })
+    ).rejects.toThrow()
+
+    expect(events).toContainEqual({ kind: 'error', recoverable: 'context-overflow' })
+  })
+
+  it('does not tag a generic invalid_request failure as context-overflow recoverable', async () => {
+    const process = new FakeAgentProcess()
+    const events: Array<{ kind: string; recoverable?: string }> = []
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: () => {
+        // A malformed-request rejection is not an overflow: resetting the agent context would destroy
+        // history without any chance of fixing the turn.
+        throw acp.RequestError.internalError(
+          { errorKind: 'invalid_request' },
+          'invalid_request: messages.0.content is required'
+        )
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: {
+        onEvent: (event) => events.push({ kind: event.kind, recoverable: event.recoverable })
+      }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await expect(
+      runtime.sendPrompt({ sessionId: 'remote-session-1', text: 'hi' })
+    ).rejects.toThrow()
+
+    const errorEvent = events.find((event) => event.kind === 'error')
+    expect(errorEvent).toBeDefined()
+    expect(errorEvent?.recoverable).toBeUndefined()
+  })
+
+  it('logs the provider rejection reason (message/code/data) when a prompt fails', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: () => {
+        throw acp.RequestError.internalError({ errorKind: 'request_too_large' }, 'provider blew up')
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await expect(
+      runtime.sendPrompt({ sessionId: 'remote-session-1', text: 'hi' })
+    ).rejects.toThrow()
+
+    // Regression: a raw Error nested in the log payload serializes without its (non-enumerable)
+    // message, so the file log showed only { code, data, name } and hid the provider's reason.
+    // errorLogFields keeps the message, code, and data together.
+    expect(errorLogSpy).toHaveBeenCalledWith(
+      'prompt failed',
+      expect.objectContaining({
+        sessionId: 'remote-session-1',
+        error: 'Internal error: provider blew up',
+        code: -32603,
+        data: { errorKind: 'request_too_large' }
+      })
+    )
+  })
+
+  it('logs the artifact-emit failure reason (message/code/data) when the prompt failed', async () => {
+    const storageRoot = await createTemporaryRoot()
+    const repository = new ArtifactRepository(storageRoot)
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: () => {
+        throw new Error('agent exploded mid-turn')
+      }
+    })
+    // The prompt failure routes the finally block into a second emit attempt; making the repository
+    // read fail there exercises the 'artifact emit after prompt failure failed' log path. The error
+    // carries a `data` detail so the assertion below also pins its survival into the log record.
+    vi.spyOn(repository, 'listPendingRunFiles').mockRejectedValue(
+      Object.assign(new Error('disk exploded'), {
+        code: 'EIO',
+        data: { operation: 'listPendingRunFiles' }
+      })
+    )
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      artifacts: {
+        configRoot: storageRoot,
+        dataRoot: storageRoot,
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        mcpCommand: '/usr/bin/electron',
+        repository
+      }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await expect(
+      runtime.sendPrompt({ sessionId: 'remote-session-1', text: 'make a file' })
+    ).rejects.toThrow()
+
+    // Same regression class as 'prompt failed': a raw nested Error would log without its message,
+    // and an incomplete serialization would drop the structured detail.
+    expect(errorLogSpy).toHaveBeenCalledWith(
+      'artifact emit after prompt failure failed',
+      expect.objectContaining({
+        sessionId: 'remote-session-1',
+        error: 'disk exploded',
+        code: 'EIO',
+        data: { operation: 'listPendingRunFiles' }
+      })
+    )
+  })
+
   it('rejects restored sessions when the agent does not advertise resume support', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, [], { supportsResume: false })
