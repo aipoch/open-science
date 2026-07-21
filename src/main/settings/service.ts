@@ -903,14 +903,29 @@ class SettingsService {
     if (cached?.resolvedPath && cachedVersions) {
       await this.repository.setCodexInfo({ ...cached, ...cachedVersions })
 
-      // Build codexComponents even for successful detection so onboarding shows separate rows
+      // Build codexComponents even for successful detection so onboarding shows separate rows.
+      // For non-managed cached adapters without a stored nativePath, probe independently.
+      let nativeCliFound = !!cached.nativePath
+      let nativeCliPath = cached.nativePath
+      let nativeCliVersion = cachedVersions.nativeVersion
+
+      if (!cached.nativePath) {
+        const { detectNativeCodex } = await import('./codex-detect')
+        const nativeCodex = await detectNativeCodex(this.codexDetectDeps)
+        if (nativeCodex) {
+          nativeCliFound = true
+          nativeCliPath = nativeCodex.path
+          nativeCliVersion = nativeCodex.version
+        }
+      }
+
       const codexComponents: ClaudeDetectResult['codexComponents'] = {
         adapterFound: true,
         adapterPath: cached.resolvedPath,
         adapterVersion: cachedVersions.version,
-        nativeCliFound: !!cached.nativePath,
-        nativeCliPath: cached.nativePath,
-        nativeCliVersion: cachedVersions.nativeVersion
+        nativeCliFound,
+        nativeCliPath,
+        nativeCliVersion
       }
 
       return {
@@ -930,14 +945,32 @@ class SettingsService {
         nativeVersion: detected.managedCodexVersion
       })
 
-      // Build codexComponents for successful detection
+      // Build codexComponents for successful detection. For managed adapters, use the bundled
+      // native CLI info. For PATH/npm adapters that passed smoke test, independently probe for
+      // native CLI so the UI can show both components.
+      let nativeCliFound = !!detected.managedCodexPath
+      let nativeCliPath = detected.managedCodexPath
+      let nativeCliVersion = detected.managedCodexVersion
+
+      if (!detected.managedCodexPath) {
+        // Non-managed adapter passed smoke test, which means a native CLI exists somewhere.
+        // Try to find it independently for display purposes.
+        const { detectNativeCodex } = await import('./codex-detect')
+        const nativeCodex = await detectNativeCodex(this.codexDetectDeps)
+        if (nativeCodex) {
+          nativeCliFound = true
+          nativeCliPath = nativeCodex.path
+          nativeCliVersion = nativeCodex.version
+        }
+      }
+
       const codexComponents: ClaudeDetectResult['codexComponents'] = {
         adapterFound: true,
         adapterPath: detected.adapterPath,
         adapterVersion: detected.adapterVersion,
-        nativeCliFound: !!detected.managedCodexPath,
-        nativeCliPath: detected.managedCodexPath,
-        nativeCliVersion: detected.managedCodexVersion
+        nativeCliFound,
+        nativeCliPath,
+        nativeCliVersion
       }
 
       return {
@@ -985,7 +1018,8 @@ class SettingsService {
         nativeCliVersion: components.nativeCliVersion,
         adapterFound: components.adapterFound,
         adapterPath: components.adapterPath,
-        adapterVersion: components.adapterVersion
+        adapterVersion: components.adapterVersion,
+        adapterFailureReason: components.adapterFailureReason
       }
     }
   }

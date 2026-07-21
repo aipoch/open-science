@@ -114,6 +114,10 @@ export type ClaudeDetectResult = {
     adapterFound: boolean
     adapterPath?: string
     adapterVersion?: string
+    // When adapter exists but is non-functional (version probe or smoke test failed), this
+    // explains why. Environment check uses this to mark the adapter row as failed even when
+    // adapterFound is true.
+    adapterFailureReason?: 'version-probe-failed' | 'smoke-test-failed'
   }
 }
 

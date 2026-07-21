@@ -308,7 +308,8 @@ const runEnvironmentCheck = async ({
         nativeCliVersion,
         adapterFound,
         adapterPath,
-        adapterVersion
+        adapterVersion,
+        adapterFailureReason
       } = runtime.codexComponents
       const isSelected = id === agentFrameworkId
 
@@ -324,15 +325,22 @@ const runEnvironmentCheck = async ({
         detail: nativeCliPath
       }
 
+      // Adapter with a failure reason is marked as found but non-functional - treat as failed
+      const adapterWorking = adapterFound && !adapterFailureReason
+
       const adapterCheck: EnvironmentCheckItem = {
         id: 'agent',
         label: 'Codex ACP adapter',
-        status: adapterFound ? 'passed' : isSelected ? 'failed' : 'warning',
-        summary: adapterFound
+        status: adapterWorking ? 'passed' : isSelected ? 'failed' : 'warning',
+        summary: adapterWorking
           ? `Codex ACP adapter ${adapterVersion} is ready.`
-          : isSelected
-            ? 'Codex ACP adapter is not installed.'
-            : 'Codex ACP adapter is not installed (optional — only needed if you switch to Codex).',
+          : adapterFound && adapterFailureReason
+            ? adapterFailureReason === 'smoke-test-failed'
+              ? `Codex ACP adapter ${adapterVersion} failed to initialize.`
+              : `Codex ACP adapter exists but version detection failed.`
+            : isSelected
+              ? 'Codex ACP adapter is not installed.'
+              : 'Codex ACP adapter is not installed (optional — only needed if you switch to Codex).',
         detail: adapterPath
       }
 
