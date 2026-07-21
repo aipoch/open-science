@@ -79,7 +79,6 @@ import type {
   ProjectFilesPage
 } from '../shared/project-files'
 import type {
-  DeleteProjectSessionsRequest,
   DeleteSessionRequest,
   LoadAllSessionsResult,
   PersistedChatSession,
@@ -191,7 +190,6 @@ interface OpenScienceAPI {
     loadAll(): Promise<LoadAllSessionsResult>
     saveSession(session: PersistedChatSession): Promise<void>
     deleteSession(request: DeleteSessionRequest): Promise<void>
-    deleteProjectSessions(request: DeleteProjectSessionsRequest): Promise<void>
     saveManifest(request: SaveSessionManifestRequest): Promise<void>
   }
   settings: {

@@ -76,7 +76,10 @@ class SessionRepository {
     private readonly storageDir: string,
     dependencies: Partial<SessionRepositoryDependencies> = {}
   ) {
-    this.dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencies }
+    this.dependencies = {
+      remove: dependencies.remove ?? DEFAULT_DEPENDENCIES.remove,
+      readSessionFile: dependencies.readSessionFile ?? DEFAULT_DEPENDENCIES.readSessionFile
+    }
   }
 
   private get sessionsDir(): string {

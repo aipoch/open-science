@@ -740,10 +740,6 @@ export type DeleteSessionRequest = {
   sessionId: string
 }
 
-export type DeleteProjectSessionsRequest = {
-  projectId: string
-}
-
 export type SaveSessionManifestRequest = {
   lastProjectId?: string
   lastSessionId?: string

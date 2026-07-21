@@ -214,6 +214,20 @@ describe('session persistence repository (per-session files)', () => {
     expect(readSessionFile).toHaveBeenCalledOnce()
   })
 
+  it('keeps default dependencies when optional overrides are explicitly undefined', async () => {
+    const root = await createStorageRoot()
+    const session = createSession()
+    await new SessionRepository(root).saveSession(session)
+    const repository = new SessionRepository(root, {
+      remove: undefined,
+      readSessionFile: undefined
+    })
+
+    await expect(repository.loadAll()).resolves.toMatchObject({
+      sessions: [{ id: session.id, projectId: session.projectId }]
+    })
+  })
+
   it('normalizes interrupted runs and open activities on load', async () => {
     const repository = new SessionRepository(await createStorageRoot())
 

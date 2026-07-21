@@ -1,7 +1,6 @@
 import { ipcMain } from 'electron'
 
 import type {
-  DeleteProjectSessionsRequest,
   DeleteSessionRequest,
   LoadAllSessionsResult,
   PersistedChatSession,
@@ -27,7 +26,6 @@ type SessionPersistenceHandlers = {
   loadAll: () => Promise<LoadAllSessionsResult>
   saveSession: (session: PersistedChatSession) => Promise<void>
   deleteSession: (request: DeleteSessionRequest) => Promise<void>
-  deleteProjectSessions: (request: DeleteProjectSessionsRequest) => Promise<void>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
 }
 
@@ -49,7 +47,6 @@ const createSessionPersistenceHandlers = (
       })
     })
   },
-  deleteProjectSessions: (request) => repository.deleteProjectSessions(request.projectId),
   saveManifest: (request) => repository.saveManifest(request)
 })
 
@@ -74,10 +71,6 @@ const registerSessionPersistenceIpcHandlers = (
   )
   ipcMain.handle('sessions:delete-session', (_event, request: DeleteSessionRequest) =>
     handlers.deleteSession(request)
-  )
-  ipcMain.handle(
-    'sessions:delete-project-sessions',
-    (_event, request: DeleteProjectSessionsRequest) => handlers.deleteProjectSessions(request)
   )
   ipcMain.handle('sessions:save-manifest', (_event, request: SaveSessionManifestRequest) =>
     handlers.saveManifest(request)
