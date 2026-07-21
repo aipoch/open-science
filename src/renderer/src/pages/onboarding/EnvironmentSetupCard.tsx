@@ -240,27 +240,7 @@ const EnvironmentSetupCard = ({
                 ) : (
                   <TerminalSquare aria-hidden="true" />
                 )}
-                {isInstalling
-                  ? 'Installing…'
-                  : (() => {
-                      // Specify what will be installed based on what's missing
-                      if (
-                        environment.agentFrameworkId === 'codex' &&
-                        environment.runtime.codexComponents
-                      ) {
-                        const { nativeCliFound, adapterFound } = environment.runtime.codexComponents
-                        if (!nativeCliFound && !adapterFound) {
-                          return 'Install Codex CLI + adapter'
-                        }
-                        if (!nativeCliFound) {
-                          return 'Install Codex CLI'
-                        }
-                        if (!adapterFound) {
-                          return 'Install ACP adapter'
-                        }
-                      }
-                      return 'Install missing runtime'
-                    })()}
+                {isInstalling ? 'Installing…' : 'Install missing runtime'}
               </Button>
             </div>
           ) : (
