@@ -36,7 +36,7 @@
     "predev": "node scripts/dev-app-branding.cjs"
   },
   "dependencies": {
-    "@agentclientprotocol/claude-agent-acp": "^0.58.1",
+    "@agentclientprotocol/claude-agent-acp": "^0.60.0",
     "@agentclientprotocol/sdk": "^1.2.1",
     "@bokuweb/zstd-wasm": "^0.0.27",
     "@electron-toolkit/preload": "^3.0.2",
