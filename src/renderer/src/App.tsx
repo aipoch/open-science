@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { useSessionPersistence } from '@/lib/session-persistence/session-persistence'
+import { CloseConfirmModal } from '@/components/CloseConfirmModal'
 import { DataRootMissingDialog } from '@/components/DataRootMissingDialog'
 import { LegacyDataMoveDialog } from '@/components/LegacyDataMoveDialog'
 import { UpdateDialog } from '@/components/UpdateDialog'
@@ -120,6 +121,7 @@ const App = (): React.JSX.Element | null => {
       <SettingsPage open={isSettingsOpen} onClose={closeSettings} />
       <ConnectorApprovalDialog />
       <UpdateDialog />
+      <CloseConfirmModal />
       <DataRootMissingDialog
         open={missingDataRoot !== undefined}
         dataRoot={missingDataRoot ?? ''}
