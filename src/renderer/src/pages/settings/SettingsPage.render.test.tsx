@@ -771,10 +771,7 @@ describe('SettingsPage Codex framework', () => {
       agentReady: true,
       activeProviderReady: true
     })
-    const logoutIsolatedCodex = vi.fn().mockResolvedValue({
-      ...snapshot,
-      providers: [{ ...provider, lastValidatedAt: undefined }]
-    })
+    const logoutIsolatedCodex = vi.fn().mockResolvedValue({ ok: true, category: 'ok' })
     api.settings.logoutIsolatedCodex = logoutIsolatedCodex
 
     await act(async () => {
@@ -784,6 +781,58 @@ describe('SettingsPage Codex framework', () => {
     await act(async () => signOut?.click())
 
     expect(logoutIsolatedCodex).toHaveBeenCalledOnce()
+    const errorAlert = document.body.querySelector('[role="alert"]')
+    expect(errorAlert).toBeNull()
+  })
+
+  it('surfaces a Codex sign-out timeout through the provider error alert', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    const provider = {
+      id: 'builtin-codex-subscription',
+      type: 'codex-isolated',
+      name: 'Codex subscription',
+      apiEndpoints: ['responses'],
+      models: ['gpt-5.6-sol'],
+      supportsImageInput: true,
+      hasKey: false,
+      needsKey: false,
+      verified: true,
+      lastValidatedAt: Date.now()
+    }
+    const snapshot = {
+      claude: {},
+      opencode: {},
+      codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
+      providers: [provider],
+      activeProviderId: provider.id,
+      activeModel: 'gpt-5.6-sol',
+      agentFrameworkId: 'codex',
+      agentFrameworks: frameworks,
+      claudeManaged: false,
+      opencodeManaged: false,
+      codexManaged: true
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue(snapshot)
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      codexReady: true,
+      agentFrameworkId: 'codex',
+      agentReady: true,
+      activeProviderReady: true
+    })
+    const logoutIsolatedCodex = vi
+      .fn()
+      .mockResolvedValue({ ok: false, category: 'timeout', message: 'Codex sign-out timed out.' })
+    api.settings.logoutIsolatedCodex = logoutIsolatedCodex
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    const signOut = document.body.querySelector<HTMLButtonElement>('[aria-label="Sign out"]')
+    await act(async () => signOut?.click())
+
+    expect(logoutIsolatedCodex).toHaveBeenCalledOnce()
+    const errorAlert = document.body.querySelector('[role="alert"]')
+    expect(errorAlert?.textContent).toBe('Codex sign-out timed out.')
   })
 
   it('shows Codex login-check IPC failures instead of leaving an unhandled rejection', async () => {
