@@ -6,23 +6,45 @@ import { Readable } from 'node:stream'
 import { gzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-// When armed, the rename from the staged scratch dir to the final destination throws EPERM,
-// simulating the Windows "operation not permitted" error that triggered the bug report.
-const injectRenameEperm = vi.hoisted(() => ({ armed: false }))
+// Injectable fault flags for the fs/promises mock — each targets one specific rename call:
+//   onStagedMove: throw EPERM when src is the .codex-install- scratch dir (staged→destination)
+//   onDestBackup: throw EPERM when dest contains .backup- (destination→backup, upgrade path)
+//   onRestore: throw EPERM when src contains .backup- (backup→destination restore)
+//   cp: throw EPERM from cp() to exercise the copy-failure→backup-restore branch
+const fsFaults = vi.hoisted(() => ({
+  renameOnStagedMove: false,
+  renameOnDestBackup: false,
+  renameOnRestore: false,
+  cpFailure: false
+}))
 
 vi.mock('node:fs/promises', async (importActual) => {
   const actual = await importActual<typeof import('node:fs/promises')>()
   return {
     ...actual,
     rename: vi.fn(async (src: string, dest: string) => {
-      if (injectRenameEperm.armed && src.includes('.codex-install-')) {
-        injectRenameEperm.armed = false
-        const err = Object.assign(new Error('EPERM: operation not permitted, rename'), {
-          code: 'EPERM'
-        })
-        throw err
+      if (fsFaults.renameOnStagedMove && src.includes('.codex-install-')) {
+        fsFaults.renameOnStagedMove = false
+        throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' })
+      }
+      if (fsFaults.renameOnDestBackup && dest.includes('.backup-')) {
+        fsFaults.renameOnDestBackup = false
+        throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' })
+      }
+      if (fsFaults.renameOnRestore && src.includes('.backup-')) {
+        fsFaults.renameOnRestore = false
+        throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' })
       }
       return actual.rename(src, dest)
+    }),
+    cp: vi.fn(async (src: string, dest: string, opts?: object) => {
+      if (fsFaults.cpFailure) {
+        fsFaults.cpFailure = false
+        throw Object.assign(new Error('EPERM: operation not permitted, copyfile'), {
+          code: 'EPERM'
+        })
+      }
+      return actual.cp(src, dest, opts as Parameters<typeof actual.cp>[2])
     })
   }
 })
@@ -579,7 +601,7 @@ describe('installManagedCodex', () => {
     expect(await readFile(join(managedCodexRoot(root), 'previous-runtime'), 'utf8')).toBe('keep-me')
   })
 
-  it('falls back to copy+delete when rename throws EPERM (Windows antivirus / locked files)', async () => {
+  it('falls back to copy+delete when staged→destination rename throws EPERM (first install)', async () => {
     root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
     const platform = resolveManagedCodexPlatform({ platform: 'linux', arch: 'x64' })
     const adapterTgz = buildTgz([
@@ -602,12 +624,10 @@ describe('installManagedCodex', () => {
       stream: Readable.from(url.includes('adapter') ? adapterTgz : nativeTgz)
     })
 
-    // Activate the EPERM rename injection (checked by the module-level mock below).
-    injectRenameEperm.armed = true
-
+    fsFaults.renameOnStagedMove = true
     try {
       const outcome = await installManagedCodex({
-        installId: 'codex-eperm',
+        installId: 'codex-eperm-staged',
         onEvent: () => undefined,
         dataRoot: root,
         registries: ['https://reg'],
@@ -624,7 +644,122 @@ describe('installManagedCodex', () => {
       expect(await readFile(managedCodexAdapterEntry(root), 'utf8')).toBe('adapter-eperm')
       expect(await readFile(managedCodexBinary(root, platform), 'utf8')).toBe('codex-eperm')
     } finally {
-      injectRenameEperm.armed = false
+      fsFaults.renameOnStagedMove = false
+    }
+  })
+
+  it('falls back to copy+delete when destination→backup rename throws EPERM (upgrade path)', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
+    const platform = resolveManagedCodexPlatform({ platform: 'linux', arch: 'x64' })
+    const adapterTgz = buildTgz([
+      { name: 'package/dist/index.js', content: Buffer.from('adapter-upgrade'), mode: 0o755 }
+    ])
+    const nativeTgz = buildTgz([
+      {
+        name: `package/vendor/${platform.target}/bin/codex`,
+        content: Buffer.from('codex-upgrade'),
+        mode: 0o755
+      }
+    ])
+    const fetchJson = async (url: string): Promise<unknown> =>
+      url.includes('agentclientprotocol%2fcodex-acp')
+        ? { dist: { tarball: 'https://reg/adapter.tgz', integrity: sha512(adapterTgz) } }
+        : { dist: { tarball: 'https://reg/codex.tgz', integrity: sha512(nativeTgz) } }
+    const fetchTarball = async (
+      url: string
+    ): Promise<{ stream: NodeJS.ReadableStream; totalBytes?: number }> => ({
+      stream: Readable.from(url.includes('adapter') ? adapterTgz : nativeTgz)
+    })
+
+    // Pre-seed an existing codex-managed dir (simulates an upgrade/reinstall scenario).
+    await mkdir(managedCodexRoot(root), { recursive: true })
+    await writeFile(join(managedCodexRoot(root), 'old-runtime'), 'old')
+
+    fsFaults.renameOnDestBackup = true
+    try {
+      const outcome = await installManagedCodex({
+        installId: 'codex-eperm-backup',
+        onEvent: () => undefined,
+        dataRoot: root,
+        registries: ['https://reg'],
+        platform,
+        fetchJson,
+        fetchTarball,
+        verifyAdapter: () => Promise.resolve('1.1.4'),
+        verifyCodex: () => Promise.resolve('0.144.6'),
+        verifyPair: vi.fn().mockResolvedValue(undefined),
+        integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
+      })
+
+      expect(outcome.result.ok).toBe(true)
+      expect(await readFile(managedCodexAdapterEntry(root), 'utf8')).toBe('adapter-upgrade')
+      expect(await readFile(managedCodexBinary(root, platform), 'utf8')).toBe('codex-upgrade')
+      // Old runtime must be gone from the final destination.
+      await expect(readFile(join(managedCodexRoot(root), 'old-runtime'))).rejects.toThrow()
+    } finally {
+      fsFaults.renameOnDestBackup = false
+    }
+  })
+
+  it('restores backup and surfaces error with backup path when cp fails during EPERM fallback', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
+    const platform = resolveManagedCodexPlatform({ platform: 'linux', arch: 'x64' })
+    const adapterTgz = buildTgz([
+      { name: 'package/dist/index.js', content: Buffer.from('adapter-cp-fail'), mode: 0o755 }
+    ])
+    const nativeTgz = buildTgz([
+      {
+        name: `package/vendor/${platform.target}/bin/codex`,
+        content: Buffer.from('codex-cp-fail'),
+        mode: 0o755
+      }
+    ])
+    const fetchJson = async (url: string): Promise<unknown> =>
+      url.includes('agentclientprotocol%2fcodex-acp')
+        ? { dist: { tarball: 'https://reg/adapter.tgz', integrity: sha512(adapterTgz) } }
+        : { dist: { tarball: 'https://reg/codex.tgz', integrity: sha512(nativeTgz) } }
+    const fetchTarball = async (
+      url: string
+    ): Promise<{ stream: NodeJS.ReadableStream; totalBytes?: number }> => ({
+      stream: Readable.from(url.includes('adapter') ? adapterTgz : nativeTgz)
+    })
+
+    // Pre-seed an existing install so hasBackup=true when the copy fallback runs.
+    await mkdir(managedCodexRoot(root), { recursive: true })
+    await writeFile(join(managedCodexRoot(root), 'previous-runtime'), 'keep-me')
+
+    // rename(staged→destination) throws EPERM, then cp also throws EPERM, then restore rename throws EPERM.
+    fsFaults.renameOnStagedMove = true
+    fsFaults.cpFailure = true
+    fsFaults.renameOnRestore = true
+    try {
+      const outcome = await installManagedCodex({
+        installId: 'codex-cp-fail',
+        onEvent: () => undefined,
+        dataRoot: root,
+        registries: ['https://reg'],
+        platform,
+        fetchJson,
+        fetchTarball,
+        verifyAdapter: () => Promise.resolve('1.1.4'),
+        verifyCodex: () => Promise.resolve('0.144.6'),
+        verifyPair: vi.fn().mockResolvedValue(undefined),
+        integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
+      })
+
+      // Install must fail.
+      expect(outcome.result.ok).toBe(false)
+      // Error must mention the backup path so the user can recover manually.
+      expect(outcome.result.error).toMatch(/backup retained at/)
+      // errorLog must have been called with the backup path.
+      expect(errorLogSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to restore backup'),
+        expect.anything()
+      )
+    } finally {
+      fsFaults.renameOnStagedMove = false
+      fsFaults.cpFailure = false
+      fsFaults.renameOnRestore = false
     }
   })
 

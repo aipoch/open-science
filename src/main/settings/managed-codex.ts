@@ -562,26 +562,55 @@ const replaceDirectory = async (staged: string, destination: string): Promise<vo
   const backup = `${destination}.backup-${randomUUID()}`
   let hasBackup = false
 
+  // Step 1: move the existing destination aside as a backup.
+  // On Windows, rename can fail with EPERM when antivirus holds a lock on files inside the
+  // existing install, or EXDEV on a cross-device move (defensive — same-volume layout makes
+  // EXDEV unreachable in practice, but guarded for completeness). Fall back to cp+rm.
   try {
     await rename(destination, backup)
     hasBackup = true
   } catch (error) {
-    if (errorCode(error) !== 'ENOENT') throw error
+    const code = errorCode(error)
+    if (code === 'ENOENT') {
+      // Nothing to back up — first install.
+    } else if (code === 'EPERM' || code === 'EXDEV') {
+      try {
+        await cp(destination, backup, { recursive: true })
+        await rm(destination, { recursive: true, force: true })
+        hasBackup = true
+      } catch {
+        throw error
+      }
+    } else {
+      throw error
+    }
   }
 
+  // Step 2: move the staged runtime into the final destination.
   try {
     await rename(staged, destination)
   } catch (renameError) {
     const code = errorCode(renameError)
-    // On Windows, rename across directories can fail with EPERM (e.g. when antivirus or Windows
-    // Defender locks files) or EXDEV (cross-device move). Fall back to a recursive copy + delete.
     if (code === 'EPERM' || code === 'EXDEV') {
       try {
         await cp(staged, destination, { recursive: true })
         await rm(staged, { recursive: true, force: true }).catch(() => undefined)
       } catch (copyError) {
+        // Copy failed — try to restore the backup so the user's previous install survives.
         await rm(destination, { recursive: true, force: true }).catch(() => undefined)
-        if (hasBackup) await rename(backup, destination).catch(() => undefined)
+        if (hasBackup) {
+          try {
+            await rename(backup, destination)
+          } catch (restoreError) {
+            // Restore also failed; log the backup path so the user can recover manually.
+            log.error(
+              `Failed to restore backup after copy error. Backup retained at: ${backup}`,
+              restoreError
+            )
+            const msg = copyError instanceof Error ? copyError.message : String(copyError)
+            throw new Error(`${msg} (backup retained at ${backup})`)
+          }
+        }
         throw copyError
       }
     } else {
