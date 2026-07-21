@@ -10,21 +10,19 @@
 
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
-const { invokeMock, exposeMock, onMock, removeListenerMock } = vi.hoisted(() => ({
+const { invokeMock, exposeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
-  exposeMock: vi.fn(),
-  onMock: vi.fn(),
-  removeListenerMock: vi.fn()
+  exposeMock: vi.fn()
 }))
 
 vi.mock('electron', () => ({
   contextBridge: { exposeInMainWorld: exposeMock },
   ipcRenderer: {
     invoke: invokeMock,
-    on: onMock,
+    on: vi.fn(),
     off: vi.fn(),
     send: vi.fn(),
-    removeListener: removeListenerMock
+    removeListener: vi.fn()
   }
 }))
 
@@ -55,13 +53,6 @@ type PreloadApi = {
     install: () => unknown
     uninstall: () => unknown
   }
-  projectFiles: {
-    getOverview: (request: unknown) => unknown
-    listFiles: (request: unknown) => unknown
-    listArtifactGroups: (request: unknown) => unknown
-    repairIndex: (request: unknown) => unknown
-    onChanged: (listener: (event: unknown) => void) => () => void
-  }
 }
 
 let api: PreloadApi
@@ -81,8 +72,6 @@ beforeAll(async () => {
 
 afterEach(() => {
   invokeMock.mockClear()
-  onMock.mockClear()
-  removeListenerMock.mockClear()
 })
 
 // Each case: invoke a bridge method with sample args, then assert the exact channel + forwarded args.
@@ -99,12 +88,6 @@ const sampleManifest = { projectId: 'p-1', sessionId: 's-1' }
 const sampleInstall = { executablePath: '/usr/local/bin/opencode' }
 const sampleFramework = { framework: 'opencode' }
 const sampleResumeRequest = { sessionId: 's-1', cwd: '/workspace/project' }
-const sampleProjectFilesRequest = { projectId: 'p-1' }
-const sampleListFilesRequest = {
-  projectId: 'p-1',
-  collection: { kind: 'uploads' as const },
-  limit: 20
-}
 
 const cases: ForwardingCase[] = [
   // sessions block
@@ -131,31 +114,6 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.sessions.saveManifest(sampleManifest),
     channel: 'sessions:save-manifest',
     args: [sampleManifest]
-  },
-  // Project Files metadata projection
-  {
-    name: 'projectFiles.getOverview → project-files:get-overview',
-    invoke: (a) => a.projectFiles.getOverview(sampleProjectFilesRequest),
-    channel: 'project-files:get-overview',
-    args: [sampleProjectFilesRequest]
-  },
-  {
-    name: 'projectFiles.listFiles → project-files:list-files',
-    invoke: (a) => a.projectFiles.listFiles(sampleListFilesRequest),
-    channel: 'project-files:list-files',
-    args: [sampleListFilesRequest]
-  },
-  {
-    name: 'projectFiles.listArtifactGroups → project-files:list-artifact-groups',
-    invoke: (a) => a.projectFiles.listArtifactGroups(sampleProjectFilesRequest),
-    channel: 'project-files:list-artifact-groups',
-    args: [sampleProjectFilesRequest]
-  },
-  {
-    name: 'projectFiles.repairIndex → project-files:repair-index',
-    invoke: (a) => a.projectFiles.repairIndex(sampleProjectFilesRequest),
-    channel: 'project-files:repair-index',
-    args: [sampleProjectFilesRequest]
   },
   // agent-framework / opencode settings additions
   {
@@ -241,7 +199,7 @@ const cases: ForwardingCase[] = [
 ]
 
 describe('preload bridge — sessions + agent-framework IPC channels', () => {
-  it('does not expose project-session deletion outside coordinated project deletion', () => {
+  it('does not expose the legacy half-delete project-session command', () => {
     expect(api.sessions).not.toHaveProperty('deleteProjectSessions')
   })
 
@@ -257,19 +215,5 @@ describe('preload bridge — sessions + agent-framework IPC channels', () => {
     // ipcRenderer.invoke unchanged.
     api.settings.installOpencode(sampleInstall)
     expect(invokeMock.mock.calls[0]?.[1]).toBe(sampleInstall)
-  })
-
-  it('subscribes and unsubscribes from project file changes with the original listener payload', () => {
-    const listener = vi.fn()
-    const event = { projectId: 'p-1', sources: ['upload'], kind: 'upsert' }
-    const unsubscribe = api.projectFiles.onChanged(listener)
-    const wrappedListener = onMock.mock.calls[0]?.[1]
-
-    expect(onMock).toHaveBeenCalledWith('project-files:changed', expect.any(Function))
-    wrappedListener({}, event)
-    expect(listener).toHaveBeenCalledWith(event)
-
-    unsubscribe()
-    expect(removeListenerMock).toHaveBeenCalledWith('project-files:changed', wrappedListener)
   })
 })
