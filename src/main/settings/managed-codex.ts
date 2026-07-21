@@ -3,6 +3,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { createReadStream } from 'node:fs'
 import {
   chmod,
+  cp,
   mkdir,
   mkdtemp,
   open,
@@ -570,9 +571,23 @@ const replaceDirectory = async (staged: string, destination: string): Promise<vo
 
   try {
     await rename(staged, destination)
-  } catch (error) {
-    if (hasBackup) await rename(backup, destination).catch(() => undefined)
-    throw error
+  } catch (renameError) {
+    const code = errorCode(renameError)
+    // On Windows, rename across directories can fail with EPERM (e.g. when antivirus or Windows
+    // Defender locks files) or EXDEV (cross-device move). Fall back to a recursive copy + delete.
+    if (code === 'EPERM' || code === 'EXDEV') {
+      try {
+        await cp(staged, destination, { recursive: true })
+        await rm(staged, { recursive: true, force: true }).catch(() => undefined)
+      } catch (copyError) {
+        await rm(destination, { recursive: true, force: true }).catch(() => undefined)
+        if (hasBackup) await rename(backup, destination).catch(() => undefined)
+        throw copyError
+      }
+    } else {
+      if (hasBackup) await rename(backup, destination).catch(() => undefined)
+      throw renameError
+    }
   }
 
   if (hasBackup) await rm(backup, { recursive: true, force: true }).catch(() => undefined)

@@ -6,6 +6,27 @@ import { Readable } from 'node:stream'
 import { gzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+// When armed, the rename from the staged scratch dir to the final destination throws EPERM,
+// simulating the Windows "operation not permitted" error that triggered the bug report.
+const injectRenameEperm = vi.hoisted(() => ({ armed: false }))
+
+vi.mock('node:fs/promises', async (importActual) => {
+  const actual = await importActual<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    rename: vi.fn(async (src: string, dest: string) => {
+      if (injectRenameEperm.armed && src.includes('.codex-install-')) {
+        injectRenameEperm.armed = false
+        const err = Object.assign(new Error('EPERM: operation not permitted, rename'), {
+          code: 'EPERM'
+        })
+        throw err
+      }
+      return actual.rename(src, dest)
+    })
+  }
+})
+
 const { errorLogSpy, warnLogSpy } = vi.hoisted(() => ({
   errorLogSpy: vi.fn(),
   warnLogSpy: vi.fn()
@@ -556,6 +577,55 @@ describe('installManagedCodex', () => {
     expect(outcome.result.ok).toBe(false)
     expect(outcome.result.error).toMatch(/Codex binary failed its --version check/)
     expect(await readFile(join(managedCodexRoot(root), 'previous-runtime'), 'utf8')).toBe('keep-me')
+  })
+
+  it('falls back to copy+delete when rename throws EPERM (Windows antivirus / locked files)', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
+    const platform = resolveManagedCodexPlatform({ platform: 'linux', arch: 'x64' })
+    const adapterTgz = buildTgz([
+      { name: 'package/dist/index.js', content: Buffer.from('adapter-eperm'), mode: 0o755 }
+    ])
+    const nativeTgz = buildTgz([
+      {
+        name: `package/vendor/${platform.target}/bin/codex`,
+        content: Buffer.from('codex-eperm'),
+        mode: 0o755
+      }
+    ])
+    const fetchJson = async (url: string): Promise<unknown> =>
+      url.includes('agentclientprotocol%2fcodex-acp')
+        ? { dist: { tarball: 'https://reg/adapter.tgz', integrity: sha512(adapterTgz) } }
+        : { dist: { tarball: 'https://reg/codex.tgz', integrity: sha512(nativeTgz) } }
+    const fetchTarball = async (
+      url: string
+    ): Promise<{ stream: NodeJS.ReadableStream; totalBytes?: number }> => ({
+      stream: Readable.from(url.includes('adapter') ? adapterTgz : nativeTgz)
+    })
+
+    // Activate the EPERM rename injection (checked by the module-level mock below).
+    injectRenameEperm.armed = true
+
+    try {
+      const outcome = await installManagedCodex({
+        installId: 'codex-eperm',
+        onEvent: () => undefined,
+        dataRoot: root,
+        registries: ['https://reg'],
+        platform,
+        fetchJson,
+        fetchTarball,
+        verifyAdapter: () => Promise.resolve('1.1.4'),
+        verifyCodex: () => Promise.resolve('0.144.6'),
+        verifyPair: vi.fn().mockResolvedValue(undefined),
+        integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
+      })
+
+      expect(outcome.result.ok).toBe(true)
+      expect(await readFile(managedCodexAdapterEntry(root), 'utf8')).toBe('adapter-eperm')
+      expect(await readFile(managedCodexBinary(root, platform), 'utf8')).toBe('codex-eperm')
+    } finally {
+      injectRenameEperm.armed = false
+    }
   })
 
   it('uninstalls only the managed Codex tree and is idempotent', async () => {
