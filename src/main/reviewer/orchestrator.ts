@@ -578,9 +578,9 @@ const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
     }
 
     const dispositionsByFindingId = new Map(
-      scopedResult.submittedChecks
-        .filter((check) => check.sourceFindingId)
-        .map((check) => [check.sourceFindingId!, check] as const)
+      scopedResult.submittedChecks.flatMap((check) =>
+        check.sourceFindingId ? [[check.sourceFindingId, check] as const] : []
+      )
     )
 
     const stillOpenChecks: ReviewCheck[] = []

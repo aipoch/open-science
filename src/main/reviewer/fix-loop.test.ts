@@ -19,7 +19,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpRuntime } from '../acp/runtime'
 import { ReviewRepository } from './repository'
@@ -567,6 +567,70 @@ describe('fix loop: all-pass on re-review ends the loop (resolved)', () => {
         )
       )
     ).toBe(true)
+
+    await client.$disconnect()
+  })
+})
+
+describe('fix loop: cancellation', () => {
+  it('stops before the first correction round when cancelled as the loop starts', async () => {
+    const process = new FakeAgentProcess()
+    const shared = makeSharedSession(makeSession())
+    const correctionPrompts: string[] = []
+    const abortController = new AbortController()
+    const onFixLoopStart = vi.fn(() => abortController.abort())
+    const onFixLoopEnd = vi.fn()
+
+    const agentState = startFixLoopFakeAgent(
+      process,
+      {
+        mainSessionId: 'main-session-1',
+        initialChecks: [
+          {
+            status: 'fail',
+            claim: 'Agent claimed 42 results',
+            evidence: 'Tool output shows 0 results',
+            locator: { blockRef: { blockIndex: 1 }, contentHash: 'abc123' }
+          }
+        ],
+        onCorrectionPrompt: (text) => correctionPrompts.push(text)
+      },
+      shared
+    )
+
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    const client = createProjectDbClient(temporaryRoot!)
+    await ensureProjectSchema(client)
+    const repository = new ReviewRepository(() => Promise.resolve(client))
+
+    const review = await runReview({
+      sessionId: 'session-1',
+      turnMessageId: 'msg-2',
+      projectId: 'project-1',
+      getSession: () => shared.getSession(),
+      reviewRepository: repository,
+      acpRuntime: runtime,
+      artifactStorageRoot: temporaryRoot!,
+      mainSessionId: 'main-session-1',
+      onCorrectionPrompt: (text) => correctionPrompts.push(text),
+      onFixLoopStart,
+      onFixLoopEnd,
+      fixLoopAbortSignal: abortController.signal
+    })
+
+    expect(onFixLoopStart).toHaveBeenCalledTimes(1)
+    expect(onFixLoopEnd).toHaveBeenCalledTimes(1)
+    expect(correctionPrompts).toEqual([])
+    expect(
+      agentState.sessions.filter((session) => session.sessionId.startsWith('reviewer-session'))
+    ).toHaveLength(1)
+    expect(review.checks[0]?.resolution).toBe('open')
 
     await client.$disconnect()
   })

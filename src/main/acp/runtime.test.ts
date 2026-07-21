@@ -2,7 +2,7 @@ import * as acp from '@agentclientprotocol/sdk'
 import type { ContentBlock, SessionModeState } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
@@ -110,6 +110,7 @@ const startFakeAgent = (
     // When true, the agent does NOT advertise session/close capability, so the runtime must fall back to
     // the session/cancel notification on delete instead of a close request.
     supportsClose?: boolean
+    rejectModeChange?: boolean
     onPrompt?: (context: {
       sessionId: string
       text: string
@@ -195,6 +196,7 @@ const startFakeAgent = (
       return { modes: options.modes }
     })
     .onRequest(acp.methods.agent.session.setMode, (ctx) => {
+      if (options.rejectModeChange) throw new Error('set mode failed')
       modeChanges.push({ sessionId: ctx.params.sessionId, modeId: ctx.params.modeId })
       actions.push(`mode:${ctx.params.modeId}`)
       return {}
@@ -2451,6 +2453,42 @@ describe('ACP runtime session management', () => {
       })
     ).rejects.toThrow(/loopback HTTP open-science-reviewer/)
     expect(spawnAgent).not.toHaveBeenCalled()
+  })
+
+  it('removes the temporary reviewer directory when session startup fails', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['reviewer-session-1'], {
+      modes: createModes(['default'], 'unexpected-mode'),
+      rejectModeChange: true
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await expect(
+      runtime.buildReviewerSession({
+        cwd: '/workspace',
+        mcpServers: [
+          {
+            type: 'http',
+            name: 'open-science-reviewer',
+            url: 'http://127.0.0.1:1/mcp',
+            headers: []
+          }
+        ]
+      })
+    ).rejects.toThrow()
+
+    expect(fakeAgent.newSessions).toHaveLength(1)
+    const reviewerSession = fakeAgent.newSessions[0]
+    if (!reviewerSession) throw new Error('Reviewer session was not created before startup failed')
+    const reviewerCwd = reviewerSession.cwd
+    expect(reviewerCwd).toMatch(/open-science-reviewer-/)
+    await expect(stat(reviewerCwd)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(reviewerSessionIds(runtime).size).toBe(0)
+    expect(mcpServerNamesMap(runtime).has('reviewer-session-1')).toBe(false)
   })
 
   it('rejects tools from every MCP namespace except the dedicated reviewer server', async () => {

@@ -229,7 +229,8 @@ export class ReviewerMcpServer {
       version: '1.0.0'
     })
 
-    if (this.evidence) {
+    const evidence = this.evidence
+    if (evidence) {
       server.registerTool(
         REVIEWER_MCP_TOOLS.readTurn,
         {
@@ -240,7 +241,7 @@ export class ReviewerMcpServer {
           inputSchema: {}
         },
         async () => ({
-          content: [{ type: 'text', text: JSON.stringify(this.evidence!.readTurn()) }]
+          content: [{ type: 'text', text: JSON.stringify(evidence.readTurn()) }]
         })
       )
 
@@ -261,7 +262,7 @@ export class ReviewerMcpServer {
               content: [
                 {
                   type: 'text',
-                  text: JSON.stringify(this.evidence!.queryExecutionLog(activityId))
+                  text: JSON.stringify(evidence.queryExecutionLog(activityId))
                 }
               ]
             }
@@ -283,9 +284,7 @@ export class ReviewerMcpServer {
         async ({ id }) => {
           try {
             return {
-              content: [
-                { type: 'text', text: JSON.stringify(await this.evidence!.readArtifact(id)) }
-              ]
+              content: [{ type: 'text', text: JSON.stringify(await evidence.readArtifact(id)) }]
             }
           } catch (error) {
             return this.toolError(error)
@@ -422,11 +421,12 @@ export class ReviewerMcpServer {
 
     let transport: StreamableHTTPServerTransport
 
-    if (sessionId && this.transports.has(sessionId)) {
+    const existingTransport = sessionId ? this.transports.get(sessionId) : undefined
+    if (existingTransport) {
       // Established session: every follow-up request (POST messages, GET SSE stream, DELETE) carries
       // the mcp-session-id, so reuse its transport. Crucially the GET that opens the SSE stream lands
       // here — connecting a second transport to the shared McpServer would throw "Already connected".
-      transport = this.transports.get(sessionId)!
+      transport = existingTransport
     } else if (!sessionId && req.method === 'POST') {
       // The initialize request is the only one without a session id: create the transport, register it
       // as soon as the session id is assigned, and connect the McpServer to it exactly once.
