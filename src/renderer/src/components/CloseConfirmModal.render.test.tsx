@@ -4,6 +4,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CloseConfirmModal } from './CloseConfirmModal'
+import { useNavigationStore } from '@/stores/navigation-store'
+import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
 import type { CloseConfirmRequest } from '../../../shared/window-controls'
 
@@ -74,9 +76,14 @@ const findButtonByName = async (pattern: RegExp): Promise<HTMLButtonElement> => 
 }
 
 describe('CloseConfirmModal', () => {
-  it('acks on request and lists the enriched session title', async () => {
+  it('acks and shows the resolved project NAME (not the id main sent) plus the title', async () => {
+    useProjectStore.setState({
+      projects: [{ id: 'p1', name: 'My Analysis' } as never],
+      isLoaded: true,
+      loadError: undefined
+    })
     useSessionStore.setState({
-      sessions: [{ id: 's1', title: 'Fix data loader' } as never],
+      sessions: [{ id: 's1', projectId: 'p1', title: 'Fix data loader' } as never],
       selectedSessionId: undefined
     })
     render()
@@ -84,12 +91,39 @@ describe('CloseConfirmModal', () => {
       emit({
         requestId: 'r1',
         variant: 'close-to-tray',
-        sessions: [{ projectName: 'my-analysis', sessionId: 's1', kind: 'agent' }]
+        // main sends a project *id* here; the modal must resolve the human name instead.
+        sessions: [{ projectName: 'cmrqcvg5i0000vo387wdhdudj', sessionId: 's1', kind: 'agent' }]
       })
     })
     expect(sendResponse).toHaveBeenCalledWith({ requestId: 'r1', ack: true })
-    await findByText(/my-analysis/)
-    await findByText(/Fix data loader/)
+    await findByText(/My Analysis — Fix data loader/)
+    expect(document.body.textContent).not.toContain('cmrqcvg5i0000vo387wdhdudj')
+  })
+
+  it('opens the session and cancels the close when a running-session row is clicked', async () => {
+    const openSession = vi.fn()
+    useNavigationStore.setState({ openSession } as never)
+    useProjectStore.setState({
+      projects: [{ id: 'p1', name: 'My Analysis' } as never],
+      isLoaded: true,
+      loadError: undefined
+    })
+    useSessionStore.setState({
+      sessions: [{ id: 's1', projectId: 'p1', title: 'Fix data loader' } as never],
+      selectedSessionId: undefined
+    })
+    render()
+    act(() => {
+      emit({
+        requestId: 'r4',
+        variant: 'quit',
+        sessions: [{ projectName: 'p1', sessionId: 's1', kind: 'agent' }]
+      })
+    })
+    const row = await findButtonByName(/My Analysis — Fix data loader/)
+    act(() => row.click())
+    expect(openSession).toHaveBeenCalledWith('p1', 's1')
+    expect(sendResponse).toHaveBeenCalledWith({ requestId: 'r4', choice: 'cancel' })
   })
 
   it('replies quit / minimize from the close-to-tray buttons', async () => {
