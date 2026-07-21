@@ -398,6 +398,44 @@ describe('logger: errorLogFields', () => {
     expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
   })
 
+  it('marks an array whose length read throws as "[unreadable]" (not an empty array)', () => {
+    // Array `length` is non-configurable, so a throwing read is modelled with a Proxy get trap. The
+    // node is still Array.isArray, so the array branch runs and must degrade to the marker.
+    const arr = new Proxy(['x'], {
+      get(target, prop, receiver) {
+        if (prop === 'length') throw new Error('length trap')
+        return Reflect.get(target, prop, receiver)
+      }
+    })
+    const err = Object.assign(new Error('e'), { data: arr })
+
+    const fields = errorLogFields(err) as { data: string }
+    expect(fields.data).toBe('[unreadable]')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('is not derailed by a hostile Array subclass (Symbol.species + throwing toJSON)', () => {
+    // A subclass that hijacks Symbol.species AND defines a throwing toJSON. Building a fresh plain array
+    // by index (rather than value.map / JSON of the original) must keep the record serializable.
+    class Hostile extends Array {
+      static get [Symbol.species](): ArrayConstructor {
+        throw new Error('species trap')
+      }
+      toJSON(): never {
+        throw new Error('toJSON trap')
+      }
+    }
+    const arr = Hostile.from(['a', 'b']) as unknown[]
+    const err = Object.assign(new Error('e'), { data: arr })
+
+    const fields = errorLogFields(err) as { data: unknown }
+    // The elements are preserved via index reads; the hostile species/toJSON never run.
+    expect(fields.data).toEqual(['a', 'b'])
+    const line = formatLine('error', 'x', 'y', fields)
+    expect(() => JSON.parse(line)).not.toThrow()
+    expect(line).not.toContain('[unserializable]')
+  })
+
   it('does not trust an overridden Date.toISOString that returns a non-string', () => {
     const date = new Date(0)
     // A hostile override that would otherwise put a bigint into the record and break JSON.stringify.

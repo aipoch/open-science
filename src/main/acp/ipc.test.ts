@@ -278,4 +278,16 @@ describe('registerAcpIpcHandlers — create-session failure logging', () => {
 
     expect(errorLogSpy).not.toHaveBeenCalled()
   })
+
+  it('still re-throws the original error to the renderer when the logger itself throws', async () => {
+    registerWithFakes()
+    const failure = Object.assign(new Error('Internal error'), { code: -32603 })
+    createSession.mockRejectedValueOnce(failure)
+    // A hostile/broken logger must never mask the error the renderer needs to see.
+    errorLogSpy.mockImplementationOnce(() => {
+      throw new Error('logger boom')
+    })
+
+    await expect(handlers.get('acp:create-session')?.({}, {})).rejects.toBe(failure)
+  })
 })

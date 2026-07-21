@@ -4253,4 +4253,108 @@ describe('ACP runtime — failure-path robustness (errorMessage coercion + sync-
       errorLogSpy.mockReset()
     }
   })
+
+  it('still runs cleanup and emits the error state when the logger throws', async () => {
+    const spawnError = new Error('spawn failed D')
+    const statuses: string[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      callbacks: { onStateChanged: (state) => statuses.push(state.status) },
+      resolveBackend: () => ({
+        framework: {
+          ...claudeCodeFramework,
+          spawn: () => {
+            throw spawnError
+          }
+        },
+        executablePath: '/bin/agent',
+        env: {}
+      })
+    })
+    const disconnectSpy = vi.spyOn(
+      runtime as unknown as { disconnectCurrent: () => Promise<unknown> },
+      'disconnectCurrent'
+    )
+    errorLogSpy.mockImplementation(() => {
+      throw new Error('logger boom')
+    })
+
+    try {
+      await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toBe(spawnError)
+    } finally {
+      errorLogSpy.mockReset()
+    }
+
+    // A throwing logger must not skip the failure-handling side effects.
+    expect(disconnectSpy).toHaveBeenCalled()
+    expect(statuses).toContain('error')
+  })
+
+  it('re-throws the permission-profile failure even when the logger throws', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['perm-log-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    const boom = new Error('permission setup failed')
+    vi.spyOn(
+      runtime as unknown as { configurePermissionProfile: () => Promise<void> },
+      'configurePermissionProfile'
+    ).mockRejectedValueOnce(boom)
+    errorLogSpy.mockImplementation(() => {
+      throw new Error('logger boom')
+    })
+
+    try {
+      await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toBe(boom)
+    } finally {
+      errorLogSpy.mockReset()
+    }
+  })
+
+  it('re-throws the null-connection failure even when the logger throws', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['null-log-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    vi.spyOn(runtime, 'connect').mockResolvedValue(runtime.getSnapshot())
+    errorLogSpy.mockImplementation(() => {
+      throw new Error('logger boom')
+    })
+
+    try {
+      await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(
+        /ACP connection failed/
+      )
+    } finally {
+      errorLogSpy.mockReset()
+    }
+  })
+
+  it('re-throws the cause on the abandoned path even when the warn logger throws', async () => {
+    const process = new FakeAgentProcess()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => {
+        ;(runtime as unknown as { connectionGeneration: number }).connectionGeneration += 1
+        return asAgentProcess(process)
+      }
+    })
+    warnLogSpy.mockImplementation(() => {
+      throw new Error('warn boom')
+    })
+
+    try {
+      await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(/superseded/i)
+    } finally {
+      warnLogSpy.mockReset()
+    }
+  })
 })

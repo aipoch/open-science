@@ -131,6 +131,9 @@ const toLogSafe = (value: unknown, seen: Set<object>, depth: number): unknown =>
         // hijacked constructor could produce an object with a throwing toJSON) and a throwing index
         // getter would abort the whole map. Per-index safeRead degrades one element instead.
         const rawLength = safeRead(value as object, 'length')
+        // A throwing length getter means the node itself is unreadable — surface that rather than
+        // silently rendering an empty array.
+        if (rawLength === UNREADABLE) return UNREADABLE_MARKER
         const length =
           typeof rawLength === 'number' && Number.isFinite(rawLength) && rawLength >= 0
             ? rawLength
