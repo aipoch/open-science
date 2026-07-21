@@ -132,6 +132,7 @@ const hostCompute = {
       // Non-blocking job submission. Returns immediately with job_id + remote_workdir.
       // options: { environment?, resources?, inputs?, outputs?, timeout_seconds?, harvest? }
       // Session/project context is always threaded from spawn env for grant-scope memory.
+      // workspace_cwd is captured at spawn time so the main process can resolve workspace paths.
       async submit_job(intent, command, options = {}) {
         return computeRpc({
           op: 'submit_job',
@@ -145,7 +146,8 @@ const hostCompute = {
           timeout_seconds: options.timeout_seconds,
           harvest: options.harvest,
           session_id: COMPUTE_SESSION_ID,
-          project_id: COMPUTE_PROJECT_NAME
+          project_id: COMPUTE_PROJECT_NAME,
+          workspace_cwd: process.cwd()
         })
       },
 

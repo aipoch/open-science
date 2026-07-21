@@ -2,14 +2,17 @@
 // SystemScpRunner (the real spawner) is not tested here — it's covered by the fake-injection tests
 // in compute-service.test.ts, matching the pattern used for SshRunner.
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   MAX_DOWNLOAD_BYTES,
   MAX_IMPORT_BYTES,
+  SCP_UPLOAD_TIMEOUT_MS,
   buildScpArgs,
+  buildScpUploadArgs,
   inferMimeType,
   resolveDestFilename,
+  runScpUpload,
   shellSingleQuote,
   validateImportPath
 } from './scp-runner'
@@ -17,6 +20,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import type { ScpRunner } from './scp-runner'
 import type { ResolvedSshTarget } from './ssh-runner'
 
 // ---------------------------------------------------------------------------
@@ -30,6 +34,10 @@ describe('size constants', () => {
 
   it('MAX_IMPORT_BYTES is 50 MB', () => {
     expect(MAX_IMPORT_BYTES).toBe(50 * 1024 * 1024)
+  })
+
+  it('SCP_UPLOAD_TIMEOUT_MS is 30 minutes', () => {
+    expect(SCP_UPLOAD_TIMEOUT_MS).toBe(30 * 60 * 1000)
   })
 })
 
@@ -257,5 +265,112 @@ describe('resolveDestFilename', () => {
     await writeFile(join(tmpDir, 'README'), '')
     const name = await resolveDestFilename(tmpDir, 'README')
     expect(name).toBe('README (1)')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// buildScpUploadArgs
+// ---------------------------------------------------------------------------
+
+describe('buildScpUploadArgs', () => {
+  const target: ResolvedSshTarget = {
+    sshBinary: '/usr/bin/ssh',
+    host: 'biowulf.nih.gov',
+    extraArgs: ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10']
+  }
+
+  it('places localPath before remoteSpec (upload direction)', () => {
+    const args = buildScpUploadArgs(target, '/local/data.csv', '/remote/workdir/data.csv')
+    const localIdx = args.indexOf('/local/data.csv')
+    const remoteIdx = args.indexOf('biowulf.nih.gov:/remote/workdir/data.csv')
+    expect(localIdx).toBeGreaterThan(-1)
+    expect(remoteIdx).toBeGreaterThan(-1)
+    expect(localIdx).toBeLessThan(remoteIdx)
+  })
+
+  it('includes remote host:path spec', () => {
+    const args = buildScpUploadArgs(target, '/local/file.txt', '/remote/file.txt')
+    expect(args).toContain('biowulf.nih.gov:/remote/file.txt')
+    expect(args).toContain('/local/file.txt')
+  })
+
+  it('translates -p <port> to -o Port=<port>', () => {
+    const targetWithPort: ResolvedSshTarget = {
+      sshBinary: '/usr/bin/ssh',
+      host: 'biowulf.nih.gov',
+      extraArgs: ['-o', 'BatchMode=yes', '-p', '2222']
+    }
+    const args = buildScpUploadArgs(targetWithPort, '/local/file.txt', '/remote/file.txt')
+    expect(args).not.toContain('-p')
+    expect(args).toContain('Port=2222')
+  })
+
+  it('passes ControlMaster args through unchanged', () => {
+    const targetWithMux: ResolvedSshTarget = {
+      sshBinary: '/usr/bin/ssh',
+      host: 'biowulf.nih.gov',
+      extraArgs: ['-o', 'ControlMaster=auto', '-o', 'ControlPersist=60']
+    }
+    const args = buildScpUploadArgs(targetWithMux, '/local/a.csv', '/remote/a.csv')
+    expect(args).toContain('ControlMaster=auto')
+    expect(args).toContain('ControlPersist=60')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// runScpUpload
+// ---------------------------------------------------------------------------
+
+describe('runScpUpload', () => {
+  const target: ResolvedSshTarget = {
+    sshBinary: '/usr/bin/ssh',
+    host: 'biowulf.nih.gov',
+    extraArgs: ['-o', 'BatchMode=yes']
+  }
+
+  const makeFakeScpRunner = (result: {
+    exitCode: number | null
+    stderr: string
+    timedOut: boolean
+  }): ScpRunner => ({
+    copy: vi.fn(async () => result)
+  })
+
+  it('resolves without throwing on exit code 0', async () => {
+    const runner = makeFakeScpRunner({ exitCode: 0, stderr: '', timedOut: false })
+    await expect(
+      runScpUpload(runner, target, '/local/a.csv', '/remote/a.csv')
+    ).resolves.toBeUndefined()
+  })
+
+  it('throws with remoteFsError on non-zero exit', async () => {
+    const runner = makeFakeScpRunner({ exitCode: 1, stderr: 'permission denied', timedOut: false })
+    const err = await runScpUpload(runner, target, '/local/a.csv', '/remote/a.csv').catch((e) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect((err as { remoteFsError?: { remoteKind: string } }).remoteFsError?.remoteKind).toBe(
+      'permission'
+    )
+  })
+
+  it('throws with remoteFsError on timeout', async () => {
+    const runner = makeFakeScpRunner({ exitCode: null, stderr: '', timedOut: true })
+    const err = await runScpUpload(runner, target, '/local/a.csv', '/remote/a.csv').catch((e) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect((err as { remoteFsError?: { remoteKind: string } }).remoteFsError?.remoteKind).toBe(
+      'connection'
+    )
+    expect(err.message).toContain('timed out')
+  })
+
+  it('passes the upload args with localPath before remoteSpec', async () => {
+    const copy = vi.fn(async () => ({ exitCode: 0, stderr: '', timedOut: false }))
+    const runner: ScpRunner = { copy }
+    await runScpUpload(runner, target, '/local/data.csv', '/remote/data.csv')
+    const [, args] = (copy as ReturnType<typeof vi.fn>).mock.calls[0] as [string, string[]]
+    const localIdx = args.indexOf('/local/data.csv')
+    const remoteIdx = args.indexOf('biowulf.nih.gov:/remote/data.csv')
+    expect(localIdx).toBeGreaterThan(-1)
+    expect(remoteIdx).toBeGreaterThan(-1)
+    expect(localIdx).toBeLessThan(remoteIdx)
   })
 })

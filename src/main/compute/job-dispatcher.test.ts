@@ -4,9 +4,11 @@ import type { ComputeJob } from '../../shared/compute'
 import type { ComputeHostRepository } from './repository'
 import type { ComputeJobRepository } from './job-repository'
 import type { SshRunner, ResolvedSshTarget } from './ssh-runner'
+import type { ScpRunner } from './scp-runner'
 import {
   dispatchJob,
   buildLauncherScript,
+  stageInputs,
   toBase64,
   hashCommand,
   computeRemoteWorkdir
@@ -259,5 +261,150 @@ describe('dispatchJob', () => {
         jobRepository: repo as unknown as ComputeJobRepository
       })
     ).resolves.toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// stageInputs
+// ---------------------------------------------------------------------------
+
+describe('stageInputs', () => {
+  const fakeTarget: ResolvedSshTarget = {
+    sshBinary: '/usr/bin/ssh',
+    host: 'biowulf.nih.gov',
+    extraArgs: ['-o', 'BatchMode=yes']
+  }
+
+  const makeScpRunner = (exitCode = 0): ScpRunner => ({
+    copy: vi.fn(async () => ({ exitCode, stderr: exitCode !== 0 ? 'error' : '', timedOut: false }))
+  })
+
+  const makeSshRunnerForStagingLn = (exitCode = 0): SshRunner => ({
+    run: vi.fn(async () => ({
+      exitCode,
+      stdout: '',
+      stderr: exitCode !== 0 ? 'ln error' : '',
+      truncated: false,
+      timedOut: false
+    }))
+  })
+
+  it('calls scp for upload entries', async () => {
+    const scpRunner = makeScpRunner(0)
+    const runner = makeSshRunnerForStagingLn(0)
+    await stageInputs(
+      [
+        { kind: 'upload', localPath: '/local/data.csv', dstFilename: 'data.csv', label: 'data.csv' }
+      ],
+      '/remote/workdir',
+      runner,
+      fakeTarget,
+      scpRunner
+    )
+    expect((scpRunner.copy as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1)
+    const [, args] = (scpRunner.copy as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      string[]
+    ]
+    expect(args).toContain('/local/data.csv')
+    expect(args.some((a) => a.includes('/remote/workdir/data.csv'))).toBe(true)
+  })
+
+  it('runs ln -s for symlink entries', async () => {
+    const scpRunner = makeScpRunner(0)
+    const runner = makeSshRunnerForStagingLn(0)
+    await stageInputs(
+      [
+        {
+          kind: 'symlink',
+          remotePath: '/scratch/ref.fa',
+          dstFilename: 'ref.fa',
+          label: '/scratch/ref.fa'
+        }
+      ],
+      '/remote/workdir',
+      runner,
+      fakeTarget,
+      scpRunner
+    )
+    expect((scpRunner.copy as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0)
+    expect((runner.run as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1)
+    const [, cmd] = (runner.run as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      ResolvedSshTarget,
+      string
+    ]
+    expect(cmd).toContain('ln -s')
+    expect(cmd).toContain('/scratch/ref.fa')
+    expect(cmd).toContain('/remote/workdir/ref.fa')
+  })
+
+  it('throws on scp failure (all-or-nothing)', async () => {
+    const scpRunner = makeScpRunner(1)
+    const runner = makeSshRunnerForStagingLn(0)
+    await expect(
+      stageInputs(
+        [{ kind: 'upload', localPath: '/local/a.csv', dstFilename: 'a.csv', label: 'a.csv' }],
+        '/remote/workdir',
+        runner,
+        fakeTarget,
+        scpRunner
+      )
+    ).rejects.toThrow()
+  })
+
+  it('throws on ln -s failure (all-or-nothing)', async () => {
+    const scpRunner = makeScpRunner(0)
+    const runner = makeSshRunnerForStagingLn(1)
+    await expect(
+      stageInputs(
+        [
+          {
+            kind: 'symlink',
+            remotePath: '/scratch/ref.fa',
+            dstFilename: 'ref.fa',
+            label: '/scratch/ref.fa'
+          }
+        ],
+        '/remote/workdir',
+        runner,
+        fakeTarget,
+        scpRunner
+      )
+    ).rejects.toThrow(/ln -s failed/)
+  })
+})
+
+describe('dispatchJob — staging integration', () => {
+  it('transitions to dispatch_failed when staging scp fails', async () => {
+    // Job with a manifest containing an upload entry.
+    const job = makeJob({
+      input_manifest: JSON.stringify([
+        { kind: 'upload', localPath: '/local/a.csv', dstFilename: 'a.csv', label: 'a.csv' }
+      ])
+    })
+    // SSH runner succeeds for mkdir, ScpRunner fails for scp.
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const scpRunner: ScpRunner = {
+      copy: vi.fn(async () => ({ exitCode: 1, stderr: 'no such file', timedOut: false }))
+    }
+    const { repo, update } = makeJobRepo(job)
+
+    await dispatchJob(job.job_id, {
+      runner,
+      scpRunner,
+      hostRepository: makeHostRepo(sampleHost()) as unknown as ComputeHostRepository,
+      jobRepository: repo as unknown as ComputeJobRepository
+    })
+
+    expect(update).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({ status: 'error', errorCode: 'dispatch_failed' })
+    )
   })
 })

@@ -51,10 +51,11 @@ type NotebookLocalRpcServerOptions = {
       options: {
         environment?: string
         resourceRequest?: string
-        inputManifest?: string
+        inputs?: unknown[]
         outputManifest?: string
         harvestConfig?: string
         timeoutSeconds?: number
+        workspaceCwd?: string
       },
       context: { sessionId: string; projectId: string }
     ): Promise<unknown>
@@ -304,13 +305,14 @@ class NotebookLocalRpcServer {
           resourceRequest: isRecord(params.resources)
             ? JSON.stringify(params.resources)
             : undefined,
-          inputManifest: Array.isArray(params.inputs) ? JSON.stringify(params.inputs) : undefined,
+          inputs: Array.isArray(params.inputs) ? (params.inputs as unknown[]) : undefined,
           outputManifest: Array.isArray(params.outputs)
             ? JSON.stringify(params.outputs)
             : undefined,
           harvestConfig: isRecord(params.harvest) ? JSON.stringify(params.harvest) : undefined,
           timeoutSeconds:
-            typeof params.timeout_seconds === 'number' ? params.timeout_seconds : undefined
+            typeof params.timeout_seconds === 'number' ? params.timeout_seconds : undefined,
+          workspaceCwd: typeof params.workspace_cwd === 'string' ? params.workspace_cwd : undefined
         }
         try {
           return await this.computeService.submitJob(providerId, intent, command, options, {

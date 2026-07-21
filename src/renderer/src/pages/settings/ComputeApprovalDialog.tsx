@@ -85,6 +85,14 @@ export function ComputeApprovalDialog(): React.JSX.Element | null {
                 )}
               </div>
             </div>
+            {request.inputs_summary && (
+              <div className="flex gap-2">
+                <span className="w-16 shrink-0 text-muted-foreground">Inputs</span>
+                <span className="min-w-0 break-words text-foreground">
+                  {request.inputs_summary}
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="mt-4 flex flex-wrap justify-end gap-2">
