@@ -7,6 +7,7 @@ import { createDefaultNotebookRuntimeService, registerAcpIpcHandlers } from './a
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
 import { registerComputeIpcHandlers, broadcastJobUpdated, toJobSummary } from './compute/ipc'
+import { attachEnabledComputeHosts } from './compute/enabled-hosts-registry'
 import { JobPoller } from './compute/job-poller'
 import { SystemSshRunner } from './compute/ssh-runner'
 import { wireConnectorReload } from './connector-reload'
@@ -252,11 +253,8 @@ const registerIpcHandlers = async ({
   })
   jobPoller.start()
   // Augment computeService with getEnabledComputeHosts so the RPC server can serve list_compute.
-  // The spread preserves all ComputeService methods; the added method surfaces the registry lookup.
-  const computeServiceWithRegistry = {
-    ...computeService,
-    getEnabledComputeHosts: (sessionId: string): string[] => hostsRegistry.get(sessionId)
-  } as typeof computeService & { getEnabledComputeHosts(sessionId: string): string[] }
+  // Must preserve ComputeService's prototype methods (list/getDetails/submitJob/...) — see the helper.
+  const computeServiceWithRegistry = attachEnabledComputeHosts(computeService, hostsRegistry)
   const notebookRpcServer = new NotebookLocalRpcServer(notebookService, {
     connectorService,
     computeService: computeServiceWithRegistry
