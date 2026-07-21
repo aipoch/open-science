@@ -44,8 +44,6 @@ describe('session persistence IPC handlers', () => {
     const reviewRepository = createMockReviewRepository()
     const handlers = createSessionPersistenceHandlers(repository, reviewRepository)
 
-    expect(handlers).not.toHaveProperty('deleteProjectSessions')
-
     await expect(handlers.loadAll()).resolves.toBe(loadResult)
 
     await handlers.saveSession(session)
@@ -55,6 +53,9 @@ describe('session persistence IPC handlers', () => {
     expect(repository.deleteSession).toHaveBeenCalledWith('project-a', 'session-1')
     // Cascade: review cleanup is attempted after the session delete commits.
     expect(reviewRepository.deleteReviewsForSession).toHaveBeenCalledWith('session-1')
+
+    await handlers.deleteProjectSessions({ projectId: 'project-a' })
+    expect(repository.deleteProjectSessions).toHaveBeenCalledWith('project-a')
 
     await handlers.saveManifest({ lastProjectId: 'project-a', lastSessionId: 'session-1' })
     expect(repository.saveManifest).toHaveBeenCalledWith({

@@ -195,6 +195,25 @@ describe('session persistence repository (per-session files)', () => {
     expect(scan.isComplete).toBe(true)
   })
 
+  it('keeps the scan incomplete without quarantining a session file that cannot be read', async () => {
+    const root = await createStorageRoot()
+    const session = createSession()
+    await new SessionRepository(root).saveSession(session)
+    const readSessionFile = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error('permission denied'), { code: 'EACCES' }))
+    const repository = new SessionRepository(root, { readSessionFile })
+
+    const scan = await repository.loadAllWithDiagnostics()
+
+    expect(scan.result.sessions).toEqual([])
+    expect(scan.isComplete).toBe(false)
+    await expect(
+      readFile(join(root, 'sessions', session.projectId, `${session.id}.json`), 'utf8')
+    ).resolves.toContain(session.id)
+    expect(readSessionFile).toHaveBeenCalledOnce()
+  })
+
   it('normalizes interrupted runs and open activities on load', async () => {
     const repository = new SessionRepository(await createStorageRoot())
 

@@ -27,10 +27,12 @@ type SessionLoadDiagnostics = {
 
 type SessionRepositoryDependencies = {
   remove(path: string, options: { force: boolean; recursive: boolean }): Promise<void>
+  readSessionFile(path: string): Promise<string>
 }
 
 const DEFAULT_DEPENDENCIES: SessionRepositoryDependencies = {
-  remove: (path, options) => rm(path, options)
+  remove: (path, options) => rm(path, options),
+  readSessionFile: (path) => readFile(path, 'utf8')
 }
 
 // Production storage lives under ~/.open-science; dev builds use an isolated sibling directory.
@@ -63,16 +65,19 @@ const assertSafeSegment = (segment: string): string => {
 
 // Owns per-session durable reads/writes: one file per session under sessions/<projectId>/<id>.json,
 // plus a small manifest for the last-open selection. Writes are serialized and atomic (temp + rename),
-// and unreadable files are backed up rather than dropped.
+// while malformed JSON is backed up and I/O failures preserve the existing file for later recovery.
 class SessionRepository {
   private saveQueue: Promise<void> = Promise.resolve()
   private writeSequence = 0
   private backupSequence = 0
+  private readonly dependencies: SessionRepositoryDependencies
 
   constructor(
     private readonly storageDir: string,
-    private readonly dependencies: SessionRepositoryDependencies = DEFAULT_DEPENDENCIES
-  ) {}
+    dependencies: Partial<SessionRepositoryDependencies> = {}
+  ) {
+    this.dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencies }
+  }
 
   private get sessionsDir(): string {
     return join(this.storageDir, SESSIONS_DIR)
@@ -204,7 +209,7 @@ class SessionRepository {
   }
 
   // Reads every project directory's session files and propagates completeness across every level.
-  // Invalid files count as handled only when they were successfully moved aside.
+  // Invalid JSON is quarantined, while I/O errors keep reconciliation disabled until the next repair.
   private async readAllSessions(): Promise<{
     sessions: PersistedChatSession[]
     isComplete: boolean
@@ -234,17 +239,20 @@ class SessionRepository {
     filePath: string,
     projectId: string
   ): Promise<{ session?: PersistedChatSession; isComplete: boolean }> {
+    let raw: string
     try {
-      const raw = await readFile(filePath, 'utf8')
-      const session = normalizeSessionFile(JSON.parse(raw) as unknown)
-
-      if (!session) {
-        return { isComplete: await this.tryBackupInvalidFile(filePath) }
-      }
-
-      return { session: decodeSessionDataPaths({ ...session, projectId }), isComplete: true }
+      raw = await this.dependencies.readSessionFile(filePath)
     } catch (error) {
       if (isMissingFileError(error)) return { isComplete: true }
+      return { isComplete: false }
+    }
+
+    try {
+      const session = normalizeSessionFile(JSON.parse(raw) as unknown)
+      if (!session) return { isComplete: await this.tryBackupInvalidFile(filePath) }
+
+      return { session: decodeSessionDataPaths({ ...session, projectId }), isComplete: true }
+    } catch {
       return { isComplete: await this.tryBackupInvalidFile(filePath) }
     }
   }

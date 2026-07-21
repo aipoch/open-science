@@ -81,6 +81,7 @@ import type {
   ProjectFilesPage
 } from '../shared/project-files'
 import type {
+  DeleteProjectSessionsRequest,
   DeleteSessionRequest,
   LoadAllSessionsResult,
   PersistedChatSession,
@@ -213,6 +214,7 @@ type OpenScienceAPI = {
     loadAll: () => Promise<LoadAllSessionsResult>
     saveSession: (session: PersistedChatSession) => Promise<void>
     deleteSession: (request: DeleteSessionRequest) => Promise<void>
+    deleteProjectSessions: (request: DeleteProjectSessionsRequest) => Promise<void>
     saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
   }
   settings: {
@@ -511,6 +513,8 @@ const api: OpenScienceAPI = {
     // Removes one session file.
     deleteSession: (request) =>
       ipcRenderer.invoke('sessions:delete-session', request) as Promise<void>,
+    deleteProjectSessions: (request) =>
+      ipcRenderer.invoke('sessions:delete-project-sessions', request) as Promise<void>,
     // Persists the last-open project/session pointer.
     saveManifest: (request) =>
       ipcRenderer.invoke('sessions:save-manifest', request) as Promise<void>

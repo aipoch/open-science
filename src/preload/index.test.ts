@@ -10,19 +10,21 @@
 
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
-const { invokeMock, exposeMock } = vi.hoisted(() => ({
+const { invokeMock, exposeMock, onMock, removeListenerMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
-  exposeMock: vi.fn()
+  exposeMock: vi.fn(),
+  onMock: vi.fn(),
+  removeListenerMock: vi.fn()
 }))
 
 vi.mock('electron', () => ({
   contextBridge: { exposeInMainWorld: exposeMock },
   ipcRenderer: {
     invoke: invokeMock,
-    on: vi.fn(),
+    on: onMock,
     off: vi.fn(),
     send: vi.fn(),
-    removeListener: vi.fn()
+    removeListener: removeListenerMock
   }
 }))
 
@@ -32,6 +34,7 @@ type PreloadApi = {
     loadAll: () => unknown
     saveSession: (session: unknown) => unknown
     deleteSession: (request: unknown) => unknown
+    deleteProjectSessions: (request: unknown) => unknown
     saveManifest: (request: unknown) => unknown
   }
   settings: {
@@ -53,6 +56,13 @@ type PreloadApi = {
     install: () => unknown
     uninstall: () => unknown
   }
+  projectFiles: {
+    getOverview: (request: unknown) => unknown
+    listFiles: (request: unknown) => unknown
+    listArtifactGroups: (request: unknown) => unknown
+    repairIndex: (request: unknown) => unknown
+    onChanged: (listener: (event: unknown) => void) => () => void
+  }
 }
 
 let api: PreloadApi
@@ -72,6 +82,8 @@ beforeAll(async () => {
 
 afterEach(() => {
   invokeMock.mockClear()
+  onMock.mockClear()
+  removeListenerMock.mockClear()
 })
 
 // Each case: invoke a bridge method with sample args, then assert the exact channel + forwarded args.
@@ -84,10 +96,17 @@ type ForwardingCase = {
 
 const sampleSession = { id: 's-1', projectId: 'p-1', title: 't' }
 const sampleDeleteSession = { projectId: 'p-1', sessionId: 's-1' }
+const sampleDeleteProject = { projectId: 'p-1' }
 const sampleManifest = { projectId: 'p-1', sessionId: 's-1' }
 const sampleInstall = { executablePath: '/usr/local/bin/opencode' }
 const sampleFramework = { framework: 'opencode' }
 const sampleResumeRequest = { sessionId: 's-1', cwd: '/workspace/project' }
+const sampleProjectFilesRequest = { projectId: 'p-1' }
+const sampleListFilesRequest = {
+  projectId: 'p-1',
+  collection: { kind: 'uploads' as const },
+  limit: 20
+}
 
 const cases: ForwardingCase[] = [
   // sessions block
@@ -110,10 +129,41 @@ const cases: ForwardingCase[] = [
     args: [sampleDeleteSession]
   },
   {
+    name: 'sessions.deleteProjectSessions → sessions:delete-project-sessions',
+    invoke: (a) => a.sessions.deleteProjectSessions(sampleDeleteProject),
+    channel: 'sessions:delete-project-sessions',
+    args: [sampleDeleteProject]
+  },
+  {
     name: 'sessions.saveManifest → sessions:save-manifest',
     invoke: (a) => a.sessions.saveManifest(sampleManifest),
     channel: 'sessions:save-manifest',
     args: [sampleManifest]
+  },
+  // Project Files metadata projection
+  {
+    name: 'projectFiles.getOverview → project-files:get-overview',
+    invoke: (a) => a.projectFiles.getOverview(sampleProjectFilesRequest),
+    channel: 'project-files:get-overview',
+    args: [sampleProjectFilesRequest]
+  },
+  {
+    name: 'projectFiles.listFiles → project-files:list-files',
+    invoke: (a) => a.projectFiles.listFiles(sampleListFilesRequest),
+    channel: 'project-files:list-files',
+    args: [sampleListFilesRequest]
+  },
+  {
+    name: 'projectFiles.listArtifactGroups → project-files:list-artifact-groups',
+    invoke: (a) => a.projectFiles.listArtifactGroups(sampleProjectFilesRequest),
+    channel: 'project-files:list-artifact-groups',
+    args: [sampleProjectFilesRequest]
+  },
+  {
+    name: 'projectFiles.repairIndex → project-files:repair-index',
+    invoke: (a) => a.projectFiles.repairIndex(sampleProjectFilesRequest),
+    channel: 'project-files:repair-index',
+    args: [sampleProjectFilesRequest]
   },
   // agent-framework / opencode settings additions
   {
@@ -199,10 +249,6 @@ const cases: ForwardingCase[] = [
 ]
 
 describe('preload bridge — sessions + agent-framework IPC channels', () => {
-  it('does not expose the legacy half-delete project-session command', () => {
-    expect(api.sessions).not.toHaveProperty('deleteProjectSessions')
-  })
-
   it.each(cases)('$name', ({ invoke, channel, args }) => {
     invoke(api)
 
@@ -215,5 +261,19 @@ describe('preload bridge — sessions + agent-framework IPC channels', () => {
     // ipcRenderer.invoke unchanged.
     api.settings.installOpencode(sampleInstall)
     expect(invokeMock.mock.calls[0]?.[1]).toBe(sampleInstall)
+  })
+
+  it('subscribes and unsubscribes from project file changes with the original listener payload', () => {
+    const listener = vi.fn()
+    const event = { projectId: 'p-1', sources: ['upload'], kind: 'upsert' }
+    const unsubscribe = api.projectFiles.onChanged(listener)
+    const wrappedListener = onMock.mock.calls[0]?.[1]
+
+    expect(onMock).toHaveBeenCalledWith('project-files:changed', expect.any(Function))
+    wrappedListener({}, event)
+    expect(listener).toHaveBeenCalledWith(event)
+
+    unsubscribe()
+    expect(removeListenerMock).toHaveBeenCalledWith('project-files:changed', wrappedListener)
   })
 })
