@@ -4,6 +4,8 @@ name: AI PR Review
 # - Secrets: ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, OPENAI_API_KEY, and CODEX_BASE_URL
 #   (the URL may omit the trailing slash or include the full /v1/responses endpoint)
 # - Variable: CLAUDE_CODE_ATTRIBUTION_HEADER=0
+# ANTHROPIC_AUTH_TOKEN is also passed to the Claude action's required API-key input; do not add a
+# separate ANTHROPIC_API_KEY secret.
 # Set ENABLE_CLAUDE_REVIEW=false or ENABLE_CODEX_REVIEW=false to disable either reviewer.
 # Pull requests from forks are skipped because GitHub does not expose Actions secrets to them.
 on:
@@ -41,6 +43,9 @@ jobs:
           ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
           CLAUDE_CODE_ATTRIBUTION_HEADER: ${{ vars.CLAUDE_CODE_ATTRIBUTION_HEADER }}
         with:
+          # The action validates this input before it starts Claude Code. The custom gateway still
+          # uses ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL from the environment above.
+          anthropic_api_key: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           prompt: |
             Perform the architecture and integration review for PR #${{ github.event.pull_request.number }}
