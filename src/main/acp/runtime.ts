@@ -241,6 +241,21 @@ const errorMessage = (error: unknown): string => {
   }
 }
 
+// The ACP agent tags a provider-relayed failure with the upstream error type in `data.errorKind`
+// (e.g. `request_too_large` for an HTTP 413). Read it so the overflow check can match the slug even
+// when the message text comes in a wording the pattern does not cover. Total: any shape but a string
+// kind collapses to undefined, and a hostile getter never escapes.
+const acpErrorKind = (error: unknown): string | undefined => {
+  try {
+    const data = (error as { data?: unknown } | null)?.data
+    const kind = (data as { errorKind?: unknown } | null | undefined)?.errorKind
+
+    return typeof kind === 'string' ? kind : undefined
+  } catch {
+    return undefined
+  }
+}
+
 // Internal wrapper thrown when framework.spawn() fails, carrying the framework the spawn targeted so
 // connectFresh can label the failure with the right backend. It never mutates the original throwable
 // (which may be a frozen/non-extensible Error, a write-rejecting Proxy, or a non-Error value) and holds
@@ -1522,12 +1537,19 @@ class AcpRuntime {
         this.handleSessionUpdate(message.notification, request.sessionId)
       }
     } catch (error) {
-      log.error('prompt failed', { sessionId: request.sessionId, error })
+      // errorLogFields keeps the RequestError message/code/data visible in the file log — a raw Error
+      // nested in the payload serializes without its (non-enumerable) message, which once hid the
+      // provider's real rejection reason from the log.
+      log.error('prompt failed', { sessionId: request.sessionId, ...errorLogFields(error) })
       const text = describePromptError(error, { model: this.pendingSessionModel })
       // Tag a request-size overflow as recoverable so the renderer compacts-and-retries (reset context +
       // replay a text transcript) instead of dead-ending; the error still throws to drive that recovery.
+      // The structured errorKind slug is checked alongside the message text: providers relay the same
+      // overflow in different wordings, and a slug-only match needs no message at all.
       const recoverable =
-        isMediaOverflowError(text) || isMediaOverflowError(errorMessage(error))
+        isMediaOverflowError(text) ||
+        isMediaOverflowError(errorMessage(error)) ||
+        isMediaOverflowError(acpErrorKind(error))
           ? 'context-overflow'
           : undefined
       this.pushEvent({
@@ -1548,7 +1570,7 @@ class AcpRuntime {
         } catch (error) {
           log.error('artifact emit after prompt failure failed', {
             sessionId: request.sessionId,
-            error
+            ...errorLogFields(error)
           })
         }
       }
