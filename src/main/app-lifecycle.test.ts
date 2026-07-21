@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { installAppLifecycle, type AppLifecycleDeps, type TrayHandlers } from './app-lifecycle'
 import type { ActiveSessionInfo } from '../shared/storage'
-import type { CloseConfirmChoice, CloseConfirmVariant } from '../shared/window-controls'
+import type {
+  CloseClassification,
+  CloseConfirmChoice,
+  CloseConfirmVariant
+} from '../shared/window-controls'
 
 type QuitEvent = { preventDefault: () => void; defaultPrevented: boolean }
 type Handler = (event: QuitEvent) => void
@@ -86,7 +90,7 @@ const asWindow = (w: FakeWindow): import('electron').BrowserWindow =>
   w as unknown as import('electron').BrowserWindow
 
 type CapturedCloseOpts = {
-  classifyClose: () => 'close' | 'hide' | 'confirm'
+  classifyClose: () => CloseClassification
   resolveCloseAction: () => Promise<CloseConfirmChoice>
   requestQuit: () => void
 }
