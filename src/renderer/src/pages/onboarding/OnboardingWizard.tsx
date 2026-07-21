@@ -198,6 +198,17 @@ const OnboardingWizard = (): React.JSX.Element => {
   const [validationMessage, setValidationMessage] = useState<string | undefined>(undefined)
   const [validationOk, setValidationOk] = useState(false)
   const didRequestCheck = useRef(false)
+  // Mirrors the Settings teardown: a pending isolated sign-in lives in the main process for up to
+  // five minutes, and its guard rejects a second attempt as "already in progress". If the wizard
+  // unmounts mid-flow (app quit, relaunch, forced navigation), cancel it so the next attempt starts
+  // clean. The ref is written only from event handlers/effects, never during render.
+  const codexLoginPendingRef = useRef(false)
+  useEffect(
+    () => () => {
+      if (codexLoginPendingRef.current) void cancelCodexLogin()
+    },
+    [cancelCodexLogin]
+  )
   // Once the user manually picks an agent, stop auto-selecting; and only auto-select once per mount.
   const userPickedFramework = useRef(false)
   const autoSelectAttempted = useRef(false)
@@ -406,7 +417,11 @@ const OnboardingWizard = (): React.JSX.Element => {
         // Persisting alone never pops a browser; a cancelled login keeps the provider saved but
         // unverified, so the user can retry without re-entering anything.
         const providerId = await persistProvider(toUpsertRequest(formValue))
-        const validation = await loginIsolatedCodex()
+        // Arm the unmount teardown for exactly the duration of the main-process login.
+        codexLoginPendingRef.current = true
+        const validation = await loginIsolatedCodex().finally(() => {
+          codexLoginPendingRef.current = false
+        })
 
         setValidationOk(validation.ok)
         setValidationMessage(describeValidation(validation))

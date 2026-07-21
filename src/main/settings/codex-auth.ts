@@ -165,6 +165,9 @@ export class CodexAuthController {
       if (!supported) return capabilityFailure('isolated')
 
       const current = await waitForOperation(authSession.status(), abort.signal)
+      // api-key/gateway credentials short-circuit the browser flow here too: the isolated home is
+      // app-managed and holds exactly what the runtime would use, so any usable credential already
+      // present means no re-login is needed.
       if (!isAuthenticated(current)) {
         await waitForOperation(authSession.authenticateChatGpt(), abort.signal)
       }
