@@ -3,6 +3,7 @@ import { create } from 'zustand'
 import type { OfficialVendorId } from '../../../shared/provider-registry'
 import {
   codexSubscriptionProviderIdentity,
+  DEFAULT_REASONING_EFFORT,
   isCodexSubscriptionProvider,
   providerValidationFailed
 } from '../../../shared/settings'
@@ -26,6 +27,7 @@ import type {
   ProviderType,
   ProviderView,
   RefreshProviderModelsResult,
+  ReasoningEffort,
   SettingsSnapshot,
   SkillView,
   CreateSkillRequest,
@@ -119,6 +121,8 @@ type SettingsStoreData = {
   pendingSkillId?: string
   // Configured package mirror (conda/pip); undefined means public hosts (unconfigured).
   packageMirror?: PackageMirror
+  // Reasoning-effort preference applied to agent requests; 'default' leaves the agent's own default.
+  reasoningEffort: ReasoningEffort
 }
 
 type SettingsStore = SettingsStoreData & {
@@ -166,6 +170,8 @@ type SettingsStore = SettingsStoreData & {
   setActiveProvider: (providerId: string, model?: string) => Promise<void>
   // Switches the agent backend (main reconnects so the next prompt uses it).
   setAgentFramework: (id: AgentFrameworkId) => Promise<void>
+  // Sets the reasoning-effort level (main reconnects so subsequent requests run at it).
+  setReasoningEffort: (effort: ReasoningEffort) => Promise<void>
   deleteProvider: (providerId: string) => Promise<void>
   openSettings: () => void
   closeSettings: () => void
@@ -278,7 +284,8 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   isEnvironmentRepairOpen: false,
   isSettingsOpen: false,
   pendingSkillId: undefined,
-  packageMirror: undefined
+  packageMirror: undefined,
+  reasoningEffort: DEFAULT_REASONING_EFFORT
 })
 
 // Applies a fresh main-process snapshot to the renderer cache.
@@ -289,6 +296,7 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   providers: snapshot.providers,
   onboardingCompletedAt: snapshot.onboardingCompletedAt,
   packageMirror: isMirrorConfigured(snapshot.packageMirror) ? snapshot.packageMirror : undefined,
+  reasoningEffort: snapshot.reasoningEffort,
   agentFrameworkId: snapshot.agentFrameworkId,
   agentFrameworks: snapshot.agentFrameworks,
   opencode: snapshot.opencode,
@@ -723,6 +731,16 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       await get().refreshPreflight()
     } catch (error) {
       console.error('Failed to switch agent framework', error)
+    }
+  },
+
+  // Sets the reasoning-effort level; main reconnects so subsequent requests run at it. Surfaces
+  // failures to the console instead of silently reverting the selector (mirrors setAgentFramework).
+  setReasoningEffort: async (effort) => {
+    try {
+      set(applySnapshot(await window.api.settings.setReasoningEffort({ effort })))
+    } catch (error) {
+      console.error('Failed to set reasoning effort', error)
     }
   },
 

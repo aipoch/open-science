@@ -197,6 +197,14 @@ export const providerValidationFailed = (provider: {
 // the main-process AgentFramework registry is keyed by the same union.
 export type AgentFrameworkId = 'claude-code' | 'opencode' | 'codex'
 
+// How much reasoning effort the user asks the agent to spend. 'default' means "don't override": the
+// agent keeps its own default and nothing is sent. The concrete levels form a relative scale
+// (low < medium < high < max): each agent/model maps the level onto its own supported rungs, using
+// the closest one it has (e.g. 'max' becomes the model's top level).
+export type ReasoningEffort = 'default' | 'low' | 'medium' | 'high' | 'max'
+
+export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'default'
+
 // Renderer-facing descriptor for one selectable agent framework (built from the main registry).
 export type AgentFrameworkView = {
   id: AgentFrameworkId
@@ -233,6 +241,9 @@ export type SettingsSnapshot = {
   onboardingCompletedAt?: number
   // Non-secret package-mirror overrides (conda/pypi/cran). Absent means public hosts.
   packageMirror?: PackageMirror
+  // The user's reasoning-effort preference for agent requests. 'default' leaves the agent's own
+  // default untouched; concrete levels apply to subsequent requests when the agent supports them.
+  reasoningEffort: ReasoningEffort
 }
 
 // Request to set (or clear, via omitted fields) the package-mirror configuration.
@@ -240,6 +251,10 @@ export type SetPackageMirrorRequest = PackageMirror
 
 export type SetAgentFrameworkRequest = {
   id: AgentFrameworkId
+}
+
+export type SetReasoningEffortRequest = {
+  effort: ReasoningEffort
 }
 
 // The hard startup gates. Kept as plain booleans so the wizard can target the first unmet step.

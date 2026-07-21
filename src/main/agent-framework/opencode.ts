@@ -8,6 +8,7 @@ import {
 } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { preferredEndpoint } from '../../shared/settings'
+import type { ReasoningEffort } from '../../shared/settings'
 import { openAiCompletionsBase } from '../settings/base-url'
 import { augmentedPathEnv } from '../settings/shell-path'
 import type { ResolvedProvider } from '../settings/provider-env'
@@ -118,9 +119,23 @@ const resolveOpencodeEndpoint = (
 // any model whose config does not declare vision — custom and freshly-registered models default to
 // text-only — so a base64 image sent over ACP silently never reaches the provider. A multimodal model
 // must therefore advertise both the attachment capability and an image input modality. Empty (text-only)
-// otherwise, so a non-vision model is never told it can accept images.
-const buildModelCapabilities = (provider: ResolvedProvider): Record<string, unknown> =>
-  provider.supportsImageInput ? { attachment: true, modalities: { input: ['text', 'image'] } } : {}
+// otherwise, so a non-vision model is never told it can accept images. A reasoning-effort preference is
+// declared via the model's `options.reasoningEffort`, opencode's per-model knob passed through to the
+// AI SDK provider; providers that don't support it ignore the option.
+const buildModelCapabilities = (
+  provider: ResolvedProvider,
+  reasoningEffort?: ReasoningEffort
+): Record<string, unknown> => ({
+  ...(provider.supportsImageInput
+    ? { attachment: true, modalities: { input: ['text', 'image'] } }
+    : {}),
+  ...(reasoningEffort ? { options: { reasoningEffort: clampOpencodeEffort(reasoningEffort) } } : {})
+})
+
+// opencode's reasoningEffort follows the AI SDK levels, which top out at 'high'; the app's top level
+// 'max' clamps down to it. 'default' is filtered upstream and never reaches here.
+const clampOpencodeEffort = (effort: ReasoningEffort): 'low' | 'medium' | 'high' =>
+  effort === 'low' || effort === 'medium' ? effort : 'high'
 
 // The app-authoritative config layer (model + provider block + permission policy) passed verbatim to
 // opencode via OPENCODE_CONFIG_CONTENT, which opencode deep-merges ABOVE both the app-owned global config
@@ -128,7 +143,10 @@ const buildModelCapabilities = (provider: ResolvedProvider): Record<string, unkn
 // lower-precedence config — e.g. the user's own ~/.opencode — cannot repoint the active provider's
 // baseURL or switch the model to an attacker-defined provider while inheriting the app's key ref, so the
 // real key can only ever go to the app's own endpoint. The key stays an env reference, never plaintext.
-const buildAppConfigContent = (provider: ResolvedProvider): Record<string, unknown> => {
+const buildAppConfigContent = (
+  provider: ResolvedProvider,
+  reasoningEffort?: ReasoningEffort
+): Record<string, unknown> => {
   const { bareModel, providerId, npm, baseURL } = resolveOpencodeEndpoint(provider)
 
   return {
@@ -141,7 +159,9 @@ const buildAppConfigContent = (provider: ResolvedProvider): Record<string, unkno
           ...(baseURL ? { baseURL } : {}),
           ...(provider.key ? { apiKey: `{env:${OPENCODE_API_KEY_ENV}}` } : {})
         },
-        ...(bareModel ? { models: { [bareModel]: buildModelCapabilities(provider) } } : {})
+        ...(bareModel
+          ? { models: { [bareModel]: buildModelCapabilities(provider, reasoningEffort) } }
+          : {})
       }
     }
   }
@@ -155,7 +175,8 @@ const buildAppConfigContent = (provider: ResolvedProvider): Record<string, unkno
 const buildOpencodeConfig = (
   provider: ResolvedProvider,
   baseConfig: Record<string, unknown> = {},
-  instructionPaths: string[] = []
+  instructionPaths: string[] = [],
+  reasoningEffort?: ReasoningEffort
 ): string => {
   const { bareModel, providerId, npm, baseURL } = resolveOpencodeEndpoint(provider)
 
@@ -199,7 +220,12 @@ const buildOpencodeConfig = (
         // Register the model so opencode treats a non-catalog id as a real, selectable model, declaring
         // its image capability when the active model is multimodal (else opencode strips image parts).
         ...(bareModel
-          ? { models: { ...baseModels, [bareModel]: buildModelCapabilities(provider) } }
+          ? {
+              models: {
+                ...baseModels,
+                [bareModel]: buildModelCapabilities(provider, reasoningEffort)
+              }
+            }
           : {})
       }
     }
@@ -262,7 +288,12 @@ export const opencodeFramework: AgentFramework = {
       configFiles.push({ path: instructionsPath, content: ctx.instructions })
     }
 
-    configFiles[0].content = buildOpencodeConfig(provider, {}, instructionPaths)
+    configFiles[0].content = buildOpencodeConfig(
+      provider,
+      {},
+      instructionPaths,
+      ctx.reasoningEffort
+    )
 
     return {
       env: {
@@ -287,7 +318,9 @@ export const opencodeFramework: AgentFramework = {
         // against the only remaining non-repo surface, the user's own ~/.opencode: it cannot repoint the
         // active provider's baseURL or swap the model to an attacker provider while inheriting the app's
         // `{env:...}` key ref. The key itself never rides this layer, only its env reference.
-        OPENCODE_CONFIG_CONTENT: JSON.stringify(buildAppConfigContent(provider)),
+        OPENCODE_CONFIG_CONTENT: JSON.stringify(
+          buildAppConfigContent(provider, ctx.reasoningEffort)
+        ),
         // Pass the decrypted key ONLY via the environment; the config references it as `{env:...}`.
         ...(provider.key ? { [OPENCODE_API_KEY_ENV]: provider.key } : {})
       },

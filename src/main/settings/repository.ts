@@ -7,6 +7,7 @@ import type {
   ClaudeInfo,
   ProviderType,
   ProviderValidationFailure,
+  ReasoningEffort,
   ValidationCategory
 } from '../../shared/settings'
 import {
@@ -427,6 +428,19 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     settings.agentFrameworkId = agentFrameworkId
   }
 
+  // Reasoning-effort preference; only the known levels survive so a bad value can't leak through.
+  const reasoningEffort = asString(value.reasoningEffort)
+
+  if (
+    reasoningEffort === 'default' ||
+    reasoningEffort === 'low' ||
+    reasoningEffort === 'medium' ||
+    reasoningEffort === 'high' ||
+    reasoningEffort === 'max'
+  ) {
+    settings.reasoningEffort = reasoningEffort
+  }
+
   const opencodePath = asString(value.opencodePath)
 
   if (opencodePath) {
@@ -624,6 +638,11 @@ class SettingsRepository {
   // Persists the selected agent backend; applied on the next reconnect.
   async setAgentFramework(id: AgentFrameworkId): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, agentFrameworkId: id }))
+  }
+
+  // Persists the reasoning-effort preference; applied to sessions created after the next reconnect.
+  async setReasoningEffort(effort: ReasoningEffort): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, reasoningEffort: effort }))
   }
 
   // Records the detected opencode executable path + version for later spawns + the settings status card.

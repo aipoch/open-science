@@ -25,6 +25,7 @@ import {
   type SetConnectorEnabledRequest,
   type SetNcbiCredentialsRequest,
   type SetPackageMirrorRequest,
+  type SetReasoningEffortRequest,
   type SetSkillEnabledRequest,
   type SetToolPermissionRequest,
   type UpdateSkillRequest,
@@ -150,6 +151,19 @@ const registerSettingsIpcHandlers = ({
 
       // Switching frameworks needs a fresh agent process, exactly like a provider switch — the live
       // process is a different backend binary, so the choice only takes effect on reconnect.
+      onActiveProviderChanged?.()
+
+      return snapshot
+    }
+  )
+  ipcMain.handle(
+    'settings:set-reasoning-effort',
+    async (_event, request: SetReasoningEffortRequest) => {
+      log.info('set reasoning effort requested', { effort: request.effort })
+      const snapshot = await service.setReasoningEffort(request.effort)
+
+      // The level is baked into the spawn env/config, so it only reaches the agent via a reconnect —
+      // the same mechanism a provider/framework switch uses. Subsequent requests then run at it.
       onActiveProviderChanged?.()
 
       return snapshot

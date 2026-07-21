@@ -1,7 +1,7 @@
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import { describe, expect, it } from 'vitest'
 
-import { matchSessionModelOption } from './session-config'
+import { matchSessionModelOption, resolveSessionEffortOption } from './session-config'
 
 // Builds a minimal `model` select option like opencode returns from session/new.
 const modelOption = (
@@ -71,5 +71,101 @@ describe('matchSessionModelOption', () => {
       configId: 'primary_model',
       value: 'x/y-model'
     })
+  })
+})
+
+// Builds a minimal `thought_level` select option like an agent returns from session/new.
+const effortOption = (
+  values: string[],
+  extra: Partial<SessionConfigOption> = {}
+): SessionConfigOption =>
+  ({
+    type: 'select',
+    id: 'thought_level',
+    name: 'Thought level',
+    category: 'thought_level',
+    currentValue: values[0],
+    options: values.map((value) => ({ value, name: value })),
+    ...extra
+  }) as SessionConfigOption
+
+describe('resolveSessionEffortOption', () => {
+  it('matches the desired level exactly when the model advertises it', () => {
+    const options = [effortOption(['low', 'medium', 'high'])]
+
+    expect(resolveSessionEffortOption(options, 'high')).toEqual({
+      configId: 'thought_level',
+      value: 'high'
+    })
+  })
+
+  it('falls back to the effort id when the category differs', () => {
+    // Claude Code advertises the option as id `effort`, not under the thought_level category.
+    const options = [effortOption(['low', 'high'], { id: 'effort', category: undefined })]
+
+    expect(resolveSessionEffortOption(options, 'low')).toEqual({
+      configId: 'effort',
+      value: 'low'
+    })
+  })
+
+  it('flattens grouped select options', () => {
+    const grouped = {
+      type: 'select',
+      id: 'effort',
+      name: 'Effort',
+      currentValue: 'low',
+      options: [{ name: 'Levels', options: [{ value: 'max', name: 'Max' }] }]
+    } as unknown as SessionConfigOption
+
+    expect(resolveSessionEffortOption([grouped], 'max')).toEqual({
+      configId: 'effort',
+      value: 'max'
+    })
+  })
+
+  it('clamps max to the model\u2019s highest advertised level, skipping the default sentinel', () => {
+    // Claude Code's effort select: a 'default' sentinel plus the model's supported levels.
+    const options = [effortOption(['default', 'low', 'medium', 'high'])]
+
+    expect(resolveSessionEffortOption(options, 'max')).toEqual({
+      configId: 'thought_level',
+      value: 'high'
+    })
+  })
+
+  it('clamps low to the model\u2019s lowest advertised level', () => {
+    const options = [effortOption(['medium', 'high'])]
+
+    expect(resolveSessionEffortOption(options, 'low')).toEqual({
+      configId: 'thought_level',
+      value: 'medium'
+    })
+  })
+
+  it('resolves equidistant levels to the lower (cheaper) one', () => {
+    const options = [effortOption(['medium', 'xhigh'])]
+
+    expect(resolveSessionEffortOption(options, 'high')).toEqual({
+      configId: 'thought_level',
+      value: 'medium'
+    })
+  })
+
+  it('returns undefined when there is nothing usable to apply', () => {
+    // Only the 'default' sentinel advertised: no real level to clamp onto.
+    expect(resolveSessionEffortOption([effortOption(['default'])], 'high')).toBeUndefined()
+    // 'default'/unknown desired levels never reach the agent.
+    expect(resolveSessionEffortOption([effortOption(['low'])], 'default')).toBeUndefined()
+    expect(resolveSessionEffortOption([effortOption(['low'])], 'turbo')).toBeUndefined()
+    expect(resolveSessionEffortOption([effortOption(['low'])], undefined)).toBeUndefined()
+    expect(resolveSessionEffortOption([], 'high')).toBeUndefined()
+    expect(resolveSessionEffortOption(undefined, 'high')).toBeUndefined()
+  })
+
+  it('does not mistake the model option for an effort option', () => {
+    const options = [modelOption(['high'])]
+
+    expect(resolveSessionEffortOption(options, 'high')).toBeUndefined()
   })
 })

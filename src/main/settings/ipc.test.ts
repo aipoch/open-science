@@ -34,6 +34,7 @@ type FakeSettingsService = Record<
   | 'uninstallOpencode'
   | 'uninstallCodex'
   | 'setAgentFramework'
+  | 'setReasoningEffort'
   | 'upsertProvider'
   | 'deleteProvider'
   | 'setActiveProvider'
@@ -79,6 +80,9 @@ const createFakeService = (): FakeSettingsService => ({
   setAgentFramework: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], agentFrameworkId: 'opencode' }),
+  setReasoningEffort: vi
+    .fn()
+    .mockResolvedValue({ claude: {}, providers: [], reasoningEffort: 'high' }),
   upsertProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   deleteProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   setActiveProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
@@ -504,6 +508,23 @@ describe('settings IPC handlers', () => {
     // The handler unwraps the request to the bare framework id the service expects.
     expect(service.setAgentFramework).toHaveBeenCalledWith('opencode')
     // Switching frameworks swaps the backend binary, so the live agent must be dropped like a provider switch.
+    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+    expect(result).toBe(snapshot)
+  })
+
+  it('persists the reasoning effort and respawns the agent on set-reasoning-effort', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const snapshot = { claude: {}, providers: [], reasoningEffort: 'high' }
+    service.setReasoningEffort.mockResolvedValue(snapshot)
+    const onActiveProviderChanged = vi.fn()
+    registerSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+
+    const result = await invoke('settings:set-reasoning-effort', { effort: 'high' })
+
+    // The handler unwraps the request to the bare effort level the service expects.
+    expect(service.setReasoningEffort).toHaveBeenCalledWith('high')
+    // The level is baked into the spawn env/config, so the live agent must be dropped like a provider switch.
     expect(onActiveProviderChanged).toHaveBeenCalledOnce()
     expect(result).toBe(snapshot)
   })

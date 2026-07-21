@@ -3,7 +3,12 @@ import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { CODEX_BRIDGE_MODEL, createCodexFramework, normalizeResponsesBaseUrl } from './codex'
+import {
+  CODEX_BRIDGE_MODEL,
+  buildCodexConfig,
+  createCodexFramework,
+  normalizeResponsesBaseUrl
+} from './codex'
 
 const fakeChild = {} as ChildProcessWithoutNullStreams
 
@@ -276,5 +281,39 @@ describe('codexFramework', () => {
     })
     expect(env.OPENAI_API_KEY).toBeUndefined()
     expect(env.CODEX_PATH).toBeUndefined()
+  })
+})
+
+describe('buildCodexConfig reasoning effort', () => {
+  it.each([
+    ['low', 'low'],
+    ['medium', 'medium'],
+    ['high', 'high'],
+    // Codex config tops out at xhigh; the app's top level 'max' maps onto it.
+    ['max', 'xhigh']
+  ] as const)('maps the %s level to model_reasoning_effort %s', (effort, expected) => {
+    expect(buildCodexConfig({ reasoningEffort: effort }).model_reasoning_effort).toBe(expected)
+  })
+
+  it.each([undefined, 'default'] as const)('omits model_reasoning_effort for %s', (effort) => {
+    expect(buildCodexConfig({ reasoningEffort: effort })).not.toHaveProperty(
+      'model_reasoning_effort'
+    )
+  })
+
+  it('threads the ctx level into the serialized CODEX_CONFIG env', () => {
+    const framework = createCodexFramework()
+    const config = framework.prepareModelConfig(
+      {
+        type: 'custom',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://gateway.example/v1',
+        model: 'gpt-5',
+        key: 'sk-plaintext-secret'
+      },
+      { storageRoot: '/data', executablePath: '/runtime/codex-acp', reasoningEffort: 'max' }
+    )
+
+    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '').model_reasoning_effort).toBe('xhigh')
   })
 })

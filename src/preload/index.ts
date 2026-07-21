@@ -101,6 +101,7 @@ import type {
   SetActiveProviderRequest,
   SetPackageMirrorRequest,
   SetAgentFrameworkRequest,
+  SetReasoningEffortRequest,
   SetSkillEnabledRequest,
   SettingsSnapshot,
   SkillDetailView,
@@ -234,6 +235,7 @@ type OpenScienceAPI = {
     deleteProvider: (request: DeleteProviderRequest) => Promise<SettingsSnapshot>
     setActiveProvider: (request: SetActiveProviderRequest) => Promise<SettingsSnapshot>
     setAgentFramework: (request: SetAgentFrameworkRequest) => Promise<SettingsSnapshot>
+    setReasoningEffort: (request: SetReasoningEffortRequest) => Promise<SettingsSnapshot>
     validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
     cancelCodexLogin: () => Promise<void>
     loginIsolatedCodex: () => Promise<ValidateProviderResult>
@@ -551,6 +553,8 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('settings:set-active-provider', request) as Promise<SettingsSnapshot>,
     setAgentFramework: (request) =>
       ipcRenderer.invoke('settings:set-agent-framework', request) as Promise<SettingsSnapshot>,
+    setReasoningEffort: (request) =>
+      ipcRenderer.invoke('settings:set-reasoning-effort', request) as Promise<SettingsSnapshot>,
     validateProvider: (request) =>
       ipcRenderer.invoke('settings:validate-provider', request) as Promise<ValidateProviderResult>,
     cancelCodexLogin: () => ipcRenderer.invoke('settings:cancel-codex-login') as Promise<void>,

@@ -88,6 +88,33 @@ describe('settings repository', () => {
     expect(settings.opencodeVersion).toBe('1.18.3')
   })
 
+  it('persists the reasoning effort across a sanitized read and a reload', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.setReasoningEffort('high')
+
+    // sanitizeSettings must not strip the level on read-back, or the selector can never switch.
+    expect((await repository.getSettings()).reasoningEffort).toBe('high')
+
+    // A fresh repository on the same storage dir models an app restart: the level is read back.
+    const reloaded = await new SettingsRepository(root).getSettings()
+    expect(reloaded.reasoningEffort).toBe('high')
+  })
+
+  it.each(['default', 'low', 'medium', 'high', 'max'] as const)(
+    'keeps the %s reasoning effort on load',
+    (effort) => {
+      expect(sanitizeSettings({ reasoningEffort: effort }).reasoningEffort).toBe(effort)
+    }
+  )
+
+  it('drops an unknown reasoning effort on load', () => {
+    expect(sanitizeSettings({ reasoningEffort: 'ultra' }).reasoningEffort).toBeUndefined()
+    expect(sanitizeSettings({ reasoningEffort: 42 }).reasoningEffort).toBeUndefined()
+    expect(sanitizeSettings({}).reasoningEffort).toBeUndefined()
+  })
+
   it('persists the Codex adapter and paired native runtime across a sanitized read', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 

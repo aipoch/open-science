@@ -49,6 +49,7 @@ import {
   type ProviderFormValue
 } from './provider-form-value'
 import { ProviderList } from './ProviderList'
+import { ReasoningEffortSelect } from './ReasoningEffortSelect'
 import { SettingsRow, SettingsSection } from './SettingsLayout'
 import { UninstallRuntimeDialog } from './UninstallRuntimeDialog'
 import { SwitchFrameworkDialog } from './SwitchFrameworkDialog'
@@ -938,6 +939,21 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                           <ActiveModelSelect />
                         </SettingsRow>
                       ) : null}
+
+                      <SettingsRow
+                        label="Reasoning effort"
+                        description={
+                          <>
+                            How much reasoning the agent puts into each request — higher levels
+                            think longer, lower levels respond faster. Applied to subsequent
+                            requests; a level the active model doesn&apos;t offer maps to its
+                            closest supported one.
+                          </>
+                        }
+                        className={`border-b border-border${providers.length > 0 ? '' : ' pt-0'}`}
+                      >
+                        <ReasoningEffortSelect />
+                      </SettingsRow>
 
                       <ProviderList
                         providers={visibleProviders}

@@ -129,6 +129,7 @@ const startFakeAgent = (
   closedSessions: string[]
   cancelledSessions: string[]
   modeChanges: Array<{ sessionId: string; modeId: string }>
+  configChanges: Array<{ sessionId: string; configId: string; value: string | boolean }>
   actions: string[]
 } => {
   const authRequests: unknown[] = []
@@ -144,6 +145,7 @@ const startFakeAgent = (
   const closedSessions: string[] = []
   const cancelledSessions: string[] = []
   const modeChanges: Array<{ sessionId: string; modeId: string }> = []
+  const configChanges: Array<{ sessionId: string; configId: string; value: string | boolean }> = []
   const actions: string[] = []
   let sessionIndex = 0
 
@@ -208,8 +210,15 @@ const startFakeAgent = (
       actions.push(`mode:${ctx.params.modeId}`)
       return {}
     })
-    .onRequest(acp.methods.agent.session.setConfigOption, () => {
+    .onRequest(acp.methods.agent.session.setConfigOption, (ctx) => {
       if (options.rejectSetConfigOption) throw acp.RequestError.internalError()
+
+      configChanges.push({
+        sessionId: ctx.params.sessionId,
+        configId: ctx.params.configId,
+        value: ctx.params.value
+      })
+
       return { configOptions: options.configOptions ?? [] }
     })
     .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
@@ -260,6 +269,7 @@ const startFakeAgent = (
     closedSessions,
     cancelledSessions,
     modeChanges,
+    configChanges,
     actions
   }
 }
@@ -4574,6 +4584,108 @@ describe('ACP runtime — connect failure logging', () => {
 
     const call = errorLogSpy.mock.calls.find(([message]) => message === 'agent connection failed')
     expect((call?.[1] as { framework: string }).framework).toBe('opencode')
+  })
+})
+
+describe('ACP runtime — session effort', () => {
+  // A select option like the thought_level selector opencode/Claude Code advertise from session/new.
+  const thoughtLevelOption = (values: string[]): SessionConfigOption =>
+    ({
+      type: 'select',
+      id: 'effort',
+      name: 'Effort',
+      category: 'thought_level',
+      currentValue: values[0],
+      options: values.map((value) => ({ value, name: value }))
+    }) as SessionConfigOption
+
+  const createEffortRuntime = (
+    process: FakeAgentProcess,
+    sessionEffort: string | undefined
+  ): AcpRuntime =>
+    new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...opencodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/opencode',
+        env: {},
+        sessionEffort
+      })
+    })
+
+  it('applies the resolved backend effort via the thought_level config option', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['s-effort'], {
+      configOptions: [thoughtLevelOption(['low', 'medium', 'high'])]
+    })
+    const runtime = createEffortRuntime(process, 'high')
+
+    await runtime.createSession({ cwd: '/workspace' })
+
+    expect(fakeAgent.configChanges).toEqual([
+      { sessionId: 's-effort', configId: 'effort', value: 'high' }
+    ])
+  })
+
+  it('sends no set_config_option request when the resolved backend carries no effort', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['s-effort'], {
+      configOptions: [thoughtLevelOption(['low', 'high'])]
+    })
+    const runtime = createEffortRuntime(process, undefined)
+
+    await runtime.createSession({ cwd: '/workspace' })
+
+    // Undefined means "don't override": the agent keeps its own default.
+    expect(fakeAgent.configChanges).toEqual([])
+  })
+
+  it('clamps the desired level to the closest advertised value', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['s-effort'], {
+      configOptions: [thoughtLevelOption(['low', 'medium'])]
+    })
+    const runtime = createEffortRuntime(process, 'max')
+
+    await runtime.createSession({ cwd: '/workspace' })
+
+    // 'max' is not advertised; the model's top level takes its place instead of a no-op.
+    expect(fakeAgent.configChanges).toEqual([
+      { sessionId: 's-effort', configId: 'effort', value: 'medium' }
+    ])
+  })
+
+  it('sends no request when the agent advertises no recognizable effort level', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['s-effort'], {
+      configOptions: [thoughtLevelOption(['default'])]
+    })
+    const runtime = createEffortRuntime(process, 'max')
+
+    await runtime.createSession({ cwd: '/workspace' })
+
+    // Only the 'default' sentinel is offered: nothing to clamp onto, the agent keeps its default.
+    expect(fakeAgent.configChanges).toEqual([])
+  })
+
+  it('swallows a set_config_option rejection instead of failing the session', async () => {
+    warnLogSpy.mockClear()
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['s-effort'], {
+      configOptions: [thoughtLevelOption(['low', 'high'])],
+      rejectSetConfigOption: true
+    })
+    const runtime = createEffortRuntime(process, 'high')
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+
+    // Best-effort: the failure is logged, the session still comes up.
+    expect(session.sessionId).toBe('s-effort')
+    expect(fakeAgent.configChanges).toEqual([])
+    const call = warnLogSpy.mock.calls.find(([message]) => message === 'set session effort failed')
+    expect(call).toBeDefined()
+    expect((call?.[1] as { sessionId: string }).sessionId).toBe('s-effort')
   })
 })
 

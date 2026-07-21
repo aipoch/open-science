@@ -173,6 +173,61 @@ describe('opencodeFramework.prepareModelConfig', () => {
       fileConfig.provider['openai-compatible'].options.baseURL
     )
   })
+
+  it('declares the reasoning effort on the model in both config layers', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
+      { storageRoot: '/data', executablePath: '/bin/opencode', reasoningEffort: 'low' }
+    )
+
+    const fileConfig = JSON.parse(
+      config.configFiles?.find((file) => file.path.endsWith('opencode.json'))?.content ?? '{}'
+    )
+    const content = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+
+    // Both layers carry the per-model knob so neither the written file nor the pinned layer drops it.
+    expect(fileConfig.provider.anthropic.models).toEqual({
+      m: { options: { reasoningEffort: 'low' } }
+    })
+    expect(content.provider.anthropic.models).toEqual({
+      m: { options: { reasoningEffort: 'low' } }
+    })
+  })
+
+  it("clamps the app's top level 'max' to opencode's 'high' in both layers", () => {
+    const config = opencodeFramework.prepareModelConfig(
+      { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
+      { storageRoot: '/data', executablePath: '/bin/opencode', reasoningEffort: 'max' }
+    )
+
+    const fileConfig = JSON.parse(
+      config.configFiles?.find((file) => file.path.endsWith('opencode.json'))?.content ?? '{}'
+    )
+    const content = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+
+    // opencode's reasoningEffort follows the AI SDK levels, which top out at 'high'.
+    expect(fileConfig.provider.anthropic.models).toEqual({
+      m: { options: { reasoningEffort: 'high' } }
+    })
+    expect(content.provider.anthropic.models).toEqual({
+      m: { options: { reasoningEffort: 'high' } }
+    })
+  })
+
+  it('leaves the model block empty when no reasoning effort is set', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
+      { storageRoot: '/data', executablePath: '/bin/opencode' }
+    )
+
+    const fileConfig = JSON.parse(
+      config.configFiles?.find((file) => file.path.endsWith('opencode.json'))?.content ?? '{}'
+    )
+    const content = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+
+    expect(fileConfig.provider.anthropic.models).toEqual({ m: {} })
+    expect(content.provider.anthropic.models).toEqual({ m: {} })
+  })
 })
 
 describe('buildOpencodeConfig', () => {
@@ -368,6 +423,21 @@ describe('buildOpencodeConfig', () => {
     )
 
     expect(config.provider['openai-compatible'].models).toEqual({ 'deepseek-v4-flash': {} })
+  })
+
+  it('declares the reasoning effort passed as the fourth argument on the model', () => {
+    const config = JSON.parse(
+      buildOpencodeConfig(
+        { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
+        {},
+        [],
+        'medium'
+      )
+    )
+
+    expect(config.provider.anthropic.models).toEqual({
+      m: { options: { reasoningEffort: 'medium' } }
+    })
   })
 
   it('uses the OpenAI base for a dual-endpoint vendor, not its Anthropic base (DeepSeek)', () => {

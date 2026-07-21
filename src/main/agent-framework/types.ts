@@ -3,7 +3,7 @@ import type { SessionModeState } from '@agentclientprotocol/sdk'
 
 import type { PermissionProfileApplication } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
-import type { AgentFrameworkId, ChatApiEndpoint } from '../../shared/settings'
+import type { AgentFrameworkId, ChatApiEndpoint, ReasoningEffort } from '../../shared/settings'
 import type { ResolvedProvider } from '../settings/provider-env'
 import type { ResponsesBridgeConnection } from '../settings/responses-bridge'
 
@@ -59,6 +59,10 @@ export type ModelConfigContext = {
   // skill loading; the adapter writes it and wires it into the agent's instruction mechanism so the
   // agent learns host.mcp instead of reimplementing connector calls with raw HTTP. Empty ⇒ omitted.
   instructions?: string
+  // The user's reasoning-effort preference ('default'/undefined ⇒ don't override; the framework
+  // injects nothing and the agent keeps its own default). Each framework maps the level onto its
+  // native config channel — Codex's model_reasoning_effort, opencode's model options.
+  reasoningEffort?: ReasoningEffort
 }
 
 // System-prompt guidance the runtime wants appended for a session (artifact routing, notebook, skill
@@ -136,6 +140,9 @@ export type ResolvedAgentBackend = {
   // Subscription backends must run the model selected in the UI. When true, a missing/rejected live
   // model option fails session creation instead of silently using the agent's account default.
   sessionModelRequired?: boolean
+  // Reasoning-effort level to apply per session via the ACP `thought_level` configOption, resolved
+  // to the closest level the agent advertises. Undefined ⇒ the agent keeps its own default.
+  sessionEffort?: string
   authentication?: AgentAuthentication
   providerConfiguration?: AgentProviderConfiguration
 }

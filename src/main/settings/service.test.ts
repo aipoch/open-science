@@ -2530,3 +2530,97 @@ describe('SettingsService: uninstall managed runtime', () => {
     expect(snapshot.agentFrameworkId).toBe('codex')
   })
 })
+
+describe('SettingsService: reasoning effort', () => {
+  it("projects 'default' when no reasoning effort is stored", async () => {
+    const service = createService()
+
+    expect((await service.getSettingsView()).reasoningEffort).toBe('default')
+  })
+
+  it('projects the stored level into the settings view', async () => {
+    const service = createService()
+
+    await repository.setReasoningEffort('low')
+
+    expect((await service.getSettingsView()).reasoningEffort).toBe('low')
+  })
+
+  it('persists the level and returns the refreshed snapshot', async () => {
+    const service = createService()
+
+    const snapshot = await service.setReasoningEffort('max')
+
+    expect(snapshot.reasoningEffort).toBe('max')
+    expect((await repository.getSettings()).reasoningEffort).toBe('max')
+  })
+
+  it('surfaces the stored level as sessionEffort on the resolved OpenCode backend', async () => {
+    // resolveActiveAgentBackend honors this forced-framework env above stored settings; set it
+    // explicitly (a prior test may leave it stubbed) so this resolves OpenCode.
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'opencode')
+    await repository.setAgentFramework('opencode')
+    const service = createService(undefined, {
+      opencodeDetected: { path: '/usr/local/bin/opencode', version: '1.19.0' }
+    })
+    const provider = (
+      await service.upsertProvider({ type: 'official', name: 'Kimi', vendorId: 'kimi', key: 'k' })
+    ).providers[0]
+    await service.setActiveProvider(provider.id)
+    await repository.setReasoningEffort('high')
+
+    const backend = await service.resolveActiveAgentBackend()
+
+    expect(backend.sessionEffort).toBe('high')
+    // The level also reaches the framework's own config channel (opencode model options).
+    const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+    expect(content.provider['openai-compatible'].models['kimi-k3']).toEqual(
+      expect.objectContaining({ options: { reasoningEffort: 'high' } })
+    )
+  })
+
+  it('surfaces sessionEffort on the Claude backend too (the early-return path)', async () => {
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'claude-code')
+    const service = createService()
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    const provider = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'G',
+        baseUrl: 'https://g/v1',
+        model: 'm',
+        key: 'k'
+      })
+    ).providers[0]
+    await service.setActiveProvider(provider.id)
+    await repository.setReasoningEffort('low')
+
+    const backend = await service.resolveActiveAgentBackend()
+
+    expect(backend.framework.id).toBe('claude-code')
+    expect(backend.sessionEffort).toBe('low')
+  })
+
+  it("leaves sessionEffort undefined when the level is 'default' or unset", async () => {
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'claude-code')
+    const service = createService()
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    const provider = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'G',
+        baseUrl: 'https://g/v1',
+        model: 'm',
+        key: 'k'
+      })
+    ).providers[0]
+    await service.setActiveProvider(provider.id)
+
+    // Unset: nothing stored yet.
+    expect((await service.resolveActiveAgentBackend()).sessionEffort).toBeUndefined()
+
+    // 'default' means "don't override": the agent keeps its own default effort.
+    await repository.setReasoningEffort('default')
+    expect((await service.resolveActiveAgentBackend()).sessionEffort).toBeUndefined()
+  })
+})

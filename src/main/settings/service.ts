@@ -48,6 +48,7 @@ import type {
   ImportSkillZipBatchRequest,
   ImportSkillZipBatchResult,
   PreviewSkillZipRequest,
+  ReasoningEffort,
   SkillBundlePreviewResult,
   ScanRepoRequest,
   ScanRepoResult,
@@ -60,6 +61,7 @@ import {
   CODEX_ISOLATED_PROVIDER_ID,
   CODEX_SHARED_PROVIDER_ID,
   codexSubscriptionProviderIdentity,
+  DEFAULT_REASONING_EFFORT,
   isCodexSubscriptionProvider,
   isProviderUsableByFramework
 } from '../../shared/settings'
@@ -422,6 +424,7 @@ class SettingsService {
       ),
       onboardingCompletedAt: settings.onboardingCompletedAt,
       packageMirror: settings.packageMirror,
+      reasoningEffort: settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
       agentFrameworkId: settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
       agentFrameworks: listAgentFrameworks().map((framework) => ({
         id: framework.id,
@@ -558,6 +561,13 @@ class SettingsService {
   // Selects the agent backend to drive; the caller reconnects so the choice applies to the next spawn.
   async setAgentFramework(id: AgentFrameworkId): Promise<SettingsSnapshot> {
     await this.repository.setAgentFramework(id)
+
+    return this.getSettingsView()
+  }
+
+  // Sets the reasoning-effort preference; the caller reconnects so it applies to subsequent sessions.
+  async setReasoningEffort(effort: ReasoningEffort): Promise<SettingsSnapshot> {
+    await this.repository.setReasoningEffort(effort)
 
     return this.getSettingsView()
   }
@@ -2063,6 +2073,12 @@ class SettingsService {
         ? forced
         : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
     const framework = getAgentFramework(frameworkId)
+    // 'default' means "don't override": nothing is sent over ACP or framework config, so the agent
+    // keeps its own default effort.
+    const sessionEffort =
+      settings.reasoningEffort && settings.reasoningEffort !== DEFAULT_REASONING_EFFORT
+        ? settings.reasoningEffort
+        : undefined
 
     // Enforce provider↔framework compatibility up front so an incompatible pair fails with a clear
     // message instead of spawning an agent that can't use the credentials — e.g. OpenCode + a Local
@@ -2110,7 +2126,8 @@ class SettingsService {
         framework,
         backendId: `${framework.id}:${activeProvider.id}`,
         executablePath,
-        env: envOverrides
+        env: envOverrides,
+        sessionEffort
       }
     }
 
@@ -2150,6 +2167,7 @@ class SettingsService {
       storageRoot: this.storageRoot,
       executablePath,
       responsesBridge,
+      reasoningEffort: sessionEffort,
       // Connector conventions + tools, so opencode uses host.mcp instead of raw HTTP (it has no skill
       // docs like Claude). Enabled bundled connectors only.
       instructions: renderConnectorInstructions(enabledConnectorIds)
@@ -2174,6 +2192,7 @@ class SettingsService {
       ...(framework.id === 'codex' && isCodexSubscriptionProvider(provider.type) && sessionModel
         ? { sessionModelRequired: true }
         : {}),
+      sessionEffort,
       authentication: modelConfig.authentication,
       providerConfiguration: modelConfig.providerConfiguration
     }

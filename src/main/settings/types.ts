@@ -3,7 +3,8 @@ import type {
   ClaudeInfo,
   CodexInfo,
   ProviderType,
-  ProviderValidationFailure
+  ProviderValidationFailure,
+  ReasoningEffort
 } from '../../shared/settings'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { OfficialVendorId } from '../../shared/provider-registry'
@@ -96,6 +97,8 @@ export type StoredSettings = {
   claude?: ClaudeInfo
   // Selected agent backend. Absent means the default (Claude Code). Switching needs a reconnect.
   agentFrameworkId?: AgentFrameworkId
+  // Reasoning-effort preference. Absent (or 'default') means the agent keeps its own default.
+  reasoningEffort?: ReasoningEffort
   // Detected opencode executable path + reported version (for the status card). Absent = detect on PATH.
   opencodePath?: string
   opencodeVersion?: string

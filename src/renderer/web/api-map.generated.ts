@@ -110,6 +110,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.setCustomServerEnabled': 'settings:set-custom-server-enabled',
   'settings.setNcbiCredentials': 'settings:set-ncbi-credentials',
   'settings.setPackageMirror': 'settings:set-package-mirror',
+  'settings.setReasoningEffort': 'settings:set-reasoning-effort',
   'settings.setSkillEnabled': 'settings:set-skill-enabled',
   'settings.setToolPermission': 'settings:set-tool-permission',
   'settings.uninstallClaude': 'settings:uninstall-claude',
