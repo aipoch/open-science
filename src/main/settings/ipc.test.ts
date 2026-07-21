@@ -39,6 +39,7 @@ type FakeSettingsService = Record<
   | 'setActiveProvider'
   | 'validateProvider'
   | 'cancelCodexLogin'
+  | 'loginIsolatedCodex'
   | 'logoutIsolatedCodex'
   | 'markOnboardingComplete'
   | 'listSkills'
@@ -83,6 +84,7 @@ const createFakeService = (): FakeSettingsService => ({
   setActiveProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   validateProvider: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   cancelCodexLogin: vi.fn(),
+  loginIsolatedCodex: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   logoutIsolatedCodex: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], activeProviderId: undefined }),
@@ -129,6 +131,7 @@ describe('settings IPC handlers', () => {
       'settings:set-active-provider',
       'settings:validate-provider',
       'settings:cancel-codex-login',
+      'settings:login-isolated-codex',
       'settings:logout-isolated-codex',
       'settings:mark-onboarding-complete'
     ]) {
@@ -174,6 +177,36 @@ describe('settings IPC handlers', () => {
     await invoke('settings:logout-isolated-codex')
 
     expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+  })
+
+  it('reconnects the active provider only when the isolated login was actually applied', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const onActiveProviderChanged = vi.fn()
+    registerSettingsIpcHandlers({
+      service: asService(service),
+      onActiveProviderChanged
+    })
+
+    // Login succeeded and the active provider is still the isolated subscription: reconnect.
+    service.getSettingsView.mockResolvedValue({
+      claude: {},
+      providers: [{ id: CODEX_SUBSCRIPTION_PROVIDER_ID, type: 'codex-isolated' }],
+      activeProviderId: CODEX_SUBSCRIPTION_PROVIDER_ID
+    })
+    await invoke('settings:login-isolated-codex')
+    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+
+    // Login succeeded but the provider was switched to shared mid-flow (outcome discarded): the
+    // shared runtime's credentials didn't change, so a reconnect would be redundant.
+    onActiveProviderChanged.mockClear()
+    service.getSettingsView.mockResolvedValue({
+      claude: {},
+      providers: [{ id: CODEX_SUBSCRIPTION_PROVIDER_ID, type: 'codex-shared' }],
+      activeProviderId: CODEX_SUBSCRIPTION_PROVIDER_ID
+    })
+    await invoke('settings:login-isolated-codex')
+    expect(onActiveProviderChanged).not.toHaveBeenCalled()
   })
 
   it('routes mark-onboarding-complete to the service', async () => {
