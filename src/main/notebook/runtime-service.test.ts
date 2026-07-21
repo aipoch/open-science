@@ -88,7 +88,12 @@ describe('resolveShellInvocation', () => {
     expect(script).toContain("$ErrorActionPreference = 'Stop'")
     expect(script).toContain('catch {')
     expect(script).toContain('[Console]::Error.WriteLine($_.ToString())')
-    expect(script).toContain('cp "source.png" "destination.png"')
+    const encodedCommand = script.match(/\$openScienceCommandBase64 = '([A-Za-z0-9+/=]+)'/)?.[1]
+    expect(Buffer.from(encodedCommand ?? '', 'base64').toString('utf8')).toBe(
+      'cp "source.png" "destination.png"'
+    )
+    expect(script).toContain('[ScriptBlock]::Create($openScienceCommandText)')
+    expect(script).toContain('& $openScienceCommand')
     expect(script).toContain('$openScienceSucceeded = $?')
     expect(script).toContain('exit $openScienceNativeExitCode')
     expect(script).toMatch(/if \(\$openScienceSucceeded\) \{ exit 0 \}/)
@@ -96,6 +101,19 @@ describe('resolveShellInvocation', () => {
       script.indexOf('if ($openScienceSucceeded) { exit 0 }')
     )
     expect(script).toMatch(/exit 1\s*$/)
+  })
+
+  it('isolates PowerShell command syntax from the exit-code wrapper', () => {
+    const command = "Write-Output 'first'\n# keep this comment\nWrite-Output 'continued' `"
+    const invocation = resolveShellInvocation(command, 'win32')
+    const script = Buffer.from(invocation.args.at(-1) ?? '', 'base64').toString('utf16le')
+    const encodedCommand = script.match(/\$openScienceCommandBase64 = '([A-Za-z0-9+/=]+)'/)?.[1]
+
+    expect(script).not.toContain(command)
+    expect(encodedCommand).toBeDefined()
+    expect(Buffer.from(encodedCommand ?? '', 'base64').toString('utf8')).toBe(command)
+    expect(script).toContain('[ScriptBlock]::Create($openScienceCommandText)')
+    expect(script).toContain('& $openScienceCommand')
   })
 })
 
@@ -622,7 +640,7 @@ describe('notebook runtime service', () => {
     })
 
     it.skipIf(process.platform !== 'win32')(
-      'propagates PowerShell cmdlet/native failures and preserves UTF-8 output on Windows',
+      'isolates commands, propagates PowerShell failures, and preserves UTF-8 output on Windows',
       async () => {
         const root = await createStorageRoot()
         const service = new NotebookRuntimeService({
@@ -647,12 +665,18 @@ describe('notebook runtime service', () => {
           workspaceCwd: root,
           command: 'Write-Output "分析完成"'
         })
+        const trailingContinuation = await service.executeShell({
+          sessionId: 'session-1',
+          workspaceCwd: root,
+          command: 'Write-Output "isolated" `'
+        })
 
         expect(cmdletFailure.exitCode).toBe(1)
         expect(cmdletFailure.stdout).not.toContain('continued')
         expect(nativeFailure.exitCode).toBe(7)
         expect(unicodeOutput).toMatchObject({ exitCode: 0 })
         expect(unicodeOutput.stdout).toContain('分析完成')
+        expect(trailingContinuation.exitCode).toBe(1)
       }
     )
 

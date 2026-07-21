@@ -432,19 +432,24 @@ type ShellInvocation = {
   args: string[]
 }
 
-// Windows PowerShell expects -EncodedCommand payloads as UTF-16LE. Encoding the complete script keeps
-// quotes, newlines, Unicode, and shell metacharacters out of command-line parsing while the script
-// normalizes output to UTF-8 and converts PowerShell's two failure channels into a real process exit
-// code: $? for cmdlets and $LASTEXITCODE for native programs.
+// Windows PowerShell expects -EncodedCommand payloads as UTF-16LE. The user command is separately
+// encoded as UTF-8 and parsed as a script block so trailing continuations, comments, and here-strings
+// cannot consume the wrapper's exit-code logic. The wrapper also normalizes output to UTF-8 and
+// converts PowerShell's two failure channels into a real process exit code: $? for cmdlets and
+// $LASTEXITCODE for native programs.
 const encodePowerShellCommand = (command: string): string => {
+  const encodedCommand = Buffer.from(command, 'utf8').toString('base64')
   const script = [
     '$openScienceUtf8 = [System.Text.UTF8Encoding]::new($false)',
     '[Console]::OutputEncoding = $openScienceUtf8',
     '$OutputEncoding = $openScienceUtf8',
+    `$openScienceCommandBase64 = '${encodedCommand}'`,
     '$global:LASTEXITCODE = 0',
     "$ErrorActionPreference = 'Stop'",
     'try {',
-    command,
+    '$openScienceCommandText = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($openScienceCommandBase64))',
+    '$openScienceCommand = [ScriptBlock]::Create($openScienceCommandText)',
+    '& $openScienceCommand',
     '$openScienceSucceeded = $?',
     '$openScienceNativeExitCode = $LASTEXITCODE',
     'if ($openScienceNativeExitCode -is [int] -and $openScienceNativeExitCode -ne 0) { exit $openScienceNativeExitCode }',
