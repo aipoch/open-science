@@ -2,6 +2,9 @@ import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { cn } from '@/lib/utils'
 import { ChevronRight } from 'lucide-react'
 
+import type { JobSummary } from '../../../../shared/compute'
+import { RemoteJobRow } from '@/components/RemoteJobRow'
+import { extractJobIdFromActivity } from '@/components/job-binding-utils'
 import { WorkspaceToolActivityRow } from './WorkspaceToolActivityRow'
 import { WorkspaceToolDetailsRow } from './WorkspaceToolDetailsRow'
 import { WorkspaceWebSearchActivityRow } from './WorkspaceWebSearchActivityRow'
@@ -27,6 +30,9 @@ type WorkspaceActivityGroupProps = {
   onToggleGroup: (groupId: string) => void
   expansionOverrides: ActivityExpansionOverrides
   onToggleRow: (activityId: string, nextExpanded: boolean) => void
+  // Map of job_id → JobSummary for jobs bound to activities in this group.
+  jobsByActivityId?: Map<string, JobSummary>
+  onOpenJobDetail?: (job: JobSummary) => void
 }
 
 // Renders adjacent tool calls as one collapsible transcript row group.
@@ -35,7 +41,9 @@ const WorkspaceActivityGroup = ({
   isExpanded,
   onToggleGroup,
   expansionOverrides,
-  onToggleRow
+  onToggleRow,
+  jobsByActivityId,
+  onOpenJobDetail
 }: WorkspaceActivityGroupProps): React.JSX.Element => {
   // ToolSearch wrapper rows are hidden when concrete search rows are present.
   const renderableActivityEntries = getRenderableActivityEntries(group.activities)
@@ -101,6 +109,23 @@ const WorkspaceActivityGroup = ({
                       ) : (
                         <WorkspaceToolActivityRow activity={activity} />
                       )}
+                      {/* RemoteJobRow: injected below a repl_execute activity that submitted a job */}
+                      {(() => {
+                        const jobId = extractJobIdFromActivity(activity)
+                        const boundJob = jobId ? jobsByActivityId?.get(jobId) : undefined
+                        if (!boundJob) return null
+                        // Only show RemoteJobRow for active (non-terminal) jobs
+                        const isActive =
+                          boundJob.status === 'running' || boundJob.status === 'submitted'
+                        if (!isActive) return null
+                        return (
+                          <RemoteJobRow
+                            key={`job-row-${boundJob.job_id}`}
+                            job={boundJob}
+                            onOpen={(job) => onOpenJobDetail?.(job)}
+                          />
+                        )
+                      })()}
                     </div>
                   )
                 })}
