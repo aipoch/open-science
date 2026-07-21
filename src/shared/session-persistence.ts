@@ -126,6 +126,10 @@ export type PersistedChatSession = {
   // Per-conversation auto-review toggle. Absent (older files) or non-true is treated as disabled;
   // only an explicit true enables it.
   autoReviewEnabled?: boolean
+  // Per-session enabled compute hosts (providerIds like "ssh:alias"). Stored as an array for JSON
+  // compatibility; semantically a set (single-select for now, multi-select-ready internally).
+  // Absent on older sessions — treated as empty (no host enabled).
+  enabledComputeHosts?: string[]
   messages: PersistedChatMessage[]
   activities?: PersistedToolActivity[]
   activeRun?: PersistedActiveRun
@@ -659,6 +663,11 @@ const sanitizeSession = (session: unknown): PersistedChatSession | undefined => 
   const activeRun = sanitizeActiveRun(session.activeRun)
   const error = asString(session.error)
   const agentFrameworkId = asString(session.agentFrameworkId) as AgentFrameworkId | undefined
+  const enabledComputeHosts = Array.isArray(session.enabledComputeHosts)
+    ? session.enabledComputeHosts.filter(
+        (item): item is string => typeof item === 'string' && item.startsWith('ssh:')
+      )
+    : []
 
   if (activeRun) sanitized.activeRun = activeRun
   if (error) sanitized.error = error
@@ -667,6 +676,7 @@ const sanitizeSession = (session: unknown): PersistedChatSession | undefined => 
   }
   if (artifacts.length > 0) sanitized.artifacts = artifacts
   if (activities.length > 0) sanitized.activities = activities
+  if (enabledComputeHosts.length > 0) sanitized.enabledComputeHosts = enabledComputeHosts
 
   return sanitizeSessionMessageImages(normalizeSessionAfterRestore(sanitized))
 }

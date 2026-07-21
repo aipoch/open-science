@@ -23,6 +23,7 @@ import { SystemSshRunner } from './ssh-runner'
 import { syncComputeSkillDoc } from './skill-doc'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { join } from 'node:path'
+import { enabledComputeHostsRegistry } from './enabled-hosts-registry'
 
 // The renderer-callable compute commands. Kept as a thin adapter over the repository + the pure
 // ssh-config parser so the IPC surface stays easy to unit test (aligns with projects/ipc.ts). Issue 01:
@@ -224,8 +225,25 @@ const registerComputeIpcHandlers = (
     }
   )
 
-  return { computeService: handlers.computeService }
+  // Per-session enabled compute hosts (issue 06). The renderer owns the durable state (session
+  // JSON); the main-process registry is the runtime cache consulted by list_compute RPC ops.
+  ipcMain.handle('compute:enabled-hosts:get', (_event, sessionId: string): string[] =>
+    enabledComputeHostsRegistry.get(sessionId)
+  )
+  ipcMain.handle(
+    'compute:enabled-hosts:set',
+    (_event, sessionId: string, providerIds: string[]): void => {
+      enabledComputeHostsRegistry.set(sessionId, providerIds)
+    }
+  )
+
+  return { computeService: handlers.computeService, enabledComputeHostsRegistry }
 }
 
-export { createComputeHandlers, createDefaultComputeHostRepository, registerComputeIpcHandlers }
+export {
+  createComputeHandlers,
+  createDefaultComputeHostRepository,
+  registerComputeIpcHandlers,
+  enabledComputeHostsRegistry
+}
 export type { ComputeHandlers, SkillDocSyncer }

@@ -332,6 +332,10 @@ type OpenScienceAPI = {
     onApprovalRequest: (listener: (request: ComputeApprovalRequest) => void) => () => void
     // Renderer sends back the user's decision (once / conversation / project / deny).
     respondApproval: (request: { id: string; decision: ComputeApprovalDecision }) => Promise<void>
+    // Per-session enabled compute hosts (issue 06). The renderer owns durable state (session JSON);
+    // the main-process registry is the runtime cache for list_compute RPC ops.
+    enabledHostsGet: (sessionId: string) => Promise<string[]>
+    enabledHostsSet: (sessionId: string, providerIds: string[]) => Promise<void>
   }
   preview: {
     load: (request: LoadPreviewStateRequest) => Promise<PersistedPreviewState | null>
@@ -721,7 +725,11 @@ const api: OpenScienceAPI = {
     bookmarksGet: (providerId) =>
       ipcRenderer.invoke('compute:bookmarks:get', providerId) as Promise<string[]>,
     bookmarksSet: (providerId, folders) =>
-      ipcRenderer.invoke('compute:bookmarks:set', providerId, folders) as Promise<void>
+      ipcRenderer.invoke('compute:bookmarks:set', providerId, folders) as Promise<void>,
+    enabledHostsGet: (sessionId) =>
+      ipcRenderer.invoke('compute:enabled-hosts:get', sessionId) as Promise<string[]>,
+    enabledHostsSet: (sessionId, providerIds) =>
+      ipcRenderer.invoke('compute:enabled-hosts:set', sessionId, providerIds) as Promise<void>
   },
   preview: {
     // Per-project preview panel state, persisted alongside projects in SQLite.

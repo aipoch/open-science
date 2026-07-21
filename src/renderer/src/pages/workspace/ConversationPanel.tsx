@@ -37,6 +37,7 @@ import { docToSkillIds, type ComposerDoc } from './composer/composer-doc'
 import { ComposerAutoReviewToggle } from './ComposerAutoReviewToggle'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { ComposerPermissionProfilePicker } from './ComposerPermissionProfilePicker'
+import { ComputeHostSelector } from './ComputeHostSelector'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 import { SessionInterruptedBanner } from './SessionInterruptedBanner'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
@@ -106,6 +107,9 @@ type ConversationPanelProps = {
   onRevokePermissionGrant: (categoryKey: string) => void
   onClearPermissionGrants: () => void
   onAutoReviewToggle: (enabled: boolean) => void
+  // Enabled compute hosts for this session (providerIds); toggling is single-select.
+  enabledComputeHosts: string[]
+  onComputeHostToggle: (providerId: string, enabled: boolean) => void
   // Manual review: invoked by the "Request review" + menu item.
   onRequestReview: () => void
   // True when "Request review" should be disabled: no completed turn, already reviewed, or currently reviewing.
@@ -142,6 +146,8 @@ const ConversationPanel = ({
   onRevokePermissionGrant,
   onClearPermissionGrants,
   onAutoReviewToggle,
+  enabledComputeHosts,
+  onComputeHostToggle,
   onRequestReview,
   isRequestReviewDisabled
 }: ConversationPanelProps): React.JSX.Element => {
@@ -406,6 +412,11 @@ const ConversationPanel = ({
                           value={autoReviewEnabled}
                           disabled={!canEditDraft}
                           onChange={onAutoReviewToggle}
+                        />
+
+                        <ComputeHostSelector
+                          enabledHosts={enabledComputeHosts}
+                          onToggle={onComputeHostToggle}
                         />
 
                         <div className="flex-1" />

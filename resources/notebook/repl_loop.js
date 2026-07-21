@@ -105,6 +105,12 @@ const hostCompute = {
   async list() {
     return computeRpc({ op: 'list' })
   },
+
+  // Returns session-enabled compute hosts (≠ list() which returns all registered hosts).
+  // Uses COMPUTE_SESSION_ID from spawn env so the registry lookup is always session-scoped.
+  async list_compute() {
+    return computeRpc({ op: 'list_compute', session_id: COMPUTE_SESSION_ID })
+  },
   // Bind a thin handle to one provider (no network call). call_command runs one short remote command;
   // login_shell defaults to true (loads the login shell so module/conda PATH is visible), timeout_seconds
   // is optional (the service applies its own default when omitted). Session/project context is threaded

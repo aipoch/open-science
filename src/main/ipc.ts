@@ -223,10 +223,16 @@ const registerIpcHandlers = async ({
   // Register compute IPC handlers early so computeService can be wired into the notebook RPC server.
   // The approval broker in compute/ipc.ts broadcasts via BrowserWindow.getAllWindows(), which requires
   // Electron to be ready — this is always the case here since we're inside registerIpcHandlers.
-  const { computeService } = registerComputeIpcHandlers()
+  const { computeService, enabledComputeHostsRegistry: hostsRegistry } =
+    registerComputeIpcHandlers()
+  // Augment computeService with getEnabledComputeHosts so the RPC server can serve list_compute.
+  const computeServiceWithRegistry = {
+    ...computeService,
+    getEnabledComputeHosts: (sessionId: string) => hostsRegistry.get(sessionId)
+  }
   const notebookRpcServer = new NotebookLocalRpcServer(notebookService, {
     connectorService,
-    computeService
+    computeService: computeServiceWithRegistry
   })
   // The RPC server needs the runtime service to dispatch to, and the runtime service needs the RPC
   // server's (lazily-started) connection for host.mcp() env injection — wire the second half here to

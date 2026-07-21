@@ -46,11 +46,26 @@ ${hostLines}
 
 Run \`await host.compute.list()\` via \`repl_execute\` to refresh this list at runtime.
 
-## API reference (Phase 1)
+## Session-active host
+
+The user may enable one host for this conversation via the \`≡\` panel in the composer.
+Always check which host is active before creating a handle:
 
 \`\`\`javascript
-// List all registered hosts (returns [{provider_id, display_name, shape, status}])
+// Returns the session-enabled hosts (subset of all registered hosts, [{provider_id, ...}]).
+// Empty array means the user hasn't chosen a host for this conversation yet.
+const activeHosts = await host.compute.list_compute()
+const c = activeHosts[0] ? host.compute.create(activeHosts[0].provider_id) : null
+\`\`\`
+
+## API reference
+
+\`\`\`javascript
+// List ALL registered hosts
 const hosts = await host.compute.list()
+
+// List session-enabled hosts (user's active selection for this conversation)
+const activeHosts = await host.compute.list_compute()
 
 // Create a handle to a specific host (no network call)
 const c = host.compute.create('ssh:<alias>')
