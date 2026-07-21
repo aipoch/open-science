@@ -44,6 +44,7 @@ type PreloadApi = {
     uninstallOpencode: () => unknown
     uninstallCodex: () => unknown
     cancelCodexLogin: () => unknown
+    loginIsolatedCodex: () => unknown
     logoutIsolatedCodex: () => unknown
   }
   acp: {
@@ -170,6 +171,12 @@ const cases: ForwardingCase[] = [
     name: 'settings.cancelCodexLogin → settings:cancel-codex-login (no args)',
     invoke: (a) => a.settings.cancelCodexLogin(),
     channel: 'settings:cancel-codex-login',
+    args: []
+  },
+  {
+    name: 'settings.loginIsolatedCodex → settings:login-isolated-codex (no args)',
+    invoke: (a) => a.settings.loginIsolatedCodex(),
+    channel: 'settings:login-isolated-codex',
     args: []
   },
   {

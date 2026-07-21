@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { mkdir } from 'node:fs/promises'
 import { Readable, Writable } from 'node:stream'
 
 import * as acp from '@agentclientprotocol/sdk'
@@ -94,6 +95,12 @@ const capabilityFailure = (mode: CodexAuthMode): CodexAuthStatus => ({
   message: 'The installed codex-acp does not advertise ChatGPT authentication.'
 })
 
+// Any stored credential counts as authenticated, not just a ChatGPT login: a profile holding an
+// API key (or gateway auth) runs fine at runtime, so reporting it as signed out would be a false
+// negative that blocks an otherwise working provider.
+const isAuthenticated = (status: CodexAuthenticationStatus): boolean =>
+  status.type === 'chat-gpt' || status.type === 'api-key' || status.type === 'gateway'
+
 const toPublicStatus = (
   mode: CodexAuthMode,
   supported: boolean,
@@ -103,7 +110,7 @@ const toPublicStatus = (
     ? {
         mode,
         supported: true,
-        authenticated: status.type === 'chat-gpt'
+        authenticated: isAuthenticated(status)
       }
     : capabilityFailure(mode)
 
@@ -158,7 +165,10 @@ export class CodexAuthController {
       if (!supported) return capabilityFailure('isolated')
 
       const current = await waitForOperation(authSession.status(), abort.signal)
-      if (current.type !== 'chat-gpt') {
+      // api-key/gateway credentials short-circuit the browser flow here too: the isolated home is
+      // app-managed and holds exactly what the runtime would use, so any usable credential already
+      // present means no re-login is needed.
+      if (!isAuthenticated(current)) {
         await waitForOperation(authSession.authenticateChatGpt(), abort.signal)
       }
 
@@ -211,12 +221,26 @@ export type CodexAuthControllerPort = Pick<
   'getStatus' | 'loginIsolated' | 'cancelLogin' | 'logoutIsolated'
 >
 
+// An auth session spawns Codex with CODEX_HOME pointed at the isolated home — which may not exist
+// yet before the first sign-in, and Codex exits hard when CODEX_HOME is missing (a fatal error on
+// Windows in particular). Runtime chat spawns get the same guarantee from the skill materializer;
+// auth sessions create it here. Shared mode touches nothing: it uses the user's real ~/.codex.
+export const ensureCodexAuthHome = async (
+  mode: CodexAuthMode,
+  storageRoot: string
+): Promise<void> => {
+  if (mode === 'isolated')
+    await mkdir(codexSubscriptionStorageDir(storageRoot), { recursive: true })
+}
+
 export const openCodexAuthSession = async ({
   adapterPath,
   nativePath,
   mode,
   storageRoot
 }: CodexAuthLaunch): Promise<CodexAuthSession> => {
+  await ensureCodexAuthHome(mode, storageRoot)
+
   const isJavaScript = /\.[cm]?js$/i.test(adapterPath)
   const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(adapterPath)
   const command = isJavaScript ? process.execPath : needsShell ? `"${adapterPath}"` : adapterPath

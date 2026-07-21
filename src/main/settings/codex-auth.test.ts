@@ -1,8 +1,15 @@
+import { existsSync } from 'node:fs'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { describe, expect, it, vi } from 'vitest'
 
+import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import {
   CodexAuthController,
   createCodexAuthEnvironment,
+  ensureCodexAuthHome,
   type CodexAuthSession
 } from './codex-auth'
 
@@ -18,6 +25,24 @@ const session = (overrides: Partial<CodexAuthSession> = {}): CodexAuthSession =>
   logout: vi.fn().mockResolvedValue(undefined),
   close: vi.fn().mockResolvedValue(undefined),
   ...overrides
+})
+
+describe('ensureCodexAuthHome', () => {
+  it('creates the isolated home up front and never touches the shared profile', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-home-'))
+    try {
+      // Shared mode uses the user's real ~/.codex; nothing may be created under the storage root.
+      await ensureCodexAuthHome('shared', root)
+      expect(existsSync(codexSubscriptionStorageDir(root))).toBe(false)
+
+      // Codex exits hard when CODEX_HOME is missing (fatal on Windows), so the isolated home must
+      // exist before the first sign-in ever spawns the process.
+      await ensureCodexAuthHome('isolated', root)
+      expect(existsSync(codexSubscriptionStorageDir(root))).toBe(true)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('createCodexAuthEnvironment', () => {
@@ -76,6 +101,30 @@ describe('CodexAuthController', () => {
       authenticated: false,
       message: 'The installed codex-acp does not advertise ChatGPT authentication.'
     })
+  })
+
+  it('treats api-key and gateway profiles as authenticated', async () => {
+    for (const type of ['api-key', 'gateway'] as const) {
+      const apiKeySession = session({
+        status: vi.fn().mockResolvedValue({ type })
+      })
+      const controller = new CodexAuthController({
+        openSession: vi.fn().mockResolvedValue(apiKeySession)
+      })
+
+      await expect(controller.getStatus('shared')).resolves.toEqual({
+        mode: 'shared',
+        supported: true,
+        authenticated: true
+      })
+
+      await expect(controller.loginIsolated()).resolves.toEqual({
+        mode: 'isolated',
+        supported: true,
+        authenticated: true
+      })
+      expect(apiKeySession.authenticateChatGpt).not.toHaveBeenCalled()
+    }
   })
 
   it('signs into the isolated profile and confirms the resulting account', async () => {

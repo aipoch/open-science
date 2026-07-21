@@ -153,6 +153,9 @@ type SettingsStore = SettingsStoreData & {
   saveAndActivateProvider: (request: UpsertProviderRequest) => Promise<SaveProviderResult>
   validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
   cancelCodexLogin: () => Promise<void>
+  // The explicit isolated sign-in — the only flow that opens the browser login. Resolves with the
+  // recorded outcome so callers can react (onboarding advances only on success).
+  loginIsolatedCodex: () => Promise<ValidateProviderResult>
   logoutIsolatedCodex: () => Promise<void>
   // Fetches a saved provider's live model list from the vendor and refreshes the cache on success.
   refreshProviderModels: (providerId: string) => Promise<RefreshProviderModelsResult>
@@ -655,6 +658,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   },
 
   cancelCodexLogin: () => window.api.settings.cancelCodexLogin(),
+
+  // Mirrors validateProvider's refresh: the recorded outcome (validated-at or failure) lives on the
+  // stored provider, so the snapshot and derived readiness are re-applied either way.
+  loginIsolatedCodex: async () => {
+    const result = await window.api.settings.loginIsolatedCodex()
+
+    set(applySnapshot(await window.api.settings.getSettings()))
+    await get().refreshPreflight()
+
+    return result
+  },
 
   logoutIsolatedCodex: async () => {
     set(applySnapshot(await window.api.settings.logoutIsolatedCodex()))

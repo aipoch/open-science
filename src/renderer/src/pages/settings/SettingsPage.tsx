@@ -186,6 +186,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const deleteProvider = useSettingsStore((state) => state.deleteProvider)
   const validateProvider = useSettingsStore((state) => state.validateProvider)
   const cancelCodexLogin = useSettingsStore((state) => state.cancelCodexLogin)
+  const loginIsolatedCodex = useSettingsStore((state) => state.loginIsolatedCodex)
   const logoutIsolatedCodex = useSettingsStore((state) => state.logoutIsolatedCodex)
   const refreshProviderModels = useSettingsStore((state) => state.refreshProviderModels)
   const pendingSkillId = useSettingsStore((state) => state.pendingSkillId)
@@ -216,6 +217,8 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const [statusMessage, setStatusMessage] = useState<string | undefined>(undefined)
   const [statusOk, setStatusOk] = useState(false)
   const [busyProviderId, setBusyProviderId] = useState<string | undefined>(undefined)
+  // True while the explicit isolated Codex sign-in is open in the browser; drives the cancel action.
+  const [isCodexLoginPending, setIsCodexLoginPending] = useState(false)
   const [providerTestError, setProviderTestError] = useState<string | undefined>(undefined)
 
   // Refresh settings whenever the dialog opens so external changes are reflected.
@@ -539,6 +542,29 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
       setBusyProviderId(undefined)
     }
   }
+
+  // The explicit isolated sign-in: opens the browser login and records the outcome on the provider,
+  // so the card flips to verified (or shows the failure reason) when the flow settles. Infrastructure
+  // failures (adapter spawn, IPC) surface through the same error line a failed test uses.
+  const handleCodexLogin = async (): Promise<void> => {
+    setIsCodexLoginPending(true)
+    setProviderTestError(undefined)
+
+    try {
+      await loginIsolatedCodex()
+    } catch (error) {
+      setProviderTestError(error instanceof Error ? error.message : 'Could not sign in to Codex.')
+    } finally {
+      setIsCodexLoginPending(false)
+    }
+  }
+
+  // A pending sign-in lives in the main process for up to five minutes — outliving this dialog, which
+  // stays mounted (only its `open` flag flips). Closing Settings mid-flow would orphan the flow (no
+  // cancel affordance on reopen), so tear it down together with the dialog.
+  useEffect(() => {
+    if (!open && isCodexLoginPending) void cancelCodexLogin()
+  }, [open, isCodexLoginPending, cancelCodexLogin])
 
   return (
     <Dialog.Root open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
@@ -905,7 +931,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                         onEdit={openEdit}
                         onDelete={(provider) => void deleteProvider(provider.id)}
                         onTest={(provider) => void handleTest(provider)}
+                        isCodexLoginPending={isCodexLoginPending}
                         onCancelCodexLogin={() => void cancelCodexLogin()}
+                        onLoginIsolatedCodex={() => void handleCodexLogin()}
                         onLogoutIsolatedCodex={() => void logoutIsolatedCodex()}
                       />
                       {providerTestError ? (
