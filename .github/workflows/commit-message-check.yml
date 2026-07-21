@@ -1,0 +1,45 @@
+name: Commit Message Check
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate:
+    name: Validate commit messages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Conventional Commit subjects
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const allowedTypes = 'feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert';
+            const subjectPattern = new RegExp(
+              `^(${allowedTypes})\\([a-z][a-z0-9-]*\\)!?: [a-z][a-z0-9 .,'/_()-]*$`,
+            );
+            const commits = await github.paginate(github.rest.pulls.listCommits, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            const invalidSubjects = commits
+              .map(({ sha, commit }) => ({ sha: sha.slice(0, 7), subject: commit.message.split('\n', 1)[0] }))
+              .filter(({ subject }) => !subjectPattern.test(subject));
+
+            if (invalidSubjects.length > 0) {
+              const details = invalidSubjects
+                .map(({ sha, subject }) => `- ${sha}: ${subject}`)
+                .join('\n');
+              core.setFailed(
+                `Each commit subject must use <type>(<scope>): <description> with an allowed type, ` +
+                  `a lowercase hyphen-separated scope, and a lowercase description.\n${details}`,
+              );
+            }
