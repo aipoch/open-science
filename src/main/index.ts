@@ -135,7 +135,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // can reach them. It only wraps ipcMain.handle — no server, no cost until something serves.
       const rpcCapture = installRpcCapture(ipcMain)
       // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
-      const { runtime, notebook, shutdownCoordinator } = await registerIpcHandlers({ mainEntryPath })
+      const { runtime, notebook, shutdownCoordinator } = await registerIpcHandlers({
+        mainEntryPath
+      })
       const webController = createWebServiceController({
         rpc: rpcCapture,
         requestQuit: () => app.quit()

@@ -824,8 +824,7 @@ const api: OpenScienceAPI = {
         listener
       ),
     onCloseConfirmRequest: (listener) => onIpcMessage(WINDOW_CLOSE_CONFIRM_REQUEST, listener),
-    sendCloseConfirmResponse: (payload) =>
-      ipcRenderer.send(WINDOW_CLOSE_CONFIRM_RESPONSE, payload)
+    sendCloseConfirmResponse: (payload) => ipcRenderer.send(WINDOW_CLOSE_CONFIRM_RESPONSE, payload)
   }
 }
 
