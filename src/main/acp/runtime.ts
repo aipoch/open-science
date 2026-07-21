@@ -405,6 +405,13 @@ class AcpRuntime {
   // Reasoning-effort level to apply per session via the ACP thought_level configOption; undefined
   // means "don't override" (the agent keeps its own default). Refreshed on each connect.
   private pendingSessionEffort: ReasoningEffort | undefined
+  // The latest configOptions each session reported — seeded from session/new and refreshed after a
+  // model switch (effort rungs are model-dependent, so the original set goes stale). The live effort
+  // path resolves against this, never against the possibly-outdated session/new response.
+  private readonly latestSessionConfigOptions = new Map<
+    string,
+    SessionConfigOption[] | null | undefined
+  >()
   // One-shot ACP authentication material resolved alongside the spawn config. It is cleared after
   // initialize so the decrypted key is not retained by the runtime longer than necessary.
   private pendingAuthentication: ResolvedAgentBackend['authentication']
@@ -577,7 +584,11 @@ class AcpRuntime {
         }
       )) as { configOptions?: SessionConfigOption[] | null }
       log.info('session model applied', { sessionId: session.sessionId, model: selection.value })
-      return response?.configOptions ?? configOptions
+      const updatedOptions = response?.configOptions ?? configOptions
+      // The model switch rebuilds the agent's options (effort rungs are model-dependent); remember
+      // the fresh set so a later live effort change resolves against the model actually running.
+      this.latestSessionConfigOptions.set(session.sessionId, updatedOptions)
+      return updatedOptions
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       log.warn('set session model failed', {
@@ -623,10 +634,12 @@ class AcpRuntime {
 
   // Live-applies a reasoning-effort change to every open session — the ACP equivalent of a model
   // switch, no respawn. Returns false when the active framework only carries effort in its baked
-  // spawn config (opencode advertises no thought_level option), so the caller falls back to the
-  // provider-switch reconnect. On success pendingSessionEffort tracks the new level, so sessions
-  // created later in this process inherit it; the persisted setting covers the next respawn.
-  // Per-session failures are logged, never fatal.
+  // spawn config (opencode advertises no thought_level option), or when applying to a session
+  // genuinely failed — the caller then falls back to the provider-switch reconnect rather than
+  // leaving the UI showing a level the agent never received. Sessions that simply advertise no
+  // effort option are skipped (a reconnect could not give their model one either). On success
+  // pendingSessionEffort tracks the new level, so sessions created later in this process inherit
+  // it; the persisted setting covers the next respawn.
   async applyReasoningEffortChange(effort: ReasoningEffort): Promise<boolean> {
     if (!this.framework.supportsLiveEffortChange) return false
 
@@ -634,9 +647,10 @@ class AcpRuntime {
     if (!this.connection) return true
 
     for (const session of this.sessions.values()) {
-      const configOptions = (
-        session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } }
-      ).newSessionResponse?.configOptions
+      const configOptions =
+        this.latestSessionConfigOptions.get(session.sessionId) ??
+        (session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } })
+          .newSessionResponse?.configOptions
       const selection = resolveSessionEffortOption(configOptions, effort)
 
       if (!selection) {
@@ -647,17 +661,19 @@ class AcpRuntime {
         continue
       }
 
-      await this.sendSessionEffort(session, selection)
+      if (!(await this.sendSessionEffort(session, selection))) return false
     }
 
     return true
   }
 
-  // Sends one resolved effort selection to a session. Best-effort: a failure is logged, never fatal.
+  // Sends one resolved effort selection to a session. Best-effort: a failure is logged (never
+  // thrown) and reported as false, so live callers can escalate while build-time callers stay
+  // non-fatal.
   private async sendSessionEffort(
     session: ActiveSession,
     selection: SessionModelSelection
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       await this.connection?.agent.request(acp.methods.agent.session.setConfigOption, {
         sessionId: session.sessionId,
@@ -665,11 +681,13 @@ class AcpRuntime {
         value: selection.value
       })
       log.info('session effort applied', { sessionId: session.sessionId, effort: selection.value })
+      return true
     } catch (error) {
       log.warn('set session effort failed', {
         sessionId: session.sessionId,
         error: error instanceof Error ? error.message : String(error)
       })
+      return false
     }
   }
 
@@ -1067,6 +1085,7 @@ class AcpRuntime {
       attached.dispose()
       this.agentToAppSessionId.delete(attached.sessionId)
       this.sessions.delete(request.sessionId)
+      this.latestSessionConfigOptions.delete(request.sessionId)
     }
 
     // The fresh agent session holds no history, so the accumulated media is gone; start its budget clean.
@@ -1430,6 +1449,7 @@ class AcpRuntime {
     this.sessionCwds.clear()
     this.sessionInlineImageBytes.clear()
     this.currentPromptTurnBySession.clear()
+    this.latestSessionConfigOptions.clear()
     this.sessionMcpServerNames.clear()
     this.sessionProjectNames.clear()
     this.permissionProfiles.clear()
@@ -1860,6 +1880,7 @@ class AcpRuntime {
     this.sessionCwds.delete(request.sessionId)
     this.sessionInlineImageBytes.delete(request.sessionId)
     this.currentPromptTurnBySession.delete(request.sessionId)
+    this.latestSessionConfigOptions.delete(request.sessionId)
     this.sessionMcpServerNames.delete(request.sessionId)
     this.sessionProjectNames.delete(request.sessionId)
     this.sessionFrameworks.delete(request.sessionId)
@@ -2981,6 +3002,7 @@ class AcpRuntime {
     this.sessionCwds.clear()
     this.sessionInlineImageBytes.clear()
     this.currentPromptTurnBySession.clear()
+    this.latestSessionConfigOptions.clear()
     this.sessionMcpServerNames.clear()
     this.sessionProjectNames.clear()
     this.artifactSessionIds.clear()

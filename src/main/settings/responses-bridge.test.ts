@@ -745,6 +745,65 @@ describe('Responses-compatible bridge conversion', () => {
     }
   })
 
+  it('flips effort forwarding on a live bridge without replacing its target', async () => {
+    let upstreamRequest: Record<string, unknown> | undefined
+    const upstreamFetch = vi.fn(
+      async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        upstreamRequest = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return new Response(
+          [
+            'data: ' +
+              JSON.stringify({
+                id: 'chat-effort-flip',
+                model: 'model-a',
+                choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' } }]
+              }),
+            '',
+            'data: [DONE]',
+            ''
+          ].join('\n'),
+          { headers: { 'content-type': 'text/event-stream' } }
+        )
+      }
+    )
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', key: 'upstream-key' },
+      upstreamFetch
+    )
+    const connection = await bridge.start()
+    const post = (): Promise<string> =>
+      fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          input: 'hi',
+          reasoning: { effort: 'high' },
+          stream: true
+        })
+      }).then((response) => response.text())
+
+    try {
+      await post()
+      expect(upstreamRequest).not.toHaveProperty('reasoning_effort')
+
+      // The user picks a level (Codex applies it live over ACP — the bridge never reconnects).
+      bridge.setForwardReasoningEffort(true)
+      await post()
+      expect(upstreamRequest).toMatchObject({ reasoning_effort: 'high' })
+
+      // Back to default: stripping restored on the same live bridge.
+      bridge.setForwardReasoningEffort(false)
+      await post()
+      expect(upstreamRequest).not.toHaveProperty('reasoning_effort')
+    } finally {
+      await bridge.close()
+    }
+  })
+
   it('restores a namespaced MCP call when its Chat id, name, and arguments are fragmented', async () => {
     let upstreamRequest: Record<string, unknown> | undefined
     const upstreamFetch = vi.fn(

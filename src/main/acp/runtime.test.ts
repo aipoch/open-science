@@ -4766,6 +4766,71 @@ describe('ACP runtime — session effort', () => {
     })
   })
 
+  it('resolves a live effort change against the options reported after a model switch', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['s-live'], {
+      configOptions: [
+        {
+          type: 'select',
+          id: 'model',
+          name: 'Model',
+          category: 'model',
+          currentValue: 'model-a',
+          options: [{ value: 'model-b', name: 'Model B' }]
+        } as SessionConfigOption,
+        thoughtLevelOption(['low', 'high'])
+      ],
+      // The model switch narrows the effort set: the session/new options are now stale.
+      updatedConfigOptions: [thoughtLevelOption(['low', 'medium'])]
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/claude',
+        env: {},
+        sessionModel: 'model-b'
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+    fakeAgent.configChanges.length = 0
+
+    const applied = await runtime.applyReasoningEffortChange('max')
+
+    // The post-switch set tops out at 'medium'; the stale session/new set would wrongly yield 'high'.
+    expect(applied).toBe(true)
+    expect(fakeAgent.configChanges).toEqual([
+      { sessionId: 's-live', configId: 'effort', value: 'medium' }
+    ])
+  })
+
+  it('reports failure so the caller reconnects when a live apply is rejected', async () => {
+    const process = new FakeAgentProcess()
+    const agentOptions: Parameters<typeof startFakeAgent>[2] = {
+      configOptions: [thoughtLevelOption(['low', 'high'])]
+    }
+    const fakeAgent = startFakeAgent(process, ['s-live'], agentOptions)
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/claude',
+        env: {}
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    agentOptions.rejectSetConfigOption = true
+    const applied = await runtime.applyReasoningEffortChange('high')
+
+    // The level never reached the agent: returning false lets the caller reconnect instead of
+    // leaving the UI showing a level the agent never received.
+    expect(applied).toBe(false)
+    expect(fakeAgent.configChanges).toEqual([])
+  })
+
   it('declines the live change when the framework bakes effort into its spawn config', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['s-effort'], {

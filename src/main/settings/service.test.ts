@@ -2623,4 +2623,83 @@ describe('SettingsService: reasoning effort', () => {
     await repository.setReasoningEffort('default')
     expect((await service.resolveActiveAgentBackend()).sessionEffort).toBeUndefined()
   })
+
+  it('updates the live bridge forwarding policy when the level changes', async () => {
+    const localFetch = globalThis.fetch
+    let upstreamRequest: Record<string, unknown> | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        upstreamRequest = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return new Response(
+          [
+            'data: ' +
+              JSON.stringify({
+                id: 'chat-effort-policy',
+                model: 'deepseek-v4-flash',
+                choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
+              }),
+            '',
+            'data: [DONE]',
+            ''
+          ].join('\n'),
+          { headers: { 'content-type': 'text/event-stream' } }
+        )
+      })
+    )
+    const adapterPath = join(storageRoot, 'bin', 'codex-acp')
+    await mkdir(dirname(adapterPath), { recursive: true })
+    await writeFile(adapterPath, '', 'utf8')
+    const service = createService(undefined, {
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' }
+    })
+    await repository.setCodexInfo({
+      resolvedPath: adapterPath,
+      version: '1.1.4',
+      nativePath: '/data/codex-managed/native/codex',
+      nativeVersion: '0.144.6'
+    })
+    await repository.setAgentFramework('codex')
+    const provider = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'DeepSeek',
+        apiEndpoints: ['openai'],
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-flash',
+        key: 'test-key'
+      })
+    ).providers[0]
+    await service.setActiveProvider(provider.id)
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
+    const backend = await service.resolveActiveAgentBackend()
+    const post = (): Promise<string> =>
+      localFetch(`${backend.providerConfiguration?.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: backend.providerConfiguration?.headers.authorization ?? '',
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'gpt-5.5',
+          input: 'hi',
+          reasoning: { effort: 'high' },
+          stream: true
+        })
+      }).then((response) => response.text())
+
+    // No explicit choice yet: Codex's own default effort is stripped, as pre-feature.
+    await post()
+    expect(upstreamRequest).not.toHaveProperty('reasoning_effort')
+
+    // An explicit level forwards — Codex applies it live over ACP, no reconnect touches the bridge.
+    await service.setReasoningEffort('high')
+    await post()
+    expect(upstreamRequest).toMatchObject({ reasoning_effort: 'high' })
+
+    // Back to 'default': stripping is restored so Codex's own effort can't leak upstream.
+    await service.setReasoningEffort('default')
+    await post()
+    expect(upstreamRequest).not.toHaveProperty('reasoning_effort')
+  })
 })

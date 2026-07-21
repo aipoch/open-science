@@ -565,9 +565,15 @@ class SettingsService {
     return this.getSettingsView()
   }
 
-  // Sets the reasoning-effort preference; the caller reconnects so it applies to subsequent sessions.
+  // Sets the reasoning-effort preference. Where the framework supports it the caller applies the
+  // level live over ACP (otherwise it reconnects); the persisted value drives the next spawn.
   async setReasoningEffort(effort: ReasoningEffort): Promise<SettingsSnapshot> {
     await this.repository.setReasoningEffort(effort)
+
+    // A live bridge never sees resolveActiveAgentBackend again until the next provider switch, so its
+    // forwarding policy must be updated in place: an explicit level forwards, 'default' restores
+    // stripping so Codex's own default effort never leaks upstream.
+    this.responsesBridge?.setForwardReasoningEffort(effort !== DEFAULT_REASONING_EFFORT)
 
     return this.getSettingsView()
   }

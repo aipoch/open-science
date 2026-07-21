@@ -1061,6 +1061,13 @@ export class ResponsesBridge {
     if (changed) this.reasoningByCallId.clear()
   }
 
+  // Updates only the effort-forwarding policy on the live target, for when the user's reasoning-effort
+  // setting changes without a reconnect (Codex applies level changes live over ACP). Deliberately not
+  // a setTarget: the upstream provider is unchanged, so the reasoning cache must be preserved.
+  setForwardReasoningEffort(forward: boolean): void {
+    this.target = { ...this.target, forwardReasoningEffort: forward }
+  }
+
   async start(): Promise<ResponsesBridgeConnection> {
     if (this.connection) return this.connection
     const token = randomBytes(24).toString('hex')
