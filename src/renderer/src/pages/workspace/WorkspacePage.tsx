@@ -170,6 +170,11 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   // conversation starts disabled; the user can toggle it on before sending. On send it is stamped
   // onto the created session (see sendCurrentMessage).
   const [newConversationAutoReviewEnabled, setNewConversationAutoReviewEnabled] = useState(false)
+  // Draft compute hosts for a not-yet-created conversation. Cleared when a new conversation draft
+  // is started, and stamped onto the session when the first message is sent (see sendCurrentMessage).
+  const [newConversationEnabledComputeHosts, setNewConversationEnabledComputeHosts] = useState<
+    string[]
+  >([])
   // Unsent composer state (rich doc + staged attachments) is kept per session (and per new conversation)
   // so switching away and back restores it. The active key's state is live; this map holds inactive keys.
   const composerDraftsRef = useRef<
@@ -211,7 +216,10 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     ? activeSession.autoReviewEnabled === true
     : newConversationAutoReviewEnabled
   // Per-session enabled compute hosts (providerIds like "ssh:<alias>"). Empty when no host is selected.
-  const activeEnabledComputeHosts = activeSession?.enabledComputeHosts ?? []
+  // New conversations use the draft state, which is cleared when a new conversation draft is started.
+  const activeEnabledComputeHosts = activeSession
+    ? (activeSession.enabledComputeHosts ?? [])
+    : newConversationEnabledComputeHosts
   // True while any review for the active session is in the 'running' lifecycle.
   // Using a shallow comparison via reviewsBySession to avoid new array reference on every render.
   const activeSessionId = activeSession?.id
@@ -531,6 +539,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     setAttachmentError(null)
     setNewConversationPermissionProfile(DEFAULT_PERMISSION_PROFILE)
     setNewConversationAutoReviewEnabled(false)
+    setNewConversationEnabledComputeHosts([])
     clearSelection()
   }
 
@@ -607,6 +616,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     // "on" needs to be stamped onto the created session (absent = off downstream).
     const wasNewConversation = !activeSession
     const draftAutoReviewEnabled = newConversationAutoReviewEnabled
+    const draftEnabledComputeHosts = newConversationEnabledComputeHosts
 
     // Optimistically clear composer state; failed sends restore both doc and attachments below. Staged
     // files are consumed (moved into the session dir) by the runtime, so they are not deleted here.
@@ -643,7 +653,17 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
       if (wasNewConversation && draftAutoReviewEnabled) {
         setAutoReviewEnabled(result.sessionId, true)
       }
+      // Carry the draft compute host selection onto the newly created session.
+      if (wasNewConversation && draftEnabledComputeHosts.length > 0) {
+        setEnabledComputeHosts(result.sessionId, draftEnabledComputeHosts)
+        void window.api.compute
+          .enabledHostsSet(result.sessionId, draftEnabledComputeHosts)
+          .catch((err: unknown) => {
+            console.warn('Failed to sync draft compute hosts to registry for new session', err)
+          })
+      }
       setNewConversationAutoReviewEnabled(false)
+      setNewConversationEnabledComputeHosts([])
     })
   }
 
@@ -748,13 +768,16 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
 
   // Enables or disables a compute host for the active session (single-select semantics).
   // Enabling one host replaces any existing selection; disabling clears the set.
-  // Updates both the session store (durable, via session JSON) and the main-process runtime
-  // registry (ephemeral cache consumed by list_compute RPC ops in the repl kernel).
+  // For a not-yet-created conversation, updates the draft state; sendCurrentMessage stamps it onto
+  // the new session. For an existing session, updates the session store and main-process registry.
   const handleComputeHostToggle = (providerId: string, enabled: boolean): void => {
-    if (!activeSession) return
-    const sessionId = activeSession.id
     // Single-select: enable one host ↔ clear all others; disabling clears the selection entirely.
     const newEnabledHosts = enabled ? [providerId] : []
+    if (!activeSession) {
+      setNewConversationEnabledComputeHosts(newEnabledHosts)
+      return
+    }
+    const sessionId = activeSession.id
     setEnabledComputeHosts(sessionId, newEnabledHosts)
     // Keep the main-process registry in sync immediately so list_compute() reflects the change
     // without waiting for the next session-switch effect.

@@ -398,6 +398,11 @@ const ConversationPanel = ({
                           onChange={handleAttachmentInputChange}
                         />
 
+                        <ComputeHostSelector
+                          enabledHosts={enabledComputeHosts}
+                          onToggle={onComputeHostToggle}
+                        />
+
                         <ComposerPermissionProfilePicker
                           value={permissionProfile}
                           state={permissionProfileState}
@@ -412,11 +417,6 @@ const ConversationPanel = ({
                           value={autoReviewEnabled}
                           disabled={!canEditDraft}
                           onChange={onAutoReviewToggle}
-                        />
-
-                        <ComputeHostSelector
-                          enabledHosts={enabledComputeHosts}
-                          onToggle={onComputeHostToggle}
                         />
 
                         <div className="flex-1" />

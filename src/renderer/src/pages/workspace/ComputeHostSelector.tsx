@@ -108,7 +108,7 @@ const ComputeHostSelector = ({
                       checked={isEnabled}
                       onCheckedChange={(checked) => handleToggle(host.providerId, checked)}
                       aria-label={`${isEnabled ? 'Disable' : 'Enable'} ${host.displayName}`}
-                      onClick={(e) => e.stopPropagation()}
+                      onPointerDown={(e) => e.stopPropagation()}
                     />
                   </DropdownMenuItem>
                 )
