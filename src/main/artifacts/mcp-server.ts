@@ -104,11 +104,12 @@ const readCurrentRunContext = async (currentRunFile: string): Promise<ArtifactRu
 }
 
 // Normalizes the legacy content/encoding shape and the new source shape into one repository input.
-// relativeBaseDir is the turn's primary resolution base (notebook data dir, else the first static
-// import root); it decides whether the bare-filename convenience default is meaningful.
+// hasRelativeBase only gates whether the bare-filename convenience default is meaningful; the
+// actual relative-path resolution (the ordered multi-base probe) happens exclusively in the
+// repository layer.
 const normalizeArtifactToolWriteInput = (
   input: ArtifactToolWriteInput,
-  relativeBaseDir: string | undefined
+  hasRelativeBase: boolean
 ): ArtifactWriteSource => {
   // An explicit source passes through untouched; the repository resolves a relative localPath
   // against the turn's ordered base dirs (never the MCP/app process cwd) and rejects when the turn
@@ -129,7 +130,7 @@ const normalizeArtifactToolWriteInput = (
   // "plot.png")` right after `plt.savefig("plot.png")` just works. With no base at all a bare
   // filename would silently resolve against the MCP process cwd and fail the allow-root check —
   // keep the explicit contract error instead so the caller learns what to pass.
-  if (!relativeBaseDir) {
+  if (!hasRelativeBase) {
     throw new Error(
       'write_artifact_file requires source or content: no notebook session data dir or allowed import root to resolve a bare filename against.'
     )
@@ -147,13 +148,16 @@ const writeArtifactFileForCurrentRun = async (
   const context = await readCurrentRunContext(environment.currentRunFile)
   // Ordered resolution bases for relative paths: the handoff's notebook data dir first (kernel cwd
   // wins when both produced a same-named file this turn), then the static import roots — which in
-  // production are exactly the session workspace, so a plain shell save resolves there. The bases
-  // are a subset of the authorized roots, so a probed hit can never fail the allow-root check.
+  // production are exactly the session workspace, so a plain shell save resolves there. Every entry
+  // is BOTH an authorization boundary and a resolution base: if the static roots ever grow beyond
+  // the session workspace (e.g. a shared asset dir), a same-named file there silently shadows
+  // later bases — keep the list intentional. Bases ⊆ authorized roots, so a probed hit can never
+  // fail the allow-root check.
   const relativeBaseDirs = [
     ...(context.notebookDataDir ? [context.notebookDataDir] : []),
     ...environment.allowedImportRoots
   ]
-  const source = normalizeArtifactToolWriteInput(input, relativeBaseDirs[0])
+  const source = normalizeArtifactToolWriteInput(input, relativeBaseDirs.length > 0)
 
   return repository.writePendingFile(
     {
