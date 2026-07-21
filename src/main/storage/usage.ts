@@ -1,12 +1,18 @@
 import { readdir, stat, statfs } from 'node:fs/promises'
 import { join } from 'node:path'
 
-export type UsageCategoryKey = 'artifacts' | 'uploads' | 'runtime' | 'notebooks'
+export type UsageCategoryKey = 'artifacts' | 'uploads' | 'runtime' | 'notebooks' | 'workspaces'
 export type UsageChild = { name: string; bytes: number }
 export type UsageCategory = { key: UsageCategoryKey; bytes: number; children?: UsageChild[] }
 export type StorageUsage = { categories: UsageCategory[]; totalBytes: number }
 
-const CATEGORY_KEYS: UsageCategoryKey[] = ['artifacts', 'uploads', 'runtime', 'notebooks']
+const CATEGORY_KEYS: UsageCategoryKey[] = [
+  'artifacts',
+  'uploads',
+  'runtime',
+  'notebooks',
+  'workspaces'
+]
 
 // Recursively sums UNIQUE file sizes under `dir`, deduping hard links by (dev, ino) through `seen`
 // (like `du`): a file whose inode was already counted contributes 0. This is essential for the runtime
