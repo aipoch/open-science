@@ -137,6 +137,43 @@ describe('artifact MCP server', () => {
     await expect(readFile(artifact.path, 'utf8')).resolves.toBe('<svg />')
   })
 
+  it('rejects an absolute path under the stale pre-start notebook alias root', async () => {
+    // Regression for the P1 follow-up: the handoff's final session root is the ONLY authoritative
+    // notebook import root. A file living under the old pre-start alias dir must NOT pass the
+    // allow-root check just because the session was once created under that alias.
+    const root = await createStorageRoot()
+    const finalSessionRoot = join(root, 'notebooks', 'default-project', 'final-session')
+    const finalDataDir = join(finalSessionRoot, 'data')
+    await mkdir(finalDataDir, { recursive: true })
+
+    // A file the agent saved under the stale alias dir (not the final session dir).
+    const aliasDataDir = join(
+      root,
+      'notebooks',
+      'default-project',
+      'notebook-session-123-1',
+      'data'
+    )
+    await mkdir(aliasDataDir, { recursive: true })
+    const aliasFile = join(aliasDataDir, 'stale.png')
+    await writeFile(aliasFile, 'PNG', 'utf8')
+
+    const repository = new ArtifactRepository(root)
+    // Static roots exclude any notebook alias (only sessionCwd would be present in production).
+    const environment = await createEnvironment(root, {
+      runId: 'run-1',
+      notebookDataDir: finalDataDir,
+      notebookSessionRoot: finalSessionRoot
+    })
+
+    await expect(
+      writeArtifactFileForCurrentRun(repository, environment, {
+        filename: 'stale.png',
+        source: { kind: 'localPath', path: aliasFile }
+      })
+    ).rejects.toThrow(/outside allowed artifact import roots/i)
+  })
+
   it('rejects writes when no active run context is available', async () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)

@@ -65,6 +65,12 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain(
       'for binary final outputs, read base64 content'
     )
+    // write_artifact_file now resolves a relative name against the notebook data dir, so the guidance
+    // must steer the model to the saved relative filename — not to a rebuilt absolute path. Guard the
+    // old "use an ABSOLUTE path" / "will not resolve a bare relative name" wording from regressing.
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('the SAME relative filename you saved with')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('use an ABSOLUTE path')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('will not resolve a bare relative name')
   })
 
   it('directs the agent to run code as one notebook_execute call per cell', () => {
@@ -255,6 +261,10 @@ describe('bash_execute tool', () => {
     expect(windowsDoc).toContain('native programs must emit UTF-8')
     expect(windowsDoc).toContain('write_artifact_file')
     expect(windowsDoc).toContain('Do NOT copy a generated notebook output into the workspace')
+    // Aligned with the relative-path artifact flow: point at the saved relative filename, not the
+    // old "generated file's absolute local path" wording.
+    expect(windowsDoc).toContain('same relative filename you saved with')
+    expect(windowsDoc).not.toContain("generated file's absolute local path")
   })
 
   it('forwards bash_execute input to the executeShell RPC method', async () => {

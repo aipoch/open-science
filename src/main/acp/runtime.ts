@@ -2183,41 +2183,31 @@ class AcpRuntime {
   // Builds the artifact MCP environment for one session, shared by the stdio config and the http host.
   private buildArtifactEnvironment(
     artifactSessionId: string,
-    notebookSessionId: string,
     sessionCwd: string,
     projectName: string
   ): ArtifactMcpEnvironment | undefined {
     if (!this.artifactOptions || !artifactSessionId) return undefined
 
-    const allowedImportRoots = [
-      sessionCwd,
-      ...(this.notebookOptions && notebookSessionId
-        ? [getNotebookSessionRoot(this.artifactOptions.dataRoot, projectName, notebookSessionId)]
-        : [])
-    ]
-
+    // Only the session workspace is a static import root. The notebook session root is intentionally
+    // NOT added here: at session creation we only hold the pre-start alias, and authorizing the alias
+    // dir would let stale-alias absolute paths pass the allow-root check. The authoritative notebook
+    // root (keyed by the final ACP session id) is supplied per turn via the current-run.json handoff.
     return {
       storageRoot: this.artifactOptions.dataRoot,
       projectName,
       sessionId: artifactSessionId,
       currentRunFile: this.getArtifactCurrentRunFile(artifactSessionId, projectName),
-      allowedImportRoots
+      allowedImportRoots: [sessionCwd]
     }
   }
 
   // Provides the agent with exactly one artifact MCP server scoped to this session's storage context.
   private createArtifactMcpServers(
     artifactSessionId: string,
-    notebookSessionId: string,
     sessionCwd: string,
     projectName: string
   ): McpServer[] {
-    const environment = this.buildArtifactEnvironment(
-      artifactSessionId,
-      notebookSessionId,
-      sessionCwd,
-      projectName
-    )
+    const environment = this.buildArtifactEnvironment(artifactSessionId, sessionCwd, projectName)
 
     if (!environment || !this.artifactOptions) return []
 
@@ -2329,12 +2319,7 @@ class AcpRuntime {
     const servers = this.framework.acceptsStdioMcp
       ? [
           ...(artifactEnabled
-            ? this.createArtifactMcpServers(
-                artifactSessionId,
-                notebookSessionId,
-                sessionCwd,
-                projectName
-              )
+            ? this.createArtifactMcpServers(artifactSessionId, sessionCwd, projectName)
             : []),
           ...(await this.createNotebookMcpServers(notebookSessionId, sessionCwd, projectName))
         ]
@@ -2400,7 +2385,6 @@ class AcpRuntime {
 
     const artifactEnvironment = this.buildArtifactEnvironment(
       artifactSessionId,
-      notebookSessionId,
       sessionCwd,
       projectName
     )

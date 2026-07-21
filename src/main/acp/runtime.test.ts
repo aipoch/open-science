@@ -3553,7 +3553,7 @@ describe('ACP runtime session management', () => {
     })
   })
 
-  it('passes workspace and notebook roots to the artifact MCP server as allowed import roots', async () => {
+  it('passes only the workspace as a static allowed import root, not the pre-start notebook alias', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['remote-session-1'])
     const runtime = new AcpRuntime({
@@ -3592,12 +3592,17 @@ describe('ACP runtime session management', () => {
 
     const notebookSessionId = getEnvValue(notebookServer, 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID')
 
-    expect(
-      JSON.parse(getEnvValue(artifactServer, 'OPEN_SCIENCE_ARTIFACT_ALLOWED_IMPORT_ROOTS'))
-    ).toEqual([
-      resolve('/workspace'),
+    // The static env carries ONLY the session workspace. The notebook session root is deliberately
+    // absent: at session creation we hold just the pre-start alias, and authorizing the alias dir
+    // would let stale-alias absolute paths pass the allow-root check. The authoritative notebook
+    // root (keyed by the final ACP session id) is supplied per turn via current-run.json instead.
+    const staticRoots = JSON.parse(
+      getEnvValue(artifactServer, 'OPEN_SCIENCE_ARTIFACT_ALLOWED_IMPORT_ROOTS')
+    )
+    expect(staticRoots).toEqual([resolve('/workspace')])
+    expect(staticRoots).not.toContain(
       join('/Users/example/.open-science', 'notebooks', 'default-project', notebookSessionId)
-    ])
+    )
   })
 
   it('uses the configured main entry path for artifact MCP server config', async () => {
