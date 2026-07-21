@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react'
+import { Component, memo, useMemo, type ErrorInfo, type ReactNode } from 'react'
 import { code } from '@streamdown/code'
 import { cjk } from '@streamdown/cjk'
 import { createMathPlugin } from '@streamdown/math'
@@ -14,6 +14,16 @@ import { cn } from '@/lib/utils'
 type AgentMarkdownProps = {
   content: string
   isAnimating?: boolean
+}
+
+type AgentMarkdownErrorBoundaryProps = {
+  content: string
+  children: ReactNode
+}
+
+type AgentMarkdownErrorBoundaryState = {
+  content: string
+  hasError: boolean
 }
 
 type MermaidErrorPanelProps = {
@@ -60,8 +70,52 @@ const agentLinkSafety: LinkSafetyConfig = {
   renderModal: (props) => <LinkSafetyModal {...props} />
 }
 
+// Contains rich-renderer failures to one message and preserves its source as readable plain text.
+class AgentMarkdownErrorBoundary extends Component<
+  AgentMarkdownErrorBoundaryProps,
+  AgentMarkdownErrorBoundaryState
+> {
+  state: AgentMarkdownErrorBoundaryState = {
+    content: this.props.content,
+    hasError: false
+  }
+
+  static getDerivedStateFromProps(
+    props: AgentMarkdownErrorBoundaryProps,
+    state: AgentMarkdownErrorBoundaryState
+  ): AgentMarkdownErrorBoundaryState | null {
+    if (props.content === state.content) return null
+
+    // A changed message gets a fresh rich-render attempt instead of inheriting the previous failure.
+    return { content: props.content, hasError: false }
+  }
+
+  static getDerivedStateFromError(): Partial<AgentMarkdownErrorBoundaryState> {
+    return { hasError: true }
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
+    console.error('Failed to render rich Markdown; showing plain text fallback.', error, errorInfo)
+  }
+
+  render(): ReactNode {
+    if (this.state.hasError) {
+      return (
+        <pre
+          data-agent-markdown-fallback=""
+          className="agent-markdown-root m-0 max-w-full min-w-0 whitespace-pre-wrap break-words font-sans text-inherit"
+        >
+          {this.props.content}
+        </pre>
+      )
+    }
+
+    return this.props.children
+  }
+}
+
 // Renders agent markdown with Streamdown tuned for incremental AI output.
-const AgentMarkdown = memo(
+const RichAgentMarkdown = memo(
   ({ content, isAnimating = false }: AgentMarkdownProps): React.JSX.Element => {
     const renderedContent = useMemo(() => normalizeAgentMarkdown(content), [content])
 
@@ -92,6 +146,17 @@ const AgentMarkdown = memo(
       </div>
     )
   }
+)
+
+RichAgentMarkdown.displayName = 'RichAgentMarkdown'
+
+// Keeps renderer-specific failures from unmounting the surrounding workspace.
+const AgentMarkdown = memo(
+  ({ content, isAnimating = false }: AgentMarkdownProps): React.JSX.Element => (
+    <AgentMarkdownErrorBoundary content={content}>
+      <RichAgentMarkdown content={content} isAnimating={isAnimating} />
+    </AgentMarkdownErrorBoundary>
+  )
 )
 
 AgentMarkdown.displayName = 'AgentMarkdown'

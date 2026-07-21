@@ -268,8 +268,14 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
       }
 
       const currentSize = panel.getSize().asPercentage
-      const resizePanel = (size: number): void => {
-        panel.resize(`${Number(size.toFixed(3))}%`)
+      const resizePanel = (size: number): boolean => {
+        const currentPanel = previewPanelRef.current
+
+        // Ignore motion callbacks that outlive the panel handle they were created for.
+        if (currentPanel !== panel) return false
+
+        currentPanel.resize(`${Number(size.toFixed(3))}%`)
+        return true
       }
 
       if (
@@ -298,8 +304,10 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
           ...previewPanelAnimation,
           onUpdate: resizePanel,
           onComplete: () => {
-            resizePanel(targetSize)
-            if (direction === 'opening') lastOpenPreviewPanelSizeRef.current = targetSize
+            const didResize = resizePanel(targetSize)
+            if (didResize && direction === 'opening') {
+              lastOpenPreviewPanelSizeRef.current = targetSize
+            }
             previewPanelAnimationDirectionRef.current = null
             previewPanelAnimationRef.current = null
             setIsPreviewPanelAnimationMinSizeRelaxed(false)

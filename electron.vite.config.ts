@@ -8,6 +8,8 @@ export default defineConfig({
   main: {},
   preload: {},
   renderer: {
+    // Regenerate lazy optimized chunks so a persisted Electron page cannot request stale hashes.
+    optimizeDeps: { force: true },
     resolve: {
       alias: {
         '@': resolve('src/renderer/src'),

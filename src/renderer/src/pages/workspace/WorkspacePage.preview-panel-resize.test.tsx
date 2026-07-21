@@ -17,6 +17,7 @@ const workspacePageHarness = vi.hoisted(() => ({
   previewPanelMinSize: undefined as string | undefined,
   previewOnResize: undefined as
     undefined | ((panelSize: PanelSize, previousPanelSize: PanelSize | undefined) => void),
+  previewPanelRef: undefined as undefined | { current: PanelImperativeHandle | null },
   previewPanelHandle: {
     collapse: vi.fn(),
     expand: vi.fn(),
@@ -114,8 +115,10 @@ vi.mock('./PreviewPanel', () => ({
     if (typeof panelRef === 'function') {
       panelRef(workspacePageHarness.previewPanelHandle)
     } else if (panelRef) {
-      ;(panelRef as { current: PanelImperativeHandle | null }).current =
-        workspacePageHarness.previewPanelHandle
+      workspacePageHarness.previewPanelRef = panelRef as {
+        current: PanelImperativeHandle | null
+      }
+      workspacePageHarness.previewPanelRef.current = workspacePageHarness.previewPanelHandle
     }
 
     return <div data-testid="preview-panel" />
@@ -143,6 +146,7 @@ describe('WorkspacePage preview panel resize sync', () => {
     workspacePageHarness.previewPanelDefaultSize = undefined
     workspacePageHarness.previewPanelMinSize = undefined
     workspacePageHarness.previewOnResize = undefined
+    workspacePageHarness.previewPanelRef = undefined
     vi.clearAllMocks()
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
       callback(0)
@@ -279,6 +283,31 @@ describe('WorkspacePage preview panel resize sync', () => {
     })
 
     expect(workspacePageHarness.previewPanelHandle.resize).toHaveBeenCalledWith('24%')
+  })
+
+  it('does not resize a detached preview panel during an in-flight animation', async () => {
+    await renderPage()
+
+    const toggleButton = container.querySelector<HTMLButtonElement>(
+      '[data-testid="preview-toggle"]'
+    )
+    await act(async () => {
+      toggleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    const animationOptions = motionHarness.animate.mock.calls.at(-1)?.[2] as
+      { onUpdate?: (value: number) => void; onComplete?: () => void } | undefined
+    vi.mocked(workspacePageHarness.previewPanelHandle.resize).mockClear()
+    if (workspacePageHarness.previewPanelRef) {
+      workspacePageHarness.previewPanelRef.current = null
+    }
+
+    await act(async () => {
+      animationOptions?.onUpdate?.(24)
+      animationOptions?.onComplete?.()
+    })
+
+    expect(workspacePageHarness.previewPanelHandle.resize).not.toHaveBeenCalled()
   })
 
   it('temporarily relaxes the preview min size while programmatic animation runs', async () => {
