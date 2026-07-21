@@ -1697,3 +1697,344 @@ describe('ComputeService.download (session-cache)', () => {
     expect(scpCopy).not.toHaveBeenCalled()
   })
 })
+
+// ---------------------------------------------------------------------------
+// ComputeService.submitJob — unit tests with injected fakes
+// ---------------------------------------------------------------------------
+
+const makeJobRepo = (
+  jobs: Map<string, import('../../shared/compute').ComputeJob> = new Map()
+): {
+  repo: import('./job-repository').ComputeJobRepository
+  createCalls: ReturnType<typeof vi.fn>
+  updateCalls: ReturnType<typeof vi.fn>
+} => {
+  const createCalls = vi.fn(async (request: import('./job-repository').CreateJobRequest) => {
+    const job: import('../../shared/compute').ComputeJob = {
+      job_id: request.id,
+      provider_id: request.providerId,
+      shape: request.shape,
+      session_id: request.sessionId,
+      project_id: request.projectId,
+      status: 'submitted',
+      intent: request.intent,
+      command: request.command,
+      command_hash: request.commandHash,
+      environment: request.environment,
+      resource_request: request.resourceRequest,
+      input_manifest: request.inputManifest,
+      output_manifest: request.outputManifest,
+      harvest_config: request.harvestConfig,
+      timeout_seconds: request.timeoutSeconds,
+      remote_workdir: request.remoteWorkdir,
+      remote_handle: undefined,
+      exit_code: undefined,
+      stdout_tail: undefined,
+      stderr_tail: undefined,
+      error_code: undefined,
+      created_at: Date.now(),
+      submitted_at: Date.now(),
+      started_at: undefined,
+      finished_at: undefined,
+      harvested_at: undefined
+    }
+    jobs.set(request.id, job)
+    return job
+  })
+  const updateCalls = vi.fn(async (jobId: string, updates: unknown) => {
+    const job = jobs.get(jobId) ?? { job_id: jobId }
+    const updated = { ...job, ...(updates as object) }
+    jobs.set(jobId, updated as import('../../shared/compute').ComputeJob)
+    return updated as import('../../shared/compute').ComputeJob
+  })
+  const getCalls = vi.fn(async (jobId: string) => jobs.get(jobId) ?? null)
+  const findNonTerminalCalls = vi.fn(async () => Array.from(jobs.values()))
+
+  return {
+    repo: {
+      create: createCalls,
+      get: getCalls,
+      update: updateCalls,
+      findNonTerminal: findNonTerminalCalls,
+      findNonTerminalByProvider: vi.fn(async () => []),
+      hasActiveJobsForProvider: vi.fn(async () => false)
+    } as unknown as import('./job-repository').ComputeJobRepository,
+    createCalls,
+    updateCalls
+  }
+}
+
+describe('ComputeService.submitJob', () => {
+  it('returns job_id + remote_workdir immediately (before dispatch)', async () => {
+    // Runner should never be called for submit_job itself (dispatch is background).
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo: jobRepo, createCalls } = makeJobRepo()
+    const { repo } = makeRepo()
+
+    const approveDecision = vi.fn(() => Promise.resolve('once' as const))
+    const broker = {
+      request: approveDecision,
+      requestWithContext: approveDecision,
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    const service = new ComputeService(runner, repo, broker, undefined, undefined, jobRepo)
+
+    const result = await service.submitJob(
+      'ssh:biowulf',
+      'smoke test',
+      'echo hello',
+      {},
+      { sessionId: 'sess-1', projectId: 'proj-1' }
+    )
+
+    expect(result.status).toBe('submitted')
+    expect(result.provider_id).toBe('ssh:biowulf')
+    expect(result.job_id).toBeDefined()
+    expect(result.remote_workdir).toContain('.openscience/jobs/')
+    expect(createCalls).toHaveBeenCalledOnce()
+  })
+
+  it('throws approval_denied and does NOT create a DB row when approval is denied', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo: jobRepo, createCalls } = makeJobRepo()
+    const { repo } = makeRepo()
+
+    const denyDecision = vi.fn(() => Promise.resolve('deny' as const))
+    const broker = {
+      request: denyDecision,
+      requestWithContext: denyDecision,
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    const service = new ComputeService(runner, repo, broker, undefined, undefined, jobRepo)
+
+    const err = await service
+      .submitJob('ssh:biowulf', 'test', 'echo hi', {}, { sessionId: 's1', projectId: 'p1' })
+      .catch((e) => e)
+
+    expect(err.computeCallError?.error_code).toBe('approval_denied')
+    // No DB row should have been created.
+    expect(createCalls).not.toHaveBeenCalled()
+  })
+
+  it('uses operation=submit_job for grant memory (not call_command)', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo: jobRepo } = makeJobRepo()
+    const { repo } = makeRepo()
+
+    const requestWithContext = vi.fn(() => Promise.resolve('conversation' as const))
+    const broker = {
+      request: vi.fn(),
+      requestWithContext,
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    const service = new ComputeService(runner, repo, broker, undefined, undefined, jobRepo)
+
+    await service.submitJob(
+      'ssh:biowulf',
+      'test',
+      'echo hi',
+      {},
+      { sessionId: 's1', projectId: 'p1' }
+    )
+
+    expect(requestWithContext).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ operation: 'submit_job' })
+    )
+  })
+
+  it('rejects timeout_seconds > 7 days', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo: jobRepo } = makeJobRepo()
+    const { repo } = makeRepo()
+    const broker = {
+      request: vi.fn(),
+      requestWithContext: vi.fn(() => Promise.resolve('once' as const)),
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    const service = new ComputeService(runner, repo, broker, undefined, undefined, jobRepo)
+
+    const err = await service
+      .submitJob(
+        'ssh:biowulf',
+        'test',
+        'echo hi',
+        { timeoutSeconds: 8 * 24 * 3600 },
+        { sessionId: 's1', projectId: 'p1' }
+      )
+      .catch((e) => e)
+
+    expect(err.computeCallError?.error_code).toBe('timeout')
+  })
+
+  it('approval fires before any DB row is created (security contract)', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo: jobRepo, createCalls } = makeJobRepo()
+    const { repo } = makeRepo()
+
+    let approvalCalledAt: number | undefined
+    let createCalledAt: number | undefined
+
+    const requestWithContext = vi.fn(async () => {
+      approvalCalledAt = Date.now()
+      await new Promise((r) => setTimeout(r, 1))
+      return 'once' as const
+    })
+    const broker = {
+      request: vi.fn(),
+      requestWithContext,
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    createCalls.mockImplementation(async (request: import('./job-repository').CreateJobRequest) => {
+      createCalledAt = Date.now()
+      return {
+        job_id: request.id,
+        provider_id: request.providerId,
+        shape: request.shape,
+        session_id: request.sessionId,
+        project_id: request.projectId,
+        status: 'submitted' as const,
+        intent: request.intent,
+        command: request.command,
+        command_hash: request.commandHash,
+        environment: undefined,
+        resource_request: undefined,
+        input_manifest: undefined,
+        output_manifest: undefined,
+        harvest_config: undefined,
+        timeout_seconds: request.timeoutSeconds,
+        remote_workdir: request.remoteWorkdir,
+        remote_handle: undefined,
+        exit_code: undefined,
+        stdout_tail: undefined,
+        stderr_tail: undefined,
+        error_code: undefined,
+        created_at: Date.now(),
+        submitted_at: Date.now(),
+        started_at: undefined,
+        finished_at: undefined,
+        harvested_at: undefined
+      }
+    })
+
+    const service = new ComputeService(runner, repo, broker, undefined, undefined, jobRepo)
+    await service.submitJob(
+      'ssh:biowulf',
+      'test',
+      'echo hi',
+      {},
+      { sessionId: 's1', projectId: 'p1' }
+    )
+
+    expect(approvalCalledAt).toBeDefined()
+    expect(createCalledAt).toBeDefined()
+    expect(approvalCalledAt!).toBeLessThan(createCalledAt!)
+  })
+})
+
+describe('ComputeService.getJobStatus', () => {
+  it('returns status shape from DB without SSH', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const jobs = new Map<string, import('../../shared/compute').ComputeJob>()
+    const job: import('../../shared/compute').ComputeJob = {
+      job_id: 'job-42',
+      provider_id: 'ssh:biowulf',
+      shape: 'direct_ssh',
+      session_id: 'sess-1',
+      project_id: 'proj-1',
+      status: 'success',
+      intent: 'test',
+      command: 'echo hi',
+      command_hash: 'abc',
+      environment: undefined,
+      resource_request: undefined,
+      input_manifest: undefined,
+      output_manifest: undefined,
+      harvest_config: undefined,
+      timeout_seconds: 3600,
+      remote_workdir: '~/.openscience/jobs/job-42',
+      remote_handle: undefined,
+      exit_code: 0,
+      stdout_tail: 'hi\n',
+      stderr_tail: '',
+      error_code: undefined,
+      created_at: 1,
+      submitted_at: 1,
+      started_at: 1,
+      finished_at: 2,
+      harvested_at: undefined
+    }
+    jobs.set('job-42', job)
+    const { repo: jobRepo } = makeJobRepo(jobs)
+    const { repo } = makeRepo()
+
+    const service = new ComputeService(runner, repo, undefined, undefined, undefined, jobRepo)
+
+    const status = await service.getJobStatus('job-42')
+    expect(status.job_id).toBe('job-42')
+    expect(status.status).toBe('success')
+    expect(status.exit_code).toBe(0)
+    expect(status.stdout_tail).toBe('hi\n')
+    expect(status.remote_workdir).toBe('~/.openscience/jobs/job-42')
+
+    // SSH runner should NOT have been called.
+    expect((runner.run as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0)
+  })
+
+  it('throws when job not found', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo: jobRepo } = makeJobRepo()
+    const { repo } = makeRepo()
+
+    const service = new ComputeService(runner, repo, undefined, undefined, undefined, jobRepo)
+
+    await expect(service.getJobStatus('nonexistent')).rejects.toThrow(/No compute job/)
+  })
+})

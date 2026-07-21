@@ -301,7 +301,9 @@ describe('ComputeApprovalBroker — download operation', () => {
     let n = 0
     const broker = new ComputeApprovalBroker({
       generateId: () => `id-${++n}`,
-      broadcast: (r) => { broadcast = r },
+      broadcast: (r) => {
+        broadcast = r
+      },
       setTimer: timer.set,
       clearTimer: timer.clear
     })
@@ -323,7 +325,9 @@ describe('ComputeApprovalBroker — download operation', () => {
     let n = 0
     const broker = new ComputeApprovalBroker({
       generateId: () => `id-${++n}`,
-      broadcast: () => { broadcastCount++ },
+      broadcast: () => {
+        broadcastCount++
+      },
       setTimer: timer.set,
       clearTimer: timer.clear,
       checkProjectGrant: () => Promise.resolve(false)
@@ -367,7 +371,9 @@ describe('ComputeApprovalBroker — download operation', () => {
     let broadcastCount = 0
     const broker2 = new ComputeApprovalBroker({
       generateId: () => `id-${++n}`,
-      broadcast: () => { broadcastCount++ },
+      broadcast: () => {
+        broadcastCount++
+      },
       setTimer: timer.set,
       clearTimer: timer.clear,
       checkProjectGrant: () => Promise.resolve(false)
@@ -391,12 +397,16 @@ describe('ComputeApprovalBroker — download operation', () => {
       broadcast: () => undefined,
       setTimer: timer.set,
       clearTimer: timer.clear,
-      checkProjectGrant: (g) => Promise.resolve(
-        savedGrant?.projectId === g.projectId &&
-        savedGrant?.operation === g.operation &&
-        savedGrant?.providerId === g.providerId
-      ),
-      saveProjectGrant: (g) => { savedGrant = g; return Promise.resolve() }
+      checkProjectGrant: (g) =>
+        Promise.resolve(
+          savedGrant?.projectId === g.projectId &&
+            savedGrant?.operation === g.operation &&
+            savedGrant?.providerId === g.providerId
+        ),
+      saveProjectGrant: (g) => {
+        savedGrant = g
+        return Promise.resolve()
+      }
     })
 
     const req = makeDownloadRequest({ provider_id: 'ssh:biowulf' })
@@ -408,13 +418,19 @@ describe('ComputeApprovalBroker — download operation', () => {
     broker.respond('id-1', 'project')
     const d1 = await p1
     expect(d1).toBe('project')
-    expect(savedGrant).toEqual({ projectId: 'proj-dl', operation: 'download', providerId: 'ssh:biowulf' })
+    expect(savedGrant).toEqual({
+      projectId: 'proj-dl',
+      operation: 'download',
+      providerId: 'ssh:biowulf'
+    })
 
     // Second request: project grant exists → resolves immediately without broadcast.
     let broadcastCount = 0
     const broker2 = new ComputeApprovalBroker({
       generateId: () => `id-${++n}`,
-      broadcast: () => { broadcastCount++ },
+      broadcast: () => {
+        broadcastCount++
+      },
       setTimer: timer.set,
       clearTimer: timer.clear,
       checkProjectGrant: () => Promise.resolve(true)

@@ -81,6 +81,46 @@ model Finding {
   review            Review  @relation(fields: [reviewId], references: [id], onDelete: Cascade)
 }
 
+// A remote compute job submitted via host.compute.create(id).submit_job(). Phase 3a (issue 01 of
+// compute-jobs) adds this table as a pure-additive migration — it references nothing, and nothing
+// references it, so adding it is safe against any pre-existing DB. The table tracks the full
+// lifecycle: submitted → running → success/failed/timeout/error.
+// Columns for harvest (harvestedAt, outputManifest) and concurrency (queued) are included now per
+// design.md §1 to avoid a schema change in 3b/3c — they are null until those phases fill them.
+// Security: no credentials are stored; command is stored for audit; commandHash for dedup.
+model ComputeJob {
+  id              String    @id @default(cuid())
+  providerId      String
+  shape           String
+  sessionId       String
+  projectId       String
+  status          String    @default("submitted")
+  intent          String
+  command         String
+  commandHash     String
+  environment     String?
+  resourceRequest String?
+  inputManifest   String?
+  outputManifest  String?
+  harvestConfig   String?
+  timeoutSeconds  Int?
+  remoteWorkdir   String?
+  remoteHandle    String?
+  exitCode        Int?
+  stdoutTail      String?
+  stderrTail      String?
+  errorCode       String?
+  createdAt       DateTime  @default(now())
+  submittedAt     DateTime?
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  harvestedAt     DateTime?
+
+  @@index([providerId])
+  @@index([sessionId])
+  @@index([status])
+}
+
 // A registered remote SSH compute host (Compute settings tab). Phase 1 (issue 01) manages the record
 // only — no SSH connection is made. Pure-additive table: it references nothing and nothing references
 // it, so adding it is byte-compatible with any pre-existing DB (see prisma-client.ts runtime DDL and
