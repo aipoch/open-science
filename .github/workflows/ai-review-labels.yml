@@ -1,0 +1,100 @@
+name: AI Review Labels
+
+# Label operations run from the base branch with a write-capable token. This workflow never checks
+# out or executes pull request code, so pull_request_target is limited to the label lifecycle.
+on:
+  pull_request_target:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+  workflow_run:
+    workflows:
+      - AI PR Review
+    types: [completed]
+
+permissions:
+  actions: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  clear_label:
+    name: Clear stale AI review label
+    if: ${{ github.event_name == 'pull_request_target' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove ai-reviewed label
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                name: 'ai-reviewed',
+              });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+
+  mark_complete:
+    name: Mark AI review complete
+    if: >-
+      ${{ github.event_name == 'workflow_run' &&
+          github.event.workflow_run.event == 'pull_request' &&
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.pull_requests[0].number != null }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add ai-reviewed label for the latest reviewed commit
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const pullRequest = context.payload.workflow_run.pull_requests[0];
+            const { data: currentPullRequest } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pullRequest.number,
+            });
+
+            if (currentPullRequest.head.sha !== context.payload.workflow_run.head_sha) {
+              core.notice('Skipping label because a newer pull request commit exists.');
+              return;
+            }
+
+            const { data: jobs } = await github.rest.actions.listJobsForWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.payload.workflow_run.id,
+            });
+            const reviewJobs = jobs.jobs.filter(
+              ({ name }) => name === 'Claude architecture review' || name === 'Codex correctness review',
+            );
+
+            if (!reviewJobs.some(({ conclusion }) => conclusion === 'success')) {
+              core.notice('Skipping label because no AI review job completed successfully.');
+              return;
+            }
+
+            const name = 'ai-reviewed';
+            try {
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name,
+                color: '1f883d',
+                description: 'Automated AI review completed successfully.',
+              });
+            } catch (error) {
+              if (error.status !== 422) throw error;
+            }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pullRequest.number,
+              labels: [name],
+            });
