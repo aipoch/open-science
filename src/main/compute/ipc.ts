@@ -23,6 +23,7 @@ import { SystemSshRunner } from './ssh-runner'
 import { syncComputeSkillDoc } from './skill-doc'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { join } from 'node:path'
+import type { ComputeJobRepository } from './job-repository'
 
 // The renderer-callable compute commands. Kept as a thin adapter over the repository + the pure
 // ssh-config parser so the IPC surface stays easy to unit test (aligns with projects/ipc.ts). Issue 01:
@@ -75,7 +76,8 @@ const createComputeHandlers = (
   injectedService?: ComputeService,
   injectedBroker?: ComputeApprovalBroker,
   onSkillDocSync?: SkillDocSyncer,
-  settingsRepository?: SettingsRepository
+  settingsRepository?: SettingsRepository,
+  jobRepository?: ComputeJobRepository
 ): ComputeHandlers => {
   // The broadcast function sends approval requests to all renderer windows. In tests, callers
   // inject a fake broker so this function is never called directly.
@@ -121,6 +123,15 @@ const createComputeHandlers = (
       return host
     },
     delete: async (providerId) => {
+      if (jobRepository) {
+        const hasActive = await jobRepository.hasActiveJobsForProvider(providerId)
+        if (hasActive) {
+          throw new Error(
+            `Cannot delete host "${providerId}": it has submitted or running jobs. ` +
+              `Wait for those jobs to reach a terminal state before deleting the host.`
+          )
+        }
+      }
       await repository.delete(providerId)
       syncSkillDocAfterMutation(onSkillDocSync)
     },

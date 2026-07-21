@@ -52,13 +52,21 @@ describe('renderComputeSkillDoc', () => {
     expect(doc).toContain('host.compute.details(')
   })
 
-  it('does NOT contain Phase-2 ops', () => {
+  it('contains Phase-3a ops: submit_job, attach_job, list_compute', () => {
     const doc = renderComputeSkillDoc([])
-    expect(doc).not.toContain('submit_job')
-    expect(doc).not.toContain('harvest')
+    expect(doc).toContain('submit_job')
+    expect(doc).toContain('attach_job')
+    expect(doc).toContain('list_compute')
+  })
+
+  it('does NOT contain harvest/notification ops (Phase 3b+ ops excluded)', () => {
+    const doc = renderComputeSkillDoc([])
+    // harvest as an option key in submit_job is fine (3a stores it); what must be absent are
+    // the Phase-3b harvest operation names and the notification op.
+    expect(doc).not.toContain('HarvestResult')
     expect(doc).not.toContain('wait_for_notification')
     expect(doc).not.toContain('save_artifacts')
-    expect(doc).not.toContain('download')
+    expect(doc).not.toContain('.result()') // attach_job().result() is Phase 3b
   })
 
   it('lists registered hosts with provider_id and status', () => {
