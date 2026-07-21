@@ -48,6 +48,18 @@ export const computeRemoteWorkdir = (scratchRoot: string | undefined, jobId: str
   return `${root}/.openscience/jobs/${jobId}`
 }
 
+// Quotes a remote path for safe interpolation into a remote shell command, while still allowing a
+// leading `~` to be expanded to $HOME by the shell. A tilde inside double/single quotes is NOT
+// expanded by bash, so the `~/` prefix is left unquoted and only the remainder is single-quoted
+// (single quotes also neutralise $, backticks, spaces, etc. for injection safety). Paths without a
+// leading tilde are single-quoted wholesale.
+export const quoteRemotePath = (path: string): string => {
+  const singleQuote = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`
+  if (path === '~') return '~'
+  if (path.startsWith('~/')) return `~/${singleQuote(path.slice(2))}`
+  return singleQuote(path)
+}
+
 // Dependency interface for the dispatcher. Tests inject a fake SshRunner.
 export type DispatcherDeps = {
   runner: SshRunner
@@ -105,9 +117,10 @@ export async function dispatchJob(jobId: string, deps: DispatcherDeps): Promise<
 
   // One SSH command: mkdir workdir, write scripts via base64 pipes, launch detached, echo pid.
   // Stdout = the pid (we echo it last).
+  const quotedWorkdir = quoteRemotePath(workdir)
   const dispatchCmd = [
-    `mkdir -p ${JSON.stringify(workdir)}`,
-    `cd ${JSON.stringify(workdir)}`,
+    `mkdir -p ${quotedWorkdir}`,
+    `cd ${quotedWorkdir}`,
     // Write command.sh and launcher.sh via base64 to avoid heredoc/quoting issues.
     `printf '%s' ${JSON.stringify(commandB64)} | base64 -d > command.sh`,
     `printf '%s' ${JSON.stringify(launcherB64)} | base64 -d > launcher.sh`,
