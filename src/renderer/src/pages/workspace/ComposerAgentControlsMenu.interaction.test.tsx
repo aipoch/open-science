@@ -383,4 +383,41 @@ describe('ComposerAgentControlsMenu', () => {
 
     expect(onAutoReviewChange).not.toHaveBeenCalled()
   })
+
+  it('stays browsable but disables every mutating control in read-only mode', () => {
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          readOnly={true}
+          grants={[{ categoryKey: 'shell:git', label: 'git status', kind: 'shell' }]}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+        />
+      )
+    })
+
+    // The trigger stays enabled so the menu and the permission submenu remain browsable.
+    const trigger = container.querySelector('[data-testid="composer-controls-trigger"]')
+    expect(trigger?.hasAttribute('disabled')).toBe(false)
+
+    // Every mutating control is disabled: profile items, auto-review row, grant actions.
+    expect(
+      findButton('Ask for approvalAsk before file edits, commands, network, and MCP tools.')
+        .disabled
+    ).toBe(true)
+    expect(
+      findButton('Auto-reviewA reviewer agent checks every change before it lands.').disabled
+    ).toBe(true)
+
+    const clearButton = Array.from(container.querySelectorAll('button')).find(
+      (candidate) => candidate.getAttribute('aria-label') === 'Clear all always-allow grants'
+    )
+    const revokeButton = Array.from(container.querySelectorAll('button')).find(
+      (candidate) => candidate.getAttribute('aria-label') === 'Revoke always-allow for git status'
+    )
+    expect(clearButton?.disabled).toBe(true)
+    expect(revokeButton?.disabled).toBe(true)
+  })
 })

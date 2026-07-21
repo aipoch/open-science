@@ -47,7 +47,9 @@ type ComposerAgentControlsMenuProps = {
   profileState?: SessionPermissionProfileState
   grants?: AcpPermissionGrant[]
   autoReviewEnabled: boolean
-  disabled?: boolean
+  // Read-only while a session is running: the menu stays openable and the permission
+  // submenu still expands on hover, but every mutating control is disabled.
+  readOnly?: boolean
   autoReviewDisabled?: boolean
   onProfileChange: (profile: PermissionProfileId) => void
   onAutoReviewChange: (enabled: boolean) => void
@@ -99,7 +101,7 @@ const ComposerAgentControlsMenu = ({
   profileState,
   grants,
   autoReviewEnabled,
-  disabled = false,
+  readOnly = false,
   autoReviewDisabled = false,
   onProfileChange,
   onAutoReviewChange,
@@ -129,7 +131,9 @@ const ComposerAgentControlsMenu = ({
   return (
     <>
       <DropdownMenu>
-        <DropdownMenuTrigger asChild disabled={disabled}>
+        {/* The trigger stays enabled in read-only mode so the menu (and its submenu)
+            remains browsable while a session is running; only the controls are disabled. */}
+        <DropdownMenuTrigger asChild>
           <button
             type="button"
             className={triggerButtonClassName}
@@ -156,10 +160,21 @@ const ComposerAgentControlsMenu = ({
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-72 p-1">
-          {/* Permission row: label + colored capsule of the current level; levels live in the submenu. */}
+          {/* Permission row mirrors the auto-review row: icon + label + description, with the
+              current level shown as a colored capsule on the right; levels live in the submenu. */}
           <DropdownMenuSub>
-            <DropdownMenuSubTrigger className="items-center justify-between gap-2 px-2 py-1.5">
-              <span className="text-[13px] font-medium leading-5">Permission mode</span>
+            <DropdownMenuSubTrigger className="items-center gap-2 px-2 py-1.5">
+              <Shield
+                className="size-4 shrink-0 text-text-200"
+                strokeWidth={2}
+                aria-hidden="true"
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13px] font-medium leading-5">Permission mode</span>
+                <span className="block text-[11px] leading-4 text-text-300">
+                  How much the agent can do without asking first.
+                </span>
+              </span>
               <span
                 data-testid="profile-capsule"
                 className={cn(
@@ -186,7 +201,7 @@ const ComposerAgentControlsMenu = ({
                 return (
                   <DropdownMenuItem
                     key={candidate.id}
-                    disabled={isDisabled}
+                    disabled={readOnly || isDisabled}
                     className="items-center gap-2 px-2 py-1.5"
                     onSelect={() => selectProfile(candidate.id)}
                   >
@@ -234,7 +249,7 @@ const ComposerAgentControlsMenu = ({
           {/* The whole row toggles auto-review; the Switch is a non-interactive indicator so
               clicking it does not double-toggle. preventDefault keeps the menu open. */}
           <DropdownMenuItem
-            disabled={autoReviewDisabled}
+            disabled={readOnly || autoReviewDisabled}
             className="items-center gap-2 px-2 py-1.5"
             onSelect={(event) => {
               event.preventDefault()
@@ -266,8 +281,9 @@ const ComposerAgentControlsMenu = ({
                 {/* One-click clear for a long session; swallow the event so the menu stays open. */}
                 <button
                   type="button"
-                  className="shrink-0 text-[11px] text-text-300 hover:text-text-000"
+                  className="shrink-0 text-[11px] text-text-300 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-text-300"
                   aria-label="Clear all always-allow grants"
+                  disabled={readOnly}
                   onClick={(event) => {
                     event.preventDefault()
                     event.stopPropagation()
@@ -293,8 +309,9 @@ const ComposerAgentControlsMenu = ({
                     {/* Revoke must not close the menu or re-select a profile, so swallow the event. */}
                     <button
                       type="button"
-                      className="flex size-5 shrink-0 items-center justify-center rounded text-text-300 hover:bg-bg-200 hover:text-text-000"
+                      className="flex size-5 shrink-0 items-center justify-center rounded text-text-300 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-text-300"
                       aria-label={`Revoke always-allow for ${grant.label}`}
+                      disabled={readOnly}
                       onClick={(event) => {
                         event.preventDefault()
                         event.stopPropagation()
