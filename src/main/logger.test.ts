@@ -609,22 +609,63 @@ describe('logger: errorLogFields', () => {
     expect(topLevel.error).toContain('chars]')
   })
 
-  it('keeps the bestEffortMessage fallback bounded when the sanitizer itself fails', () => {
-    // Force the outer catch: a getPrototypeOf trap makes `instanceof` throw. bestEffortMessage can't
-    // safely read anything off such a value, so it returns a short fixed string — the key property is
-    // that the fallback is always bounded (never a huge passthrough).
+  it('truncates the bestEffortMessage fallback text (exercises the fallback cap, not a fixed string)', () => {
+    // A STATEFUL proxy: getPrototypeOf throws only the first time, so the main try's `instanceof` fails
+    // (→ outer catch), but by the time bestEffortMessage runs the proxy behaves and String(it) returns a
+    // huge value via the target's toString. This drives bestEffortMessage's truncate() path — deleting
+    // the truncate() would make this field ~100k chars and fail the bound below.
     const huge = 'z'.repeat(100_000)
-    const hostile = new Proxy(
-      { message: huge },
-      {
-        getPrototypeOf() {
-          throw new Error('proto trap')
-        }
+    let protoCalls = 0
+    const target = { toString: () => huge }
+    const hostile = new Proxy(target, {
+      getPrototypeOf(t) {
+        protoCalls += 1
+        if (protoCalls === 1) throw new Error('proto trap (first call only)')
+        return Object.getPrototypeOf(t)
       }
-    )
+    })
+
     const fields = errorLogFields(hostile) as { error: string; serializationFailed?: boolean }
     expect(fields.serializationFailed).toBe(true)
+    // The huge text was reached and truncated (per-field cap suffix present), not collapsed to a fixed
+    // "unserializable error".
     expect(fields.error.length).toBeLessThan(9000)
+    expect(fields.error).toContain('chars]')
+  })
+
+  it('truncates an over-long function name', () => {
+    const hugeName = 'f'.repeat(100_000)
+    const fn = (): void => undefined
+    Object.defineProperty(fn, 'name', { value: hugeName, configurable: true })
+    const fields = errorLogFields(Object.assign(new Error('e'), { data: fn })) as { data: string }
+
+    expect(fields.data.startsWith('[function')).toBe(true)
+    expect(fields.data.length).toBeLessThan(9000)
+    expect(fields.data).toContain('chars]')
+  })
+
+  it('never collides keys when the character budget runs out mid-object (stops + counts remainder)', () => {
+    // Values large enough that the global char budget is exhausted partway through. Once a unique key
+    // can no longer be afforded, the loop must STOP (counting the rest as omitted) rather than collapse
+    // later keys to a shared "…[truncated]" that overwrites earlier fields and loses them silently.
+    const data: Record<string, unknown> = {}
+    for (let i = 0; i < 200; i += 1) data[`key${i}`] = 'v'.repeat(5000)
+    const fields = errorLogFields(Object.assign(new Error('e'), { data })) as {
+      data: Record<string, unknown>
+    }
+
+    const outKeys = Object.keys(fields.data)
+    // Every emitted key is distinct — no silent overwrite.
+    expect(new Set(outKeys).size).toBe(outKeys.length)
+    // No key collapsed to a shared truncation marker.
+    expect(outKeys).not.toContain('…[truncated]')
+    // An aggregate marker is present and its count is exact: total inputs minus emitted data keys.
+    const marker = fields.data['[truncated]'] as string | undefined
+    expect(typeof marker).toBe('string')
+    const emittedDataKeys = outKeys.filter((k) => k !== '[truncated]').length
+    expect(marker).toContain(`+${200 - emittedDataKeys} `)
+    expect(emittedDataKeys).toBeLessThan(200) // budget genuinely stopped it early
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
   })
 
   it('caps an astronomically large bigint', () => {

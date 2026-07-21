@@ -102,11 +102,16 @@ const chargeString = (value: string, budget: Budget): string => {
   return `${kept}…[truncated]`
 }
 
-// Bounds a property name and keeps it collision-free: a truncated key is disambiguated by its index so
-// two long keys sharing a prefix can't collapse to the same output key. Charges the character budget.
-const capKey = (key: string, index: number, budget: Budget): string => {
-  const base = key.length <= MAX_KEY_LENGTH ? key : `${key.slice(0, MAX_KEY_LENGTH)}…#${index}`
-  return chargeString(base, budget)
+// Produces a bounded, collision-free property name, or undefined when the character budget can't afford
+// one. A long key is disambiguated by its index (so two long keys sharing a prefix stay distinct), and
+// the key is emitted only if it fits the remaining budget in full — we never collapse a key to a shared
+// truncation marker (that would silently overwrite fields), so the caller stops and counts the rest as
+// omitted instead. Charges the character budget for the key it returns.
+const capKey = (key: string, index: number, budget: Budget): string | undefined => {
+  const candidate = key.length <= MAX_KEY_LENGTH ? key : `${key.slice(0, MAX_KEY_LENGTH)}…#${index}`
+  if (candidate.length > budget.chars) return undefined
+  budget.chars -= candidate.length
+  return candidate
 }
 
 // Sentinel distinguishing a property whose read *threw* (a hostile getter/Proxy) from one that is
@@ -185,7 +190,8 @@ const toLogSafe = (value: unknown, seen: Set<object>, depth: number, budget: Bud
       const time = Date.prototype.getTime.call(value)
       if (typeof time !== 'number' || Number.isNaN(time)) return '[invalid date]'
       const iso = Date.prototype.toISOString.call(value)
-      return typeof iso === 'string' ? iso : '[invalid date]'
+      // Charge the data-derived ISO string against the character budget like any other value string.
+      return typeof iso === 'string' ? chargeString(iso, budget) : '[invalid date]'
     }
 
     if (seen.has(value as object)) return CIRCULAR_MARKER
@@ -248,9 +254,15 @@ const toLogSafe = (value: unknown, seen: Set<object>, depth: number, budget: Bud
           objBudgetHit = true
           break
         }
+        // A unique bounded key must be affordable; if not, stop so the remainder is counted rather than
+        // collapsing keys to a shared marker that overwrites earlier fields.
+        const key = capKey(keys[processed], processed, budget)
+        if (key === undefined) {
+          objBudgetHit = true
+          break
+        }
         // Charge per slot (see the array note): a key whose read throws must still cost budget.
         budget.nodes -= 1
-        const key = capKey(keys[processed], processed, budget)
         const raw = safeRead(value as object, keys[processed])
         out[key] = raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, depth + 1, budget)
       }
@@ -351,15 +363,18 @@ const bestEffortMessage = (error: unknown): string => {
 // runs through toLogSafe (which unwraps nested Errors, breaks any cycle, bounds depth, and guards every
 // property read), and an outer guard converts even a total failure into a fixed fallback.
 //
-// Bounded-output guarantee (and its limits): the *produced* record is bounded on both axes — a global
+// Bounded-output guarantee (and its limits): the *produced* record is bounded on both axes. A global
 // node budget caps the total emitted-value COUNT regardless of reference sharing (no combinatorial DAG
-// blowup), and a global character budget caps the total emitted SIZE (per-field caps are measured in
-// UTF-16 code units via String.length, not bytes). Every variable fan-out slot — array elements, object
-// values, and property names — charges the budgets; the fixed Error fields and the per-container
-// aggregate markers are a bounded constant on top. Each container appends at most one *aggregate*
-// omission marker (counting budget-skipped + beyond-cap items together); note an individual element may
-// itself already be a truncation marker when its own value ran the budget out, so a truncated container
-// can contain both a per-element marker and the aggregate marker — different information, by design.
+// blowup). A global character budget caps the total SIZE contributed by variable-length text: every
+// data-derived string — array/object values, property names, message, stack, coerced values, bigint and
+// Date text — is charged against it (per-field caps are UTF-16 code units via String.length, not bytes).
+// Fixed structural markers ([circular], [max depth], [unreadable], the node-exhaustion and aggregate
+// omission markers, [invalid date], the fallback marker) are short constants that are NOT charged; they
+// stay bounded because the node budget and the per-array/per-object caps bound how many can appear.
+// Each container appends at most one *aggregate* omission marker (counting budget-skipped + beyond-cap
+// items together); an individual element may itself already be a truncation marker when its own value
+// ran the budget out, so a truncated container can contain both a per-element marker and the aggregate
+// marker — different information, by design.
 // What this does NOT promise is sub-linear time under an adversarial synchronous Proxy: `Object.keys`
 // must enumerate the trap's full ownKeys result before we cap it, and a Proxy that materializes millions
 // of keys (or a value that allocates a huge string) pays that cost in its own trap/allocation, which JS
@@ -403,10 +418,16 @@ const errorLogFields = (error: unknown): Record<string, unknown> => {
           objBudgetHit = true
           break
         }
+        // A unique bounded key must be affordable; otherwise stop and count the remainder rather than
+        // collapsing keys to a shared marker.
+        const key = capKey(keys[processed], processed, budget)
+        if (key === undefined) {
+          objBudgetHit = true
+          break
+        }
         // Charge per slot so an all-throwing-getter object still spends budget (marker path skips
         // toLogSafe), keeping a shared-DAG re-expansion bounded.
         budget.nodes -= 1
-        const key = capKey(keys[processed], processed, budget)
         const raw = safeRead(error, keys[processed])
         safe[key] = raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, 1, budget)
       }
