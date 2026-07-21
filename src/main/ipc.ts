@@ -226,10 +226,11 @@ const registerIpcHandlers = async ({
   const { computeService, enabledComputeHostsRegistry: hostsRegistry } =
     registerComputeIpcHandlers()
   // Augment computeService with getEnabledComputeHosts so the RPC server can serve list_compute.
+  // The spread preserves all ComputeService methods; the added method surfaces the registry lookup.
   const computeServiceWithRegistry = {
     ...computeService,
-    getEnabledComputeHosts: (sessionId: string) => hostsRegistry.get(sessionId)
-  }
+    getEnabledComputeHosts: (sessionId: string): string[] => hostsRegistry.get(sessionId)
+  } as typeof computeService & { getEnabledComputeHosts(sessionId: string): string[] }
   const notebookRpcServer = new NotebookLocalRpcServer(notebookService, {
     connectorService,
     computeService: computeServiceWithRegistry

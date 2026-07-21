@@ -311,6 +311,10 @@ interface OpenScienceAPI {
     // Bookmark folders for the file browser Go-to/Pin feature, persisted in settings JSON.
     bookmarksGet(providerId: string): Promise<string[]>
     bookmarksSet(providerId: string, folders: string[]): Promise<void>
+    // Per-session enabled compute hosts (issue 06). The renderer owns the durable state (session JSON);
+    // the main-process registry is the runtime cache for list_compute RPC ops.
+    enabledHostsGet(sessionId: string): Promise<string[]>
+    enabledHostsSet(sessionId: string, providerIds: string[]): Promise<void>
   }
   preview: {
     load(request: LoadPreviewStateRequest): Promise<PersistedPreviewState | null>

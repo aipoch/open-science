@@ -25,7 +25,10 @@ const triggerClassName =
   'flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-200 hover:text-text-100 disabled:cursor-not-allowed disabled:opacity-50 transition-colors duration-200 ease-out'
 
 // Shows the current active host alias truncated, or a placeholder when none is enabled.
-const activeLabel = (enabledHosts: string[], hosts: { providerId: string; displayName: string }[]): string => {
+const activeLabel = (
+  enabledHosts: string[],
+  hosts: { providerId: string; displayName: string }[]
+): string => {
   if (enabledHosts.length === 0) return ''
   const host = hosts.find((h) => enabledHosts.includes(h.providerId))
   return host?.displayName ?? enabledHosts[0].replace('ssh:', '')
@@ -68,7 +71,9 @@ const ComputeHostSelector = ({
           type="button"
           className={triggerClassName}
           aria-label={activeHostLabel ? `Compute: ${activeHostLabel}` : 'Select compute host'}
-          title={activeHostLabel ? `Active compute host: ${activeHostLabel}` : 'Compute host selector'}
+          title={
+            activeHostLabel ? `Active compute host: ${activeHostLabel}` : 'Compute host selector'
+          }
         >
           <SlidersHorizontal className="size-4" strokeWidth={1.75} aria-hidden="true" />
         </button>
@@ -91,7 +96,12 @@ const ComputeHostSelector = ({
                     }}
                     className="flex items-center justify-between gap-3 cursor-pointer"
                   >
-                    <span className={cn('min-w-0 flex-1 truncate text-sm', isEnabled ? 'font-medium text-text-100' : 'text-text-200')}>
+                    <span
+                      className={cn(
+                        'min-w-0 flex-1 truncate text-sm',
+                        isEnabled ? 'font-medium text-text-100' : 'text-text-200'
+                      )}
+                    >
                       {host.displayName}
                     </span>
                     <Switch

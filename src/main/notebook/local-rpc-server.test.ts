@@ -233,4 +233,67 @@ describe('notebook local RPC server', () => {
       await server.close()
     }
   })
+
+  it('list_compute op returns the enabled hosts for the given session', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    // Inject a fake compute service with the minimal surface the dispatch needs.
+    const fakeComputeService = {
+      callCommand: async () => ({}),
+      list: async () => [],
+      getDetails: async () => ({ doc: '', isSkeleton: true }),
+      appendDetails: async () => {},
+      replaceDetails: async () => {},
+      download: async () => ({}),
+      submitJob: async () => ({}),
+      getJobStatus: async () => ({}),
+      // Returns pre-configured enabled hosts for the session under test.
+      getEnabledComputeHosts: (sessionId: string): string[] => {
+        if (sessionId === 'my-session') return ['ssh:cluster-1']
+        return []
+      }
+    }
+    const server = new NotebookLocalRpcServer(service, {
+      token: 'secret-token',
+      computeService: fakeComputeService
+    })
+    const connection = await server.ensureStarted()
+
+    try {
+      // Known session → returns the registered host list.
+      const withHosts = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          method: 'computeCall',
+          params: { op: 'list_compute', session_id: 'my-session' }
+        })
+      })
+      const withHostsPayload = (await withHosts.json()) as { result: string[] }
+
+      expect(withHosts.status).toBe(200)
+      expect(withHostsPayload.result).toEqual(['ssh:cluster-1'])
+
+      // Unknown session → empty array.
+      const noHosts = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          method: 'computeCall',
+          params: { op: 'list_compute', session_id: 'other-session' }
+        })
+      })
+      const noHostsPayload = (await noHosts.json()) as { result: string[] }
+
+      expect(noHosts.status).toBe(200)
+      expect(noHostsPayload.result).toEqual([])
+    } finally {
+      await server.close()
+    }
+  })
 })

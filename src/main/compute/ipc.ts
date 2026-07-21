@@ -23,7 +23,7 @@ import { SystemSshRunner } from './ssh-runner'
 import { syncComputeSkillDoc } from './skill-doc'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { join } from 'node:path'
-import { enabledComputeHostsRegistry } from './enabled-hosts-registry'
+import { EnabledComputeHostsRegistry, enabledComputeHostsRegistry } from './enabled-hosts-registry'
 
 // The renderer-callable compute commands. Kept as a thin adapter over the repository + the pure
 // ssh-config parser so the IPC surface stays easy to unit test (aligns with projects/ipc.ts). Issue 01:
@@ -151,7 +151,7 @@ const createDefaultComputeHostRepository = (): ComputeHostRepository =>
 // Registers the renderer-callable compute host commands.
 const registerComputeIpcHandlers = (
   repository = createDefaultComputeHostRepository()
-): { computeService: ComputeService } => {
+): { computeService: ComputeService; enabledComputeHostsRegistry: EnabledComputeHostsRegistry } => {
   const storageRoot = resolveStorageRoot()
   const skillsDir = join(getAppClaudeConfigDir(storageRoot), 'skills')
 
