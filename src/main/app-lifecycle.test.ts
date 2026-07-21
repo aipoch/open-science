@@ -448,4 +448,57 @@ describe('installAppLifecycle', () => {
     await flush()
     expect(quit).toHaveBeenCalledTimes(1)
   })
+
+  it('a titlebar X close-to-tray does not dispatch a second confirm while a quit-confirm is open', async () => {
+    // Cross-flow guard: tray/Ctrl+Q quit-confirm is already open (before-quit -> confirmClose('quit', ...)
+    // pending) when the user clicks the titlebar X. Without the shared confirmInFlight guard this would
+    // fire a second confirmClose('close-to-tray', ...) that overwrites the renderer's single request slot,
+    // stranding the quit-confirm promise and permanently pinning quitConfirmInFlight (see defect writeup).
+    let resolveConfirm: ((choice: CloseConfirmChoice) => void) | undefined
+    const sessions: ActiveSessionInfo[] = [{ projectName: 'demo', sessionId: 's1', kind: 'agent' }]
+    const confirmClose = vi.fn(
+      () =>
+        new Promise<CloseConfirmChoice>((resolve) => {
+          resolveConfirm = resolve
+        })
+    )
+    const { app, closeOpts } = setup({ detectActiveSessions: () => sessions, confirmClose })
+
+    app.emit('before-quit') // opens the quit-confirm modal, confirmClose('quit', ...) pending
+    expect(confirmClose).toHaveBeenCalledTimes(1)
+    expect(confirmClose).toHaveBeenCalledWith('quit', sessions)
+
+    const choice = await closeOpts[0].resolveCloseAction() // titlebar X pressed while quit-confirm is open
+    expect(choice).toBe('cancel')
+    expect(confirmClose).toHaveBeenCalledTimes(1) // no second (close-to-tray) dispatch
+
+    resolveConfirm?.('cancel')
+    await flush()
+  })
+
+  it('tray Quit is a no-op (preventDefault only) while a close-to-tray confirm is open', async () => {
+    // Mirror of the above: titlebar X close-to-tray confirm is open when the user hits tray Quit /
+    // Ctrl+Q. The before-quit handler must preventDefault and return without starting a second
+    // confirmClose('quit', ...) dispatch, leaving the open close-to-tray confirm authoritative.
+    let resolveConfirm: ((choice: CloseConfirmChoice) => void) | undefined
+    const confirmClose = vi.fn(
+      () =>
+        new Promise<CloseConfirmChoice>((resolve) => {
+          resolveConfirm = resolve
+        })
+    )
+    const { app, closeOpts } = setup({ confirmClose })
+
+    const resolveCloseActionPromise = closeOpts[0].resolveCloseAction() // titlebar X, confirm pending
+    expect(confirmClose).toHaveBeenCalledTimes(1)
+    expect(confirmClose).toHaveBeenCalledWith('close-to-tray', [])
+
+    const event = app.emit('before-quit') // tray Quit / Ctrl+Q while the X confirm is open
+    expect(event.defaultPrevented).toBe(true)
+    expect(confirmClose).toHaveBeenCalledTimes(1) // no second (quit) dispatch
+
+    resolveConfirm?.('minimize')
+    await expect(resolveCloseActionPromise).resolves.toBe('minimize')
+    await flush()
+  })
 })

@@ -57,6 +57,10 @@ export const installAppLifecycle = (deps: AppLifecycleDeps): { showMainWindow: (
   // Set once the user has confirmed a quit (via the dialog or a prior 'confirm' close), so a re-issued
   // before-quit skips straight to teardown instead of asking again.
   let quitConfirmed = false
+  // Shared across both confirm-dispatching paths (titlebar X and tray/Ctrl+Q quit) so only one
+  // confirmation modal is ever open at a time. The renderer holds a single request slot; a second
+  // dispatch would silently overwrite the first and strand its promise forever (see app-lifecycle.test.ts).
+  let confirmInFlight = false
 
   const confirmClose = deps.createConfirmClose(() => mainWindow)
 
@@ -69,10 +73,22 @@ export const installAppLifecycle = (deps: AppLifecycleDeps): { showMainWindow: (
     return 'hide'
   }
 
+  // Only one confirmation modal at a time: if a quit-confirm (or another close-confirm) is already
+  // open, do nothing for this X press so the in-flight decision stays authoritative.
+  const resolveCloseAction = async (): Promise<CloseConfirmChoice> => {
+    if (confirmInFlight) return 'cancel'
+    confirmInFlight = true
+    try {
+      return await confirmClose('close-to-tray', deps.detectActiveSessions())
+    } finally {
+      confirmInFlight = false
+    }
+  }
+
   const openWindow = (): BrowserWindow =>
     deps.createMainWindow({
       classifyClose,
-      resolveCloseAction: () => confirmClose('close-to-tray', deps.detectActiveSessions()),
+      resolveCloseAction,
       requestQuit: () => {
         quitConfirmed = true
         deps.quit()
@@ -107,7 +123,6 @@ export const installAppLifecycle = (deps: AppLifecycleDeps): { showMainWindow: (
   // migration guard (registered earlier) via defaultPrevented + isMigrationInProgress so a
   // migration-cancelled quit is respected. #177's will-quit guard remains a synchronous backstop for a
   // committed quit that never reaches this path.
-  let quitConfirmInFlight = false
   deps.app.on('before-quit', (event) => {
     if (shutdownFinished) return
     if (shutdownStarted) {
@@ -121,8 +136,8 @@ export const installAppLifecycle = (deps: AppLifecycleDeps): { showMainWindow: (
     // quit. An empty active-session list makes confirmClose('quit', []) resolve 'quit' with no modal.
     if (!quitConfirmed) {
       event.preventDefault()
-      if (quitConfirmInFlight) return
-      quitConfirmInFlight = true
+      if (confirmInFlight) return
+      confirmInFlight = true
       void confirmClose('quit', deps.detectActiveSessions())
         .then((choice) => {
           if (choice === 'quit') {
@@ -131,7 +146,7 @@ export const installAppLifecycle = (deps: AppLifecycleDeps): { showMainWindow: (
           }
         })
         .finally(() => {
-          quitConfirmInFlight = false
+          confirmInFlight = false
         })
       return
     }
