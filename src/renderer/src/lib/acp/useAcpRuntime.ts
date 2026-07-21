@@ -72,7 +72,7 @@ const useAcpRuntime = (): {
     historyAttachments?: AcpPromptRequest['historyAttachments'],
     historyImages?: AcpPromptRequest['historyImages'],
     resumeFallback?: AcpPromptRequest['resumeFallback']
-  ) => Promise<AcpStateSnapshot | undefined>
+  ) => Promise<AcpStateSnapshot>
   respondToPermission: (
     requestId: string,
     optionId?: string
@@ -256,7 +256,7 @@ const useAcpRuntime = (): {
       historyImages?: AcpPromptRequest['historyImages'],
       resumeFallback?: AcpPromptRequest['resumeFallback']
     ) =>
-      runSnapshotAction(undefined, () =>
+      runValueAction(undefined, () =>
         window.api.acp.sendPrompt({
           sessionId,
           text,
@@ -272,7 +272,7 @@ const useAcpRuntime = (): {
           ...(resumeFallback ? { resumeFallback } : {})
         })
       ),
-    [runSnapshotAction]
+    [runValueAction]
   )
 
   // Converts a UI permission click into the response shape expected by IPC.

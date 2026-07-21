@@ -317,14 +317,6 @@ const startPendingSessionPrompt = (
 
     void runtime
       .sendPrompt(runtimeSessionId, content, promptAttachments, forcedSkillIds, referencedArtifacts)
-      .then((snapshot) => {
-        if (!snapshot) {
-          // Use the actual error from runtime.actionError instead of the generic fallback message.
-          // Ensure the message is non-empty to avoid being silently dropped by failRun's empty check.
-          const errorMessage = runtime.actionError?.trim() || 'Agent run failed'
-          void failOrMarkDisconnected(runtimeSessionId, errorMessage)
-        }
-      })
       .catch((error) => {
         // A rejected prompt surfaces as a Resume banner if the connection dropped, otherwise a
         // visible session error, instead of being swallowed as an unhandled rejection.
@@ -514,14 +506,6 @@ const sendWorkspaceMessage = async (
         historyImages,
         resumeFallback
       )
-      .then((snapshot) => {
-        if (!snapshot) {
-          // Use the actual error from runtime.actionError instead of the generic fallback message.
-          // Ensure the message is non-empty to avoid being silently dropped by failRun's empty check.
-          const errorMessage = runtime.actionError?.trim() || 'Agent run failed'
-          void failOrMarkDisconnected(targetSessionId, errorMessage)
-        }
-      })
       .catch((error) => {
         // A rejected prompt surfaces as a Resume banner if the connection dropped, otherwise a
         // visible session error, instead of being swallowed as an unhandled rejection.

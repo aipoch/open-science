@@ -624,7 +624,7 @@ describe('workspace agent message sending', () => {
       createSession: vi.fn(),
       resumeSession: vi.fn(),
       resetSessionContext: vi.fn(),
-      sendPrompt: vi.fn().mockResolvedValue(undefined)
+      sendPrompt: vi.fn().mockRejectedValue(new Error('Agent run failed'))
     }
 
     useSessionStore.getState().appendUserMessage({
@@ -663,7 +663,7 @@ describe('workspace agent message sending', () => {
       createSession: vi.fn(),
       resumeSession: vi.fn(),
       resetSessionContext: vi.fn(),
-      sendPrompt: vi.fn().mockResolvedValue(undefined)
+      sendPrompt: vi.fn().mockRejectedValue(new Error('Agent run failed'))
     }
 
     useSessionStore.getState().appendUserMessage({
