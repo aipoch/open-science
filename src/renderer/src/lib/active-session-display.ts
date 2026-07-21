@@ -23,10 +23,14 @@ export const truncateLabel = (text: string): string =>
 // storage migration) shows names, not ids. Falls back progressively so a row is never blank:
 // project name -> cwd basename -> the project id main sent.
 //
-// Known limitation (cosmetic, self-healing): if the session isn't in THIS renderer's store — a
-// session started from another Web UI client, or the brief post-reload window before hydration — the
-// project name still resolves via info.projectId against the project store (and the row stays
-// clickable), but the title column degrades to the raw session id until the store catches up.
+// Known limitation (cosmetic): this reads a non-reactive store snapshot, so a modal already on screen
+// does NOT re-render when stores hydrate — a resolved value is fixed for that modal's lifetime and only
+// refreshes the next time the modal opens (or after a renderer reload/re-hydration). If a running
+// session isn't in THIS renderer's stores (started from another Web UI client, or the pre-hydration
+// window after a reload), the title falls back to the raw session id, and the project name falls back
+// to its id too when that project also isn't in this renderer's project store. Such a cross-renderer
+// session is not navigable either — clicking it switches project and cancels the close, but
+// selectSession no-ops on an id this renderer doesn't know.
 export const resolveActiveSessionDisplay = (info: ActiveSessionInfo): ActiveSessionDisplay => {
   const session = useSessionStore.getState().sessions.find((entry) => entry.id === info.sessionId)
   const projectId = session?.projectId ?? info.projectId
