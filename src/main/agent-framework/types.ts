@@ -142,7 +142,7 @@ export type ResolvedAgentBackend = {
   sessionModelRequired?: boolean
   // Reasoning-effort level to apply per session via the ACP `thought_level` configOption, resolved
   // to the closest level the agent advertises. Undefined ⇒ the agent keeps its own default.
-  sessionEffort?: string
+  sessionEffort?: ReasoningEffort
   authentication?: AgentAuthentication
   providerConfiguration?: AgentProviderConfiguration
 }

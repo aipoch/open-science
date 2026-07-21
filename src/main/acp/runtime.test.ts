@@ -9,6 +9,7 @@ import { PassThrough, Readable, Writable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpRuntime } from './runtime'
+import type { ReasoningEffort } from '../../shared/settings'
 import { terminateProcessTree } from '../process-tree'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
@@ -4605,7 +4606,7 @@ describe('ACP runtime — session effort', () => {
 
   const createEffortRuntime = (
     process: FakeAgentProcess,
-    sessionEffort: string | undefined,
+    sessionEffort: ReasoningEffort | undefined,
     sessionModel?: string
   ): AcpRuntime =>
     new AcpRuntime({

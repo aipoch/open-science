@@ -41,6 +41,7 @@ import {
   type PermissionProfileId,
   type SessionPermissionProfileState
 } from '../../shared/permission-profiles'
+import type { ReasoningEffort } from '../../shared/settings'
 import {
   claudeCodeFramework,
   type AgentFramework,
@@ -399,7 +400,7 @@ class AcpRuntime {
   private pendingSessionModelRequired = false
   // Reasoning-effort level to apply per session via the ACP thought_level configOption; undefined
   // means "don't override" (the agent keeps its own default). Refreshed on each connect.
-  private pendingSessionEffort: string | undefined
+  private pendingSessionEffort: ReasoningEffort | undefined
   // One-shot ACP authentication material resolved alongside the spawn config. It is cleared after
   // initialize so the decrypted key is not retained by the runtime longer than necessary.
   private pendingAuthentication: ResolvedAgentBackend['authentication']
