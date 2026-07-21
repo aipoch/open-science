@@ -158,11 +158,16 @@ const hostCompute = {
       },
 
       // Attaches to an existing job by job_id. .status() reads from DB only (no SSH).
+      // .result() returns the full JobResult (spec §11.4): scans the local harvest directory,
+      // returns workspace-relative file paths, never triggers harvest or SSH (design §9).
       attach_job(jobId) {
         return {
           job_id: jobId,
           async status() {
             return computeRpc({ op: 'job_status', job_id: jobId })
+          },
+          async result() {
+            return computeRpc({ op: 'job_result', job_id: jobId })
           }
         }
       }

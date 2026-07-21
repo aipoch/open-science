@@ -13,7 +13,13 @@ import type {
   DetailsAuthor,
   ProbeResult
 } from '../../shared/compute'
-import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs'
+import type {
+  DirListing,
+  DownloadDest,
+  LocalFile,
+  SerializableRemoteFsError
+} from '../../shared/remote-fs'
+import { encodeRemoteFsError } from '../../shared/remote-fs'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { resolveStorageRoot } from '../storage-root'
 import { SettingsRepository } from '../settings/repository'
@@ -35,6 +41,8 @@ export const COMPUTE_JOB_UPDATED_CHANNEL = 'compute:job-updated'
 
 // Converts a full ComputeJob to the lightweight JobSummary sent over IPC. The display_name is
 // denormalized from the host list at query time in listJobSummaries below.
+// Phase 3b: includes notification inbox timestamps so the renderer can decide whether to trigger
+// an analysis turn (issue 05/07).
 export const toJobSummary = (job: ComputeJob, displayName: string): JobSummary => ({
   job_id: job.job_id,
   provider_id: job.provider_id,
@@ -50,7 +58,10 @@ export const toJobSummary = (job: ComputeJob, displayName: string): JobSummary =
   error_code: job.error_code,
   remote_workdir: job.remote_workdir,
   stdout_tail: job.stdout_tail,
-  stderr_tail: job.stderr_tail
+  stderr_tail: job.stderr_tail,
+  // Phase 3b notification inbox timestamps (issue 06).
+  notified_at: job.notified_at,
+  notification_consumed_at: job.notification_consumed_at
 })
 
 // The renderer-callable compute commands. Kept as a thin adapter over the repository + the pure
@@ -94,6 +105,10 @@ type ComputeHandlers = {
   approvalRespond: (id: string, decision: ComputeApprovalDecision) => void
   // Returns JobSummary[] for a session, optionally filtered by status (renderer feed, issue 05).
   jobsList: (filter: { sessionId: string; status?: string[] }) => Promise<JobSummary[]>
+  // Returns jobs with notifiedAt set and notificationConsumedAt null (issue 05 restart recovery).
+  jobsPendingNotification: (sessionId: string) => Promise<JobSummary[]>
+  // Marks the given job ids as notification-consumed. Idempotent (issue 05).
+  jobsMarkConsumed: (sessionId: string, jobIds: string[]) => Promise<void>
 }
 
 // Optional callback injected into createComputeHandlers so create/delete can re-sync the skill doc
@@ -110,7 +125,8 @@ const createComputeHandlers = (
   settingsRepository?: SettingsRepository,
   jobRepository?: ComputeJobRepository,
   onJobUpdated?: (job: ComputeJob) => void,
-  artifactResolver?: ArtifactResolver
+  artifactResolver?: ArtifactResolver,
+  storageRoot?: string
 ): ComputeHandlers => {
   // The broadcast function sends approval requests to all renderer windows. In tests, callers
   // inject a fake broker so this function is never called directly.
@@ -136,7 +152,7 @@ const createComputeHandlers = (
   // Construct the production service with the full job dependency set so agent submit_job works and
   // dispatcher status transitions (submitted→running/error) broadcast to the renderer. Positional
   // args match the ComputeService constructor: (runner, repository, broker, scpRunner,
-  // overrideDownloadsDir, jobRepository, onJobUpdated, artifactResolver).
+  // overrideDownloadsDir, jobRepository, onJobUpdated, artifactResolver, storageRoot).
   const service =
     injectedService ??
     new ComputeService(
@@ -147,7 +163,8 @@ const createComputeHandlers = (
       undefined,
       jobRepository,
       onJobUpdated,
-      artifactResolver
+      artifactResolver,
+      storageRoot
     )
 
   // Re-syncs the skill doc after a create or delete. Runs fire-and-forget — a failure to write
@@ -203,6 +220,17 @@ const createComputeHandlers = (
       const hostNameMap = new Map(hosts.map((h) => [h.providerId, h.displayName]))
       const jobs = await jobRepository.findBySession(filter.sessionId, filter.status)
       return jobs.map((j) => toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id))
+    },
+    jobsPendingNotification: async (sessionId) => {
+      if (!jobRepository) return []
+      const hosts = await repository.list()
+      const hostNameMap = new Map(hosts.map((h) => [h.providerId, h.displayName]))
+      const jobs = await jobRepository.findPendingNotifications(sessionId)
+      return jobs.map((j) => toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id))
+    },
+    jobsMarkConsumed: async (_sessionId, jobIds) => {
+      if (!jobRepository) return
+      await jobRepository.markNotificationsConsumed(jobIds)
     }
   }
 }
@@ -273,7 +301,8 @@ const registerComputeIpcHandlers = (
     settingsRepo,
     jobRepository,
     onJobUpdated,
-    artifactResolver
+    artifactResolver,
+    storageRoot
   )
 
   // Write the initial skill doc at startup so agents see the host list from the first session.
@@ -309,14 +338,31 @@ const registerComputeIpcHandlers = (
     handlers.concurrencySet(providerId, limit)
   )
   // Lists a remote directory (browse experience, issue 05).
-  ipcMain.handle('compute:list-dir', (_event, providerId: string, path: string) =>
-    handlers.listDir(providerId, path)
-  )
+  ipcMain.handle('compute:list-dir', async (_event, providerId: string, path: string) => {
+    try {
+      return await handlers.listDir(providerId, path)
+    } catch (err) {
+      const e = err as Error & { remoteFsError?: SerializableRemoteFsError }
+      if (e.remoteFsError) {
+        throw new Error(encodeRemoteFsError(e.message, e.remoteFsError))
+      }
+      throw err
+    }
+  })
   // Downloads a remote file to OS Downloads or project artifact. No approval gate (issue 03).
   ipcMain.handle(
     'compute:download',
-    (_event, providerId: string, remotePath: string, dest: DownloadDest) =>
-      handlers.download(providerId, remotePath, dest)
+    async (_event, providerId: string, remotePath: string, dest: DownloadDest) => {
+      try {
+        return await handlers.download(providerId, remotePath, dest)
+      } catch (err) {
+        const e = err as Error & { remoteFsError?: SerializableRemoteFsError }
+        if (e.remoteFsError) {
+          throw new Error(encodeRemoteFsError(e.message, e.remoteFsError))
+        }
+        throw err
+      }
+    }
   )
   // Reveals a local file path in the OS file manager (Finder / Explorer).
   ipcMain.handle('compute:reveal-in-folder', (_event, filePath: string) => {
@@ -334,6 +380,14 @@ const registerComputeIpcHandlers = (
   ipcMain.handle(
     COMPUTE_JOBS_LIST_CHANNEL,
     (_event, filter: { sessionId: string; status?: string[] }) => handlers.jobsList(filter)
+  )
+  // Returns jobs pending analysis turn (notifiedAt set, notificationConsumedAt null — issue 05).
+  ipcMain.handle('compute:jobs:pending-notification', (_event, sessionId: string) =>
+    handlers.jobsPendingNotification(sessionId)
+  )
+  // Marks job ids as notification-consumed (analysis turn done — issue 05).
+  ipcMain.handle('compute:jobs:mark-consumed', (_event, sessionId: string, jobIds: string[]) =>
+    handlers.jobsMarkConsumed(sessionId, jobIds)
   )
 
   // Per-session enabled compute hosts (issue 06). The renderer owns the durable state (session

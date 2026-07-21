@@ -59,14 +59,40 @@ describe('renderComputeSkillDoc', () => {
     expect(doc).toContain('list_compute')
   })
 
-  it('does NOT contain harvest/notification ops (Phase 3b+ ops excluded)', () => {
+  it('does NOT contain blocking wait or notification ops', () => {
     const doc = renderComputeSkillDoc([])
-    // harvest as an option key in submit_job is fine (3a stores it); what must be absent are
-    // the Phase-3b harvest operation names and the notification op.
+    // These patterns must never appear — they describe the old blocking approach.
     expect(doc).not.toContain('HarvestResult')
     expect(doc).not.toContain('wait_for_notification')
     expect(doc).not.toContain('save_artifacts')
-    expect(doc).not.toContain('.result()') // attach_job().result() is Phase 3b
+    // The doc MUST NOT teach polling loops: while(status === 'running') is the old wrong approach.
+    expect(doc).not.toMatch(/while\s*\(.*status.*running/)
+  })
+
+  it('contains Phase-3b ops: result(), write_artifact_file, left_on_remote', () => {
+    const doc = renderComputeSkillDoc([])
+    // These are the Phase-3b harvest/analysis turn APIs.
+    expect(doc).toContain('.result()')
+    expect(doc).toContain('write_artifact_file')
+    expect(doc).toContain('left_on_remote')
+  })
+
+  it('describes app-initiated analysis turn — not agent blocking wait', () => {
+    const doc = renderComputeSkillDoc([])
+    // The key behavioral contract: app starts the analysis turn, agent does not block.
+    expect(doc).toMatch(/app.*analysis turn|analysis turn.*app/i)
+    expect(doc).toContain('Do NOT write')
+    // Conversation must not be locked.
+    expect(doc).toMatch(/conversation.*NOT locked|NOT locked.*conversation/i)
+  })
+
+  it('teaches outputs/harvest declaration with featured, hidden, residency:remote', () => {
+    const doc = renderComputeSkillDoc([])
+    expect(doc).toContain('featured')
+    expect(doc).toContain("visibility: 'hidden'")
+    expect(doc).toContain("residency: 'remote'")
+    expect(doc).toContain('max_file_mb')
+    expect(doc).toContain('max_total_mb')
   })
 
   it('lists registered hosts with provider_id and status', () => {
@@ -106,13 +132,17 @@ describe('renderComputeSkillDoc', () => {
     expect(doc).toContain('not yet probed')
   })
 
-  it('teaches the JavaScript control-plane REPL, not python cells', () => {
+  it('teaches the JavaScript control-plane REPL, not python cells for host.compute', () => {
     const doc = renderComputeSkillDoc([])
     // host.compute lives on the repl kernel now; examples are JavaScript run via repl_execute.
     expect(doc).toContain('repl_execute')
     expect(doc).toContain('```javascript')
-    // No python code fences — the old python-shim examples must be gone.
-    expect(doc).not.toContain('```python')
+    // Python cells must not call host.compute — the doc may show python for file reading only.
+    // Ensure no python code block contains a host.compute call.
+    const pythonBlocks = doc.match(/```python[\s\S]*?```/g) ?? []
+    for (const block of pythonBlocks) {
+      expect(block).not.toContain('host.compute')
+    }
   })
 
   it('states that the python/r data kernels have no host.compute', () => {

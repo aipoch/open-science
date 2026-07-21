@@ -156,6 +156,15 @@ export type ComputeJob = {
   // retry_after_user_action is always true for this condition (design.md §8 boundary 2 / §11).
   // Optional: absent means no poll error has been recorded for this job.
   last_poll_error?: string
+  // Phase 3b harvest fields (compute-harvest issue 01). All optional; null until Phase 3b fills them.
+  // harvest_error: non-null means the harvest completed but with errors (harvest_failed outcome).
+  harvest_error?: string
+  // left_on_remote: JSON string [{uri, size_mb, reason}] — files not downloaded from remote.
+  left_on_remote?: string
+  // notified_at: epoch ms when the compute_done notification was enqueued to the inbox.
+  notified_at?: number
+  // notification_consumed_at: epoch ms when wait_for_notification consumed the notification.
+  notification_consumed_at?: number
   created_at: number
   submitted_at: number | undefined
   started_at: number | undefined
@@ -172,6 +181,27 @@ export type JobStatusResult = {
   stdout_tail: string | undefined
   stderr_tail: string | undefined
   remote_workdir: string | undefined
+}
+
+// Full job result shape returned by attach_job().result() (spec §11.4, design §9).
+// File lists are workspace-relative paths (e.g. "hpc/<jobId>/featured/out.result").
+// In non-terminal states or before harvest completes, file fields are empty arrays.
+export type JobResult = {
+  job_id: string
+  status: ComputeJobStatus
+  exit_code: number | undefined
+  // Workspace-relative paths of featured output files (hpc/<jobId>/featured/*).
+  featured_files: string[]
+  // Workspace-relative paths of hidden output files (hpc/<jobId>/hidden/*).
+  hidden_files: string[]
+  // featured_files + hidden_files combined, featured first.
+  output_files: string[]
+  // Files not downloaded from the remote workdir (JSON [{uri,size_mb,reason}]).
+  left_on_remote: Array<{ uri: string; size_mb: number; reason: string }>
+  // Remote workdir path; preserved even on harvest_failed so the user can manually retrieve files.
+  remote_workdir: string | undefined
+  stdout_tail: string | undefined
+  stderr_tail: string | undefined
 }
 
 // Result returned by submit_job (immediate, before dispatch completes). remote_workdir is
@@ -196,6 +226,8 @@ export type ComputeJobErrorCode =
 // `compute:job-updated`. Contains the fields the UI needs for badge + job feed display. The host
 // display_name is denormalized here so the renderer never needs a separate host lookup.
 // Shape defined in design.md §9 and issue 05 Interfaces.
+// Phase 3b: notification payload fields (spec §11.3) are embedded here so the renderer can
+// display the done card and decide whether to trigger an analysis turn (issue 05/07).
 export type JobSummary = {
   job_id: string
   provider_id: string
@@ -214,4 +246,12 @@ export type JobSummary = {
   remote_workdir: string | undefined
   stdout_tail: string | undefined
   stderr_tail: string | undefined
+  // Phase 3b: inbox timestamps — renderer uses these to decide whether to start an analysis turn.
+  notified_at: number | undefined
+  notification_consumed_at: number | undefined
+  // Phase 3b: compute_done payload fields (spec §11.3). Present when notified_at is set.
+  featured_files?: string[]
+  output_file_count?: number
+  left_on_remote_count?: number
+  left_on_remote?: Array<{ uri: string; size_mb: number; reason: string }>
 }

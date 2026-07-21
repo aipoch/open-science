@@ -41,6 +41,11 @@ const toJob = (row: PrismaComputeJob): ComputeJob => ({
   stderr_tail: row.stderrTail ?? undefined,
   error_code: row.errorCode ?? undefined,
   last_poll_error: row.lastPollError ?? undefined,
+  // Phase 3b harvest fields
+  harvest_error: row.harvestError ?? undefined,
+  left_on_remote: row.leftOnRemote ?? undefined,
+  notified_at: row.notifiedAt?.getTime(),
+  notification_consumed_at: row.notificationConsumedAt?.getTime(),
   created_at: row.createdAt.getTime(),
   submitted_at: row.submittedAt?.getTime(),
   started_at: row.startedAt?.getTime(),
@@ -82,6 +87,12 @@ export type UpdateJobRequest = {
   submittedAt?: Date
   startedAt?: Date
   finishedAt?: Date
+  // Phase 3b harvest fields (compute-harvest issue 01).
+  harvestedAt?: Date
+  harvestError?: string | null
+  leftOnRemote?: string | null
+  notifiedAt?: Date | null
+  notificationConsumedAt?: Date | null
 }
 
 // Owns ComputeJob reads/writes. Follows the same lazy-provider pattern as ComputeHostRepository.
@@ -130,6 +141,20 @@ export class ComputeJobRepository {
     return rows.map(toJob)
   }
 
+  // Returns all terminal jobs (success/failed/timeout) that have not yet been harvested.
+  // Used by the poller's restart-recovery scan to re-queue harvests interrupted by an app restart.
+  async findTerminalUnharvested(): Promise<ComputeJob[]> {
+    const client = await this.getClient()
+    const rows = await client.computeJob.findMany({
+      where: {
+        status: { in: ['success', 'failed', 'timeout'] },
+        harvestedAt: null
+      },
+      orderBy: { createdAt: 'asc' }
+    })
+    return rows.map(toJob)
+  }
+
   // Returns all non-terminal jobs for a given provider (used by per-host batch polling).
   async findNonTerminalByProvider(providerId: string): Promise<ComputeJob[]> {
     const client = await this.getClient()
@@ -154,6 +179,13 @@ export class ComputeJobRepository {
     if (updates.submittedAt !== undefined) data.submittedAt = updates.submittedAt
     if (updates.startedAt !== undefined) data.startedAt = updates.startedAt
     if (updates.finishedAt !== undefined) data.finishedAt = updates.finishedAt
+    // Phase 3b harvest fields
+    if (updates.harvestedAt !== undefined) data.harvestedAt = updates.harvestedAt
+    if ('harvestError' in updates) data.harvestError = updates.harvestError
+    if ('leftOnRemote' in updates) data.leftOnRemote = updates.leftOnRemote
+    if ('notifiedAt' in updates) data.notifiedAt = updates.notifiedAt
+    if ('notificationConsumedAt' in updates)
+      data.notificationConsumedAt = updates.notificationConsumedAt
 
     const row = await client.computeJob.update({ where: { id: jobId }, data })
     return toJob(row)
@@ -179,6 +211,36 @@ export class ComputeJobRepository {
       where: { providerId, status: { in: ['submitted', 'running'] } }
     })
     return count > 0
+  }
+
+  // Returns jobs for a session that have been notified (notifiedAt set) but not yet consumed
+  // (notificationConsumedAt null). Used by the renderer at session load time to find jobs that
+  // need an analysis turn (issue 05: restart recovery path).
+  async findPendingNotifications(sessionId: string): Promise<ComputeJob[]> {
+    const client = await this.getClient()
+    const rows = await client.computeJob.findMany({
+      where: {
+        sessionId,
+        notifiedAt: { not: null },
+        notificationConsumedAt: null
+      },
+      orderBy: { createdAt: 'asc' }
+    })
+    return rows.map(toJob)
+  }
+
+  // Marks a batch of jobs as notification-consumed by setting notificationConsumedAt to now.
+  // Idempotent — already-consumed jobs are unaffected by the where clause.
+  async markNotificationsConsumed(jobIds: string[]): Promise<void> {
+    if (jobIds.length === 0) return
+    const client = await this.getClient()
+    await client.computeJob.updateMany({
+      where: {
+        id: { in: jobIds },
+        notificationConsumedAt: null
+      },
+      data: { notificationConsumedAt: new Date() }
+    })
   }
 }
 

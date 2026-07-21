@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils'
 
 const Select = SelectPrimitive.Root
 const SelectGroup = SelectPrimitive.Group
+const SelectValue = SelectPrimitive.Value
 
 function SelectTrigger({
   className,
@@ -127,5 +128,6 @@ export {
   SelectItem,
   SelectLabel,
   SelectSeparator,
-  SelectTrigger
+  SelectTrigger,
+  SelectValue
 }

@@ -60,6 +60,7 @@ type NotebookLocalRpcServerOptions = {
       context: { sessionId: string; projectId: string }
     ): Promise<unknown>
     getJobStatus(jobId: string): Promise<unknown>
+    getJobResult(jobId: string): Promise<unknown>
     // Returns the provider ids of compute hosts enabled for the given session (issue 06).
     getEnabledComputeHosts(sessionId: string): string[]
   }
@@ -336,6 +337,13 @@ class NotebookLocalRpcServer {
       if (op === 'job_status') {
         const jobId = typeof params.job_id === 'string' ? params.job_id : ''
         return this.computeService.getJobStatus(jobId)
+      }
+
+      // op='job_result' — full JobResult (spec §11.4, design §9). Non-blocking query: reads DB
+      // row + scans the local harvest directory. No SSH, no harvest trigger (issue 04).
+      if (op === 'job_result') {
+        const jobId = typeof params.job_id === 'string' ? params.job_id : ''
+        return this.computeService.getJobResult(jobId)
       }
 
       // op='list_compute' — returns session-enabled hosts (design.md §15.1, issue 06).

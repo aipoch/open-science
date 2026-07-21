@@ -44,6 +44,7 @@ import { RenameSessionDialog } from './RenameSessionDialog'
 import { SessionNotebookDialog } from './SessionNotebookDialog'
 import { getVisiblePermissionRequests } from './session-permissions'
 import { WorkspaceSidebar } from './WorkspaceSidebar'
+import { useJobAnalysisEffect } from '@/lib/compute/useJobAnalysisEffect'
 
 type WorkspacePageProps = {
   isSessionPersistenceReady: boolean
@@ -163,6 +164,9 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     setPermissionProfile,
     revokePermissionGrant
   } = useWorkspaceAgentRuntime()
+
+  // Auto-trigger an analysis turn when a remote job finishes (design §11).
+  useJobAnalysisEffect({ sendMessage })
   const [draftDoc, setDraftDoc] = useState<ComposerDoc>(emptyDoc)
   const [newConversationPermissionProfile, setNewConversationPermissionProfile] =
     useState<PermissionProfileId>(DEFAULT_PERMISSION_PROFILE)

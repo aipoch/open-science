@@ -314,6 +314,10 @@ interface OpenScienceAPI {
     bookmarksSet(providerId: string, folders: string[]): Promise<void>
     // Returns all jobs for a session as JobSummary[], optionally filtered by status (Phase 3d).
     jobsList(filter: { sessionId: string; status?: string[] }): Promise<JobSummary[]>
+    // Returns jobs with notifiedAt set and notificationConsumedAt null (issue 05 restart recovery).
+    jobsPendingNotification(sessionId: string): Promise<JobSummary[]>
+    // Marks job ids as notification-consumed after a successful analysis turn (issue 05).
+    jobsMarkConsumed(sessionId: string, jobIds: string[]): Promise<void>
     // Fires when a job's status or tail changes (broadcast from the main-process poller).
     onJobUpdated(listener: (job: JobSummary) => void): () => void
     // Per-session enabled compute hosts (issue 06). The renderer owns the durable state (session JSON);

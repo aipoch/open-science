@@ -6,6 +6,7 @@ import type { ComputeJobRepository } from './job-repository'
 import type { SshRunner, ResolvedSshTarget } from './ssh-runner'
 import { JobPoller } from './job-poller'
 import { DispatchTracker } from './dispatch-tracker'
+import type { HarvestFn } from './job-poller'
 
 // Mock resolveSshTarget at module level so all tests bypass the real ssh -G call.
 vi.mock('./ssh-runner', async (importOriginal) => {
@@ -754,5 +755,485 @@ describe('JobPoller', () => {
     // Calling stop() again is a no-op.
     poller.stop()
     expect(clearIntervalMock).toHaveBeenCalledOnce()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Harvest wiring tests (issue 03: poller-harvest-wiring)
+// ---------------------------------------------------------------------------
+
+describe('JobPoller — harvest wiring', () => {
+  // Helper: builds a terminal poll output (exit_code=0 → success)
+  const makeTerminalPollOutput = (jobId: string, exitCode = 0): string =>
+    withNonce([
+      `JOB_START:${jobId}`,
+      'alive:0',
+      String(exitCode),
+      '',
+      `STDOUT_END:${jobId}`,
+      '',
+      `STDERR_END:${jobId}`
+    ])
+
+  it('dispatches harvest asynchronously when a job transitions to success (does not await)', async () => {
+    // harvestFn hangs forever — the tick must still return promptly.
+    let harvestStarted = false
+    const harvestFn: HarvestFn = vi.fn(() => {
+      harvestStarted = true
+      return new Promise(() => {
+        /* never resolves */
+      })
+    })
+
+    const job = makeJob()
+    const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
+      update
+    } as unknown as ComputeJobRepository
+    const hostRepo = {
+      get: vi.fn(() => Promise.resolve(sampleHost()))
+    } as unknown as ComputeHostRepository
+
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: makeTerminalPollOutput('job-1', 0),
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+
+    const poller = new JobPoller({
+      runner,
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      makeNonce: () => NONCE,
+      harvestFn
+    })
+
+    // tick must complete even though harvestFn hangs
+    await poller.tick()
+
+    // harvest was started (but not awaited)
+    expect(harvestStarted).toBe(true)
+    // tick returned promptly (harvestFn is still pending — this assertion runs immediately after tick)
+    expect(harvestFn).toHaveBeenCalledOnce()
+  })
+
+  it('dispatches harvest for failed and timeout terminal states', async () => {
+    const harvestFn: HarvestFn = vi.fn(() => Promise.resolve())
+
+    for (const exitCode of [3, 124]) {
+      vi.clearAllMocks()
+      const job = makeJob()
+      const update = vi.fn((_id: string, u: unknown) =>
+        Promise.resolve({ ...job, ...(u as object) })
+      )
+      const jobRepo = {
+        findNonTerminal: vi.fn(() => Promise.resolve([job])),
+        findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
+        update
+      } as unknown as ComputeJobRepository
+      const hostRepo = {
+        get: vi.fn(() => Promise.resolve(sampleHost()))
+      } as unknown as ComputeHostRepository
+      const runner = makeSshRunner({
+        exitCode: 0,
+        stdout: makeTerminalPollOutput('job-1', exitCode),
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+
+      const poller = new JobPoller({
+        runner,
+        hostRepository: hostRepo,
+        jobRepository: jobRepo,
+        makeNonce: () => NONCE,
+        harvestFn
+      })
+      await poller.tick()
+
+      expect(harvestFn).toHaveBeenCalled()
+    }
+  })
+
+  it('does NOT dispatch harvest for error status (dispatch_failed)', async () => {
+    const harvestFn: HarvestFn = vi.fn(() => Promise.resolve())
+
+    const job = makeJob({ status: 'submitted', remote_handle: undefined })
+    const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
+      update
+    } as unknown as ComputeJobRepository
+    const hostRepo = {
+      get: vi.fn(() => Promise.resolve(sampleHost()))
+    } as unknown as ComputeHostRepository
+
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+
+    const poller = new JobPoller({
+      runner,
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      makeNonce: () => NONCE,
+      harvestFn,
+      dispatchTracker: new DispatchTracker() // empty — causes dispatch_failed
+    })
+
+    await poller.tick()
+
+    // error/dispatch_failed job must NOT get harvest dispatched
+    expect(harvestFn).not.toHaveBeenCalled()
+  })
+
+  it('does not re-dispatch harvest for the same job while its harvest is in-flight (dedup)', async () => {
+    // harvestFn hangs — so job-1 stays in-flight across multiple ticks.
+    let resolveHarvest!: () => void
+    const harvestFn: HarvestFn = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveHarvest = resolve
+        })
+    )
+
+    const job = makeJob()
+    const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
+      update
+    } as unknown as ComputeJobRepository
+    const hostRepo = {
+      get: vi.fn(() => Promise.resolve(sampleHost()))
+    } as unknown as ComputeHostRepository
+
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: makeTerminalPollOutput('job-1', 0),
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+
+    const poller = new JobPoller({
+      runner,
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      makeNonce: () => NONCE,
+      harvestFn
+    })
+
+    // First tick — starts harvest
+    await poller.tick()
+    expect(harvestFn).toHaveBeenCalledTimes(1)
+
+    // Second tick — job still in-flight, must NOT re-dispatch
+    await poller.tick()
+    expect(harvestFn).toHaveBeenCalledTimes(1)
+
+    // After harvest resolves, a third tick may dispatch again (dedup cleared)
+    resolveHarvest()
+    // Allow the microtask queue to flush so the in-flight entry is removed
+    await Promise.resolve()
+    await poller.tick()
+    expect(harvestFn).toHaveBeenCalledTimes(2)
+  })
+
+  it('enforces concurrency limit of 2 (third harvest waits until one of the first two completes)', async () => {
+    const started: string[] = []
+    const completions: Array<() => void> = []
+
+    // harvestFn records which job was started and suspends until manually resolved
+    const harvestFn: HarvestFn = vi.fn((job) => {
+      started.push(job.job_id)
+      return new Promise<void>((resolve) => {
+        completions.push(resolve)
+      })
+    })
+
+    const jobs = ['job-1', 'job-2', 'job-3'].map((id) => makeJob({ job_id: id }))
+
+    const update = vi.fn((id: string, u: unknown) => {
+      const job = jobs.find((j) => j.job_id === id) ?? jobs[0]!
+      return Promise.resolve({ ...job, ...(u as object) })
+    })
+
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve(jobs)),
+      findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
+      update
+    } as unknown as ComputeJobRepository
+    const hostRepo = {
+      get: vi.fn(() => Promise.resolve(sampleHost()))
+    } as unknown as ComputeHostRepository
+
+    // All three jobs succeed in one poll batch
+    const batchOutput = ['job-1', 'job-2', 'job-3']
+      .map((id) => makeTerminalPollOutput(id, 0))
+      .join('\n')
+
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: batchOutput,
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+
+    const poller = new JobPoller({
+      runner,
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      makeNonce: () => NONCE,
+      harvestFn
+    })
+
+    await poller.tick()
+    // Allow microtask queue to let the semaphore acquire run
+    await Promise.resolve()
+
+    // Only 2 harvests should have started (semaphore limit)
+    expect(started.length).toBe(2)
+
+    // Complete one harvest → third should start
+    completions[0]!()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(started.length).toBe(3)
+  })
+
+  it('does not affect poller tick when a harvest fails (error isolation)', async () => {
+    const harvestFn: HarvestFn = vi.fn(() => Promise.reject(new Error('scp failed')))
+
+    const job = makeJob()
+    const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
+      update
+    } as unknown as ComputeJobRepository
+    const hostRepo = {
+      get: vi.fn(() => Promise.resolve(sampleHost()))
+    } as unknown as ComputeHostRepository
+
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: makeTerminalPollOutput('job-1', 0),
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+
+    const poller = new JobPoller({
+      runner,
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      makeNonce: () => NONCE,
+      harvestFn
+    })
+
+    // tick must complete without throwing even if harvestFn rejects
+    await expect(poller.tick()).resolves.not.toThrow()
+  })
+
+  it('recovery scan: harvests terminal+unharvestedAt jobs on start', async () => {
+    const harvestFn: HarvestFn = vi.fn(() => Promise.resolve())
+
+    const terminalJob = makeJob({
+      job_id: 'job-orphan',
+      status: 'success',
+      finished_at: Date.now() - 60_000,
+      harvested_at: undefined
+    })
+
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([])),
+      findTerminalUnharvested: vi.fn(() => Promise.resolve([terminalJob])),
+      update: vi.fn()
+    } as unknown as ComputeJobRepository
+    const hostRepo = {
+      get: vi.fn(() => Promise.resolve(sampleHost()))
+    } as unknown as ComputeHostRepository
+
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+
+    const poller = new JobPoller({
+      runner,
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      makeNonce: () => NONCE,
+      harvestFn
+    })
+
+    await poller.tick()
+    // Allow microtask queue to flush
+    await Promise.resolve()
+
+    // The orphaned terminal+unharvested job should have been harvested
+    expect(harvestFn).toHaveBeenCalledWith(terminalJob)
+  })
+
+  it('does not re-harvest already-harvested jobs in recovery scan', async () => {
+    const harvestFn: HarvestFn = vi.fn(() => Promise.resolve())
+
+    // findTerminalUnharvested returns no jobs (all already harvested)
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([])),
+      findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
+      update: vi.fn()
+    } as unknown as ComputeJobRepository
+    const hostRepo = {
+      get: vi.fn(() => Promise.resolve(sampleHost()))
+    } as unknown as ComputeHostRepository
+
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+
+    const poller = new JobPoller({
+      runner,
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      makeNonce: () => NONCE,
+      harvestFn
+    })
+
+    await poller.tick()
+    await Promise.resolve()
+
+    expect(harvestFn).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Notification trigger: execution-error jobs emit compute_done (issue 06)
+// ---------------------------------------------------------------------------
+describe('compute_done notification on dispatch_failed (error) jobs', () => {
+  it('emits notification for error/dispatch_failed job (broadcast + notifiedAt written)', async () => {
+    const job = makeJob({ status: 'submitted', remote_handle: undefined })
+
+    // Track update calls: first call writes status=error, second writes notifiedAt (from emitJobNotification).
+    const updatedJobWithError = {
+      ...job,
+      status: 'error' as const,
+      error_code: 'dispatch_failed',
+      finished_at: Date.now(),
+      notified_at: undefined
+    }
+    const updatedJobWithNotif = { ...updatedJobWithError, notified_at: Date.now() }
+
+    const update = vi
+      .fn()
+      .mockResolvedValueOnce(updatedJobWithError) // status=error write
+      .mockResolvedValueOnce(updatedJobWithNotif) // notifiedAt write
+
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
+      update
+    } as unknown as ComputeJobRepository
+
+    const hostRepo = {
+      get: vi.fn(() => Promise.resolve(sampleHost()))
+    } as unknown as ComputeHostRepository
+
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+
+    const broadcast = vi.fn()
+
+    const poller = new JobPoller({
+      runner,
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      dispatchTracker: new DispatchTracker(), // empty = post-restart, triggers dispatch_failed
+      broadcast,
+      storageRoot: '/tmp/test-storage'
+    })
+
+    await poller.tick()
+    // Wait for the async notification to settle
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    // Status update was called with error/dispatch_failed
+    expect(update).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({ status: 'error', errorCode: 'dispatch_failed' })
+    )
+
+    // Notification write (notifiedAt)
+    expect(update).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({ notifiedAt: expect.any(Date) })
+    )
+
+    // Broadcast was called with the notification summary
+    expect(broadcast).toHaveBeenCalledOnce()
+    const summary = broadcast.mock.calls[0][0]
+    expect(summary.status).toBe('error')
+    expect(summary.notified_at).toBeDefined()
+    expect(summary.featured_files).toEqual([])
+    expect(summary.output_file_count).toBe(0)
+  })
+
+  it('does NOT emit notification if broadcast is not wired', async () => {
+    const job = makeJob({ status: 'submitted', remote_handle: undefined })
+    const updatedJob = { ...job, status: 'error' as const }
+    const update = vi.fn().mockResolvedValue(updatedJob)
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
+      update
+    } as unknown as ComputeJobRepository
+    const hostRepo = { get: vi.fn() } as unknown as ComputeHostRepository
+
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+
+    const poller = new JobPoller({
+      runner,
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      dispatchTracker: new DispatchTracker()
+      // no broadcast / storageRoot wired
+    })
+
+    await poller.tick()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    // Only one update call (the status=error write), no notifiedAt write
+    expect(update).toHaveBeenCalledOnce()
+    expect(update).toHaveBeenCalledWith('job-1', expect.objectContaining({ status: 'error' }))
   })
 })

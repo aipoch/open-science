@@ -5,7 +5,7 @@ import type { CreateComputeHostRequest, SshOverrides } from '../../../../shared/
 import { DETAILS_DOC_MAX_LENGTH } from '../../../../shared/compute'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useComputeStore } from '@/stores/compute-store'
 
@@ -94,14 +94,16 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
         <div className="flex flex-col gap-1.5">
           <label className="text-sm font-medium text-foreground">From ~/.ssh/config</label>
           <Select
-            value=""
+            value={alias}
             onValueChange={(value) => setAlias(value)}
             disabled={sshAliases.length === 0}
           >
             <SelectTrigger aria-label="Pick a host from ~/.ssh/config">
-              <span className="truncate text-muted-foreground">
-                {sshAliases.length === 0 ? 'No hosts in ~/.ssh/config' : 'Pick a host…'}
-              </span>
+              <SelectValue
+                placeholder={
+                  sshAliases.length === 0 ? 'No hosts in ~/.ssh/config' : 'Pick a host…'
+                }
+              />
             </SelectTrigger>
             <SelectContent>
               {sshAliases.map((option) => (

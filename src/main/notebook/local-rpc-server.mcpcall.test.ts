@@ -381,4 +381,78 @@ describe('computeCall RPC', () => {
     const body = (await res.json()) as { error: string }
     expect(body.error).toMatch(/unknown details mode/i)
   })
+
+  it('routes computeCall op=job_result to getJobResult', async () => {
+    const fakeResult = {
+      job_id: 'job-42',
+      status: 'success',
+      exit_code: 0,
+      featured_files: ['hpc/job-42/featured/out.result'],
+      hidden_files: [],
+      output_files: ['hpc/job-42/featured/out.result'],
+      left_on_remote: [],
+      remote_workdir: '~/.openscience/jobs/job-42',
+      stdout_tail: 'done\n',
+      stderr_tail: ''
+    }
+    const fakeCompute = {
+      callCommand: async () => ({}),
+      list: async () => [],
+      getDetails: async () => ({ doc: '', isSkeleton: false }),
+      appendDetails: async () => {},
+      replaceDetails: async () => {},
+      submitJob: async () => ({}),
+      getJobStatus: async () => ({}),
+      getJobResult: async (jobId: string) => ({ ...fakeResult, job_id: jobId }),
+      getEnabledComputeHosts: () => []
+    }
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      computeService: fakeCompute as never
+    })
+    const { endpoint, token } = await server.ensureStarted()
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        method: 'computeCall',
+        params: { op: 'job_result', job_id: 'job-42' }
+      })
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { result: typeof fakeResult }
+    expect(body.result.job_id).toBe('job-42')
+    expect(body.result.featured_files).toContain('hpc/job-42/featured/out.result')
+    expect(body.result.output_files).toContain('hpc/job-42/featured/out.result')
+  })
+
+  it('routes computeCall op=job_result errors through computeError serialization', async () => {
+    const fakeCompute = {
+      callCommand: async () => ({}),
+      list: async () => [],
+      getDetails: async () => ({ doc: '', isSkeleton: false }),
+      appendDetails: async () => {},
+      replaceDetails: async () => {},
+      submitJob: async () => ({}),
+      getJobStatus: async () => ({}),
+      getJobResult: async () => {
+        throw new Error('No compute job found with id "missing".')
+      },
+      getEnabledComputeHosts: () => []
+    }
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      computeService: fakeCompute as never
+    })
+    const { endpoint, token } = await server.ensureStarted()
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        method: 'computeCall',
+        params: { op: 'job_result', job_id: 'missing' }
+      })
+    })
+    expect(res.status).toBe(500)
+    const body = (await res.json()) as { error: string }
+    expect(body.error).toMatch(/No compute job/)
+  })
 })

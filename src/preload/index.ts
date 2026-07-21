@@ -734,6 +734,12 @@ const api: OpenScienceAPI = {
     // Returns all jobs for a session as JobSummary[], optionally filtered by status (Phase 3d).
     jobsList: (filter: { sessionId: string; status?: string[] }) =>
       ipcRenderer.invoke('compute:jobs:list', filter) as Promise<JobSummary[]>,
+    // Returns jobs pending analysis turn (notifiedAt set, notificationConsumedAt null).
+    jobsPendingNotification: (sessionId) =>
+      ipcRenderer.invoke('compute:jobs:pending-notification', sessionId) as Promise<JobSummary[]>,
+    // Marks job ids as notification-consumed after a successful analysis turn (issue 05).
+    jobsMarkConsumed: (sessionId, jobIds) =>
+      ipcRenderer.invoke('compute:jobs:mark-consumed', sessionId, jobIds) as Promise<void>,
     // Fires when a job's status or tail changes (broadcast from the main-process poller).
     onJobUpdated: (listener: (job: JobSummary) => void) =>
       onIpcMessage<JobSummary>('compute:job-updated', listener),

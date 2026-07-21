@@ -113,12 +113,21 @@ model ComputeJob {
   // lastPollError: set when SSH connectivity fails during a poll tick (design.md §8 boundary 2).
   // The job status is NOT changed — this field surfaces the transient error to the UI.
   // Cleared on the next successful poll. retry_after_user_action is always true for this field.
-  lastPollError   String?
-  createdAt       DateTime  @default(now())
-  submittedAt     DateTime?
-  startedAt       DateTime?
-  finishedAt      DateTime?
-  harvestedAt     DateTime?
+  lastPollError           String?
+  // 3b harvest columns (compute-harvest issue 01): pure-additive, null until Phase 3b fills them.
+  // harvestError: summary of a harvest_failed outcome; non-null means harvest completed with errors.
+  harvestError            String?
+  // leftOnRemote: JSON [{uri, size_mb, reason}] — files left on the remote side after harvest.
+  leftOnRemote            String?
+  // notifiedAt: set when the compute_done notification has been enqueued to the inbox.
+  notifiedAt              DateTime?
+  // notificationConsumedAt: set by wait_for_notification when the notification is consumed.
+  notificationConsumedAt  DateTime?
+  createdAt               DateTime  @default(now())
+  submittedAt             DateTime?
+  startedAt               DateTime?
+  finishedAt              DateTime?
+  harvestedAt             DateTime?
 
   @@index([providerId])
   @@index([sessionId])

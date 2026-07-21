@@ -112,6 +112,8 @@ const COMPUTE_HOST_PROVIDER_ID_INDEX_DDL = `CREATE UNIQUE INDEX IF NOT EXISTS "C
 // Harvest columns (harvestedAt, outputManifest) are created now but filled in Phase 3b only.
 // Security: command stored for audit; commandHash for dedup; no credentials ever stored.
 // compute-jobs issue 02: added lastPollError for SSH-connectivity-failure recording (design.md §8).
+// compute-harvest issue 01: added harvestError, leftOnRemote, notifiedAt, notificationConsumedAt
+//   (pure-additive; null until Phase 3b fills them).
 const COMPUTE_JOB_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ComputeJob" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "providerId" TEXT NOT NULL,
@@ -135,6 +137,10 @@ const COMPUTE_JOB_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ComputeJob" (
     "stderrTail" TEXT,
     "errorCode" TEXT,
     "lastPollError" TEXT,
+    "harvestError" TEXT,
+    "leftOnRemote" TEXT,
+    "notifiedAt" DATETIME,
+    "notificationConsumedAt" DATETIME,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "submittedAt" DATETIME,
     "startedAt" DATETIME,
@@ -145,6 +151,14 @@ const COMPUTE_JOB_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ComputeJob" (
 // Migration guard: add lastPollError to ComputeJob for DBs created before compute-jobs issue 02.
 // Catch swallows the duplicate-column error (SQLite has no IF NOT EXISTS on ALTER TABLE ADD COLUMN).
 const COMPUTE_JOB_ADD_LAST_POLL_ERROR_DDL = `ALTER TABLE "ComputeJob" ADD COLUMN "lastPollError" TEXT`
+
+// Migration guards: add the 4 new Phase 3b harvest columns to ComputeJob for DBs created before
+// compute-harvest issue 01. Each is nullable and defaults to NULL so existing rows are unaffected.
+// Catch swallows the duplicate-column error (idempotent on repeat runs).
+const COMPUTE_JOB_ADD_HARVEST_ERROR_DDL = `ALTER TABLE "ComputeJob" ADD COLUMN "harvestError" TEXT`
+const COMPUTE_JOB_ADD_LEFT_ON_REMOTE_DDL = `ALTER TABLE "ComputeJob" ADD COLUMN "leftOnRemote" TEXT`
+const COMPUTE_JOB_ADD_NOTIFIED_AT_DDL = `ALTER TABLE "ComputeJob" ADD COLUMN "notifiedAt" DATETIME`
+const COMPUTE_JOB_ADD_NOTIFICATION_CONSUMED_AT_DDL = `ALTER TABLE "ComputeJob" ADD COLUMN "notificationConsumedAt" DATETIME`
 
 // Indexes for ComputeJob: by providerId (per-host poller queries), sessionId (UI list), status
 // (finding non-terminal jobs on restart). IF NOT EXISTS makes re-runs idempotent.
@@ -195,6 +209,15 @@ const ensureProjectSchema = async (client: PrismaClient): Promise<void> => {
   // Migration guard: add lastPollError column for DBs created before compute-jobs issue 02.
   // Catch swallows duplicate-column error (idempotent on repeat calls).
   await client.$executeRawUnsafe(COMPUTE_JOB_ADD_LAST_POLL_ERROR_DDL).catch(() => undefined)
+
+  // Migration guards: add Phase 3b harvest columns for DBs created before compute-harvest issue 01.
+  // Each column is nullable (default NULL), so existing rows are unaffected (CLAUDE.md requirement).
+  await client.$executeRawUnsafe(COMPUTE_JOB_ADD_HARVEST_ERROR_DDL).catch(() => undefined)
+  await client.$executeRawUnsafe(COMPUTE_JOB_ADD_LEFT_ON_REMOTE_DDL).catch(() => undefined)
+  await client.$executeRawUnsafe(COMPUTE_JOB_ADD_NOTIFIED_AT_DDL).catch(() => undefined)
+  await client
+    .$executeRawUnsafe(COMPUTE_JOB_ADD_NOTIFICATION_CONSUMED_AT_DDL)
+    .catch(() => undefined)
 }
 
 let clientPromise: Promise<PrismaClient> | undefined

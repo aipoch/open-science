@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, stat as fsStat, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, stat as fsStat, rm } from 'node:fs/promises'
 import { app } from 'electron'
 import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -9,6 +9,7 @@ import type {
   ComputeHost,
   DetailsAuthor,
   ExecResult,
+  JobResult,
   ProbeResult,
   SubmitJobResult
 } from '../../shared/compute'
@@ -35,6 +36,8 @@ import {
 import type { ComputeJobRepository } from './job-repository'
 import { computeRemoteWorkdir, dispatchJob, hashCommand } from './job-dispatcher'
 import type { StagedInputEntry } from './job-dispatcher'
+import { getJobHarvestDir } from './harvest-engine'
+import { getNotebookSessionRoot } from '../notebook/repository'
 
 // Probe timeout for the full bundle — individual commands share one connection but each gets this
 // budget. Set generously so slow clusters don't abort, but short enough for a responsive UI (30s).
@@ -302,7 +305,8 @@ export class ComputeService {
     private readonly overrideDownloadsDir?: string,
     private readonly jobRepository?: ComputeJobRepository,
     private readonly onJobUpdated?: (job: import('../../shared/compute').ComputeJob) => void,
-    private readonly artifactResolver?: ArtifactResolver
+    private readonly artifactResolver?: ArtifactResolver,
+    private readonly storageRoot?: string
   ) {
     this.scpRunner = scpRunner ?? new SystemScpRunner()
   }
@@ -334,7 +338,7 @@ export class ComputeService {
     }
 
     // Run the probe script in a login shell so module/conda PATHs are present.
-    const runResult = await this.runner.run(target, PROBE_SCRIPT, {
+    let runResult = await this.runner.run(target, PROBE_SCRIPT, {
       timeoutMs: PROBE_TIMEOUT_MS,
       loginShell: true,
       maxOutputBytes: PROBE_MAX_OUTPUT_BYTES
@@ -348,7 +352,30 @@ export class ComputeService {
       runResult.exitCode === 255 ||
       (runResult.exitCode === null && runResult.stderr.includes('Connection'))
 
-    if (connectionFailed) {
+    // Retry once on transient routing errors (e.g. "No route to host", "Network is unreachable").
+    // These occur on macOS when a virtual network bridge (multipass vmnet, Docker, VPN) is still
+    // recovering after sleep/wake — the kernel immediately returns EHOSTUNREACH regardless of
+    // ConnectTimeout. A 3-second wait is usually enough for the bridge to restore its routes.
+    if (connectionFailed && !runResult.timedOut) {
+      const errText = (runResult.stderr + runResult.stdout).toLowerCase()
+      const isTransientRouting =
+        errText.includes('no route to host') || errText.includes('network is unreachable')
+      if (isTransientRouting) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 3000))
+        runResult = await this.runner.run(target, PROBE_SCRIPT, {
+          timeoutMs: PROBE_TIMEOUT_MS,
+          loginShell: true,
+          maxOutputBytes: PROBE_MAX_OUTPUT_BYTES
+        })
+      }
+    }
+
+    const connectionFailedFinal =
+      runResult.timedOut ||
+      runResult.exitCode === 255 ||
+      (runResult.exitCode === null && runResult.stderr.includes('Connection'))
+
+    if (connectionFailedFinal) {
       const tail = errorTail(runResult.stderr, runResult.stdout)
       const result: ProbeResult = {
         ok: false,
@@ -529,7 +556,12 @@ export class ComputeService {
     // Single-quote the path so the remote shell performs no expansion: an attacker-named directory
     // like `$(...)` or with backticks (browsed via double-click) cannot inject commands. We author
     // this ssh-exec command ourselves, so single-quoting is robust (unlike scp — see validateImportPath).
-    const quotedPath = shellSingleQuote(path)
+    //
+    // Exception: bare `~` and `~/…` are user-facing navigation shortcuts. Single-quoting suppresses
+    // tilde expansion, so `realpath '~'` resolves to a literal file named "~" and `cd '~'` fails.
+    // Expand these to `$HOME` / `$HOME/…` instead — $HOME is safe (set by sshd, not user input).
+    const expandedPath = path === '~' ? '$HOME' : path.startsWith('~/') ? `$HOME/${path.slice(2)}` : path
+    const quotedPath = expandedPath.startsWith('$HOME') ? expandedPath : shellSingleQuote(expandedPath)
     const remoteCmd = [
       `realpath ${quotedPath} 2>/dev/null || echo ${quotedPath}`,
       `cd ${quotedPath} || exit 1`,
@@ -1233,6 +1265,140 @@ export class ComputeService {
       stdout_tail: job.stdout_tail,
       stderr_tail: job.stderr_tail,
       remote_workdir: job.remote_workdir
+    }
+  }
+
+  // Returns the full job result (spec §11.4, design §9). Non-blocking: reads DB row + scans
+  // the local harvest directory. Does not make any SSH call or trigger harvest.
+  //
+  // Four-timing semantics:
+  //  1. Non-terminal (submitted/running): empty file lists, no error.
+  //  2. Terminal but harvest not done (harvestedAt null): same.
+  //  3. Clean harvest (harvestedAt set, harvestError null): full file lists.
+  //  4. harvest_failed (harvestedAt set, harvestError non-null): partial files + remote_workdir.
+  //
+  // File paths are workspace-relative (e.g. "hpc/<jobId>/featured/out.result") so the agent's
+  // data kernel can directly open() them relative to the workspace cwd (design §4).
+  async getJobResult(jobId: string): Promise<JobResult> {
+    if (!this.jobRepository) {
+      throw new Error('ComputeJobRepository is required to call getJobResult.')
+    }
+
+    const job = await this.jobRepository.get(jobId)
+    if (!job) {
+      throw new Error(`No compute job found with id "${jobId}".`)
+    }
+
+    // Terminal states that can have harvest output.
+    const terminalStates = new Set(['success', 'failed', 'timeout', 'error'])
+    const isTerminal = terminalStates.has(job.status)
+
+    // Parse left_on_remote JSON from the job row (may be undefined before harvest).
+    const leftOnRemote: Array<{ uri: string; size_mb: number; reason: string }> = job.left_on_remote
+      ? (JSON.parse(job.left_on_remote) as typeof leftOnRemote)
+      : []
+
+    // Return empty file lists for non-terminal or pre-harvest states (design §9 rules 1 & 2).
+    if (!isTerminal || !job.harvested_at) {
+      return {
+        job_id: job.job_id,
+        status: job.status,
+        exit_code: job.exit_code,
+        featured_files: [],
+        hidden_files: [],
+        output_files: [],
+        left_on_remote: [],
+        remote_workdir: job.remote_workdir,
+        stdout_tail: job.stdout_tail,
+        stderr_tail: job.stderr_tail
+      }
+    }
+
+    // Harvest is done (rules 3 & 4): scan the local harvest directory for actual files.
+    // storageRoot is required to locate the harvest directory.
+    const effectiveStorageRoot = this.storageRoot
+    if (!effectiveStorageRoot) {
+      // Fall back to empty file lists if storageRoot was not wired (should not happen in prod).
+      return {
+        job_id: job.job_id,
+        status: job.status,
+        exit_code: job.exit_code,
+        featured_files: [],
+        hidden_files: [],
+        output_files: [],
+        left_on_remote: leftOnRemote,
+        remote_workdir: job.remote_workdir,
+        stdout_tail: job.stdout_tail,
+        stderr_tail: job.stderr_tail
+      }
+    }
+
+    const harvestDir = getJobHarvestDir(
+      effectiveStorageRoot,
+      job.project_id,
+      job.session_id,
+      job.job_id
+    )
+    // Workspace root: one level up from hpc/<jobId>/ — the session workspace cwd.
+    const workspaceCwd = getNotebookSessionRoot(
+      effectiveStorageRoot,
+      job.project_id,
+      job.session_id
+    )
+
+    const featuredFiles = await scanDirRelative(join(harvestDir, 'featured'), workspaceCwd)
+    const hiddenFiles = await scanDirRelative(join(harvestDir, 'hidden'), workspaceCwd)
+
+    return {
+      job_id: job.job_id,
+      status: job.status,
+      exit_code: job.exit_code,
+      featured_files: featuredFiles,
+      hidden_files: hiddenFiles,
+      // featured first, then hidden (design §9).
+      output_files: [...featuredFiles, ...hiddenFiles],
+      left_on_remote: leftOnRemote,
+      remote_workdir: job.remote_workdir,
+      stdout_tail: job.stdout_tail,
+      stderr_tail: job.stderr_tail
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// scanDirRelative: recursively list files under a directory, returning paths
+// relative to workspaceCwd. Returns [] if the directory does not exist.
+// ---------------------------------------------------------------------------
+
+async function scanDirRelative(dir: string, workspaceCwd: string): Promise<string[]> {
+  const results: string[] = []
+  try {
+    await collectFiles(dir, dir, workspaceCwd, results)
+  } catch {
+    // Directory absent (harvest not created yet, or was deleted) — return empty.
+  }
+  return results
+}
+
+async function collectFiles(
+  baseDir: string,
+  currentDir: string,
+  workspaceCwd: string,
+  results: string[]
+): Promise<void> {
+  let entries: import('node:fs').Dirent[]
+  try {
+    entries = await readdir(currentDir, { withFileTypes: true })
+  } catch {
+    return
+  }
+  for (const entry of entries) {
+    const fullPath = join(currentDir, entry.name)
+    if (entry.isDirectory()) {
+      await collectFiles(baseDir, fullPath, workspaceCwd, results)
+    } else if (entry.isFile()) {
+      // Use workspace-relative path so agent can open() directly (design §4).
+      results.push(relative(workspaceCwd, fullPath))
     }
   }
 }

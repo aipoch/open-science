@@ -237,6 +237,37 @@ export const readBookmarks = (settings: ComputeBookmarkStore, providerId: string
   return folders.filter((f): f is string => typeof f === 'string')
 }
 
+// ---------------------------------------------------------------------------
+// IPC error serialization (RemoteFsError survives Electron's process boundary)
+// ---------------------------------------------------------------------------
+
+// Electron's ipcMain.handle re-serializes thrown Errors as plain objects, keeping only `name`,
+// `message`, and `stack`. Custom properties like `remoteFsError` are silently dropped.
+// These helpers embed the RemoteFsError payload inside the error message string so it survives
+// the IPC boundary and can be recovered by the renderer.
+
+const REMOTE_FS_ERROR_MARKER = '\x00__remoteFsError__'
+
+export type SerializableRemoteFsError = RemoteFsError & { retry_after_user_action?: boolean }
+
+// Appends a JSON-encoded RemoteFsError to an error message so it survives IPC serialization.
+export const encodeRemoteFsError = (
+  originalMessage: string,
+  fsErr: SerializableRemoteFsError
+): string => `${originalMessage}${REMOTE_FS_ERROR_MARKER}${JSON.stringify(fsErr)}`
+
+// Parses a RemoteFsError encoded by encodeRemoteFsError from an error message. Returns null when
+// no marker is present (plain errors, non-remote errors, etc.).
+export const decodeRemoteFsError = (message: string): SerializableRemoteFsError | null => {
+  const idx = message.lastIndexOf(REMOTE_FS_ERROR_MARKER)
+  if (idx === -1) return null
+  try {
+    return JSON.parse(message.slice(idx + REMOTE_FS_ERROR_MARKER.length)) as SerializableRemoteFsError
+  } catch {
+    return null
+  }
+}
+
 // Returns a new settings object with the bookmark folders for a provider replaced.
 // Does not mutate the input. Generic over T so callers passing the full StoredSettings get the
 // same type back (only the computeBookmarks slice is touched).

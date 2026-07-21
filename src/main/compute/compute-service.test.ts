@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -2270,5 +2270,171 @@ describe('ComputeService.submitJob — inputs_summary in approval', () => {
       remotePath: '/scratch/ref.fa',
       dstFilename: 'ref.fa'
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ComputeService.getJobResult — four-timing semantics (design §9, issue 04)
+// ---------------------------------------------------------------------------
+
+describe('ComputeService.getJobResult', () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'job-result-test-'))
+  })
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true })
+  })
+
+  const makeServiceWithStorageRoot = (
+    job: import('../../shared/compute').ComputeJob,
+    storageRoot: string
+  ) => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const jobs = new Map([[job.job_id, job]])
+    const { repo: jobRepo } = makeJobRepo(jobs)
+    const { repo } = makeRepo()
+    return new ComputeService(
+      runner,
+      repo,
+      undefined,
+      undefined,
+      undefined,
+      jobRepo,
+      undefined,
+      undefined,
+      storageRoot
+    )
+  }
+
+  const baseJob = (
+    overrides: Partial<import('../../shared/compute').ComputeJob> = {}
+  ): import('../../shared/compute').ComputeJob => ({
+    job_id: 'job-result-1',
+    provider_id: 'ssh:biowulf',
+    shape: 'direct_ssh',
+    session_id: 'sess-1',
+    project_id: 'proj-1',
+    status: 'success',
+    intent: 'test',
+    command: 'echo hi',
+    command_hash: 'abc',
+    environment: undefined,
+    resource_request: undefined,
+    input_manifest: undefined,
+    output_manifest: undefined,
+    harvest_config: undefined,
+    timeout_seconds: 3600,
+    remote_workdir: '~/.openscience/jobs/job-result-1',
+    remote_handle: undefined,
+    exit_code: 0,
+    stdout_tail: 'hi\n',
+    stderr_tail: '',
+    error_code: undefined,
+    created_at: 1,
+    submitted_at: 1,
+    started_at: 1,
+    finished_at: 2,
+    harvested_at: undefined,
+    ...overrides
+  })
+
+  it('non-terminal status: returns empty file lists without error', async () => {
+    const job = baseJob({ status: 'running', harvested_at: undefined })
+    const service = makeServiceWithStorageRoot(job, tmpDir)
+    const result = await service.getJobResult('job-result-1')
+    expect(result.status).toBe('running')
+    expect(result.featured_files).toEqual([])
+    expect(result.hidden_files).toEqual([])
+    expect(result.output_files).toEqual([])
+    expect(result.left_on_remote).toEqual([])
+  })
+
+  it('terminal but harvest not done: returns empty file lists without error', async () => {
+    const job = baseJob({ status: 'success', harvested_at: undefined })
+    const service = makeServiceWithStorageRoot(job, tmpDir)
+    const result = await service.getJobResult('job-result-1')
+    expect(result.status).toBe('success')
+    expect(result.featured_files).toEqual([])
+    expect(result.output_files).toEqual([])
+  })
+
+  it('clean harvest: returns full file lists with workspace-relative paths', async () => {
+    const harvestDir = join(tmpDir, 'notebooks', 'proj-1', 'sess-1', 'hpc', 'job-result-1')
+    await mkdir(join(harvestDir, 'featured'), { recursive: true })
+    await mkdir(join(harvestDir, 'hidden'), { recursive: true })
+    await writeFile(join(harvestDir, 'featured', 'out.result'), 'result data')
+    await writeFile(join(harvestDir, 'hidden', 'debug.log'), 'log data')
+
+    const job = baseJob({ harvested_at: Date.now(), harvest_error: undefined })
+    const service = makeServiceWithStorageRoot(job, tmpDir)
+    const result = await service.getJobResult('job-result-1')
+
+    expect(result.status).toBe('success')
+    expect(result.exit_code).toBe(0)
+    expect(result.featured_files).toContain('hpc/job-result-1/featured/out.result')
+    expect(result.hidden_files).toContain('hpc/job-result-1/hidden/debug.log')
+    expect(result.output_files).toContain('hpc/job-result-1/featured/out.result')
+    expect(result.output_files).toContain('hpc/job-result-1/hidden/debug.log')
+    // featured entries come before hidden in output_files
+    const featIdx = result.output_files.indexOf('hpc/job-result-1/featured/out.result')
+    const hidIdx = result.output_files.indexOf('hpc/job-result-1/hidden/debug.log')
+    expect(featIdx).toBeLessThan(hidIdx)
+  })
+
+  it('harvest_failed: partial files returned, remote_workdir preserved', async () => {
+    const harvestDir = join(tmpDir, 'notebooks', 'proj-1', 'sess-1', 'hpc', 'job-result-1')
+    await mkdir(join(harvestDir, 'featured'), { recursive: true })
+    await writeFile(join(harvestDir, 'featured', 'partial.result'), 'partial')
+
+    const leftOnRemote = JSON.stringify([
+      { uri: 'ssh://biowulf/tmp/big.bin', size_mb: 150, reason: 'exceeds_max_file_mb' }
+    ])
+    const job = baseJob({
+      harvested_at: Date.now(),
+      harvest_error: 'scp failed: connection reset',
+      left_on_remote: leftOnRemote,
+      remote_workdir: '~/.openscience/jobs/job-result-1'
+    })
+    const service = makeServiceWithStorageRoot(job, tmpDir)
+    const result = await service.getJobResult('job-result-1')
+
+    expect(result.status).toBe('success')
+    expect(result.featured_files).toContain('hpc/job-result-1/featured/partial.result')
+    expect(result.remote_workdir).toBe('~/.openscience/jobs/job-result-1')
+    expect(result.left_on_remote).toHaveLength(1)
+    expect(result.left_on_remote[0].uri).toBe('ssh://biowulf/tmp/big.bin')
+  })
+
+  it('throws when job not found', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo: jobRepo } = makeJobRepo()
+    const { repo } = makeRepo()
+    const service = new ComputeService(
+      runner,
+      repo,
+      undefined,
+      undefined,
+      undefined,
+      jobRepo,
+      undefined,
+      undefined,
+      tmpDir
+    )
+    await expect(service.getJobResult('no-such-job')).rejects.toThrow(/No compute job/)
   })
 })

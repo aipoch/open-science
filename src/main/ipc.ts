@@ -6,10 +6,16 @@ import { app, ipcMain } from 'electron'
 import { createDefaultNotebookRuntimeService, registerAcpIpcHandlers } from './acp/ipc'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
-import { registerComputeIpcHandlers, createJobUpdatedBroadcaster } from './compute/ipc'
+import {
+  registerComputeIpcHandlers,
+  createJobUpdatedBroadcaster,
+  broadcastJobUpdated
+} from './compute/ipc'
 import { attachEnabledComputeHosts } from './compute/enabled-hosts-registry'
 import { JobPoller } from './compute/job-poller'
 import { SystemSshRunner } from './compute/ssh-runner'
+import { SystemScpRunner } from './compute/scp-runner'
+import { harvestJob } from './compute/harvest-engine'
 import { wireConnectorReload } from './connector-reload'
 import { ApprovalBroker } from './connectors/approval-broker'
 import { toCustomMcpConfig, selectEnabledCustomServers } from './connectors/custom-mcp-bootstrap'
@@ -237,14 +243,30 @@ const registerIpcHandlers = async ({
     hostRepository,
     enabledComputeHostsRegistry: hostsRegistry
   } = registerComputeIpcHandlers(undefined, undefined, computeArtifactResolver)
+  const storageRoot = resolveStorageRoot()
   // Start the JobPoller wired to the shared broadcaster so every state/tail change is pushed to all
   // renderer windows via 'compute:job-updated' (Phase 3d, design.md §9 + §15.3). The dispatcher
   // (inside ComputeService) uses the same hook, so submitted→running/error transitions broadcast too.
+  // Phase 3b: harvestFn drives automatic harvest on terminal transitions; broadcast + storageRoot
+  // wire the compute_done notification emitter for all three terminal outcomes (issue 06).
+  const sshRunner = new SystemSshRunner()
+  const scpRunner = new SystemScpRunner()
   const jobPoller = new JobPoller({
-    runner: new SystemSshRunner(),
+    runner: sshRunner,
     hostRepository,
     jobRepository,
-    onJobUpdated: createJobUpdatedBroadcaster(hostRepository)
+    onJobUpdated: createJobUpdatedBroadcaster(hostRepository),
+    broadcast: broadcastJobUpdated,
+    storageRoot,
+    harvestFn: (job) =>
+      harvestJob(job, {
+        sshRunner,
+        scpRunner,
+        hostRepository,
+        jobRepository,
+        storageRoot,
+        broadcast: broadcastJobUpdated
+      })
   })
   jobPoller.start()
   // Augment computeService with getEnabledComputeHosts so the RPC server can serve list_compute.

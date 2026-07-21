@@ -29,7 +29,7 @@ import { Dialog } from 'radix-ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { DirListing, RemoteDirEntry } from '../../../../shared/remote-fs'
-import { resolveRemotePath, validateRemotePath } from '../../../../shared/remote-fs'
+import { decodeRemoteFsError, resolveRemotePath, validateRemotePath } from '../../../../shared/remote-fs'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
@@ -175,7 +175,8 @@ function DetailPanel({
       })
     } catch (err) {
       const e = err as Error & { remoteFsError?: { detail: string; remoteKind: string } }
-      const detail = e.remoteFsError?.detail ?? e.message ?? 'Download failed'
+      const fsErr = e.remoteFsError ?? decodeRemoteFsError(e.message ?? '')
+      const detail = fsErr?.detail ?? e.message ?? 'Download failed'
       setActionStatus({ kind: 'error', message: detail })
     }
   }
@@ -321,6 +322,7 @@ export function FileBrowserModal({
   initialProviderId
 }: FileBrowserModalProps): React.JSX.Element | null {
   const hosts = useComputeStore((s) => s.hosts)
+  const probeHost = useComputeStore((s) => s.probeHost)
   // Active project for "Add to project" — derived from navigation state.
   const activeProjectId = useNavigationStore((s) => s.activeProjectId)
   const projects = useProjectStore((s) => s.projects)
@@ -366,11 +368,17 @@ export function FileBrowserModal({
         setAddressInput(listing.resolvedPath)
       } catch (err) {
         const e = err as Error & { remoteFsError?: { detail: string; remoteKind: string } }
-        const detail = e.remoteFsError?.detail ?? e.message ?? 'Unknown error'
-        setBrowserState({ kind: 'error', detail, kind_hint: e.remoteFsError?.remoteKind })
+        const fsErr = e.remoteFsError ?? decodeRemoteFsError(e.message ?? '')
+        const detail = fsErr?.detail ?? e.message ?? 'Unknown error'
+        setBrowserState({ kind: 'error', detail, kind_hint: fsErr?.remoteKind })
+        // Connection failure means the probe result is stale — re-probe in the background so
+        // the host chip reflects the current unreachable state (green → grey).
+        if (fsErr?.remoteKind === 'connection') {
+          void probeHost(host.providerId).catch(() => undefined)
+        }
       }
     },
-    [host, cwd]
+    [host, cwd, probeHost]
   )
 
   // Initial navigation when modal opens or host changes.

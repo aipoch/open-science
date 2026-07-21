@@ -1,12 +1,13 @@
 import { randomBytes } from 'node:crypto'
 
-import type { ComputeJob } from '../../shared/compute'
+import type { ComputeJob, JobSummary } from '../../shared/compute'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 import type { SshRunner } from './ssh-runner'
 import { resolveSshTarget } from './ssh-runner'
 import { quoteRemotePath, type RemoteHandle } from './job-dispatcher'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
+import { emitJobNotification } from './job-notifier'
 
 // Polling interval: 15 seconds (design.md §8).
 export const POLL_INTERVAL_MS = 15_000
@@ -28,6 +29,16 @@ const POLL_MAX_OUTPUT_BYTES = TAIL_MAX_BYTES * 2 + 4 * 1024
 // cleanly and write the exit_code file (exit 124) before the poller intervenes.
 const POLLER_KILL_GRACE_SECONDS = 60
 
+// Maximum concurrent harvest operations (design.md §3: concurrency limit 2).
+const HARVEST_CONCURRENCY_LIMIT = 2
+
+/**
+ * Injectable harvest function type. The poller calls this for each terminal job that needs
+ * harvesting (design §3). In production this is `harvestJob` from harvest-engine.ts.
+ * Accepting the full job object lets the function access all fields without extra lookups.
+ */
+export type HarvestFn = (job: ComputeJob) => Promise<void>
+
 export type JobPollerDeps = {
   runner: SshRunner
   hostRepository: ComputeHostRepository
@@ -42,6 +53,21 @@ export type JobPollerDeps = {
   // Shared with the dispatcher so the poller can tell a job that is still actively dispatching
   // (in-flight in this process) from one orphaned by an app restart. Defaults to the shared tracker.
   dispatchTracker?: DispatchTracker
+  // Injectable harvest function (design §3). When omitted, harvest is disabled (no-op).
+  // In production, wire this to harvestJob from harvest-engine.ts.
+  harvestFn?: HarvestFn
+  /**
+   * Broadcast hook for compute_done notification (issue 06).
+   * Used when emitting the notification for execution-error jobs (dispatch_failed).
+   * Harvest-triggered notifications use harvestFn's own broadcast dep.
+   * When omitted, no notification is emitted for error-state jobs.
+   */
+  broadcast?: (summary: JobSummary) => void
+  /**
+   * Storage root for the workspace path (issue 06).
+   * Required when broadcast is set; used to compute the harvest dir path.
+   */
+  storageRoot?: string
 }
 
 // Per-job vanish counter (lives here because the poller is the only thing that increments it).
@@ -49,6 +75,8 @@ type VanishState = { ticks: number }
 
 // JobPoller runs in the main process, independent of any kernel lifetime. It polls all non-terminal
 // jobs every 15 s, batching by provider to minimise SSH connections. App restart resumes from DB.
+// In 3b it also drives harvest: on terminal transition it async-dispatches harvestFn (no-await),
+// bounded by a concurrency semaphore of 2 and an in-flight dedup Set (design §3).
 export class JobPoller {
   private handle: ReturnType<typeof setInterval> | undefined
   private readonly vanishCounters = new Map<string, VanishState>()
@@ -60,12 +88,23 @@ export class JobPoller {
   private readonly makeNonceFn: () => string
   // Shared dispatch tracker (see JobPollerDeps.dispatchTracker).
   private readonly dispatchTracker: DispatchTracker
+  // Optional injectable harvest function (design §3).
+  private readonly harvestFn: HarvestFn | undefined
+
+  // Harvest concurrency state (design §3):
+  //   inFlightHarvests: jobIds whose harvest is currently running — prevents duplicate dispatches
+  //   harvestSemaphore: count of available harvest slots (starts at HARVEST_CONCURRENCY_LIMIT)
+  //   harvestQueue: jobs waiting for a semaphore slot
+  private readonly inFlightHarvests = new Set<string>()
+  private harvestSemaphore = HARVEST_CONCURRENCY_LIMIT
+  private readonly harvestQueue: ComputeJob[] = []
 
   constructor(private readonly deps: JobPollerDeps) {
     this.setIntervalFn = deps.setInterval ?? ((fn, ms) => setInterval(fn, ms))
     this.clearIntervalFn = deps.clearInterval ?? ((h) => clearInterval(h))
     this.makeNonceFn = deps.makeNonce ?? (() => randomBytes(12).toString('hex') + '_')
     this.dispatchTracker = deps.dispatchTracker ?? sharedDispatchTracker
+    this.harvestFn = deps.harvestFn
   }
 
   // Starts the poller. Polls once immediately (picks up jobs that were running before restart),
@@ -85,7 +124,17 @@ export class JobPoller {
   }
 
   // One poll cycle: group non-terminal jobs by provider, poll each provider's jobs.
+  // Also runs the restart-recovery harvest scan (design §3): re-queues terminal+unharvested jobs.
   async tick(): Promise<void> {
+    // Restart-recovery harvest scan: re-queue terminal jobs whose harvest was interrupted by restart.
+    // harvestFn must be configured; without it, harvest is disabled entirely.
+    if (this.harvestFn) {
+      const unharvested = await this.deps.jobRepository.findTerminalUnharvested()
+      for (const job of unharvested) {
+        this._dispatchHarvest(job)
+      }
+    }
+
     const jobs = await this.deps.jobRepository.findNonTerminal()
     if (jobs.length === 0) return
 
@@ -103,6 +152,51 @@ export class JobPoller {
         this._pollProvider(providerId, providerJobs)
       )
     )
+  }
+
+  // ---------------------------------------------------------------------------
+  // Harvest dispatch helpers (design §3)
+  // ---------------------------------------------------------------------------
+
+  // Dispatches a harvest for a terminal job. Fire-and-forget: does NOT await the harvest so the
+  // poller tick returns immediately (hard constraint: design §3 "never await in tick loop").
+  // Enforces: in-flight dedup (same job not re-dispatched while harvest is running), and the
+  // concurrency semaphore (at most HARVEST_CONCURRENCY_LIMIT harvests run simultaneously).
+  private _dispatchHarvest(job: ComputeJob): void {
+    if (!this.harvestFn) return
+    // In-flight dedup: if already harvesting this job, skip.
+    if (this.inFlightHarvests.has(job.job_id)) return
+
+    this.inFlightHarvests.add(job.job_id)
+
+    if (this.harvestSemaphore > 0) {
+      // Slot available — start immediately.
+      this._runHarvest(job)
+    } else {
+      // No slot — enqueue; will be started when a running harvest completes.
+      this.harvestQueue.push(job)
+    }
+  }
+
+  // Acquires a semaphore slot, runs harvestFn, then releases the slot and drains the queue.
+  private _runHarvest(job: ComputeJob): void {
+    if (!this.harvestFn) return
+    this.harvestSemaphore--
+
+    // Fire-and-forget: intentionally not awaited.
+    void this.harvestFn(job)
+      .catch(() => {
+        // Individual harvest failures must not propagate to the poller (design §3: error isolation).
+      })
+      .finally(() => {
+        this.inFlightHarvests.delete(job.job_id)
+        this.harvestSemaphore++
+        // Drain one item from the queue if any are waiting.
+        const next = this.harvestQueue.shift()
+        if (next) {
+          this._runHarvest(next)
+        }
+      })
   }
 
   // Polls all jobs for one provider in a single SSH round-trip (where possible).
@@ -133,6 +227,17 @@ export class JobPoller {
         finishedAt: new Date()
       })
       this.deps.onJobUpdated?.(updated)
+      // Emit compute_done notification for execution-error jobs (design §8: error is a final
+      // resting state). Fire-and-forget: notification failure must not break the poller tick.
+      if (this.deps.broadcast && this.deps.storageRoot) {
+        void emitJobNotification(updated, {
+          jobRepository: this.deps.jobRepository,
+          storageRoot: this.deps.storageRoot,
+          broadcast: this.deps.broadcast
+        }).catch(() => {
+          // Non-fatal: job status is already persisted.
+        })
+      }
     }
 
     if (withHandle.length === 0) return
@@ -343,6 +448,9 @@ export class JobPoller {
         finishedAt: new Date()
       })
       this.deps.onJobUpdated?.(updated)
+      // Async-dispatch harvest for success/failed/timeout (design §3). Not awaited — must not
+      // block the tick loop. 'error' status is never reached here (only in the noHandle path).
+      this._dispatchHarvest(updated)
       return
     }
 
@@ -362,6 +470,8 @@ export class JobPoller {
           finishedAt: new Date()
         })
         this.deps.onJobUpdated?.(updated)
+        // process_vanished is a terminal state — dispatch harvest (design §3).
+        this._dispatchHarvest(updated)
       }
       // else: keep running, check again next tick
       return
@@ -402,6 +512,8 @@ export class JobPoller {
           finishedAt: new Date()
         })
         this.deps.onJobUpdated?.(updated)
+        // Poller-fallback timeout is a terminal state — dispatch harvest (design §3).
+        this._dispatchHarvest(updated)
         return
       }
     }
