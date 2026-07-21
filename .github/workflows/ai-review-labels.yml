@@ -155,8 +155,10 @@ jobs:
               repo: context.repo.repo,
               run_id: context.payload.workflow_run.id,
             });
-            // Keep these names in sync with the reviewer job names in ai-review.yml; each entry
-            // maps a job to the comment header its reviewer posts on the pull request.
+            // Contract with ai-review.yml: jobName must match the reviewer job's `name:` field,
+            // and header plus the '**Verdict: mergeable|needs changes**' line must match the
+            // format each reviewer's prompt requires for its pull request comment. A rename or
+            // prompt-format change on either side silently disables labeling.
             const reviewers = [
               { jobName: 'Claude architecture review', header: '## Claude Architecture Review' },
               { jobName: 'Codex correctness review', header: '## Codex Correctness Review' },
@@ -217,7 +219,10 @@ jobs:
                 .at(-1);
               const verdict = comment?.body.match(/\*\*Verdict:\s*(mergeable|needs changes)\*\*/)?.[1];
               if (!verdict) {
-                core.warning(`No verdict comment found for "${jobName}"; skipping labels.`);
+                // Fail closed: an unconfirmed verdict must not leave a previously applied
+                // ready-to-merge label in place.
+                core.warning(`No verdict comment found for "${jobName}"; removing ${name}.`);
+                await removeReadyLabel();
                 return;
               }
               verdicts.push(verdict);
