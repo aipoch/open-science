@@ -152,6 +152,9 @@ export type ComputeJob = {
   stdout_tail: string | undefined
   stderr_tail: string | undefined
   error_code: string | undefined
+  // Set when a poll SSH connection fails; job status is NOT changed. Cleared on next successful poll.
+  // retry_after_user_action is always true for this condition (design.md §8 boundary 2 / §11).
+  last_poll_error: string | undefined
   created_at: number
   submitted_at: number | undefined
   started_at: number | undefined

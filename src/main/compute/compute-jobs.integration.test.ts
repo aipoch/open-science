@@ -1,11 +1,12 @@
-// Gated integration test for the job submission spine (Phase 3a, compute-jobs issue 01).
+// Gated integration tests for the compute-jobs Phase 3a state machine.
 // Runs only when RUN_COMPUTE_JOBS=1 and COMPUTE_TEST_SSH_ALIAS is set.
 // These tests require a real SSH host configured in ~/.ssh/config; they are skipped in CI.
 //
 // Usage (local):
 //   RUN_COMPUTE_JOBS=1 COMPUTE_TEST_SSH_ALIAS=my-host npx vitest run src/main/compute/compute-jobs.integration.test.ts
 //
-// The test seeds a ComputeHost row, submits an 'echo ok' job, polls until success, then cleans up.
+// Each test covers one terminal-state path (issue 01: success; issue 02: failed/timeout/process_vanished).
+// Remote workdirs are cleaned up in afterAll.
 
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -28,7 +29,7 @@ const describeIf = RUN && ALIAS ? describe : describe.skip
 describeIf('compute-jobs integration (real SSH)', () => {
   let storageRoot: string
   let disconnect: () => Promise<void>
-  let remoteWorkdir: string | undefined
+  const remoteWorkdirs: string[] = []
 
   beforeAll(async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-int-'))
@@ -46,16 +47,14 @@ describeIf('compute-jobs integration (real SSH)', () => {
   })
 
   afterAll(async () => {
-    // Clean up remote workdir if we know it.
-    if (remoteWorkdir && ALIAS) {
+    // Clean up remote workdirs for all tests.
+    if (remoteWorkdirs.length > 0 && ALIAS) {
       const runner = new SystemSshRunner()
       const { resolveSshTarget } = await import('./ssh-runner')
       try {
         const target = await resolveSshTarget(ALIAS, undefined)
-        await runner.run(target, `rm -rf ${JSON.stringify(remoteWorkdir)}`, {
-          timeoutMs: 30_000,
-          loginShell: false
-        })
+        const rmCmds = remoteWorkdirs.map((d) => `rm -rf ${JSON.stringify(d)}`).join('; ')
+        await runner.run(target, rmCmds, { timeoutMs: 30_000, loginShell: false })
       } catch {
         // Best-effort cleanup; do not fail the test.
       }

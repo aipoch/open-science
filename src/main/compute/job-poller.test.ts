@@ -292,6 +292,193 @@ describe('JobPoller', () => {
     )
   })
 
+  it('records lastPollError when SSH fails and does not flip job status', async () => {
+    const job = makeJob()
+    const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      update
+    } as unknown as ComputeJobRepository
+    const hostRepo = {
+      get: vi.fn(() => Promise.resolve(sampleHost()))
+    } as unknown as ComputeHostRepository
+
+    const runner = makeSshRunner({
+      exitCode: 255,
+      stdout: '',
+      stderr: 'ssh: connect to host biowulf port 22: Connection refused',
+      truncated: false,
+      timedOut: false
+    })
+
+    const poller = new JobPoller({ runner, hostRepository: hostRepo, jobRepository: jobRepo })
+    await poller.tick()
+
+    // Status must NOT be changed (design.md §8 boundary 2).
+    expect(update).not.toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({ status: expect.anything() })
+    )
+    // lastPollError must be recorded so the UI can surface it.
+    expect(update).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({
+        lastPollError: expect.stringContaining('Connection refused'),
+        retryAfterUserAction: true
+      })
+    )
+  })
+
+  it('disambiguates exit 137: elapsed >= timeout_seconds → timeout', async () => {
+    // Started 1h ago; timeout is 3600s; elapsed = timeout → classify as timeout.
+    const now = Date.now()
+    const timeoutSecs = 3600
+    const job = makeJob({
+      timeout_seconds: timeoutSecs,
+      started_at: now - timeoutSecs * 1000 // exactly at the boundary
+    })
+    const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      update
+    } as unknown as ComputeJobRepository
+    const hostRepo = {
+      get: vi.fn(() => Promise.resolve(sampleHost()))
+    } as unknown as ComputeHostRepository
+
+    const pollOutput = [
+      'JOB_START:job-1',
+      'alive:0',
+      '137',
+      '',
+      'STDOUT_END:job-1',
+      '',
+      'STDERR_END:job-1'
+    ].join('\n')
+
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: pollOutput,
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+
+    const poller = new JobPoller({ runner, hostRepository: hostRepo, jobRepository: jobRepo })
+    await poller.tick()
+
+    expect(update).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({ status: 'timeout', exitCode: 137, errorCode: 'timeout' })
+    )
+  })
+
+  it('disambiguates exit 137: elapsed < timeout_seconds → failed (OOM)', async () => {
+    // Started 10s ago; timeout is 3600s → not a timeout.
+    const now = Date.now()
+    const job = makeJob({
+      timeout_seconds: 3600,
+      started_at: now - 10_000 // only 10s ago
+    })
+    const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      update
+    } as unknown as ComputeJobRepository
+    const hostRepo = {
+      get: vi.fn(() => Promise.resolve(sampleHost()))
+    } as unknown as ComputeHostRepository
+
+    const pollOutput = [
+      'JOB_START:job-1',
+      'alive:0',
+      '137',
+      '',
+      'STDOUT_END:job-1',
+      '',
+      'STDERR_END:job-1'
+    ].join('\n')
+
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: pollOutput,
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+
+    const poller = new JobPoller({ runner, hostRepository: hostRepo, jobRepository: jobRepo })
+    await poller.tick()
+
+    expect(update).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({ status: 'failed', exitCode: 137, errorCode: 'job_failed' })
+    )
+  })
+
+  it('poller fallback: kills and marks timeout when elapsed > startedAt+timeout+60s grace', async () => {
+    // Started timeout+61 seconds ago; the remote timeout command may have been absent or failed.
+    // The poller should SSH-kill the pid and mark the job as timeout.
+    const now = Date.now()
+    const timeoutSecs = 10
+    const graceMs = (timeoutSecs + 61) * 1000 // well past grace
+    const job = makeJob({
+      timeout_seconds: timeoutSecs,
+      started_at: now - graceMs
+    })
+    const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      update
+    } as unknown as ComputeJobRepository
+    const hostRepo = {
+      get: vi.fn(() => Promise.resolve(sampleHost()))
+    } as unknown as ComputeHostRepository
+
+    // Process is still alive, no exit_code.
+    const pollOutput = [
+      'JOB_START:job-1',
+      'alive:1',
+      '',
+      '',
+      'STDOUT_END:job-1',
+      '',
+      'STDERR_END:job-1'
+    ].join('\n')
+
+    // runner.run is called twice: once for poll, once for kill.
+    const runFn = vi.fn()
+    runFn.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: pollOutput,
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    runFn.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const runner: SshRunner = { run: runFn }
+
+    const poller = new JobPoller({ runner, hostRepository: hostRepo, jobRepository: jobRepo })
+    await poller.tick()
+
+    // Must have been updated to timeout.
+    expect(update).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({ status: 'timeout', errorCode: 'timeout' })
+    )
+    // Second run call should have been the kill command.
+    expect(runFn).toHaveBeenCalledTimes(2)
+    const killCall = runFn.mock.calls[1]
+    expect(killCall[1]).toContain('kill')
+    expect(killCall[1]).toContain('1234') // pid from makeJob
+  })
+
   it('marks submitted job without pid as error/dispatch_failed on restart', async () => {
     // A submitted job with no remote_handle = dispatch was interrupted by app restart.
     const job = makeJob({ status: 'submitted', remote_handle: undefined })

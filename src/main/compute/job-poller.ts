@@ -20,6 +20,11 @@ const POLL_TIMEOUT_MS = 30_000
 // Maximum output per poll (pid lines + exit codes + tails; bounded by TAIL_MAX_BYTES × 2 + overhead).
 const POLL_MAX_OUTPUT_BYTES = TAIL_MAX_BYTES * 2 + 4 * 1024
 
+// Grace period added to timeout_seconds before the poller forcibly kills a still-running job
+// (design.md §10). This gives the remote `timeout` command time to deliver SIGTERM+SIGKILL
+// cleanly and write the exit_code file (exit 124) before the poller intervenes.
+const POLLER_KILL_GRACE_SECONDS = 60
+
 export type JobPollerDeps = {
   runner: SshRunner
   hostRepository: ComputeHostRepository
@@ -158,19 +163,23 @@ export class JobPoller {
         loginShell: false,
         maxOutputBytes: POLL_MAX_OUTPUT_BYTES
       })
-    } catch {
-      // SSH error — leave jobs in place for next tick.
+    } catch (err) {
+      // SSH threw — record lastPollError for each job but do NOT flip status (design.md §8 boundary 2).
+      const msg = err instanceof Error ? err.message : String(err)
+      await this._recordPollError(withHandle, msg)
       return
     }
 
     if (runResult.timedOut || runResult.exitCode === 255) {
-      // Host unreachable — leave jobs running, retry next tick.
+      // Host unreachable — record error per job but do NOT flip status (design.md §8 boundary 2).
+      const msg = runResult.stderr || (runResult.timedOut ? 'SSH connection timed out' : 'SSH exit 255')
+      await this._recordPollError(withHandle, msg)
       return
     }
 
-    // Parse the batched output.
+    // Parse the batched output. Pass target so jobs that need killing can be killed.
     const output = runResult.stdout
-    await this._parsePollOutput(output, withHandle)
+    await this._parsePollOutput(output, withHandle, target)
   }
 
   private _parseHandle(raw: string | undefined): RemoteHandle | null {
@@ -182,8 +191,24 @@ export class JobPoller {
     }
   }
 
+  // Records a transient SSH connectivity error for each job without changing job status.
+  // Implements design.md §8 boundary 2: "host unreachable ≠ job failed".
+  private async _recordPollError(jobs: ComputeJob[], message: string): Promise<void> {
+    for (const job of jobs) {
+      const updated = await this.deps.jobRepository.update(job.job_id, {
+        lastPollError: message,
+        retryAfterUserAction: true
+      })
+      this.deps.onJobUpdated?.(updated)
+    }
+  }
+
   // Parses the batched poll output and updates each job accordingly.
-  private async _parsePollOutput(output: string, jobs: ComputeJob[]): Promise<void> {
+  private async _parsePollOutput(
+    output: string,
+    jobs: ComputeJob[],
+    target: import('./ssh-runner').ResolvedSshTarget
+  ): Promise<void> {
     // Split output into per-job sections by the JOB_START marker.
     const sections = output.split(/^JOB_START:/m)
 
@@ -226,7 +251,7 @@ export class JobPoller {
       const stderrTail =
         stderrEnd > stderrStart ? body.slice(stderrStart, stderrEnd).replace(/\n$/, '') : ''
 
-      await this._applyPollResult(job, { alive, exitCode, hasExitCode, stdoutTail, stderrTail })
+      await this._applyPollResult(job, { alive, exitCode, hasExitCode, stdoutTail, stderrTail }, target)
     }
   }
 
@@ -238,7 +263,8 @@ export class JobPoller {
       hasExitCode: boolean
       stdoutTail: string
       stderrTail: string
-    }
+    },
+    target: import('./ssh-runner').ResolvedSshTarget
   ): Promise<void> {
     const { alive, exitCode, hasExitCode, stdoutTail, stderrTail } = result
 
@@ -305,8 +331,41 @@ export class JobPoller {
       return
     }
 
-    // Still alive (running) — update tails only. Reset vanish counter.
+    // Still alive (running) — check poller fallback timeout, then update tails. Reset vanish counter.
     this.vanishCounters.delete(job.job_id)
+
+    // Poller fallback: if job is still alive past startedAt + timeout + grace, the remote `timeout`
+    // command may have been absent or hung. Kill the pid and mark as timeout (design.md §10).
+    const startedAt = job.started_at
+    const timeoutSecs = job.timeout_seconds ?? 86400
+    if (startedAt) {
+      const elapsedSecs = (Date.now() - startedAt) / 1000
+      if (elapsedSecs >= timeoutSecs + POLLER_KILL_GRACE_SECONDS) {
+        const handle = this._parseHandle(job.remote_handle)
+        if (handle) {
+          // Best-effort kill; ignore errors (process may have already exited).
+          try {
+            await this.deps.runner.run(target, `kill ${handle.pid} 2>/dev/null; kill -9 ${handle.pid} 2>/dev/null; true`, {
+              timeoutMs: 10_000,
+              loginShell: false,
+              maxOutputBytes: 64
+            })
+          } catch {
+            // Ignore kill errors — the job is marked terminal regardless.
+          }
+        }
+        const updated = await this.deps.jobRepository.update(job.job_id, {
+          status: 'timeout',
+          errorCode: 'timeout',
+          stdoutTail: stdoutTail || null,
+          stderrTail: stderrTail || null,
+          finishedAt: new Date()
+        })
+        this.deps.onJobUpdated?.(updated)
+        return
+      }
+    }
+
     if (job.status !== 'running') {
       // Transition to running if still in submitted (shouldn't happen but guard).
       const updated = await this.deps.jobRepository.update(job.job_id, {
