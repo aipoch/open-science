@@ -1,8 +1,15 @@
+import { existsSync } from 'node:fs'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { describe, expect, it, vi } from 'vitest'
 
+import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import {
   CodexAuthController,
   createCodexAuthEnvironment,
+  ensureCodexAuthHome,
   type CodexAuthSession
 } from './codex-auth'
 
@@ -18,6 +25,24 @@ const session = (overrides: Partial<CodexAuthSession> = {}): CodexAuthSession =>
   logout: vi.fn().mockResolvedValue(undefined),
   close: vi.fn().mockResolvedValue(undefined),
   ...overrides
+})
+
+describe('ensureCodexAuthHome', () => {
+  it('creates the isolated home up front and never touches the shared profile', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-home-'))
+    try {
+      // Shared mode uses the user's real ~/.codex; nothing may be created under the storage root.
+      await ensureCodexAuthHome('shared', root)
+      expect(existsSync(codexSubscriptionStorageDir(root))).toBe(false)
+
+      // Codex exits hard when CODEX_HOME is missing (fatal on Windows), so the isolated home must
+      // exist before the first sign-in ever spawns the process.
+      await ensureCodexAuthHome('isolated', root)
+      expect(existsSync(codexSubscriptionStorageDir(root))).toBe(true)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('createCodexAuthEnvironment', () => {
