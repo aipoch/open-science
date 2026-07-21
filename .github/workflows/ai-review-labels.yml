@@ -170,15 +170,15 @@ jobs:
               { jobName: 'Claude architecture review', header: '## Claude Architecture Review' },
               { jobName: 'Codex correctness review', header: '## Codex Correctness Review' },
             ];
-            // Jobs skipped by configuration (a disabled reviewer, or Codex on a non-'opened'
-            // event) never appear in this list. A reviewer job that ran but did not succeed
-            // must block the ready label instead of being silently ignored.
+            // Skipped reviewer jobs (a disabled reviewer, or Codex on a non-'opened' event) still
+            // appear in this list with conclusion 'skipped' and must be ignored; only a reviewer
+            // that actually ran but did not succeed may block the ready label.
             const present = reviewers
               .map((reviewer) => ({
                 ...reviewer,
                 job: jobs.jobs.find(({ name }) => name === reviewer.jobName),
               }))
-              .filter(({ job }) => job);
+              .filter(({ job }) => job && job.conclusion !== 'skipped' && job.conclusion !== 'neutral');
 
             const name = 'ready-to-merge';
             const removeReadyLabel = async () => {
