@@ -2,7 +2,7 @@ import { AlertDialog } from 'radix-ui'
 import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
-import { resolveActiveSessionDisplay } from '@/lib/active-session-display'
+import { resolveActiveSessionDisplay, truncateLabel } from '@/lib/active-session-display'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { ActiveSessionInfo } from '../../../shared/storage'
 import type {
@@ -16,12 +16,6 @@ type ActiveRequest = {
   variant: CloseConfirmVariant
   sessions: ActiveSessionInfo[]
 }
-
-// Cap each label so one long project name or title can't blow out the row; the li's title
-// attribute still carries the full text on hover.
-const MAX_LABEL_CHARS = 28
-const truncate = (text: string): string =>
-  text.length > MAX_LABEL_CHARS ? `${text.slice(0, MAX_LABEL_CHARS - 1).trimEnd()}…` : text
 
 // Subscribes to main's close/quit confirmation requests, lists running work (enriching each
 // session's title from the session store), and replies with the user's choice. Mounted once at
@@ -93,7 +87,7 @@ export const CloseConfirmModal = (): React.JSX.Element | null => {
                       disabled={!row.projectId}
                       className="block w-full truncate rounded-lg border border-border bg-muted/40 p-2 text-left text-foreground enabled:cursor-pointer enabled:hover:bg-muted disabled:cursor-default"
                     >
-                      {truncate(row.project)} — {truncate(row.title)}
+                      {truncateLabel(row.project)} — {truncateLabel(row.title)}
                     </button>
                   </li>
                 )

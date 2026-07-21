@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { resolveActiveSessionDisplay } from './active-session-display'
+import { resolveActiveSessionDisplay, truncateLabel } from './active-session-display'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
 import type { ActiveSessionInfo } from '../../../shared/storage'
@@ -60,5 +60,17 @@ describe('resolveActiveSessionDisplay', () => {
     expect(result.project).toBe('raw-id')
     expect(result.title).toBe('raw-session')
     expect(result.projectId).toBe('raw-id')
+  })
+})
+
+describe('truncateLabel', () => {
+  it('leaves short labels intact', () => {
+    expect(truncateLabel('My Analysis')).toBe('My Analysis')
+  })
+
+  it('caps long labels at 28 chars with an ellipsis', () => {
+    const result = truncateLabel('a'.repeat(40))
+    expect(result).toHaveLength(28)
+    expect(result.endsWith('…')).toBe(true)
   })
 })

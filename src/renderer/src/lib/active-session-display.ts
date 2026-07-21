@@ -6,11 +6,17 @@ export type ActiveSessionDisplay = {
   // The owning project's human name (never its id).
   project: string
   title: string
-  // Present when the session resolves to a project, so callers can navigate into it.
-  projectId?: string
+  // The resolved project id (may be empty for a project-less session; callers guard before nav).
+  projectId: string
 }
 
 const basename = (path: string): string => path.split(/[\\/]/).filter(Boolean).pop() ?? path
+
+// Caps a label so one long project name or title can't blow out a fixed-size row/list; callers keep
+// the full text available on hover.
+const MAX_LABEL_CHARS = 28
+export const truncateLabel = (text: string): string =>
+  text.length > MAX_LABEL_CHARS ? `${text.slice(0, MAX_LABEL_CHARS - 1).trimEnd()}…` : text
 
 // main only knows a session's id + its stored project *id*; the human project name and title live in
 // the renderer stores. Resolves both here so every "running session" surface (close/quit confirm,

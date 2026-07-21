@@ -3,7 +3,7 @@ import { Check, RefreshCw, TriangleAlert } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
-import { resolveActiveSessionDisplay } from '@/lib/active-session-display'
+import { resolveActiveSessionDisplay, truncateLabel } from '@/lib/active-session-display'
 import { cn } from '@/lib/utils'
 import type {
   ActiveSessionInfo,
@@ -30,7 +30,7 @@ const PHASE_LABELS: Record<MigrationPhase, string> = {
 // not the raw ids main sends.
 const describeSession = (session: ActiveSessionInfo): string => {
   const display = resolveActiveSessionDisplay(session)
-  return `${session.kind}: ${display.project} / ${display.title}`
+  return `${session.kind}: ${truncateLabel(display.project)} / ${truncateLabel(display.title)}`
 }
 
 // m:ss elapsed clock for the migrating stage. A running timer (rather than a fabricated ETA) so
