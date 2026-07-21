@@ -55,7 +55,9 @@ type SendWorkspaceMessageResult = {
 type WorkspaceMessageRuntime = Pick<
   ReturnType<typeof useAcpRuntime>,
   'state' | 'createSession' | 'resumeSession' | 'resetSessionContext' | 'sendPrompt'
->
+> & {
+  actionError?: string | null
+}
 
 type WorkspaceDeletionRuntime = Pick<ReturnType<typeof useAcpRuntime>, 'deleteSession'>
 type PersistSessionDeletion = (request: { projectId: string; sessionId: string }) => Promise<void>
@@ -317,7 +319,10 @@ const startPendingSessionPrompt = (
       .sendPrompt(runtimeSessionId, content, promptAttachments, forcedSkillIds, referencedArtifacts)
       .then((snapshot) => {
         if (!snapshot) {
-          void failOrMarkDisconnected(runtimeSessionId, 'Agent run failed')
+          // Use the actual error from runtime.actionError instead of the generic fallback message.
+          // Ensure the message is non-empty to avoid being silently dropped by failRun's empty check.
+          const errorMessage = runtime.actionError?.trim() || 'Agent run failed'
+          void failOrMarkDisconnected(runtimeSessionId, errorMessage)
         }
       })
       .catch((error) => {
@@ -511,7 +516,10 @@ const sendWorkspaceMessage = async (
       )
       .then((snapshot) => {
         if (!snapshot) {
-          void failOrMarkDisconnected(targetSessionId, 'Agent run failed')
+          // Use the actual error from runtime.actionError instead of the generic fallback message.
+          // Ensure the message is non-empty to avoid being silently dropped by failRun's empty check.
+          const errorMessage = runtime.actionError?.trim() || 'Agent run failed'
+          void failOrMarkDisconnected(targetSessionId, errorMessage)
         }
       })
       .catch((error) => {
