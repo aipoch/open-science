@@ -117,6 +117,17 @@ describe('provider registry', () => {
     expect(defaultVendorModel('xiaomimimo')).toBe('mimo-v2.5-pro')
   })
 
+  it('routes SenseNova through both APIs with a curated chat catalog', () => {
+    expect(resolveVendorApiEndpoints('sensenova')).toEqual(['anthropic', 'openai'])
+    expect(resolveVendorBaseUrl('sensenova')).toBe('https://token.sensenova.cn')
+    expect(resolveVendorOpenAiBaseUrl('sensenova')).toBe('https://token.sensenova.cn/v1')
+    expect(resolveVendorApiKeyUrl('sensenova')).toBe('https://platform.sensenova.cn/token-plan')
+    // The live list also serves the image-generation-only sensenova-u1-fast, which the refresh
+    // cannot filter out — so refresh-from-vendor is hidden and the chat catalog stays curated.
+    expect(resolveVendorModelsUrl('sensenova')).toBeUndefined()
+    expect(defaultVendorModel('sensenova')).toBe('sensenova-6.7-flash-lite')
+  })
+
   it('routes Kimi through both APIs so Codex can bridge it', () => {
     expect(resolveVendorApiEndpoints('kimi')).toEqual(['anthropic', 'openai'])
     expect(resolveVendorBaseUrl('kimi')).toBe('https://api.moonshot.cn/anthropic')
@@ -216,6 +227,11 @@ describe('provider registry', () => {
     it('returns false for Xiaomi MIMO models (no vision support)', () => {
       expect(isVendorModelMultimodal('xiaomimimo', 'mimo-v2.5-pro')).toBe(false)
       expect(isVendorModelMultimodal('xiaomimimo', 'mimo-v2.5')).toBe(false)
+    })
+
+    it('returns true only for the SenseNova vision model', () => {
+      expect(isVendorModelMultimodal('sensenova', 'sensenova-6.7-flash-lite')).toBe(true)
+      expect(isVendorModelMultimodal('sensenova', 'deepseek-v4-flash')).toBe(false)
     })
 
     it('returns true only for the StepFun multimodal flash model', () => {
