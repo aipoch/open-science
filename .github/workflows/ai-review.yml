@@ -166,8 +166,9 @@ jobs:
             particular, verify that the branch name uses <type>/<short-description>, with a
             lowercase hyphen-separated description and one of these allowed prefixes: feat, fix,
             docs, style, refactor, perf, test, build, ci, chore, or revert. Also verify that the
-            PR title uses <type>(<scope>): <description>, with a required lowercase scope, an
-            allowed type, and a lowercase imperative description.
+            PR title uses <type>(<scope>): <description>, with an allowed type, a hyphen-separated
+            scope and an imperative description that both start with a lowercase letter (uppercase
+            is allowed inside for proper nouns and technical terms).
 
             The Claude architecture job checks module ownership, maintainability, packaging, and
             cross-platform integration. Complement that review by prioritizing high-confidence,
