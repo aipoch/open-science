@@ -186,15 +186,18 @@ export const OfficePreviewContent = ({
   }
 
   return (
-    <div className="relative size-full overflow-hidden bg-bg-20">
-      {!state && (
-        <div className="absolute inset-0 z-10 bg-bg-20">
-          <PreviewLoadingContent title={loading?.title} description={loading?.description} />
-        </div>
-      )}
+    <div
+      data-office-preview-state={state ? 'ready' : 'loading'}
+      className="relative size-full overflow-hidden bg-bg-000"
+    >
+      {!state ? (
+        <PreviewLoadingContent title={loading?.title} description={loading?.description} />
+      ) : null}
       <div
         ref={containerRef}
-        className="office-preview-content size-full overflow-auto p-4"
+        // Keep the vendor target measurable while preventing partial renderer chrome from leaking.
+        className={`office-preview-content absolute inset-0 size-full overflow-auto p-4 ${state ? '' : 'invisible'}`}
+        aria-hidden={state ? undefined : true}
         onClickCapture={blockDocumentLink}
         onAuxClickCapture={blockDocumentLink}
       />

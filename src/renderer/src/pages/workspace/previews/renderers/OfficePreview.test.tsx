@@ -144,6 +144,42 @@ describe('OfficePreviewRenderer', () => {
     })
   })
 
+  it('keeps vendor content hidden behind the top-level loading state until first paint', async () => {
+    let finishRender: (() => void) | undefined
+    const renderGate = new Promise<void>((resolve) => {
+      finishRender = resolve
+    })
+    mocks.render.mockImplementation(async () => {
+      await renderGate
+      return vi.fn()
+    })
+
+    await act(async () => {
+      root.render(<OfficePreviewRenderer item={createItem()} />)
+      await flushMicrotasks()
+    })
+
+    const loadingRoot = container.querySelector('[data-office-preview-state="loading"]')
+    const loadingStatus = container.querySelector('[data-preview-status="loading"]')
+    const officeContent = container.querySelector<HTMLElement>('.office-preview-content')
+
+    expect(loadingRoot).not.toBeNull()
+    expect(loadingRoot?.classList.contains('bg-bg-000')).toBe(true)
+    expect(loadingStatus?.parentElement).toBe(loadingRoot)
+    expect(officeContent?.classList.contains('invisible')).toBe(true)
+    expect(officeContent?.getAttribute('aria-hidden')).toBe('true')
+
+    await act(async () => {
+      finishRender?.()
+      await flushMicrotasks()
+    })
+
+    expect(container.querySelector('[data-office-preview-state="ready"]')).not.toBeNull()
+    expect(container.querySelector('[data-preview-status="loading"]')).toBeNull()
+    expect(officeContent?.classList.contains('invisible')).toBe(false)
+    expect(officeContent?.hasAttribute('aria-hidden')).toBe(false)
+  })
+
   it('re-reads a finalized upload path and disposes the pending render', async () => {
     const disposePending = vi.fn()
     mocks.render.mockResolvedValueOnce(disposePending).mockResolvedValueOnce(vi.fn())
