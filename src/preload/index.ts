@@ -150,7 +150,14 @@ import type {
   ReviewUpdateEvent
 } from '../shared/reviewer'
 import { REVIEWER_IPC } from '../shared/reviewer'
-import { subscribeCloseActivePane, WINDOW_CLOSE_CHANNEL } from '../shared/window-controls'
+import {
+  subscribeCloseActivePane,
+  WINDOW_CLOSE_CHANNEL,
+  WINDOW_CLOSE_CONFIRM_REQUEST,
+  WINDOW_CLOSE_CONFIRM_RESPONSE,
+  type CloseConfirmRequest,
+  type CloseConfirmResponse
+} from '../shared/window-controls'
 
 type RemoveListener = () => void
 type AcpListener<Payload> = (payload: Payload) => void
@@ -438,6 +445,10 @@ type OpenScienceAPI = {
     close: () => Promise<void>
     // Fires when Cmd+W / Ctrl+W is pressed; the renderer decides pane-vs-window.
     onCloseActivePane: (listener: () => void) => RemoveListener
+    // Fires when main asks to confirm a close/quit; the renderer renders the modal and replies.
+    onCloseConfirmRequest: (listener: (payload: CloseConfirmRequest) => void) => RemoveListener
+    // Renderer -> main: modal-mounted ack, then the user's choice, keyed by requestId.
+    sendCloseConfirmResponse: (payload: CloseConfirmResponse) => void
   }
 }
 
@@ -811,7 +822,10 @@ const api: OpenScienceAPI = {
           send: (channel) => ipcRenderer.send(channel)
         },
         listener
-      )
+      ),
+    onCloseConfirmRequest: (listener) => onIpcMessage(WINDOW_CLOSE_CONFIRM_REQUEST, listener),
+    sendCloseConfirmResponse: (payload) =>
+      ipcRenderer.send(WINDOW_CLOSE_CONFIRM_RESPONSE, payload)
   }
 }
 
