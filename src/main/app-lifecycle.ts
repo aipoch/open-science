@@ -1,7 +1,11 @@
 import type { App, BrowserWindow, Tray } from 'electron'
 
 import type { ActiveSessionInfo } from '../shared/storage'
-import type { CloseConfirmChoice, CloseConfirmVariant } from '../shared/window-controls'
+import type {
+  CloseClassification,
+  CloseConfirmChoice,
+  CloseConfirmVariant
+} from '../shared/window-controls'
 
 // Menu action callbacks the tray is wired to.
 export type TrayHandlers = { onShow: () => void; onHide: () => void; onQuit: () => void }
@@ -14,7 +18,7 @@ export type AppLifecycleDeps = {
   app: Pick<App, 'on' | 'exit'>
   // Creates the main window; the lifecycle supplies the close classification + confirm callbacks.
   createMainWindow: (opts: {
-    classifyClose: () => 'close' | 'hide' | 'confirm'
+    classifyClose: () => CloseClassification
     resolveCloseAction: () => Promise<CloseConfirmChoice>
     requestQuit: () => void
   }) => BrowserWindow
@@ -66,7 +70,7 @@ export const installAppLifecycle = (deps: AppLifecycleDeps): { showMainWindow: (
 
   // Synchronous close classification, evaluated at close time. darwin keeps its dock convention (real
   // close); a mid-quit or no-tray close proceeds; Windows asks (confirm); Linux keeps silent hide-to-tray.
-  const classifyClose = (): 'close' | 'hide' | 'confirm' => {
+  const classifyClose = (): CloseClassification => {
     if (platform === 'darwin') return 'close'
     if (!trayBox.current || shutdownStarted || quitConfirmed) return 'close'
     if (platform === 'win32') return 'confirm'
@@ -130,7 +134,13 @@ export const installAppLifecycle = (deps: AppLifecycleDeps): { showMainWindow: (
       event.preventDefault()
       return
     }
-    if (event.defaultPrevented || deps.isMigrationInProgress()) return
+    if (event.defaultPrevented || deps.isMigrationInProgress()) {
+      // This quit is being aborted (e.g. the migration guard cancelled it). Clear any prior
+      // confirmation so it doesn't leak into a later close: otherwise classifyClose would return
+      // 'close' and the next Windows X would bypass the dialog and destroy the window.
+      quitConfirmed = false
+      return
+    }
 
     // Confirmation gate: unless the user already confirmed (e.g. Windows X -> Quit), confirm the
     // quit. An empty active-session list makes confirmClose('quit', []) resolve 'quit' with no modal.

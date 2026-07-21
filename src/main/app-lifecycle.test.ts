@@ -430,6 +430,26 @@ describe('installAppLifecycle', () => {
     expect(shutdownBackends).not.toHaveBeenCalled()
   })
 
+  it('re-confirms a later Windows X after a confirmed quit was aborted by migration', async () => {
+    // A confirmed quit (Windows X -> Quit sets quitConfirmed) that the migration guard then aborts must
+    // not leave quitConfirmed latched — otherwise classifyClose would return 'close' and the next X
+    // would destroy the window without asking. The abort resets it so the next X re-confirms.
+    let migrating = false
+    const { app, closeOpts } = setup({
+      platform: 'win32',
+      trayHost: true,
+      isMigrationInProgress: (): boolean => migrating
+    })
+    const opts = closeOpts[0]
+
+    opts.requestQuit() // quitConfirmed = true
+    migrating = true
+    app.emit('before-quit') // aborted by migration -> resets quitConfirmed
+    migrating = false
+
+    expect(opts.classifyClose()).toBe('confirm')
+  })
+
   it('holds a re-issued quit while a confirm is already in flight', async () => {
     let resolveConfirm: ((choice: CloseConfirmChoice) => void) | undefined
     const confirmClose = vi.fn(
@@ -453,7 +473,7 @@ describe('installAppLifecycle', () => {
     // Cross-flow guard: tray/Ctrl+Q quit-confirm is already open (before-quit -> confirmClose('quit', ...)
     // pending) when the user clicks the titlebar X. Without the shared confirmInFlight guard this would
     // fire a second confirmClose('close-to-tray', ...) that overwrites the renderer's single request slot,
-    // stranding the quit-confirm promise and permanently pinning quitConfirmInFlight (see defect writeup).
+    // stranding the quit-confirm promise and permanently pinning confirmInFlight.
     let resolveConfirm: ((choice: CloseConfirmChoice) => void) | undefined
     const sessions: ActiveSessionInfo[] = [{ projectName: 'demo', sessionId: 's1', kind: 'agent' }]
     const confirmClose = vi.fn(

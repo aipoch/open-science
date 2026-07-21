@@ -107,4 +107,17 @@ describe('createCloseConfirm', () => {
     await expect(pending).resolves.toBe('quit')
     expect(h.nativeFallback).toHaveBeenCalledTimes(1)
   })
+
+  it('still settles when the native fallback rejects (never strands the confirm)', async () => {
+    // A stranded promise would pin the caller's in-flight guard forever and block quit. If the native
+    // dialog rejects (e.g. the window was destroyed), quit proceeds and close-to-tray stays resident.
+    const rejecting = vi.fn(async (): Promise<CloseConfirmChoice> => {
+      throw new Error('dialog failed')
+    })
+    const quitHarness = makeHarness({ isRendererAvailable: () => false, nativeFallback: rejecting })
+    await expect(quitHarness.confirm('quit', [session])).resolves.toBe('quit')
+
+    const trayHarness = makeHarness({ isRendererAvailable: () => false, nativeFallback: rejecting })
+    await expect(trayHarness.confirm('close-to-tray', [session])).resolves.toBe('minimize')
+  })
 })

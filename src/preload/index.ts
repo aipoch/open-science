@@ -153,8 +153,8 @@ import { REVIEWER_IPC } from '../shared/reviewer'
 import {
   subscribeCloseActivePane,
   WINDOW_CLOSE_CHANNEL,
-  WINDOW_CLOSE_CONFIRM_REQUEST,
-  WINDOW_CLOSE_CONFIRM_RESPONSE,
+  WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL,
+  WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL,
   type CloseConfirmRequest,
   type CloseConfirmResponse
 } from '../shared/window-controls'
@@ -823,8 +823,10 @@ const api: OpenScienceAPI = {
         },
         listener
       ),
-    onCloseConfirmRequest: (listener) => onIpcMessage(WINDOW_CLOSE_CONFIRM_REQUEST, listener),
-    sendCloseConfirmResponse: (payload) => ipcRenderer.send(WINDOW_CLOSE_CONFIRM_RESPONSE, payload)
+    onCloseConfirmRequest: (listener) =>
+      onIpcMessage(WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL, listener),
+    sendCloseConfirmResponse: (payload) =>
+      ipcRenderer.send(WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL, payload)
   }
 }
 

@@ -1,4 +1,4 @@
-import { Dialog } from 'radix-ui'
+import { AlertDialog } from 'radix-ui'
 import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -48,54 +48,56 @@ export const CloseConfirmModal = (): React.JSX.Element | null => {
   if (!request) return null
 
   const isQuitVariant = request.variant === 'quit'
+  const hasSessions = request.sessions.length > 0
   const title = isQuitVariant ? 'Quit Open Science?' : 'Minimize or quit?'
+  const description = isQuitVariant
+    ? 'Work is still running and will be interrupted if you quit.'
+    : 'This app can keep running in the tray, or you can quit.'
 
   return (
-    <Dialog.Root open onOpenChange={(open) => (!open ? reply('cancel') : undefined)}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/50" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-[60] w-[min(420px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5 text-foreground shadow-dialog">
-          <Dialog.Title className="text-sm font-semibold">{title}</Dialog.Title>
-          {request.sessions.length > 0 ? (
-            <>
-              <Dialog.Description className="mt-1 text-xs text-muted-foreground">
-                Still running:
-              </Dialog.Description>
-              <ul className="mt-3 space-y-1 text-xs">
-                {request.sessions.map((session) => (
-                  <li
-                    key={`${session.kind}:${session.sessionId}`}
-                    className="rounded-lg border border-border bg-muted/40 p-2 text-foreground"
-                  >
-                    {session.projectName} — {resolveTitle(session.sessionId)}
-                  </li>
-                ))}
-              </ul>
-            </>
+    <AlertDialog.Root
+      open
+      onOpenChange={(open) => {
+        if (!open) reply('cancel')
+      }}
+    >
+      <AlertDialog.Portal>
+        <AlertDialog.Overlay className="fixed inset-0 z-[60] bg-black/50" />
+        <AlertDialog.Content className="fixed left-1/2 top-1/2 z-[60] w-[min(420px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5 text-foreground shadow-dialog">
+          <AlertDialog.Title className="text-sm font-semibold">{title}</AlertDialog.Title>
+          <AlertDialog.Description className="mt-1 text-xs text-muted-foreground">
+            {description}
+          </AlertDialog.Description>
+          {hasSessions ? (
+            <ul className="mt-3 space-y-1 text-xs">
+              {request.sessions.map((session) => (
+                <li
+                  key={`${session.kind}:${session.sessionId}`}
+                  className="rounded-lg border border-border bg-muted/40 p-2 text-foreground"
+                >
+                  {session.projectName} — {resolveTitle(session.sessionId)}
+                </li>
+              ))}
+            </ul>
           ) : null}
           <div className="mt-4 flex justify-end gap-2">
             {isQuitVariant ? (
-              <>
-                <Button type="button" variant="ghost" onClick={() => reply('cancel')}>
+              <AlertDialog.Cancel asChild>
+                <Button type="button" variant="ghost">
                   Cancel
                 </Button>
-                <Button type="button" onClick={() => reply('quit')}>
-                  Quit
-                </Button>
-              </>
+              </AlertDialog.Cancel>
             ) : (
-              <>
-                <Button type="button" variant="ghost" onClick={() => reply('minimize')}>
-                  Minimize to tray
-                </Button>
-                <Button type="button" onClick={() => reply('quit')}>
-                  Quit
-                </Button>
-              </>
+              <Button type="button" variant="ghost" onClick={() => reply('minimize')}>
+                Minimize to tray
+              </Button>
             )}
+            <Button type="button" onClick={() => reply('quit')}>
+              Quit
+            </Button>
           </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        </AlertDialog.Content>
+      </AlertDialog.Portal>
+    </AlertDialog.Root>
   )
 }

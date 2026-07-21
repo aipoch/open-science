@@ -3,16 +3,16 @@ import { randomUUID } from 'node:crypto'
 
 import type { ActiveSessionInfo } from '../shared/storage'
 import {
-  WINDOW_CLOSE_CONFIRM_REQUEST,
-  WINDOW_CLOSE_CONFIRM_RESPONSE,
+  WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL,
+  WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL,
   type CloseConfirmChoice,
   type CloseConfirmRequest,
   type CloseConfirmResponse,
   type CloseConfirmVariant
 } from '../shared/window-controls'
 
-// Structural (Electron-free) plumbing so the coordinator is unit-testable. The Electron glue that
-// satisfies this lives in createElectronCloseConfirm (added in a later task).
+// Structural (Electron-free) plumbing so the coordinator is unit-testable; the Electron glue that
+// satisfies this is createElectronCloseConfirm below.
 export type CloseConfirmDeps = {
   // Send the request to the renderer (webContents.send).
   send: (payload: CloseConfirmRequest) => void
@@ -22,8 +22,8 @@ export type CloseConfirmDeps = {
   isRendererAvailable: () => boolean
   // Subscribe to render-process-gone for the confirm window; returns an unsubscribe.
   onRenderGone: (cb: () => void) => () => void
-  // Native fallback when the renderer can't answer: a message box for close-to-tray, or 'quit' for
-  // the quit variant (a dead UI must never block quit).
+  // Native fallback when the renderer can't answer (dead/hung, or no window at all). May reject;
+  // the coordinator wraps it so a rejection never leaves the confirm unsettled.
   nativeFallback: (variant: CloseConfirmVariant) => Promise<CloseConfirmChoice>
   newRequestId: () => string
   // Grace period for the modal-mounted ack before falling back. Defaults to 500ms.
@@ -45,7 +45,14 @@ export const createCloseConfirm = (
 
   return (variant, sessions) => {
     if (variant === 'quit' && sessions.length === 0) return Promise.resolve('quit')
-    if (!deps.isRendererAvailable()) return deps.nativeFallback(variant)
+
+    // Never let a fallback rejection leave the confirm unsettled: a stranded promise would pin the
+    // caller's in-flight guard forever and permanently block quit. On failure, keep the app resident
+    // for close-to-tray and proceed for quit.
+    const safeFallback = (): Promise<CloseConfirmChoice> =>
+      deps.nativeFallback(variant).catch(() => (variant === 'quit' ? 'quit' : 'minimize'))
+
+    if (!deps.isRendererAvailable()) return safeFallback()
 
     const requestId = deps.newRequestId()
 
@@ -67,7 +74,7 @@ export const createCloseConfirm = (
         if (fallbackStarted) return
         fallbackStarted = true
         clearTimeout(ackTimer)
-        void deps.nativeFallback(variant).then(finish)
+        void safeFallback().then(finish)
       }
 
       const offResponse = deps.onResponse((payload) => {
@@ -91,26 +98,41 @@ export const createCloseConfirm = (
   }
 }
 
-// Native fallback when the renderer can't render the modal. close-to-tray shows an OS message box;
-// quit proceeds (returns 'quit') because a dead/gone UI must not be able to block quit.
+// Native fallback when the renderer can't render the modal (dead/hung, or no window — e.g. macOS
+// after the window was closed but the app stays resident). The coordinator only reaches this with
+// work running (an empty quit list fast-paths to 'quit'), so both variants still ASK: quit offers
+// Quit/Cancel, close-to-tray offers Minimize/Quit. A destroyed window can't parent a dialog, so fall
+// back to a windowless one.
 const nativeFallback = async (
   getWindow: () => BrowserWindow | undefined,
   variant: CloseConfirmVariant
 ): Promise<CloseConfirmChoice> => {
-  if (variant === 'quit') return 'quit'
+  const options =
+    variant === 'quit'
+      ? {
+          type: 'question' as const,
+          buttons: ['Cancel', 'Quit'],
+          defaultId: 0,
+          cancelId: 0,
+          title: 'Open Science',
+          message: 'Quit Open Science?',
+          detail: 'Work is still running and will be interrupted if you quit.'
+        }
+      : {
+          type: 'question' as const,
+          buttons: ['Minimize to tray', 'Quit'],
+          defaultId: 0,
+          cancelId: 0,
+          title: 'Open Science',
+          message: 'Minimize to tray or quit?',
+          detail: 'Background work may still be running.'
+        }
   const window = getWindow()
-  const options = {
-    type: 'question' as const,
-    buttons: ['Minimize to tray', 'Quit'],
-    defaultId: 0,
-    cancelId: 0,
-    title: 'Open Science',
-    message: 'Minimize to tray or quit?',
-    detail: 'Background work may still be running.'
-  }
-  const { response } = window
-    ? await dialog.showMessageBox(window, options)
-    : await dialog.showMessageBox(options)
+  const { response } =
+    window && !window.isDestroyed()
+      ? await dialog.showMessageBox(window, options)
+      : await dialog.showMessageBox(options)
+  if (variant === 'quit') return response === 1 ? 'quit' : 'cancel'
   return response === 1 ? 'quit' : 'minimize'
 }
 
@@ -120,11 +142,21 @@ export const createElectronCloseConfirm = (
   getWindow: () => BrowserWindow | undefined
 ): ((variant: CloseConfirmVariant, sessions: ActiveSessionInfo[]) => Promise<CloseConfirmChoice>) =>
   createCloseConfirm({
-    send: (payload) => getWindow()?.webContents.send(WINDOW_CLOSE_CONFIRM_REQUEST, payload),
+    // Reveal the window before asking: a tray/Ctrl+Q quit can arrive while the window is hidden
+    // (minimized to tray), and a modal sent to a hidden window would never be seen — leaving the
+    // confirm (and thus the quit) stuck. Restoring/showing/focusing guarantees the modal is visible.
+    send: (payload) => {
+      const window = getWindow()
+      if (!window || window.isDestroyed()) return
+      if (window.isMinimized()) window.restore()
+      if (!window.isVisible()) window.show()
+      window.focus()
+      window.webContents.send(WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL, payload)
+    },
     onResponse: (cb) => {
       const listener = (_event: unknown, payload: CloseConfirmResponse): void => cb(payload)
-      ipcMain.on(WINDOW_CLOSE_CONFIRM_RESPONSE, listener)
-      return () => ipcMain.removeListener(WINDOW_CLOSE_CONFIRM_RESPONSE, listener)
+      ipcMain.on(WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL, listener)
+      return () => ipcMain.removeListener(WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL, listener)
     },
     isRendererAvailable: () => {
       const window = getWindow()

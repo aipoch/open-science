@@ -15,6 +15,7 @@ import {
   CLOSE_ACTIVE_PANE_READY_CHANNEL,
   CLOSE_ACTIVE_PANE_UNREADY_CHANNEL,
   isCloseWindowChord,
+  type CloseClassification,
   type CloseConfirmChoice
 } from '../shared/window-controls'
 
@@ -68,7 +69,7 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
 // ('close' = let it close, 'hide' = minimize to tray, 'confirm' = ask via resolveCloseAction).
 // resolveCloseAction is awaited only for 'confirm'; requestQuit is called when the choice is quit.
 type MainWindowCloseOptions = {
-  classifyClose: () => 'close' | 'hide' | 'confirm'
+  classifyClose: () => CloseClassification
   resolveCloseAction: () => Promise<CloseConfirmChoice>
   requestQuit: () => void
 }
