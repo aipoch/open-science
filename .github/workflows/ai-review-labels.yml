@@ -80,6 +80,24 @@ jobs:
               },
             };
             const label = type ? labelByType[type] : undefined;
+
+            // This workflow owns the mapped labels: drop any managed label that no longer
+            // matches the current type so retitling a pull request cannot leave stale ones.
+            const currentNames = new Set(pullRequest.labels.map(({ name }) => name));
+            for (const { name } of Object.values(labelByType)) {
+              if (name === label?.name || !currentNames.has(name)) continue;
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pullRequest.number,
+                  name,
+                });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }
+
             if (!label) {
               core.notice(`No built-in label maps to pull request type "${type ?? 'unknown'}".`);
               return;
@@ -143,12 +161,40 @@ jobs:
               { jobName: 'Claude architecture review', header: '## Claude Architecture Review' },
               { jobName: 'Codex correctness review', header: '## Codex Correctness Review' },
             ];
-            const succeeded = reviewers.filter(({ jobName }) =>
-              jobs.jobs.some((job) => job.name === jobName && job.conclusion === 'success'),
-            );
+            // Jobs skipped by configuration (a disabled reviewer, or Codex on a non-'opened'
+            // event) never appear in this list. A reviewer job that ran but did not succeed
+            // must block the ready label instead of being silently ignored.
+            const present = reviewers
+              .map((reviewer) => ({
+                ...reviewer,
+                job: jobs.jobs.find(({ name }) => name === reviewer.jobName),
+              }))
+              .filter(({ job }) => job);
 
-            if (succeeded.length === 0) {
-              core.notice('Skipping labels because no AI review job completed successfully.');
+            const name = 'ready-to-merge';
+            const removeReadyLabel = async () => {
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pullRequest.number,
+                  name,
+                });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            };
+
+            const unsuccessful = present.filter(({ job }) => job.conclusion !== 'success');
+            if (unsuccessful.length > 0) {
+              const names = unsuccessful.map(({ jobName }) => jobName).join(', ');
+              core.warning(`Reviewer job(s) did not succeed: ${names}; removing ${name}.`);
+              await removeReadyLabel();
+              return;
+            }
+
+            if (present.length === 0) {
+              core.notice('Skipping labels because no AI review job ran in this workflow run.');
               return;
             }
 
@@ -162,7 +208,7 @@ jobs:
             });
             const runStartedAt = new Date(context.payload.workflow_run.created_at);
             const verdicts = [];
-            for (const { jobName, header } of succeeded) {
+            for (const { jobName, header } of present) {
               const comment = comments
                 .filter(
                   ({ body, created_at }) =>
@@ -177,19 +223,9 @@ jobs:
               verdicts.push(verdict);
             }
 
-            const name = 'ready-to-merge';
             if (verdicts.includes('needs changes')) {
               core.notice('At least one reviewer requested changes; the pull request is not labeled.');
-              try {
-                await github.rest.issues.removeLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: pullRequest.number,
-                  name,
-                });
-              } catch (error) {
-                if (error.status !== 404) throw error;
-              }
+              await removeReadyLabel();
               return;
             }
 
