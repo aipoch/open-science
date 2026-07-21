@@ -175,7 +175,7 @@ const resolveAllowedImportFilePath = async (
 
   if (!resolvedFilePath) {
     throw new Error(
-      `Artifact local source path does not exist: "${filePath}". Save the file to disk (inside the notebook session workspace) before calling write_artifact_file, or pass inline content instead.`
+      `Artifact local source path does not exist: "${filePath}". Save the file to disk (inside the notebook session workspace) before calling write_artifact_file, pass an absolute path to an already-saved file, or use inline content instead.`
     )
   }
   const resolvedRoots = (

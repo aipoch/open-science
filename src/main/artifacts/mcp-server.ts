@@ -171,7 +171,9 @@ const writeArtifactFileForCurrentRun = async (
     {
       // The kernel's final session root (from the per-turn handoff) is the authoritative import root
       // for notebook writes; add it to the static roots so a resolved relative path is accepted even
-      // when the env was built under a pre-start alias.
+      // when the env was built under a pre-start alias. Authorization-only: it must NOT also join
+      // relativeBaseDirs — a relative name resolves against the kernel cwd (notebookDataDir), never
+      // against the session root.
       allowedImportRoots: context.notebookSessionRoot
         ? [...environment.allowedImportRoots, context.notebookSessionRoot]
         : environment.allowedImportRoots,
