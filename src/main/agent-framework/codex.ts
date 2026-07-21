@@ -192,6 +192,9 @@ export const createCodexFramework = ({
   displayName: 'Codex',
   supportsSkills: true,
   acceptsStdioMcp: true,
+  // codex-acp advertises a thought_level effort option and honors set_config_option on live sessions
+  // (verified live), so an effort change does not need a respawn.
+  supportsLiveEffortChange: true,
   supportedApiTypes: ['responses'],
 
   spawn(input: AgentSpawnInput): ChildProcessWithoutNullStreams {

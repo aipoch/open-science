@@ -152,10 +152,21 @@ describe('resolveSessionEffortOption', () => {
     })
   })
 
+  it('matches the literal default sentinel when the agent advertises it', () => {
+    // Claude Code's effort select includes a 'default' value meaning "clear any forced level" —
+    // a live change back to Default uses it to hand control back to the agent.
+    const options = [effortOption(['default', 'low', 'high'])]
+
+    expect(resolveSessionEffortOption(options, 'default')).toEqual({
+      configId: 'thought_level',
+      value: 'default'
+    })
+  })
+
   it('returns undefined when there is nothing usable to apply', () => {
     // Only the 'default' sentinel advertised: no real level to clamp onto.
     expect(resolveSessionEffortOption([effortOption(['default'])], 'high')).toBeUndefined()
-    // 'default'/unknown desired levels never reach the agent.
+    // 'default' without an advertised sentinel cannot be cleared; unknown levels never apply.
     expect(resolveSessionEffortOption([effortOption(['low'])], 'default')).toBeUndefined()
     expect(resolveSessionEffortOption([effortOption(['low'])], 'turbo')).toBeUndefined()
     expect(resolveSessionEffortOption([effortOption(['low'])], undefined)).toBeUndefined()

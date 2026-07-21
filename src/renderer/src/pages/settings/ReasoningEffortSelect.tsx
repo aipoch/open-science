@@ -16,7 +16,9 @@ const REASONING_EFFORT_OPTIONS: { value: ReasoningEffort; label: string }[] = [
 ]
 
 // Segmented effort selector: the highlight block slides to the picked level. Fixed-width segments
-// keep the thumb math exact. Mirrored on ToolPermissionControl's radiogroup pattern.
+// keep the thumb math exact. Mirrored on ToolPermissionControl's radiogroup pattern. The new level
+// applies to open sessions live where the framework allows it (Claude Code, Codex), otherwise on
+// the next reconnect (opencode).
 const ReasoningEffortSelect = (): React.JSX.Element => {
   const reasoningEffort = useSettingsStore((state) => state.reasoningEffort)
   const setReasoningEffort = useSettingsStore((state) => state.setReasoningEffort)

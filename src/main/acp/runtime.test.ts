@@ -4706,6 +4706,83 @@ describe('ACP runtime — session effort', () => {
     expect(fakeAgent.configChanges).toEqual([])
   })
 
+  it('live-applies an effort change to open sessions without a respawn', async () => {
+    const process = new FakeAgentProcess()
+    const spawn = vi.fn(() => asAgentProcess(process))
+    const fakeAgent = startFakeAgent(process, ['s-live', 's-live-2'], {
+      configOptions: [thoughtLevelOption(['default', 'low', 'medium', 'high'])]
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn },
+        executablePath: '/bin/claude',
+        env: {}
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+    expect(fakeAgent.configChanges).toEqual([])
+
+    const applied = await runtime.applyReasoningEffortChange('max')
+
+    // The open session gets the closest advertised level over ACP, still on the original process.
+    expect(applied).toBe(true)
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(fakeAgent.configChanges).toEqual([
+      { sessionId: 's-live', configId: 'effort', value: 'high' }
+    ])
+
+    // Sessions created later in the same process inherit the new level.
+    await runtime.createSession({ cwd: '/workspace' })
+    expect(fakeAgent.configChanges[1]).toMatchObject({ configId: 'effort', value: 'high' })
+  })
+
+  it('hands control back to the agent default when the level is cleared live', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['s-live'], {
+      configOptions: [thoughtLevelOption(['default', 'low', 'high'])]
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/claude',
+        env: {}
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.applyReasoningEffortChange('max')
+
+    const applied = await runtime.applyReasoningEffortChange('default')
+
+    // The advertised 'default' sentinel clears the previously forced level.
+    expect(applied).toBe(true)
+    expect(fakeAgent.configChanges.at(-1)).toEqual({
+      sessionId: 's-live',
+      configId: 'effort',
+      value: 'default'
+    })
+  })
+
+  it('declines the live change when the framework bakes effort into its spawn config', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['s-effort'], {
+      configOptions: [thoughtLevelOption(['low', 'high'])]
+    })
+    // createEffortRuntime drives the opencode framework, which advertises no live effort channel.
+    const runtime = createEffortRuntime(process, 'high')
+    await runtime.createSession({ cwd: '/workspace' })
+    fakeAgent.configChanges.length = 0
+
+    const applied = await runtime.applyReasoningEffortChange('low')
+
+    // The caller reconnects instead: nothing is sent, and the pending level stays as resolved.
+    expect(applied).toBe(false)
+    expect(fakeAgent.configChanges).toEqual([])
+  })
+
   it('swallows a set_config_option rejection instead of failing the session', async () => {
     warnLogSpy.mockClear()
     const process = new FakeAgentProcess()

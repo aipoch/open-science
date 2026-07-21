@@ -41,7 +41,7 @@ import {
   type PermissionProfileId,
   type SessionPermissionProfileState
 } from '../../shared/permission-profiles'
-import type { ReasoningEffort } from '../../shared/settings'
+import { DEFAULT_REASONING_EFFORT, type ReasoningEffort } from '../../shared/settings'
 import {
   claudeCodeFramework,
   type AgentFramework,
@@ -55,7 +55,11 @@ import {
   toAcpRuntimeEvent
 } from './runtime-events'
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
-import { matchSessionModelOption, resolveSessionEffortOption } from './session-config'
+import {
+  matchSessionModelOption,
+  resolveSessionEffortOption,
+  type SessionModelSelection
+} from './session-config'
 import { describePromptError } from './prompt-error'
 import {
   ATTACHMENT_PREVIEW_BYTES,
@@ -614,8 +618,48 @@ class AcpRuntime {
       return
     }
 
+    await this.sendSessionEffort(session, selection)
+  }
+
+  // Live-applies a reasoning-effort change to every open session — the ACP equivalent of a model
+  // switch, no respawn. Returns false when the active framework only carries effort in its baked
+  // spawn config (opencode advertises no thought_level option), so the caller falls back to the
+  // provider-switch reconnect. On success pendingSessionEffort tracks the new level, so sessions
+  // created later in this process inherit it; the persisted setting covers the next respawn.
+  // Per-session failures are logged, never fatal.
+  async applyReasoningEffortChange(effort: ReasoningEffort): Promise<boolean> {
+    if (!this.framework.supportsLiveEffortChange) return false
+
+    this.pendingSessionEffort = effort === DEFAULT_REASONING_EFFORT ? undefined : effort
+    if (!this.connection) return true
+
+    for (const session of this.sessions.values()) {
+      const configOptions = (
+        session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } }
+      ).newSessionResponse?.configOptions
+      const selection = resolveSessionEffortOption(configOptions, effort)
+
+      if (!selection) {
+        log.info('no session effort option to apply', {
+          desiredEffort: effort,
+          sessionId: session.sessionId
+        })
+        continue
+      }
+
+      await this.sendSessionEffort(session, selection)
+    }
+
+    return true
+  }
+
+  // Sends one resolved effort selection to a session. Best-effort: a failure is logged, never fatal.
+  private async sendSessionEffort(
+    session: ActiveSession,
+    selection: SessionModelSelection
+  ): Promise<void> {
     try {
-      await this.connection.agent.request(acp.methods.agent.session.setConfigOption, {
+      await this.connection?.agent.request(acp.methods.agent.session.setConfigOption, {
         sessionId: session.sessionId,
         configId: selection.configId,
         value: selection.value

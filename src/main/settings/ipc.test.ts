@@ -512,19 +512,45 @@ describe('settings IPC handlers', () => {
     expect(result).toBe(snapshot)
   })
 
-  it('persists the reasoning effort and respawns the agent on set-reasoning-effort', async () => {
+  it('applies the level live without respawning when the framework supports it', async () => {
     handlers.clear()
     const service = createFakeService()
     const snapshot = { claude: {}, providers: [], reasoningEffort: 'high' }
     service.setReasoningEffort.mockResolvedValue(snapshot)
     const onActiveProviderChanged = vi.fn()
-    registerSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+    const onReasoningEffortChanged = vi.fn().mockResolvedValue(true)
+    registerSettingsIpcHandlers({
+      service: asService(service),
+      onActiveProviderChanged,
+      onReasoningEffortChanged
+    })
 
     const result = await invoke('settings:set-reasoning-effort', { effort: 'high' })
 
-    // The handler unwraps the request to the bare effort level the service expects.
+    // A live ACP application (Claude Code, Codex) makes the level stick without a respawn.
     expect(service.setReasoningEffort).toHaveBeenCalledWith('high')
-    // The level is baked into the spawn env/config, so the live agent must be dropped like a provider switch.
+    expect(onReasoningEffortChanged).toHaveBeenCalledWith('high')
+    expect(onActiveProviderChanged).not.toHaveBeenCalled()
+    expect(result).toBe(snapshot)
+  })
+
+  it('respawns the agent when the framework cannot apply the level live', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const snapshot = { claude: {}, providers: [], reasoningEffort: 'high' }
+    service.setReasoningEffort.mockResolvedValue(snapshot)
+    const onActiveProviderChanged = vi.fn()
+    const onReasoningEffortChanged = vi.fn().mockResolvedValue(false)
+    registerSettingsIpcHandlers({
+      service: asService(service),
+      onActiveProviderChanged,
+      onReasoningEffortChanged
+    })
+
+    const result = await invoke('settings:set-reasoning-effort', { effort: 'high' })
+
+    // opencode bakes effort into its spawn config, so the provider-switch reconnect delivers it.
+    expect(service.setReasoningEffort).toHaveBeenCalledWith('high')
     expect(onActiveProviderChanged).toHaveBeenCalledOnce()
     expect(result).toBe(snapshot)
   })

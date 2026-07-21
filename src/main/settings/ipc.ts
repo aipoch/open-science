@@ -3,6 +3,7 @@ import { ipcMain } from 'electron'
 import {
   CODEX_SUBSCRIPTION_PROVIDER_ID,
   isReasoningEffort,
+  type ReasoningEffort,
   type CreateSkillRequest,
   type DeleteProviderRequest,
   type DeleteSkillRequest,
@@ -47,6 +48,10 @@ export type SettingsIpcOptions = {
   service?: SettingsService
   // Called after the active provider changes so the ACP runtime can drop its stale connection.
   onActiveProviderChanged?: () => void
+  // Called after the reasoning effort changes so the ACP runtime can live-apply it to open sessions.
+  // Returns true when the level was applied over ACP (no reconnect needed); false means the active
+  // framework only carries effort in its spawn config and onActiveProviderChanged must fire instead.
+  onReasoningEffortChanged?: (effort: ReasoningEffort) => Promise<boolean>
   // Called after a skill is toggled so the ACP runtime reloads skills on its next reconnect.
   onSkillsChanged?: () => void
   // Called after a connector/tool/credential change so bundled + custom skill docs re-sync.
@@ -63,6 +68,7 @@ const broadcastInstallEvent = (event: ClaudeInstallEvent): void => {
 const registerSettingsIpcHandlers = ({
   service = createDefaultSettingsService(),
   onActiveProviderChanged,
+  onReasoningEffortChanged,
   onSkillsChanged,
   onConnectorsChanged
 }: SettingsIpcOptions = {}): void => {
@@ -169,9 +175,14 @@ const registerSettingsIpcHandlers = ({
       log.info('set reasoning effort requested', { effort: request.effort })
       const snapshot = await service.setReasoningEffort(request.effort)
 
-      // The level is baked into the spawn env/config, so it only reaches the agent via a reconnect —
-      // the same mechanism a provider/framework switch uses. Subsequent requests then run at it.
-      onActiveProviderChanged?.()
+      // Live-capable frameworks (Claude Code, Codex) apply the level to open sessions over ACP —
+      // no respawn, the way a model switch feels. Others (opencode) bake effort into the spawn
+      // config, so only the provider-switch reconnect can deliver it.
+      const appliedLive = (await onReasoningEffortChanged?.(request.effort)) ?? false
+
+      if (!appliedLive) {
+        onActiveProviderChanged?.()
+      }
 
       return snapshot
     }

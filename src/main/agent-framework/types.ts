@@ -117,6 +117,12 @@ export interface AgentFramework {
   // (currently stdio) is gated off for such frameworks until it is exposed over http/sse.
   readonly acceptsStdioMcp: boolean
 
+  // Whether a reasoning-effort change can be applied LIVE to open sessions via the ACP thought_level
+  // configOption, without a respawn. True where the adapter advertises that option (verified live:
+  // Claude Code, codex-acp). False where effort only rides the baked spawn config (opencode ignores
+  // the protocol option), so a change must respawn to regenerate it.
+  readonly supportsLiveEffortChange: boolean
+
   // Chat endpoints this framework can drive. A provider is only selectable when it shares one:
   // Claude Code speaks Anthropic /v1/messages; opencode speaks both.
   readonly supportedApiTypes: readonly ChatApiEndpoint[]

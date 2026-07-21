@@ -342,6 +342,7 @@ const registerIpcHandlers = async ({
   registerSettingsIpcHandlers({
     service: settingsService,
     onActiveProviderChanged: () => void runtime.requestProviderReconnect(),
+    onReasoningEffortChanged: (effort) => runtime.applyReasoningEffortChange(effort),
     onSkillsChanged: () => void runtime.requestSkillsReload(),
     // Re-sync bundled + custom skill docs and refresh the in-memory snapshot the connector
     // service reads, then request a skills reload. The reload respawns the agent on next idle so a

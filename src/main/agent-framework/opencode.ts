@@ -247,6 +247,9 @@ export const opencodeFramework: AgentFramework = {
   // ACP has no stdio flag — stdio is the baseline transport. So opencode uses the SAME stdio artifact/
   // notebook config as Claude; the http MCP host stays in the runtime but no framework needs it.
   acceptsStdioMcp: true,
+  // opencode's ACP server advertises no thought_level option (verified live) — effort only rides the
+  // generated config's per-model options, so a change must respawn to take effect.
+  supportsLiveEffortChange: false,
   // opencode speaks both Anthropic /v1/messages and OpenAI /v1/chat/completions.
   supportedApiTypes: ['anthropic', 'openai'],
 

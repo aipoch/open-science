@@ -71,15 +71,13 @@ const effortRank = (value: string): number =>
 // offers: exact match first, otherwise the advertised level nearest on the canonical scale (ties go
 // to the lower, cheaper level — e.g. 'max' on a model topping out at 'high' applies 'high'). Returns
 // undefined when there is no effort option or it advertises no recognizable level, so the agent
-// keeps its own default rather than erroring.
+// keeps its own default rather than erroring. The 'default' desired level is special: it matches the
+// agent's literal 'default' sentinel (Claude Code advertises one to mean "clear any forced level"),
+// so a live change can hand control back to the agent.
 export const resolveSessionEffortOption = (
   configOptions: readonly SessionConfigOption[] | null | undefined,
   desiredEffort: string | undefined
 ): SessionModelSelection | undefined => {
-  const desiredRank = desiredEffort ? effortRank(desiredEffort) : -1
-
-  if (desiredRank < 0) return undefined
-
   const option = (configOptions ?? []).find(
     (candidate) =>
       candidate.type === 'select' &&
@@ -88,8 +86,19 @@ export const resolveSessionEffortOption = (
 
   if (!option || option.type !== 'select') return undefined
 
+  const values = collectSelectValues(option.options)
+
+  // Clearing back to the agent default is only possible when the sentinel is explicitly advertised.
+  if (desiredEffort === 'default') {
+    return values.includes('default') ? { configId: option.id, value: 'default' } : undefined
+  }
+
+  const desiredRank = desiredEffort ? effortRank(desiredEffort) : -1
+
+  if (desiredRank < 0) return undefined
+
   // Only real levels are clamp targets — sentinels like 'default' (the agent's own default) are not.
-  const candidates = collectSelectValues(option.options)
+  const candidates = values
     .map((value) => ({ value, rank: effortRank(value) }))
     .filter((candidate) => candidate.rank >= 0)
 
