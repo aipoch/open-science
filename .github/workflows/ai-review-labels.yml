@@ -6,16 +6,17 @@ on:
   pull_request_target:
     branches:
       - main
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
   workflow_run:
     workflows:
       - AI PR Review
     types: [completed]
 
 jobs:
-  clear_label:
-    name: Clear stale AI review label
-    if: ${{ github.event_name == 'pull_request_target' }}
+  reset_review_labels:
+    name: Reset review outcome labels
+    # A title edit does not change the reviewed commit, so outcome labels survive 'edited'.
+    if: ${{ github.event_name == 'pull_request_target' && github.event.action != 'edited' }}
     runs-on: ubuntu-latest
     # Label operations on a pull request require pull-requests write; the label REST endpoints
     # return 403 with only issues write (GitHub reports "issues=write; pull_requests=write").
@@ -23,24 +24,86 @@ jobs:
       issues: write
       pull-requests: write
     steps:
-      - name: Remove ai-reviewed label
+      - name: Remove stale review outcome labels
         uses: actions/github-script@v8
         with:
           github-token: ${{ github.token }}
           script: |
-            try {
-              await github.rest.issues.removeLabel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.payload.pull_request.number,
-                name: 'ai-reviewed',
-              });
-            } catch (error) {
-              if (error.status !== 404) throw error;
+            // 'ready-to-merge' goes stale once new commits arrive. 'ai-reviewed' is the retired
+            // predecessor label; removing it here cleans up pull requests that still carry it.
+            for (const name of ['ready-to-merge', 'ai-reviewed']) {
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.payload.pull_request.number,
+                  name,
+                });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
             }
 
-  mark_complete:
-    name: Mark AI review complete
+  apply_type_labels:
+    name: Apply type labels
+    # Adding an existing label is a no-op, so this job also heals labels removed by hand.
+    if: ${{ github.event_name == 'pull_request_target' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Label the pull request from its conventional type
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            // Keep the allowed types in sync with commit-message-check.yml and CONTRIBUTING.md.
+            const typePattern = '(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)';
+            const pullRequest = context.payload.pull_request;
+            const type =
+              pullRequest.title.match(new RegExp(`^${typePattern}(\\([^)]*\\))?!?:`))?.[1] ??
+              pullRequest.head.ref.match(new RegExp(`^${typePattern}/`))?.[1];
+
+            const labelByType = {
+              feat: { name: 'enhancement', color: 'a2eeef', description: 'New feature or request' },
+              fix: { name: 'bug', color: 'd73a4a', description: "Something isn't working" },
+              docs: {
+                name: 'documentation',
+                color: '0075ca',
+                description: 'Improvements or additions to documentation',
+              },
+              chore: {
+                name: 'chore',
+                color: 'ededed',
+                description: 'Maintenance, cleanup, or tooling — no product behavior change',
+              },
+            };
+            const label = type ? labelByType[type] : undefined;
+            if (!label) {
+              core.notice(`No built-in label maps to pull request type "${type ?? 'unknown'}".`);
+              return;
+            }
+
+            try {
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ...label,
+              });
+            } catch (error) {
+              if (error.status !== 422) throw error;
+            }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pullRequest.number,
+              labels: [label.name],
+            });
+
+  apply_review_outcome:
+    name: Apply review outcome labels
     if: >-
       ${{ github.event_name == 'workflow_run' &&
           github.event.workflow_run.event == 'pull_request' &&
@@ -52,7 +115,7 @@ jobs:
       issues: write
       pull-requests: write
     steps:
-      - name: Add ai-reviewed label for the latest reviewed commit
+      - name: Label the pull request from the latest review verdicts
         uses: actions/github-script@v8
         with:
           github-token: ${{ github.token }}
@@ -65,7 +128,7 @@ jobs:
             });
 
             if (currentPullRequest.head.sha !== context.payload.workflow_run.head_sha) {
-              core.notice('Skipping label because a newer pull request commit exists.');
+              core.notice('Skipping labels because a newer pull request commit exists.');
               return;
             }
 
@@ -74,29 +137,69 @@ jobs:
               repo: context.repo.repo,
               run_id: context.payload.workflow_run.id,
             });
-            // Keep these names in sync with the reviewer job names in ai-review.yml.
-            const reviewJobs = jobs.jobs.filter(
-              ({ name }) => name === 'Claude architecture review' || name === 'Codex correctness review',
+            // Keep these names in sync with the reviewer job names in ai-review.yml; each entry
+            // maps a job to the comment header its reviewer posts on the pull request.
+            const reviewers = [
+              { jobName: 'Claude architecture review', header: '## Claude Architecture Review' },
+              { jobName: 'Codex correctness review', header: '## Codex Correctness Review' },
+            ];
+            const succeeded = reviewers.filter(({ jobName }) =>
+              jobs.jobs.some((job) => job.name === jobName && job.conclusion === 'success'),
             );
 
-            if (reviewJobs.length === 0) {
-              core.warning('No recognized AI review jobs were found; check the job-name contract.');
+            if (succeeded.length === 0) {
+              core.notice('Skipping labels because no AI review job completed successfully.');
               return;
             }
 
-            if (!reviewJobs.some(({ conclusion }) => conclusion === 'success')) {
-              core.notice('Skipping label because no AI review job completed successfully.');
+            // A verdict only counts when its reviewer succeeded in this run and posted the
+            // comment after the run started, so stale comments from older commits are ignored.
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pullRequest.number,
+              per_page: 100,
+            });
+            const runStartedAt = new Date(context.payload.workflow_run.created_at);
+            const verdicts = [];
+            for (const { jobName, header } of succeeded) {
+              const comment = comments
+                .filter(
+                  ({ body, created_at }) =>
+                    body?.includes(header) && new Date(created_at) >= runStartedAt,
+                )
+                .at(-1);
+              const verdict = comment?.body.match(/\*\*Verdict:\s*(mergeable|needs changes)\*\*/)?.[1];
+              if (!verdict) {
+                core.warning(`No verdict comment found for "${jobName}"; skipping labels.`);
+                return;
+              }
+              verdicts.push(verdict);
+            }
+
+            const name = 'ready-to-merge';
+            if (verdicts.includes('needs changes')) {
+              core.notice('At least one reviewer requested changes; the pull request is not labeled.');
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pullRequest.number,
+                  name,
+                });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
               return;
             }
 
-            const name = 'ai-reviewed';
             try {
               await github.rest.issues.createLabel({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 name,
                 color: '1f883d',
-                description: 'At least one automated AI reviewer completed successfully.',
+                description: 'All completed AI reviewers found this pull request mergeable.',
               });
             } catch (error) {
               if (error.status !== 422) throw error;
