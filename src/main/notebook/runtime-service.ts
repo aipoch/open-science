@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
@@ -78,6 +78,7 @@ import {
 import { operationJournalPath, RuntimeOperationJournal } from './operation-journal'
 import { reconcileInterruptedOperations, defaultOperationChildLiveness } from './operation-recovery'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
+import { terminateProcessTree } from '../process-tree'
 
 // Locale fallback when no explicit locale is injected (see shared/mirror.ts: non-CN locales resolve
 // to public hosts, so this default never silently forces a CN mirror).
@@ -379,7 +380,7 @@ const cancelledExecutionResult = (cwd: string): NotebookExecutionResult => ({
   outputs: [{ type: 'error', message: CANCELLED_MESSAGE, traceback: CANCELLED_MESSAGE }]
 })
 
-// Benign environment variables the bash kernel is allowed to inherit. Everything else from the host
+// Benign environment variables the stateless shell is allowed to inherit. Everything else from the host
 // process.env is dropped (default-deny) — see buildShellEnv.
 const SHELL_ENV_ALLOWLIST = [
   'PATH',
@@ -397,25 +398,67 @@ const SHELL_ENV_ALLOWLIST = [
   'TMP'
 ]
 
-// Builds a minimal, secret-free environment for the stateless bash kernel. bash runs arbitrary shell
+// PowerShell and child processes on Windows need these OS-location variables to locate built-in tools.
+// They contain paths rather than credentials, so they remain safe to inherit into the scrubbed shell env.
+const WINDOWS_SHELL_ENV_ALLOWLIST = ['ComSpec', 'PATHEXT', 'SystemRoot', 'WINDIR', 'USERPROFILE']
+
+// Builds a minimal, secret-free environment for the stateless shell. It runs arbitrary commands
 // and — unlike the python kernel's protected-dir audit hook — cannot enforce read restrictions in
 // process, so it previously inherited the FULL host process.env, including the connector RPC token and
-// any proxy/API credentials the app process holds; a bash command could read or exfiltrate those.
-// Pass only an allowlist of benign vars plus the shared workspace channel, so bash cannot reach the
+// any proxy/API credentials the app process holds; a shell command could read or exfiltrate those.
+// Pass only an allowlist of benign vars plus the shared workspace channel, so the shell cannot reach the
 // connector RPC or read host secrets from its environment. (Full filesystem/network egress isolation
-// for bash is a tracked follow-up; this closes the environment-based leak.)
-const buildShellEnv = (handoffDir: string): NodeJS.ProcessEnv => {
+// for shell commands is a tracked follow-up; this closes the environment-based leak.)
+const buildShellEnv = (
+  handoffDir: string,
+  platform: NodeJS.Platform = process.platform,
+  sourceEnv: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = {}
-  for (const key of SHELL_ENV_ALLOWLIST) {
-    const value = process.env[key]
+  const keys =
+    platform === 'win32'
+      ? [...SHELL_ENV_ALLOWLIST, ...WINDOWS_SHELL_ENV_ALLOWLIST]
+      : SHELL_ENV_ALLOWLIST
+  for (const key of keys) {
+    const value = sourceEnv[key]
     if (value !== undefined) env[key] = value
   }
   env.OPEN_SCIENCE_HANDOFF_DIR = handoffDir
   return env
 }
 
-// Runs one shell command in a brand-new `sh -c` process — no persistent proc, no kernel executor
-// involvement. cwd/env mirror where the data kernels start (session cwd + the handoff dir), so bash
+type ShellInvocation = {
+  executable: string
+  args: string[]
+}
+
+// Resolve the command interpreter explicitly instead of using shell:true. Node's Windows default is
+// cmd.exe, whose command language cannot run the POSIX-style commands agents commonly emit.
+const resolveShellInvocation = (
+  command: string,
+  platform: NodeJS.Platform = process.platform
+): ShellInvocation =>
+  platform === 'win32'
+    ? {
+        executable: 'powershell.exe',
+        args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command]
+      }
+    : { executable: 'sh', args: ['-c', command] }
+
+// Returns true when it delegated the tree teardown to the Windows-specific terminator. The dependency
+// is injectable to keep this platform boundary covered without needing a Windows host in unit tests.
+const terminateShellOnTimeout = (
+  child: ChildProcess,
+  platform: NodeJS.Platform = process.platform,
+  terminateTree: (process: ChildProcess) => Promise<unknown> = terminateProcessTree
+): boolean => {
+  if (platform !== 'win32') return false
+  void terminateTree(child)
+  return true
+}
+
+// Runs one shell command in a brand-new platform-native process — no persistent proc, no kernel executor
+// involvement. cwd/env mirror where the data kernels start (session cwd + the handoff dir), so the shell
 // can read/write files the same shared workspace channel the other kernels see. The env is scrubbed to
 // an allowlist (buildShellEnv) so host secrets never reach the shell. Never rejects: a spawn failure, a
 // non-zero exit, and a timeout are all resolved as ordinary results for the agent to inspect, matching
@@ -428,7 +471,8 @@ const runShellCommand = (options: {
 }): Promise<NotebookShellResult> =>
   new Promise((resolve) => {
     const timeoutMs = options.timeoutMs ?? DEFAULT_SHELL_TIMEOUT_MS
-    const child = spawn('sh', ['-c', options.command], {
+    const invocation = resolveShellInvocation(options.command)
+    const child = spawn(invocation.executable, invocation.args, {
       cwd: options.cwd,
       env: buildShellEnv(options.handoffDir)
     })
@@ -450,6 +494,19 @@ const runShellCommand = (options: {
     }
 
     const timeoutTimer = setTimeout(() => {
+      if (terminateShellOnTimeout(child)) {
+        // child.kill() only reaches the PowerShell parent on Windows; a command it launched may
+        // survive. taskkill /T /F reaps the full tree while this promise still settles immediately.
+        finish({
+          stdout,
+          stderr:
+            stderr +
+            `${stderr && !stderr.endsWith('\n') ? '\n' : ''}Shell command timed out after ${timeoutMs}ms and was killed.`,
+          exitCode: null
+        })
+        return
+      }
+
       // Escalate SIGTERM -> SIGKILL if the process ignores the polite signal; the promise itself
       // settles immediately so a wedged process can never hang the caller past the timeout.
       child.kill('SIGTERM')
@@ -1550,10 +1607,10 @@ class NotebookRuntimeService {
     }
   }
 
-  // Runs one bash command in a brand-new stateless process — distinct from every persistent kernel:
+  // Runs one shell command in a brand-new stateless process — distinct from every persistent kernel:
   // no proc map entry, no serialization queue (each call is independent and spawns immediately).
   // cwd matches where the data kernels start (the session's data dir); env carries the handoff dir so
-  // bash can read/write the same cross-kernel channel repl_execute uses. Each call still records its
+  // the shell can read/write the same cross-kernel channel repl_execute uses. Each call still records its
   // own run-history entry (kernelKind 'bash'); a fresh runId per call plus the repository's own
   // write-serialization (see NotebookRunRepository.writeDocument) keep overlapping calls from
   // colliding, even though there is no serialization queue here.
@@ -2362,7 +2419,7 @@ class NotebookRuntimeService {
   }
 
   // Shared append-running -> execute -> update-completed -> notify sequence used by cell, repl, and
-  // bash runs so none of the three reimplements it. `execute` is expected to never reject (each caller
+  // shell runs so none of the three reimplements it. `execute` is expected to never reject (each caller
   // pre-catches its own executor/process failure into a normal result, matching every kernel's
   // "don't throw on failure" contract); `afterUpdate` lets the caller mutate session/cell state (e.g.
   // session.cwd, cell.status) from the result before the single trailing notify fires.
@@ -2519,7 +2576,14 @@ class NotebookRuntimeService {
   }
 }
 
-export { NotebookRuntimeService, resolveDefaultExecutorOptions, resolveLoopScriptPaths }
+export {
+  NotebookRuntimeService,
+  buildShellEnv,
+  resolveDefaultExecutorOptions,
+  resolveLoopScriptPaths,
+  resolveShellInvocation,
+  terminateShellOnTimeout
+}
 export type {
   NotebookExecutionRequest,
   NotebookExecutionResult,

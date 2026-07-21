@@ -9,8 +9,11 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { NotebookExecutionRequest, NotebookExecutionResult } from './runtime-service'
 import {
   NotebookRuntimeService,
+  buildShellEnv,
   resolveDefaultExecutorOptions,
-  resolveLoopScriptPaths
+  resolveLoopScriptPaths,
+  resolveShellInvocation,
+  terminateShellOnTimeout
 } from './runtime-service'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { effectiveMirrorAsync, resetAutoMirrorCache } from './mirror-probe'
@@ -57,6 +60,61 @@ beforeAll(async () => {
     probe: async () => {
       throw new Error('no network in tests')
     }
+  })
+})
+
+describe('resolveShellInvocation', () => {
+  it('uses a POSIX sh command on Unix platforms', () => {
+    expect(resolveShellInvocation('echo hi', 'linux')).toEqual({
+      executable: 'sh',
+      args: ['-c', 'echo hi']
+    })
+  })
+
+  it('uses a non-interactive PowerShell command on Windows instead of assuming sh exists', () => {
+    expect(resolveShellInvocation('cp "source.png" "destination.png"', 'win32')).toEqual({
+      executable: 'powershell.exe',
+      args: [
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        'cp "source.png" "destination.png"'
+      ]
+    })
+  })
+})
+
+describe('Windows shell support', () => {
+  it('keeps Windows shell location variables while excluding host secrets', () => {
+    const env = buildShellEnv('/notebook/handoff', 'win32', {
+      PATH: 'C:\\Windows\\System32',
+      SystemRoot: 'C:\\Windows',
+      WINDIR: 'C:\\Windows',
+      ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+      PATHEXT: '.COM;.EXE;.BAT;.CMD',
+      USERPROFILE: 'C:\\Users\\Ada',
+      OPEN_SCIENCE_TEST_SECRET: 'must-not-leak'
+    })
+
+    expect(env).toMatchObject({
+      PATH: 'C:\\Windows\\System32',
+      SystemRoot: 'C:\\Windows',
+      WINDIR: 'C:\\Windows',
+      ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+      PATHEXT: '.COM;.EXE;.BAT;.CMD',
+      USERPROFILE: 'C:\\Users\\Ada',
+      OPEN_SCIENCE_HANDOFF_DIR: '/notebook/handoff'
+    })
+    expect(env.OPEN_SCIENCE_TEST_SECRET).toBeUndefined()
+  })
+
+  it('uses the Windows process-tree terminator for a timed-out shell command', () => {
+    const child = {} as Parameters<typeof terminateShellOnTimeout>[0]
+    const terminateTree = vi.fn().mockResolvedValue({ reaped: true })
+
+    expect(terminateShellOnTimeout(child, 'win32', terminateTree)).toBe(true)
+    expect(terminateTree).toHaveBeenCalledWith(child)
   })
 })
 
