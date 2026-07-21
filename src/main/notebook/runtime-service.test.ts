@@ -3336,6 +3336,77 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(installRan).toBe(false)
   })
 
+  it('awaits startup recovery before executing bound external or named runtimes', async () => {
+    const root = await createStorageRoot()
+    const namedId = pythonBin(envPrefix(getRuntimeRoot(root), 'my-analysis'))
+    const namedRuntime: DiscoveredInterpreter = {
+      language: 'python',
+      provenance: 'agent-created',
+      envId: namedId,
+      interpreterPath: namedId,
+      label: 'my-analysis',
+      condaEnv: 'my-analysis',
+      version: '3.12',
+      runnable: true
+    }
+    const scenarios = [
+      {
+        label: 'external',
+        runtimeId: userPyA.envId,
+        discovered: [managedPy, userPyA],
+        enablement: {
+          enabled: { [userPyA.envId]: true },
+          installAuthorized: {}
+        }
+      },
+      {
+        label: 'named',
+        runtimeId: namedId,
+        discovered: [managedPy, namedRuntime],
+        enablement: { enabled: { [namedId]: true }, installAuthorized: {} }
+      }
+    ] satisfies Array<{
+      label: string
+      runtimeId: string
+      discovered: DiscoveredInterpreter[]
+      enablement: RuntimeEnablement
+    }>
+
+    for (const [index, scenario] of scenarios.entries()) {
+      const executions: NotebookExecutionRequest[] = []
+      const service = bindingService(root, {
+        discovered: scenario.discovered,
+        enablement: scenario.enablement,
+        executions
+      })
+      const sessionId = `recovery-${index}`
+      await service.bindRuntime({
+        sessionId,
+        workspaceCwd: root,
+        language: 'python',
+        runtimeId: scenario.runtimeId
+      })
+
+      let releaseRecovery!: () => void
+      const recoveryGate = new Promise<void>((resolve) => {
+        releaseRecovery = resolve
+      })
+      const ensureRecovered = vi
+        .spyOn(service, 'ensureRecovered')
+        .mockImplementation(() => recoveryGate)
+
+      const run = service.execute({ sessionId, workspaceCwd: root, code: '1' })
+      await vi.waitFor(() => expect(ensureRecovered).toHaveBeenCalledOnce())
+      expect(executions, scenario.label).toEqual([])
+
+      releaseRecovery()
+      const result = await run
+      ensureRecovered.mockRestore()
+      expect(result.status, scenario.label).toBe('completed')
+      expect(executions, scenario.label).toHaveLength(1)
+    }
+  })
+
   it('blocks a no-binding execute + install on a DEFAULT prefix an unknown-liveness orphan may hold', async () => {
     // After recovery, an interrupted materialize whose child could NOT be confirmed dead ('unknown' —
     // here a live pid with no recorded start time) must leave its prefix BLOCKED for this process, so a

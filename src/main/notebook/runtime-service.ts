@@ -1423,6 +1423,9 @@ class NotebookRuntimeService {
     // exactly like an executor spawn/crash — rather than throwing raw out of the run path and leaving no
     // run history for the agent to inspect.
     let interpreterResolveError: unknown
+    // Recovery starts before IPC registration but completes asynchronously. Wait before consulting its
+    // block sets so an external or named run cannot start while an unknown orphan is still being found.
+    await this.ensureRecovered()
     const binding = session.runtimeBindings.get(cell.language)
     // A managed/default run is gated by its real prefix via isPrefixRecoveryBlocked, which folds in the
     // corrupt-journal barrier AND honours a force Reset's per-prefix allowlist — so a reset (allowlisted)
