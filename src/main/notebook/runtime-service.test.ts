@@ -450,6 +450,45 @@ describe('notebook runtime service', () => {
     })
   })
 
+  it('threads the session id and project name into the repl execute request for host.compute grants', async () => {
+    const root = await createStorageRoot()
+    const executions: NotebookExecutionRequest[] = []
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'my-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => {
+          executions.push(request)
+          return {
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }
+        },
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+
+    await service.executeControl({
+      projectName: 'my-project',
+      sessionId: 'session-9',
+      workspaceCwd: root,
+      code: 'return 1'
+    })
+
+    // The control path threads session/project identity so the repl kernel can carry it into
+    // host.compute call_command payloads (grant-scope approval memory: This conversation / This project).
+    expect(executions).toHaveLength(1)
+    expect(executions[0].kind).toBe('repl')
+    expect(executions[0].sessionId).toBe('session-9')
+    expect(executions[0].projectName).toBe('my-project')
+  })
+
   it('records a failed repl run when the executor throws', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({

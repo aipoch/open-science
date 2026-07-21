@@ -178,6 +178,8 @@ describe('repl_execute tool', () => {
   it('describes the control-plane repl (host.mcp + handoff) distinctly from notebook_execute', () => {
     expect(tool?.description).toBe(REPL_EXECUTE_DOC)
     expect(tool?.description).toContain('host.mcp')
+    // host.compute (remote compute) is only reachable here too, same as host.mcp.
+    expect(tool?.description).toContain('host.compute')
     expect(tool?.description).toContain('./handoff/')
     expect(tool?.description.toLowerCase()).toContain('connector')
     expect(tool?.description).toContain('notebook_execute')

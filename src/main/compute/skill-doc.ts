@@ -35,66 +35,70 @@ This skill covers Phase-1 remote compute capabilities: listing hosts, creating h
 running short remote commands, and reading/writing host knowledge docs. Phase-2 operations
 (job submission, output collection, notifications, and artifact management) are not available yet.
 
+**Where host.compute runs:** \`host.compute\` lives ONLY on the control-plane REPL kernel — run
+every example below with the \`repl_execute\` tool (JavaScript), the same kernel that hosts
+\`host.mcp\`. The \`python\`/\`r\` data kernels have NO \`host.compute\` (SSH and approvals stay outside
+the sandbox workspace); calling it from a python/r cell will fail with \`host.compute is undefined\`.
+
 ## Registered hosts
 
 ${hostLines}
 
-Call \`host.compute.list()\` in a notebook cell to refresh this list at runtime.
+Run \`await host.compute.list()\` via \`repl_execute\` to refresh this list at runtime.
 
 ## API reference (Phase 1)
 
-\`\`\`python
-# List all registered hosts (returns [{provider_id, display_name, shape, status}])
-hosts = host.compute.list()
+\`\`\`javascript
+// List all registered hosts (returns [{provider_id, display_name, shape, status}])
+const hosts = await host.compute.list()
 
-# Create a handle to a specific host (no network call)
-c = host.compute.create('ssh:<alias>')
+// Create a handle to a specific host (no network call)
+const c = host.compute.create('ssh:<alias>')
 
-# Run a short remote command (raises RuntimeError on approval_denied / host_unreachable / timeout)
-result = c.call_command(
-    cmd='<shell command>',
-    intent='<one-line description for the approval card>',
-    login_shell=True,           # default: True — loads ~/.bash_profile so module/conda PATH is visible
-    timeout_seconds=60,         # default: 60s
-)
-# result → {exit_code, stdout, stderr, truncated}
+// Run a short remote command (throws on approval_denied / host_unreachable / timeout)
+const result = await c.call_command('<shell command>', '<one-line intent for the approval card>', {
+  login_shell: true,   // default: true — loads the login shell so module/conda PATH is visible
+  timeout_seconds: 60  // optional — the host applies its own default (60s) when omitted
+})
+// result → { exit_code, stdout, stderr, truncated }
 
-# Read the host knowledge doc (returns {doc, isSkeleton})
-info = host.compute.details('ssh:<alias>', mode='read')
+// Read the host knowledge doc (returns { doc, isSkeleton })
+const info = await host.compute.details('ssh:<alias>', { mode: 'read' })
 
-# Append a note to the host knowledge doc (agent writes; 32 KB cap enforced)
-host.compute.details('ssh:<alias>', mode='append', text='\\n## Note\\nlearned X on <date>')
+// Append a note to the host knowledge doc (agent writes; 32 KB cap enforced)
+await host.compute.details('ssh:<alias>', { mode: 'append', text: '\\n## Note\\nlearned X on <date>' })
 
-# Replace the entire host knowledge doc (old_text must match the current doc exactly)
-host.compute.details('ssh:<alias>', mode='replace',
-    text='<new full doc>',
-    old_text=info['doc'])   # from the read above
+// Replace the entire host knowledge doc (old_text must match the current doc exactly)
+await host.compute.details('ssh:<alias>', {
+  mode: 'replace',
+  text: '<new full doc>',
+  old_text: info.doc   // from the read above
+})
 \`\`\`
 
 ## Typical first-contact workflow
 
-1. Call \`host.compute.details(provider_id, mode='read')\` — a \`## Resources\` skeleton means
+1. \`await host.compute.details(provider_id, { mode: 'read' })\` — a \`## Resources\` skeleton means
    first contact; populated sections mean prior sessions did the legwork, trust them.
-2. Bind once: \`c = host.compute.create(provider_id)\`.
-3. Run one batched probe: \`c.call_command('id; module avail 2>&1 | head -40', intent=...)\`.
-4. Append what you learned to the knowledge doc via \`host.compute.details(..., mode='append')\`.
+2. Bind once: \`const c = host.compute.create(provider_id)\`.
+3. Run one batched probe: \`await c.call_command('id; module avail 2>&1 | head -40', '<intent>')\`.
+4. Append what you learned via \`await host.compute.details(..., { mode: 'append' })\`.
 
 ## call_command error handling
 
-\`\`\`python
-try:
-    r = c.call_command('cmd', intent='...')
-except RuntimeError as e:
-    code = getattr(e, 'error_code', '')
-    if code == 'host_unreachable':
-        # SSH connectivity issue — requires user action (VPN, key, etc.)
-        pass
-    elif code == 'approval_denied':
-        # User declined the approval card
-        pass
-    elif code == 'timeout':
-        # Command exceeded timeout_seconds
-        pass
+\`\`\`javascript
+try {
+  const r = await c.call_command('cmd', '<intent>')
+} catch (e) {
+  const code = e.error_code || ''
+  if (code === 'host_unreachable') {
+    // SSH connectivity issue — needs user action (VPN, key, etc.); e.retry_after_user_action is true
+  } else if (code === 'approval_denied') {
+    // User declined the approval card
+  } else if (code === 'timeout') {
+    // Command exceeded timeout_seconds
+  }
+}
 \`\`\`
 
 ## What to record in the knowledge doc

@@ -143,6 +143,7 @@ const SWITCH_RUNTIME_DOC = [
 const REPL_EXECUTE_DOC = [
   'Run JavaScript on the persistent control-plane REPL kernel — a Node process separate from the python/r data kernels.',
   'This is the ONLY kernel with outbound connector access: call `await host.mcp(server, method, args)` to reach MCP connectors. The python/r data kernels have none, so do connector fetches here.',
+  'Remote compute (`host.compute`: list / create / call_command / details of SSH compute hosts) is likewise available ONLY here — the python/r data kernels have no `host.compute`. Load the `remote-compute-ssh` skill for its API.',
   'Code runs in a persistent context (globals declared in one call persist to the next). A trailing expression is echoed like a REPL — its value comes back as the result — or use `console.log(...)` / `return <expr>`. Do NOT echo a large result (many records / big JSON); it is truncated. Write large data to ./handoff/ instead.',
   'To hand data to the python/r kernels, write files into ./handoff/ (the shared workspace channel every kernel sees) and have the data cell read them back; this tool does not itself run data-analysis code.',
   'Distinct from notebook_execute: use notebook_execute for python/r data cells, and this tool for connector calls and control-plane orchestration.'

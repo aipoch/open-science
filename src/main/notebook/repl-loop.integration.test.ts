@@ -75,6 +75,187 @@ gate('repl_loop.js', () => {
   }, 60_000)
 })
 
+gate('repl_loop.js host.compute', () => {
+  let server: Server
+  let endpoint: string
+  // Last computeCall params the stub received, so tests can assert the JS shim's wire payload.
+  let received: { method?: string; params?: Record<string, unknown> } = {}
+  // Next response the stub returns: { status, body } lets a case drive success and structured-error paths.
+  let next: { status: number; body: unknown } = { status: 200, body: { result: null } }
+
+  beforeAll(async () => {
+    const { createServer } = await import('node:http')
+    server = createServer((req, res) => {
+      let body = ''
+      req.on('data', (c) => (body += c))
+      req.on('end', () => {
+        received = body ? JSON.parse(body) : {}
+        res
+          .writeHead(next.status, { 'content-type': 'application/json' })
+          .end(JSON.stringify(next.body))
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const addr = server.address() as { port: number }
+    endpoint = `http://127.0.0.1:${addr.port}`
+  })
+
+  afterAll(() => {
+    server.close()
+  })
+
+  it('host.compute.list() posts op=list and returns the parsed result', async () => {
+    next = {
+      status: 200,
+      body: { result: [{ provider_id: 'ssh:biowulf', display_name: 'biowulf' }] }
+    }
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'tok'
+    })
+    try {
+      const r = await send('return (await host.compute.list())[0].provider_id')
+      expect(r.error).toBeNull()
+      expect(r.result).toContain('ssh:biowulf')
+      expect(received.method).toBe('computeCall')
+      expect(received.params?.op).toBe('list')
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
+  it('create().call_command() posts op=call_command with defaults and returns the ExecResult', async () => {
+    next = {
+      status: 200,
+      body: { result: { exit_code: 0, stdout: 'hi', stderr: '', truncated: false } }
+    }
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'tok'
+    })
+    try {
+      const r = await send(
+        "const c = host.compute.create('ssh:biowulf'); const res = await c.call_command('echo hi', 'probe'); return res.stdout"
+      )
+      expect(r.error).toBeNull()
+      expect(r.result).toContain('hi')
+      expect(received.params?.op).toBe('call_command')
+      expect(received.params?.provider_id).toBe('ssh:biowulf')
+      expect(received.params?.cmd).toBe('echo hi')
+      expect(received.params?.intent).toBe('probe')
+      // login_shell defaults to true; timeout_seconds omitted -> the service applies its own default.
+      expect(received.params?.login_shell).toBe(true)
+      expect(received.params?.timeout_seconds).toBeUndefined()
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
+  it('maps a structured compute error onto the thrown Error (error_code / retry_after_user_action)', async () => {
+    // The RPC layer re-serializes ComputeService's structured error as a JSON string in `error`.
+    next = {
+      status: 500,
+      body: {
+        error: JSON.stringify({
+          error_code: 'host_unreachable',
+          message: 'SSH connect failed',
+          retry_after_user_action: true
+        })
+      }
+    }
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'tok'
+    })
+    try {
+      const r = await send(
+        "const c = host.compute.create('ssh:x');\n" +
+          'try { await c.call_command("id", "probe") }\n' +
+          'catch (e) { return JSON.stringify({ code: e.error_code, retry: e.retry_after_user_action, msg: e.message }) }'
+      )
+      expect(r.error).toBeNull()
+      const parsed = JSON.parse(r.result ?? '')
+      expect(parsed.code).toBe('host_unreachable')
+      expect(parsed.retry).toBe(true)
+      expect(parsed.msg).toContain('SSH connect failed')
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
+  it('details() posts op=details with mode/text/old_text and returns the result', async () => {
+    next = { status: 200, body: { result: { doc: 'the doc', isSkeleton: false } } }
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'tok'
+    })
+    try {
+      // read: only mode is forwarded.
+      const read = await send(
+        "return (await host.compute.details('ssh:biowulf', { mode: 'read' })).doc"
+      )
+      expect(read.error).toBeNull()
+      expect(read.result).toContain('the doc')
+      expect(received.params?.op).toBe('details')
+      expect(received.params?.provider_id).toBe('ssh:biowulf')
+      expect(received.params?.mode).toBe('read')
+
+      // replace: text + old_text are forwarded (snake_case matches the RPC contract).
+      next = { status: 200, body: { result: { ok: true } } }
+      const replace = await send(
+        "await host.compute.details('ssh:biowulf', { mode: 'replace', text: 'new', old_text: 'old' }); return 'done'"
+      )
+      expect(replace.error).toBeNull()
+      expect(received.params?.mode).toBe('replace')
+      expect(received.params?.text).toBe('new')
+      expect(received.params?.old_text).toBe('old')
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
+  it('threads session/project identity from the spawn env into the call_command payload', async () => {
+    next = {
+      status: 200,
+      body: { result: { exit_code: 0, stdout: '', stderr: '', truncated: false } }
+    }
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'tok',
+      OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-42',
+      OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME: 'my-project'
+    })
+    try {
+      const r = await send(
+        "await host.compute.create('ssh:biowulf').call_command('id', 'probe'); return 'ok'"
+      )
+      expect(r.error).toBeNull()
+      expect(received.params?.session_id).toBe('session-42')
+      expect(received.params?.project_id).toBe('my-project')
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
+  it('removes the session/project identity from process.env so sandbox code cannot read it', async () => {
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'tok',
+      OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-42',
+      OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME: 'my-project'
+    })
+    try {
+      const r = await send(
+        'return JSON.stringify([process.env.OPEN_SCIENCE_NOTEBOOK_SESSION_ID, process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME])'
+      )
+      expect(r.error).toBeNull()
+      expect(JSON.parse(r.result ?? '')).toEqual([null, null])
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+})
+
 gate('repl_loop.js host.mcp', () => {
   let server: Server
   let endpoint: string

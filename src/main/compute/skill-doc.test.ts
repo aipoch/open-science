@@ -97,6 +97,22 @@ describe('renderComputeSkillDoc', () => {
     const doc = renderComputeSkillDoc([sampleHost()])
     expect(doc).toContain('not yet probed')
   })
+
+  it('teaches the JavaScript control-plane REPL, not python cells', () => {
+    const doc = renderComputeSkillDoc([])
+    // host.compute lives on the repl kernel now; examples are JavaScript run via repl_execute.
+    expect(doc).toContain('repl_execute')
+    expect(doc).toContain('```javascript')
+    // No python code fences — the old python-shim examples must be gone.
+    expect(doc).not.toContain('```python')
+  })
+
+  it('states that the python/r data kernels have no host.compute', () => {
+    const doc = renderComputeSkillDoc([])
+    expect(doc.toLowerCase()).toContain('host.compute')
+    // The isolation note: data kernels cannot reach host.compute.
+    expect(doc).toMatch(/python\/r|data kernel/i)
+  })
 })
 
 // ---------------------------------------------------------------------------
