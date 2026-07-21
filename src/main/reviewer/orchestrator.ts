@@ -1,5 +1,5 @@
 // Orchestrator for the auto-review pipeline. `runReview` is called after each turn completes;
-// it spawns a fresh-context reviewer ACP session, injects the rubric + reviewer MCP + host SDK,
+// it spawns a fresh-context reviewer ACP session, injects the rubric + scope-bounded reviewer MCP,
 // drives the reviewer to completion, persists findings, and then disposes the session.
 //
 // Phase 3: after a review with warn/fail, `runFixLoop` drives the bounded re-review loop:
@@ -26,11 +26,15 @@ import type { ReviewRepository } from './repository'
 import { resolveTurnScopeWithArtifactDigests } from './artifact-digest'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { ReviewerMcpServer } from './mcp-server'
-import { buildReviewerHostPythonBootstrap, ReviewerHostServer } from './host-sdk'
+import { ReviewerHostServer } from './host-sdk'
 import { REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND } from './rubric'
 import { injectAuditorMessage } from './correction'
 
 const log = createLogger('reviewer:orchestrator')
+
+type SessionProvider = (
+  sessionId: string
+) => PersistedChatSession | undefined | Promise<PersistedChatSession | undefined>
 
 export type RunReviewOptions = {
   sessionId: string
@@ -49,12 +53,12 @@ export type RunReviewOptions = {
   projectId: string
   // Used to resolve the session's persisted data for turn-scope resolution.
   // For the fix loop, this is called after each correction turn so it must return the LATEST session.
-  getSession: (sessionId: string) => PersistedChatSession | undefined
+  getSession: SessionProvider
   // Repository for persisting review rows + checks.
   reviewRepository: ReviewRepository
   // The ACP runtime that owns the agent connection (used to spawn the reviewer session).
   acpRuntime: AcpRuntime
-  // Storage root for artifact reads (used by the reviewer host SDK).
+  // Storage root for artifact reads (used by the scope-bounded evidence reader).
   artifactStorageRoot: string
   // The model/provider tag to record on the Review row.
   model?: string
@@ -86,15 +90,20 @@ export type RunReviewOptions = {
   // AbortSignal to stop the fix loop early (e.g. when the user presses cancel). When aborted,
   // the loop exits at the next round boundary without further [Auditor] injections.
   fixLoopAbortSignal?: AbortSignal
+  // How long the fix loop waits for the correction turn to reach durable session storage. The main
+  // agent can finish before the renderer's persistence queue flushes, so a single immediate read races.
+  sessionRefreshTimeoutMs?: number
 }
 
 // Default drive-loop guards. The wall-clock timeout is the primary backstop against a reviewer that
 // never stops (it is the only guard that catches a reviewer stuck streaming thoughts forever, since
 // those do not count toward the update cap — see below). The update cap is a secondary backstop
 // against a fast-looping reviewer that spins through discrete actions. Reviews do real multi-step
-// verification (several Python cells + reasoning), so the timeout is generous.
+// evidence tracing, so the timeout is generous.
 const DEFAULT_REVIEWER_TIMEOUT_MS = 900_000
 const DEFAULT_REVIEWER_MAX_UPDATES = 1000
+const DEFAULT_SESSION_REFRESH_TIMEOUT_MS = 10_000
+const SESSION_REFRESH_POLL_MS = 50
 
 // Streaming content deltas are emitted one-per-chunk as the reviewer writes its message/thinking, so
 // their count tracks how much it *says*, not how much it *does*. Counting them toward the loop cap
@@ -338,13 +347,11 @@ type FixLoopOptions = {
   sessionId: string
   // The original turn's message id (shared across all Review rows in this closure).
   originalTurnMessageId: string
-  // The reviewId whose warn/fail checks are being tracked.
-  originalReviewId: string
   // The currently-open warn/fail checks to carry forward into each re-review.
   openChecks: ReviewCheck[]
   projectId: string
   mainSessionId: string
-  getSession: (sessionId: string) => PersistedChatSession | undefined
+  getSession: SessionProvider
   reviewRepository: ReviewRepository
   acpRuntime: AcpRuntime
   artifactStorageRoot: string
@@ -355,25 +362,54 @@ type FixLoopOptions = {
   reviewerTimeoutMs: number
   reviewerMaxUpdates: number
   maxRounds: number
+  sessionRefreshTimeoutMs: number
   // Optional abort signal: when aborted, the loop exits at the next round boundary.
   abortSignal?: AbortSignal
+}
+
+const waitForCorrectionAgentMessage = async (options: {
+  sessionId: string
+  messageIdsBefore: ReadonlySet<string>
+  getSession: SessionProvider
+  timeoutMs: number
+  abortSignal?: AbortSignal
+}): Promise<
+  | {
+      session: PersistedChatSession
+      message: PersistedChatSession['messages'][number]
+    }
+  | undefined
+> => {
+  const deadline = Date.now() + options.timeoutMs
+
+  for (;;) {
+    if (options.abortSignal?.aborted) return undefined
+
+    const latest = await options.getSession(options.sessionId)
+    const correction = latest?.messages.find(
+      (message) => !options.messageIdsBefore.has(message.id) && message.role === 'agent'
+    )
+    if (latest && correction) return { session: latest, message: correction }
+
+    if (Date.now() >= deadline) return undefined
+    await new Promise<void>((resolve) => setTimeout(resolve, SESSION_REFRESH_POLL_MS))
+  }
 }
 
 // Runs the Phase 3 bounded re-review loop. For each round (up to maxRounds):
 // 1. Injects [Auditor] with the still-open warn/fail checks.
 // 2. The main agent produces a correction turn.
 // 3. Re-reviews the correction turn's new blocks.
-// 4. Updates resolutions on the original review's checks from re-review results:
-//    - claim passes in re-review → resolved
-//    - same claim flagged again → incrementReflagCount on original check; stays open
-//    - claim not mentioned in re-review → stays open
+// 4. Updates each original finding by its stable sourceFindingId:
+//    - pass → resolved
+//    - warn/fail → incrementReflagCount; stays open
+//    - missing/unknown/duplicate id → submission rejected, original stays open
 // 5. If all resolved or cap reached, stops.
 // Cap termination marks remaining open warn/fail checks as 'unaddressed'.
 const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
   const {
     sessionId,
     originalTurnMessageId,
-    originalReviewId,
     projectId,
     mainSessionId,
     getSession,
@@ -387,10 +423,20 @@ const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
     reviewerTimeoutMs,
     reviewerMaxUpdates,
     maxRounds,
+    sessionRefreshTimeoutMs,
     abortSignal
   } = options
 
   let openChecks = [...options.openChecks]
+  const markOpenChecksUnaddressed = async (): Promise<void> => {
+    for (const openCheck of openChecks) {
+      await reviewRepository.updateFindingResolution(
+        openCheck.reviewId,
+        openCheck.id,
+        'unaddressed'
+      )
+    }
+  }
 
   for (let round = 0; round < maxRounds; round++) {
     if (openChecks.length === 0) break
@@ -401,12 +447,27 @@ const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
       return
     }
 
-    // Step A: record the last known message id before the correction prompt, so we can detect
-    // the correction turn's new agent message after sendPrompt returns.
-    const sessionBefore = getSession(sessionId)
-    const messagesBefore = sessionBefore?.messages ?? []
-    const lastMessageIdBefore =
-      messagesBefore.length > 0 ? messagesBefore[messagesBefore.length - 1]!.id : null
+    // Step A: record every known message id before the correction prompt. The provider is awaited on
+    // every use; production reloads durable storage rather than returning the initial review snapshot.
+    let sessionBefore: PersistedChatSession | undefined
+    try {
+      sessionBefore = await getSession(sessionId)
+    } catch (error) {
+      log.warn('fix loop: failed to load durable session before correction', {
+        sessionId,
+        round,
+        error: error instanceof Error ? error.message : String(error)
+      })
+      await markOpenChecksUnaddressed()
+      return
+    }
+    if (!sessionBefore) {
+      log.warn('fix loop: durable session disappeared before correction', { sessionId, round })
+      await markOpenChecksUnaddressed()
+      return
+    }
+    const messagesBefore = sessionBefore.messages
+    const messageIdsBefore = new Set(messagesBefore.map((message) => message.id))
 
     // Step B: inject [Auditor] with the currently-open warn/fail checks.
     let correctionFailed = false
@@ -430,48 +491,56 @@ const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
         round,
         openCount: openChecks.length
       })
-      await reviewRepository.updateFindingResolutions(originalReviewId, 'unaddressed')
+      await markOpenChecksUnaddressed()
       return
     }
 
-    // Step C: reload the session to see the correction turn's new messages.
-    const sessionAfter = getSession(sessionId)
-    if (!sessionAfter) {
-      log.warn('session not found after correction in fix loop', { sessionId, round })
-      await reviewRepository.updateFindingResolutions(originalReviewId, 'unaddressed')
+    // Step C: wait for the new agent message to reach durable storage. sendPrompt completion and the
+    // renderer persistence queue are independent, so an immediate one-shot reload is still racy.
+    let correctionState:
+      | { session: PersistedChatSession; message: PersistedChatSession['messages'][number] }
+      | undefined
+    try {
+      correctionState = await waitForCorrectionAgentMessage({
+        sessionId,
+        messageIdsBefore,
+        getSession,
+        timeoutMs: sessionRefreshTimeoutMs,
+        abortSignal
+      })
+    } catch (error) {
+      log.warn('fix loop: failed while refreshing durable correction turn', {
+        sessionId,
+        round,
+        error: error instanceof Error ? error.message : String(error)
+      })
+      await markOpenChecksUnaddressed()
       return
     }
-
-    // Find the first new agent message added after the correction prompt. This is the
-    // correction turn's response — use it as the turnMessageId for the re-review scope.
-    const messagesAfter = sessionAfter.messages ?? []
-    const newMessages = lastMessageIdBefore
-      ? (() => {
-          const cutoffIndex = messagesAfter.findIndex((m) => m.id === lastMessageIdBefore)
-          return cutoffIndex >= 0 ? messagesAfter.slice(cutoffIndex + 1) : messagesAfter
-        })()
-      : messagesAfter
-
-    const correctionAgentMsg = newMessages.find((m) => m.role === 'agent')
-    if (!correctionAgentMsg) {
-      log.warn(
-        'no new agent message after correction in fix loop — using auditor msg as scope marker',
-        {
+    if (!correctionState) {
+      if (abortSignal?.aborted) {
+        log.info('fix loop: aborted while waiting for durable correction turn', {
           sessionId,
-          round,
-          newMessageCount: newMessages.length
-        }
-      )
-      // Fall back to re-reviewing the whole session's last agent message.
+          round
+        })
+        return
+      }
+      log.warn('correction turn did not reach durable session storage; refusing stale re-review', {
+        sessionId,
+        round,
+        timeoutMs: sessionRefreshTimeoutMs
+      })
+      await markOpenChecksUnaddressed()
+      return
     }
 
-    const correctionTurnMessageId = correctionAgentMsg?.id ?? originalTurnMessageId
+    const correctionTurnMessageId = correctionState.message.id
 
     // Step D: run a re-review scoped to the correction turn's new blocks.
     // This creates a new Review row sharing the original turnMessageId.
     log.info('fix loop: running re-review', { sessionId, round, correctionTurnMessageId })
 
-    const reReviewResult = await runScopedReview({
+    const scopedResult = await runScopedReview({
       sessionId,
       turnMessageId: correctionTurnMessageId,
       originalTurnMessageId,
@@ -483,14 +552,17 @@ const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
       model,
       onReviewUpdate,
       reviewerTimeoutMs,
-      reviewerMaxUpdates
+      reviewerMaxUpdates,
+      trackedChecks: openChecks,
+      sessionSnapshot: correctionState.session
     })
+    const reReviewResult = scopedResult.review
 
     // Step E: compute resolution transitions for the original review's open checks.
     // - If the re-review errored: count as a round but mark remaining unaddressed and stop.
-    // - If the re-review has no warn/fail (all pass or empty): all open checks → resolved.
-    // - If the re-review flags the same claim: incrementReflagCount; stays open.
-    // - If the re-review flags a different claim: original open check stays open.
+    // - Each original finding is matched only by sourceFindingId, never by model-generated prose.
+    // - A pass disposition resolves it; warn/fail increments reflagCount and keeps it open.
+    // - Missing dispositions are rejected by MCP and stay open defensively if one slips through.
 
     if (reReviewResult.lifecycle === 'error') {
       log.warn('fix loop: re-review errored — marking remaining checks unaddressed', {
@@ -498,45 +570,63 @@ const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
         round,
         openCount: openChecks.length
       })
-      for (const openCheck of openChecks) {
-        await reviewRepository.updateFindingResolutionForClaim(
-          originalReviewId,
-          openCheck.claim,
-          'unaddressed'
-        )
-      }
+      await markOpenChecksUnaddressed()
       return
     }
 
-    const reReviewWarnFail = reReviewResult.checks.filter(
-      (c) => c.status === 'warn' || c.status === 'fail'
+    const dispositionsByFindingId = new Map(
+      scopedResult.submittedChecks
+        .filter((check) => check.sourceFindingId)
+        .map((check) => [check.sourceFindingId!, check] as const)
     )
-    const reReviewWarnFailClaims = new Set(reReviewWarnFail.map((c) => c.claim))
 
     const stillOpenChecks: ReviewCheck[] = []
 
     for (const openCheck of openChecks) {
-      if (reReviewWarnFailClaims.has(openCheck.claim)) {
-        // Same claim flagged again → over-correction; increment reflagCount and keep open.
-        await reviewRepository.incrementReflagCount(originalReviewId, openCheck.claim)
-        log.info('fix loop: claim re-flagged (over-correction)', {
+      const disposition = dispositionsByFindingId.get(openCheck.id)
+      if (!disposition) {
+        // The MCP server rejects incomplete submissions, so this is defensive fail-closed behavior.
+        log.error('fix loop: scoped re-review omitted a tracked finding disposition', {
           sessionId,
           round,
-          claim: openCheck.claim
+          findingId: openCheck.id
+        })
+        stillOpenChecks.push(openCheck)
+      } else if (disposition.status === 'warn' || disposition.status === 'fail') {
+        await reviewRepository.incrementReflagCount(openCheck.reviewId, openCheck.id)
+        log.info('fix loop: finding re-flagged', {
+          sessionId,
+          round,
+          findingId: openCheck.id
         })
         stillOpenChecks.push(openCheck)
       } else {
-        // Claim not flagged in re-review → resolved.
-        await reviewRepository.updateFindingResolutionForClaim(
-          originalReviewId,
-          openCheck.claim,
-          'resolved'
-        )
-        log.info('fix loop: claim resolved', { sessionId, round, claim: openCheck.claim })
+        await reviewRepository.updateFindingResolution(openCheck.reviewId, openCheck.id, 'resolved')
+        log.info('fix loop: finding resolved', { sessionId, round, findingId: openCheck.id })
       }
     }
 
-    openChecks = stillOpenChecks
+    const newIssueSortIndexes = new Set(
+      scopedResult.submittedChecks
+        .filter(
+          (check) => !check.sourceFindingId && (check.status === 'warn' || check.status === 'fail')
+        )
+        .map((check) => check.sortIndex)
+    )
+    const newlyOpenChecks = reReviewResult.checks.filter(
+      (check) =>
+        newIssueSortIndexes.has(check.sortIndex) &&
+        (check.status === 'warn' || check.status === 'fail')
+    )
+    if (newlyOpenChecks.length > 0) {
+      log.info('fix loop: carrying newly discovered findings into the next round', {
+        sessionId,
+        round,
+        count: newlyOpenChecks.length
+      })
+    }
+
+    openChecks = [...stillOpenChecks, ...newlyOpenChecks]
 
     if (openChecks.length === 0) {
       log.info('fix loop: all checks resolved', { sessionId, rounds: round + 1 })
@@ -557,13 +647,7 @@ const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
       maxRounds,
       remaining: openChecks.length
     })
-    for (const openCheck of openChecks) {
-      await reviewRepository.updateFindingResolutionForClaim(
-        originalReviewId,
-        openCheck.claim,
-        'unaddressed'
-      )
-    }
+    await markOpenChecksUnaddressed()
   }
 }
 
@@ -575,7 +659,7 @@ const runScopedReview = async (options: {
   turnMessageId: string // the correction turn's agent message id
   originalTurnMessageId: string // shared across all Review rows in this fix-loop closure
   projectId: string
-  getSession: (sessionId: string) => PersistedChatSession | undefined
+  getSession: SessionProvider
   reviewRepository: ReviewRepository
   acpRuntime: AcpRuntime
   artifactStorageRoot: string
@@ -583,7 +667,9 @@ const runScopedReview = async (options: {
   onReviewUpdate?: (review: ReviewWithChecks) => void
   reviewerTimeoutMs: number
   reviewerMaxUpdates: number
-}): Promise<ReviewWithChecks> => {
+  trackedChecks: ReviewCheck[]
+  sessionSnapshot?: PersistedChatSession
+}): Promise<{ review: ReviewWithChecks; submittedChecks: NewCheck[] }> => {
   const {
     sessionId,
     turnMessageId,
@@ -596,10 +682,14 @@ const runScopedReview = async (options: {
     model,
     onReviewUpdate,
     reviewerTimeoutMs,
-    reviewerMaxUpdates
+    reviewerMaxUpdates,
+    trackedChecks,
+    sessionSnapshot
   } = options
 
-  const session = getSession(sessionId)
+  // Use the exact durable snapshot that proved the correction message exists. A second independent
+  // read could regress to an older file during concurrent persistence and reintroduce stale auditing.
+  const session = sessionSnapshot ?? (await getSession(sessionId))
 
   if (!session) {
     log.warn('session not found for scoped re-review', { sessionId })
@@ -612,7 +702,7 @@ const runScopedReview = async (options: {
       errorMessage: `Session ${sessionId} not found during re-review`,
       model
     })
-    return { ...errorReview, checks: [] }
+    return { review: { ...errorReview, checks: [] }, submittedChecks: [] }
   }
 
   // Resolve the correction turn's scope, pinning each artifact to a digest of its current bytes.
@@ -639,24 +729,27 @@ const runScopedReview = async (options: {
   log.info('scoped re-review created', { reviewId: review.id, blocks: scope.blocks.length })
 
   // Run the reviewer session (same flow as the initial review).
-  let reviewerSession: ReturnType<typeof Object.create> | undefined
-  let hostServer: ReviewerHostServer | undefined
+  let reviewerSession: ActiveSession | undefined
   let mcpServer: ReviewerMcpServer | undefined
   let checksReceived: NewCheck[] = []
   let checksSubmitted = false
   const capturedLog: ReviewerLogEntry[] = []
 
   try {
-    hostServer = new ReviewerHostServer(session, scope, artifactStorageRoot)
-    const { endpoint: hostEndpoint, token: hostToken } = await hostServer.start()
+    const evidence = new ReviewerHostServer(session, scope, artifactStorageRoot)
 
-    mcpServer = new ReviewerMcpServer(scope, async (checks: NewCheck[]) => {
-      checksReceived = checks
-      checksSubmitted = true
-    })
+    mcpServer = new ReviewerMcpServer(
+      scope,
+      async (checks: NewCheck[]) => {
+        checksReceived = checks
+        checksSubmitted = true
+      },
+      evidence,
+      trackedChecks.map((check) => check.id)
+    )
     await mcpServer.start()
 
-    const reviewerPrompt = buildReviewerPrompt(scope, hostEndpoint, hostToken)
+    const reviewerPrompt = buildReviewerPrompt(scope, trackedChecks)
     const systemPromptAppend = REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND
     const cwd = session.cwd || homedir()
 
@@ -685,25 +778,32 @@ const runScopedReview = async (options: {
 
     review = await reviewRepository.updateReview(review.id, {
       lifecycle: 'error',
-      errorMessage: errorMsg
+      errorMessage: errorMsg,
+      reviewerLog: capturedLog
     })
     const errorWithChecks: ReviewWithChecks = { ...review, checks: [] }
     onReviewUpdate?.(errorWithChecks)
-    return errorWithChecks
+    return { review: errorWithChecks, submittedChecks: [] }
   } finally {
     if (reviewerSession) acpRuntime.disposeReviewerSession(reviewerSession)
     await mcpServer?.stop().catch(() => undefined)
-    await hostServer?.stop().catch(() => undefined)
+  }
+
+  if (!checksSubmitted) {
+    const errorMessage = 'Reviewer stopped without calling submit_findings.'
+    log.error('scoped re-review protocol incomplete', { reviewId: review.id, error: errorMessage })
+    review = await reviewRepository.updateReview(review.id, {
+      lifecycle: 'error',
+      errorMessage,
+      reviewerLog: capturedLog
+    })
+    const errorWithChecks: ReviewWithChecks = { ...review, checks: [] }
+    onReviewUpdate?.(errorWithChecks)
+    return { review: errorWithChecks, submittedChecks: [] }
   }
 
   // Persist checks and complete the review.
   try {
-    if (!checksSubmitted) {
-      log.warn('re-reviewer did not call submit_findings; treating as pass', {
-        reviewId: review.id
-      })
-    }
-
     await reviewRepository.addChecks(review.id, checksReceived)
 
     const hasWarnOrFailCheck = checksReceived.some(
@@ -720,11 +820,12 @@ const runScopedReview = async (options: {
     log.error('scoped re-review persistence failed', { reviewId: review.id, error: errorMsg })
     review = await reviewRepository.updateReview(review.id, {
       lifecycle: 'error',
-      errorMessage: errorMsg
+      errorMessage: errorMsg,
+      reviewerLog: capturedLog
     })
     const errorWithChecks: ReviewWithChecks = { ...review, checks: [] }
     onReviewUpdate?.(errorWithChecks)
-    return errorWithChecks
+    return { review: errorWithChecks, submittedChecks: [] }
   }
 
   // Load the final review with checks.
@@ -746,7 +847,7 @@ const runScopedReview = async (options: {
   }
 
   onReviewUpdate?.(finalReview)
-  return finalReview
+  return { review: finalReview, submittedChecks: checksReceived }
 }
 
 // Drives one complete auto-review cycle: scope resolution → DB record → reviewer session →
@@ -773,13 +874,14 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
     fixLoopMaxRounds = 3,
     onFixLoopStart,
     onFixLoopEnd,
-    fixLoopAbortSignal
+    fixLoopAbortSignal,
+    sessionRefreshTimeoutMs = DEFAULT_SESSION_REFRESH_TIMEOUT_MS
   } = options
 
   log.info('runReview started', { sessionId, turnMessageId })
 
   // Step 1: resolve the turn scope.
-  const session = getSession(sessionId)
+  const session = await getSession(sessionId)
 
   if (!session) {
     log.warn('session not found for review', { sessionId })
@@ -825,30 +927,29 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
 
   // Step 3: run the reviewer session. All failures inside are caught and set lifecycle='error'.
   let reviewerSession: ActiveSession | undefined
-  let hostServer: ReviewerHostServer | undefined
   let mcpServer: ReviewerMcpServer | undefined
   let checksReceived: NewCheck[] = []
   let checksSubmitted = false
   const capturedLog: ReviewerLogEntry[] = []
 
   try {
-    // Start the host SDK server (provides read_turn / query_execution_log / read_artifact).
-    hostServer = new ReviewerHostServer(session, scope, artifactStorageRoot)
-    const { endpoint: hostEndpoint, token: hostToken } = await hostServer.start()
+    // Evidence reads and submission share one authenticated MCP server. The evidence object enforces
+    // turn/artifact scope server-side; no host token or Bash bootstrap is exposed to the model.
+    const evidence = new ReviewerHostServer(session, scope, artifactStorageRoot)
 
-    // Start the submit_findings MCP server.
-    mcpServer = new ReviewerMcpServer(scope, async (checks: NewCheck[]) => {
-      checksReceived = checks
-      checksSubmitted = true
-      log.info('submit_findings received by MCP handler', { count: checks.length })
-    })
-    // The endpoint/token are consumed via mcpServer.toAcpMcpServerConfig() below.
+    mcpServer = new ReviewerMcpServer(
+      scope,
+      async (checks: NewCheck[]) => {
+        checksReceived = checks
+        checksSubmitted = true
+        log.info('submit_findings received by MCP handler', { count: checks.length })
+      },
+      evidence
+    )
     await mcpServer.start()
 
-    // Build the reviewer prompt: passes the turn scope metadata and host SDK endpoint.
-    const reviewerPrompt = buildReviewerPrompt(scope, hostEndpoint, hostToken)
+    const reviewerPrompt = buildReviewerPrompt(scope)
 
-    // Combine the rubric with the host SDK Python setup instructions.
     const systemPromptAppend = REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND
 
     // Spawn the reviewer ACP session (clean context, reviewer-only tools).
@@ -865,7 +966,7 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
 
     // Send the prompt and drive the session to completion. A timeout / update cap guards against a
     // hung or fast-looping reviewer that never stops: on expiry this throws, the catch below sets
-    // lifecycle='error', and the finally disposes the session + host/MCP servers.
+    // lifecycle='error', and the finally disposes the session + MCP server.
     // opencode gets the rubric via a prompt prefix (Claude via _meta, prefix empty).
     const reviewerPromptText = built.promptPrefix
       ? `${built.promptPrefix}\n\n${reviewerPrompt}`
@@ -889,7 +990,8 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
 
     review = await reviewRepository.updateReview(review.id, {
       lifecycle: 'error',
-      errorMessage: errorMsg
+      errorMessage: errorMsg,
+      reviewerLog: capturedLog
     })
     const errorWithFindings: ReviewWithChecks = { ...review, checks: [] }
     onReviewUpdate?.(errorWithFindings)
@@ -899,16 +1001,24 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
     // Always dispose the reviewer session and shut down the servers.
     if (reviewerSession) acpRuntime.disposeReviewerSession(reviewerSession)
     await mcpServer?.stop().catch(() => undefined)
-    await hostServer?.stop().catch(() => undefined)
+  }
+
+  if (!checksSubmitted) {
+    const errorMessage = 'Reviewer stopped without calling submit_findings.'
+    log.error('review protocol incomplete', { reviewId: review.id, error: errorMessage })
+    review = await reviewRepository.updateReview(review.id, {
+      lifecycle: 'error',
+      errorMessage,
+      reviewerLog: capturedLog
+    })
+    const errorWithFindings: ReviewWithChecks = { ...review, checks: [] }
+    onReviewUpdate?.(errorWithFindings)
+    return errorWithFindings
   }
 
   // Step 4: persist checks and set lifecycle='complete'.
   // outcome = flagged iff at least one check is warn or fail; otherwise pass.
   try {
-    if (!checksSubmitted) {
-      log.warn('reviewer did not call submit_findings; treating as pass', { reviewId: review.id })
-    }
-
     await reviewRepository.addChecks(review.id, checksReceived)
 
     const hasWarnOrFailCheck = checksReceived.some(
@@ -967,7 +1077,6 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
       await runFixLoop({
         sessionId,
         originalTurnMessageId: turnMessageId,
-        originalReviewId: review.id,
         openChecks: finalReview.checks.filter((c) => c.status === 'warn' || c.status === 'fail'),
         projectId,
         mainSessionId,
@@ -982,6 +1091,7 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
         reviewerTimeoutMs,
         reviewerMaxUpdates,
         maxRounds: fixLoopMaxRounds,
+        sessionRefreshTimeoutMs,
         abortSignal: fixLoopAbortSignal
       })
     } finally {
@@ -1001,14 +1111,11 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
   return finalReview
 }
 
-// Builds the initial prompt sent to the reviewer session. It passes the turn scope as structured
-// context and provides the host client via the single-sourced bootstrap (see host-sdk.ts) — the
-// reviewer runs Python through Bash, so each fresh process must re-run this setup; there is no
-// pre-loaded `host` object.
+// Builds the prompt sent to the isolated reviewer session. All evidence is available only through the
+// scope-bounded reviewer MCP; no executable bootstrap, filesystem path, or bearer token enters the prompt.
 export const buildReviewerPrompt = (
   scope: TurnScope,
-  hostEndpoint: string,
-  hostToken: string
+  trackedChecks: readonly ReviewCheck[] = []
 ): string => {
   const blockSummary =
     scope.blocks.length === 0
@@ -1025,20 +1132,34 @@ export const buildReviewerPrompt = (
       ? 'No artifacts in this turn.'
       : `Artifact version ids: ${scope.artifactVersionIds.join(', ')}`
 
+  const trackedSummary =
+    trackedChecks.length === 0
+      ? []
+      : [
+          '',
+          'This is a fix-loop re-review. Disposition every tracked finding exactly once by copying',
+          '`sourceFindingId` unchanged into its check. Use pass if fixed, warn/fail if it remains:',
+          JSON.stringify(
+            trackedChecks.map((check) => ({
+              sourceFindingId: check.id,
+              previousStatus: check.status,
+              claim: check.claim,
+              evidence: check.evidence
+            }))
+          ),
+          'You may report a newly discovered issue without sourceFindingId, but omission of any tracked',
+          'finding or reuse of an unknown/duplicate id is rejected.'
+        ]
+
   return [
     `You are reviewing turn: ${scope.turnMessageId}`,
     '',
     blockSummary,
     artifactSummary,
+    ...trackedSummary,
     '',
-    'To read the turn data, run Python via Bash. Each invocation is a fresh process, so include this',
-    'host client setup at the top of every snippet — there is no pre-loaded `host`:',
-    '',
-    '```python',
-    buildReviewerHostPythonBootstrap(hostEndpoint, hostToken),
-    '# Then read the turn:',
-    'blocks = host.read_turn()',
-    '```',
+    'Use only the reviewer MCP tools: read_turn, query_execution_log, and read_artifact.',
+    'They expose only this audited scope. Do not use Bash, filesystem, network, or other tools.',
     '',
     'After reading the turn data, apply the rubric, then call submit_findings once with your findings.',
     'Call submit_findings with an empty array if you find no issues.'

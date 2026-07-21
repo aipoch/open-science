@@ -1,12 +1,10 @@
-// Unit test for buildReviewerPrompt: the host client handed to the reviewer must come from the single
-// source of truth (buildReviewerHostPythonBootstrap), not a second hand-written copy that can drift
-// from the server's actual method set.
+// Unit tests for the isolated reviewer prompt: it advertises only the scope-bounded MCP evidence tools,
+// carries no executable bootstrap/secret, and binds fix-loop dispositions to stable finding ids.
 
 import { describe, expect, it } from 'vitest'
 
 import { buildReviewerPrompt } from './orchestrator'
-import { buildReviewerHostPythonBootstrap } from './host-sdk'
-import type { TurnScope } from '../../shared/reviewer'
+import type { ReviewCheck, TurnScope } from '../../shared/reviewer'
 
 const scope: TurnScope = {
   turnMessageId: 'msg-1',
@@ -16,26 +14,36 @@ const scope: TurnScope = {
   artifactVersionIds: []
 }
 
-describe('buildReviewerPrompt — single-source host client', () => {
-  it('embeds the exact bootstrap client (no independent hand-written copy)', () => {
-    const endpoint = 'http://127.0.0.1:5555'
-    const token = 'tok-xyz'
+describe('buildReviewerPrompt — isolated evidence access', () => {
+  it('advertises only MCP evidence tools and carries no Bash/Python bootstrap or bearer secret', () => {
+    const prompt = buildReviewerPrompt(scope)
 
-    const prompt = buildReviewerPrompt(scope, endpoint, token)
-
-    // The prompt must contain the bootstrap verbatim — this is what guarantees there is only one
-    // definition of the client and its method set.
-    expect(prompt).toContain(buildReviewerHostPythonBootstrap(endpoint, token))
-    expect(prompt).toContain(endpoint)
-    expect(prompt).toContain(token)
+    expect(prompt).toContain('read_turn')
+    expect(prompt).toContain('query_execution_log')
+    expect(prompt).toContain('read_artifact')
+    expect(prompt).not.toContain('http://')
+    expect(prompt).not.toContain('Bearer')
+    expect(prompt).not.toContain('```python')
+    expect(prompt).toContain('Do not use Bash')
   })
 
-  it('tells the reviewer to re-run setup per process rather than assuming a pre-loaded host', () => {
-    const prompt = buildReviewerPrompt(scope, 'http://x', 't')
+  it('requires every fix-loop finding to be dispositioned by stable id', () => {
+    const tracked: ReviewCheck[] = [
+      {
+        id: 'finding-stable-1',
+        reviewId: 'review-1',
+        status: 'fail',
+        resolution: 'open',
+        claim: 'The count is wrong',
+        evidence: 'Output says 3',
+        sortIndex: 0,
+        reflagCount: 0
+      }
+    ]
+    const prompt = buildReviewerPrompt(scope, tracked)
 
-    // The reviewer runs Python via Bash (fresh process each time); the prompt must make that explicit
-    // so the model does not skip setup assuming a persistent pre-injected `host`.
-    expect(prompt).toContain('fresh process')
-    expect(prompt).toContain('no pre-loaded `host`')
+    expect(prompt).toContain('sourceFindingId')
+    expect(prompt).toContain('finding-stable-1')
+    expect(prompt).toContain('exactly once')
   })
 })

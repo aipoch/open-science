@@ -103,6 +103,20 @@ class SessionRepository {
     return (await this.loadAllWithDiagnostics()).result
   }
 
+  // Loads one durable session directly instead of scanning every project/session file. Reviewer fix
+  // loops call this after each correction turn so every re-review sees newly persisted messages rather
+  // than retaining the snapshot that existed when the initial review started.
+  async loadSession(
+    projectId: string,
+    sessionId: string
+  ): Promise<PersistedChatSession | undefined> {
+    const read = await this.readSessionFile(
+      this.sessionFilePath(projectId, sessionId),
+      assertSafeSegment(projectId)
+    )
+    return read.session
+  }
+
   // Reports whether the sessions tree was fully scanned so DB reconciliation never acts on a partial
   // read. Cleanup of previously renamed project tombstones is best-effort and does not re-expose them.
   async loadAllWithDiagnostics(): Promise<SessionLoadDiagnostics> {

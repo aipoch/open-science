@@ -69,6 +69,39 @@ describe('session persistence repository (per-session files)', () => {
     })
   })
 
+  it('loads one session directly so callers can refresh durable state between turns', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    await repository.saveSession(createSession({ title: 'Before correction' }))
+
+    await expect(repository.loadSession('project-a', 'session-1')).resolves.toMatchObject({
+      id: 'session-1',
+      title: 'Before correction'
+    })
+
+    await repository.saveSession(
+      createSession({
+        title: 'After correction',
+        messages: [
+          ...createSession().messages,
+          {
+            id: 'message-2',
+            role: 'agent',
+            content: 'Correction complete',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1710000000200,
+            updatedAt: 1710000000200
+          }
+        ]
+      })
+    )
+
+    const refreshed = await repository.loadSession('project-a', 'session-1')
+    expect(refreshed?.title).toBe('After correction')
+    expect(refreshed?.messages.at(-1)?.id).toBe('message-2')
+    await expect(repository.loadSession('project-a', 'missing')).resolves.toBeUndefined()
+  })
+
   it('sanitizes embedded message images before writing session JSON', async () => {
     const repository = new SessionRepository(await createStorageRoot())
     const session = createSession({

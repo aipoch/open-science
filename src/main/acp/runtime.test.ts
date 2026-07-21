@@ -297,6 +297,13 @@ const startPermissionProbeAgent = (
     newSessionId: string
     toolCallId: string
     toolTitle: string
+    toolKind?: 'other' | 'execute'
+    permissionOptions?: Array<{
+      optionId: string
+      name: string
+      kind: 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always'
+    }>
+    onPermissionResponse?: (response: unknown) => void
     resume?: 'ok' | 'notFound'
   }
 ): void => {
@@ -321,16 +328,19 @@ const startPermissionProbeAgent = (
     .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
       // opencode renames MCP tools <server>_<tool>; classification must come from the session's
       // recorded MCP server names, so this exercises the sessionMcpServerNames map end to end.
-      await ctx.client.request(acp.methods.client.session.requestPermission, {
+      const response = await ctx.client.request(acp.methods.client.session.requestPermission, {
         sessionId: ctx.params.sessionId,
         toolCall: {
           toolCallId: options.toolCallId,
           title: options.toolTitle,
-          kind: 'other',
+          kind: options.toolKind ?? 'other',
           status: 'pending'
         },
-        options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+        options: options.permissionOptions ?? [
+          { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }
+        ]
       })
+      options.onPermissionResponse?.(response)
 
       return { stopReason: 'end_turn' }
     })
@@ -2325,6 +2335,75 @@ describe('ACP runtime session management', () => {
     expect(mcpServerNamesMap(runtime).has('reviewer-session-1')).toBe(false)
   })
 
+  it('refuses a non-loopback reviewer MCP before starting an agent connection', async () => {
+    const process = new FakeAgentProcess()
+    const spawnAgent = vi.fn(() => asAgentProcess(process))
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent
+    })
+
+    await expect(
+      runtime.buildReviewerSession({
+        cwd: '/workspace',
+        mcpServers: [
+          {
+            type: 'http',
+            name: 'open-science-reviewer',
+            url: 'https://example.com/mcp',
+            headers: []
+          }
+        ]
+      })
+    ).rejects.toThrow(/loopback HTTP open-science-reviewer/)
+    expect(spawnAgent).not.toHaveBeenCalled()
+  })
+
+  it('rejects tools from every MCP namespace except the dedicated reviewer server', async () => {
+    const process = new FakeAgentProcess()
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'reviewer-session-1',
+      toolCallId: 'reviewer-foreign-mcp',
+      toolTitle: 'mcp__other-server__read_file',
+      toolKind: 'execute',
+      permissionOptions: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+      ],
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const { session } = await runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        {
+          type: 'http',
+          name: 'open-science-reviewer',
+          url: 'http://127.0.0.1:1/mcp',
+          headers: []
+        }
+      ]
+    })
+    await session.prompt([{ type: 'text', text: 'attempt an out-of-scope command' }])
+
+    expect(permissionResponse).toEqual({
+      outcome: { outcome: 'selected', optionId: 'reject-once' }
+    })
+    // It is generically recognized as MCP for audit logging, but the reviewer gate rejects it because
+    // its namespace does not exactly match open-science-reviewer.
+    expect(auditedIsMcp('reviewer-foreign-mcp')).toBe(true)
+    runtime.disposeReviewerSession(session)
+  })
+
   it('clears reviewer auto-approval identities when the agent disconnects', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['reviewer-session-1'])
@@ -2334,7 +2413,17 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process)
     })
 
-    await runtime.buildReviewerSession({ cwd: '/workspace', mcpServers: [] })
+    await runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        {
+          type: 'http',
+          name: 'open-science-reviewer',
+          url: 'http://127.0.0.1:1/mcp',
+          headers: []
+        }
+      ]
+    })
     expect(reviewerSessionIds(runtime)).toEqual(new Set(['reviewer-session-1']))
 
     await runtime.disconnect()

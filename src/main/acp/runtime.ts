@@ -12,8 +12,10 @@ import type {
   SessionNotification
 } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { rmSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 import { pathToFileURL } from 'node:url'
 
@@ -90,6 +92,7 @@ import type { UploadRepository } from '../uploads/repository'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, ArtifactReference } from '../../shared/artifacts'
 import { isMediaOverflowError } from '../../shared/media-overflow'
+import { REVIEWER_MCP_SERVER_NAME } from '../../shared/reviewer'
 import {
   buildImageContentData,
   canInlineImageInSession,
@@ -324,10 +327,11 @@ class AcpRuntime {
   // than hardcoded so it can't drift from what createMcpServers wires up.
   private readonly sessionMcpServerNames = new Map<string, string[]>()
   // Ephemeral background reviewer sessions (built via buildReviewerSession). They are deliberately kept
-  // out of `this.sessions` — not tracked in the snapshot, not user-facing — but their tool calls still
-  // trigger permission requests over the shared agent connection. This set lets the permission handler
-  // recognise them and auto-approve without prompting (design §3: background review, no user interaction).
+  // out of `this.sessions` — not tracked in the snapshot, not user-facing. Their permission requests are
+  // handled by a strict allowlist: only the scope-bounded reviewer MCP is approved; every built-in tool is
+  // rejected. Each session also gets an empty temporary cwd so ungated read-only tools see no project data.
   private readonly reviewerSessionIds = new Set<string>()
+  private readonly reviewerSessionDirectories = new Map<string, string>()
   // A replaced agent's own session id -> the app-facing id it was adopted under (after a provider
   // switch), so agent-origin events/permissions relabel into the conversation the renderer tracks.
   private readonly agentToAppSessionId = new Map<string, string>()
@@ -1247,7 +1251,7 @@ class AcpRuntime {
     for (const timer of this.cancelTimers.values()) this.clearTimer(timer)
     this.cancelTimers.clear()
     this.permissionBroker.cancelAll()
-    this.reviewerSessionIds.clear()
+    this.clearReviewerSessionState()
     this.promptInFlightSessionIds.clear()
 
     for (const session of this.sessions.values()) {
@@ -2545,11 +2549,11 @@ class AcpRuntime {
     })
 
     try {
-      // Background reviewer sessions run unattended with a restricted toolset: auto-approve their tool
-      // calls instead of routing to the renderer (which never sees these sessions) or throwing "Unknown
-      // ACP session" because they are intentionally not in `this.sessions`. See design §3.
+      // Background reviewer sessions run unattended and are intentionally absent from `this.sessions`.
+      // Approve only their dedicated, scope-bounded MCP. Bash, filesystem, network, other MCP servers,
+      // and unknown tools are rejected without involving the renderer.
       if (this.reviewerSessionIds.has(params.sessionId)) {
-        return this.autoApproveReviewerPermission(params)
+        return this.resolveReviewerPermission(params, mcpServerNames)
       }
 
       if (!this.sessions.has(appSessionId)) {
@@ -2578,26 +2582,53 @@ class AcpRuntime {
     }
   }
 
-  // Selects an allow option for an unattended reviewer tool call. Prefers a one-shot allow (the reviewer
-  // session is ephemeral, so remembering an "always" grant is pointless) and falls back to allow_always,
-  // then the first option. A request with no allow option is cancelled rather than left hanging.
-  private autoApproveReviewerPermission(
-    params: RequestPermissionRequest
+  // Grants only the dedicated reviewer MCP. The old implementation selected the first available option
+  // for every reviewer request, which effectively approved Bash/network/filesystem tools. A denied call
+  // uses a one-shot reject when offered and otherwise cancels; it never falls through to an allow option.
+  private resolveReviewerPermission(
+    params: RequestPermissionRequest,
+    mcpServerNames: readonly string[]
   ): RequestPermissionResponse {
+    const toolName = extractProviderToolName(params.toolCall)
+    const belongsToReviewerMcp = (name: string | null | undefined): boolean =>
+      name != null &&
+      (name === REVIEWER_MCP_SERVER_NAME ||
+        name.startsWith(`${REVIEWER_MCP_SERVER_NAME}_`) ||
+        name.startsWith(`mcp__${REVIEWER_MCP_SERVER_NAME}__`))
+    const isReviewerMcp =
+      mcpServerNames.length === 1 &&
+      mcpServerNames[0] === REVIEWER_MCP_SERVER_NAME &&
+      (belongsToReviewerMcp(params.toolCall.title) || belongsToReviewerMcp(toolName))
+
+    if (!isReviewerMcp) {
+      const rejectOption =
+        params.options.find((option) => option.kind === 'reject_once') ??
+        params.options.find((option) => option.kind === 'reject_always')
+
+      log.warn('rejecting non-reviewer tool requested by background reviewer', {
+        sessionId: params.sessionId,
+        tool: toolName ?? params.toolCall.kind,
+        toolCallId: params.toolCall?.toolCallId
+      })
+
+      return rejectOption
+        ? { outcome: { outcome: 'selected', optionId: rejectOption.optionId } }
+        : { outcome: { outcome: 'cancelled' } }
+    }
+
     const allowOption =
       params.options.find((option) => option.kind === 'allow_once') ??
-      params.options.find((option) => option.kind === 'allow_always') ??
-      params.options[0]
+      params.options.find((option) => option.kind === 'allow_always')
 
     if (!allowOption) {
-      log.warn('reviewer permission request had no allow option; cancelling', {
+      log.warn('reviewer MCP permission request had no allow option; cancelling', {
         sessionId: params.sessionId,
         toolCallId: params.toolCall?.toolCallId
       })
       return { outcome: { outcome: 'cancelled' } }
     }
 
-    log.debug('auto-approving reviewer tool call', {
+    log.debug('approving scope-bounded reviewer MCP tool call', {
       sessionId: params.sessionId,
       toolCallId: params.toolCall?.toolCallId,
       optionId: allowOption.optionId
@@ -2747,7 +2778,7 @@ class AcpRuntime {
     for (const timer of this.cancelTimers.values()) this.clearTimer(timer)
     this.cancelTimers.clear()
     this.permissionBroker.cancelAll()
-    this.reviewerSessionIds.clear()
+    this.clearReviewerSessionState()
     this.sessions.clear()
     this.sessionCwds.clear()
     this.sessionInlineImageBytes.clear()
@@ -2835,11 +2866,32 @@ class AcpRuntime {
     this.callbacks.onStateChanged?.(this.getSnapshot())
   }
 
+  private clearReviewerSessionState(): void {
+    for (const reviewerCwd of this.reviewerSessionDirectories.values()) {
+      this.removeReviewerDirectory(reviewerCwd)
+    }
+    this.reviewerSessionDirectories.clear()
+    this.reviewerSessionIds.clear()
+  }
+
+  private removeReviewerDirectory(reviewerCwd: string): void {
+    try {
+      rmSync(reviewerCwd, { recursive: true, force: true })
+    } catch (error) {
+      log.warn('failed to remove temporary reviewer directory', {
+        reviewerCwd,
+        error: errorMessage(error)
+      })
+    }
+  }
+
   // Creates an ephemeral reviewer ACP session using the existing agent connection. The reviewer
   // session is isolated from main agent sessions: it is not tracked in this.sessions, does not
   // appear in the snapshot, and callers are responsible for disposing it. This allows background
   // review to run in parallel with the main session without affecting the main state machine.
   async buildReviewerSession(request: {
+    // Used only to establish/reuse the shared agent connection. The reviewer session itself runs in an
+    // app-created empty temporary directory so built-in read tools cannot see the audited workspace.
     cwd: string
     mcpServers: McpServer[]
     systemPromptAppend?: string
@@ -2849,28 +2901,88 @@ class AcpRuntime {
     // opencode has no preset so the rubric rides back as a prompt prefix the caller must prepend.
     promptPrefix?: string
   }> {
+    const mcpServerNames = this.mcpServerNamesOf(request.mcpServers)
+    const reviewerMcp = request.mcpServers[0]
+    const reviewerMcpHttp =
+      reviewerMcp && 'type' in reviewerMcp && reviewerMcp.type === 'http' ? reviewerMcp : undefined
+    let reviewerMcpUrl: URL | undefined
+    try {
+      reviewerMcpUrl = reviewerMcpHttp ? new URL(reviewerMcpHttp.url) : undefined
+    } catch {
+      reviewerMcpUrl = undefined
+    }
+    if (
+      request.mcpServers.length !== 1 ||
+      mcpServerNames.length !== 1 ||
+      mcpServerNames[0] !== REVIEWER_MCP_SERVER_NAME ||
+      !reviewerMcpHttp ||
+      reviewerMcpUrl?.protocol !== 'http:' ||
+      reviewerMcpUrl.hostname !== '127.0.0.1'
+    ) {
+      throw new Error(
+        `Reviewer sessions require exactly one loopback HTTP ${REVIEWER_MCP_SERVER_NAME} MCP server.`
+      )
+    }
+
     const connection = await this.ensureConnected(request.cwd)
+    const reviewerCwd = await mkdtemp(join(tmpdir(), 'open-science-reviewer-'))
 
     const setup = this.framework.buildSessionSetup({
       systemPromptAppends: request.systemPromptAppend ? [request.systemPromptAppend] : []
     })
+    const reviewerMeta: Record<string, unknown> = {
+      ...(setup.meta ?? {}),
+      // claude-agent-acp's framework-neutral legacy switch; harmless to agents that ignore it.
+      disableBuiltInTools: true
+    }
+    if (this.framework.id === 'claude-code') {
+      const claudeCode =
+        typeof reviewerMeta.claudeCode === 'object' && reviewerMeta.claudeCode !== null
+          ? (reviewerMeta.claudeCode as Record<string, unknown>)
+          : {}
+      const claudeOptions =
+        typeof claudeCode.options === 'object' && claudeCode.options !== null
+          ? (claudeCode.options as Record<string, unknown>)
+          : {}
+      reviewerMeta.claudeCode = {
+        ...claudeCode,
+        options: { ...claudeOptions, tools: [] }
+      }
+    }
 
-    const session = await connection.agent
-      .buildSession({
-        cwd: request.cwd,
-        mcpServers: request.mcpServers,
-        ...(setup.meta ? { _meta: setup.meta } : {})
-      })
-      .start()
+    try {
+      const session = await connection.agent
+        .buildSession({
+          cwd: reviewerCwd,
+          mcpServers: request.mcpServers,
+          _meta: reviewerMeta
+        })
+        .start()
 
-    // Register so the permission handler recognises this session and auto-approves its tool calls.
-    // The orchestrator must call disposeReviewerSession() to unregister and tear it down.
-    this.reviewerSessionIds.add(session.sessionId)
-    // Record the reviewer's MCP server names too, so its MCP tool calls are audited as MCP (they are
-    // still auto-approved via reviewerSessionIds, but the isMcp classification must stay accurate).
-    this.sessionMcpServerNames.set(session.sessionId, this.mcpServerNamesOf(request.mcpServers))
+      try {
+        // Apply the framework's Ask baseline before prompting. The dedicated reviewer MCP is
+        // then selectively approved by resolveReviewerPermission; all other permission requests fail.
+        const permission = this.framework.mapPermissionProfile('ask', session.modes)
+        if (permission.modeId && permission.modeId !== session.modes?.currentModeId) {
+          await connection.agent.request(acp.methods.agent.session.setMode, {
+            sessionId: session.sessionId,
+            modeId: permission.modeId
+          })
+        }
+      } catch (error) {
+        session.dispose()
+        throw error
+      }
 
-    return { session, promptPrefix: setup.promptPrefix }
+      this.reviewerSessionIds.add(session.sessionId)
+      this.reviewerSessionDirectories.set(session.sessionId, reviewerCwd)
+      this.sessionMcpServerNames.set(session.sessionId, mcpServerNames)
+
+      return { session, promptPrefix: setup.promptPrefix }
+    } catch (error) {
+      this.removeReviewerDirectory(reviewerCwd)
+      throw error
+    }
   }
 
   // Disposes an ephemeral reviewer session and unregisters it from the auto-approve set. Safe to call
@@ -2878,7 +2990,10 @@ class AcpRuntime {
   disposeReviewerSession(session: import('@agentclientprotocol/sdk').ActiveSession): void {
     this.reviewerSessionIds.delete(session.sessionId)
     this.sessionMcpServerNames.delete(session.sessionId)
+    const reviewerCwd = this.reviewerSessionDirectories.get(session.sessionId)
+    this.reviewerSessionDirectories.delete(session.sessionId)
     session.dispose()
+    if (reviewerCwd) this.removeReviewerDirectory(reviewerCwd)
   }
 }
 
