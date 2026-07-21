@@ -615,7 +615,8 @@ export const responsesToChatRequest = (
     ) {
       throw new Error(`Unsupported Responses reasoning summary: ${String(summary)}`)
     }
-    // These known Codex preferences have no portable Chat Completions equivalent and are omitted.
+    // The summary preference has no portable Chat Completions equivalent and is omitted; the
+    // effort is translated below.
   }
   if (body.store !== undefined && body.store !== false && body.store !== null) {
     throw new Error('Stored Responses are not supported by this gateway')
@@ -642,6 +643,25 @@ export const responsesToChatRequest = (
   const toolChoice = hasTools ? requestedToolChoice : undefined
   const stream = body.stream !== false
 
+  // Translate the Responses reasoning effort into the Chat Completions equivalent (validated above).
+  // OpenAI-shaped gateways take `reasoning_effort`; the Codex-only 'xhigh' clamps to 'high', and
+  // 'none' is omitted — Chat Completions has no "reasoning off" switch, so the upstream default
+  // stands. A gateway that doesn't know the parameter rejects it explicitly, which beats the
+  // selected effort silently vanishing.
+  const requestedEffort =
+    body.reasoning && typeof body.reasoning === 'object' && !Array.isArray(body.reasoning)
+      ? (body.reasoning as JsonObject).effort
+      : undefined
+  const chatReasoningEffort =
+    requestedEffort === 'xhigh'
+      ? 'high'
+      : requestedEffort === 'minimal' ||
+          requestedEffort === 'low' ||
+          requestedEffort === 'medium' ||
+          requestedEffort === 'high'
+        ? requestedEffort
+        : undefined
+
   return {
     model: upstreamModel ?? body.model,
     messages: inputToMessages(body, reasoningByCallId, namespacedTools),
@@ -655,6 +675,7 @@ export const responsesToChatRequest = (
     ...(body.max_output_tokens === undefined || body.max_output_tokens === null
       ? {}
       : { max_tokens: body.max_output_tokens }),
+    ...(chatReasoningEffort ? { reasoning_effort: chatReasoningEffort } : {}),
     stream,
     ...(stream ? { stream_options: body.stream_options ?? { include_usage: true } } : {})
   }

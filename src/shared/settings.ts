@@ -205,6 +205,12 @@ export type ReasoningEffort = 'default' | 'low' | 'medium' | 'high' | 'max'
 
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'default'
 
+const REASONING_EFFORTS: readonly ReasoningEffort[] = ['default', 'low', 'medium', 'high', 'max']
+
+// Runtime guard for untrusted values (IPC payloads, settings.json): only the known levels pass.
+export const isReasoningEffort = (value: unknown): value is ReasoningEffort =>
+  typeof value === 'string' && (REASONING_EFFORTS as readonly string[]).includes(value)
+
 // Renderer-facing descriptor for one selectable agent framework (built from the main registry).
 export type AgentFrameworkView = {
   id: AgentFrameworkId

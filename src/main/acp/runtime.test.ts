@@ -103,6 +103,10 @@ const startFakeAgent = (
     supportsResume?: boolean
     modes?: SessionModeState
     configOptions?: SessionConfigOption[]
+    // Option set the set_config_option RESPONSE reports back. Agents rebuild their options when a
+    // switch invalidates them (effort levels are model-dependent), so this can differ from the
+    // session/new set; defaults to echoing configOptions.
+    updatedConfigOptions?: SessionConfigOption[]
     rejectSetConfigOption?: boolean
     // When true, the resume handler rejects with the ACP "Resource not found" (-32002) — the signal a
     // replaced agent (e.g. after a provider switch) gives for a session id it does not hold.
@@ -219,7 +223,7 @@ const startFakeAgent = (
         value: ctx.params.value
       })
 
-      return { configOptions: options.configOptions ?? [] }
+      return { configOptions: options.updatedConfigOptions ?? options.configOptions ?? [] }
     })
     .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
       // Flatten text blocks because these tests only exercise plain prompts.
@@ -4601,7 +4605,8 @@ describe('ACP runtime — session effort', () => {
 
   const createEffortRuntime = (
     process: FakeAgentProcess,
-    sessionEffort: string | undefined
+    sessionEffort: string | undefined,
+    sessionModel?: string
   ): AcpRuntime =>
     new AcpRuntime({
       appVersion: '0.1.0',
@@ -4610,6 +4615,7 @@ describe('ACP runtime — session effort', () => {
         framework: { ...opencodeFramework, spawn: () => asAgentProcess(process) },
         executablePath: '/bin/opencode',
         env: {},
+        sessionModel,
         sessionEffort
       })
     })
@@ -4652,6 +4658,36 @@ describe('ACP runtime — session effort', () => {
 
     // 'max' is not advertised; the model's top level takes its place instead of a no-op.
     expect(fakeAgent.configChanges).toEqual([
+      { sessionId: 's-effort', configId: 'effort', value: 'medium' }
+    ])
+  })
+
+  it('resolves effort against the option set reported after a model switch', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['s-effort'], {
+      configOptions: [
+        {
+          type: 'select',
+          id: 'model',
+          name: 'Model',
+          category: 'model',
+          currentValue: 'model-a',
+          options: [{ value: 'model-b', name: 'Model B' }]
+        } as SessionConfigOption,
+        thoughtLevelOption(['low', 'high'])
+      ],
+      // Effort levels are model-dependent: model-b tops out at 'medium', not the 'high' the
+      // session originally advertised.
+      updatedConfigOptions: [thoughtLevelOption(['low', 'medium'])]
+    })
+    const runtime = createEffortRuntime(process, 'max', 'model-b')
+
+    await runtime.createSession({ cwd: '/workspace' })
+
+    // Clamping against the pre-switch set would apply 'high' — invalid for model-b. The post-switch
+    // set yields 'medium' instead.
+    expect(fakeAgent.configChanges).toEqual([
+      { sessionId: 's-effort', configId: 'model', value: 'model-b' },
       { sessionId: 's-effort', configId: 'effort', value: 'medium' }
     ])
   })

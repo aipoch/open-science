@@ -508,6 +508,32 @@ describe('Responses-compatible bridge conversion', () => {
     ).toMatchObject({ model: 'deepseek-v4-flash' })
   })
 
+  it('translates the reasoning effort into the Chat Completions parameter', () => {
+    expect(
+      responsesToChatRequest({ model: 'model-a', input: 'hi', reasoning: { effort: 'high' } })
+    ).toMatchObject({ reasoning_effort: 'high' })
+    expect(
+      responsesToChatRequest({ model: 'model-a', input: 'hi', reasoning: { effort: 'low' } })
+    ).toMatchObject({ reasoning_effort: 'low' })
+  })
+
+  it('clamps the Codex-only xhigh effort to high for Chat Completions', () => {
+    expect(
+      responsesToChatRequest({ model: 'model-a', input: 'hi', reasoning: { effort: 'xhigh' } })
+    ).toMatchObject({ reasoning_effort: 'high' })
+  })
+
+  it('omits the reasoning effort when there is nothing portable to send', () => {
+    // 'none' has no Chat Completions equivalent — the upstream default stands. No reasoning block
+    // means nothing is sent either.
+    expect(
+      responsesToChatRequest({ model: 'model-a', input: 'hi', reasoning: { effort: 'none' } })
+    ).not.toHaveProperty('reasoning_effort')
+    expect(responsesToChatRequest({ model: 'model-a', input: 'hi' })).not.toHaveProperty(
+      'reasoning_effort'
+    )
+  })
+
   it('surfaces a nested upstream error instead of hiding it behind HTTP status', () => {
     expect(
       upstreamErrorMessage('{"error":{"message":"Model deepseek-v4-flash does not exist"}}', 400)
@@ -577,6 +603,57 @@ describe('Responses-compatible bridge conversion', () => {
       expect(output).toContain('response.output_text.delta')
       expect(output).toContain('bridge-ok')
       expect(output).toContain('response.completed')
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('forwards the reasoning effort to the upstream gateway', async () => {
+    let upstreamRequest: Record<string, unknown> | undefined
+    const upstreamFetch = vi.fn(
+      async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        upstreamRequest = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return new Response(
+          [
+            'data: ' +
+              JSON.stringify({
+                id: 'chat-effort-1',
+                model: 'model-a',
+                choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' } }]
+              }),
+            '',
+            'data: [DONE]',
+            ''
+          ].join('\n'),
+          { headers: { 'content-type': 'text/event-stream' } }
+        )
+      }
+    )
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', key: 'upstream-key' },
+      upstreamFetch
+    )
+    const connection = await bridge.start()
+
+    try {
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          input: 'hi',
+          reasoning: { effort: 'xhigh' },
+          stream: true
+        })
+      })
+      await response.text()
+
+      // The Codex-only 'xhigh' reaches the gateway as 'high', not dropped.
+      expect(response.status).toBe(200)
+      expect(upstreamRequest).toMatchObject({ reasoning_effort: 'high' })
     } finally {
       await bridge.close()
     }

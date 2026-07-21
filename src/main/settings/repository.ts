@@ -15,7 +15,8 @@ import {
   SETTINGS_FILE_VERSION,
   codexSubscriptionProviderIdentity,
   isCodexSubscriptionProvider,
-  isCodexSubscriptionProviderId
+  isCodexSubscriptionProviderId,
+  isReasoningEffort
 } from '../../shared/settings'
 import { isOfficialVendorId } from '../../shared/provider-registry'
 import type { PackageMirror } from '../../shared/mirror'
@@ -431,13 +432,7 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   // Reasoning-effort preference; only the known levels survive so a bad value can't leak through.
   const reasoningEffort = asString(value.reasoningEffort)
 
-  if (
-    reasoningEffort === 'default' ||
-    reasoningEffort === 'low' ||
-    reasoningEffort === 'medium' ||
-    reasoningEffort === 'high' ||
-    reasoningEffort === 'max'
-  ) {
+  if (isReasoningEffort(reasoningEffort)) {
     settings.reasoningEffort = reasoningEffort
   }
 

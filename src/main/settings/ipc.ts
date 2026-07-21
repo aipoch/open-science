@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 
 import {
   CODEX_SUBSCRIPTION_PROVIDER_ID,
+  isReasoningEffort,
   type CreateSkillRequest,
   type DeleteProviderRequest,
   type DeleteSkillRequest,
@@ -159,6 +160,12 @@ const registerSettingsIpcHandlers = ({
   ipcMain.handle(
     'settings:set-reasoning-effort',
     async (_event, request: SetReasoningEffortRequest) => {
+      // Renderer payloads are untyped at runtime: reject anything outside the known levels instead
+      // of persisting a value the agent-mapping layers can't interpret.
+      if (!isReasoningEffort(request?.effort)) {
+        throw new Error(`Unknown reasoning effort: ${String(request?.effort)}`)
+      }
+
       log.info('set reasoning effort requested', { effort: request.effort })
       const snapshot = await service.setReasoningEffort(request.effort)
 

@@ -529,6 +529,26 @@ describe('settings IPC handlers', () => {
     expect(result).toBe(snapshot)
   })
 
+  it('rejects an unknown reasoning effort without touching the service or the agent', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const onActiveProviderChanged = vi.fn()
+    registerSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+
+    // Renderer payloads are untyped at runtime: garbage must fail at the boundary, not persist.
+    await expect(invoke('settings:set-reasoning-effort', { effort: 'ultra' })).rejects.toThrow(
+      'Unknown reasoning effort'
+    )
+    await expect(invoke('settings:set-reasoning-effort', { effort: 3 })).rejects.toThrow(
+      'Unknown reasoning effort'
+    )
+    await expect(invoke('settings:set-reasoning-effort', {})).rejects.toThrow(
+      'Unknown reasoning effort'
+    )
+    expect(service.setReasoningEffort).not.toHaveBeenCalled()
+    expect(onActiveProviderChanged).not.toHaveBeenCalled()
+  })
+
   it('surfaces a service error thrown by install-opencode', async () => {
     handlers.clear()
     const service = createFakeService()

@@ -539,9 +539,12 @@ class AcpRuntime {
   // frameworks that select the model over the protocol (opencode). No-op for env-driven frameworks
   // (pendingSessionModel undefined). Optional selections keep the agent default when no matching option
   // exists or application fails; required selections fail visibly rather than silently running another
-  // model.
-  private async applySessionModel(session: ActiveSession): Promise<void> {
-    if (!this.pendingSessionModel || !this.connection) return
+  // model. Returns the agent's post-application configOptions when it reports them — effort levels are
+  // model-dependent, so callers resolving further options must use the set from AFTER the model switch.
+  private async applySessionModel(
+    session: ActiveSession
+  ): Promise<SessionConfigOption[] | null | undefined> {
+    if (!this.pendingSessionModel || !this.connection) return undefined
 
     const configOptions = (
       session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } }
@@ -556,16 +559,20 @@ class AcpRuntime {
           `The selected model "${this.pendingSessionModel}" is not available for this Codex account.`
         )
       }
-      return
+      return undefined
     }
 
     try {
-      await this.connection.agent.request(acp.methods.agent.session.setConfigOption, {
-        sessionId: session.sessionId,
-        configId: selection.configId,
-        value: selection.value
-      })
+      const response = (await this.connection.agent.request(
+        acp.methods.agent.session.setConfigOption,
+        {
+          sessionId: session.sessionId,
+          configId: selection.configId,
+          value: selection.value
+        }
+      )) as { configOptions?: SessionConfigOption[] | null }
       log.info('session model applied', { sessionId: session.sessionId, model: selection.value })
+      return response?.configOptions ?? configOptions
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       log.warn('set session model failed', {
@@ -578,6 +585,7 @@ class AcpRuntime {
           `The selected model "${this.pendingSessionModel}" could not be applied: ${message}`
         )
       }
+      return undefined
     }
   }
 
@@ -585,14 +593,20 @@ class AcpRuntime {
   // thought_level configOption. No-op when no explicit level is set (pendingSessionEffort undefined —
   // the agent then keeps its own default) or when the agent advertises no effort option. The desired
   // level is resolved to the closest advertised one, so a level the model lacks still lands on its
-  // nearest rung. Best-effort: a failure is logged, never fatal to the session.
-  private async applySessionEffort(session: ActiveSession): Promise<void> {
+  // nearest rung. `configOptions` should be the agent's latest option set (e.g. returned by a model
+  // switch just before); falls back to the session's original response. Best-effort: a failure is
+  // logged, never fatal to the session.
+  private async applySessionEffort(
+    session: ActiveSession,
+    configOptions?: SessionConfigOption[] | null
+  ): Promise<void> {
     if (!this.pendingSessionEffort || !this.connection) return
 
-    const configOptions = (
-      session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } }
-    ).newSessionResponse?.configOptions
-    const selection = resolveSessionEffortOption(configOptions, this.pendingSessionEffort)
+    const effectiveOptions =
+      configOptions ??
+      (session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } })
+        .newSessionResponse?.configOptions
+    const selection = resolveSessionEffortOption(effectiveOptions, this.pendingSessionEffort)
 
     if (!selection) {
       log.info('no session effort option to apply', { desiredEffort: this.pendingSessionEffort })
@@ -890,8 +904,8 @@ class AcpRuntime {
       }
 
       log.info('createSession: applySessionModel', { sessionId: session.sessionId })
-      await this.applySessionModel(session)
-      await this.applySessionEffort(session)
+      const updatedConfigOptions = await this.applySessionModel(session)
+      await this.applySessionEffort(session, updatedConfigOptions)
 
       this.sessions.set(session.sessionId, session)
       this.sessionCwds.set(session.sessionId, sessionCwd)
@@ -1137,8 +1151,8 @@ class AcpRuntime {
       throw error
     }
 
-    await this.applySessionModel(session)
-    await this.applySessionEffort(session)
+    const updatedConfigOptions = await this.applySessionModel(session)
+    await this.applySessionEffort(session, updatedConfigOptions)
 
     this.sessions.set(request.sessionId, session)
     this.sessionCwds.set(request.sessionId, sessionCwd)
@@ -1201,8 +1215,8 @@ class AcpRuntime {
       throw error
     }
 
-    await this.applySessionModel(adopted)
-    await this.applySessionEffort(adopted)
+    const updatedConfigOptions = await this.applySessionModel(adopted)
+    await this.applySessionEffort(adopted, updatedConfigOptions)
     this.adoptSession(
       request.sessionId,
       adopted,
