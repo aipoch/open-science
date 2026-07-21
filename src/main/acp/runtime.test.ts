@@ -4848,6 +4848,54 @@ describe('ACP runtime — session effort', () => {
     expect(fakeAgent.configChanges).toEqual([])
   })
 
+  it('falls back to a reconnect when no Codex session advertises an effort option', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['s-codex'], {
+      // An adapter build that surfaces no thought_level option at all.
+      configOptions: [],
+      modes: {
+        currentModeId: 'agent',
+        availableModes: ['read-only', 'agent'].map((id) => ({ id, name: id }))
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codex-acp',
+        env: {}
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    const applied = await runtime.applyReasoningEffortChange('high')
+
+    // Codex bakes effort into its spawn config, so only a reconnect delivers it here — the UI must
+    // not report a level the running session never received.
+    expect(applied).toBe(false)
+    expect(fakeAgent.configChanges).toEqual([])
+  })
+
+  it('reports success without a reconnect when a Claude session simply lacks effort support', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s-claude'], { configOptions: [] })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/claude',
+        env: {}
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    // Claude has no config channel to fall back to: the model doesn't support effort, and a
+    // respawn can't change that — report success rather than restarting for nothing.
+    expect(await runtime.applyReasoningEffortChange('high')).toBe(true)
+  })
+
   it('swallows a set_config_option rejection instead of failing the session', async () => {
     warnLogSpy.mockClear()
     const process = new FakeAgentProcess()

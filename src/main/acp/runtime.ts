@@ -647,6 +647,7 @@ class AcpRuntime {
     if (!this.connection) return true
 
     let allApplied = true
+    let appliedToAny = false
 
     for (const session of this.sessions.values()) {
       const configOptions =
@@ -663,8 +664,18 @@ class AcpRuntime {
         continue
       }
 
-      if (!(await this.sendSessionEffort(session, selection))) allApplied = false
+      if (!(await this.sendSessionEffort(session, selection))) {
+        allApplied = false
+      } else {
+        appliedToAny = true
+      }
     }
+
+    // No open session could take the level over ACP. For Claude there is no other channel — the
+    // model simply doesn't support effort, and a respawn can't change that. Codex also bakes the
+    // level into its spawn config (model_reasoning_effort), so a reconnect DOES deliver it: report
+    // failure rather than leaving the UI showing a level the running session never received.
+    if (!appliedToAny && this.sessions.size > 0 && this.framework.id === 'codex') return false
 
     return allApplied
   }

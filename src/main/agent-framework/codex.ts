@@ -193,7 +193,9 @@ export const createCodexFramework = ({
   supportsSkills: true,
   acceptsStdioMcp: true,
   // codex-acp advertises a thought_level effort option and honors set_config_option on live sessions
-  // (verified live), so an effort change does not need a respawn.
+  // (verified live: a session accepted effort 'high' over ACP). If a future adapter stops
+  // advertising it, the runtime's no-applied-session guard falls back to a reconnect so the baked
+  // model_reasoning_effort config takes over.
   supportsLiveEffortChange: true,
   supportedApiTypes: ['responses'],
 
