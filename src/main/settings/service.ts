@@ -2074,7 +2074,13 @@ class SettingsService {
         : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
     const framework = getAgentFramework(frameworkId)
     // 'default' means "don't override": nothing is sent over ACP or framework config, so the agent
-    // keeps its own default effort.
+    // keeps its own default effort. A concrete level is delivered through two channels deliberately
+    // (defense-in-depth, mirroring how sessionModel reaches opencode): the framework's own config
+    // (Codex model_reasoning_effort, opencode model options) covers agents that ignore the protocol,
+    // while sessionEffort drives the ACP thought_level configOption — Claude Code's only channel —
+    // and, being applied per session after spawn, wins over the baked config when both fire. The
+    // channels clamp 'max' independently (Codex config → xhigh, opencode config → high, ACP → the
+    // nearest advertised rung), which is accepted: each stays within its own supported set.
     const sessionEffort =
       settings.reasoningEffort && settings.reasoningEffort !== DEFAULT_REASONING_EFFORT
         ? settings.reasoningEffort
