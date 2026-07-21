@@ -32,6 +32,7 @@ import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import type { SettingsService } from '../settings/service'
 import type { UploadRepository } from '../uploads/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
+import { withDataRootWrite } from '../storage/migration-state'
 
 type AcpIpcArtifacts = {
   repository: ArtifactRepository
@@ -135,13 +136,15 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntime => {
       return runtime.createSession({ ...request, cwd: explicitCwd })
     }
 
-    const managedCwd = await createManagedSessionWorkspace()
-    try {
-      return await runtime.createSession({ ...request, cwd: managedCwd })
-    } catch (error) {
-      await rm(managedCwd, { recursive: true, force: true }).catch(() => undefined)
-      throw error
-    }
+    return withDataRootWrite(async () => {
+      const managedCwd = await createManagedSessionWorkspace()
+      try {
+        return await runtime.createSession({ ...request, cwd: managedCwd })
+      } catch (error) {
+        await rm(managedCwd, { recursive: true, force: true }).catch(() => undefined)
+        throw error
+      }
+    })
   })
   ipcMain.handle('acp:resume-session', async (_event, request: AcpResumeSessionRequest) =>
     runtime.resumeSession(request)

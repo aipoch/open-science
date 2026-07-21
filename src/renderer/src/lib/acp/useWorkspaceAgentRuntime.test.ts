@@ -318,6 +318,32 @@ describe('workspace agent message sending', () => {
     expect(runtime.createSession).toHaveBeenCalledWith(undefined, 'project-1', 'ask')
   })
 
+  it('does not persist the runtime home when managed session creation omits cwd', async () => {
+    const runtime = {
+      state: { ...createSnapshot(), cwd: 'C:\\Users\\example' },
+      createSession: vi.fn().mockResolvedValue({ sessionId: 'transport-session-1' }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    const sent = await sendWorkspaceMessage(runtime, {
+      text: 'Clone a repository',
+      projectId: 'project-1',
+      projectName: 'project-1'
+    })
+    await flushRuntimeTasks()
+
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      id: sent?.sessionId,
+      isPending: true,
+      cwd: '',
+      status: 'error',
+      error: 'Agent session did not return a workspace.'
+    })
+  })
+
   it('sends attachments when creating a new runtime session', async () => {
     const attachment = createAttachment()
     const finalizedAttachment = createAttachment({

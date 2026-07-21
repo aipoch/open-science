@@ -276,10 +276,18 @@ const startPendingSessionPrompt = (
       return
     }
 
+    const sessionCwd = createdSession.cwd ?? cwd
+    if (!sessionCwd) {
+      useSessionStore
+        .getState()
+        .failRun(pending.sessionId, 'Agent session did not return a workspace.')
+      return
+    }
+
     const bound = useSessionStore.getState().bindPendingSession({
       pendingSessionId: pending.sessionId,
       sessionId: runtimeSessionId,
-      cwd: createdSession.cwd ?? cwd ?? runtime.state.cwd,
+      cwd: sessionCwd,
       agentFrameworkId: createdSession.frameworkId
     })
 
