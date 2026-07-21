@@ -9,7 +9,7 @@ import type {
 import { createCloseConfirm, type CloseConfirmDeps } from './window-close-confirm'
 
 const session: ActiveSessionInfo = {
-  projectName: 'my-analysis',
+  projectId: 'my-analysis',
   sessionId: 's1',
   kind: 'agent'
 }

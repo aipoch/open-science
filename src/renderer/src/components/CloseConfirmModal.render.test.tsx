@@ -92,7 +92,7 @@ describe('CloseConfirmModal', () => {
         requestId: 'r1',
         variant: 'close-to-tray',
         // main sends a project *id* here; the modal must resolve the human name instead.
-        sessions: [{ projectName: 'cmrqcvg5i0000vo387wdhdudj', sessionId: 's1', kind: 'agent' }]
+        sessions: [{ projectId: 'cmrqcvg5i0000vo387wdhdudj', sessionId: 's1', kind: 'agent' }]
       })
     })
     expect(sendResponse).toHaveBeenCalledWith({ requestId: 'r1', ack: true })
@@ -117,7 +117,7 @@ describe('CloseConfirmModal', () => {
       emit({
         requestId: 'r4',
         variant: 'quit',
-        sessions: [{ projectName: 'p1', sessionId: 's1', kind: 'agent' }]
+        sessions: [{ projectId: 'p1', sessionId: 's1', kind: 'agent' }]
       })
     })
     const row = await findButtonByName(/My Analysis — Fix data loader/)
@@ -142,7 +142,7 @@ describe('CloseConfirmModal', () => {
       emit({
         requestId: 'r3',
         variant: 'quit',
-        sessions: [{ projectName: 'p', sessionId: 'x', kind: 'notebook' }]
+        sessions: [{ projectId: 'p', sessionId: 'x', kind: 'notebook' }]
       })
     })
     const quitButton = await findButtonByName(/^quit$/i)

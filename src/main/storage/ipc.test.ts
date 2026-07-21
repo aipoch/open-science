@@ -305,8 +305,8 @@ describe('storage IPC handlers', () => {
     registerStorageIpcHandlers(deps)
 
     await expect(invoke('storage:detect-active')).resolves.toEqual([
-      { projectName: 'p', sessionId: 'agent-1', kind: 'agent' },
-      { projectName: 'p', sessionId: 'nb-1', kind: 'notebook' }
+      { projectId: 'p', sessionId: 'agent-1', kind: 'agent' },
+      { projectId: 'p', sessionId: 'nb-1', kind: 'notebook' }
     ])
   })
 
@@ -328,7 +328,7 @@ describe('storage IPC handlers', () => {
     registerStorageIpcHandlers(deps)
 
     await expect(invoke('storage:detect-active')).resolves.toEqual([
-      { projectName: 'p', sessionId: 'nb-1', kind: 'notebook' }
+      { projectId: 'p', sessionId: 'nb-1', kind: 'notebook' }
     ])
   })
 

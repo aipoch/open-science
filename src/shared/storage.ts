@@ -28,7 +28,9 @@ export type StorageInfo = {
 }
 
 export type ActiveSessionInfo = {
-  projectName: string
+  // The owning project's id (the artifact/notebook storage key). main doesn't hold the human
+  // project name or session title — the renderer maps this id + sessionId to display strings.
+  projectId: string
   sessionId: string
   kind: 'agent' | 'notebook'
   title?: string

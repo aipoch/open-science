@@ -348,7 +348,7 @@ describe('installAppLifecycle', () => {
   })
 
   it('resolveCloseAction resolves via confirmClose("close-to-tray", sessions)', async () => {
-    const sessions: ActiveSessionInfo[] = [{ projectName: 'demo', sessionId: 's1', kind: 'agent' }]
+    const sessions: ActiveSessionInfo[] = [{ projectId: 'demo', sessionId: 's1', kind: 'agent' }]
     const confirmClose = vi.fn(async (): Promise<CloseConfirmChoice> => 'minimize')
     const { closeOpts } = setup({ detectActiveSessions: () => sessions, confirmClose })
 
@@ -387,9 +387,7 @@ describe('installAppLifecycle', () => {
   })
 
   it('before-quit with active work + cancel keeps the app alive (no shutdown, no exit)', async () => {
-    const sessions: ActiveSessionInfo[] = [
-      { projectName: 'demo', sessionId: 's1', kind: 'notebook' }
-    ]
+    const sessions: ActiveSessionInfo[] = [{ projectId: 'demo', sessionId: 's1', kind: 'notebook' }]
     const confirmClose = vi.fn(async (): Promise<CloseConfirmChoice> => 'cancel')
     const { app, shutdownBackends, quit } = setup({
       detectActiveSessions: () => sessions,
@@ -479,7 +477,7 @@ describe('installAppLifecycle', () => {
     // fire a second confirmClose('close-to-tray', ...) that overwrites the renderer's single request slot,
     // stranding the quit-confirm promise and permanently pinning confirmInFlight.
     let resolveConfirm: ((choice: CloseConfirmChoice) => void) | undefined
-    const sessions: ActiveSessionInfo[] = [{ projectName: 'demo', sessionId: 's1', kind: 'agent' }]
+    const sessions: ActiveSessionInfo[] = [{ projectId: 'demo', sessionId: 's1', kind: 'agent' }]
     const confirmClose = vi.fn(
       () =>
         new Promise<CloseConfirmChoice>((resolve) => {

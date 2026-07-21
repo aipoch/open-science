@@ -2,9 +2,8 @@ import { AlertDialog } from 'radix-ui'
 import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { resolveActiveSessionDisplay } from '@/lib/active-session-display'
 import { useNavigationStore } from '@/stores/navigation-store'
-import { useProjectStore } from '@/stores/project-store'
-import { useSessionStore } from '@/stores/session-store'
 import type { ActiveSessionInfo } from '../../../shared/storage'
 import type {
   CloseConfirmChoice,
@@ -18,39 +17,11 @@ type ActiveRequest = {
   sessions: ActiveSessionInfo[]
 }
 
-type ResolvedRow = {
-  // The owning project's display name (not its id), resolved via the session's projectId.
-  project: string
-  title: string
-  // Present only when the session resolves to a project, so the row can navigate into it.
-  projectId?: string
-}
-
-const basename = (path: string): string => path.split(/[\\/]/).filter(Boolean).pop() ?? path
-
-// Cap each label so one long project name or title can't blow out the row; the button's title
+// Cap each label so one long project name or title can't blow out the row; the li's title
 // attribute still carries the full text on hover.
 const MAX_LABEL_CHARS = 28
 const truncate = (text: string): string =>
   text.length > MAX_LABEL_CHARS ? `${text.slice(0, MAX_LABEL_CHARS - 1).trimEnd()}…` : text
-
-// Resolves a running-session row to its display fields. main only knows the session's id + a stored
-// project *id*, so the human project NAME and title are looked up here from the renderer stores;
-// projectId is returned so the row can open that session. Falls back progressively so a row is never
-// blank: project name -> cwd basename -> whatever main sent.
-const resolveRow = (info: ActiveSessionInfo): ResolvedRow => {
-  const session = useSessionStore.getState().sessions.find((entry) => entry.id === info.sessionId)
-  const projectId = session?.projectId
-  const projectName = projectId
-    ? useProjectStore.getState().projects.find((project) => project.id === projectId)?.name
-    : undefined
-  const cwdName = session?.cwd ? basename(session.cwd) : undefined
-  return {
-    project: projectName ?? cwdName ?? info.projectName,
-    title: session?.title?.trim() || info.title?.trim() || info.sessionId,
-    projectId
-  }
-}
 
 // Subscribes to main's close/quit confirmation requests, lists running work (enriching each
 // session's title from the session store), and replies with the user's choice. Mounted once at
@@ -101,7 +72,7 @@ export const CloseConfirmModal = (): React.JSX.Element | null => {
           {hasSessions ? (
             <ul className="mt-3 space-y-1 text-xs">
               {request.sessions.map((session) => {
-                const row = resolveRow(session)
+                const row = resolveActiveSessionDisplay(session)
                 // Clicking a row cancels the close and jumps to that session so the user can check on
                 // it. Only navigable when we resolved its project (openSession needs the project id).
                 const openThisSession = (): void => {
