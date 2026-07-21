@@ -1799,9 +1799,10 @@ describe('checkEnvironment', () => {
     expect(agentRows.map((row) => row.label)).toEqual([
       'Claude Code runtime',
       'OpenCode runtime',
-      'Codex runtime'
+      'Codex native CLI',
+      'Codex ACP adapter'
     ])
-    expect(agentRows.map((row) => row.status)).toEqual(['passed', 'passed', 'warning'])
+    expect(agentRows.map((row) => row.status)).toEqual(['passed', 'passed', 'warning', 'warning'])
     expect(result.agentFrameworkId).toBe('opencode')
     expect(result.runtime).toEqual({
       found: true,
@@ -1835,7 +1836,8 @@ describe('checkEnvironment', () => {
     expect(agentRows.map((row) => `${row.label}:${row.status}`)).toEqual([
       'Claude Code runtime:passed',
       'OpenCode runtime:failed',
-      'Codex runtime:warning'
+      'Codex native CLI:warning',
+      'Codex ACP adapter:warning'
     ])
     // Selection drives readiness: the missing selected runtime blocks Continue even though Claude runs.
     expect(result.agentFrameworkId).toBe('opencode')

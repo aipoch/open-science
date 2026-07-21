@@ -101,6 +101,20 @@ export type ClaudeDetectResult = {
   found: boolean
   path?: string
   version?: string
+  // Diagnostic detail for when detection fails but partial components are present. Used to provide
+  // more accurate error messages (e.g., "Codex ACP adapter missing" vs "Codex not installed").
+  diagnostic?: string
+  // For Codex: separate detection state of native CLI and ACP adapter components. When present,
+  // the environment check can display distinct status for each component rather than collapsing
+  // them into a single "runtime" row. Omitted for Claude/OpenCode (single-binary runtimes).
+  codexComponents?: {
+    nativeCliFound: boolean
+    nativeCliPath?: string
+    nativeCliVersion?: string
+    adapterFound: boolean
+    adapterPath?: string
+    adapterVersion?: string
+  }
 }
 
 // A recorded failed validation, kept so the list can flag a provider as unverified and say why

@@ -342,3 +342,180 @@ describe('codex-detect: real ACP initialize smoke', () => {
     expect(result).toBeUndefined()
   })
 })
+
+describe('detectNativeCodex', () => {
+  it('detects native Codex on macOS in the ChatGPT.app bundle', async () => {
+    const { detectNativeCodex } = await import('./codex-detect')
+    const result = await detectNativeCodex({
+      platform: 'darwin',
+      env: { PATH: '/usr/bin' },
+      getCodexVersion: (path) =>
+        path === '/Applications/ChatGPT.app/Contents/Resources/codex'
+          ? Promise.resolve('codex-cli 0.144.2')
+          : Promise.resolve(undefined)
+    })
+
+    expect(result).toEqual({
+      path: '/Applications/ChatGPT.app/Contents/Resources/codex',
+      version: '0.144.2'
+    })
+  })
+
+  it('detects native Codex on Windows in LocalAppData', async () => {
+    const { detectNativeCodex } = await import('./codex-detect')
+    const result = await detectNativeCodex({
+      platform: 'win32',
+      env: {
+        PATH: 'C:\\Windows\\System32',
+        LOCALAPPDATA: 'C:\\Users\\User\\AppData\\Local'
+      },
+      getCodexVersion: (path) =>
+        path === win32.join('C:\\Users\\User\\AppData\\Local', 'Programs', 'ChatGPT', 'codex.exe')
+          ? Promise.resolve('codex-cli 0.144.2')
+          : Promise.resolve(undefined)
+    })
+
+    expect(result).toEqual({
+      path: 'C:\\Users\\User\\AppData\\Local\\Programs\\ChatGPT\\codex.exe',
+      version: '0.144.2'
+    })
+  })
+
+  it('detects native Codex on PATH', async () => {
+    const { detectNativeCodex } = await import('./codex-detect')
+    const result = await detectNativeCodex({
+      platform: 'linux',
+      env: { PATH: '/usr/bin:/usr/local/bin' },
+      getCodexVersion: (path) =>
+        path === '/usr/local/bin/codex'
+          ? Promise.resolve('codex-cli 0.144.2')
+          : Promise.resolve(undefined)
+    })
+
+    expect(result).toEqual({
+      path: '/usr/local/bin/codex',
+      version: '0.144.2'
+    })
+  })
+
+  it('returns undefined when no native Codex is found', async () => {
+    const { detectNativeCodex } = await import('./codex-detect')
+    const result = await detectNativeCodex({
+      platform: 'darwin',
+      env: { PATH: '/usr/bin' },
+      getCodexVersion: () => Promise.resolve(undefined)
+    })
+
+    expect(result).toBeUndefined()
+  })
+})
+
+describe('detectCodexComponents', () => {
+  it('reports both components found when adapter passes smoke test', async () => {
+    const { detectCodexComponents } = await import('./codex-detect')
+    const result = await detectCodexComponents({
+      platform: 'darwin',
+      env: { PATH: '/usr/bin' },
+      homePath: '/Users/test',
+      isRunnable: (path) =>
+        Promise.resolve(
+          path === '/usr/local/bin/codex-acp' ||
+            path === '/Applications/ChatGPT.app/Contents/Resources/codex'
+        ),
+      getAdapterVersion: (path) =>
+        path === '/usr/local/bin/codex-acp'
+          ? Promise.resolve('codex-acp 1.0.0')
+          : Promise.resolve(undefined),
+      getCodexVersion: (path) =>
+        path === '/Applications/ChatGPT.app/Contents/Resources/codex'
+          ? Promise.resolve('codex-cli 0.144.2')
+          : Promise.resolve(undefined),
+      smokeInitialize: () => Promise.resolve(true),
+      resolveNpmBinDirs: () => Promise.resolve([])
+    })
+
+    expect(result).toMatchObject({
+      nativeCliFound: true,
+      nativeCliPath: '/Applications/ChatGPT.app/Contents/Resources/codex',
+      nativeCliVersion: '0.144.2',
+      adapterFound: true,
+      adapterPath: '/usr/local/bin/codex-acp',
+      adapterVersion: '1.0.0',
+      adapterFailureReason: undefined
+    })
+  })
+
+  it('reports native found but adapter missing when no adapter exists', async () => {
+    const { detectCodexComponents } = await import('./codex-detect')
+    const result = await detectCodexComponents({
+      platform: 'darwin',
+      env: { PATH: '/usr/bin' },
+      homePath: '/Users/test',
+      isRunnable: (path) =>
+        Promise.resolve(path === '/Applications/ChatGPT.app/Contents/Resources/codex'),
+      getAdapterVersion: () => Promise.resolve(undefined),
+      getCodexVersion: (path) =>
+        path === '/Applications/ChatGPT.app/Contents/Resources/codex'
+          ? Promise.resolve('codex-cli 0.144.2')
+          : Promise.resolve(undefined),
+      smokeInitialize: () => Promise.resolve(false),
+      resolveNpmBinDirs: () => Promise.resolve([])
+    })
+
+    expect(result).toMatchObject({
+      nativeCliFound: true,
+      nativeCliPath: '/Applications/ChatGPT.app/Contents/Resources/codex',
+      nativeCliVersion: '0.144.2',
+      adapterFound: false,
+      adapterPath: undefined,
+      adapterVersion: undefined
+    })
+  })
+
+  it('reports adapter smoke-test failure when version succeeds but initialization fails', async () => {
+    const { detectCodexComponents } = await import('./codex-detect')
+    const result = await detectCodexComponents({
+      platform: 'darwin',
+      env: { PATH: '/usr/bin' },
+      homePath: '/Users/test',
+      isRunnable: (path) => Promise.resolve(path === '/usr/local/bin/codex-acp'),
+      getAdapterVersion: (path) =>
+        path === '/usr/local/bin/codex-acp'
+          ? Promise.resolve('codex-acp 1.0.0')
+          : Promise.resolve(undefined),
+      getCodexVersion: () => Promise.resolve(undefined),
+      smokeInitialize: () => Promise.resolve(false),
+      resolveNpmBinDirs: () => Promise.resolve([])
+    })
+
+    expect(result).toMatchObject({
+      nativeCliFound: false,
+      adapterFound: true,
+      adapterPath: '/usr/local/bin/codex-acp',
+      adapterVersion: '1.0.0',
+      adapterFailureReason: 'smoke-test-failed'
+    })
+  })
+
+  it('reports version-probe failure when adapter exists but version check fails', async () => {
+    const { detectCodexComponents } = await import('./codex-detect')
+    const result = await detectCodexComponents({
+      platform: 'darwin',
+      env: { PATH: '/usr/bin' },
+      homePath: '/Users/test',
+      isRunnable: (path) => Promise.resolve(path === '/usr/local/bin/codex-acp'),
+      getAdapterVersion: () => Promise.resolve(undefined), // Version probe fails
+      getCodexVersion: () => Promise.resolve(undefined),
+      smokeInitialize: () => Promise.resolve(false),
+      resolveNpmBinDirs: () => Promise.resolve([])
+    })
+
+    expect(result).toMatchObject({
+      nativeCliFound: false,
+      adapterFound: true,
+      adapterPath: '/usr/local/bin/codex-acp',
+      adapterVersion: undefined,
+      adapterFailureReason: 'version-probe-failed'
+    })
+  })
+})

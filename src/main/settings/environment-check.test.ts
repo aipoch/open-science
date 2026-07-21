@@ -296,4 +296,169 @@ describe('runEnvironmentCheck', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  it('uses diagnostic message when runtime detection provides one', async () => {
+    const diagnosticMessage =
+      'Native Codex 0.144.2 is installed at /Applications/ChatGPT.app/Contents/Resources/codex, but the Codex ACP adapter required by Open Science is missing.'
+
+    const result = await runEnvironmentCheck({
+      storageRoot: '/data',
+      agentFrameworkId: 'codex',
+      frameworks: [
+        {
+          id: 'codex',
+          label: 'Codex',
+          runtime: { found: false, diagnostic: diagnosticMessage }
+        }
+      ],
+      encryptionAvailable: true,
+      deps: baseDeps()
+    })
+
+    const codexCheck = result.checks.find(
+      (check) => check.id === 'agent' && check.label === 'Codex runtime'
+    )
+    expect(codexCheck?.status).toBe('failed')
+    expect(codexCheck?.summary).toBe(diagnosticMessage)
+    expect(codexCheck?.detail).toBeUndefined()
+  })
+
+  it('falls back to generic message when no diagnostic is provided', async () => {
+    const result = await runEnvironmentCheck({
+      storageRoot: '/data',
+      agentFrameworkId: 'codex',
+      frameworks: [{ id: 'codex', label: 'Codex', runtime: { found: false } }],
+      encryptionAvailable: true,
+      deps: baseDeps()
+    })
+
+    const codexCheck = result.checks.find(
+      (check) => check.id === 'agent' && check.label === 'Codex runtime'
+    )
+    expect(codexCheck?.status).toBe('failed')
+    expect(codexCheck?.summary).toBe('Codex is not installed yet.')
+    expect(codexCheck?.detail).toBe(
+      'Automatic setup installs a self-contained runtime without Node.js, npm, or admin access.'
+    )
+  })
+
+  it('displays separate rows for Codex native CLI and adapter when component info is available', async () => {
+    const result = await runEnvironmentCheck({
+      storageRoot: '/data',
+      agentFrameworkId: 'codex',
+      frameworks: [
+        {
+          id: 'codex',
+          label: 'Codex',
+          runtime: {
+            found: false,
+            codexComponents: {
+              nativeCliFound: true,
+              nativeCliPath: '/Applications/ChatGPT.app/Contents/Resources/codex',
+              nativeCliVersion: '0.144.2',
+              adapterFound: false,
+              adapterPath: undefined,
+              adapterVersion: undefined
+            }
+          }
+        }
+      ],
+      encryptionAvailable: true,
+      deps: baseDeps()
+    })
+
+    const nativeCheck = result.checks.find((check) => check.label === 'Codex native CLI')
+    const adapterCheck = result.checks.find((check) => check.label === 'Codex ACP adapter')
+
+    expect(nativeCheck).toMatchObject({
+      id: 'agent',
+      label: 'Codex native CLI',
+      status: 'passed',
+      summary: 'Codex CLI 0.144.2 is installed.',
+      detail: '/Applications/ChatGPT.app/Contents/Resources/codex'
+    })
+
+    expect(adapterCheck).toMatchObject({
+      id: 'agent',
+      label: 'Codex ACP adapter',
+      status: 'failed',
+      summary: 'Codex ACP adapter is not installed.',
+      detail: undefined
+    })
+  })
+
+  it('shows both Codex components as passed when both are found', async () => {
+    const result = await runEnvironmentCheck({
+      storageRoot: '/data',
+      agentFrameworkId: 'codex',
+      frameworks: [
+        {
+          id: 'codex',
+          label: 'Codex',
+          runtime: {
+            found: true,
+            path: '/usr/local/bin/codex-acp',
+            version: '1.0.0',
+            codexComponents: {
+              nativeCliFound: true,
+              nativeCliPath: '/Applications/ChatGPT.app/Contents/Resources/codex',
+              nativeCliVersion: '0.144.2',
+              adapterFound: true,
+              adapterPath: '/usr/local/bin/codex-acp',
+              adapterVersion: '1.0.0'
+            }
+          }
+        }
+      ],
+      encryptionAvailable: true,
+      deps: baseDeps()
+    })
+
+    const nativeCheck = result.checks.find((check) => check.label === 'Codex native CLI')
+    const adapterCheck = result.checks.find((check) => check.label === 'Codex ACP adapter')
+
+    expect(nativeCheck).toMatchObject({
+      status: 'passed',
+      summary: 'Codex CLI 0.144.2 is installed.'
+    })
+
+    expect(adapterCheck).toMatchObject({
+      status: 'passed',
+      summary: 'Codex ACP adapter 1.0.0 is ready.'
+    })
+  })
+
+  it('marks non-selected Codex components as warnings when missing', async () => {
+    const result = await runEnvironmentCheck({
+      storageRoot: '/data',
+      agentFrameworkId: 'claude-code',
+      frameworks: [
+        {
+          id: 'claude-code',
+          label: 'Claude',
+          runtime: { found: true, path: '/usr/local/bin/claude', version: '2.1.0' }
+        },
+        {
+          id: 'codex',
+          label: 'Codex',
+          runtime: {
+            found: false,
+            codexComponents: {
+              nativeCliFound: false,
+              adapterFound: false
+            }
+          }
+        }
+      ],
+      encryptionAvailable: true,
+      deps: baseDeps()
+    })
+
+    const nativeCheck = result.checks.find((check) => check.label === 'Codex native CLI')
+    const adapterCheck = result.checks.find((check) => check.label === 'Codex ACP adapter')
+
+    expect(nativeCheck?.status).toBe('warning')
+    expect(adapterCheck?.status).toBe('warning')
+    expect(result.ready).toBe(true) // Non-selected framework doesn't block
+  })
 })

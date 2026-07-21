@@ -201,11 +201,32 @@ const EnvironmentSetupCard = ({
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-sm font-medium text-foreground">
-                  The agent runtime is the only missing item
+                  {(() => {
+                    // For Codex with component info, describe what's missing specifically
+                    if (
+                      environment.agentFrameworkId === 'codex' &&
+                      environment.runtime.codexComponents
+                    ) {
+                      const { nativeCliFound, adapterFound } = environment.runtime.codexComponents
+                      if (!nativeCliFound && !adapterFound) {
+                        return 'Both native Codex CLI and ACP adapter are missing'
+                      }
+                      if (!nativeCliFound) {
+                        return 'Native Codex CLI is the missing component'
+                      }
+                      if (!adapterFound) {
+                        return 'Codex ACP adapter is the missing component'
+                      }
+                    }
+                    return 'The agent runtime is the only missing item'
+                  })()}
                 </p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  Install it into Open Science using the {sourceLabel}, with the other trusted
-                  source as fallback; no Node.js, npm, or admin password is required.
+                  {environment.agentFrameworkId === 'codex' &&
+                  environment.runtime.codexComponents?.nativeCliFound &&
+                  !environment.runtime.codexComponents?.adapterFound
+                    ? `Install the Codex ACP adapter into Open Science using the ${sourceLabel}. The installer will set up a managed adapter paired with a bundled Codex CLI; no Node.js, npm, or admin password is required.`
+                    : `Install it into Open Science using the ${sourceLabel}, with the other trusted source as fallback; no Node.js, npm, or admin password is required.`}
                 </p>
               </div>
               <Button
@@ -219,7 +240,27 @@ const EnvironmentSetupCard = ({
                 ) : (
                   <TerminalSquare aria-hidden="true" />
                 )}
-                {isInstalling ? 'Installing…' : 'Install missing runtime'}
+                {isInstalling
+                  ? 'Installing…'
+                  : (() => {
+                      // Specify what will be installed based on what's missing
+                      if (
+                        environment.agentFrameworkId === 'codex' &&
+                        environment.runtime.codexComponents
+                      ) {
+                        const { nativeCliFound, adapterFound } = environment.runtime.codexComponents
+                        if (!nativeCliFound && !adapterFound) {
+                          return 'Install Codex CLI + adapter'
+                        }
+                        if (!nativeCliFound) {
+                          return 'Install Codex CLI'
+                        }
+                        if (!adapterFound) {
+                          return 'Install ACP adapter'
+                        }
+                      }
+                      return 'Install missing runtime'
+                    })()}
               </Button>
             </div>
           ) : (
