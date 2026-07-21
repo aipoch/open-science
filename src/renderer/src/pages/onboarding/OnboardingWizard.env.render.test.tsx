@@ -61,11 +61,12 @@ const provision = vi.fn(async () => {})
 const init = vi.fn(async () => {})
 const retry = vi.fn(async () => {})
 const cancel = vi.fn(async () => {})
+const reset = vi.fn(async () => {})
 
 beforeEach(() => {
   // Full replace (needs every action typed) so a stray real bridge call can never sneak in.
   useNotebookEnvStore.setState(
-    { ...createInitialNotebookEnvState(), init, provision, cancel, retry },
+    { ...createInitialNotebookEnvState(), init, provision, cancel, retry, reset },
     true
   )
   // The wizard reads storage info on mount (main's data-root step); stub it so the effect resolves.

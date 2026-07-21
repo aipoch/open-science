@@ -342,7 +342,7 @@ interface OpenScienceAPI {
     getStatus(): Promise<ProvisionStatus>
     provision(lang: NotebookLanguage): Promise<void>
     repair(lang: NotebookLanguage): Promise<void>
-    cancel(): Promise<void>
+    cancel(lang?: NotebookLanguage): Promise<void>
     onProgress(listener: (progress: ProvisionProgress) => void): RemoveListener
   }
   runtime: {

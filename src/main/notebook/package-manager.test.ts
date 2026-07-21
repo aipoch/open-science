@@ -12,7 +12,12 @@ vi.mock('./micromamba', async (importActual) => ({
   resolveMicromamba: () => undefined
 }))
 
-import { installPackages, type InstallSpawn, type SpawnResult } from './package-manager'
+import {
+  defaultSpawn,
+  installPackages,
+  type InstallSpawn,
+  type SpawnResult
+} from './package-manager'
 import { micromambaCacheLockKey, selectMicromambaCache } from './micromamba-cache'
 import { withExclusiveCacheLock } from './pkgs-cache-lock'
 import {
@@ -52,6 +57,53 @@ const base = {
   storageRoot: '/root',
   condaChannel: 'https://mirror.test/conda-forge'
 }
+
+describe('defaultSpawn (fail-closed spawn hooks)', () => {
+  it('calls onBeforeSpawn before spawning, and fails closed (no spawn) when it throws', async () => {
+    const order: string[] = []
+    await defaultSpawn(
+      process.execPath,
+      ['-e', 'process.exit(0)'],
+      undefined,
+      () => order.push('child'),
+      () => order.push('before')
+    )
+    expect(order[0]).toBe('before')
+
+    let childSpawned = false
+    const result = await defaultSpawn(
+      process.execPath,
+      ['-e', 'process.exit(0)'],
+      undefined,
+      () => {
+        childSpawned = true
+      },
+      () => {
+        throw new Error('intent write failed')
+      }
+    )
+    expect(result.code).toBe(1)
+    expect(result.stderr).toMatch(/spawn intent/)
+    expect(childSpawned).toBe(false) // never spawned
+  })
+
+  it('kills the child and reports failure when onChild (PID recording) throws', async () => {
+    let killedPid: number | undefined
+    const result = await defaultSpawn(
+      process.execPath,
+      ['-e', 'setTimeout(() => {}, 60000)'],
+      undefined,
+      (pid) => {
+        killedPid = pid
+        throw new Error('sidecar write failed')
+      }
+    )
+    expect(result.code).toBe(1)
+    expect(result.stderr).toMatch(/Failed to record the installer worker/)
+    expect(killedPid).toBeGreaterThan(0)
+    await vi.waitFor(() => expect(() => process.kill(killedPid as number, 0)).toThrow())
+  })
+})
 
 describe('installPackages', () => {
   it('forwards the installer child PID through onChild (for crash-recovery journaling)', async () => {
@@ -346,6 +398,60 @@ describe('installPackages', () => {
     expect(result.log).toContain('retry install stdout')
     expect(result.error).toMatch(/short Windows package cache[^]*shorter data location/i)
     expect(result.error).not.toMatch(/LongPathsEnabled|administrator/i)
+  })
+
+  it('threads onBeforeSpawn through the conda path on BOTH the first spawn and the MAX_PATH retry', async () => {
+    // Regression: the conda runConda path used to call baseSpawn WITHOUT deps.onBeforeSpawn, so the
+    // {spawning} intent sidecar was never written before conda install/remove. A crash in the
+    // spawn→onChild window then left no sidecar and recovery misread it as "never spawned" — reconciling
+    // or retrying under a possibly-live installer. Both the first spawn and the fresh retry after MAX_PATH
+    // recovery must re-arm the intent, mirroring defaultSpawn's ordering (before, then child).
+    const storageRoot = mkdtempSync(join(tmpdir(), 'os-pm-conda-intent-'))
+    const cache = join(storageRoot, 'runtime', 'pkgs')
+    const leaf = 'broken-package-1.0-0'
+    const packageDir = join(cache, 'https', 'host', 'channel', 'noarch', leaf)
+    mkdirSync(packageDir, { recursive: true })
+    const missing = join(packageDir, 'Library', 'x'.repeat(280))
+    const results: SpawnResult[] = [
+      {
+        code: 1,
+        stdout: '',
+        stderr: `Invalid package cache, file '${missing}' is missing for '${leaf}.conda'; Package cache error`
+      },
+      { code: 0, stdout: 'ok', stderr: '' } // retry succeeds
+    ]
+    const order: string[] = []
+    let i = 0
+    // deps.onBeforeSpawn is threaded to baseSpawn as its 5th arg; a faithful stub invokes it (as the real
+    // defaultSpawn does) BEFORE reporting the child, so we can assert both that it ran and that it ran first.
+    const spawn: InstallSpawn = async (_command, _args, _env, onChild, onBeforeSpawn) => {
+      onBeforeSpawn?.()
+      order.push(`child#${i}`)
+      onChild?.(1000 + i)
+      return results[i++]
+    }
+
+    const result = await installPackages(
+      { language: 'python', packages: ['numpy'], environment: 'my-analysis' },
+      {
+        spawn,
+        ...base,
+        storageRoot,
+        pathExists: () => true,
+        onBeforeSpawn: () => order.push('intent'),
+        micromambaEnv: {
+          platform: 'win32',
+          env: { USERNAME: 'alice', USERPROFILE: 'C:\\Users\\alice' },
+          selectCache: () => ({ path: cache, lockKey: cache })
+        }
+      }
+    )
+
+    expect(result.ok).toBe(true)
+    // The intent fired before the child on the FIRST spawn AND again on the RETRY (old bug: zero intents,
+    // since runConda dropped deps.onBeforeSpawn entirely).
+    expect(order).toEqual(['intent', 'child#0', 'intent', 'child#1'])
+    expect(i).toBe(2)
   })
 
   it('rejects an empty package list without spawning', async () => {

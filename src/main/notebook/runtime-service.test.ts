@@ -18,7 +18,13 @@ import {
 import { NotebookKernelExecutor } from './kernel-executor'
 import { effectiveMirrorAsync, resetAutoMirrorCache } from './mirror-probe'
 import { NotebookRunRepository, getRuntimeRoot } from './repository'
-import { RuntimeOperationJournal, operationJournalPath } from './operation-journal'
+import {
+  RuntimeOperationJournal,
+  operationJournalPath,
+  recordSpawnIntentSync
+} from './operation-journal'
+import { DefaultRuntimeProvisioner } from './provisioner'
+import { CHILD_UNCONFIRMED } from './provisioner-runtime'
 import type {
   InstallDeps as InstallDepsForTest,
   InstallRequest as InstallRequestForTest,
@@ -31,6 +37,7 @@ import {
   addRepairRequired,
   DEFAULT_ENV_VERSION,
   DEFAULT_PY_ENV,
+  DEFAULT_R_ENV,
   envPrefix,
   pythonBin,
   writeRReadyMarker
@@ -2180,7 +2187,9 @@ describe('notebook runtime service', () => {
           message: 'Could not prepare default-r: checksum mismatch',
           progress: 0,
           scope: 'r',
-          sessionId: 's'
+          sessionId: 's',
+          // Tagged so the Settings R card settles out of "preparing" on a first-use provision failure.
+          language: 'r'
         }
       ])
     })
@@ -3327,17 +3336,19 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(installRan).toBe(false)
   })
 
-  it('blocks execute + install + provision on a prefix an unknown-liveness orphan may still hold', async () => {
+  it('blocks a no-binding execute + install on a DEFAULT prefix an unknown-liveness orphan may hold', async () => {
     // After recovery, an interrupted materialize whose child could NOT be confirmed dead ('unknown' —
     // here a live pid with no recorded start time) must leave its prefix BLOCKED for this process, so a
-    // fresh materialize/install/provision refuses rather than racing the possible survivor. Verifies the
-    // barrier resolving is not mistaken for "safe to write this prefix".
+    // fresh materialize/install refuses rather than racing the possible survivor. Verifies the barrier
+    // resolving is not mistaken for "safe to write this prefix". The provision/repair/restore side of
+    // this guarantee is exercised in provisioner.test.ts (the provisioner self-guards via the same
+    // isPrefixRecoveryBlocked predicate ipc.ts injects), and the named/external runtimeId side below.
     const root = await createStorageRoot()
     const runtimeRoot = getRuntimeRoot(root)
     const defaultPrefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
     const journal = new RuntimeOperationJournal(operationJournalPath(runtimeRoot))
-    // childPid alive (this process) + no childStartedAt => defaultOperationChildLiveness = 'unknown'
-    // deterministically, on every platform (it returns before consulting ps).
+    // childPid alive (this process) + no token => defaultOperationChildLiveness = 'unknown'
+    // deterministically, on every platform. childStartedAt is written atomically with childPid.
     await journal.begin({
       operationId: 'm',
       kind: 'materialize',
@@ -3345,6 +3356,7 @@ describe('v4 runtime bindings & agent tools', () => {
       phase: 'create',
       startedAt: 100,
       childPid: process.pid,
+      childStartedAt: 100,
       targetPath: defaultPrefix
     })
 
@@ -3360,8 +3372,10 @@ describe('v4 runtime bindings & agent tools', () => {
 
     await service.recoverInterruptedOperations()
 
-    // The default prefix is now recovery-blocked.
+    // The default prefix is now recovery-blocked — both via the language helper AND the raw-prefix
+    // predicate ipc.ts hands to the provisioner (so the startup gate self-guards through the same seam).
     expect(service.isDefaultEnvRecoveryBlocked('python')).toBe(true)
+    expect(service.isPrefixRecoveryBlocked(defaultPrefix)).toBe(true)
 
     // A no-binding execute (default env) fails rather than materializing over the blocked prefix.
     const run = await service.execute({ sessionId: 's', workspaceCwd: root, code: '1' })
@@ -3381,13 +3395,437 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(installRan).toBe(false)
   })
 
-  it('restores a repaired binding to active across sessions after a successful repair install', async () => {
-    // A binding resolved while its runtime was repair-required is held unavailable/repair-required in
-    // memory. A completed repair install clears the disk flag AND must restore the in-memory binding to
-    // active (in every session), or it keeps refusing until a rebind.
+  it('re-derives the recovery block from the retained journal across sessions (persistent quarantine)', async () => {
+    // An unprobeable record is RETAINED (never auto-cleared on a guess), so the block is re-derived
+    // from the journal on every startup — a fresh service (a new session) blocks the same prefix. This
+    // is the service-side blockedPrefixes lifecycle: it lives only in memory and is rebuilt from the
+    // durable journal each session, so recovery only truly clears once the child is confirmed gone.
     const root = await createStorageRoot()
     const runtimeRoot = getRuntimeRoot(root)
-    // Flag the external runtime repair-required BEFORE binding, so the bind resolves it as unavailable.
+    const defaultPrefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+    const journal = new RuntimeOperationJournal(operationJournalPath(runtimeRoot))
+    // Alive pid + NO childStartedAt => 'unknown' deterministically -> block + retain.
+    await journal.begin({
+      operationId: 'm',
+      kind: 'materialize',
+      runtimeId: DEFAULT_PY_ENV,
+      phase: 'create',
+      startedAt: 100,
+      childPid: process.pid,
+      childStartedAt: 100, // written atomically with childPid; alive + no token => 'unknown'
+      targetPath: defaultPrefix
+    })
+
+    // Session A blocks and RETAINS the record (does not clear it under a possible writer).
+    const serviceA = bindingService(root)
+    await serviceA.recoverInterruptedOperations()
+    expect(serviceA.isPrefixRecoveryBlocked(defaultPrefix)).toBe(true)
+    expect((await journal.pending()).map((r) => r.operationId)).toEqual(['m'])
+
+    // Session B (a fresh service on the same journal) re-derives the same block from the retained record.
+    const serviceB = bindingService(root)
+    await serviceB.recoverInterruptedOperations()
+    expect(serviceB.isPrefixRecoveryBlocked(defaultPrefix)).toBe(true)
+  })
+
+  it('integration: a real provisioner writes the spawn-intent sidecar; service recovery hydrates it and blocks', async () => {
+    // The production chain end-to-end (not mocks): a real DefaultRuntimeProvisioner rooted at the same
+    // runtime root the service recovers from journals the op + writes a synchronous spawn-intent sidecar
+    // before its create runs. We hang the create (simulating a crash mid-op that never records a PID),
+    // then a fresh service recovers from the SAME root: it hydrates the intent sidecar and BLOCKS the
+    // prefix (a child may be live), without probing/killing.
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+    const provisioner = new DefaultRuntimeProvisioner({
+      root: runtimeRoot,
+      mm: '/mm',
+      channel: 'conda-forge',
+      fetchBundle: async (spec) => ({ lockPath: join(runtimeRoot, `${spec.name}.lock`) }),
+      // Real runMicromamba calls onBeforeSpawn right before spawning; mimic that (write the intent) then
+      // hang, modelling a crash after spawn but before the PID is recorded.
+      runArgv: (_argv, _signal, _onChild, onBeforeSpawn) => {
+        onBeforeSpawn?.()
+        return new Promise<void>(() => {})
+      },
+      verify: async () => undefined
+    })
+    void provisioner.provisionPython(() => {}) // leaves an interrupted materialize (do not await)
+
+    // Wait until the provisioner has journaled the op (its spawn-intent sidecar is written just before).
+    const journal = new RuntimeOperationJournal(operationJournalPath(runtimeRoot))
+    await vi.waitFor(async () => {
+      expect((await journal.pending()).some((r) => r.kind === 'materialize')).toBe(true)
+    })
+
+    const service = bindingService(root)
+    await service.recoverInterruptedOperations()
+    expect(service.isPrefixRecoveryBlocked(prefix)).toBe(true)
+  })
+
+  it('refuses an install when the journal cannot record it (begin fails closed, no spawn)', async () => {
+    // If the install can't be journaled for crash recovery, spawning the installer could strand a
+    // worker. managePackages must refuse with a structured error instead of installing.
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    // Make the journal path unwritable: a FILE where the journal file's directory must be, so begin()'s
+    // mkdir/rename fails. operationJournalPath = <runtimeRoot>/operation-journal.json; block its parent.
+    await rm(runtimeRoot, { recursive: true, force: true })
+    // Replace the runtime root with a file so mkdir(dirname(journalPath)) fails on begin().
+    await writeFile(runtimeRoot, 'not-a-dir')
+
+    let installRan = false
+    const service = bindingService(root, {
+      installPackagesImpl: async () => {
+        installRan = true
+        return { ok: true, needsRestart: false, log: '' }
+      }
+    })
+    const result = await service.managePackages({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      packages: ['numpy']
+    })
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/RUNTIME_JOURNAL_UNWRITABLE/)
+    expect(installRan).toBe(false)
+  })
+
+  it('blocks a named-env REMOVE on a prefix an unknown-liveness orphan may still hold', async () => {
+    // After a restart there is no in-memory kernel state, so isEnvironmentLive() can't see a surviving
+    // installer — the prefix-block from recovery is the only thing standing between rm -rf and a live
+    // orphan still writing the named prefix. Assert the guard fires BEFORE the manager deletes anything.
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    const namedPrefix = envPrefix(runtimeRoot, 'my-analysis')
+    const journal = new RuntimeOperationJournal(operationJournalPath(runtimeRoot))
+    await journal.begin({
+      operationId: 'i',
+      kind: 'install',
+      runtimeId: 'my-analysis',
+      phase: 'install-python',
+      startedAt: 100,
+      childPid: process.pid, // alive + no token => 'unknown'
+      childStartedAt: 100, // written atomically with childPid
+      targetPath: namedPrefix
+    })
+
+    const removed: string[] = []
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      environmentManager: {
+        createNamedEnvironment: async (name, language) => ({
+          name,
+          language,
+          ready: true,
+          isDefault: false
+        }),
+        listEnvironments: () => [],
+        removeEnvironment: (name) => {
+          removed.push(name)
+          return []
+        }
+      }
+    })
+
+    await service.recoverInterruptedOperations()
+    expect(service.isPrefixRecoveryBlocked(namedPrefix)).toBe(true)
+
+    await expect(
+      service.manageEnvironments({ action: 'remove', name: 'my-analysis' })
+    ).rejects.toThrow(/RUNTIME_RECOVERY_BLOCKED/)
+    // The rm -rf never reached the manager — nothing was deleted out from under a possible survivor.
+    expect(removed).toEqual([])
+  })
+
+  it('blocks a bound external execute + install by runtimeId after an interrupted external install', async () => {
+    // An external install writes the user's OWN env, not a path under runtimeRoot, so it is blocked by
+    // runtimeId (blockUnknownChildTarget), NOT a prefix. execute() and managePackages() must consume
+    // that runtimeId block for the bound runtime — the default-prefix guard alone would never fire here.
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    const journal = new RuntimeOperationJournal(operationJournalPath(runtimeRoot))
+    await journal.begin({
+      operationId: 'x',
+      kind: 'install',
+      runtimeId: userPyA.envId, // the external runtime's identity
+      phase: 'install-python',
+      startedAt: 100,
+      childPid: process.pid, // alive + no token => 'unknown'
+      childStartedAt: 100 // written atomically with childPid
+      // NOTE: no targetPath — an external install carries none (that is exactly the journal-target fix).
+    })
+
+    let installRan = false
+    const service = bindingService(root, {
+      discovered: [managedPy, userPyA],
+      enablement: {
+        enabled: { [userPyA.envId]: true },
+        installAuthorized: { [userPyA.envId]: true }
+      },
+      installPackagesImpl: async () => {
+        installRan = true
+        return { ok: true, needsRestart: false, log: '' }
+      }
+    })
+    await service.bindRuntime({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      runtimeId: userPyA.envId
+    })
+
+    await service.recoverInterruptedOperations()
+    // The external runtime is blocked by id; the app-managed DEFAULT prefix is NOT (no false-positive).
+    expect(service.isPrefixRecoveryBlocked(envPrefix(runtimeRoot, DEFAULT_PY_ENV))).toBe(false)
+
+    const run = await service.execute({ sessionId: 's', workspaceCwd: root, code: '1' })
+    expect(run.status).toBe('failed')
+    expect(run.text.traceback).toMatch(/RUNTIME_RECOVERY_BLOCKED/)
+
+    const install = await service.managePackages({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      packages: ['numpy']
+    })
+    expect(install.ok).toBe(false)
+    expect(install.error).toMatch(/RUNTIME_RECOVERY_BLOCKED/)
+    expect(installRan).toBe(false)
+  })
+
+  it('journals an external install by runtimeId with NO managed prefix as target', async () => {
+    // The bug: an external install recorded envPrefix(default) as its targetPath, so recovery would
+    // clean/block the unrelated app-managed default and never identify the real external runtime. Assert
+    // the in-flight journal record carries the external runtimeId and an UNDEFINED targetPath.
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    const inspectJournal = new RuntimeOperationJournal(operationJournalPath(runtimeRoot))
+    let recordedDuringInstall: { runtimeId: string; targetPath?: string } | undefined
+
+    const service = bindingService(root, {
+      discovered: [managedPy, userPyA],
+      enablement: {
+        enabled: { [userPyA.envId]: true },
+        installAuthorized: { [userPyA.envId]: true }
+      },
+      installPackagesImpl: async () => {
+        // Read the journal WHILE the install is in flight (before the finally clears it).
+        const pending = await inspectJournal.pending()
+        const install = pending.find((r) => r.kind === 'install')
+        recordedDuringInstall = install
+          ? { runtimeId: install.runtimeId, targetPath: install.targetPath }
+          : undefined
+        return { ok: true, needsRestart: false, log: '' }
+      }
+    })
+    await service.bindRuntime({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      runtimeId: userPyA.envId
+    })
+
+    const result = await service.managePackages({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      packages: ['numpy']
+    })
+    expect(result.ok).toBe(true)
+    expect(recordedDuringInstall?.runtimeId).toBe(userPyA.envId)
+    expect(recordedDuringInstall?.targetPath).toBeUndefined()
+  })
+
+  it('refuses an install when the operation journal is corrupt (fail closed inside the lock)', async () => {
+    // begin() runs inside the env lock and throws on a corrupt journal; managePackages must map that to
+    // a structured refusal (no installer spawned) rather than proceeding without a recovery record.
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    await mkdir(runtimeRoot, { recursive: true })
+    await writeFile(operationJournalPath(runtimeRoot), '{ not json', 'utf8')
+    let installRan = false
+    const service = bindingService(root, {
+      installPackagesImpl: async () => {
+        installRan = true
+        return { ok: true, needsRestart: false, log: '' }
+      }
+    })
+
+    const result = await service.managePackages({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      packages: ['numpy']
+    })
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/RUNTIME_JOURNAL_UNWRITABLE/)
+    expect(installRan).toBe(false)
+  })
+
+  it('blocks when a later spawn intent supersedes a stale journal PID (multi-spawn recovery)', async () => {
+    // Multi-spawn op (e.g. materialize's cache-repair retry): spawn #1's PID landed in the journal, then
+    // a second spawn was armed ({ spawning: true } sidecar) but crashed before its PID was recorded. The
+    // journal still names the (exited) first child. Trusting it would probe a dead pid, conclude 'dead',
+    // and clean the prefix while spawn #2 may still be writing. The sidecar is authoritative: a bare
+    // spawn intent must BLOCK regardless of the stale journal PID.
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    const defaultPrefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+    const journal = new RuntimeOperationJournal(operationJournalPath(runtimeRoot))
+    await journal.begin({
+      operationId: 'm',
+      kind: 'materialize',
+      runtimeId: DEFAULT_PY_ENV,
+      phase: 'create',
+      startedAt: 100,
+      // A stale PID that is definitely GONE (would probe 'dead' and reconcile if trusted).
+      childPid: 2_147_483_646,
+      childStartedAt: 100,
+      targetPath: defaultPrefix
+    })
+    // The current spawn re-armed the sidecar to a bare intent (its PID never landed).
+    recordSpawnIntentSync(runtimeRoot, 'm')
+
+    const service = bindingService(root)
+    service.setDefaultEnvProvisioner({
+      provisionPython: async () => undefined,
+      provisionR: async () => undefined
+    })
+
+    await service.recoverInterruptedOperations()
+
+    // The sidecar intent wins over the stale journal PID -> the prefix is blocked, not reconciled.
+    expect(service.isPrefixRecoveryBlocked(defaultPrefix)).toBe(true)
+  })
+
+  it('fails safe on a corrupt operation journal by blocking the managed default prefixes', async () => {
+    // A corrupt/unreadable journal is NOT proof that nothing was in flight — an install may have been
+    // mid-write. Recovery can't know which prefix, so it blocks BOTH managed defaults for this session
+    // and leaves the journal untouched (a later boot / explicit Reset recovers), rather than reading it
+    // as empty and opening the barrier.
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    await mkdir(runtimeRoot, { recursive: true })
+    await writeFile(operationJournalPath(runtimeRoot), '{ not json', 'utf8')
+
+    const service = bindingService(root)
+    await service.recoverInterruptedOperations()
+
+    expect(service.isPrefixRecoveryBlocked(envPrefix(runtimeRoot, DEFAULT_PY_ENV))).toBe(true)
+    expect(service.isPrefixRecoveryBlocked(envPrefix(runtimeRoot, DEFAULT_R_ENV))).toBe(true)
+    // The corrupt journal is left in place for a later boot to recover.
+    expect(existsSync(operationJournalPath(runtimeRoot))).toBe(true)
+  })
+
+  it('corrupt journal blocks ALL prefixes (not just the two managed defaults)', async () => {
+    // A corrupt journal means we can't enumerate what was in flight: a named env's orphan might still
+    // be writing, so blocking only the defaults would leave that env exposed. recoveryCorrupt must make
+    // isPrefixRecoveryBlocked return true for ANY prefix, including named-env and external targets.
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    await mkdir(runtimeRoot, { recursive: true })
+    await writeFile(operationJournalPath(runtimeRoot), '{ not json', 'utf8')
+
+    const service = bindingService(root)
+    await service.recoverInterruptedOperations()
+
+    const namedPrefix = envPrefix(runtimeRoot, 'my-analysis')
+    const pyPrefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+    expect(service.isPrefixRecoveryBlocked(namedPrefix)).toBe(true)
+    expect(service.isPrefixRecoveryBlocked(pyPrefix)).toBe(true)
+    // A force Reset releases only the prefix it reset from the global corrupt barrier — resetting the
+    // Python default must NOT unblock the named env (we can't know which env the corrupt journal's
+    // in-flight work targeted). The others stay blocked until their own Reset or a restart.
+    service.clearCorruptRecoveryBlock(pyPrefix)
+    expect(service.isPrefixRecoveryBlocked(pyPrefix)).toBe(false)
+    expect(service.isPrefixRecoveryBlocked(namedPrefix)).toBe(true)
+  })
+
+  it('lets an allowlisted default env EXECUTE cells after a corrupt-journal Reset (no restart needed)', async () => {
+    // Fix D: the execute path must gate a managed/default run by its per-prefix block (allowlist-aware),
+    // NOT the raw recoveryCorrupt flag. Otherwise a force-Reset Python env stays un-runnable until a
+    // restart even though its prefix was explicitly released. A DIFFERENT default (R) stays blocked.
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    await mkdir(runtimeRoot, { recursive: true })
+    await writeFile(operationJournalPath(runtimeRoot), '{ not json', 'utf8')
+
+    const executions: NotebookExecutionRequest[] = []
+    const service = bindingService(root, { executions })
+    // A ready marker so the default-env readiness gate doesn't try to provision during execute.
+    service.setDefaultEnvProvisioner({
+      provisionPython: async () => undefined,
+      provisionR: async () => undefined
+    })
+    await service.recoverInterruptedOperations()
+
+    // Release ONLY the Python default prefix (what a force Reset of Python does via clearQuarantine).
+    service.clearCorruptRecoveryBlock(envPrefix(runtimeRoot, DEFAULT_PY_ENV))
+
+    // A no-binding Python execute now runs (reaches the executor) instead of failing recovery-blocked.
+    const pyRun = await service.execute({ sessionId: 's', workspaceCwd: root, code: '1' })
+    expect(pyRun.status).not.toBe('failed')
+    expect(executions.length).toBe(1)
+
+    // R was NOT reset, so its execute is still refused under the corrupt barrier.
+    const rRun = await service.execute({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'r',
+      code: '1'
+    })
+    expect(rRun.status).toBe('failed')
+    expect(rRun.text.traceback).toMatch(/RUNTIME_RECOVERY_BLOCKED/)
+  })
+
+  it('blocks the install target in-process after an unconfirmed-child install failure, refusing a retry', async () => {
+    // An install whose worker could not be confirmed stopped leaves a possibly-live orphan. Retaining the
+    // journal record only guards the NEXT boot — so managePackages must ALSO block the runtimeId + prefix
+    // in THIS process, or an in-session retry would begin() a SECOND install racing the orphan. The
+    // installer throws the CHILD_UNCONFIRMED marker (recording failed, exit unconfirmed) on the first call
+    // only; the second must be refused before it ever runs.
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    const pyPrefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+    let installAttempts = 0
+    const service = bindingService(root, {
+      installPackagesImpl: async () => {
+        installAttempts += 1
+        throw new Error(`install failed: ${CHILD_UNCONFIRMED}`)
+      }
+    })
+
+    // The unconfirmed-child error propagates (only a begin() failure becomes a structured result); it is
+    // re-thrown after the in-process block is armed.
+    await expect(
+      service.managePackages({ language: 'python', packages: ['numpy'] })
+    ).rejects.toThrow(CHILD_UNCONFIRMED)
+    expect(installAttempts).toBe(1)
+    // The managed default's prefix is now blocked in-process (not just via the retained journal entry).
+    expect(service.isPrefixRecoveryBlocked(pyPrefix)).toBe(true)
+    // It is ALSO marked live-unconfirmed, so a force Reset this session refuses to delete it out from
+    // under the possibly-live installer (the provisioner reads this via the injected dep).
+    expect(service.isPrefixLiveUnconfirmed(pyPrefix)).toBe(true)
+
+    // An in-session retry is refused by the block — the installer is never spawned a second time.
+    const retry = await service.managePackages({ language: 'python', packages: ['numpy'] })
+    expect(retry.error).toMatch(/RUNTIME_RECOVERY_BLOCKED/)
+    expect(installAttempts).toBe(1)
+  })
+
+  it('restores a repaired binding to active in EVERY bound session after a successful repair install', async () => {
+    // A binding resolved while its runtime was repair-required is held unavailable/repair-required in
+    // memory. A completed repair install clears the disk flag AND must restore the in-memory binding to
+    // active in EVERY session that bound it — restoreRepairedBindings() walks all live sessions, so this
+    // uses TWO distinct sessions (s and t) bound to the SAME runtime and asserts both flip back.
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    // Flag the external runtime repair-required BEFORE binding, so each bind resolves it as unavailable.
     addRepairRequired(runtimeRoot, userPyA.envId)
     const service = bindingService(root, {
       discovered: [managedPy, userPyA],
@@ -3397,16 +3835,20 @@ describe('v4 runtime bindings & agent tools', () => {
       },
       installPackagesImpl: async () => ({ ok: true, needsRestart: false, log: '' })
     })
-    const bound = await service.bindRuntime({
-      sessionId: 's',
-      workspaceCwd: root,
-      language: 'python',
-      runtimeId: userPyA.envId
-    })
-    // Bound but unavailable/repair-required (installable — completing the install is the repair).
-    expect(bound.bound.status).toBe('unavailable')
-    expect(bound.bound.reason).toBe('repair-required')
 
+    // Bind the same repair-required runtime in two separate sessions.
+    for (const sessionId of ['s', 't']) {
+      const bound = await service.bindRuntime({
+        sessionId,
+        workspaceCwd: root,
+        language: 'python',
+        runtimeId: userPyA.envId
+      })
+      expect(bound.bound.status).toBe('unavailable')
+      expect(bound.bound.reason).toBe('repair-required')
+    }
+
+    // Repair via a completed install issued from session s only.
     const result = await service.managePackages({
       sessionId: 's',
       workspaceCwd: root,
@@ -3415,10 +3857,12 @@ describe('v4 runtime bindings & agent tools', () => {
     })
     expect(result.ok).toBe(true)
 
-    // The binding is now active again in the live session (not just the disk flag cleared).
-    const state = await service.state({ sessionId: 's', workspaceCwd: root })
-    expect(state.runtimeBindings.python?.status).toBe('active')
-    expect(state.runtimeBindings.python?.reason).toBeUndefined()
+    // BOTH sessions' bindings are active again — including session t, which never issued the install.
+    for (const sessionId of ['s', 't']) {
+      const state = await service.state({ sessionId, workspaceCwd: root })
+      expect(state.runtimeBindings.python?.status).toBe('active')
+      expect(state.runtimeBindings.python?.reason).toBeUndefined()
+    }
   })
 
   it('revokes a disabled runtime from a bound session so execution rejects (no silent fallback)', async () => {

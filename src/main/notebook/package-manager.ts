@@ -20,6 +20,7 @@ import {
 } from './micromamba-cache'
 import { recoverWindowsMaxPathPackage } from './micromamba-cache-recovery'
 import { withExclusiveCacheLocks, withSharedCacheLocks } from './pkgs-cache-lock'
+import { CHILD_UNCONFIRMED, killAndConfirmExit } from './provisioner-runtime'
 import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
@@ -74,7 +75,11 @@ export type InstallSpawn = (
   env?: NodeJS.ProcessEnv,
   // Invoked with the spawned installer's PID so the caller can journal it for crash-recovery
   // supervision (a killed installer survivor is reaped before reconciling). Test spawns ignore it.
-  onChild?: (pid: number) => void
+  onChild?: (pid: number) => void,
+  // Invoked synchronously right before EACH spawn so the caller can (re)record the per-spawn intent. An
+  // R install spawns twice (conda then CRAN on fallback), so each must re-arm rather than trust the
+  // first spawn's PID. Throwing fails closed (nothing is spawned).
+  onBeforeSpawn?: () => void
 ) => Promise<SpawnResult>
 
 // condaChannel/pypiIndex/cranMirror are resolved PackageMirror values (see shared/mirror.ts);
@@ -99,6 +104,8 @@ export type InstallDeps = {
   // Invoked with each spawned installer's PID so the caller (managePackages) can journal it for
   // crash-recovery supervision of a surviving installer after a hard quit.
   onChild?: (pid: number) => void
+  // Invoked synchronously right before EACH spawn so the caller can (re)record the per-spawn intent.
+  onBeforeSpawn?: () => void
 }
 
 const DEFAULT_CONDA_CHANNEL = 'conda-forge'
@@ -143,10 +150,49 @@ const rCondaNames = (packages: string[]): string[] =>
 const condaReportsNotManaged = (log: string): boolean => /not (found|installed)/i.test(log)
 
 // Real spawn wrapper collecting stdout/stderr and the exit code; replaced by an injected spawn in tests.
-const defaultSpawn: InstallSpawn = (command, args, env, onChild) =>
-  new Promise((resolve) => {
+// Exported so its fail-closed spawn-intent / kill-on-record-failure branches are directly testable.
+export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBeforeSpawn) =>
+  new Promise((resolve, reject) => {
+    try {
+      onBeforeSpawn?.() // re-arm the per-spawn intent; fail closed if it can't be recorded
+    } catch (error) {
+      resolve({
+        code: 1,
+        stdout: '',
+        stderr: `Failed to record the spawn intent; not spawning: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      })
+      return
+    }
     const child = nodeSpawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], env })
-    if (child.pid !== undefined) onChild?.(child.pid)
+    if (child.pid !== undefined) {
+      try {
+        onChild?.(child.pid)
+      } catch (error) {
+        // Recording the PID failed. FAIL CLOSED: kill it and only settle once it is CONFIRMED gone.
+        // If it can't be confirmed, REJECT with the CHILD_UNCONFIRMED marker so the caller retains the
+        // recovery evidence (a worker may still be writing) instead of clearing it.
+        void killAndConfirmExit(child).then((confirmed) => {
+          if (confirmed) {
+            resolve({
+              code: 1,
+              stdout: '',
+              stderr: `Failed to record the installer worker; aborted: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            })
+          } else {
+            reject(
+              new Error(
+                `${CHILD_UNCONFIRMED}: recording failed and the installer could not be confirmed stopped.`
+              )
+            )
+          }
+        })
+        return
+      }
+    }
     let stdout = ''
     let stderr = ''
     child.stdout?.on('data', (chunk) => {
@@ -193,7 +239,8 @@ export async function installPackages(
   // custom corporate CA is trusted by conda/pip/R. Wrapping here keeps every run() call site 2-arg.
   const baseSpawn = deps.spawn ?? defaultSpawn
   const spawnEnv: NodeJS.ProcessEnv = { ...process.env, ...caBundleEnv(deps.caBundle) }
-  const run: InstallSpawn = (command, args) => baseSpawn(command, args, spawnEnv, deps.onChild)
+  const run: InstallSpawn = (command, args) =>
+    baseSpawn(command, args, spawnEnv, deps.onChild, deps.onBeforeSpawn)
 
   if (req.packages.length === 0) {
     return { ok: false, needsRestart: false, log: '', error: 'No packages requested.' }
@@ -261,7 +308,10 @@ export async function installPackages(
       })
     ]
     const result = await withSharedCacheLocks(cacheKeys, () =>
-      baseSpawn(command, args, context.env, deps.onChild)
+      // Thread onBeforeSpawn so the {spawning} intent sidecar is written BEFORE conda spawns, exactly as
+      // the pip path does. Without it, a crash in the spawn→onChild window leaves no sidecar, and recovery
+      // would misread that as "never spawned" and reconcile/retry under a possibly-live installer.
+      baseSpawn(command, args, context.env, deps.onChild, deps.onBeforeSpawn)
     )
     if (result.code === 0) return result
     const evidence = `${result.stdout}\n${result.stderr}`
@@ -292,7 +342,9 @@ export async function installPackages(
     }
     if (!recovered) return result
     const retry = await withSharedCacheLocks(cacheKeys, () =>
-      baseSpawn(command, args, context.env, deps.onChild)
+      // The MAX_PATH retry is a fresh spawn — re-arm the intent sidecar for it too, or the same
+      // spawn→onChild crash window on the retry would be unrecoverable (no sidecar → misread as no child).
+      baseSpawn(command, args, context.env, deps.onChild, deps.onBeforeSpawn)
     )
     if (retry.code === 0) return retry
     return {

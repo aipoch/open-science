@@ -2,9 +2,9 @@ import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { md5File, runMicromamba, verifyExecutable } from './provisioner-runtime'
+import { killAndConfirmExit, md5File, runMicromamba, verifyExecutable } from './provisioner-runtime'
 import { condaActivatedPath } from './runtime-paths'
 
 describe('verifyExecutable', () => {
@@ -83,6 +83,7 @@ describe('runMicromamba', () => {
         { MM_TIMEOUT_TOKEN: 'timeout-stderr-token' },
         undefined,
         undefined,
+        undefined,
         200
       )
     ).rejects.toThrow(/timed out[^]*timeout-stderr-token/i)
@@ -98,5 +99,84 @@ describe('runMicromamba', () => {
     abort.abort()
 
     await expect(running).rejects.toThrow(/^Runtime setup cancelled\.$/)
+  })
+
+  it('kills the child and rejects (fail-closed) when onChild throws (PID recording failed)', async () => {
+    // If recording the child fails, running on would strand an unrecorded orphan. runMicromamba must
+    // kill the just-spawned child and reject rather than proceed. A long-lived child proves the kill.
+    let killedPid: number | undefined
+    await expect(
+      runMicromamba(
+        [process.execPath, '-e', 'setTimeout(() => {}, 60000)'],
+        undefined,
+        undefined,
+        (pid) => {
+          killedPid = pid
+          throw new Error('sidecar write failed')
+        }
+      )
+    ).rejects.toThrow(/Failed to record the runtime worker/)
+    expect(killedPid).toBeGreaterThan(0)
+    // The child was signalled to die; poll briefly until it's reaped rather than racing the kill.
+    await vi.waitFor(() => expect(() => process.kill(killedPid as number, 0)).toThrow())
+  })
+
+  it('calls onBeforeSpawn immediately before spawning (per-spawn intent re-arm)', async () => {
+    const order: string[] = []
+    await runMicromamba(
+      [process.execPath, '-e', 'process.exit(0)'],
+      undefined,
+      undefined,
+      () => order.push('child'),
+      () => order.push('before')
+    )
+    expect(order).toEqual(['before', 'child']) // intent recorded before the PID
+  })
+
+  it('fails closed (does NOT spawn) when onBeforeSpawn throws', async () => {
+    let childSpawned = false
+    await expect(
+      runMicromamba(
+        [process.execPath, '-e', 'process.exit(0)'],
+        undefined,
+        undefined,
+        () => {
+          childSpawned = true
+        },
+        () => {
+          throw new Error('intent write failed')
+        }
+      )
+    ).rejects.toThrow(/spawn intent/)
+    expect(childSpawned).toBe(false) // onChild never fired -> nothing was spawned
+  })
+})
+
+describe('killAndConfirmExit', () => {
+  it('resolves true once the child actually exits', async () => {
+    const listeners: Record<string, () => void> = {}
+    const fake = {
+      exitCode: null,
+      signalCode: null,
+      kill: () => true,
+      once: (event: string, cb: () => void) => {
+        listeners[event] = cb
+      }
+    } as never
+    const pending = killAndConfirmExit(fake, 1000)
+    listeners.exit?.() // the child exits
+    expect(await pending).toBe(true)
+  })
+
+  it('resolves false when exit cannot be confirmed within the deadline (SIGTERM ignored)', async () => {
+    // A child that never emits exit (kill ignored) — the deadline elapses and we report UNconfirmed so
+    // the caller retains the recovery evidence rather than clearing it under a possibly-live worker.
+    const fake = {
+      exitCode: null,
+      signalCode: null,
+      kill: () => false,
+      once: () => undefined // never fires exit
+    } as never
+    expect(await killAndConfirmExit(fake, 40)).toBe(false)
   })
 })

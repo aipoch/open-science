@@ -55,6 +55,7 @@ let registerInterpreter: ReturnType<typeof vi.fn>
 let pickInterpreter: ReturnType<typeof vi.fn>
 let provision: ReturnType<typeof vi.fn>
 let cancelBridge: ReturnType<typeof vi.fn>
+let repairBridge: ReturnType<typeof vi.fn>
 
 const provisionStatus: ProvisionStatus = {
   pythonReady: false,
@@ -86,6 +87,7 @@ beforeEach(() => {
   pickInterpreter = vi.fn().mockResolvedValue('/usr/bin/python3')
   provision = vi.fn().mockRejectedValue(new Error('runtime CDN unavailable'))
   cancelBridge = vi.fn().mockResolvedValue(undefined)
+  repairBridge = vi.fn().mockResolvedValue(undefined)
   ;(window as unknown as { api: unknown }).api = {
     runtime: {
       listEnvironments,
@@ -100,7 +102,8 @@ beforeEach(() => {
       getStatus: vi.fn().mockResolvedValue(provisionStatus),
       onProgress: vi.fn(),
       provision,
-      cancel: cancelBridge
+      cancel: cancelBridge,
+      repair: repairBridge
     }
   }
   container = document.createElement('div')
@@ -235,8 +238,9 @@ describe('RuntimesPanel', () => {
     )
     await click(setupBtn ?? null)
     expect(provision).toHaveBeenCalledWith('r')
+    // The failure surfaces on R's OWN card (per-language error), and its button offers a retry.
     expect(
-      container.querySelector('[data-testid="runtimes-provision-error"]')?.textContent
+      container.querySelector('[data-testid="runtimes-provision-error-r"]')?.textContent
     ).toContain('runtime CDN unavailable')
     expect(container.textContent).toContain('Retry setup')
   })
@@ -261,12 +265,16 @@ describe('RuntimesPanel', () => {
     // the progress bar + Cancel). Drive the mirrored provisioning state into "preparing" at 30% for R.
     act(() =>
       useNotebookEnvStore.setState({
-        ui: {
-          kind: 'preparing',
-          scope: 'r',
-          phase: 'download',
-          message: 'Downloading managed R runtime (30%)',
-          progress: 0.3
+        byLang: {
+          r: {
+            preparing: true,
+            progress: {
+              phase: 'download',
+              message: 'Downloading managed R runtime (30%)',
+              progress: 0.3,
+              language: 'r'
+            }
+          }
         }
       })
     )
@@ -281,6 +289,53 @@ describe('RuntimesPanel', () => {
     expect(cancelBtn).toBeDefined()
     await click(cancelBtn ?? null)
     expect(cancelBridge).toHaveBeenCalled()
+  })
+
+  it('surfaces Reset in the app-managed SETUP card when a language is recovery-blocked', async () => {
+    await render()
+    // R has no provisioned managed env -> its section shows the setup card. A recovery-blocked error
+    // must turn the primary action into "Reset runtime" (not "Retry setup") wired to repair.
+    act(() =>
+      useNotebookEnvStore.setState({
+        byLang: {
+          r: {
+            preparing: false,
+            error: 'RUNTIME_RECOVERY_BLOCKED: a previous operation was interrupted'
+          }
+        }
+      })
+    )
+    const resetBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      /^reset runtime$/i.test((b.textContent ?? '').trim())
+    )
+    expect(resetBtn).toBeDefined()
+    await click(resetBtn ?? null)
+    expect(repairBridge).toHaveBeenCalledWith('r')
+  })
+
+  it('surfaces Reset even when a runnable managed env is still present (interrupted upgrade/install)', async () => {
+    await render()
+    // Python HAS a runnable app-managed env, so the normal card renders — but an interrupted
+    // upgrade/install may have quarantined its prefix. The recovery entry must still be reachable, or
+    // the user could never clear the block while the interpreter exists.
+    act(() =>
+      useNotebookEnvStore.setState({
+        byLang: {
+          python: {
+            preparing: false,
+            error: 'RUNTIME_RECOVERY_BLOCKED: a previous operation was interrupted'
+          }
+        }
+      })
+    )
+    const notice = container.querySelector('[data-testid="runtimes-recovery-blocked-python"]')
+    expect(notice).not.toBeNull()
+    const resetBtn = Array.from(notice?.querySelectorAll('button') ?? []).find((b) =>
+      /^reset runtime$/i.test((b.textContent ?? '').trim())
+    )
+    expect(resetBtn).toBeDefined()
+    await click(resetBtn ?? null)
+    expect(repairBridge).toHaveBeenCalledWith('python')
   })
 
   it('keeps Cancel clickable while a real Download-and-set-up is in flight (not locked by busy)', async () => {

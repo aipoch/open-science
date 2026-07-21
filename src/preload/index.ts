@@ -377,7 +377,7 @@ type OpenScienceAPI = {
     getStatus: () => Promise<ProvisionStatus>
     provision: (lang: NotebookLanguage) => Promise<void>
     repair: (lang: NotebookLanguage) => Promise<void>
-    cancel: () => Promise<void>
+    cancel: (lang?: NotebookLanguage) => Promise<void>
     onProgress: (listener: (progress: ProvisionProgress) => void) => RemoveListener
   }
   runtime: {
@@ -764,7 +764,8 @@ const api: OpenScienceAPI = {
     getStatus: () => ipcRenderer.invoke('notebook-env:status') as Promise<ProvisionStatus>,
     provision: (lang) => ipcRenderer.invoke('notebook-env:provision', lang) as Promise<void>,
     repair: (lang) => ipcRenderer.invoke('notebook-env:repair', lang) as Promise<void>,
-    cancel: () => ipcRenderer.invoke('notebook-env:cancel') as Promise<void>,
+    cancel: (lang?: NotebookLanguage) =>
+      ipcRenderer.invoke('notebook-env:cancel', lang) as Promise<void>,
     onProgress: (listener) => onIpcMessage('notebook-env:progress', listener)
   },
   runtime: {

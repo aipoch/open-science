@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { delimiter, dirname, join, win32 } from 'node:path'
 
 import type { NotebookLanguage } from '../../shared/notebook'
@@ -186,12 +187,20 @@ export const readReadyMarker = (root: string): EnvReadyMarker | undefined => {
   }
 }
 
+// Atomically writes a ready marker (temp file + rename) so a crash mid-write can never leave a torn
+// marker that reads as neither present-and-valid nor absent — the restore path treats a marker write as
+// a commit point, so it must be all-or-nothing. Throws on failure (the caller decides whether that means
+// "keep the existing env" rather than rebuilding).
+const writeMarkerAtomic = (path: string, marker: EnvReadyMarker): void => {
+  mkdirSync(dirname(path), { recursive: true })
+  const temp = `${path}.${process.pid}-${randomUUID()}.tmp`
+  writeFileSync(temp, `${JSON.stringify(marker, null, 2)}\n`, 'utf8')
+  renameSync(temp, path)
+}
+
 // Writes .env-ready as pretty camelCase JSON, creating the runtime root if needed.
 export const writeReadyMarker = (root: string, version: number, preparedAt: string): void => {
-  const path = readyMarkerPath(root)
-  mkdirSync(dirname(path), { recursive: true })
-  const marker: EnvReadyMarker = { defaultEnvVersion: version, preparedAt }
-  writeFileSync(path, `${JSON.stringify(marker, null, 2)}\n`, 'utf8')
+  writeMarkerAtomic(readyMarkerPath(root), { defaultEnvVersion: version, preparedAt })
 }
 
 export const readRReadyMarker = (root: string): EnvReadyMarker | undefined => {
@@ -209,10 +218,7 @@ export const readRReadyMarker = (root: string): EnvReadyMarker | undefined => {
 }
 
 export const writeRReadyMarker = (root: string, version: number, preparedAt: string): void => {
-  const path = rReadyMarkerPath(root)
-  mkdirSync(dirname(path), { recursive: true })
-  const marker: EnvReadyMarker = { defaultEnvVersion: version, preparedAt }
-  writeFileSync(path, `${JSON.stringify(marker, null, 2)}\n`, 'utf8')
+  writeMarkerAtomic(rReadyMarkerPath(root), { defaultEnvVersion: version, preparedAt })
 }
 
 // True when a regular file exists at the path (mirrors Rust is_file()).

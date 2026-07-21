@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'node:child_process'
+import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { promisify } from 'node:util'
@@ -6,6 +6,50 @@ import { promisify } from 'node:util'
 import { condaActivatedPath } from './runtime-paths'
 
 const execFileAsync = promisify(execFile)
+
+// Marker on the error thrown when a child could NOT be confirmed stopped after a recording failure. The
+// caller must then RETAIN the crash-recovery evidence (sidecar + journal) rather than clearing it, since
+// a live worker may still be writing the prefix. See killAndConfirmExit / runMicromamba.
+export const CHILD_UNCONFIRMED = 'RUNTIME_CHILD_UNCONFIRMED'
+export const isChildUnconfirmedError = (error: unknown): boolean =>
+  error instanceof Error && error.message.includes(CHILD_UNCONFIRMED)
+
+// Kills a child and resolves ONLY once it has actually exited, escalating SIGTERM -> SIGKILL. Resolves
+// true when exit is confirmed, false when it can't be confirmed within the deadline (SIGTERM can be
+// ignored/delayed and kill() can return false, so a single kill() is not proof of exit). The caller
+// decides what an unconfirmed exit means (here: retain recovery evidence, fail closed).
+export const killAndConfirmExit = (child: ChildProcess, deadlineMs = 5000): Promise<boolean> =>
+  new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve(true)
+      return
+    }
+    let done = false
+    const finish = (confirmed: boolean): void => {
+      if (done) return
+      done = true
+      clearTimeout(escalate)
+      clearTimeout(giveUp)
+      resolve(confirmed)
+    }
+    child.once('exit', () => finish(true))
+    try {
+      child.kill('SIGTERM')
+    } catch {
+      // Already gone or un-signalable; the exit listener / timeout below still resolves.
+    }
+    const escalate = setTimeout(
+      () => {
+        try {
+          child.kill('SIGKILL')
+        } catch {
+          // Best-effort escalation.
+        }
+      },
+      Math.floor(deadlineMs / 2)
+    )
+    const giveUp = setTimeout(() => finish(false), deadlineMs)
+  })
 
 // Merges extra vars over the current process env for a subprocess (used to inject the CA-bundle vars
 // so an online provision behind an enterprise TLS proxy verifies HTTPS). Undefined → inherit as-is.
@@ -53,11 +97,31 @@ export const runMicromamba = (
   // Invoked with the spawned child's PID so the caller can journal it — crash recovery then kills a
   // surviving orphan (a micromamba the dead parent left running) before reconciling its target prefix.
   onChild?: (pid: number) => void,
+  // Invoked SYNCHRONOUSLY immediately before the spawn so the caller can (re)record the spawn intent for
+  // THIS spawn — a single op can spawn more than once (create + cache-repair retry), and each spawn must
+  // re-arm the intent so a crash before its PID is recorded blocks rather than trusting a prior PID.
+  // Throwing here fails closed: nothing is spawned.
+  onBeforeSpawn?: () => void,
   timeoutMs = 600_000
 ): Promise<void> =>
   new Promise<void>((resolve, reject) => {
     if (signal?.aborted) {
       reject(new Error('Runtime setup cancelled.'))
+      return
+    }
+
+    // Re-arm the per-spawn intent for THIS spawn before launching. Throwing fails closed: nothing is
+    // spawned, so a crash before the PID is recorded blocks rather than trusting a prior spawn's PID.
+    try {
+      onBeforeSpawn?.()
+    } catch (error) {
+      reject(
+        new Error(
+          `Failed to record the spawn intent; not spawning: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+      )
       return
     }
 
@@ -68,7 +132,6 @@ export const runMicromamba = (
       env,
       stdio: ['ignore', 'pipe', 'pipe']
     })
-    if (child.pid !== undefined) onChild?.(child.pid)
 
     const maxTail = 16 * 1024
     let stdout = ''
@@ -104,6 +167,36 @@ export const runMicromamba = (
         .filter(Boolean)
         .join('\n')
 
+    // Record the spawned PID for crash-recovery supervision. If recording FAILS, fail closed: kill the
+    // child and only settle once it is CONFIRMED gone — the close handler then rejects with
+    // recordingError. If it can't be confirmed, reject with the CHILD_UNCONFIRMED marker so the caller
+    // RETAINS the recovery evidence (a worker may still be writing) instead of clearing it.
+    let recordingError: Error | undefined
+    if (child.pid !== undefined) {
+      try {
+        onChild?.(child.pid)
+      } catch (error) {
+        recordingError = new Error(
+          `Failed to record the runtime worker PID; aborted to avoid an unrecoverable process: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+        void killAndConfirmExit(child).then((confirmed) => {
+          if (!confirmed && !settled) {
+            settled = true
+            cleanup()
+            reject(
+              new Error(
+                `${CHILD_UNCONFIRMED}: recording failed and the runtime worker could not be confirmed ` +
+                  'stopped; leaving the operation for recovery to block.'
+              )
+            )
+          }
+          // If confirmed, the close handler below rejects with recordingError.
+        })
+      }
+    }
+
     child.once('error', (error) => {
       if (settled) return
       settled = true
@@ -114,6 +207,10 @@ export const runMicromamba = (
       if (settled) return
       settled = true
       cleanup()
+      if (recordingError) {
+        reject(recordingError)
+        return
+      }
       if (cancelled || signal?.aborted) {
         reject(new Error('Runtime setup cancelled.'))
         return

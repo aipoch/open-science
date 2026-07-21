@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -25,7 +25,8 @@ import type { ProvisionProgress, RuntimeProvisioner } from './provisioner'
 import {
   createNotebookEnvHandlers,
   registerNotebookEnvIpcHandlers,
-  runStartupGate
+  runStartupGate,
+  serializeProvisioner
 } from './env-ipc'
 
 const fakeProvisioner = (over: Partial<RuntimeProvisioner> = {}): RuntimeProvisioner => ({
@@ -42,10 +43,10 @@ const fakeProvisioner = (over: Partial<RuntimeProvisioner> = {}): RuntimeProvisi
 })
 
 describe('createNotebookEnvHandlers', () => {
-  it('status returns the provisioner status', () => {
+  it('status returns the provisioner status', async () => {
     const provisioner = fakeProvisioner()
     const handlers = createNotebookEnvHandlers(provisioner)
-    expect(handlers.status()).toEqual({
+    expect(await handlers.status()).toEqual({
       pythonReady: false,
       rReady: false,
       version: 0,
@@ -69,11 +70,99 @@ describe('createNotebookEnvHandlers', () => {
     expect(provisioner.provisionR).toHaveBeenCalledOnce()
   })
 
-  it('repair delegates by language', async () => {
+  it('repair delegates by language as an explicit force-recovery', async () => {
     const provisioner = fakeProvisioner()
     const handlers = createNotebookEnvHandlers(provisioner)
     await handlers.repair('r', () => {})
-    expect(provisioner.repair).toHaveBeenCalledWith('r', expect.any(Function))
+    // UI repair is the user's Reset: it force-clears the quarantine (force: true).
+    expect(provisioner.repair).toHaveBeenCalledWith('r', expect.any(Function), { force: true })
+  })
+
+  it('cancel forwards the language to the provisioner while that language is provisioning', () => {
+    const provisioner = fakeProvisioner({
+      // Keep R provisioning in flight so its language is pending when we cancel.
+      provisionR: vi.fn().mockReturnValue(new Promise<void>(() => {}))
+    })
+    const handlers = createNotebookEnvHandlers(provisioner)
+    void handlers.provision('r', () => {})
+    handlers.cancel('r')
+    expect(provisioner.cancel).toHaveBeenCalledWith('r')
+  })
+
+  it('cancel forwards the language to the provisioner while a Reset (repair) is in flight', () => {
+    // A Reset runs through repair; it must bump the per-language pending count (serializeLanguage), or
+    // the Cancel button shown during a Reset would be dropped as idle and the Reset be un-abortable.
+    const provisioner = fakeProvisioner({
+      repair: vi.fn().mockReturnValue(new Promise<void>(() => {})) // keep the Reset in flight
+    })
+    const handlers = createNotebookEnvHandlers(provisioner)
+    void handlers.repair('python', () => {})
+    handlers.cancel('python')
+    expect(provisioner.cancel).toHaveBeenCalledWith('python')
+  })
+
+  it('cancel is a NO-OP when the language is idle (does not arm the next unrelated provision)', () => {
+    const provisioner = fakeProvisioner()
+    const handlers = createNotebookEnvHandlers(provisioner)
+    handlers.cancel('r') // nothing provisioning -> must not reach the provisioner
+    expect(provisioner.cancel).not.toHaveBeenCalled()
+  })
+
+  it('idempotent: the production triple-wrap still forwards a queued cancel to the base provisioner', () => {
+    // In production the provisioner is wrapped 3x (main/ipc.ts, registerNotebookEnvIpcHandlers,
+    // createNotebookEnvHandlers). If each wrap owned its own queue+pending, a request queued at the
+    // OUTER layer wouldn't exist in an inner layer's pending, so cancel routed inward would be dropped
+    // as idle. Idempotent serialization collapses them to ONE queue, so a queued cancel reaches base.
+    let releasePython!: () => void
+    const base = fakeProvisioner({
+      provisionPython: vi.fn().mockReturnValue(
+        new Promise<void>((resolve) => {
+          releasePython = resolve
+        })
+      )
+    })
+    const wrapped = serializeProvisioner(serializeProvisioner(serializeProvisioner(base)))
+
+    void wrapped.provisionPython(() => {}) // running
+    void wrapped.provisionR(() => {}) // queued behind python (same single queue)
+    wrapped.cancel('r') // must reach base despite the triple wrap
+
+    expect(base.cancel).toHaveBeenCalledWith('r')
+    releasePython()
+  })
+
+  it('idempotent: re-wrapping an already-serialized provisioner returns the same instance', () => {
+    const once = serializeProvisioner(fakeProvisioner())
+    expect(serializeProvisioner(once)).toBe(once)
+  })
+
+  it('counts multiple pending requests for one language (cancel stays live until the last settles)', async () => {
+    // Two same-language requests must both be tracked; if the first to settle deleted the language, a
+    // cancel while the second is still in flight would be wrongly dropped as idle.
+    let releaseFirst!: () => void
+    let firstStarted = false
+    const base = fakeProvisioner({
+      provisionR: vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise<void>((resolve) => {
+              firstStarted = true
+              releaseFirst = resolve
+            })
+        )
+        .mockImplementation(() => new Promise<void>(() => {})) // second stays pending
+    })
+    const wrapped = serializeProvisioner(base)
+
+    const first = wrapped.provisionR(() => {}) // running
+    void wrapped.provisionR(() => {}) // second queued (count = 2)
+    await vi.waitFor(() => expect(firstStarted).toBe(true))
+
+    releaseFirst() // first settles -> count drops to 1, NOT 0
+    await first
+    wrapped.cancel('r') // second still pending -> must still forward
+    expect(base.cancel).toHaveBeenCalledWith('r')
   })
 
   it('UI provision awaits recovery BEFORE touching a prefix (barrier)', async () => {
@@ -111,10 +200,10 @@ describe('createNotebookEnvHandlers', () => {
     expect(order).toEqual(['recovery', 'repair'])
   })
 
-  it('UI provision/repair refuses when the default env is recovery-blocked', async () => {
+  it('UI provision refuses when the default env is recovery-blocked (but repair is the recovery)', async () => {
     // After recovery leaves the default prefix blocked (an unknown-liveness orphan may still hold it),
-    // a UI provision/repair must refuse rather than materialize over it. The guard runs AFTER
-    // waitForRecovery so the blocked set is populated.
+    // a UI PROVISION must refuse rather than materialize over it. REPAIR is the explicit Reset/recovery
+    // — it deliberately bypasses that gate (force-clears the quarantine), so it must NOT refuse.
     const provisioner = fakeProvisioner()
     const assertProvisionAllowed = vi.fn((lang: string) => {
       if (lang === 'python') throw new Error('RUNTIME_RECOVERY_BLOCKED: python is recovering')
@@ -122,10 +211,12 @@ describe('createNotebookEnvHandlers', () => {
     const handlers = createNotebookEnvHandlers(provisioner, async () => {}, assertProvisionAllowed)
 
     await expect(handlers.provision('python', () => {})).rejects.toThrow(/RUNTIME_RECOVERY_BLOCKED/)
-    await expect(handlers.repair('python', () => {})).rejects.toThrow(/RUNTIME_RECOVERY_BLOCKED/)
-    // The provisioner is never touched when blocked.
     expect(provisioner.provisionPython).not.toHaveBeenCalled()
-    expect(provisioner.repair).not.toHaveBeenCalled()
+
+    // Repair (the Reset entry) proceeds — it's the recovery, so it force-clears rather than refusing.
+    await handlers.repair('python', () => {})
+    expect(provisioner.repair).toHaveBeenCalledWith('python', expect.any(Function), { force: true })
+
     // A non-blocked language still provisions.
     await handlers.provision('r', () => {})
     expect(provisioner.provisionR).toHaveBeenCalledOnce()
@@ -218,7 +309,7 @@ describe('registerNotebookEnvIpcHandlers', () => {
 
   it('status reports not-ready and provision/repair reject with an actionable reason', async () => {
     registerNotebookEnvIpcHandlers(undefined, '/tmp/nope')
-    const status = registered.get('notebook-env:status')?.({})
+    const status = await registered.get('notebook-env:status')?.({})
     expect(status).toMatchObject({ pythonReady: false, rReady: false, provisioning: false })
     await expect(registered.get('notebook-env:provision')?.({}, 'python')).rejects.toThrow(
       /micromamba/i
@@ -335,6 +426,42 @@ describe('runStartupGate', () => {
     await expect(runStartupGate(provisioner, dir, broadcast)).resolves.toBeUndefined()
     expect(broadcast).toHaveBeenCalledWith(
       expect.objectContaining({ phase: 'error', message: expect.stringContaining('boom') })
+    )
+  })
+
+  it('refuses to rebuild over a recovery-blocked prefix through the REAL provisioner self-guard', async () => {
+    // The startup gate drives repair/upgrade/restore through the provisioner, so the block guarantee
+    // must survive that real path — not just a mock guard on the UI handlers. Wire a real
+    // DefaultRuntimeProvisioner with the isPrefixBlocked dep ipc.ts injects (← isPrefixRecoveryBlocked),
+    // set up a marker-but-no-bin state so the planner picks 'repair', and assert the gate refuses:
+    // nothing is spawned, the (possibly-live) prefix is not deleted, and the error is broadcast.
+    const { writeReadyMarker, envPrefix, DEFAULT_PY_ENV } = await import('./runtime-paths')
+    const { DefaultRuntimeProvisioner } = await import('./provisioner')
+    const dir = mkdtempSync(join(tmpdir(), 'os-gate-blocked-'))
+    const prefix = envPrefix(dir, DEFAULT_PY_ENV)
+    mkdirSync(prefix, { recursive: true }) // a partial prefix an orphan may still be writing
+    writeReadyMarker(dir, 0, 't') // marker present + no bin => planStartupAction === 'repair'
+
+    const runArgv = vi.fn().mockResolvedValue(undefined)
+    const provisioner = new DefaultRuntimeProvisioner({
+      root: dir,
+      mm: '/mm',
+      channel: 'conda-forge',
+      fetchBundle: async (spec) => ({ lockPath: join(dir, `${spec.name}.lock`) }),
+      runArgv,
+      verify: async () => undefined,
+      isPrefixBlocked: (p) => p === prefix
+    })
+    const broadcast = vi.fn()
+    await runStartupGate(provisioner, dir, broadcast)
+
+    expect(runArgv).not.toHaveBeenCalled() // no rebuild spawned
+    expect(existsSync(prefix)).toBe(true) // prefix not rm -rf'd out from under a possible survivor
+    expect(broadcast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: 'error',
+        message: expect.stringMatching(/RUNTIME_RECOVERY_BLOCKED/)
+      })
     )
   })
 
