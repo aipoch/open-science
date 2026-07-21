@@ -23,6 +23,11 @@ export type ResponsesBridgeTarget = {
   model?: string
   namespacedTools?: ResponsesBridgeNamespacedTool[]
   connectorInstructions?: ResponsesBridgeConnectorInstruction[]
+  // Forward reasoning.effort upstream as reasoning_effort ONLY when the user explicitly picked a
+  // level. Codex emits its own default effort even when the app never configured one, so
+  // unconditional forwarding would change what existing bridged users send to their gateway —
+  // and gateways fronting non-OpenAI models often reject unknown parameters.
+  forwardReasoningEffort?: boolean
 }
 
 export type ResponsesBridgeNamespacedTool = {
@@ -572,7 +577,8 @@ export const responsesToChatRequest = (
   body: JsonObject,
   upstreamModel?: string,
   reasoningByCallId?: Map<string, string>,
-  namespacedTools: readonly ResponsesBridgeNamespacedTool[] = []
+  namespacedTools: readonly ResponsesBridgeNamespacedTool[] = [],
+  options?: { forwardReasoningEffort?: boolean }
 ): JsonObject => {
   for (const field of UNSUPPORTED_FIELDS) {
     if (body[field] !== undefined && body[field] !== null) {
@@ -643,13 +649,16 @@ export const responsesToChatRequest = (
   const toolChoice = hasTools ? requestedToolChoice : undefined
   const stream = body.stream !== false
 
-  // Translate the Responses reasoning effort into the Chat Completions equivalent (validated above).
-  // OpenAI-shaped gateways take `reasoning_effort`; the Codex-only 'xhigh' clamps to 'high', and
-  // 'none' is omitted — Chat Completions has no "reasoning off" switch, so the upstream default
-  // stands. A gateway that doesn't know the parameter rejects it explicitly, which beats the
-  // selected effort silently vanishing.
+  // Translate the Responses reasoning effort into the Chat Completions equivalent (validated above),
+  // but only when the app's user explicitly picked a level: Codex also emits its own default effort,
+  // and forwarding that would change what existing bridged users send upstream. OpenAI-shaped
+  // gateways take `reasoning_effort`; the Codex-only 'xhigh' clamps to 'high', and 'none' is
+  // omitted — Chat Completions has no "reasoning off" switch, so the upstream default stands.
   const requestedEffort =
-    body.reasoning && typeof body.reasoning === 'object' && !Array.isArray(body.reasoning)
+    options?.forwardReasoningEffort &&
+    body.reasoning &&
+    typeof body.reasoning === 'object' &&
+    !Array.isArray(body.reasoning)
       ? (body.reasoning as JsonObject).effort
       : undefined
   const chatReasoningEffort =
@@ -1136,7 +1145,8 @@ export class ResponsesBridge {
         connectorSelection.body,
         this.target.model,
         this.reasoningByCallId,
-        namespacedTools
+        namespacedTools,
+        { forwardReasoningEffort: this.target.forwardReasoningEffort }
       )
 
       // Reveals which real model actually serves the turn (Codex only ever sees the internal catalog

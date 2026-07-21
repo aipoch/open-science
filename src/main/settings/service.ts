@@ -2167,7 +2167,7 @@ class SettingsService {
       framework.id === 'codex' && (provider.apiEndpoints?.includes('openai') ?? false)
     const enabledConnectorIds = this.enabledConnectorIds(settings.connectors)
     const responsesBridge = needsResponsesBridge
-      ? await this.ensureResponsesBridge(provider, enabledConnectorIds)
+      ? await this.ensureResponsesBridge(provider, enabledConnectorIds, sessionEffort !== undefined)
       : await this.disableResponsesBridge()
     const modelConfig = framework.prepareModelConfig(provider, {
       storageRoot: this.storageRoot,
@@ -2206,7 +2206,8 @@ class SettingsService {
 
   private async ensureResponsesBridge(
     provider: ResolvedProvider,
-    enabledConnectorIds: string[]
+    enabledConnectorIds: string[],
+    forwardReasoningEffort: boolean
   ): Promise<ResponsesBridgeConnection> {
     // Resolve to the OpenAI base the bridge appends `/chat/completions` to: an official vendor's exact
     // versioned base, or a custom gateway root normalized to `<root>/v1`.
@@ -2217,6 +2218,7 @@ class SettingsService {
       baseUrl: targetBaseUrl,
       key: provider.key,
       model: provider.model,
+      forwardReasoningEffort,
       namespacedTools: [...CODEX_BRIDGE_NOTEBOOK_TOOLS, ...CODEX_BRIDGE_ARTIFACT_TOOLS],
       connectorInstructions: enabledConnectorIds.map((id) => {
         const metadata = CONNECTOR_CATALOG.find((connector) => connector.id === id)
