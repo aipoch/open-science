@@ -74,7 +74,10 @@ jobs:
             are found, write **No architectural or integration issues found.** Be concise.
 
             Post the review as a PR comment via `gh pr comment`.
+          # API-key accounts resolve Claude Code's default model to the latest Opus; pin sonnet
+          # explicitly so review cost and latency stay predictable.
           claude_args: |
+            --model sonnet
             --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Read,Grep,Glob"
 
   codex_review:
