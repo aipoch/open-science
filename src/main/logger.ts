@@ -62,6 +62,16 @@ const MAX_SANITIZE_DEPTH = 12
 const MAX_ARRAY_ELEMENTS = 1000
 // Upper bound on own keys walked per object node (a hostile ownKeys can enumerate very many).
 const MAX_OBJECT_KEYS = 1000
+// Per-string byte ceiling. The node budget bounds the *count* of nodes, not their size — a single giant
+// string (a huge Error message/stack, a base64 blob in `data`, or a giant bigint) would otherwise emit
+// an arbitrarily large log line. Any longer string is truncated with a "…[+N chars]" suffix.
+const MAX_STRING_LENGTH = 8192
+
+// Truncates an over-long string so one field can't produce an unbounded log line.
+const capString = (value: string): string =>
+  value.length <= MAX_STRING_LENGTH
+    ? value
+    : `${value.slice(0, MAX_STRING_LENGTH)}…[+${value.length - MAX_STRING_LENGTH} chars]`
 // Global bound on total nodes produced per sanitize call. The per-array cap and depth limit bound a
 // single path, but a shared DAG (a diamond re-expanded on every reference after seen.delete) can still
 // blow up combinatorially — e.g. three nested Array(1000).fill(child) is ~3000 input refs but ~1e9
@@ -104,10 +114,11 @@ const safeRead = (value: object, key: string): unknown => {
   }
 }
 
-// String() can itself throw (a hostile Symbol.toPrimitive/toString); never let it escape.
+// String() can itself throw (a hostile Symbol.toPrimitive/toString); never let it escape. Also caps the
+// result so a hostile (or just huge) coercion can't produce an unbounded string.
 const safeToString = (value: unknown): string => {
   try {
-    return String(value)
+    return capString(String(value))
   } catch {
     return '[unstringifiable]'
   }
@@ -127,13 +138,16 @@ const toLogSafe = (value: unknown, seen: Set<object>, depth: number, budget: Bud
   budget.remaining -= 1
 
   const type = typeof value
-  if (type === 'bigint') return `${value as bigint}n`
+  // A bigint can be astronomically large (10n ** 100000n); cap its textual form.
+  if (type === 'bigint') return capString(`${value as bigint}n`)
   if (type === 'symbol') return safeToString(value)
   if (type === 'function') {
     // A function's `name` can be a throwing getter on an exotic object.
     const name = safeRead(value as object, 'name')
-    return `[function ${typeof name === 'string' && name ? name : 'anonymous'}]`
+    return `[function ${typeof name === 'string' && name ? capString(name) : 'anonymous'}]`
   }
+  // Cap over-long strings so one field can't blow up the log line; other primitives pass through.
+  if (type === 'string') return capString(value as string)
   if (value === null || type !== 'object') return value
 
   try {
@@ -167,9 +181,11 @@ const toLogSafe = (value: unknown, seen: Set<object>, depth: number, budget: Bud
         // Cap iteration so a huge (real sparse array or hostile) length can't hang/OOM the process.
         const cap = Math.min(rawLength, MAX_ARRAY_ELEMENTS)
         const items: unknown[] = []
-        for (let index = 0; index < cap; index += 1) {
+        let index = 0
+        let budgetHit = false
+        for (; index < cap; index += 1) {
           if (budget.remaining <= 0) {
-            items.push('[truncated: budget exceeded]')
+            budgetHit = true
             break
           }
           // Charge one unit for THIS slot before reading, so an element whose read throws (marker path,
@@ -181,7 +197,12 @@ const toLogSafe = (value: unknown, seen: Set<object>, depth: number, budget: Bud
             raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, depth + 1, budget)
           )
         }
-        if (rawLength > cap) items.push(`[+${rawLength - cap} more]`)
+        // One marker counting EVERY element we didn't emit — those skipped by the budget within the cap
+        // AND those beyond the cap — so the two limits never overwrite each other or under-report.
+        const omitted = rawLength - index
+        if (omitted > 0) {
+          items.push(budgetHit ? `[+${omitted} more, output truncated]` : `[+${omitted} more]`)
+        }
 
         return items
       }
@@ -191,19 +212,27 @@ const toLogSafe = (value: unknown, seen: Set<object>, depth: number, budget: Bud
       const out = nullProtoRecord()
       // Cap the number of keys walked: Object.keys already materialized them, but processing an
       // unbounded count (hostile Proxy ownKeys) still needs a ceiling.
-      const cappedKeys = keys.length > MAX_OBJECT_KEYS ? keys.slice(0, MAX_OBJECT_KEYS) : keys
-      for (const key of cappedKeys) {
+      const limit = Math.min(keys.length, MAX_OBJECT_KEYS)
+      let processed = 0
+      let objBudgetHit = false
+      for (; processed < limit; processed += 1) {
         if (budget.remaining <= 0) {
-          out['[truncated]'] = '[truncated: budget exceeded]'
+          objBudgetHit = true
           break
         }
         // Charge per slot (see the array note): a key whose read throws must still cost budget.
         budget.remaining -= 1
+        const key = keys[processed]
         const raw = safeRead(value as object, key)
         out[key] = raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, depth + 1, budget)
       }
-      if (keys.length > cappedKeys.length)
-        out['[truncated]'] = `[+${keys.length - cappedKeys.length} more keys]`
+      // One marker counting all unprocessed keys (budget-skipped within the cap + beyond the cap).
+      const omittedKeys = keys.length - processed
+      if (omittedKeys > 0) {
+        out['[truncated]'] = objBudgetHit
+          ? `+${omittedKeys} keys omitted, output truncated`
+          : `+${omittedKeys} more keys`
+      }
 
       return out
     } finally {
@@ -245,11 +274,13 @@ const formatError = (
   const rawMessage = safeRead(error, 'message')
   const rawStack = safeRead(error, 'stack')
   const fields: Record<string, unknown> = {
+    // message + stack are capped: an Error can carry a multi-megabyte message or stack, which the node
+    // budget (a count, not a size) would not bound.
     error:
       rawMessage === UNREADABLE
         ? UNREADABLE_MARKER
         : typeof rawMessage === 'string'
-          ? rawMessage
+          ? capString(rawMessage)
           : rawMessage === undefined
             ? ''
             : safeToString(rawMessage),
@@ -257,7 +288,7 @@ const formatError = (
       rawStack === UNREADABLE
         ? UNREADABLE_MARKER
         : typeof rawStack === 'string'
-          ? rawStack
+          ? capString(rawStack)
           : undefined
   }
 
@@ -288,10 +319,17 @@ const bestEffortMessage = (error: unknown): string => {
 // that name the real cause. Spread the result into the log context so all of it survives:
 //   log.error('connect failed', { ...errorLogFields(err), framework })
 // The result is guaranteed acyclic and JSON-serializable, and this function never throws: every branch
-// runs through toLogSafe (which unwraps nested Errors, breaks any cycle — in a cause chain, in
-// RequestError.data, or a directly-thrown object — bounds depth, and guards every property read), and an
-// outer guard converts even a total failure into a fixed fallback rather than losing the caller's log
-// line or masking the original error.
+// runs through toLogSafe (which unwraps nested Errors, breaks any cycle, bounds depth, and guards every
+// property read), and an outer guard converts even a total failure into a fixed fallback.
+//
+// Bounded-output guarantee (and its limits): the *produced* record is bounded — a global node budget
+// caps the total node count regardless of reference sharing (no combinatorial DAG blowup), per-array /
+// per-object caps bound fan-out, and per-string caps bound each field's size. What this does NOT promise
+// is sub-linear time under an adversarial synchronous Proxy: `Object.keys` must enumerate the trap's full
+// ownKeys result before we cap it, and a Proxy that materializes millions of keys (or a value that
+// allocates a huge string) pays that cost in its own trap/allocation, which JS cannot preempt. In short:
+// we never *amplify* the input and never emit unbounded output, but we cannot make reading a
+// pathological host object cheaper than the host object already made itself.
 const errorLogFields = (error: unknown): Record<string, unknown> => {
   try {
     const seen = new Set<object>()
@@ -321,20 +359,26 @@ const errorLogFields = (error: unknown): Record<string, unknown> => {
               : '[object]'
       if (keys === undefined) return { error: errorText }
       const safe = nullProtoRecord()
-      const cappedKeys = keys.length > MAX_OBJECT_KEYS ? keys.slice(0, MAX_OBJECT_KEYS) : keys
-      for (const key of cappedKeys) {
+      const limit = Math.min(keys.length, MAX_OBJECT_KEYS)
+      let processed = 0
+      let objBudgetHit = false
+      for (; processed < limit; processed += 1) {
         if (budget.remaining <= 0) {
-          safe['[truncated]'] = '[truncated: budget exceeded]'
+          objBudgetHit = true
           break
         }
         // Charge per slot so an all-throwing-getter object still spends budget (marker path skips
         // toLogSafe), keeping a shared-DAG re-expansion bounded.
         budget.remaining -= 1
+        const key = keys[processed]
         const raw = safeRead(error, key)
         safe[key] = raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, 1, budget)
       }
-      if (keys.length > cappedKeys.length) {
-        safe['[truncated]'] = `[+${keys.length - cappedKeys.length} more keys]`
+      const omittedKeys = keys.length - processed
+      if (omittedKeys > 0) {
+        safe['[truncated]'] = objBudgetHit
+          ? `+${omittedKeys} keys omitted, output truncated`
+          : `+${omittedKeys} more keys`
       }
 
       return { error: errorText, ...safe }

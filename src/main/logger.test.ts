@@ -476,7 +476,7 @@ describe('logger: errorLogFields', () => {
     expect(elapsed).toBeLessThan(1000)
     const line = formatLine('error', 'x', 'y', fields)
     expect(() => JSON.parse(line)).not.toThrow()
-    expect(line).toContain('[truncated: budget exceeded]')
+    expect(line).toContain('truncated')
     // Sanity bound: the serialized size is bounded (well under what ~1e9 nodes would be).
     expect(line.length).toBeLessThan(2_000_000)
   })
@@ -508,7 +508,7 @@ describe('logger: errorLogFields', () => {
     expect(() => JSON.parse(line)).not.toThrow()
     // Both the degraded-field marker and the budget-truncation marker appear, and the output is bounded.
     expect(line).toContain('[unreadable]')
-    expect(line).toContain('[truncated: budget exceeded]')
+    expect(line).toContain('truncated')
     expect(line.length).toBeLessThan(2_000_000)
   })
 
@@ -534,6 +534,88 @@ describe('logger: errorLogFields', () => {
     const producedKeys = Object.keys(fields.data)
     expect(producedKeys.length).toBeLessThanOrEqual(1001)
     expect(fields.data['[truncated]']).toBeDefined()
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('bounds a shared DAG of throwing-getter OBJECTS (the object-branch per-slot charge)', () => {
+    // Objects (not arrays) whose every key read throws. Each shared child, if re-expanded on every
+    // reference, would emit 1000 markers per visit → ~1e6 fields. Only the object loop's per-slot budget
+    // charge (which the marker path would otherwise skip) keeps this bounded — removing it regresses here.
+    const throwingChild: Record<string, unknown> = {}
+    for (let i = 0; i < 1000; i += 1) {
+      Object.defineProperty(throwingChild, `k${i}`, {
+        enumerable: true,
+        configurable: true,
+        get() {
+          throw new Error(`key ${i} trap`)
+        }
+      })
+    }
+    const parent: Record<string, unknown> = {}
+    for (let i = 0; i < 1000; i += 1) parent[`p${i}`] = throwingChild
+    const err = Object.assign(new Error('obj-dag'), { data: parent })
+
+    const start = Date.now()
+    const fields = errorLogFields(err)
+    expect(Date.now() - start).toBeLessThan(1000)
+    const line = formatLine('error', 'x', 'y', fields)
+    expect(() => JSON.parse(line)).not.toThrow()
+    expect(line).toContain('[unreadable]')
+    expect(line).toContain('truncated')
+    expect(line.length).toBeLessThan(2_000_000)
+  })
+
+  it('caps a directly-thrown object with more keys than MAX_OBJECT_KEYS', () => {
+    // The top-level plain-object branch (not nested) must also cap keys + append one accurate marker.
+    const thrown: Record<string, unknown> = { message: 'top-level' }
+    for (let i = 0; i < 6000; i += 1) thrown[`k${i}`] = i
+    const fields = errorLogFields(thrown) as Record<string, unknown>
+
+    expect(fields.error).toBe('top-level')
+    expect(Object.keys(fields).length).toBeLessThanOrEqual(1002) // error + <=1000 keys + 1 marker
+    expect(typeof fields['[truncated]']).toBe('string')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('caps an over-long string field so one value cannot produce an unbounded log line', () => {
+    const huge = 'x'.repeat(100_000)
+    const fields = errorLogFields(Object.assign(new Error(huge), { data: { blob: huge } })) as {
+      error: string
+      data: { blob: string }
+    }
+    // Both the message and a nested string value are truncated with a char-count suffix.
+    expect(fields.error.length).toBeLessThan(9000)
+    expect(fields.error).toContain('chars]')
+    expect(fields.data.blob.length).toBeLessThan(9000)
+    expect(fields.data.blob).toContain('chars]')
+  })
+
+  it('caps an astronomically large bigint', () => {
+    const bigintValue = 10n ** 100000n
+    const fields = errorLogFields(Object.assign(new Error('e'), { data: bigintValue })) as {
+      data: string
+    }
+    expect(fields.data.length).toBeLessThan(9000)
+    expect(fields.data).toContain('chars]')
+  })
+
+  it('uses one accurate truncation marker when budget AND key-cap both trigger (no overwrite)', () => {
+    // An object with >1000 keys, each an object that consumes budget, so the loop stops on budget before
+    // reaching the key cap. The single marker must report ALL omitted keys (budget-skipped + beyond-cap).
+    const child: Record<string, unknown> = {}
+    for (let i = 0; i < 1000; i += 1) child[`c${i}`] = i
+    const parent: Record<string, unknown> = {}
+    for (let i = 0; i < 2000; i += 1) parent[`p${i}`] = child
+    const fields = errorLogFields(Object.assign(new Error('e'), { data: parent })) as {
+      data: Record<string, unknown>
+    }
+
+    const marker = fields.data['[truncated]']
+    expect(typeof marker).toBe('string')
+    // Exactly one truncation marker key, and it reflects the omitted count (well over the cap remainder).
+    const truncatedKeys = Object.keys(fields.data).filter((k) => k === '[truncated]')
+    expect(truncatedKeys.length).toBe(1)
+    expect(marker as string).toMatch(/\d+ keys omitted/)
     expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
   })
 
