@@ -61,7 +61,7 @@ description:
 ```text
 feat/project-sidebar-filter
 fix/notebook-kernel-timeout
-ci/codex-pr-review
+ci/ai-pr-review
 ```
 
 Use one of these standard type prefixes:
@@ -113,7 +113,7 @@ The scope should be a short, lowercase name for the affected area.
 ```text
 feat(projects): add sidebar filter
 fix(notebook): prevent kernel startup timeout
-ci(review): add automated Codex review
+ci(review): unify automated AI reviews
 ```
 
 - Write a clear, lowercase, imperative-mood description.
