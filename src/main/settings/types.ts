@@ -7,6 +7,9 @@ import type {
 } from '../../shared/settings'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { OfficialVendorId } from '../../shared/provider-registry'
+import type { PackageMirror } from '../../shared/mirror'
+import type { NotebookLanguage } from '../../shared/notebook'
+import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import type { AgentFrameworkId } from '../agent-framework'
 
 // Main-process-only stored shapes for settings.json. These carry the encrypted key reference and a
@@ -110,6 +113,8 @@ export type StoredSettings = {
   // (default-on), so new bundled skills are enabled automatically.
   disabledSkillIds?: string[]
   connectors?: StoredConnectors
+  // Non-secret package-mirror overrides (conda/pypi/cran). Absent means public hosts.
+  packageMirror?: PackageMirror
   // Absolute path of the relocatable data root (artifacts/notebooks/runtime/uploads). Absent means
   // "use the config root" (default). Only written after a successful migration; a change needs a restart.
   dataRoot?: string
@@ -120,6 +125,18 @@ export type StoredSettings = {
   // visible OpenScience folder" prompt (by moving, choosing another folder, or declining). Absent
   // means it has never been answered, so an eligible legacy install may still be offered the prompt.
   legacyDataMovePromptDismissedAt?: number
+  // Per-language notebook runtime choice: the app-managed conda env, or the user's own interpreter
+  // (BYO). Absent for a language means "not chosen yet" -> resolves to the managed default. See
+  // RuntimeSelection (shared/notebook-runtime.ts). R is managed-only in v1.
+  notebookRuntimes?: Partial<Record<NotebookLanguage, RuntimeSelection>>
+  // Per-language v4 environment enablement: an explicit per-env enabled override map plus the separate
+  // per-env package-install authorization, both keyed by envId (interpreter real path). Absent means
+  // "use the provenance default" (app-managed ON, user-own/agent-created OFF). See RuntimeEnablement.
+  notebookRuntimeEnablement?: Partial<Record<NotebookLanguage, RuntimeEnablement>>
+  // Per-language catalog of interpreter paths the user added manually via "Add interpreter…". These
+  // are merged into environment discovery (probed + classified user-own) so a manually-picked
+  // interpreter shows up as an enable-able runtime card even when it is not on PATH / in a conda root.
+  notebookManualInterpreters?: Partial<Record<NotebookLanguage, string[]>>
 }
 
 // Canonical empty settings used for a first run or an unreadable file.

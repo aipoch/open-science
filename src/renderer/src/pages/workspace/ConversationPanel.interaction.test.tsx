@@ -50,8 +50,8 @@ vi.mock('./ComposerModelPicker', () => ({
   ComposerModelPicker: (): null => null
 }))
 
-vi.mock('./ComposerAutoReviewToggle', () => ({
-  ComposerAutoReviewToggle: (): null => null
+vi.mock('./ComposerAgentControlsMenu', () => ({
+  ComposerAgentControlsMenu: (): null => null
 }))
 
 vi.mock('./WorkspaceMessageScroller', () => ({

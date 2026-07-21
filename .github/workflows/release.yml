@@ -92,8 +92,8 @@ jobs:
             artifacts/*.AppImage
             artifacts/*.deb
 
-      # Attach user-facing artifacts + checksums: installers (dmg/exe/AppImage/deb) and portable
-      # zips (mac + win), plus the electron-updater feed files so the mirror-to-website job can
+      # Attach user-facing artifacts + checksums: installers (dmg/exe/AppImage/deb) and the mac
+      # portable zips, plus the electron-updater feed files so the mirror-to-website job can
       # republish them to the CDN feed: win/linux latest.yml + latest-linux.yml, and the mac feeds.
       # `*-mac.yml` covers the merged latest-mac.yml (the file the app polls) plus the per-arch
       # arm64/x64-mac.yml intermediates it was built from. Blockmaps are win/linux only (mac does

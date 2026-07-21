@@ -236,7 +236,7 @@ export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
     returns:
       '{rs_id, api_total (page.totalElements), returned, truncated (api_total > returned), associations[]} — each row the shared association shape.',
     example:
-      'result = host.mcp("human_genetics", "gwas_associations_for_variant", {"rs_id": "rs7412", "max_records": 100})',
+      'const result = await host.mcp("human_genetics", "gwas_associations_for_variant", {"rs_id": "rs7412", "max_records": 100})',
     run: async (ctx, a) => {
       const rsId = String(a.rs_id)
       const maxRecords = clampInt(a.max_records, 500, 1, 10000)
@@ -261,7 +261,7 @@ export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
     returns:
       '{gene_symbol, api_total, returned, truncated, associations[]} — the shared association row shape.',
     example:
-      'result = host.mcp("human_genetics", "gwas_associations_for_gene", {"gene_symbol": "PCSK9", "max_records": 100})',
+      'const result = await host.mcp("human_genetics", "gwas_associations_for_gene", {"gene_symbol": "PCSK9", "max_records": 100})',
     run: async (ctx, a) => {
       const geneSymbol = String(a.gene_symbol)
       const maxRecords = clampInt(a.max_records, 500, 1, 10000)
@@ -285,7 +285,7 @@ export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
     returns:
       '{efo_id|efo_trait, api_total, returned, truncated, associations[]} — the shared association row shape.',
     example:
-      'result = host.mcp("human_genetics", "gwas_associations_for_trait", {"efo_id": "MONDO_0005010", "max_records": 100})',
+      'const result = await host.mcp("human_genetics", "gwas_associations_for_trait", {"efo_id": "MONDO_0005010", "max_records": 100})',
     run: async (ctx, a) => {
       const efoId = a.efo_id != null && String(a.efo_id).trim() !== '' ? String(a.efo_id) : null
       const efoTrait =
@@ -316,7 +316,7 @@ export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
     required: ['query'],
     returns: '{query, api_total, returned, truncated, efo_traits:[{efo_id, efo_trait, uri}]}.',
     example:
-      'result = host.mcp("human_genetics", "gwas_search_traits", {"query": "coronary", "max_records": 50})',
+      'const result = await host.mcp("human_genetics", "gwas_search_traits", {"query": "coronary", "max_records": 50})',
     run: async (ctx, a) => {
       const query = String(a.query)
       const maxRecords = clampInt(a.max_records, 500, 1, 10000)
@@ -351,7 +351,7 @@ export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
     returns:
       '{filters, api_total, returned, truncated, studies[]} — each study the lean study shape.',
     example:
-      'result = host.mcp("human_genetics", "gwas_search_studies", {"efo_id": "MONDO_0005010", "max_records": 50})',
+      'const result = await host.mcp("human_genetics", "gwas_search_studies", {"efo_id": "MONDO_0005010", "max_records": 50})',
     run: async (ctx, a) => {
       const filters: Record<string, string> = {}
       if (a.efo_id != null && String(a.efo_id).trim() !== '') filters['efo_id'] = String(a.efo_id)
@@ -395,7 +395,7 @@ export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
     required: ['accession_id'],
     returns: '{found, accession_id, study} — study is the lean study shape, null when unknown.',
     example:
-      'result = host.mcp("human_genetics", "gwas_get_study", {"accession_id": "GCST90841394"})',
+      'const result = await host.mcp("human_genetics", "gwas_get_study", {"accession_id": "GCST90841394"})',
     run: async (ctx, a) => {
       const accessionId = String(a.accession_id)
       try {
@@ -424,7 +424,8 @@ export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
     required: ['rs_id'],
     returns:
       '{found, rs_id, variant} — variant is the lean variant shape, null when not in catalog.',
-    example: 'result = host.mcp("human_genetics", "gwas_get_variant", {"rs_id": "rs7412"})',
+    example:
+      'const result = await host.mcp("human_genetics", "gwas_get_variant", {"rs_id": "rs7412"})',
     run: async (ctx, a) => {
       const rsId = String(a.rs_id)
       try {

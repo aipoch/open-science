@@ -1,18 +1,35 @@
 name: Stage runtime bundle
 
-# Build the per-platform offline default-environment bundles and publish them to the CDN, so the
-# packaging workflow (build.yml) can inject a ready-made bundle instead of solving envs on every build.
-# Run this by hand whenever DEFAULT_ENV_VERSION or the default env specs change; the packaged app and
-# this bundle are keyed by the same version (runtime-paths.ts DEFAULT_ENV_VERSION), so a bump here must
-# accompany a bump there. Each platform solves NATIVELY on its own runner (osx-64 on the Intel runner,
-# osx-arm64 on Apple Silicon, etc.) so there is no cross-arch solve — each installer ships tarballs for
-# exactly its own conda subdir.
+# Build the per-platform offline default-environment bundle and publish it to the CDN. The published
+# layout is the CURATED multi-version pack layout consumed by src/main/notebook/bundle-local.ts:
+# per-pack `<language>-<version>.tar.zst` archives (packId) and manifest.json — the same files the
+# local bundle adapter looks up under resources/default-envs. Run this by hand whenever
+# DEFAULT_ENV_VERSION or the default env specs change; the packaged app and this bundle are keyed by the
+# same version (runtime-paths.ts DEFAULT_ENV_VERSION), so a bump here must accompany a bump there. Each
+# platform solves NATIVELY on its own runner (osx-arm64 on Apple Silicon, etc.) so there is no cross-arch
+# solve — each installer ships pack archives for exactly its own conda subdir.
+#
+# CONSUMER STATUS: packaged builds fetch the selected pack from this CDN on first managed-runtime use;
+# a local resources/default-envs directory remains an optional developer/offline override.
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: Runtime bundle version to publish
+        required: true
+        default: '1'
+        type: string
 
 # Read-only on the repo; writes go to S3, not back to git.
 permissions:
   contents: read
+
+# Only one publisher may upload a versioned target at a time. Matrix jobs still publish distinct
+# subdirs concurrently within one run; separate workflow runs queue instead of racing the same
+# manifest key during an explicit republish.
+concurrency:
+  group: runtime-bundle-publisher-${{ github.repository }}
+  cancel-in-progress: false
 
 jobs:
   stage:
@@ -21,15 +38,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # subdir = conda platform to SOLVE for; runner_subdir = the runner's native arch, whose
+        # micromamba we run. They differ only for osx-64: Intel macOS runners (macos-13) are scarce, so
+        # osx-64 is cross-solved on Apple-silicon (macos-14) — the dry-run solve never runs foreign-arch
+        # binaries, so this is safe (see stage-default-envs.mjs).
         include:
           - subdir: osx-arm64
             os: macos-14
+            runner_subdir: osx-arm64
           - subdir: osx-64
-            os: macos-13
+            os: macos-14
+            runner_subdir: osx-arm64
           - subdir: linux-64
             os: ubuntu-latest
+            runner_subdir: linux-64
           - subdir: win-64
             os: windows-latest
+            runner_subdir: win-64
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -40,45 +65,67 @@ jobs:
           node-version: 22
           cache: npm
 
+      # The staging script packs each env into a .tar.zst via scripts/pack-archive.mjs, which imports
+      # @bokuweb/zstd-wasm + tar — so node_modules must be present. --ignore-scripts skips the heavy,
+      # staging-irrelevant postinstall (prisma generate + electron-builder native rebuild); staging only
+      # needs these JS/WASM deps plus the micromamba fetched below.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
       # micromamba comes from the public micro.mamba.pm API (see fetch-micromamba.mjs), not our CDN, so
-      # staging never depends on a chicken-and-egg CDN state. It runs natively to solve this subdir.
+      # staging never depends on a chicken-and-egg CDN state. Fetch the RUNNER's native micromamba
+      # (runner_subdir) to execute; the target platform to solve for is passed separately below.
       - name: Fetch micromamba
         shell: bash
         run: |
           bin="$RUNNER_TEMP/micromamba"
-          [ "${{ matrix.subdir }}" = "win-64" ] && bin="$bin.exe"
-          node scripts/fetch-micromamba.mjs "${{ matrix.subdir }}" "$bin"
+          [ "${{ matrix.runner_subdir }}" = "win-64" ] && bin="$bin.exe"
+          # Pass the pinned version explicitly so the intent is visible in CI. Read it from the single
+          # source of truth (scripts/micromamba-versions.json) to avoid drifting from the digests the
+          # script verifies against.
+          export MICROMAMBA_VERSION=$(node -p "require('./scripts/micromamba-versions.json').version")
+          echo "using pinned micromamba $MICROMAMBA_VERSION"
+          node scripts/fetch-micromamba.mjs "${{ matrix.runner_subdir }}" "$bin"
           echo "MICROMAMBA_BIN=$bin" >> "$GITHUB_ENV"
 
-      # Solve default-python + default-r natively and collect their @EXPLICIT locks + tarballs into
-      # resources/default-envs (stage-default-envs.mjs reads MICROMAMBA_BIN).
+      # Solve the curated multi-version matrix (Python 3.11/3.12/3.13, R 4.3/4.4) for the target subdir
+      # (dry-run, so cross-solving osx-64 on an arm64 runner is fine): one self-contained pack archive
+      # per version + manifest.json, all under resources/default-envs.
       - name: Stage default environments
+        env:
+          OS_STAGE_PLATFORM: ${{ matrix.subdir }}
         run: npm run stage-default-envs
 
-      # Fail loudly if the solve produced nothing, rather than uploading an empty bundle.
+      # Fail loudly if staging produced nothing, rather than uploading an empty/partial bundle: require
+      # the manifest and at least one pack archive. The per-pack completeness gate already ran inside
+      # the script.
       - name: Verify bundle is non-empty
         shell: bash
         run: |
-          test -f resources/default-envs/default-python.lock
-          test -f resources/default-envs/default-r.lock
-          count=$(ls resources/default-envs/pkgs | wc -l)
-          echo "staged $count package tarballs for ${{ matrix.subdir }}"
-          [ "$count" -gt 0 ]
+          shopt -s nullglob
+          test -f resources/default-envs/manifest.json
+          archives=(resources/default-envs/*.tar.zst)
+          echo "staged ${#archives[@]} pack archives for ${{ matrix.subdir }}"
+          [ "${#archives[@]}" -gt 0 ]
 
-      # One tarball per platform keeps the CDN upload + build-time download to a single object.
-      - name: Pack bundle
-        shell: bash
-        run: tar -czf "$RUNNER_TEMP/default-envs.tar.gz" -C resources/default-envs .
-
-      # Read DEFAULT_ENV_VERSION straight from its source of truth so the CDN path always matches what
-      # the app fetches at runtime (bundle-fetch.ts uses the same version segment).
+      # Read DEFAULT_ENV_VERSION straight from its source of truth so the CDN path always matches the
+      # version segment the app/build keys off (runtime-paths.ts DEFAULT_ENV_VERSION).
       - name: Resolve bundle version
         id: ver
         shell: bash
         run: |
-          version=$(node -e "const s=require('fs').readFileSync('src/main/notebook/runtime-paths.ts','utf8');process.stdout.write(String(s.match(/DEFAULT_ENV_VERSION\s*=\s*(\d+)/)[1]))")
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "bundle version = $version"
+          requested='${{ inputs.version }}'
+          current=$(node -e "const s=require('fs').readFileSync('src/main/notebook/runtime-paths.ts','utf8');process.stdout.write(String(s.match(/DEFAULT_ENV_VERSION\s*=\s*(\d+)/)[1]))")
+          if ! [[ "$requested" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::version must be a positive integer"
+            exit 1
+          fi
+          if [ "$requested" != "$current" ]; then
+            echo "::error::requested version $requested does not match DEFAULT_ENV_VERSION $current on this ref"
+            exit 1
+          fi
+          echo "version=$requested" >> "$GITHUB_OUTPUT"
+          echo "bundle version = $requested"
 
       - name: Configure AWS credentials
         env:
@@ -91,8 +138,13 @@ jobs:
           aws configure set aws_secret_access_key "$S3_SECRET_ACCESS_KEY"
           aws configure set default.region "$S3_REGION"
 
-      # Immutable per-(version, subdir) path — the bundle for a given version never changes, so it can be
-      # cached forever. Bucket stays masked (secret); --only-show-errors avoids leaking the s3:// path.
+      # The operator explicitly chooses the version, which must match DEFAULT_ENV_VERSION on this ref.
+      # Publishing the same version again replaces its objects; matrix jobs remain serialized across
+      # workflow runs so two publishes cannot race the same manifest.
+      # Publishes EACH curated pack file (`<language>-<version>.tar.zst`) + the shared manifest.json as
+      # discrete objects, so a consumer fetches only the pack(s) it needs. Pack files are uploaded before
+      # the manifest so consumers never observe a manifest that points to a missing object.
+      # Bucket stays masked (secret); --only-show-errors avoids leaking the s3:// path.
       - name: Upload bundle to CDN
         shell: bash
         env:
@@ -104,7 +156,17 @@ jobs:
           # "open-science"), so the env-version-keyed bundle is a sibling of the app release channel,
           # not nested under it. Must stay in sync with the download path in build.yml.
           ns="${S3_PREFIX%%/*}"
-          key="s3://$S3_BUCKET${ns:+/$ns}/runtime-bundle/$VERSION/${{ matrix.subdir }}/default-envs.tar.gz"
-          aws s3 cp "$RUNNER_TEMP/default-envs.tar.gz" "$key" \
+          base="s3://$S3_BUCKET${ns:+/$ns}/runtime-bundle/$VERSION/${{ matrix.subdir }}"
+          key_prefix="${ns:+$ns/}runtime-bundle/$VERSION/${{ matrix.subdir }}"
+          if aws s3api head-object --bucket "$S3_BUCKET" --key "$key_prefix/manifest.json" >/dev/null 2>&1; then
+            echo "::warning::overwriting runtime bundle version $VERSION at $key_prefix"
+          fi
+          shopt -s nullglob
+          archives=(resources/default-envs/*.tar.zst)
+          for archive in "${archives[@]}"; do
+            aws s3 cp "$archive" "$base/$(basename "$archive")" \
+              --cache-control "public, max-age=31536000, immutable" --only-show-errors
+          done
+          aws s3 cp resources/default-envs/manifest.json "$base/manifest.json" \
             --cache-control "public, max-age=31536000, immutable" --only-show-errors
-          echo "published ${ns:+$ns/}runtime-bundle/$VERSION/${{ matrix.subdir }}/default-envs.tar.gz"
+          echo "published manifest.json + ${#archives[@]} pack archives to ${ns:+$ns/}runtime-bundle/$VERSION/${{ matrix.subdir }}/"

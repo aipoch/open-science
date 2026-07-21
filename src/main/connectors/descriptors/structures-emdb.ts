@@ -699,7 +699,7 @@ export const STRUCTURES_EMDB_TOOLS: ToolDescriptor[] = [
     returns:
       '{n_requested, records:[{emdb_id, title, status, is_obsolete, superseded_by, obsolete_date, method, aggregation_state, resolution_angstrom, resolution_method, deposition_date, header_release_date, map_release_date, update_date, sample_name, macromolecule_names, supramolecule_names, fitted_pdb_ids, has_fitted_model, citation:{title, journal, year, published, doi, pmid, first_author, author_count}, map:{file, size_kbytes, dimensions:{col,row,sec}, voxel_size_angstrom:{x,y,z:{value,units}}}} | {emdb_id, error:"not_found"}]}.',
     example:
-      'result = host.mcp("structures", "emdb_get_entries", {"emdb_ids": ["EMD-11638", "emd-3061", "1234"]})',
+      'const result = await host.mcp("structures", "emdb_get_entries", {"emdb_ids": ["EMD-11638", "emd-3061", "1234"]})',
     run: async (ctx, a) => {
       const ids = idList(a)
       const records: Record<string, unknown>[] = []
@@ -736,7 +736,7 @@ export const STRUCTURES_EMDB_TOOLS: ToolDescriptor[] = [
     returns:
       '{query, num_found_released (facet-route released count), rows_retrieved (REL+OBS, deduped), rows_by_status (e.g. {"OBS":19,"REL":890}), released_complete, records:[{emdb_id, title, resolution, structure_determination_method, fitted_pdbs, current_status, release_date}], max_rows}.',
     example:
-      'result = host.mcp("structures", "emdb_search_entries", {"query": "title:\\"apoferritin\\" AND resolution:[0 TO 1.5]", "max_rows": 500})',
+      'const result = await host.mcp("structures", "emdb_search_entries", {"query": "title:\\"apoferritin\\" AND resolution:[0 TO 1.5]", "max_rows": 500})',
     run: async (ctx, a) => {
       const query = String(a.query)
       const maxRows = clampInt(a.max_rows, 1000, 1, 100_000)
@@ -761,7 +761,7 @@ export const STRUCTURES_EMDB_TOOLS: ToolDescriptor[] = [
     returns:
       '{n_requested, section, records:[<section record> | {emdb_id, error:"not_found"}]}. Section record shapes: publications -> {emdb_id, primary_citation, secondary_citations}; map -> {emdb_id, file, format, dimensions, pixel_spacing_angstrom, cell, statistics, contour_levels, space_group, ...}; sample -> {emdb_id, name, macromolecules[...], supramolecules[...]}; imaging -> {emdb_id, method, microscopy[...], specimen_preparations[...]}.',
     example:
-      'result = host.mcp("structures", "emdb_get_entry_section", {"emdb_ids": ["EMD-11638"], "section": "imaging"})',
+      'const result = await host.mcp("structures", "emdb_get_entry_section", {"emdb_ids": ["EMD-11638"], "section": "imaging"})',
     run: async (ctx, a) => {
       const ids = idList(a)
       const section = String(a.section)
@@ -804,7 +804,7 @@ export const STRUCTURES_EMDB_TOOLS: ToolDescriptor[] = [
     returns:
       '{n_requested, records:[{emdb_id, has_validation_analysis, resolution_angstrom, qscore_average, atom_inclusion_average, available_blocks:[...], recommended_contour_level, predicated_contour_level, rawmap_contour_level, model_map_ratio, model_volume, mask_volume, surfaces, surface_ratio, feature_assessment, relion_mask_coverage}]} — scalar blocks are the raw numeric objects or null; unknown accessions get has_validation_analysis=false + error:"not_found".',
     example:
-      'result = host.mcp("structures", "emdb_get_validation", {"emdb_ids": ["EMD-11638", "EMD-3061"]})',
+      'const result = await host.mcp("structures", "emdb_get_validation", {"emdb_ids": ["EMD-11638", "EMD-3061"]})',
     run: async (ctx, a) => {
       const ids = idList(a)
       const records: Record<string, unknown>[] = []

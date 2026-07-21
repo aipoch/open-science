@@ -34,9 +34,8 @@ import type { ChatSession } from '@/stores/session-store'
 
 import { ComposerEditor } from './composer/ComposerEditor'
 import { docToSkillIds, type ComposerDoc } from './composer/composer-doc'
-import { ComposerAutoReviewToggle } from './ComposerAutoReviewToggle'
+import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
 import { ComposerModelPicker } from './ComposerModelPicker'
-import { ComposerPermissionProfilePicker } from './ComposerPermissionProfilePicker'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 import { SessionInterruptedBanner } from './SessionInterruptedBanner'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
@@ -392,20 +391,17 @@ const ConversationPanel = ({
                           onChange={handleAttachmentInputChange}
                         />
 
-                        <ComposerPermissionProfilePicker
-                          value={permissionProfile}
-                          state={permissionProfileState}
+                        <ComposerAgentControlsMenu
+                          profile={permissionProfile}
+                          profileState={permissionProfileState}
                           grants={permissionGrants}
-                          disabled={!canChangePermissionProfile}
-                          onChange={onPermissionProfileChange}
+                          autoReviewEnabled={autoReviewEnabled}
+                          readOnly={!canChangePermissionProfile}
+                          autoReviewDisabled={!canEditDraft}
+                          onProfileChange={onPermissionProfileChange}
+                          onAutoReviewChange={onAutoReviewToggle}
                           onRevokeGrant={onRevokePermissionGrant}
                           onClearGrants={onClearPermissionGrants}
-                        />
-
-                        <ComposerAutoReviewToggle
-                          value={autoReviewEnabled}
-                          disabled={!canEditDraft}
-                          onChange={onAutoReviewToggle}
                         />
 
                         <div className="flex-1" />

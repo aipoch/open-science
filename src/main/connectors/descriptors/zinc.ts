@@ -392,7 +392,8 @@ export const ZINC_TOOLS: ToolDescriptor[] = [
     required: ['zinc_ids'],
     returns:
       '`{ "query", "total_available", "returned_count", "truncated", "source_counts": { "zinc22": int, ... }, "records": [ { "zinc_id", "smiles", "tranche_name", "catalogs", "source", "tranche_properties": { "heavy_atoms", "logp" } } ] }` — records capped at `max_results` (default 50, cap 500); `truncated` true when more were available. `source` is "zinc22"/"zinc20"; ids with no match simply have no record.',
-    example: 'result = host.mcp("zinc", "zinc_search_by_id", {"zinc_ids": ["ZINC000000000012"]})',
+    example:
+      'const result = await host.mcp("zinc", "zinc_search_by_id", {"zinc_ids": ["ZINC000000000012"]})',
     run: async (_ctx, a) => {
       const ids = requireIds(a.zinc_ids, MAX_IDS_PER_CALL, 'ZINC id', ZINC_ID_RE)
       const cap = clampMaxResults(a.max_results)
@@ -444,7 +445,7 @@ export const ZINC_TOOLS: ToolDescriptor[] = [
     returns:
       'The standard bounded shape (`query`, `total_available`, `returned_count`, `truncated`, `source_counts`, `records`) with records as in `zinc_search_by_id`. `query` echoes the resolved `{ smiles, dist, adist }`.',
     example:
-      'result = host.mcp("zinc", "zinc_search_by_smiles", {"smiles": "CC(=O)Oc1ccccc1C(=O)O", "dist": 2})',
+      'const result = await host.mcp("zinc", "zinc_search_by_smiles", {"smiles": "CC(=O)Oc1ccccc1C(=O)O", "dist": 2})',
     run: async (_ctx, a) => {
       const smiles = typeof a.smiles === 'string' ? a.smiles.trim() : ''
       if (!smiles) throw new Error('smiles must be a non-empty SMILES string')
@@ -492,7 +493,7 @@ export const ZINC_TOOLS: ToolDescriptor[] = [
     returns:
       'The standard bounded shape; records additionally carry `supplier_code` alongside `zinc_id`/`smiles`/`catalogs`/`tranche_name`/`tranche_properties`.',
     example:
-      'result = host.mcp("zinc", "zinc_search_by_supplier", {"supplier_codes": ["MCULE-2311834287"]})',
+      'const result = await host.mcp("zinc", "zinc_search_by_supplier", {"supplier_codes": ["MCULE-2311834287"]})',
     run: async (_ctx, a) => {
       const codes = requireIds(a.supplier_codes, MAX_IDS_PER_CALL, 'supplier code')
       const cap = clampMaxResults(a.max_results)
@@ -536,7 +537,7 @@ export const ZINC_TOOLS: ToolDescriptor[] = [
     returns:
       'The standard bounded shape with records as in `zinc_search_by_id` (random order). `query` echoes `{ count, subset, known_subsets }`.',
     example:
-      'result = host.mcp("zinc", "zinc_random_sample", {"count": 25, "subset": "lead-like"})',
+      'const result = await host.mcp("zinc", "zinc_random_sample", {"count": 25, "subset": "lead-like"})',
     run: async (_ctx, a) => {
       const cap = clampMaxResults(a.count)
       const subset = typeof a.subset === 'string' && a.subset.trim() ? a.subset.trim() : undefined
@@ -578,7 +579,8 @@ export const ZINC_TOOLS: ToolDescriptor[] = [
     required: ['zinc_ids'],
     returns:
       '`{ "query", "returned_count", "structures", "repository_note" }`; each structure carries `zinc_id`, `found`, `smiles`, `source`, `tranche_name` + `tranche_properties`, and (when the tranche decodes) `download`: `{ repository, tranche_path_pattern: "zinc-22*/H##/<tranche>/", formats }`. Sub-release directories (zinc-22a, zinc-22b, …) must be browsed for exact file names — the repository has no per-compound fetch URL.',
-    example: 'result = host.mcp("zinc", "zinc_get_3d", {"zinc_ids": ["ZINC000000000012"]})',
+    example:
+      'const result = await host.mcp("zinc", "zinc_get_3d", {"zinc_ids": ["ZINC000000000012"]})',
     run: async (_ctx, a) => {
       const ids = requireIds(a.zinc_ids, MAX_IDS_3D, 'ZINC id', ZINC_ID_RE)
       const canonical = ids.map(normalizeZincId)

@@ -103,6 +103,14 @@ beforeEach(() => {
         .fn()
         .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' }),
       setDataRootAndRelaunch: vi.fn().mockResolvedValue({ ok: true })
+    },
+    // The optional RuntimeChoiceCard lists detected interpreters on mount; stub so the effect resolves.
+    runtime: {
+      listEnvironments: vi.fn().mockResolvedValue({ python: [], r: [] }),
+      getEnablement: vi.fn().mockResolvedValue({ enabled: {}, installAuthorized: {} }),
+      setEnvironmentEnabled: vi.fn().mockResolvedValue({ enabled: {}, installAuthorized: {} }),
+      registerInterpreter: vi.fn().mockResolvedValue([]),
+      pickInterpreter: vi.fn().mockResolvedValue(null)
     }
   }
 

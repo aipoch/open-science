@@ -4,6 +4,7 @@ import { join, normalize, resolve, sep } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MIGRATION_MARKER_FILENAME } from './storage/migration-marker'
+import { RELOCATABLE_DATA_DIRS } from './storage/data-directories'
 
 // Unified electron mock: getPath is a vi.fn so main's override tests can assert it isn't called,
 // while our data-root tests point it at a per-test temp home via mockReturnValue.
@@ -178,8 +179,8 @@ describe('computeDefaultDataRoot', () => {
     await rm(configRoot, { recursive: true, force: true })
   })
 
-  it('checks every USER-data marker dir (artifacts, notebooks, uploads)', async () => {
-    for (const marker of ['artifacts', 'notebooks', 'uploads']) {
+  it('checks every relocatable user-data directory as a legacy marker', async () => {
+    for (const marker of RELOCATABLE_DATA_DIRS) {
       const configRoot = resolveConfigRoot()
       await mkdir(join(configRoot, marker), { recursive: true })
 
