@@ -6,7 +6,7 @@ import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 
 import type { ComputeHost } from '../../shared/compute'
 import type { DownloadDest } from '../../shared/remote-fs'
-import { ComputeService, parseProbeOutput } from './compute-service'
+import { ComputeService, parseProbeOutput, resolveInputs } from './compute-service'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeHostRepository } from './repository'
 import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
@@ -2036,5 +2036,237 @@ describe('ComputeService.getJobStatus', () => {
     const service = new ComputeService(runner, repo, undefined, undefined, undefined, jobRepo)
 
     await expect(service.getJobStatus('nonexistent')).rejects.toThrow(/No compute job/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// resolveInputs — unit tests for input staging validation/resolution
+// ---------------------------------------------------------------------------
+
+describe('resolveInputs — workspace source', () => {
+  it('resolves a workspace path to an absolute local path', async () => {
+    const { entries, inputsSummary } = await resolveInputs(
+      [{ src: 'data/sample.fa', dst_filename: 'sample.fa' }],
+      '/workspace/root',
+      undefined
+    )
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({ kind: 'upload', dstFilename: 'sample.fa' })
+    expect((entries[0] as { localPath: string }).localPath).toBe('/workspace/root/data/sample.fa')
+    expect(inputsSummary).toBe('1 input: sample.fa')
+  })
+
+  it('rejects a workspace path that escapes the workspace root via ../', async () => {
+    await expect(
+      resolveInputs(
+        [{ src: '../../etc/passwd', dst_filename: 'passwd' }],
+        '/workspace/root',
+        undefined
+      )
+    ).rejects.toThrow(/escape/)
+  })
+
+  it('throws when workspaceCwd is missing for a workspace src', async () => {
+    await expect(
+      resolveInputs([{ src: 'data.csv', dst_filename: 'data.csv' }], undefined, undefined)
+    ).rejects.toThrow(/workspace_cwd/)
+  })
+})
+
+describe('resolveInputs — artifact source', () => {
+  it('resolves an artifact id via ArtifactResolver to a local path', async () => {
+    const resolver = {
+      resolveArtifactPath: vi.fn(async () => '/storage/artifacts/sess/run/model.pkl')
+    }
+    const { entries, inputsSummary } = await resolveInputs(
+      [{ src: '{{artifact:sess:run:model.pkl}}', dst_filename: 'model.pkl' }],
+      undefined,
+      resolver
+    )
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({
+      kind: 'upload',
+      localPath: '/storage/artifacts/sess/run/model.pkl',
+      dstFilename: 'model.pkl'
+    })
+    expect(inputsSummary).toBe('1 input: model.pkl')
+    expect(resolver.resolveArtifactPath).toHaveBeenCalledWith('sess:run:model.pkl')
+  })
+
+  it('throws when artifactResolver is missing for an artifact src', async () => {
+    await expect(
+      resolveInputs(
+        [{ src: '{{artifact:sess:run:model.pkl}}', dst_filename: 'model.pkl' }],
+        undefined,
+        undefined
+      )
+    ).rejects.toThrow(/ArtifactResolver/)
+  })
+})
+
+describe('resolveInputs — remote_path source', () => {
+  it('creates a symlink entry for an absolute remote path', async () => {
+    const { entries, inputsSummary } = await resolveInputs(
+      [{ remote_path: '/scratch/ref.fa', dst_filename: 'ref.fa' }],
+      undefined,
+      undefined
+    )
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({
+      kind: 'symlink',
+      remotePath: '/scratch/ref.fa',
+      dstFilename: 'ref.fa'
+    })
+    expect(inputsSummary).toBe('1 input: ref.fa (symlink)')
+  })
+
+  it('infers dst_filename from basename when omitted', async () => {
+    const { entries } = await resolveInputs(
+      [{ remote_path: '/scratch/genome.fa' }],
+      undefined,
+      undefined
+    )
+    expect(entries[0]).toMatchObject({ kind: 'symlink', dstFilename: 'genome.fa' })
+  })
+
+  it('rejects a relative remote_path', async () => {
+    await expect(
+      resolveInputs([{ remote_path: 'relative/path' }], undefined, undefined)
+    ).rejects.toThrow(/absolute/)
+  })
+
+  it('rejects a remote_path with glob characters', async () => {
+    await expect(
+      resolveInputs([{ remote_path: '/scratch/*.fa' }], undefined, undefined)
+    ).rejects.toThrow(/glob/)
+  })
+
+  it('rejects a remote_path with shell-unsafe characters', async () => {
+    await expect(
+      resolveInputs([{ remote_path: '/scratch/$(id)' }], undefined, undefined)
+    ).rejects.toThrow(/shell-unsafe/)
+  })
+})
+
+describe('resolveInputs — dst_filename validation', () => {
+  it('rejects a dst_filename containing /', async () => {
+    await expect(
+      resolveInputs([{ src: 'data.csv', dst_filename: 'sub/data.csv' }], '/workspace', undefined)
+    ).rejects.toThrow(/bare filename/)
+  })
+
+  it('rejects an empty dst_filename', async () => {
+    await expect(
+      resolveInputs([{ src: 'data.csv', dst_filename: '' }], '/workspace', undefined)
+    ).rejects.toThrow(/bare filename/)
+  })
+})
+
+describe('resolveInputs — mixed inputs summary', () => {
+  it('builds summary for multiple inputs of different kinds', async () => {
+    const resolver = {
+      resolveArtifactPath: vi.fn(async () => '/storage/model.pkl')
+    }
+    const { entries, inputsSummary } = await resolveInputs(
+      [
+        { src: 'data.csv', dst_filename: 'data.csv' },
+        { src: '{{artifact:s:r:model.pkl}}', dst_filename: 'model.pkl' },
+        { remote_path: '/scratch/ref.fa', dst_filename: 'ref.fa' }
+      ],
+      '/workspace',
+      resolver
+    )
+    expect(entries).toHaveLength(3)
+    expect(inputsSummary).toBe('3 inputs: data.csv, model.pkl, ref.fa (symlink)')
+  })
+
+  it('returns empty summary when no inputs', async () => {
+    const { entries, inputsSummary } = await resolveInputs([], '/workspace', undefined)
+    expect(entries).toHaveLength(0)
+    expect(inputsSummary).toBe('')
+  })
+})
+
+describe('ComputeService.submitJob — inputs_summary in approval', () => {
+  it('passes inputs_summary to the approval request when inputs are provided', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo: jobRepo } = makeJobRepo()
+    const { repo } = makeRepo()
+
+    const requestWithContext = vi.fn(() => Promise.resolve('once' as const))
+    const broker = {
+      request: requestWithContext,
+      requestWithContext,
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    const service = new ComputeService(runner, repo, broker, undefined, undefined, jobRepo)
+
+    await service.submitJob(
+      'ssh:biowulf',
+      'test',
+      'echo hi',
+      {
+        inputs: [{ remote_path: '/scratch/ref.fa', dst_filename: 'ref.fa' }]
+      },
+      { sessionId: 's1', projectId: 'p1' }
+    )
+
+    const callArg = (requestWithContext as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      inputs_summary?: string
+    }
+    expect(callArg.inputs_summary).toBe('1 input: ref.fa (symlink)')
+  })
+
+  it('stores resolved inputManifest in the DB row', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo: jobRepo, createCalls } = makeJobRepo()
+    const { repo } = makeRepo()
+
+    const broker = {
+      request: vi.fn(() => Promise.resolve('once' as const)),
+      requestWithContext: vi.fn(() => Promise.resolve('once' as const)),
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    const service = new ComputeService(runner, repo, broker, undefined, undefined, jobRepo)
+
+    await service.submitJob(
+      'ssh:biowulf',
+      'test',
+      'echo hi',
+      {
+        inputs: [{ remote_path: '/scratch/ref.fa', dst_filename: 'ref.fa' }]
+      },
+      { sessionId: 's1', projectId: 'p1' }
+    )
+
+    const createArg = (createCalls as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      inputManifest?: string
+    }
+    expect(createArg.inputManifest).toBeDefined()
+    const manifest = JSON.parse(createArg.inputManifest!) as Array<{
+      kind: string
+      remotePath: string
+      dstFilename: string
+    }>
+    expect(manifest).toHaveLength(1)
+    expect(manifest[0]).toMatchObject({
+      kind: 'symlink',
+      remotePath: '/scratch/ref.fa',
+      dstFilename: 'ref.fa'
+    })
   })
 })

@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, stat as fsStat, rm } from 'node:fs/promises'
 import { app } from 'electron'
-import { basename, join } from 'node:path'
+import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 
@@ -32,6 +32,7 @@ import {
 } from './scp-runner'
 import type { ComputeJobRepository } from './job-repository'
 import { computeRemoteWorkdir, dispatchJob, hashCommand } from './job-dispatcher'
+import type { StagedInputEntry } from './job-dispatcher'
 
 // Probe timeout for the full bundle — individual commands share one connection but each gets this
 // budget. Set generously so slow clusters don't abort, but short enough for a responsive UI (30s).
@@ -170,6 +171,115 @@ const buildDetailsSkeleton = (probe: ProbeResult): string => {
   return lines.join('\n')
 }
 
+// Raw input spec as submitted by the agent (before resolution to local paths).
+// Three kinds per design.md §7:
+//   workspace: {src:"workspace/some/path", dst_filename:"name.csv"}
+//   artifact:  {src:"{{artifact:SESSION:RUN:name.csv}}", dst_filename:"name.csv"}
+//   remote:    {remote_path:"/abs/path", dst_filename?:"name.csv"}
+export type RawInputSpec =
+  | { src: string; dst_filename: string } // workspace or artifact (distinguished by src prefix)
+  | { remote_path: string; dst_filename?: string }
+
+// Artifact src pattern: {{artifact:ID}} where ID is the opaque artifact id string.
+const ARTIFACT_SRC_RE = /^\{\{artifact:(.+)\}\}$/
+
+// Shell-unsafe and glob characters reused from scp-runner (same set, kept in sync here to avoid
+// importing scp-runner's private const). See scp-runner.ts for the rationale.
+// eslint-disable-next-line no-control-regex
+const SHELL_UNSAFE_CHARS_RE = /[$`;|&<>()"'\x00-\x1f\x7f]/
+const GLOB_CHARS_RE = /[*?[\]{}\\]/
+
+// Validates a dst_filename: must be a bare filename with no path separators.
+const assertBareName = (name: string, label: string): void => {
+  if (!name || name.includes('/') || name.includes('\\') || name === '.' || name === '..') {
+    throw new Error(
+      `dst_filename must be a bare filename with no path separators (got "${name}" for ${label})`
+    )
+  }
+}
+
+// Checks a workspace path doesn't escape the workspace root.
+// Returns the resolved absolute path on success, throws on escape.
+const resolveWorkspacePath = (workspaceCwd: string, srcPath: string): string => {
+  const resolved = resolve(workspaceCwd, srcPath)
+  const rel = relative(resolve(workspaceCwd), resolved)
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    throw new Error(`workspace path "${srcPath}" would escape the workspace root "${workspaceCwd}"`)
+  }
+  return resolved
+}
+
+// ArtifactRepository interface needed for input staging.
+// We only need to resolve an artifact id → local absolute path.
+export interface ArtifactResolver {
+  resolveArtifactPath(artifactId: string): Promise<string>
+}
+
+// Validates and resolves raw input specs into staged manifest entries.
+// workspace/path → resolveWorkspacePath → StagedInputEntry{kind:'upload', localPath}
+// {{artifact:ID}} → artifactResolver → StagedInputEntry{kind:'upload', localPath}
+// remote_path → validate absolute + no unsafe/glob chars → StagedInputEntry{kind:'symlink'}
+// Returns [entries, inputs_summary].
+export const resolveInputs = async (
+  rawInputs: RawInputSpec[],
+  workspaceCwd: string | undefined,
+  artifactResolver: ArtifactResolver | undefined
+): Promise<{ entries: StagedInputEntry[]; inputsSummary: string }> => {
+  const entries: StagedInputEntry[] = []
+  const summaryParts: string[] = []
+
+  for (const raw of rawInputs) {
+    if ('remote_path' in raw) {
+      // Remote symlink: validate absolute + no unsafe/glob chars.
+      const rp = raw.remote_path
+      if (!rp.startsWith('/')) {
+        throw new Error(`remote_path must be an absolute path (got "${rp}")`)
+      }
+      if (GLOB_CHARS_RE.test(rp)) {
+        throw new Error(`remote_path must not contain glob characters (got "${rp}")`)
+      }
+      if (SHELL_UNSAFE_CHARS_RE.test(rp)) {
+        throw new Error(`remote_path must not contain shell-unsafe characters (got "${rp}")`)
+      }
+      const dstFilename = raw.dst_filename ?? basename(rp)
+      assertBareName(dstFilename, `remote_path "${rp}"`)
+      entries.push({ kind: 'symlink', remotePath: rp, dstFilename, label: rp })
+      summaryParts.push(`${dstFilename} (symlink)`)
+    } else {
+      // src-based input: workspace or artifact.
+      const { src, dst_filename: dstFilename } = raw
+      assertBareName(dstFilename, `src "${src}"`)
+
+      const artifactMatch = ARTIFACT_SRC_RE.exec(src)
+      if (artifactMatch) {
+        // Artifact source.
+        const artifactId = artifactMatch[1]!
+        if (!artifactResolver) {
+          throw new Error(`Cannot resolve artifact "${src}": ArtifactResolver is not available`)
+        }
+        const localPath = await artifactResolver.resolveArtifactPath(artifactId)
+        entries.push({ kind: 'upload', localPath, dstFilename, label: src })
+        summaryParts.push(dstFilename)
+      } else {
+        // Workspace source.
+        if (!workspaceCwd) {
+          throw new Error(`Cannot resolve workspace path "${src}": workspace_cwd is not available`)
+        }
+        const localPath = resolveWorkspacePath(workspaceCwd, src)
+        entries.push({ kind: 'upload', localPath, dstFilename, label: src })
+        summaryParts.push(dstFilename)
+      }
+    }
+  }
+
+  const inputsSummary =
+    entries.length === 0
+      ? ''
+      : `${entries.length} input${entries.length === 1 ? '' : 's'}: ${summaryParts.join(', ')}`
+
+  return { entries, inputsSummary }
+}
+
 // Maximum timeout seconds allowed for a job (7 days). Commands above this are rejected.
 const JOB_MAX_TIMEOUT_SECONDS = 7 * 24 * 3600
 
@@ -184,6 +294,7 @@ const JOB_DEFAULT_TIMEOUT_SECONDS = 24 * 3600
 // scpRunner is optional: when omitted a SystemScpRunner is used (production default).
 // overrideDownloadsDir is optional: when supplied, used as the OS Downloads dir (for tests).
 // jobRepository is optional: when omitted, submitJob will throw (for tests that don't need it).
+// artifactResolver is optional: when omitted, artifact inputs in submitJob throw.
 export class ComputeService {
   private readonly scpRunner: ScpRunner
 
@@ -194,7 +305,8 @@ export class ComputeService {
     scpRunner?: ScpRunner,
     private readonly overrideDownloadsDir?: string,
     private readonly jobRepository?: ComputeJobRepository,
-    private readonly onJobUpdated?: (job: import('../../shared/compute').ComputeJob) => void
+    private readonly onJobUpdated?: (job: import('../../shared/compute').ComputeJob) => void,
+    private readonly artifactResolver?: ArtifactResolver
   ) {
     this.scpRunner = scpRunner ?? new SystemScpRunner()
   }
@@ -951,10 +1063,11 @@ export class ComputeService {
   //
   // Flow:
   //   1. Validate host exists and timeout is within bounds.
-  //   2. Pre-generate a job_id (not yet in DB).
-  //   3. Fire approval gate (before any DB write or SSH).
-  //   4. On approval: write ComputeJob row (status=submitted) + trigger background dispatch.
-  //   5. Return { job_id, provider_id, status:'submitted', remote_workdir } immediately.
+  //   2. Resolve and validate inputs (workspace/artifact/remote_path).
+  //   3. Pre-generate a job_id (not yet in DB).
+  //   4. Fire approval gate (before any DB write or SSH).
+  //   5. On approval: write ComputeJob row (status=submitted) + trigger background dispatch.
+  //   6. Return { job_id, provider_id, status:'submitted', remote_workdir } immediately.
   //
   // The background dispatcher transitions the job to running (or error) without blocking this call.
   async submitJob(
@@ -964,10 +1077,11 @@ export class ComputeService {
     options: {
       environment?: string
       resourceRequest?: string
-      inputManifest?: string
+      inputs?: RawInputSpec[]
       outputManifest?: string
       harvestConfig?: string
       timeoutSeconds?: number
+      workspaceCwd?: string
     },
     context: { sessionId: string; projectId: string }
   ): Promise<SubmitJobResult> {
@@ -1008,6 +1122,19 @@ export class ComputeService {
     }
     const timeoutSeconds = rawTimeout ?? JOB_DEFAULT_TIMEOUT_SECONDS
 
+    // ── RESOLVE INPUTS (validation in main process — security boundary) ───────────
+    let stagedEntries: StagedInputEntry[] = []
+    let inputsSummary = ''
+    if (options.inputs && options.inputs.length > 0) {
+      const resolved = await resolveInputs(
+        options.inputs,
+        options.workspaceCwd,
+        this.artifactResolver
+      )
+      stagedEntries = resolved.entries
+      inputsSummary = resolved.inputsSummary
+    }
+
     // Pre-generate job_id for the approval card's remote_workdir preview.
     const jobId = randomUUID()
     const remoteWorkdir = computeRemoteWorkdir(host.scratchRoot, jobId)
@@ -1029,6 +1156,7 @@ export class ComputeService {
       intent,
       command_preview: commandPreview,
       command_full: command,
+      inputs_summary: inputsSummary || undefined,
       timeout_seconds: timeoutSeconds,
       remote_workdir: remoteWorkdir
     }
@@ -1053,6 +1181,7 @@ export class ComputeService {
 
     // ── WRITE JOB ROW ──────────────────────────────────────────────────────────────
     const commandHash = hashCommand(command)
+    const inputManifest = stagedEntries.length > 0 ? JSON.stringify(stagedEntries) : undefined
 
     await this.jobRepository.create({
       id: jobId,
@@ -1065,7 +1194,7 @@ export class ComputeService {
       commandHash,
       environment: options.environment,
       resourceRequest: options.resourceRequest,
-      inputManifest: options.inputManifest,
+      inputManifest,
       outputManifest: options.outputManifest,
       harvestConfig: options.harvestConfig,
       timeoutSeconds,
@@ -1076,6 +1205,7 @@ export class ComputeService {
     // Fire-and-forget. Errors are persisted to the job row by the dispatcher.
     void dispatchJob(jobId, {
       runner: this.runner,
+      scpRunner: this.scpRunner,
       hostRepository: this.repository,
       jobRepository: this.jobRepository,
       onJobUpdated: this.onJobUpdated

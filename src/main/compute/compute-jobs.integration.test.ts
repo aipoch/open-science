@@ -1,14 +1,14 @@
-// Gated integration tests for the compute-jobs Phase 3a state machine.
+// Gated integration tests for Phase 3a compute-jobs (issues 01–03).
 // Runs only when RUN_COMPUTE_JOBS=1 and COMPUTE_TEST_SSH_ALIAS is set.
 // These tests require a real SSH host configured in ~/.ssh/config; they are skipped in CI.
 //
 // Usage (local):
 //   RUN_COMPUTE_JOBS=1 COMPUTE_TEST_SSH_ALIAS=my-host npx vitest run src/main/compute/compute-jobs.integration.test.ts
 //
-// Each test covers one terminal-state path (issue 01: success; issue 02: failed/timeout/process_vanished).
-// Remote workdirs are cleaned up in afterAll.
+// Each test covers one terminal-state path (issue 01: success; issue 02: failed/timeout/process_vanished)
+// plus input staging (issue 03). Remote workdirs are cleaned up in afterAll.
 
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -264,4 +264,83 @@ describeIf('compute-jobs integration (real SSH)', () => {
 
     expect(after2.status).toBe('failed')
   }, 120_000)
+
+  it('stages a workspace file and job can read it via ./dst_filename', async () => {
+    const client = createProjectDbClient(storageRoot)
+    const hostRepo = new ComputeHostRepository(() => Promise.resolve(client))
+    const jobRepo = new ComputeJobRepository(() => Promise.resolve(client))
+    const providerId = computeProviderId(ALIAS)
+
+    // Write a local file in a temp workspace dir.
+    const workspaceDir = await mkdtemp(join(tmpdir(), 'os-int-workspace-'))
+    const localFile = join(workspaceDir, 'hello.txt')
+    await writeFile(localFile, 'staged-content\n')
+
+    let stagedWorkdir: string | undefined
+
+    try {
+      const broker = new ComputeApprovalBroker({
+        broadcast: () => undefined,
+        generateId: () => 'test-approval-staging',
+        timeoutMs: 1000
+      })
+      // Auto-approve both request and requestWithContext for CI-free tests.
+      const originalReqCtx = broker.requestWithContext.bind(broker)
+      broker.requestWithContext = async (info, ctx) => {
+        const p = originalReqCtx(info, ctx)
+        setImmediate(() => broker.respond('test-approval-staging', 'once'))
+        return p
+      }
+
+      const runner = new SystemSshRunner()
+      const service = new ComputeService(runner, hostRepo, broker, undefined, undefined, jobRepo)
+
+      const result = await service.submitJob(
+        providerId,
+        'input staging integration test',
+        // Read the staged file and verify content.
+        'cat ./hello.txt | grep staged-content && echo PASS > verify.txt',
+        {
+          timeoutSeconds: 60,
+          inputs: [{ src: 'hello.txt', dst_filename: 'hello.txt' }],
+          workspaceCwd: workspaceDir
+        },
+        { sessionId: 'int-sess-staging', projectId: 'int-proj' }
+      )
+
+      expect(result.status).toBe('submitted')
+      stagedWorkdir = result.remote_workdir
+
+      // Poll until terminal state.
+      const poller = new JobPoller({ runner, hostRepository: hostRepo, jobRepository: jobRepo })
+      let jobStatus = await service.getJobStatus(result.job_id)
+      const maxWaitMs = 120_000
+      const startMs = Date.now()
+      while (!['success', 'failed', 'timeout', 'error'].includes(jobStatus.status)) {
+        if (Date.now() - startMs > maxWaitMs)
+          throw new Error(`Staging job timed out: ${jobStatus.status}`)
+        await poller.tick()
+        jobStatus = await service.getJobStatus(result.job_id)
+        await new Promise((r) => setTimeout(r, 2_000))
+      }
+
+      expect(jobStatus.status).toBe('success')
+    } finally {
+      // Best-effort remote cleanup.
+      if (stagedWorkdir && ALIAS) {
+        const runner = new SystemSshRunner()
+        const { resolveSshTarget } = await import('./ssh-runner')
+        try {
+          const target = await resolveSshTarget(ALIAS, undefined)
+          await runner.run(target, `rm -rf ${JSON.stringify(stagedWorkdir)}`, {
+            timeoutMs: 30_000,
+            loginShell: false
+          })
+        } catch {
+          /* ignore */
+        }
+      }
+      await rm(workspaceDir, { recursive: true, force: true })
+    }
+  }, 150_000)
 })

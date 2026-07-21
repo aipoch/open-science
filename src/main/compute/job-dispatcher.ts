@@ -5,6 +5,9 @@ import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 import type { SshRunner } from './ssh-runner'
 import { resolveSshTarget } from './ssh-runner'
+import type { ScpRunner } from './scp-runner'
+import { SystemScpRunner, runScpUpload } from './scp-runner'
+import { shellSingleQuote } from './scp-runner'
 
 // Maximum number of bytes for the per-job dispatch SSH command (enough for base64 of large scripts).
 const DISPATCH_MAX_OUTPUT_BYTES = 4 * 1024
@@ -60,9 +63,49 @@ export const quoteRemotePath = (path: string): string => {
   return singleQuote(path)
 }
 
+// One entry in the stored input manifest. Created by ComputeService (validation/resolution)
+// and consumed by the dispatcher (staging).
+export type StagedInputEntry =
+  | { kind: 'upload'; localPath: string; dstFilename: string; label: string }
+  | { kind: 'symlink'; remotePath: string; dstFilename: string; label: string }
+
+// Performs the remote staging for all entries: scp upload for 'upload' entries,
+// remote ln -s for 'symlink' entries. All-or-nothing: throws on first failure.
+// Called inside dispatchJob after the SSH target is resolved.
+export const stageInputs = async (
+  entries: StagedInputEntry[],
+  workdir: string,
+  runner: SshRunner,
+  target: import('./ssh-runner').ResolvedSshTarget,
+  scpRunner: ScpRunner
+): Promise<void> => {
+  for (const entry of entries) {
+    if (entry.kind === 'upload') {
+      const remoteDest = `${workdir}/${entry.dstFilename}`
+      await runScpUpload(scpRunner, target, entry.localPath, remoteDest)
+    } else {
+      // Remote symlink: ln -s /abs/path workdir/dst_filename
+      const quoted = shellSingleQuote(entry.remotePath)
+      const destQ = quoteRemotePath(`${workdir}/${entry.dstFilename}`)
+      const lnCmd = `ln -s ${quoted} ${destQ}`
+      const result = await runner.run(target, lnCmd, {
+        timeoutMs: 30_000,
+        loginShell: false,
+        maxOutputBytes: 4 * 1024
+      })
+      if (result.exitCode !== 0) {
+        throw new Error(
+          `ln -s failed for ${entry.label}: ${result.stderr.trim() || `exit ${result.exitCode ?? 'null'}`}`
+        )
+      }
+    }
+  }
+}
+
 // Dependency interface for the dispatcher. Tests inject a fake SshRunner.
 export type DispatcherDeps = {
   runner: SshRunner
+  scpRunner?: ScpRunner
   hostRepository: ComputeHostRepository
   jobRepository: ComputeJobRepository
   // Optional broadcast hook for Phase 3d renderer IPC; no-op when omitted (Phase 3a).
@@ -73,6 +116,7 @@ export type DispatcherDeps = {
 // Transitions: submitted → running (success) or error (any failure).
 export async function dispatchJob(jobId: string, deps: DispatcherDeps): Promise<void> {
   const { runner, hostRepository, jobRepository, onJobUpdated } = deps
+  const scpRunner = deps.scpRunner ?? new SystemScpRunner()
 
   const job = await jobRepository.get(jobId)
   if (!job) return // already gone (unlikely but guard anyway)
@@ -106,6 +150,55 @@ export async function dispatchJob(jobId: string, deps: DispatcherDeps): Promise<
 
   const workdir = job.remote_workdir ?? computeRemoteWorkdir(host.scratchRoot, jobId)
   const timeoutSecs = job.timeout_seconds ?? 86400 // default 24h
+
+  // Stage inputs declared in the manifest (all-or-nothing: failure → dispatch_failed).
+  if (job.input_manifest) {
+    let entries: StagedInputEntry[]
+    try {
+      entries = JSON.parse(job.input_manifest) as StagedInputEntry[]
+    } catch {
+      const updated = await jobRepository.update(jobId, {
+        status: 'error',
+        errorCode: 'dispatch_failed',
+        stderrTail: 'Failed to parse inputManifest JSON',
+        finishedAt: new Date()
+      })
+      onJobUpdated?.(updated)
+      return
+    }
+
+    // Mkdir workdir first so symlinks and uploads have a destination.
+    const mkdirResult = await runner.run(target, `mkdir -p ${quoteRemotePath(workdir)}`, {
+      timeoutMs: 30_000,
+      loginShell: false,
+      maxOutputBytes: 4 * 1024
+    })
+    if (mkdirResult.exitCode !== 0) {
+      const tail = mkdirResult.stderr || `mkdir exit ${mkdirResult.exitCode ?? 'null'}`
+      const updated = await jobRepository.update(jobId, {
+        status: 'error',
+        errorCode: 'dispatch_failed',
+        stderrTail: tail,
+        finishedAt: new Date()
+      })
+      onJobUpdated?.(updated)
+      return
+    }
+
+    try {
+      await stageInputs(entries, workdir, runner, target, scpRunner)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      const updated = await jobRepository.update(jobId, {
+        status: 'error',
+        errorCode: 'dispatch_failed',
+        stderrTail: `Input staging failed: ${msg}`,
+        finishedAt: new Date()
+      })
+      onJobUpdated?.(updated)
+      return
+    }
+  }
 
   // Build scripts.
   const commandScript = job.command // raw command content written to command.sh

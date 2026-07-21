@@ -39,6 +39,9 @@ export const MAX_IMPORT_BYTES = 50 * 1024 * 1024
 // SCP timeout: generous because files can be large, but bounded.
 const SCP_TIMEOUT_MS = 10 * 60 * 1000 // 10 minutes
 
+// Timeout for job input uploads — generous because inputs can be GB-scale (bioinformatics).
+export const SCP_UPLOAD_TIMEOUT_MS = 30 * 60 * 1000 // 30 minutes
+
 // Locates scp.exe on Windows. Mirrors the ssh.exe search in ssh-runner.ts.
 const findWindowsScp = (): string => {
   const candidates = [
@@ -74,9 +77,26 @@ export const validateImportPath = (
   return undefined
 }
 
-// Converts a ResolvedSshTarget (built for ssh) into scp-compatible args.
-// scp does not accept -p <port>; ports must be passed as -P <port> or -o Port=.
-// We use -o Port=<n> to stay consistent with the mux options style.
+// Translates ssh extraArgs to scp-compatible form (shared between download and upload builders).
+// ssh uses -p <port>; scp uses -P <port> (or equivalently -o Port=<port>). Both accept -o options.
+const buildScpExtraArgs = (target: ResolvedSshTarget): string[] => {
+  const scpExtraArgs: string[] = []
+  let i = 0
+  while (i < target.extraArgs.length) {
+    const arg = target.extraArgs[i]
+    if (arg === '-p' && i + 1 < target.extraArgs.length) {
+      scpExtraArgs.push('-o', `Port=${target.extraArgs[i + 1]}`)
+      i += 2
+    } else {
+      scpExtraArgs.push(arg as string)
+      i++
+    }
+  }
+  return scpExtraArgs
+}
+
+// Converts a ResolvedSshTarget (built for ssh) into scp-compatible args for downloading.
+// Direction: remote → local (remoteSpec first, then localPath).
 //
 // The extraArgs from resolveSshTarget are already in -o Key=Value form for BatchMode, ConnectTimeout,
 // ControlMaster, ControlPath, ControlPersist. The only difference is that -p <port> must become
@@ -86,27 +106,28 @@ export const buildScpArgs = (
   remotePath: string,
   localPath: string
 ): string[] => {
-  const scpExtraArgs: string[] = []
-
-  // Translate ssh extraArgs to scp-compatible form.
-  // ssh uses -p <port>; scp uses -P <port>. Both accept -o options identically.
-  let i = 0
-  while (i < target.extraArgs.length) {
-    const arg = target.extraArgs[i]
-    if (arg === '-p' && i + 1 < target.extraArgs.length) {
-      // Convert ssh -p <port> → scp -o Port=<port>
-      scpExtraArgs.push('-o', `Port=${target.extraArgs[i + 1]}`)
-      i += 2
-    } else {
-      scpExtraArgs.push(arg as string)
-      i++
-    }
-  }
+  const scpExtraArgs = buildScpExtraArgs(target)
 
   // Remote source: user@host:path (or just host:path when User is already in -o User=).
   const remoteSpec = `${target.host}:${remotePath}`
 
   return [...scpExtraArgs, remoteSpec, localPath]
+}
+
+// Builds scp args for uploading a local file to a remote destination.
+// Direction: local → remote (localPath first, then remoteSpec).
+// Uses the same -o Port= translation and ControlMaster args as buildScpArgs.
+export const buildScpUploadArgs = (
+  target: ResolvedSshTarget,
+  localPath: string,
+  remotePath: string
+): string[] => {
+  const scpExtraArgs = buildScpExtraArgs(target)
+
+  // Remote destination: user@host:path.
+  const remoteSpec = `${target.host}:${remotePath}`
+
+  return [...scpExtraArgs, localPath, remoteSpec]
 }
 
 // Result of a single scp transfer attempt.
@@ -204,6 +225,38 @@ const classifyScpError = (stderr: string): string => {
   )
     return 'connection'
   return 'other'
+}
+
+// Runs an scp upload (local → remote) and classifies any failure.
+// Throws an error with a .remoteFsError property on failure; resolves on success.
+export const runScpUpload = async (
+  scpRunner: ScpRunner,
+  target: ResolvedSshTarget,
+  localPath: string,
+  remotePath: string,
+  timeoutMs = SCP_UPLOAD_TIMEOUT_MS
+): Promise<void> => {
+  const scpBinary = resolveScpBinary()
+  const args = buildScpUploadArgs(target, localPath, remotePath)
+  const result = await scpRunner.copy(scpBinary, args, timeoutMs)
+
+  if (result.timedOut) {
+    const err = new Error('scp upload timed out') as Error & {
+      remoteFsError: { detail: string; remoteKind: string }
+    }
+    err.remoteFsError = { detail: 'scp upload timed out.', remoteKind: 'connection' }
+    throw err
+  }
+
+  if (result.exitCode !== 0) {
+    const detail = result.stderr.trim() || `scp exited with code ${String(result.exitCode)}`
+    const kind = classifyScpError(result.stderr)
+    const err = new Error(detail) as Error & {
+      remoteFsError: { detail: string; remoteKind: string }
+    }
+    err.remoteFsError = { detail, remoteKind: kind }
+    throw err
+  }
 }
 
 // Infers a MIME type from a file extension.
