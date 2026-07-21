@@ -91,7 +91,7 @@ export type ProviderKind = {
 export const PROVIDER_KINDS: ProviderKind[] = [
   {
     key: 'codex-subscription',
-    label: 'Codex subscription',
+    label: codexSubscriptionProviderIdentity().name,
     description: 'Use an existing Codex profile or sign in with a separate Open Science profile.',
     group: 'coding'
   },
