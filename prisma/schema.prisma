@@ -110,6 +110,10 @@ model ComputeJob {
   stdoutTail      String?
   stderrTail      String?
   errorCode       String?
+  // lastPollError: set when SSH connectivity fails during a poll tick (design.md §8 boundary 2).
+  // The job status is NOT changed — this field surfaces the transient error to the UI.
+  // Cleared on the next successful poll. retry_after_user_action is always true for this field.
+  lastPollError   String?
   createdAt       DateTime  @default(now())
   submittedAt     DateTime?
   startedAt       DateTime?

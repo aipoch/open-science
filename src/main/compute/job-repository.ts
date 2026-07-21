@@ -40,6 +40,7 @@ const toJob = (row: PrismaComputeJob): ComputeJob => ({
   stdout_tail: row.stdoutTail ?? undefined,
   stderr_tail: row.stderrTail ?? undefined,
   error_code: row.errorCode ?? undefined,
+  last_poll_error: row.lastPollError ?? undefined,
   created_at: row.createdAt.getTime(),
   submitted_at: row.submittedAt?.getTime(),
   started_at: row.startedAt?.getTime(),
@@ -72,6 +73,12 @@ export type UpdateJobRequest = {
   stdoutTail?: string | null
   stderrTail?: string | null
   errorCode?: string | null
+  // lastPollError is set when SSH connectivity fails during polling (not a job failure).
+  lastPollError?: string | null
+  // retryAfterUserAction is an in-memory hint; always true for poll connectivity errors.
+  // It is NOT persisted to the DB but is carried in the update call so callers can surface
+  // the retry_after_user_action semantic without a separate DB column.
+  retryAfterUserAction?: boolean
   submittedAt?: Date
   startedAt?: Date
   finishedAt?: Date
@@ -143,6 +150,7 @@ export class ComputeJobRepository {
     if ('stdoutTail' in updates) data.stdoutTail = updates.stdoutTail
     if ('stderrTail' in updates) data.stderrTail = updates.stderrTail
     if ('errorCode' in updates) data.errorCode = updates.errorCode
+    if ('lastPollError' in updates) data.lastPollError = updates.lastPollError
     if (updates.submittedAt !== undefined) data.submittedAt = updates.submittedAt
     if (updates.startedAt !== undefined) data.startedAt = updates.startedAt
     if (updates.finishedAt !== undefined) data.finishedAt = updates.finishedAt
