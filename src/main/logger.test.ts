@@ -226,6 +226,22 @@ describe('logger: errorLogFields', () => {
     expect(invalid.data).toBe('[invalid date]')
   })
 
+  it('charges a Date ISO string against the global character budget', () => {
+    // Use an ARRAY: unlike the object branch it doesn't stop on key-affordability, so the trailing Date
+    // is still visited after earlier string elements have exhausted the global char budget. Its ISO can
+    // only be emitted through chargeString, which returns the truncated marker once the budget is spent —
+    // if the Date bypassed chargeString it would emit the raw "1970-…" ISO here and fail the assertion.
+    const arr: unknown[] = []
+    for (let i = 0; i < 40; i += 1) arr.push('x'.repeat(8000))
+    arr.push(new Date(0))
+    const fields = errorLogFields(Object.assign(new Error('e'), { data: arr })) as {
+      data: unknown[]
+    }
+    const dateSlot = fields.data[fields.data.length - 1]
+    expect(dateSlot).toBe('…[truncated]')
+    expect(dateSlot).not.toContain('1970') // definitely not the raw ISO
+  })
+
   it('degrades a throwing getter to a marker while keeping sibling fields', () => {
     const data = { ok: 'kept' }
     Object.defineProperty(data, 'boom', {
@@ -633,6 +649,27 @@ describe('logger: errorLogFields', () => {
     expect(fields.error).toContain('chars]')
   })
 
+  it('truncates the bestEffortMessage Error-message branch (real Error under a stateful proxy)', () => {
+    // Wrap a REAL Error so bestEffortMessage's `error instanceof Error` is true on the second (fallback)
+    // getPrototypeOf call, driving `truncate(error.message)` specifically — the String(error) branch of
+    // the previous test wouldn't cover this path.
+    const huge = 'z'.repeat(100_000)
+    let protoCalls = 0
+    const target = new Error(huge)
+    const hostile = new Proxy(target, {
+      getPrototypeOf(t) {
+        protoCalls += 1
+        if (protoCalls === 1) throw new Error('proto trap (first call only)')
+        return Reflect.getPrototypeOf(t)
+      }
+    })
+
+    const fields = errorLogFields(hostile) as { error: string; serializationFailed?: boolean }
+    expect(fields.serializationFailed).toBe(true)
+    expect(fields.error.length).toBeLessThan(9000)
+    expect(fields.error).toContain('chars]')
+  })
+
   it('truncates an over-long function name', () => {
     const hugeName = 'f'.repeat(100_000)
     const fn = (): void => undefined
@@ -666,6 +703,49 @@ describe('logger: errorLogFields', () => {
     expect(marker).toContain(`+${200 - emittedDataKeys} `)
     expect(emittedDataKeys).toBeLessThan(200) // budget genuinely stopped it early
     expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('preserves an input own "[truncated]" key instead of overwriting it with the aggregate marker', () => {
+    // A nested object that has its OWN "[truncated]" field AND enough keys to trigger the cap so an
+    // aggregate marker is emitted. The input value must survive (disambiguated), the aggregate marker
+    // must be present and distinct, and the omitted count must not be off by one.
+    const nested: Record<string, unknown> = { '[truncated]': 'REAL_INPUT_VALUE' }
+    for (let i = 0; i < 1500; i += 1) nested[`k${i}`] = i // exceeds MAX_OBJECT_KEYS (1000)
+    const fields = errorLogFields(Object.assign(new Error('e'), { data: nested })) as {
+      data: Record<string, unknown>
+    }
+    const out = fields.data
+
+    // The input's own "[truncated]" value is retained under a disambiguated key, not lost.
+    const preserved = Object.entries(out).filter(([, v]) => v === 'REAL_INPUT_VALUE')
+    expect(preserved.length).toBe(1)
+    expect(preserved[0][0]).not.toBe('[truncated]') // it was disambiguated
+    // The aggregate marker occupies the reserved name and reads as an omission summary, not the input.
+    expect(out['[truncated]']).toMatch(/more keys|omitted/)
+    // Exact count: total input keys (1501) minus the input keys actually emitted (everything except the
+    // aggregate marker itself).
+    const emitted = Object.keys(out).filter((k) => k !== '[truncated]').length
+    const marker = out['[truncated]'] as string
+    expect(marker).toContain(`${1501 - emitted}`)
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('does not let a top-level input "error" key clobber the message summary', () => {
+    // A directly-thrown object with both a `message` (→ the `error` summary) and its own `error` field.
+    const fields = errorLogFields({
+      message: 'the summary',
+      error: 'INPUT_ERROR_FIELD',
+      code: 7
+    }) as {
+      error: string
+    } & Record<string, unknown>
+
+    // The reserved `error` holds the message summary; the input `error` is preserved under another key.
+    expect(fields.error).toBe('the summary')
+    const preserved = Object.entries(fields).filter(([, v]) => v === 'INPUT_ERROR_FIELD')
+    expect(preserved.length).toBe(1)
+    expect(preserved[0][0]).not.toBe('error')
+    expect(fields.code).toBe(7)
   })
 
   it('caps an astronomically large bigint', () => {

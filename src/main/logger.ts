@@ -102,15 +102,29 @@ const chargeString = (value: string, budget: Budget): string => {
   return `${kept}…[truncated]`
 }
 
-// Produces a bounded, collision-free property name, or undefined when the character budget can't afford
-// one. A long key is disambiguated by its index (so two long keys sharing a prefix stay distinct), and
-// the key is emitted only if it fits the remaining budget in full — we never collapse a key to a shared
-// truncation marker (that would silently overwrite fields), so the caller stops and counts the rest as
-// omitted instead. Charges the character budget for the key it returns.
-const capKey = (key: string, index: number, budget: Budget): string | undefined => {
-  const candidate = key.length <= MAX_KEY_LENGTH ? key : `${key.slice(0, MAX_KEY_LENGTH)}…#${index}`
+// Produces a bounded, unique output key, or undefined when the character budget can't afford one. A long
+// key is first bounded (index-suffixed so two long keys sharing a prefix stay distinct), then made unique
+// against `used` — which the caller seeds with the record's RESERVED output names (e.g. the aggregate
+// "[truncated]" marker, and "error" at the top level) so an input key of the same name is disambiguated
+// rather than silently overwriting (or being overwritten by) our own field. We never collapse a key to a
+// shared truncation marker; if a unique key doesn't fit the remaining budget the caller stops and counts
+// the rest as omitted. Charges the character budget for the key it returns and records it in `used`.
+const capKey = (
+  key: string,
+  index: number,
+  used: Set<string>,
+  budget: Budget
+): string | undefined => {
+  const bounded = key.length <= MAX_KEY_LENGTH ? key : `${key.slice(0, MAX_KEY_LENGTH)}…#${index}`
+  let candidate = bounded
+  let dup = 0
+  while (used.has(candidate)) {
+    dup += 1
+    candidate = `${bounded}#dup${dup}`
+  }
   if (candidate.length > budget.chars) return undefined
   budget.chars -= candidate.length
+  used.add(candidate)
   return candidate
 }
 
@@ -244,6 +258,9 @@ const toLogSafe = (value: unknown, seen: Set<object>, depth: number, budget: Bud
       const keys = safeKeys(value as object)
       if (keys === undefined) return UNREADABLE_MARKER
       const out = nullProtoRecord()
+      // Reserve the aggregate-marker name so an input key literally named "[truncated]" is disambiguated
+      // rather than overwriting (or being overwritten by) our own marker.
+      const used = new Set<string>(['[truncated]'])
       // Cap the number of keys walked: Object.keys already materialized them, but processing an
       // unbounded count (hostile Proxy ownKeys) still needs a ceiling.
       const limit = Math.min(keys.length, MAX_OBJECT_KEYS)
@@ -256,7 +273,7 @@ const toLogSafe = (value: unknown, seen: Set<object>, depth: number, budget: Bud
         }
         // A unique bounded key must be affordable; if not, stop so the remainder is counted rather than
         // collapsing keys to a shared marker that overwrites earlier fields.
-        const key = capKey(keys[processed], processed, budget)
+        const key = capKey(keys[processed], processed, used, budget)
         if (key === undefined) {
           objBudgetHit = true
           break
@@ -410,6 +427,10 @@ const errorLogFields = (error: unknown): Record<string, unknown> => {
               : '[object]'
       if (keys === undefined) return { error: errorText }
       const safe = nullProtoRecord()
+      // Reserve the names this branch owns in the returned `{ error, ...safe }`: "error" (the message
+      // summary) and the aggregate "[truncated]" marker. An input key of either name is disambiguated so
+      // it can neither clobber the summary nor be clobbered by the marker.
+      const used = new Set<string>(['error', '[truncated]'])
       const limit = Math.min(keys.length, MAX_OBJECT_KEYS)
       let processed = 0
       let objBudgetHit = false
@@ -420,7 +441,7 @@ const errorLogFields = (error: unknown): Record<string, unknown> => {
         }
         // A unique bounded key must be affordable; otherwise stop and count the remainder rather than
         // collapsing keys to a shared marker.
-        const key = capKey(keys[processed], processed, budget)
+        const key = capKey(keys[processed], processed, used, budget)
         if (key === undefined) {
           objBudgetHit = true
           break
