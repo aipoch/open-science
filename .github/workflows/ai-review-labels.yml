@@ -17,8 +17,11 @@ jobs:
     name: Clear stale AI review label
     if: ${{ github.event_name == 'pull_request_target' }}
     runs-on: ubuntu-latest
+    # Label operations on a pull request require pull-requests write; the label REST endpoints
+    # return 403 with only issues write (GitHub reports "issues=write; pull_requests=write").
     permissions:
       issues: write
+      pull-requests: write
     steps:
       - name: Remove ai-reviewed label
         uses: actions/github-script@v8
@@ -47,7 +50,7 @@ jobs:
     permissions:
       actions: read
       issues: write
-      pull-requests: read
+      pull-requests: write
     steps:
       - name: Add ai-reviewed label for the latest reviewed commit
         uses: actions/github-script@v8
