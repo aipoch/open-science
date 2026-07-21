@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { createLogger, flushLogs, formatLine, initLogger } from './logger'
+import { createLogger, errorLogFields, flushLogs, formatLine, initLogger } from './logger'
 
 let logDir: string | undefined
 
@@ -53,6 +53,843 @@ describe('logger: formatLine', () => {
 
     expect(() => JSON.parse(line)).not.toThrow()
     expect((JSON.parse(line) as { data: unknown }).data).toBe('[unserializable]')
+  })
+})
+
+describe('logger: errorLogFields', () => {
+  it('expands an Error into message + stack', () => {
+    const fields = errorLogFields(new Error('boom'))
+
+    expect(fields.error).toBe('boom')
+    expect(typeof fields.stack).toBe('string')
+  })
+
+  it('keeps JSON-RPC RequestError code + data (the real provider/agent reason)', () => {
+    // Shape of the ACP RequestError the renderer saw as a bare "Internal error".
+    const requestError = Object.assign(new Error('Internal error'), {
+      name: 'RequestError',
+      code: -32603,
+      data: { details: 'agent exited with code 1' }
+    })
+
+    const fields = errorLogFields(requestError)
+
+    expect(fields.error).toBe('Internal error')
+    expect(fields.name).toBe('RequestError')
+    expect(fields.code).toBe(-32603)
+    expect(fields.data).toEqual({ details: 'agent exited with code 1' })
+  })
+
+  it('keeps Node system-error fields (errno/syscall/path)', () => {
+    const spawnError = Object.assign(new Error('spawn claude ENOENT'), {
+      code: 'ENOENT',
+      errno: -2,
+      syscall: 'spawn claude',
+      path: 'claude'
+    })
+
+    const fields = errorLogFields(spawnError)
+
+    expect(fields.code).toBe('ENOENT')
+    expect(fields.errno).toBe(-2)
+    expect(fields.syscall).toBe('spawn claude')
+    expect(fields.path).toBe('claude')
+  })
+
+  it('follows a nested cause (bounded), not collapsing it to {}', () => {
+    const cause = new Error('underlying socket hang up')
+    const wrapper = Object.assign(new Error('request failed'), { cause })
+
+    const fields = errorLogFields(wrapper) as { cause: { error: string } }
+
+    expect(fields.cause.error).toBe('underlying socket hang up')
+  })
+
+  it('breaks a self-referential cause so the record still serializes (not [unserializable])', () => {
+    const selfReferential = new Error('loop') as Error & { cause?: unknown }
+    selfReferential.cause = selfReferential
+
+    const fields = errorLogFields(selfReferential)
+    expect(fields.cause).toBe('[circular]')
+
+    // The whole point: the final log line must survive JSON.stringify with the error + context intact,
+    // rather than collapsing to the circular fallback and dropping everything.
+    const parsed = JSON.parse(
+      formatLine('error', 'acp', 'failed', { ...fields, framework: 'claude-code' })
+    ) as { data: { error: string; cause: string; framework: string } }
+    expect(parsed.data.error).toBe('loop')
+    expect(parsed.data.cause).toBe('[circular]')
+    expect(parsed.data.framework).toBe('claude-code')
+  })
+
+  it('breaks a mutually-referential cause cycle (a → b → a)', () => {
+    const a = new Error('a') as Error & { cause?: unknown }
+    const b = new Error('b') as Error & { cause?: unknown }
+    a.cause = b
+    b.cause = a
+
+    const fields = errorLogFields(a) as { cause: { error: string; cause: string } }
+    expect(fields.cause.error).toBe('b')
+    expect(fields.cause.cause).toBe('[circular]')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('breaks a cycle in a non-Error (plain object) cause', () => {
+    const cyclic: Record<string, unknown> = { detail: 'provider blew up' }
+    cyclic.self = cyclic
+    const wrapper = Object.assign(new Error('request failed'), { cause: cyclic })
+
+    const fields = errorLogFields(wrapper) as { cause: { detail: string; self: string } }
+    expect(fields.cause.detail).toBe('provider blew up')
+    expect(fields.cause.self).toBe('[circular]')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', { ...fields, ctx: 1 }))).not.toThrow()
+  })
+
+  it('unwraps an Error nested inside a non-Error cause instead of dropping it to {}', () => {
+    const inner = new Error('inner boom')
+    const wrapper = Object.assign(new Error('outer'), { cause: { nested: inner } })
+
+    const fields = errorLogFields(wrapper) as {
+      cause: { nested: { error: string; stack?: string } }
+    }
+    expect(fields.cause.nested.error).toBe('inner boom')
+    expect(typeof fields.cause.nested.stack).toBe('string')
+  })
+
+  it('breaks a cycle inside RequestError.data so the whole record still serializes', () => {
+    const data: Record<string, unknown> = { details: 'rate limited' }
+    data.loop = data
+    const requestError = Object.assign(new Error('Internal error'), { code: -32603, data })
+
+    const fields = errorLogFields(requestError) as {
+      data: { details: string; loop: string }
+    }
+    expect(fields.data.details).toBe('rate limited')
+    expect(fields.data.loop).toBe('[circular]')
+
+    const parsed = JSON.parse(
+      formatLine('error', 'acp', 'failed', { ...fields, framework: 'opencode' })
+    ) as { data: { error: string; framework: string } }
+    expect(parsed.data.error).toBe('Internal error')
+    expect(parsed.data.framework).toBe('opencode')
+  })
+
+  it('breaks a cycle in a directly-thrown plain object', () => {
+    const thrown: Record<string, unknown> = { message: 'weird throw', code: 7 }
+    thrown.self = thrown
+
+    const fields = errorLogFields(thrown) as { error: string; code: number; self: string }
+    expect(fields.error).toBe('weird throw')
+    expect(fields.code).toBe(7)
+    expect(fields.self).toBe('[circular]')
+    expect(() => JSON.parse(formatLine('warn', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('keeps sibling (non-cyclic) shared references, flagging only true back-references', () => {
+    const shared = { id: 1 }
+    const thrown = { a: shared, b: shared }
+
+    const fields = errorLogFields(thrown) as { a: { id: number }; b: { id: number } }
+    // A diamond is not a cycle: both positions keep the value.
+    expect(fields.a).toEqual({ id: 1 })
+    expect(fields.b).toEqual({ id: 1 })
+  })
+
+  it('stringifies bigint / function / symbol values that JSON.stringify cannot represent', () => {
+    const fields = errorLogFields(
+      Object.assign(new Error('boom'), {
+        data: {
+          big: 10n,
+          fn: function handler() {
+            return 1
+          },
+          sym: Symbol('s')
+        }
+      })
+    ) as { data: { big: string; fn: string; sym: string } }
+
+    expect(fields.data.big).toBe('10n')
+    expect(fields.data.fn).toBe('[function handler]')
+    expect(fields.data.sym).toBe('Symbol(s)')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('serializes a valid Date to ISO and never throws on an invalid Date', () => {
+    const valid = errorLogFields(Object.assign(new Error('e'), { data: new Date(0) })) as {
+      data: string
+    }
+    expect(valid.data).toBe('1970-01-01T00:00:00.000Z')
+
+    const invalid = errorLogFields(
+      Object.assign(new Error('e'), { data: new Date('not-a-date') })
+    ) as { data: string }
+    expect(invalid.data).toBe('[invalid date]')
+  })
+
+  it('charges a Date ISO string against the global character budget', () => {
+    // Use an ARRAY: unlike the object branch it doesn't stop on key-affordability, so the trailing Date
+    // is still visited after earlier string elements have exhausted the global char budget. Its ISO can
+    // only be emitted through chargeString, which returns the truncated marker once the budget is spent —
+    // if the Date bypassed chargeString it would emit the raw "1970-…" ISO here and fail the assertion.
+    const arr: unknown[] = []
+    for (let i = 0; i < 40; i += 1) arr.push('x'.repeat(8000))
+    arr.push(new Date(0))
+    const fields = errorLogFields(Object.assign(new Error('e'), { data: arr })) as {
+      data: unknown[]
+    }
+    const dateSlot = fields.data[fields.data.length - 1]
+    expect(dateSlot).toBe('…[truncated]')
+    expect(dateSlot).not.toContain('1970') // definitely not the raw ISO
+  })
+
+  it('degrades a throwing getter to a marker while keeping sibling fields', () => {
+    const data = { ok: 'kept' }
+    Object.defineProperty(data, 'boom', {
+      enumerable: true,
+      get() {
+        throw new Error('getter blew up')
+      }
+    })
+    const fields = errorLogFields(Object.assign(new Error('e'), { data })) as {
+      data: { ok: string; boom: string }
+    }
+
+    expect(fields.data.ok).toBe('kept')
+    expect(fields.data.boom).toBe('[unreadable]')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('never throws on a Proxy whose ownKeys/get traps throw', () => {
+    const hostile = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error('ownKeys trap')
+        },
+        get() {
+          throw new Error('get trap')
+        }
+      }
+    )
+
+    // Directly thrown hostile object, and nested inside a normal error's data — neither may throw.
+    expect(() => errorLogFields(hostile)).not.toThrow()
+    const nested = errorLogFields(Object.assign(new Error('e'), { data: hostile }))
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', nested))).not.toThrow()
+  })
+
+  it('bounds recursion depth on a deeply nested (non-cyclic) structure', () => {
+    let deep: Record<string, unknown> = { leaf: true }
+    for (let i = 0; i < 50; i += 1) deep = { next: deep }
+
+    const fields = errorLogFields(Object.assign(new Error('e'), { data: deep }))
+    const line = formatLine('error', 'x', 'y', fields)
+    expect(() => JSON.parse(line)).not.toThrow()
+    // The depth marker appears somewhere in the truncated chain rather than the whole thing being dropped.
+    expect(line).toContain('[max depth]')
+  })
+
+  it('degrades a throwing message getter to a field marker while keeping the other Error fields', () => {
+    // An Error whose message accessor throws must NOT send the whole record to the outer fallback: the
+    // still-readable code/data survive, only the message degrades.
+    const hostile = new Error() as Error & { code?: string }
+    hostile.code = 'EHOSTILE'
+    ;(hostile as unknown as { data?: unknown }).data = { detail: 'kept' }
+    Object.defineProperty(hostile, 'message', {
+      configurable: true,
+      get() {
+        throw new Error('message trap')
+      }
+    })
+
+    const fields = errorLogFields(hostile) as {
+      error: string
+      code: string
+      data: { detail: string }
+      serializationFailed?: boolean
+    }
+    expect(fields.serializationFailed).toBeUndefined()
+    // A read that *throws* is surfaced as the marker (distinct from a genuinely empty/absent message).
+    expect(fields.error).toBe('[unreadable]')
+    expect(fields.code).toBe('EHOSTILE')
+    expect(fields.data).toEqual({ detail: 'kept' })
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('distinguishes a genuinely absent message ("") from an unreadable one ("[unreadable]")', () => {
+    // Absent message: empty string, not the marker.
+    const noMessage = new Error()
+    Object.defineProperty(noMessage, 'message', { value: undefined, configurable: true })
+    expect((errorLogFields(noMessage) as { error: string }).error).toBe('')
+  })
+
+  it('degrades a throwing detail (data) getter to the marker while keeping other fields', () => {
+    const err = new Error('outer') as Error & { code?: string }
+    err.code = 'EKEEP'
+    Object.defineProperty(err, 'data', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        throw new Error('data trap')
+      }
+    })
+
+    const fields = errorLogFields(err) as { error: string; code: string; data: string }
+    // The whole Error must not collapse to the outer fallback: message + code survive, only data degrades.
+    expect(fields.error).toBe('outer')
+    expect(fields.code).toBe('EKEEP')
+    expect(fields.data).toBe('[unreadable]')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('degrades a hostile nested value without dropping its readable siblings', () => {
+    // data.bad is a Proxy whose getPrototypeOf trap throws (so sanitizing it throws internally); data.ok
+    // must still survive as a normal field.
+    const bad = new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw new Error('nested proto trap')
+        }
+      }
+    )
+    const err = Object.assign(new Error('e'), { data: { ok: 'survives', bad } })
+
+    const fields = errorLogFields(err) as { data: { ok: string; bad: string } }
+    expect(fields.data.ok).toBe('survives')
+    expect(fields.data.bad).toBe('[unreadable]')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('hits the outer fallback (serializationFailed) when even type inspection throws', () => {
+    // A Proxy whose getPrototypeOf trap throws makes `value instanceof Error` throw — the very first
+    // thing errorLogFields does — so only the outermost guard can catch it.
+    const hostile = new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw new Error('proto trap')
+        }
+      }
+    )
+
+    const fields = errorLogFields(hostile) as { error: string; serializationFailed?: boolean }
+    expect(fields.serializationFailed).toBe(true)
+    expect(typeof fields.error).toBe('string')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('marks a nested value whose ownKeys trap throws as "[unreadable]" (not {})', () => {
+    const badKeys = new Proxy(
+      { visible: 1 },
+      {
+        ownKeys() {
+          throw new Error('ownKeys trap')
+        }
+      }
+    )
+    const err = Object.assign(new Error('e'), { data: { ok: 'kept', badKeys } })
+
+    const fields = errorLogFields(err) as { data: { ok: string; badKeys: string } }
+    expect(fields.data.ok).toBe('kept')
+    expect(fields.data.badKeys).toBe('[unreadable]')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('degrades a throwing array index getter to a marker while keeping other elements', () => {
+    const arr: unknown[] = ['a', 'b', 'c']
+    Object.defineProperty(arr, '1', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        throw new Error('index trap')
+      }
+    })
+    const err = Object.assign(new Error('e'), { data: arr })
+
+    const fields = errorLogFields(err) as { data: unknown[] }
+    expect(fields.data[0]).toBe('a')
+    expect(fields.data[1]).toBe('[unreadable]')
+    expect(fields.data[2]).toBe('c')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('marks an array whose length read throws as "[unreadable]" (not an empty array)', () => {
+    // Array `length` is non-configurable, so a throwing read is modelled with a Proxy get trap. The
+    // node is still Array.isArray, so the array branch runs and must degrade to the marker.
+    const arr = new Proxy(['x'], {
+      get(target, prop, receiver) {
+        if (prop === 'length') throw new Error('length trap')
+        return Reflect.get(target, prop, receiver)
+      }
+    })
+    const err = Object.assign(new Error('e'), { data: arr })
+
+    const fields = errorLogFields(err) as { data: string }
+    expect(fields.data).toBe('[unreadable]')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('is not derailed by a hostile Array subclass (Symbol.species + throwing toJSON)', () => {
+    // A subclass that hijacks Symbol.species AND defines a throwing toJSON. Building a fresh plain array
+    // by index (rather than value.map / JSON of the original) must keep the record serializable.
+    class Hostile extends Array {
+      static get [Symbol.species](): ArrayConstructor {
+        throw new Error('species trap')
+      }
+      toJSON(): never {
+        throw new Error('toJSON trap')
+      }
+    }
+    const arr = Hostile.from(['a', 'b']) as unknown[]
+    const err = Object.assign(new Error('e'), { data: arr })
+
+    const fields = errorLogFields(err) as { data: unknown }
+    // The elements are preserved via index reads; the hostile species/toJSON never run.
+    expect(fields.data).toEqual(['a', 'b'])
+    const line = formatLine('error', 'x', 'y', fields)
+    expect(() => JSON.parse(line)).not.toThrow()
+    expect(line).not.toContain('[unserializable]')
+  })
+
+  it('caps a hostile huge array length without hanging, appending a truncation marker', () => {
+    // A Proxy reporting a giant length must NOT be iterated in full — that would block/OOM the process.
+    const huge = 2 ** 31
+    const arr = new Proxy([] as unknown[], {
+      get(target, prop, receiver) {
+        if (prop === 'length') return huge
+        if (typeof prop === 'string' && /^\d+$/.test(prop)) return `item-${prop}`
+        return Reflect.get(target, prop, receiver)
+      }
+    })
+    const err = Object.assign(new Error('e'), { data: arr })
+
+    const start = Date.now()
+    const fields = errorLogFields(err) as { data: unknown[] }
+    // Bounded work: returns near-instantly, capped element count plus one truncation marker.
+    expect(Date.now() - start).toBeLessThan(1000)
+    expect(fields.data.length).toBe(1001)
+    expect(fields.data[0]).toBe('item-0')
+    expect(fields.data[1000]).toBe(`[+${huge - 1000} more]`)
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('bounds total work on a shared DAG (fan-out) so it cannot expand combinatorially', () => {
+    // A diamond: each level references the SAME child 1000 times. Only ~3000 input references, but a
+    // naive per-node cap would still re-expand the shared subtree on every reference — ~1e9 output
+    // nodes. The global node budget must keep this fast and finite.
+    const leaf = { v: 1 }
+    const level1 = new Array(1000).fill(leaf)
+    const level2 = new Array(1000).fill(level1)
+    const level3 = new Array(1000).fill(level2)
+    const err = Object.assign(new Error('dag'), { data: level3 })
+
+    const start = Date.now()
+    const fields = errorLogFields(err)
+    const elapsed = Date.now() - start
+
+    // Returns quickly and produces a bounded, serializable record with a truncation marker somewhere.
+    expect(elapsed).toBeLessThan(1000)
+    const line = formatLine('error', 'x', 'y', fields)
+    expect(() => JSON.parse(line)).not.toThrow()
+    expect(line).toContain('truncated')
+    // Sanity bound: the serialized size is bounded (well under what ~1e9 nodes would be).
+    expect(line.length).toBeLessThan(2_000_000)
+  })
+
+  it('bounds a shared DAG of throwing getters (marker slots must also spend budget)', () => {
+    // Every element read throws, so each slot takes the "[unreadable]" marker path (never entering the
+    // node recursion). If markers were free, this shared array would re-expand across the DAG without
+    // limit; charging per slot keeps it bounded.
+    const throwingChild: unknown[] = new Array(1000)
+    for (let i = 0; i < 1000; i += 1) {
+      Object.defineProperty(throwingChild, i, {
+        enumerable: true,
+        configurable: true,
+        get() {
+          throw new Error(`index ${i} trap`)
+        }
+      })
+    }
+    const level2 = new Array(1000).fill(throwingChild)
+    const level3 = new Array(1000).fill(level2)
+    const err = Object.assign(new Error('throwing-dag'), { data: level3 })
+
+    const start = Date.now()
+    const fields = errorLogFields(err)
+    const elapsed = Date.now() - start
+    expect(elapsed).toBeLessThan(1000)
+
+    const line = formatLine('error', 'x', 'y', fields)
+    expect(() => JSON.parse(line)).not.toThrow()
+    // Both the degraded-field marker and the budget-truncation marker appear, and the output is bounded.
+    expect(line).toContain('[unreadable]')
+    expect(line).toContain('truncated')
+    expect(line.length).toBeLessThan(2_000_000)
+  })
+
+  it('bounds an object whose every key getter throws (marker slots spend budget) and caps key count', () => {
+    // A single object with far more throwing-getter keys than the budget: it must not spin unbounded,
+    // and the produced field count is capped.
+    const hostile: Record<string, unknown> = {}
+    for (let i = 0; i < 5000; i += 1) {
+      Object.defineProperty(hostile, `k${i}`, {
+        enumerable: true,
+        configurable: true,
+        get() {
+          throw new Error(`key ${i} trap`)
+        }
+      })
+    }
+    const fields = errorLogFields(Object.assign(new Error('e'), { data: hostile })) as {
+      data: Record<string, unknown>
+    }
+
+    // Key processing is capped at MAX_OBJECT_KEYS (1000), so the record has at most that many fields
+    // plus the truncation marker — never all 5000.
+    const producedKeys = Object.keys(fields.data)
+    expect(producedKeys.length).toBeLessThanOrEqual(1001)
+    expect(fields.data['[truncated]']).toBeDefined()
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('bounds a shared DAG of throwing-getter OBJECTS (the object-branch per-slot charge)', () => {
+    // Objects (not arrays) whose every key read throws. Each shared child, if re-expanded on every
+    // reference, would emit 1000 markers per visit → ~1e6 fields. Only the object loop's per-slot budget
+    // charge (which the marker path would otherwise skip) keeps this bounded — removing it regresses here.
+    const throwingChild: Record<string, unknown> = {}
+    for (let i = 0; i < 1000; i += 1) {
+      Object.defineProperty(throwingChild, `k${i}`, {
+        enumerable: true,
+        configurable: true,
+        get() {
+          throw new Error(`key ${i} trap`)
+        }
+      })
+    }
+    const parent: Record<string, unknown> = {}
+    for (let i = 0; i < 1000; i += 1) parent[`p${i}`] = throwingChild
+    const err = Object.assign(new Error('obj-dag'), { data: parent })
+
+    const start = Date.now()
+    const fields = errorLogFields(err)
+    expect(Date.now() - start).toBeLessThan(1000)
+    const line = formatLine('error', 'x', 'y', fields)
+    expect(() => JSON.parse(line)).not.toThrow()
+    expect(line).toContain('[unreadable]')
+    expect(line).toContain('truncated')
+    expect(line.length).toBeLessThan(2_000_000)
+  })
+
+  it('caps a directly-thrown object with more keys than MAX_OBJECT_KEYS', () => {
+    // The top-level plain-object branch (not nested) must also cap keys + append one accurate marker.
+    const thrown: Record<string, unknown> = { message: 'top-level' }
+    for (let i = 0; i < 6000; i += 1) thrown[`k${i}`] = i
+    const fields = errorLogFields(thrown) as Record<string, unknown>
+
+    expect(fields.error).toBe('top-level')
+    expect(Object.keys(fields).length).toBeLessThanOrEqual(1002) // error + <=1000 keys + 1 marker
+    expect(typeof fields['[truncated]']).toBe('string')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('caps the Error message, stack, and a nested string value', () => {
+    const huge = 'x'.repeat(100_000)
+    const err = new Error(huge)
+    err.stack = huge
+    const fields = errorLogFields(Object.assign(err, { data: { blob: huge } })) as {
+      error: string
+      stack: string
+      data: { blob: string }
+    }
+    expect(fields.error.length).toBeLessThan(9000)
+    expect(fields.error).toContain('chars]')
+    expect(fields.stack.length).toBeLessThan(9000)
+    expect(fields.stack).toContain('chars]')
+    expect(fields.data.blob.length).toBeLessThan(9000)
+    expect(fields.data.blob).toContain('chars]')
+  })
+
+  it('caps a coerced (non-string) Error message and the top-level plain-object message', () => {
+    const huge = 'y'.repeat(100_000)
+    // Coercion path: an Error whose `message` is a non-string that stringifies to a huge value —
+    // formatError runs it through safeToString, which must cap.
+    const err = new Error()
+    Object.defineProperty(err, 'message', { value: { toString: () => huge }, configurable: true })
+    const coerced = errorLogFields(err) as { error: string }
+    expect(coerced.error.length).toBeLessThan(9000)
+
+    // Top-level directly-thrown object whose own `message` is huge → goes into `error`, must be capped.
+    const topLevel = errorLogFields({ message: huge, code: 1 }) as { error: string }
+    expect(topLevel.error.length).toBeLessThan(9000)
+    expect(topLevel.error).toContain('chars]')
+  })
+
+  it('truncates the bestEffortMessage fallback text (exercises the fallback cap, not a fixed string)', () => {
+    // A STATEFUL proxy: getPrototypeOf throws only the first time, so the main try's `instanceof` fails
+    // (→ outer catch), but by the time bestEffortMessage runs the proxy behaves and String(it) returns a
+    // huge value via the target's toString. This drives bestEffortMessage's truncate() path — deleting
+    // the truncate() would make this field ~100k chars and fail the bound below.
+    const huge = 'z'.repeat(100_000)
+    let protoCalls = 0
+    const target = { toString: () => huge }
+    const hostile = new Proxy(target, {
+      getPrototypeOf(t) {
+        protoCalls += 1
+        if (protoCalls === 1) throw new Error('proto trap (first call only)')
+        return Object.getPrototypeOf(t)
+      }
+    })
+
+    const fields = errorLogFields(hostile) as { error: string; serializationFailed?: boolean }
+    expect(fields.serializationFailed).toBe(true)
+    // The huge text was reached and truncated (per-field cap suffix present), not collapsed to a fixed
+    // "unserializable error".
+    expect(fields.error.length).toBeLessThan(9000)
+    expect(fields.error).toContain('chars]')
+  })
+
+  it('truncates the bestEffortMessage Error-message branch (real Error under a stateful proxy)', () => {
+    // Wrap a REAL Error so bestEffortMessage's `error instanceof Error` is true on the second (fallback)
+    // getPrototypeOf call, driving `truncate(error.message)` specifically — the String(error) branch of
+    // the previous test wouldn't cover this path.
+    const huge = 'z'.repeat(100_000)
+    let protoCalls = 0
+    const target = new Error(huge)
+    const hostile = new Proxy(target, {
+      getPrototypeOf(t) {
+        protoCalls += 1
+        if (protoCalls === 1) throw new Error('proto trap (first call only)')
+        return Reflect.getPrototypeOf(t)
+      }
+    })
+
+    const fields = errorLogFields(hostile) as { error: string; serializationFailed?: boolean }
+    expect(fields.serializationFailed).toBe(true)
+    expect(fields.error.length).toBeLessThan(9000)
+    expect(fields.error).toContain('chars]')
+  })
+
+  it('truncates an over-long function name', () => {
+    const hugeName = 'f'.repeat(100_000)
+    const fn = (): void => undefined
+    Object.defineProperty(fn, 'name', { value: hugeName, configurable: true })
+    const fields = errorLogFields(Object.assign(new Error('e'), { data: fn })) as { data: string }
+
+    expect(fields.data.startsWith('[function')).toBe(true)
+    expect(fields.data.length).toBeLessThan(9000)
+    expect(fields.data).toContain('chars]')
+  })
+
+  it('never collides keys when the character budget runs out mid-object (stops + counts remainder)', () => {
+    // Values large enough that the global char budget is exhausted partway through. Once a unique key
+    // can no longer be afforded, the loop must STOP (counting the rest as omitted) rather than collapse
+    // later keys to a shared "…[truncated]" that overwrites earlier fields and loses them silently.
+    const data: Record<string, unknown> = {}
+    for (let i = 0; i < 200; i += 1) data[`key${i}`] = 'v'.repeat(5000)
+    const fields = errorLogFields(Object.assign(new Error('e'), { data })) as {
+      data: Record<string, unknown>
+    }
+
+    const outKeys = Object.keys(fields.data)
+    // Every emitted key is distinct — no silent overwrite.
+    expect(new Set(outKeys).size).toBe(outKeys.length)
+    // No key collapsed to a shared truncation marker.
+    expect(outKeys).not.toContain('…[truncated]')
+    // An aggregate marker is present and its count is exact: total inputs minus emitted data keys.
+    const marker = fields.data['[truncated]'] as string | undefined
+    expect(typeof marker).toBe('string')
+    const emittedDataKeys = outKeys.filter((k) => k !== '[truncated]').length
+    expect(marker).toContain(`+${200 - emittedDataKeys} `)
+    expect(emittedDataKeys).toBeLessThan(200) // budget genuinely stopped it early
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('preserves an input own "[truncated]" key instead of overwriting it with the aggregate marker', () => {
+    // A nested object that has its OWN "[truncated]" field AND enough keys to trigger the cap so an
+    // aggregate marker is emitted. The input value must survive (disambiguated), the aggregate marker
+    // must be present and distinct, and the omitted count must not be off by one.
+    const nested: Record<string, unknown> = { '[truncated]': 'REAL_INPUT_VALUE' }
+    for (let i = 0; i < 1500; i += 1) nested[`k${i}`] = i // exceeds MAX_OBJECT_KEYS (1000)
+    const fields = errorLogFields(Object.assign(new Error('e'), { data: nested })) as {
+      data: Record<string, unknown>
+    }
+    const out = fields.data
+
+    // The input's own "[truncated]" value is retained under a disambiguated key, not lost.
+    const preserved = Object.entries(out).filter(([, v]) => v === 'REAL_INPUT_VALUE')
+    expect(preserved.length).toBe(1)
+    expect(preserved[0][0]).not.toBe('[truncated]') // it was disambiguated
+    // The aggregate marker occupies the reserved name and reads as an omission summary, not the input.
+    expect(out['[truncated]']).toMatch(/more keys|omitted/)
+    // Exact count: total input keys (1501) minus the input keys actually emitted (everything except the
+    // aggregate marker itself).
+    const emitted = Object.keys(out).filter((k) => k !== '[truncated]').length
+    const marker = out['[truncated]'] as string
+    expect(marker).toContain(`${1501 - emitted}`)
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('does not let a top-level input "error" key clobber the message summary', () => {
+    // A directly-thrown object with both a `message` (→ the `error` summary) and its own `error` field.
+    const fields = errorLogFields({
+      message: 'the summary',
+      error: 'INPUT_ERROR_FIELD',
+      code: 7
+    }) as {
+      error: string
+    } & Record<string, unknown>
+
+    // The reserved `error` holds the message summary; the input `error` is preserved under another key.
+    expect(fields.error).toBe('the summary')
+    const preserved = Object.entries(fields).filter(([, v]) => v === 'INPUT_ERROR_FIELD')
+    expect(preserved.length).toBe(1)
+    expect(preserved[0][0]).not.toBe('error')
+    expect(fields.code).toBe(7)
+  })
+
+  it('caps an astronomically large bigint', () => {
+    const bigintValue = 10n ** 100000n
+    const fields = errorLogFields(Object.assign(new Error('e'), { data: bigintValue })) as {
+      data: string
+    }
+    expect(fields.data.length).toBeLessThan(9000)
+    expect(fields.data).toContain('chars]')
+  })
+
+  it('caps an over-long property NAME (and keeps distinct long keys from colliding)', () => {
+    const longA = `${'a'.repeat(100_000)}_A`
+    const longB = `${'a'.repeat(100_000)}_B` // shares the truncation prefix with longA
+    const data: Record<string, unknown> = {}
+    data[longA] = 1
+    data[longB] = 2
+    const fields = errorLogFields(Object.assign(new Error('e'), { data })) as {
+      data: Record<string, unknown>
+    }
+
+    const outKeys = Object.keys(fields.data)
+    // Two inputs → two distinct output keys (no collision from truncation), each bounded in length.
+    expect(outKeys.length).toBe(2)
+    expect(new Set(outKeys).size).toBe(2)
+    for (const k of outKeys) expect(k.length).toBeLessThan(400)
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('bounds TOTAL output size via the global character budget, not just per field', () => {
+    // Many distinct medium strings: each is under the per-field cap, so only the GLOBAL char budget
+    // bounds the whole line. Without it, ~1000 × 8KB ≈ 8MB would be emitted.
+    const data: Record<string, unknown> = {}
+    for (let i = 0; i < 1000; i += 1) data[`k${i}`] = 'm'.repeat(5000)
+    const fields = errorLogFields(Object.assign(new Error('e'), { data }))
+    const line = formatLine('error', 'x', 'y', fields)
+    // Comfortably bounded by MAX_TOTAL_CHARS (256KB) plus fixed overhead — nowhere near 8MB.
+    expect(line.length).toBeLessThan(400_000)
+  })
+
+  it('uses one accurate truncation marker when budget AND key-cap both trigger (no overwrite)', () => {
+    // An object with >1000 keys, each an object that consumes budget, so the loop stops on budget before
+    // reaching the key cap. The single marker must report ALL omitted keys (budget-skipped + beyond-cap).
+    const child: Record<string, unknown> = {}
+    for (let i = 0; i < 1000; i += 1) child[`c${i}`] = i
+    const parent: Record<string, unknown> = {}
+    for (let i = 0; i < 2000; i += 1) parent[`p${i}`] = child
+    const fields = errorLogFields(Object.assign(new Error('e'), { data: parent })) as {
+      data: Record<string, unknown>
+    }
+
+    const marker = fields.data['[truncated]']
+    expect(typeof marker).toBe('string')
+    // Exactly one truncation marker key.
+    const truncatedKeys = Object.keys(fields.data).filter((k) => k === '[truncated]')
+    expect(truncatedKeys.length).toBe(1)
+    // The count must be EXACT, not just "some number": total input keys minus the keys actually emitted
+    // (everything except the marker itself). A hardcoded "1 keys omitted" would fail this.
+    const emittedKeyCount = Object.keys(fields.data).filter((k) => k !== '[truncated]').length
+    const expectedOmitted = 2000 - emittedKeyCount
+    expect(marker).toBe(`+${expectedOmitted} keys omitted, output truncated`)
+    expect(expectedOmitted).toBeGreaterThan(1000) // budget stopped it well before the 1000-key cap
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('marks an array with a non-integer reported length as "[unreadable]"', () => {
+    const arr = new Proxy([] as unknown[], {
+      get(target, prop, receiver) {
+        if (prop === 'length') return 3.5
+        return Reflect.get(target, prop, receiver)
+      }
+    })
+    const err = Object.assign(new Error('e'), { data: arr })
+
+    expect((errorLogFields(err) as { data: string }).data).toBe('[unreadable]')
+  })
+
+  it('preserves an own "__proto__" data field instead of mutating the prototype', () => {
+    // Nested object with an own __proto__ key, plus a directly-thrown object with one.
+    const nested = JSON.parse('{"__proto__": {"polluted": true}, "keep": 1}') as Record<
+      string,
+      unknown
+    >
+    const err = Object.assign(new Error('e'), { data: nested })
+    const fields = errorLogFields(err) as { data: Record<string, unknown> }
+    expect(fields.data.keep).toBe(1)
+    // The __proto__ value is kept as an own field, and the record's prototype is untouched.
+    expect(Object.prototype.hasOwnProperty.call(fields.data, '__proto__')).toBe(true)
+    expect((fields.data as { polluted?: unknown }).polluted).toBeUndefined()
+    const line = formatLine('error', 'x', 'y', fields)
+    expect(line).toContain('__proto__')
+    expect(() => JSON.parse(line)).not.toThrow()
+
+    const thrown = JSON.parse('{"__proto__": {"x": 1}, "message": "boom"}') as Record<
+      string,
+      unknown
+    >
+    const topFields = errorLogFields(thrown)
+    expect(Object.prototype.hasOwnProperty.call(topFields, '__proto__')).toBe(true)
+  })
+
+  it('does not trust an overridden Date.toISOString that returns a non-string', () => {
+    const date = new Date(0)
+    // A hostile override that would otherwise put a bigint into the record and break JSON.stringify.
+    ;(date as unknown as { toISOString: () => unknown }).toISOString = () => 1n
+    const err = Object.assign(new Error('e'), { data: date })
+
+    const fields = errorLogFields(err) as { data: string }
+    // The real prototype method is used, so a valid epoch still serializes to ISO.
+    expect(fields.data).toBe('1970-01-01T00:00:00.000Z')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('keeps a thrown plain object’s own fields instead of "[object Object]"', () => {
+    const fields = errorLogFields({ code: -32603, message: 'Internal error', data: { x: 1 } })
+
+    expect(fields.error).toBe('Internal error')
+    expect(fields.code).toBe(-32603)
+    expect(fields.data).toEqual({ x: 1 })
+  })
+
+  it('stringifies primitive throws', () => {
+    expect(errorLogFields('plain string').error).toBe('plain string')
+    expect(errorLogFields(42).error).toBe('42')
+  })
+
+  it('survives the file logger nested in a context object (the {} regression it guards)', () => {
+    // A raw Error nested in a context object serializes to {} — its fields are non-enumerable.
+    const raw = JSON.parse(
+      formatLine('error', 'acp', 'failed', { error: new Error('x'), framework: 'claude-code' })
+    ) as { data: { error: unknown } }
+    expect(raw.data.error).toEqual({})
+
+    // Spreading errorLogFields keeps message + stack + context visible.
+    const fixed = JSON.parse(
+      formatLine('error', 'acp', 'failed', {
+        ...errorLogFields(new Error('x')),
+        framework: 'claude-code'
+      })
+    ) as { data: { error: string; stack?: string; framework: string } }
+
+    expect(fixed.data.error).toBe('x')
+    expect(typeof fixed.data.stack).toBe('string')
+    expect(fixed.data.framework).toBe('claude-code')
   })
 })
 

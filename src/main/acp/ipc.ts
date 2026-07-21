@@ -33,6 +33,9 @@ import type { SettingsService } from '../settings/service'
 import type { UploadRepository } from '../uploads/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { withDataRootWrite } from '../storage/migration-state'
+import { createLogger, errorLogFields } from '../logger'
+
+const log = createLogger('acp')
 
 type AcpIpcArtifacts = {
   repository: ArtifactRepository
@@ -131,20 +134,32 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntime => {
   )
   ipcMain.handle('acp:disconnect', () => runtime.disconnect())
   ipcMain.handle('acp:create-session', async (_event, request: AcpCreateSessionRequest) => {
-    const explicitCwd = request.cwd?.trim()
-    if (explicitCwd) {
-      return runtime.createSession({ ...request, cwd: explicitCwd })
-    }
-
-    return withDataRootWrite(async () => {
-      const managedCwd = await createManagedSessionWorkspace()
-      try {
-        return await runtime.createSession({ ...request, cwd: managedCwd })
-      } catch (error) {
-        await rm(managedCwd, { recursive: true, force: true }).catch(() => undefined)
-        throw error
+    try {
+      const explicitCwd = request.cwd?.trim()
+      if (explicitCwd) {
+        return await runtime.createSession({ ...request, cwd: explicitCwd })
       }
-    })
+
+      return await withDataRootWrite(async () => {
+        const managedCwd = await createManagedSessionWorkspace()
+        try {
+          return await runtime.createSession({ ...request, cwd: managedCwd })
+        } catch (error) {
+          await rm(managedCwd, { recursive: true, force: true }).catch(() => undefined)
+          throw error
+        }
+      })
+    } catch (error) {
+      // Route through the file logger (rotating main.log) so the failure survives in a packaged build,
+      // not just the dev console. errorLogFields keeps the message + stack out of a `{}`. Guarded so a
+      // throwing logger can never mask the original error the renderer must still receive.
+      try {
+        log.error('acp:create-session failed', errorLogFields(error))
+      } catch {
+        /* logging must never mask the real error */
+      }
+      throw error
+    }
   })
   ipcMain.handle('acp:resume-session', async (_event, request: AcpResumeSessionRequest) =>
     runtime.resumeSession(request)

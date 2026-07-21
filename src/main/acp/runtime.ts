@@ -44,7 +44,7 @@ import {
   type AgentFramework,
   type ResolvedAgentBackend
 } from '../agent-framework'
-import { createLogger } from '../logger'
+import { createLogger, errorLogFields } from '../logger'
 import { terminateProcessTree } from '../process-tree'
 import {
   extractProviderToolName,
@@ -226,16 +226,43 @@ const LARGE_DATA_FILE_SYSTEM_PROMPT_APPEND = [
   '</open_science_large_file_instructions>'
 ].join('\n')
 
-// Converts unknown thrown values into user-visible error text.
+// Converts unknown thrown values into user-visible error text. Total AND always returns a string: a
+// hostile message getter or a throwing String() coercion (e.g. a Proxy-wrapped Error) must not escape,
+// and a non-string message (object/bigint/Symbol/undefined) must be coerced — this text flows into the
+// state snapshot and event payloads that get structured-cloned to the renderer, where a raw Symbol or
+// throwing value would break the broadcast.
 const errorMessage = (error: unknown): string => {
-  if (error instanceof Error) {
-    return error.message
-  }
+  try {
+    const raw = error instanceof Error ? (error as { message?: unknown }).message : error
 
-  return String(error)
+    return typeof raw === 'string' ? raw : String(raw)
+  } catch {
+    return 'unknown error'
+  }
+}
+
+// Internal wrapper thrown when framework.spawn() fails, carrying the framework the spawn targeted so
+// connectFresh can label the failure with the right backend. It never mutates the original throwable
+// (which may be a frozen/non-extensible Error, a write-rejecting Proxy, or a non-Error value) and holds
+// the original `cause` verbatim so connectFresh can re-throw exactly what was thrown.
+class SpawnFailure {
+  constructor(
+    readonly framework: AgentFramework['id'],
+    readonly cause: unknown
+  ) {}
 }
 
 const log = createLogger('acp')
+
+// Logs an error without ever throwing back into the caller. Used on failure paths where a throwing
+// logger (or a hostile payload) must never mask the original error being handled/re-thrown.
+const safeLogError = (message: string, data?: unknown): void => {
+  try {
+    log.error(message, data)
+  } catch {
+    /* logging must never mask the real error */
+  }
+}
 
 // Detects an agent-side resume failure that means the session cannot be reattached, so the thread
 // should adopt a fresh agent session instead of dead-ending. A spec-compliant agent returns
@@ -525,16 +552,33 @@ class AcpRuntime {
     request: AcpConnectRequest = {},
     generation: number
   ): Promise<AcpStateSnapshot> {
-    await this.disconnectCurrent(false)
-    this.assertCurrentConnectionGeneration(generation)
-
-    this.cwd = resolve(request.cwd || this.options.defaultCwd)
-    this.error = undefined
-    this.setStatus('connecting')
-    log.info('connecting agent', { cwd: this.cwd, generation })
+    // Resolved up front (not this.cwd, which the pre-connect teardown below may still be mutating) so the
+    // failure log always names the target workspace even if we throw before assigning this.cwd.
+    const cwd = resolve(request.cwd || this.options.defaultCwd)
+    // Captured at function scope so the catch can log the spawned child's pid/killed state on *every*
+    // failure path — including "superseded during spawn", where the process is deliberately never
+    // assigned to this.agentProcess.
+    let agentProcess: ChildProcessWithoutNullStreams | undefined
+    // The framework THIS connect spawned under, bound atomically to the spawn (spawnAgentProcess returns
+    // it alongside the process, and tags a spawn-throw with it) rather than re-read from the mutable
+    // this.framework, which an overlapping reconnect can move before the failure log is written. Seeded
+    // with the current value in case we throw before spawning at all (e.g. a pre-spawn teardown failure).
+    let spawnedFramework = this.framework.id
 
     try {
-      const agentProcess = await this.spawnAgentProcess()
+      // Inside the try so a teardown throw or the generation assertion (a supersede race) also produces
+      // an enriched failure record instead of propagating silently.
+      await this.disconnectCurrent(false)
+      this.assertCurrentConnectionGeneration(generation)
+
+      this.cwd = cwd
+      this.error = undefined
+      this.setStatus('connecting')
+      log.info('connecting agent', { cwd: this.cwd, generation })
+
+      const spawned = await this.spawnAgentProcess()
+      agentProcess = spawned.process
+      spawnedFramework = spawned.framework
 
       // spawnAgentProcess resolves the provider config asynchronously, so the connection may have been
       // torn down or superseded during the spawn: a quit latched shuttingDown, or any teardown/reconnect
@@ -626,23 +670,95 @@ class AcpRuntime {
         text: `ACP protocol ${initResult.protocolVersion}`
       })
       this.setStatus('connected')
-    } catch (error) {
-      if (generation !== this.connectionGeneration) {
-        throw error
+    } catch (thrown) {
+      // A spawn failure arrives wrapped so it can name the framework it targeted without mutating the
+      // original throwable; unwrap to the real cause (logged and re-thrown) and prefer its framework
+      // (the process never returned to update spawnedFramework). `instanceof` is guarded because a
+      // hostile thrown value's getPrototypeOf trap could otherwise throw here. Every other failure is
+      // its own cause.
+      let spawnFailure: SpawnFailure | undefined
+      try {
+        if (thrown instanceof SpawnFailure) spawnFailure = thrown
+      } catch {
+        spawnFailure = undefined
+      }
+      const cause = spawnFailure ? spawnFailure.cause : thrown
+
+      // The entire failure-handling body is best-effort: logging, notification sinks (pushEvent/
+      // emitState), and cleanup are each isolated so that whatever throws — a hostile error value, a
+      // renderer broadcast, or a teardown hook — the original `cause` is still re-thrown below and never
+      // replaced by a handling-time error.
+      try {
+        // Shared process context so both the abandoned and the failed paths name the child — including
+        // the superseded-during-spawn case, where the local `agentProcess` holds the child
+        // this.agentProcess never received.
+        const processFields = {
+          cwd,
+          generation,
+          currentGeneration: this.connectionGeneration,
+          framework: spawnFailure ? spawnFailure.framework : spawnedFramework,
+          shuttingDown: this.shuttingDown,
+          agentProcessPid: agentProcess?.pid,
+          agentProcessKilled: agentProcess?.killed
+        }
+
+        if (generation !== this.connectionGeneration) {
+          // Superseded (a newer reconnect bumped the generation) or shutting down: the fast-path re-throw
+          // skips the error handling below, so log here too — these late-spawn/teardown races are exactly
+          // the failures that are otherwise invisible.
+          try {
+            log.warn('agent connection abandoned (superseded or shutting down)', {
+              ...errorLogFields(cause),
+              ...processFields
+            })
+          } catch {
+            /* a throwing logger must not mask the cause */
+          }
+        } else {
+          this.error = errorMessage(cause)
+          safeLogError('agent connection failed', { ...errorLogFields(cause), ...processFields })
+          // A notification sink that throws synchronously must not skip cleanup or the re-throw.
+          try {
+            this.pushEvent({
+              kind: 'error',
+              level: 'error',
+              title: 'Connection failed',
+              text: this.error
+            })
+          } catch (notifyError) {
+            safeLogError(
+              'agent connection failure notification failed',
+              errorLogFields(notifyError)
+            )
+          }
+          // Cleanup must not mask the original failure: a throw from session.dispose(),
+          // connection.close(), or a teardown hook is logged with context but never replaces `cause`.
+          try {
+            await this.disconnectCurrent(false)
+          } catch (cleanupError) {
+            safeLogError('agent connection cleanup failed', {
+              ...errorLogFields(cleanupError),
+              ...processFields
+            })
+          }
+          this.status = 'error'
+          try {
+            this.emitState()
+          } catch (notifyError) {
+            safeLogError('agent connection emitState failed', errorLogFields(notifyError))
+          }
+        }
+      } catch (handlingError) {
+        // Last-resort guard: even the logger threw. Swallow it (best-effort re-log) so the original
+        // cause below is what propagates.
+        try {
+          log.error('error while handling agent connection failure', errorLogFields(handlingError))
+        } catch {
+          /* nothing more we can safely do */
+        }
       }
 
-      this.error = errorMessage(error)
-      log.error('agent connection failed', error)
-      this.pushEvent({
-        kind: 'error',
-        level: 'error',
-        title: 'Connection failed',
-        text: this.error
-      })
-      await this.disconnectCurrent(false)
-      this.status = 'error'
-      this.emitState()
-      throw error
+      throw cause
     }
 
     return this.getSnapshot()
@@ -650,58 +766,71 @@ class AcpRuntime {
 
   // Creates a protocol session, injects artifact tooling, and uses the returned id as the app session id.
   async createSession(request: AcpCreateSessionRequest = {}): Promise<AcpCreateSessionResponse> {
-    const sessionCwd = resolve(request.cwd || this.cwd || this.options.defaultCwd)
-    const projectName = this.normalizeProjectName(request.projectName)
-    const connection = await this.ensureConnected(sessionCwd)
-    const artifactSessionId = this.createArtifactSessionId()
-    const notebookSessionId = this.createNotebookSessionId()
-
-    const mcpServers = await this.createMcpServers({
-      artifactSessionId,
-      notebookSessionId,
-      sessionCwd,
-      projectName
-    })
-    const session = await connection.agent
-      .buildSession({
-        cwd: sessionCwd,
-        mcpServers,
-        ...this.buildSessionMetaArg()
-      })
-      .start()
-
     try {
-      await this.configurePermissionProfile(
-        session.sessionId,
-        session,
-        normalizePermissionProfile(request.permissionProfile)
-      )
+      log.info('createSession: starting', { request })
+      const sessionCwd = resolve(request.cwd || this.cwd || this.options.defaultCwd)
+      const projectName = this.normalizeProjectName(request.projectName)
+      log.info('createSession: ensureConnected', { sessionCwd, projectName })
+      const connection = await this.ensureConnected(sessionCwd)
+      const artifactSessionId = this.createArtifactSessionId()
+      const notebookSessionId = this.createNotebookSessionId()
+
+      log.info('createSession: createMcpServers', { artifactSessionId, notebookSessionId })
+      const mcpServers = await this.createMcpServers({
+        artifactSessionId,
+        notebookSessionId,
+        sessionCwd,
+        projectName
+      })
+      log.info('createSession: buildSession', { mcpServersCount: mcpServers.length })
+      const session = await connection.agent
+        .buildSession({
+          cwd: sessionCwd,
+          mcpServers,
+          ...this.buildSessionMetaArg()
+        })
+        .start()
+
+      log.info('createSession: configurePermissionProfile', { sessionId: session.sessionId })
+      try {
+        await this.configurePermissionProfile(
+          session.sessionId,
+          session,
+          normalizePermissionProfile(request.permissionProfile)
+        )
+      } catch (error) {
+        safeLogError('createSession: configurePermissionProfile failed', errorLogFields(error))
+        session.dispose()
+        throw error
+      }
+
+      log.info('createSession: applySessionModel', { sessionId: session.sessionId })
+      await this.applySessionModel(session)
+
+      this.sessions.set(session.sessionId, session)
+      this.sessionCwds.set(session.sessionId, sessionCwd)
+      this.sessionMcpServerNames.set(session.sessionId, this.mcpServerNamesOf(mcpServers))
+      this.sessionProjectNames.set(session.sessionId, projectName)
+      this.sessionFrameworks.set(session.sessionId, this.framework.id)
+      this.rememberArtifactSession(session.sessionId, artifactSessionId)
+      this.rememberNotebookSession(session.sessionId, notebookSessionId)
+      this.currentSessionId = session.sessionId
+      this.cwd = sessionCwd
+      this.pushEvent({
+        kind: 'system',
+        level: 'info',
+        sessionId: session.sessionId,
+        title: 'Session created',
+        text: sessionCwd
+      })
+      this.emitState()
+
+      log.info('createSession: completed successfully', { sessionId: session.sessionId })
+      return { sessionId: session.sessionId, cwd: sessionCwd, frameworkId: this.framework.id }
     } catch (error) {
-      session.dispose()
+      safeLogError('createSession: failed', errorLogFields(error))
       throw error
     }
-
-    await this.applySessionModel(session)
-
-    this.sessions.set(session.sessionId, session)
-    this.sessionCwds.set(session.sessionId, sessionCwd)
-    this.sessionMcpServerNames.set(session.sessionId, this.mcpServerNamesOf(mcpServers))
-    this.sessionProjectNames.set(session.sessionId, projectName)
-    this.sessionFrameworks.set(session.sessionId, this.framework.id)
-    this.rememberArtifactSession(session.sessionId, artifactSessionId)
-    this.rememberNotebookSession(session.sessionId, notebookSessionId)
-    this.currentSessionId = session.sessionId
-    this.cwd = sessionCwd
-    this.pushEvent({
-      kind: 'system',
-      level: 'info',
-      sessionId: session.sessionId,
-      title: 'Session created',
-      text: sessionCwd
-    })
-    this.emitState()
-
-    return { sessionId: session.sessionId, cwd: sessionCwd, frameworkId: this.framework.id }
   }
 
   // Registers a freshly-built agent session under an app-facing id (used when adopting a conversation
@@ -1193,10 +1322,15 @@ class AcpRuntime {
   }
 
   // Creates the agent process, preferring an injected spawner (tests) and otherwise resolving the
-  // active agent backend so each reconnect uses the current framework + up-to-date credentials.
-  private async spawnAgentProcess(): Promise<ChildProcessWithoutNullStreams> {
+  // active agent backend so each reconnect uses the current framework + up-to-date credentials. Returns
+  // the child paired with the framework it was spawned under so the caller labels lifecycle/failure logs
+  // atomically — never by re-reading the mutable this.framework, which an overlapping reconnect can move.
+  private async spawnAgentProcess(): Promise<{
+    process: ChildProcessWithoutNullStreams
+    framework: AgentFramework['id']
+  }> {
     if (this.spawnAgent) {
-      return this.spawnAgent()
+      return { process: this.spawnAgent(), framework: this.framework.id }
     }
 
     const backend = this.options.resolveBackend ? await this.options.resolveBackend() : undefined
@@ -1221,14 +1355,32 @@ class AcpRuntime {
     log.info('agent backend resolved', {
       framework: backend.framework.id,
       sessionModel: backend.sessionModel ?? '(framework default)',
-      args: backend.args ?? []
+      args: backend.args ?? [],
+      executablePath: backend.executablePath,
+      // Log env keys but not values (may contain credentials)
+      envKeys: Object.keys(backend.env ?? {})
     })
 
-    return this.framework.spawn({
-      executablePath: backend.executablePath,
-      env: backend.env,
-      args: backend.args ?? []
+    let process: ChildProcessWithoutNullStreams
+    try {
+      process = this.framework.spawn({
+        executablePath: backend.executablePath,
+        env: backend.env,
+        args: backend.args ?? []
+      })
+    } catch (error) {
+      // Wrap (never mutate) the failure with the framework this spawn targeted: the connect-level catch
+      // would otherwise fall back to this.framework.id, which an overlapping reconnect could move before
+      // the log is written. connectFresh unwraps this and re-throws the original `error` value.
+      throw new SpawnFailure(backend.framework.id, error)
+    }
+
+    log.info('agent process spawned', {
+      framework: backend.framework.id,
+      pid: process.pid
     })
+
+    return { process, framework: backend.framework.id }
   }
 
   // Sends one prompt turn to the targeted session and streams updates until stop.
@@ -1860,12 +2012,24 @@ class AcpRuntime {
       return this.connection
     }
 
-    await this.connect({ cwd })
+    log.info('ensureConnected: attempting connection', { cwd, status: this.status })
+
+    try {
+      await this.connect({ cwd })
+    } catch (error) {
+      safeLogError('ensureConnected: connect failed', { cwd, ...errorLogFields(error) })
+      throw error
+    }
 
     if (!this.connection) {
+      safeLogError('ensureConnected: connection is null after connect', {
+        cwd,
+        status: this.status
+      })
       throw new Error('ACP connection failed')
     }
 
+    log.info('ensureConnected: connection established', { cwd })
     return this.connection
   }
 
@@ -2487,12 +2651,24 @@ class AcpRuntime {
 
   // Captures process stderr/errors/exits and converts unexpected ones to events.
   private attachAgentProcessEvents(agentProcess: ChildProcessWithoutNullStreams): void {
+    // Bind the framework this process was spawned under now. During a reconnect the runtime's
+    // this.framework may already point at a new backend, so reading it inside the async handlers would
+    // mislabel a late stderr/exit from the old process.
+    const framework = this.framework.id
+
     agentProcess.stderr.on('data', (data: Buffer) => {
       const text = data.toString('utf8').trim()
 
       // Always capture agent stderr in the log — it's the primary clue when a turn stalls or the
       // agent misbehaves (auth loops, MCP connection failures, tool errors) in a packaged build.
-      if (text) log.warn('agent stderr', { text })
+      if (text) {
+        log.warn('agent stderr', {
+          text,
+          framework,
+          status: this.status,
+          sessionCount: this.sessions.size
+        })
+      }
 
       if (this.expectedProcessExits.has(agentProcess)) {
         return
@@ -2514,6 +2690,13 @@ class AcpRuntime {
     })
 
     agentProcess.on('error', (error) => {
+      log.error('agent process error event', {
+        ...errorLogFields(error),
+        framework,
+        status: this.status,
+        pid: agentProcess.pid
+      })
+
       if (this.expectedProcessExits.has(agentProcess)) {
         return
       }
@@ -2529,6 +2712,16 @@ class AcpRuntime {
     })
 
     agentProcess.on('exit', (code, signal) => {
+      log.info('agent process exit', {
+        code,
+        signal,
+        framework,
+        status: this.status,
+        expected: this.expectedProcessExits.has(agentProcess),
+        sessionCount: this.sessions.size,
+        pid: agentProcess.pid
+      })
+
       if (this.expectedProcessExits.has(agentProcess)) {
         return
       }

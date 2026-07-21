@@ -48,6 +48,17 @@ const { createSession, resetSessionContext, resumeSession, AcpRuntimeMock } = vi
   return { createSession, resetSessionContext, resumeSession, AcpRuntimeMock }
 })
 
+// Spy on the file logger so the create-session failure path can be asserted (routes to main.log, not a
+// bare console.error). errorLogFields stays real so the assertion also covers its output shape.
+const { errorLogSpy } = vi.hoisted(() => ({ errorLogSpy: vi.fn() }))
+vi.mock('../logger', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../logger')>()
+  return {
+    ...actual,
+    createLogger: (scope: string) => ({ ...actual.createLogger(scope), error: errorLogSpy })
+  }
+})
+
 vi.mock('./runtime', () => ({ AcpRuntime: AcpRuntimeMock }))
 vi.mock('./shutdown-guard', () => ({ installAgentShutdownGuard: vi.fn() }))
 vi.mock('./mcp-http-host', () => ({ AgentMcpHttpHost: vi.fn() }))
@@ -74,9 +85,12 @@ afterEach(() => {
   clearMigrationPending()
   mkdir.mockClear()
   rm.mockClear()
-  createSession.mockClear()
+  // Restore the default managed-workspace implementation (a test may have overridden it once).
+  createSession.mockReset()
+  createSession.mockImplementation(async (request) => ({ sessionId: 's-new', cwd: request.cwd }))
   resetSessionContext.mockClear()
   resumeSession.mockClear()
+  errorLogSpy.mockClear()
 })
 
 describe('registerAcpIpcHandlers — managed session workspace', () => {
@@ -238,5 +252,42 @@ describe('registerAcpIpcHandlers — reset-session-context bridge', () => {
     // The distinct resume channel must not be driven by the reset call.
     expect(resumeSession).not.toHaveBeenCalled()
     expect(result).toEqual({ sessionId: 's-1', cwd: '/workspace', contextReset: true })
+  })
+})
+
+describe('registerAcpIpcHandlers — create-session failure logging', () => {
+  it('logs the failure via the file logger and re-throws so the renderer still sees the error', async () => {
+    registerWithFakes()
+    const failure = Object.assign(new Error('Internal error'), { code: -32603 })
+    createSession.mockRejectedValueOnce(failure)
+
+    await expect(handlers.get('acp:create-session')?.({}, {})).rejects.toBe(failure)
+
+    expect(errorLogSpy).toHaveBeenCalledTimes(1)
+    const [message, data] = errorLogSpy.mock.calls[0] as [string, Record<string, unknown>]
+    expect(message).toBe('acp:create-session failed')
+    // Full error, not a bare "Internal error" string: message + JSON-RPC code both survive.
+    expect(data.error).toBe('Internal error')
+    expect(data.code).toBe(-32603)
+  })
+
+  it('does not log on the success path', async () => {
+    registerWithFakes()
+
+    await handlers.get('acp:create-session')?.({}, {})
+
+    expect(errorLogSpy).not.toHaveBeenCalled()
+  })
+
+  it('still re-throws the original error to the renderer when the logger itself throws', async () => {
+    registerWithFakes()
+    const failure = Object.assign(new Error('Internal error'), { code: -32603 })
+    createSession.mockRejectedValueOnce(failure)
+    // A hostile/broken logger must never mask the error the renderer needs to see.
+    errorLogSpy.mockImplementationOnce(() => {
+      throw new Error('logger boom')
+    })
+
+    await expect(handlers.get('acp:create-session')?.({}, {})).rejects.toBe(failure)
   })
 })
