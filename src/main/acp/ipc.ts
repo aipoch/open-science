@@ -125,8 +125,13 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntime => {
       return await runtime.createSession(request)
     } catch (error) {
       // Route through the file logger (rotating main.log) so the failure survives in a packaged build,
-      // not just the dev console. errorLogFields keeps the message + stack out of a `{}`.
-      log.error('acp:create-session failed', errorLogFields(error))
+      // not just the dev console. errorLogFields keeps the message + stack out of a `{}`. Guarded so a
+      // throwing logger can never mask the original error the renderer must still receive.
+      try {
+        log.error('acp:create-session failed', errorLogFields(error))
+      } catch {
+        /* logging must never mask the real error */
+      }
       throw error
     }
   })

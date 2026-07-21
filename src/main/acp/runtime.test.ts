@@ -4144,3 +4144,113 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
     expect(typeof runtime.getSnapshot().error).toBe('string')
   })
 })
+
+describe('ACP runtime — failure-path robustness (errorMessage coercion + sync-callback isolation)', () => {
+  // Builds a runtime whose spawn throws an Error carrying `message`, runs createSession (which rejects),
+  // and returns the resulting snapshot error text — exercising errorMessage through the real connectFresh
+  // catch. `message` is set via defineProperty so non-string values survive assignment.
+  const snapshotErrorForMessage = async (message: unknown): Promise<string | undefined> => {
+    const hostile = new Error('placeholder')
+    Object.defineProperty(hostile, 'message', { value: message, configurable: true })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: {
+          ...claudeCodeFramework,
+          spawn: () => {
+            throw hostile
+          }
+        },
+        executablePath: '/bin/agent',
+        env: {}
+      })
+    })
+
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toBe(hostile)
+
+    return runtime.getSnapshot().error
+  }
+
+  it('coerces a bigint message to a string in the snapshot', async () => {
+    expect(await snapshotErrorForMessage(42n)).toBe('42')
+  })
+
+  it('coerces a Symbol message to a string in the snapshot', async () => {
+    expect(await snapshotErrorForMessage(Symbol('boom'))).toBe('Symbol(boom)')
+  })
+
+  it('coerces an object message to a string in the snapshot', async () => {
+    expect(await snapshotErrorForMessage({ nested: true })).toBe('[object Object]')
+  })
+
+  it('falls back to a safe string when the message throws on coercion', async () => {
+    const hostileMessage = {
+      [Symbol.toPrimitive]() {
+        throw new Error('toPrimitive trap')
+      }
+    }
+    const result = await snapshotErrorForMessage(hostileMessage)
+    // Never a thrown value or non-string — just the guarded fallback.
+    expect(result).toBe('unknown error')
+  })
+
+  // Builds a runtime whose spawn throws `spawnError`, with the given callbacks, and asserts createSession
+  // still rejects with the ORIGINAL spawn error (a synchronous sink/logger throw must not mask it).
+  const expectSpawnCausePropagates = async (
+    spawnError: Error,
+    callbacks: {
+      onEvent?: () => void
+      onStateChanged?: (state: { status: string }) => void
+    }
+  ): Promise<void> => {
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      callbacks,
+      resolveBackend: () => ({
+        framework: {
+          ...claudeCodeFramework,
+          spawn: () => {
+            throw spawnError
+          }
+        },
+        executablePath: '/bin/agent',
+        env: {}
+      })
+    })
+
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toBe(spawnError)
+  }
+
+  it('propagates the spawn cause even when onEvent throws synchronously', async () => {
+    const spawnError = new Error('spawn failed A')
+    await expectSpawnCausePropagates(spawnError, {
+      onEvent: () => {
+        throw new Error('onEvent boom')
+      }
+    })
+  })
+
+  it('propagates the spawn cause even when onStateChanged throws on the error state', async () => {
+    const spawnError = new Error('spawn failed B')
+    await expectSpawnCausePropagates(spawnError, {
+      onStateChanged: (state) => {
+        // Throw only for the terminal error emit so earlier "connecting" emits still work.
+        if (state.status === 'error') throw new Error('onStateChanged boom')
+      }
+    })
+  })
+
+  it('propagates the spawn cause even when the logger throws', async () => {
+    const spawnError = new Error('spawn failed C')
+    errorLogSpy.mockImplementation(() => {
+      throw new Error('logger boom')
+    })
+    try {
+      await expectSpawnCausePropagates(spawnError, {})
+    } finally {
+      errorLogSpy.mockReset()
+    }
+  })
+})

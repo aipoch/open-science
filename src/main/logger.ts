@@ -63,12 +63,14 @@ const MAX_SANITIZE_DEPTH = 12
 const UNREADABLE = Symbol('unreadable')
 const UNREADABLE_MARKER = '[unreadable]'
 
-// Reads own-property keys defensively — an exotic Proxy can throw from its ownKeys trap.
-const safeKeys = (value: object): string[] => {
+// Reads own-property keys defensively — an exotic Proxy can throw from its ownKeys trap. Returns
+// undefined (not []) on failure so the caller can surface the node as "[unreadable]" rather than an
+// empty object, distinguishing a hostile object from a genuinely empty one.
+const safeKeys = (value: object): string[] | undefined => {
   try {
     return Object.keys(value)
   } catch {
-    return []
+    return undefined
   }
 }
 
@@ -111,9 +113,12 @@ const toLogSafe = (value: unknown, seen: Set<object>, depth: number): unknown =>
 
   try {
     if (value instanceof Date) {
-      // An invalid Date throws from toISOString(); guard so it can't take the whole log line down.
-      const time = value.getTime()
-      return Number.isNaN(time) ? '[invalid date]' : value.toISOString()
+      // Call the ORIGINAL prototype methods (not the instance's, which can be overridden to return a
+      // bigint or a value with a throwing toJSON), and validate the result is a string.
+      const time = Date.prototype.getTime.call(value)
+      if (typeof time !== 'number' || Number.isNaN(time)) return '[invalid date]'
+      const iso = Date.prototype.toISOString.call(value)
+      return typeof iso === 'string' ? iso : '[invalid date]'
     }
 
     if (seen.has(value as object)) return CIRCULAR_MARKER
@@ -121,10 +126,28 @@ const toLogSafe = (value: unknown, seen: Set<object>, depth: number): unknown =>
     seen.add(value as object)
     try {
       if (value instanceof Error) return formatError(value, seen, depth)
-      if (Array.isArray(value)) return value.map((item) => toLogSafe(item, seen, depth + 1))
+      if (Array.isArray(value)) {
+        // Build a fresh plain array by index rather than value.map: map respects Symbol.species (a
+        // hijacked constructor could produce an object with a throwing toJSON) and a throwing index
+        // getter would abort the whole map. Per-index safeRead degrades one element instead.
+        const rawLength = safeRead(value as object, 'length')
+        const length =
+          typeof rawLength === 'number' && Number.isFinite(rawLength) && rawLength >= 0
+            ? rawLength
+            : 0
+        const items: unknown[] = []
+        for (let index = 0; index < length; index += 1) {
+          const raw = safeRead(value as object, String(index))
+          items.push(raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, depth + 1))
+        }
 
+        return items
+      }
+
+      const keys = safeKeys(value as object)
+      if (keys === undefined) return UNREADABLE_MARKER
       const out: Record<string, unknown> = {}
-      for (const key of safeKeys(value as object)) {
+      for (const key of keys) {
         const raw = safeRead(value as object, key)
         out[key] = raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, depth + 1)
       }
@@ -219,14 +242,24 @@ const errorLogFields = (error: unknown): Record<string, unknown> => {
     // rather than collapsing to "[object Object]" the way String() would.
     if (error !== null && typeof error === 'object') {
       seen.add(error)
+      const keys = safeKeys(error)
+      const message = safeRead(error, 'message')
+      const errorText =
+        message === UNREADABLE
+          ? UNREADABLE_MARKER
+          : typeof message === 'string'
+            ? message
+            : keys === undefined
+              ? UNREADABLE_MARKER
+              : '[object]'
+      if (keys === undefined) return { error: errorText }
       const safe: Record<string, unknown> = {}
-      for (const key of safeKeys(error)) {
+      for (const key of keys) {
         const raw = safeRead(error, key)
         safe[key] = raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, 1)
       }
-      const message = safeRead(error, 'message')
 
-      return { error: typeof message === 'string' ? message : '[object]', ...safe }
+      return { error: errorText, ...safe }
     }
 
     return { error: safeToString(error) }

@@ -363,6 +363,53 @@ describe('logger: errorLogFields', () => {
     expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
   })
 
+  it('marks a nested value whose ownKeys trap throws as "[unreadable]" (not {})', () => {
+    const badKeys = new Proxy(
+      { visible: 1 },
+      {
+        ownKeys() {
+          throw new Error('ownKeys trap')
+        }
+      }
+    )
+    const err = Object.assign(new Error('e'), { data: { ok: 'kept', badKeys } })
+
+    const fields = errorLogFields(err) as { data: { ok: string; badKeys: string } }
+    expect(fields.data.ok).toBe('kept')
+    expect(fields.data.badKeys).toBe('[unreadable]')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('degrades a throwing array index getter to a marker while keeping other elements', () => {
+    const arr: unknown[] = ['a', 'b', 'c']
+    Object.defineProperty(arr, '1', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        throw new Error('index trap')
+      }
+    })
+    const err = Object.assign(new Error('e'), { data: arr })
+
+    const fields = errorLogFields(err) as { data: unknown[] }
+    expect(fields.data[0]).toBe('a')
+    expect(fields.data[1]).toBe('[unreadable]')
+    expect(fields.data[2]).toBe('c')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('does not trust an overridden Date.toISOString that returns a non-string', () => {
+    const date = new Date(0)
+    // A hostile override that would otherwise put a bigint into the record and break JSON.stringify.
+    ;(date as unknown as { toISOString: () => unknown }).toISOString = () => 1n
+    const err = Object.assign(new Error('e'), { data: date })
+
+    const fields = errorLogFields(err) as { data: string }
+    // The real prototype method is used, so a valid epoch still serializes to ISO.
+    expect(fields.data).toBe('1970-01-01T00:00:00.000Z')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
   it('keeps a thrown plain object’s own fields instead of "[object Object]"', () => {
     const fields = errorLogFields({ code: -32603, message: 'Internal error', data: { x: 1 } })
 

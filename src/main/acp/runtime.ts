@@ -254,6 +254,16 @@ class SpawnFailure {
 
 const log = createLogger('acp')
 
+// Logs an error without ever throwing back into the caller. Used on failure paths where a throwing
+// logger (or a hostile payload) must never mask the original error being handled/re-thrown.
+const safeLogError = (message: string, data?: unknown): void => {
+  try {
+    log.error(message, data)
+  } catch {
+    /* logging must never mask the real error */
+  }
+}
+
 // Detects an agent-side resume failure that means the session cannot be reattached, so the thread
 // should adopt a fresh agent session instead of dead-ending. A spec-compliant agent returns
 // "Resource not found" (-32002) for a session id it no longer holds (e.g. after a provider switch);
@@ -696,13 +706,17 @@ class AcpRuntime {
           // Superseded (a newer reconnect bumped the generation) or shutting down: the fast-path re-throw
           // skips the error handling below, so log here too — these late-spawn/teardown races are exactly
           // the failures that are otherwise invisible.
-          log.warn('agent connection abandoned (superseded or shutting down)', {
-            ...errorLogFields(cause),
-            ...processFields
-          })
+          try {
+            log.warn('agent connection abandoned (superseded or shutting down)', {
+              ...errorLogFields(cause),
+              ...processFields
+            })
+          } catch {
+            /* a throwing logger must not mask the cause */
+          }
         } else {
           this.error = errorMessage(cause)
-          log.error('agent connection failed', { ...errorLogFields(cause), ...processFields })
+          safeLogError('agent connection failed', { ...errorLogFields(cause), ...processFields })
           // A notification sink that throws synchronously must not skip cleanup or the re-throw.
           try {
             this.pushEvent({
@@ -712,14 +726,17 @@ class AcpRuntime {
               text: this.error
             })
           } catch (notifyError) {
-            log.error('agent connection failure notification failed', errorLogFields(notifyError))
+            safeLogError(
+              'agent connection failure notification failed',
+              errorLogFields(notifyError)
+            )
           }
           // Cleanup must not mask the original failure: a throw from session.dispose(),
           // connection.close(), or a teardown hook is logged with context but never replaces `cause`.
           try {
             await this.disconnectCurrent(false)
           } catch (cleanupError) {
-            log.error('agent connection cleanup failed', {
+            safeLogError('agent connection cleanup failed', {
               ...errorLogFields(cleanupError),
               ...processFields
             })
@@ -728,7 +745,7 @@ class AcpRuntime {
           try {
             this.emitState()
           } catch (notifyError) {
-            log.error('agent connection emitState failed', errorLogFields(notifyError))
+            safeLogError('agent connection emitState failed', errorLogFields(notifyError))
           }
         }
       } catch (handlingError) {
@@ -782,7 +799,7 @@ class AcpRuntime {
           normalizePermissionProfile(request.permissionProfile)
         )
       } catch (error) {
-        log.error('createSession: configurePermissionProfile failed', errorLogFields(error))
+        safeLogError('createSession: configurePermissionProfile failed', errorLogFields(error))
         session.dispose()
         throw error
       }
@@ -811,7 +828,7 @@ class AcpRuntime {
       log.info('createSession: completed successfully', { sessionId: session.sessionId })
       return { sessionId: session.sessionId, cwd: sessionCwd, frameworkId: this.framework.id }
     } catch (error) {
-      log.error('createSession: failed', errorLogFields(error))
+      safeLogError('createSession: failed', errorLogFields(error))
       throw error
     }
   }
@@ -2000,12 +2017,15 @@ class AcpRuntime {
     try {
       await this.connect({ cwd })
     } catch (error) {
-      log.error('ensureConnected: connect failed', { cwd, ...errorLogFields(error) })
+      safeLogError('ensureConnected: connect failed', { cwd, ...errorLogFields(error) })
       throw error
     }
 
     if (!this.connection) {
-      log.error('ensureConnected: connection is null after connect', { cwd, status: this.status })
+      safeLogError('ensureConnected: connection is null after connect', {
+        cwd,
+        status: this.status
+      })
       throw new Error('ACP connection failed')
     }
 
