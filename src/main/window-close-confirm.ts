@@ -1,9 +1,14 @@
+import { BrowserWindow, dialog, ipcMain } from 'electron'
+import { randomUUID } from 'node:crypto'
+
 import type { ActiveSessionInfo } from '../shared/storage'
-import type {
-  CloseConfirmChoice,
-  CloseConfirmRequest,
-  CloseConfirmResponse,
-  CloseConfirmVariant
+import {
+  WINDOW_CLOSE_CONFIRM_REQUEST,
+  WINDOW_CLOSE_CONFIRM_RESPONSE,
+  type CloseConfirmChoice,
+  type CloseConfirmRequest,
+  type CloseConfirmResponse,
+  type CloseConfirmVariant
 } from '../shared/window-controls'
 
 // Structural (Electron-free) plumbing so the coordinator is unit-testable. The Electron glue that
@@ -85,3 +90,52 @@ export const createCloseConfirm = (
     })
   }
 }
+
+// Native fallback when the renderer can't render the modal. close-to-tray shows an OS message box;
+// quit proceeds (returns 'quit') because a dead/gone UI must not be able to block quit.
+const nativeFallback = async (
+  getWindow: () => BrowserWindow | undefined,
+  variant: CloseConfirmVariant
+): Promise<CloseConfirmChoice> => {
+  if (variant === 'quit') return 'quit'
+  const window = getWindow()
+  const options = {
+    type: 'question' as const,
+    buttons: ['Minimize to tray', 'Quit'],
+    defaultId: 0,
+    cancelId: 0,
+    title: 'Open Science',
+    message: 'Minimize to tray or quit?',
+    detail: 'Background work may still be running.'
+  }
+  const { response } = window
+    ? await dialog.showMessageBox(window, options)
+    : await dialog.showMessageBox(options)
+  return response === 1 ? 'quit' : 'minimize'
+}
+
+// Wires createCloseConfirm to Electron IPC + the current main window (via getWindow, since the window
+// can be recreated). Response listeners are per-confirm and removed when it settles.
+export const createElectronCloseConfirm = (
+  getWindow: () => BrowserWindow | undefined
+): ((variant: CloseConfirmVariant, sessions: ActiveSessionInfo[]) => Promise<CloseConfirmChoice>) =>
+  createCloseConfirm({
+    send: (payload) => getWindow()?.webContents.send(WINDOW_CLOSE_CONFIRM_REQUEST, payload),
+    onResponse: (cb) => {
+      const listener = (_event: unknown, payload: CloseConfirmResponse): void => cb(payload)
+      ipcMain.on(WINDOW_CLOSE_CONFIRM_RESPONSE, listener)
+      return () => ipcMain.removeListener(WINDOW_CLOSE_CONFIRM_RESPONSE, listener)
+    },
+    isRendererAvailable: () => {
+      const window = getWindow()
+      return Boolean(window && !window.isDestroyed() && !window.webContents.isDestroyed())
+    },
+    onRenderGone: (cb) => {
+      const window = getWindow()
+      if (!window) return () => undefined
+      window.webContents.on('render-process-gone', cb)
+      return () => window.webContents.off('render-process-gone', cb)
+    },
+    nativeFallback: (variant) => nativeFallback(getWindow, variant),
+    newRequestId: () => randomUUID()
+  })
