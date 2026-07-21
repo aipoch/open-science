@@ -225,7 +225,7 @@ const SPREADSHEET_WORKER_STARTUP_TIMEOUT_MS = 5_000
 const SPREADSHEET_STATUS_SCOPE_ATTRIBUTE = 'data-open-science-spreadsheet-preview'
 const SPREADSHEET_STATUS_SCOPE = `[${SPREADSHEET_STATUS_SCOPE_ATTRIBUTE}]`
 const SPREADSHEET_PARSING_STATUS: OfficeRenderStatus = {
-  title: 'Parsing the Excel workbook. Please wait...',
+  title: 'Parsing the Excel workbook',
   description: 'Preparing worksheets, styles, and virtualized viewport data.'
 }
 const SPREADSHEET_STATUS_STYLE = `

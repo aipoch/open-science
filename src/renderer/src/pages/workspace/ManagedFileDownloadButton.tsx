@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import type { SaveManagedFileRequest } from '../../../../shared/file-save'
 
 type ManagedFileDownloadButtonProps = SaveManagedFileRequest & {
+  appearance?: 'icon' | 'primary'
   className?: string
   disabled?: boolean
   revealOnParentHover?: boolean
@@ -20,6 +21,7 @@ const ManagedFileDownloadButtonState = ({
   source,
   path,
   suggestedName,
+  appearance = 'icon',
   className,
   disabled = false,
   revealOnParentHover = false,
@@ -90,6 +92,16 @@ const ManagedFileDownloadButtonState = ({
           : disabled
             ? 'File unavailable'
             : 'Download'
+  // The labeled fallback action mirrors save state without changing its fixed button geometry.
+  const visibleLabel =
+    status === 'saving'
+      ? 'Saving...'
+      : status === 'saved'
+        ? 'Saved'
+        : status === 'error'
+          ? 'Try again'
+          : 'Download'
+  const isPrimary = appearance === 'primary'
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -103,13 +115,14 @@ const ManagedFileDownloadButtonState = ({
           >
             <Button
               type="button"
-              variant="ghost"
-              size="icon-xs"
+              variant={isPrimary ? 'default' : 'ghost'}
+              size={isPrimary ? 'sm' : 'icon-xs'}
               className={cn(
-                'bg-bg-000/90 shadow-sm',
-                status === 'saved'
-                  ? 'text-emerald-600 hover:bg-muted hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-400'
-                  : 'text-text-100 hover:bg-muted hover:text-text-000',
+                isPrimary ? 'w-24' : 'bg-bg-000/90 shadow-sm',
+                !isPrimary &&
+                  (status === 'saved'
+                    ? 'text-emerald-600 hover:bg-muted hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-400'
+                    : 'text-text-100 hover:bg-muted hover:text-text-000'),
                 revealOnParentHover &&
                   (status === 'idle'
                     ? 'opacity-0 group-hover:opacity-100 group-focus-visible/download:opacity-100 focus-visible:opacity-100'
@@ -132,6 +145,7 @@ const ManagedFileDownloadButtonState = ({
               ) : (
                 <Download aria-hidden="true" />
               )}
+              {isPrimary ? <span>{visibleLabel}</span> : null}
             </Button>
           </span>
         </TooltipTrigger>

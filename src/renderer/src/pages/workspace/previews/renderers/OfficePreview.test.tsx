@@ -112,7 +112,7 @@ describe('OfficePreviewRenderer', () => {
         onStatus?: (status: { title: string; description: string }) => void
       }) => {
         onStatus?.({
-          title: 'Parsing the Excel workbook. Please wait...',
+          title: 'Parsing the Excel workbook',
           description: 'Preparing worksheets, styles, and virtualized viewport data.'
         })
         await renderGate
@@ -130,7 +130,8 @@ describe('OfficePreviewRenderer', () => {
     })
 
     const status = container.querySelector('[data-preview-status="loading"]')
-    expect(status?.textContent).toContain('Parsing the Excel workbook. Please wait...')
+    expect(status?.textContent).toContain('Parsing the Excel workbook')
+    expect(status?.textContent).not.toContain('Please wait')
     expect(status?.textContent).toContain(
       'Preparing worksheets, styles, and virtualized viewport data.'
     )

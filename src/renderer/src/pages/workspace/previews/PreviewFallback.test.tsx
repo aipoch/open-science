@@ -88,7 +88,7 @@ describe('PreviewFallback', () => {
     await act(async () => {
       root.render(
         renderLoading(
-          'Parsing the Excel workbook. Please wait...',
+          'Parsing the Excel workbook',
           'Preparing worksheets, styles, and virtualized viewport data.'
         )
       )
@@ -96,7 +96,8 @@ describe('PreviewFallback', () => {
 
     const parsingStatus = container.querySelector('[data-preview-status="loading"]')
     expect(parsingStatus).toBe(initialStatus)
-    expect(parsingStatus?.textContent).toContain('Parsing the Excel workbook. Please wait...')
+    expect(parsingStatus?.textContent).toContain('Parsing the Excel workbook')
+    expect(parsingStatus?.textContent).not.toContain('Please wait')
     expect(parsingStatus?.textContent).toContain(
       'Preparing worksheets, styles, and virtualized viewport data.'
     )

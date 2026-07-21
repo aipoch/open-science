@@ -419,7 +419,7 @@ describe('renderOfficeFile', () => {
       'style[data-open-science-spreadsheet-status]'
     )
     expect(onStatus).toHaveBeenCalledWith({
-      title: 'Parsing the Excel workbook. Please wait...',
+      title: 'Parsing the Excel workbook',
       description: 'Preparing worksheets, styles, and virtualized viewport data.'
     })
     expect(getComputedStyle(container.querySelector<HTMLElement>('.loading')!).display).toBe('none')

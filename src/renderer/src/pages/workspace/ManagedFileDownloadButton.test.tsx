@@ -244,4 +244,62 @@ describe('ManagedFileDownloadButton', () => {
       expect.any(Error)
     )
   })
+
+  it('shows each save state inside the stable primary action', async () => {
+    vi.useFakeTimers()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    let resolveRetry: ((result: { saved: boolean }) => void) | undefined
+    const saveManagedFile = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('disk full'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ saved: boolean }>((resolve) => {
+            resolveRetry = resolve
+          })
+      )
+    window.api = { saveManagedFile } as unknown as Window['api']
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <ManagedFileDownloadButton
+          source="artifact"
+          path="/managed/report.csv"
+          suggestedName="report.csv"
+          appearance="primary"
+        />
+      )
+    })
+
+    const button = container.querySelector<HTMLButtonElement>('button')!
+    expect(button.dataset.variant).toBe('default')
+    expect(button.dataset.size).toBe('sm')
+    expect(button.className.split(/\s+/)).toContain('w-24')
+    expect(button.querySelector('svg')).not.toBeNull()
+    expect(button.textContent).toBe('Download')
+
+    await act(async () => {
+      button.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(button.textContent).toBe('Try again')
+
+    await act(async () => {
+      button.click()
+      await Promise.resolve()
+    })
+    expect(button.disabled).toBe(true)
+    expect(button.textContent).toBe('Saving...')
+
+    await act(async () => resolveRetry?.({ saved: true }))
+    expect(button.textContent).toBe('Saved')
+
+    await act(async () => vi.advanceTimersByTime(1600))
+    expect(button.textContent).toBe('Download')
+    expect(consoleError).toHaveBeenCalledWith(
+      'Failed to download managed file: report.csv',
+      expect.any(Error)
+    )
+  })
 })
