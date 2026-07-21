@@ -423,4 +423,41 @@ describe('CodexAuthController', () => {
     })
     expect(vi.mocked(isolated.logout)).toHaveBeenCalledOnce()
   })
+
+  it('times out a stalled sign-out and closes the session instead of hanging', async () => {
+    // logoutIsolated is user-triggered and now issues its own status round-trip, so it must fail
+    // closed on a stalled adapter like the reads do — not freeze the Settings sign-out.
+    vi.useFakeTimers()
+    let resolveStatus!: (value: { type: 'unauthenticated' }) => void
+    const stalledStatus = new Promise<{ type: 'unauthenticated' }>((resolve) => {
+      resolveStatus = resolve
+    })
+    const isolated = session({ status: vi.fn(() => stalledStatus) })
+    const controller = new CodexAuthController({
+      openSession: vi.fn().mockResolvedValue(isolated),
+      statusTimeoutMs: 10
+    })
+    let outcome: Awaited<ReturnType<CodexAuthController['logoutIsolated']>> | undefined
+    const pending = controller.logoutIsolated().then((result) => {
+      outcome = result
+    })
+
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(10)
+    await pending
+
+    try {
+      expect(outcome).toEqual({
+        mode: 'isolated',
+        supported: true,
+        authenticated: false,
+        message: 'Codex sign-out timed out.'
+      })
+      expect(vi.mocked(isolated.logout)).not.toHaveBeenCalled()
+      expect(vi.mocked(isolated.close)).toHaveBeenCalledOnce()
+    } finally {
+      resolveStatus({ type: 'unauthenticated' })
+      vi.useRealTimers()
+    }
+  })
 })
