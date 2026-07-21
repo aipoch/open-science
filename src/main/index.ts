@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url'
 // SDK graph) are imported lazily inside the matching branch, and the Electron backend is imported only
 // after the single-instance lock is held — so no backend module loads before the lock in UI mode.
 import { ARTIFACT_MCP_SERVER_ARG, NOTEBOOK_MCP_SERVER_ARG } from './mcp-server-args'
+import { detectActiveSessions } from './storage/detect-active'
+import { createElectronCloseConfirm } from './window-close-confirm'
 
 const APP_NAME = 'Open Science'
 const APP_USER_MODEL_ID = 'com.aipoch.open-science'
@@ -133,7 +135,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // can reach them. It only wraps ipcMain.handle — no server, no cost until something serves.
       const rpcCapture = installRpcCapture(ipcMain)
       // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
-      const { shutdownCoordinator } = await registerIpcHandlers({ mainEntryPath })
+      const { runtime, notebook, shutdownCoordinator } = await registerIpcHandlers({ mainEntryPath })
       const webController = createWebServiceController({
         rpc: rpcCapture,
         requestQuit: () => app.quit()
@@ -149,6 +151,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         createAppTray,
         buildAuthenticatedWebUrl,
         routeSecondInstance,
+        runtime,
+        notebook,
         shutdownCoordinator,
         installAppLifecycle,
         log,
@@ -203,7 +207,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         isMigrationInProgress: ctx.isMigrationInProgress,
         quit: () => app.quit(),
         countWindows: () => BrowserWindow.getAllWindows().length,
-        createInitialWindow: !ctx.webMode.headless
+        createInitialWindow: !ctx.webMode.headless,
+        detectActiveSessions: () =>
+          detectActiveSessions({ runtime: ctx.runtime, notebook: ctx.notebook }),
+        createConfirmClose: (getWindow) => createElectronCloseConfirm(getWindow)
       })
 
       // Route each second launch by its forwarded argv (see second-instance-router): a CLI
