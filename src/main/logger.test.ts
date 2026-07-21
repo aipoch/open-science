@@ -577,17 +577,54 @@ describe('logger: errorLogFields', () => {
     expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
   })
 
-  it('caps an over-long string field so one value cannot produce an unbounded log line', () => {
+  it('caps the Error message, stack, and a nested string value', () => {
     const huge = 'x'.repeat(100_000)
-    const fields = errorLogFields(Object.assign(new Error(huge), { data: { blob: huge } })) as {
+    const err = new Error(huge)
+    err.stack = huge
+    const fields = errorLogFields(Object.assign(err, { data: { blob: huge } })) as {
       error: string
+      stack: string
       data: { blob: string }
     }
-    // Both the message and a nested string value are truncated with a char-count suffix.
     expect(fields.error.length).toBeLessThan(9000)
     expect(fields.error).toContain('chars]')
+    expect(fields.stack.length).toBeLessThan(9000)
+    expect(fields.stack).toContain('chars]')
     expect(fields.data.blob.length).toBeLessThan(9000)
     expect(fields.data.blob).toContain('chars]')
+  })
+
+  it('caps a coerced (non-string) Error message and the top-level plain-object message', () => {
+    const huge = 'y'.repeat(100_000)
+    // Coercion path: an Error whose `message` is a non-string that stringifies to a huge value —
+    // formatError runs it through safeToString, which must cap.
+    const err = new Error()
+    Object.defineProperty(err, 'message', { value: { toString: () => huge }, configurable: true })
+    const coerced = errorLogFields(err) as { error: string }
+    expect(coerced.error.length).toBeLessThan(9000)
+
+    // Top-level directly-thrown object whose own `message` is huge → goes into `error`, must be capped.
+    const topLevel = errorLogFields({ message: huge, code: 1 }) as { error: string }
+    expect(topLevel.error.length).toBeLessThan(9000)
+    expect(topLevel.error).toContain('chars]')
+  })
+
+  it('keeps the bestEffortMessage fallback bounded when the sanitizer itself fails', () => {
+    // Force the outer catch: a getPrototypeOf trap makes `instanceof` throw. bestEffortMessage can't
+    // safely read anything off such a value, so it returns a short fixed string — the key property is
+    // that the fallback is always bounded (never a huge passthrough).
+    const huge = 'z'.repeat(100_000)
+    const hostile = new Proxy(
+      { message: huge },
+      {
+        getPrototypeOf() {
+          throw new Error('proto trap')
+        }
+      }
+    )
+    const fields = errorLogFields(hostile) as { error: string; serializationFailed?: boolean }
+    expect(fields.serializationFailed).toBe(true)
+    expect(fields.error.length).toBeLessThan(9000)
   })
 
   it('caps an astronomically large bigint', () => {
@@ -597,6 +634,35 @@ describe('logger: errorLogFields', () => {
     }
     expect(fields.data.length).toBeLessThan(9000)
     expect(fields.data).toContain('chars]')
+  })
+
+  it('caps an over-long property NAME (and keeps distinct long keys from colliding)', () => {
+    const longA = `${'a'.repeat(100_000)}_A`
+    const longB = `${'a'.repeat(100_000)}_B` // shares the truncation prefix with longA
+    const data: Record<string, unknown> = {}
+    data[longA] = 1
+    data[longB] = 2
+    const fields = errorLogFields(Object.assign(new Error('e'), { data })) as {
+      data: Record<string, unknown>
+    }
+
+    const outKeys = Object.keys(fields.data)
+    // Two inputs → two distinct output keys (no collision from truncation), each bounded in length.
+    expect(outKeys.length).toBe(2)
+    expect(new Set(outKeys).size).toBe(2)
+    for (const k of outKeys) expect(k.length).toBeLessThan(400)
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('bounds TOTAL output size via the global character budget, not just per field', () => {
+    // Many distinct medium strings: each is under the per-field cap, so only the GLOBAL char budget
+    // bounds the whole line. Without it, ~1000 × 8KB ≈ 8MB would be emitted.
+    const data: Record<string, unknown> = {}
+    for (let i = 0; i < 1000; i += 1) data[`k${i}`] = 'm'.repeat(5000)
+    const fields = errorLogFields(Object.assign(new Error('e'), { data }))
+    const line = formatLine('error', 'x', 'y', fields)
+    // Comfortably bounded by MAX_TOTAL_CHARS (256KB) plus fixed overhead — nowhere near 8MB.
+    expect(line.length).toBeLessThan(400_000)
   })
 
   it('uses one accurate truncation marker when budget AND key-cap both trigger (no overwrite)', () => {
@@ -612,10 +678,15 @@ describe('logger: errorLogFields', () => {
 
     const marker = fields.data['[truncated]']
     expect(typeof marker).toBe('string')
-    // Exactly one truncation marker key, and it reflects the omitted count (well over the cap remainder).
+    // Exactly one truncation marker key.
     const truncatedKeys = Object.keys(fields.data).filter((k) => k === '[truncated]')
     expect(truncatedKeys.length).toBe(1)
-    expect(marker as string).toMatch(/\d+ keys omitted/)
+    // The count must be EXACT, not just "some number": total input keys minus the keys actually emitted
+    // (everything except the marker itself). A hardcoded "1 keys omitted" would fail this.
+    const emittedKeyCount = Object.keys(fields.data).filter((k) => k !== '[truncated]').length
+    const expectedOmitted = 2000 - emittedKeyCount
+    expect(marker).toBe(`+${expectedOmitted} keys omitted, output truncated`)
+    expect(expectedOmitted).toBeGreaterThan(1000) // budget stopped it well before the 1000-key cap
     expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
   })
 
