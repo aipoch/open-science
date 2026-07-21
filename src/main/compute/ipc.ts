@@ -6,6 +6,8 @@ import type {
   ComputeApprovalDecision,
   ComputeHost,
   ComputeApprovalRequest,
+  ComputeJob,
+  JobSummary,
   CreateComputeHostRequest,
   DeleteComputeHostRequest,
   DetailsAuthor,
@@ -15,14 +17,39 @@ import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs
 import { getProjectDbClient } from '../projects/prisma-client'
 import { resolveStorageRoot } from '../storage-root'
 import { SettingsRepository } from '../settings/repository'
+import { broadcastToRenderers } from '../renderer-broadcast'
 import { ComputeApprovalBroker } from './compute-approval-broker'
 import { ComputeService } from './compute-service'
 import { ComputeHostRepository } from './repository'
+import { ComputeJobRepository } from './job-repository'
 import { readSshConfigHostAliases } from './ssh-config'
 import { SystemSshRunner } from './ssh-runner'
 import { syncComputeSkillDoc } from './skill-doc'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { join } from 'node:path'
+
+// IPC channel names for the renderer job feed (Phase 3d, issue 05).
+export const COMPUTE_JOBS_LIST_CHANNEL = 'compute:jobs:list'
+export const COMPUTE_JOB_UPDATED_CHANNEL = 'compute:job-updated'
+
+// Converts a full ComputeJob to the lightweight JobSummary sent over IPC. The display_name is
+// denormalized from the host list at query time in listJobSummaries below.
+export const toJobSummary = (job: ComputeJob, displayName: string): JobSummary => ({
+  job_id: job.job_id,
+  provider_id: job.provider_id,
+  display_name: displayName,
+  shape: job.shape,
+  status: job.status,
+  intent: job.intent,
+  created_at: job.created_at,
+  started_at: job.started_at,
+  finished_at: job.finished_at,
+  exit_code: job.exit_code,
+  error_code: job.error_code,
+  remote_workdir: job.remote_workdir,
+  stdout_tail: job.stdout_tail,
+  stderr_tail: job.stderr_tail
+})
 
 // The renderer-callable compute commands. Kept as a thin adapter over the repository + the pure
 // ssh-config parser so the IPC surface stays easy to unit test (aligns with projects/ipc.ts). Issue 01:
@@ -30,6 +57,7 @@ import { join } from 'node:path'
 // details/scratch/concurrency. Issue 04 adds callCommand + the approval broker wiring.
 // Issue 05 (browse) adds listDir. Issue 06 adds list (via ComputeService) and skill doc sync.
 // Issue 03 (file-preview) adds download (os-downloads + artifact).
+// Issue 05 (renderer-job-feed): jobsList (compute:jobs:list IPC).
 type ComputeHandlers = {
   list: () => Promise<ComputeHost[]>
   get: (providerId: string) => Promise<ComputeHost | null>
@@ -62,6 +90,8 @@ type ComputeHandlers = {
   // Responds to a pending approval request from the renderer. Decision now includes
   // 'conversation' and 'project' scopes in addition to 'once' and 'deny' (issue 05).
   approvalRespond: (id: string, decision: ComputeApprovalDecision) => void
+  // Returns JobSummary[] for a session, optionally filtered by status (renderer feed, issue 05).
+  jobsList: (filter: { sessionId: string; status?: string[] }) => Promise<JobSummary[]>
 }
 
 // Optional callback injected into createComputeHandlers so create/delete can re-sync the skill doc
@@ -75,7 +105,8 @@ const createComputeHandlers = (
   injectedService?: ComputeService,
   injectedBroker?: ComputeApprovalBroker,
   onSkillDocSync?: SkillDocSyncer,
-  settingsRepository?: SettingsRepository
+  settingsRepository?: SettingsRepository,
+  jobRepository?: ComputeJobRepository
 ): ComputeHandlers => {
   // The broadcast function sends approval requests to all renderer windows. In tests, callers
   // inject a fake broker so this function is never called directly.
@@ -137,7 +168,14 @@ const createComputeHandlers = (
       shell.showItemInFolder(filePath)
     },
     computeService: service,
-    approvalRespond: (id, decision) => broker.respond(id, decision)
+    approvalRespond: (id, decision) => broker.respond(id, decision),
+    jobsList: async (filter) => {
+      if (!jobRepository) return []
+      const hosts = await repository.list()
+      const hostNameMap = new Map(hosts.map((h) => [h.providerId, h.displayName]))
+      const jobs = await jobRepository.findBySession(filter.sessionId, filter.status)
+      return jobs.map((j) => toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id))
+    }
   }
 }
 
@@ -147,10 +185,20 @@ const createComputeHandlers = (
 const createDefaultComputeHostRepository = (): ComputeHostRepository =>
   new ComputeHostRepository(() => getProjectDbClient(resolveStorageRoot()))
 
+const createDefaultComputeJobRepository = (): ComputeJobRepository =>
+  new ComputeJobRepository(() => getProjectDbClient(resolveStorageRoot()))
+
+// Broadcasts a job summary to all renderer windows. Called by the JobPoller onJobUpdated hook
+// and by the job dispatcher on status transitions (Phase 3d, design.md §9).
+export const broadcastJobUpdated = (summary: JobSummary): void => {
+  broadcastToRenderers(COMPUTE_JOB_UPDATED_CHANNEL, summary)
+}
+
 // Registers the renderer-callable compute host commands.
 const registerComputeIpcHandlers = (
-  repository = createDefaultComputeHostRepository()
-): { computeService: ComputeService } => {
+  repository = createDefaultComputeHostRepository(),
+  jobRepository = createDefaultComputeJobRepository()
+): { computeService: ComputeService; jobRepository: ComputeJobRepository } => {
   const storageRoot = resolveStorageRoot()
   const skillsDir = join(getAppClaudeConfigDir(storageRoot), 'skills')
 
@@ -166,7 +214,8 @@ const registerComputeIpcHandlers = (
     undefined,
     undefined,
     skillDocSyncer,
-    settingsRepo
+    settingsRepo,
+    jobRepository
   )
 
   // Write the initial skill doc at startup so agents see the host list from the first session.
@@ -223,9 +272,19 @@ const registerComputeIpcHandlers = (
       handlers.approvalRespond(request.id, request.decision)
     }
   )
+  // Returns all jobs for a session as JobSummary[], optionally filtered by status (Phase 3d).
+  ipcMain.handle(
+    COMPUTE_JOBS_LIST_CHANNEL,
+    (_event, filter: { sessionId: string; status?: string[] }) => handlers.jobsList(filter)
+  )
 
-  return { computeService: handlers.computeService }
+  return { computeService: handlers.computeService, jobRepository }
 }
 
-export { createComputeHandlers, createDefaultComputeHostRepository, registerComputeIpcHandlers }
+export {
+  createComputeHandlers,
+  createDefaultComputeHostRepository,
+  createDefaultComputeJobRepository,
+  registerComputeIpcHandlers
+}
 export type { ComputeHandlers, SkillDocSyncer }
