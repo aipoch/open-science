@@ -624,7 +624,7 @@ describe('workspace agent message sending', () => {
       createSession: vi.fn(),
       resumeSession: vi.fn(),
       resetSessionContext: vi.fn(),
-      sendPrompt: vi.fn().mockRejectedValue(new Error('Agent run failed'))
+      sendPrompt: vi.fn().mockRejectedValue(new Error('Connection timeout'))
     }
 
     useSessionStore.getState().appendUserMessage({
@@ -663,7 +663,45 @@ describe('workspace agent message sending', () => {
       createSession: vi.fn(),
       resumeSession: vi.fn(),
       resetSessionContext: vi.fn(),
-      sendPrompt: vi.fn().mockRejectedValue(new Error('Agent run failed'))
+      sendPrompt: vi.fn().mockRejectedValue(new Error('Invalid API key'))
+    }
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'earlier turn',
+      cwd: '/workspace/project'
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'hello',
+      cwd: '/workspace/project'
+    })
+    await flushRuntimeTasks()
+    await flushRuntimeTasks()
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.status).toBe('error')
+    expect(session.interrupted).toBeFalsy()
+    expect(session.error).toBe('Invalid API key')
+  })
+
+  it('uses fallback message when error is empty or whitespace-only', async () => {
+    vi.stubGlobal('window', {
+      api: {
+        acp: {
+          getState: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+        }
+      }
+    })
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockRejectedValue(new Error('  '))
     }
 
     useSessionStore.getState().appendUserMessage({

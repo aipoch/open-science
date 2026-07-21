@@ -320,7 +320,9 @@ const startPendingSessionPrompt = (
       .catch((error) => {
         // A rejected prompt surfaces as a Resume banner if the connection dropped, otherwise a
         // visible session error, instead of being swallowed as an unhandled rejection.
-        void failOrMarkDisconnected(runtimeSessionId, getErrorMessage(error))
+        // Ensure non-empty message to avoid being silently dropped by failRun's empty check.
+        const errorMessage = getErrorMessage(error).trim() || 'Agent run failed'
+        void failOrMarkDisconnected(runtimeSessionId, errorMessage)
       })
   })()
 }
@@ -509,7 +511,9 @@ const sendWorkspaceMessage = async (
       .catch((error) => {
         // A rejected prompt surfaces as a Resume banner if the connection dropped, otherwise a
         // visible session error, instead of being swallowed as an unhandled rejection.
-        void failOrMarkDisconnected(targetSessionId, getErrorMessage(error))
+        // Ensure non-empty message to avoid being silently dropped by failRun's empty check.
+        const errorMessage = getErrorMessage(error).trim() || 'Agent run failed'
+        void failOrMarkDisconnected(targetSessionId, errorMessage)
       })
 
     return appended
