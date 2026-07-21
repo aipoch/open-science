@@ -295,6 +295,32 @@ describe('CodexAuthController', () => {
     expect(vi.mocked(isolated.close)).toHaveBeenCalledOnce()
   })
 
+  it('rejects a second concurrent sign-in without opening a second session', async () => {
+    // The in-progress slot must be claimed synchronously, in the same tick as the guard, so two
+    // rapid calls (no await between them) cannot both pass the guard and open two browser flows.
+    const isolated = session({
+      status: vi.fn().mockResolvedValue({ type: 'unauthenticated' }),
+      authenticateChatGpt: vi.fn(() => new Promise<void>(() => undefined))
+    })
+    const openSession = vi.fn().mockResolvedValue(isolated)
+    const controller = new CodexAuthController({ openSession, loginTimeoutMs: 60_000 })
+
+    const first = controller.loginIsolated()
+    const second = controller.loginIsolated()
+
+    await expect(second).resolves.toEqual({
+      mode: 'isolated',
+      supported: true,
+      authenticated: false,
+      message: 'A Codex sign-in is already in progress.'
+    })
+    expect(openSession).toHaveBeenCalledOnce()
+
+    // The first login still owns the slot and remains cancellable.
+    controller.cancelLogin()
+    await expect(first).resolves.toMatchObject({ message: 'Codex sign-in was cancelled.' })
+  })
+
   it('times out while isolated login initialization is stalled', async () => {
     vi.useFakeTimers()
     let resolveInitialize!: (value: { authMethods: { id: string }[] }) => void

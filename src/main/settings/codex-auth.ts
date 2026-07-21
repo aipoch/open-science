@@ -133,17 +133,18 @@ export class CodexAuthController {
   // Runs an adapter interaction against a freshly opened session under a hard deadline, so every
   // status/login/logout round-trip fails closed rather than hanging on a stalled codex-acp. Owns the
   // full lifecycle: open (racing the deadline), late-close of a session that only arrives after the
-  // abort, timeout, and teardown. `register` lets a caller expose the AbortController (loginIsolated
-  // stores it so cancelLogin can abort in flight); `onAborted` maps a timeout/cancel into a result.
+  // abort, timeout, and teardown. The caller supplies the AbortController so it can register it
+  // synchronously before any await (loginIsolated stores it in activeLogin, before this async helper
+  // is even entered, so its re-entrancy guard cannot race); `onAborted` maps a timeout/cancel into a
+  // result, and `onSettled` runs in the finally for caller-side teardown (clearing activeLogin).
   private async withBoundedSession(
     mode: CodexAuthMode,
     timeoutMs: number,
     run: (session: CodexAuthSession, signal: AbortSignal) => Promise<CodexAuthStatus>,
     onAborted: (reason: unknown) => CodexAuthStatus,
-    register?: (abort: AbortController | undefined) => void
+    abort: AbortController = new AbortController(),
+    onSettled?: () => void
   ): Promise<CodexAuthStatus> {
-    const abort = new AbortController()
-    register?.(abort)
     const timeout = setTimeout(() => abort.abort('timeout'), timeoutMs)
     let authSession: CodexAuthSession | undefined
 
@@ -161,7 +162,7 @@ export class CodexAuthController {
       throw error
     } finally {
       clearTimeout(timeout)
-      register?.(undefined)
+      onSettled?.()
       await authSession?.close()
     }
   }
@@ -198,6 +199,12 @@ export class CodexAuthController {
       }
     }
 
+    // Claim the in-progress slot synchronously, in the same tick as the guard above and before the
+    // async helper is entered, so two rapid calls cannot both pass the guard and open two browser
+    // sign-ins. cancelLogin aborts this same controller; onSettled clears the slot on teardown.
+    const abort = new AbortController()
+    this.activeLogin = abort
+
     return this.withBoundedSession(
       'isolated',
       this.loginTimeoutMs,
@@ -226,8 +233,9 @@ export class CodexAuthController {
             ? 'Codex sign-in timed out after five minutes.'
             : 'Codex sign-in was cancelled.'
       }),
-      (abort) => {
-        this.activeLogin = abort
+      abort,
+      () => {
+        this.activeLogin = undefined
       }
     )
   }
