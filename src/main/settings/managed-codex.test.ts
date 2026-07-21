@@ -8,11 +8,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // Injectable fault flags for the fs/promises mock — each targets one specific rename call:
 //   onStagedMove: throw EPERM when src is the .codex-install- scratch dir (staged→destination)
+//   onStagedMoveEio: throw EIO on the same call (non-EPERM staged-failure path)
 //   onDestBackup: throw EPERM when dest contains .backup- (destination→backup, upgrade path)
 //   onRestore: throw EPERM when src contains .backup- (backup→destination restore)
 //   cp: throw EPERM from cp() to exercise the copy-failure→backup-restore branch
 const fsFaults = vi.hoisted(() => ({
   renameOnStagedMove: false,
+  renameOnStagedMoveEio: false,
   renameOnDestBackup: false,
   renameOnRestore: false,
   cpFailure: false
@@ -26,6 +28,10 @@ vi.mock('node:fs/promises', async (importActual) => {
       if (fsFaults.renameOnStagedMove && src.includes('.codex-install-')) {
         fsFaults.renameOnStagedMove = false
         throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' })
+      }
+      if (fsFaults.renameOnStagedMoveEio && src.includes('.codex-install-')) {
+        fsFaults.renameOnStagedMoveEio = false
+        throw Object.assign(new Error('EIO: i/o error, rename'), { code: 'EIO' })
       }
       if (fsFaults.renameOnDestBackup && dest.includes('.backup-')) {
         fsFaults.renameOnDestBackup = false
@@ -873,6 +879,9 @@ describe('installManagedCodex', () => {
       })
 
       expect(outcome.result.ok).toBe(false)
+      // The surfaced error must carry the real cause (the cp failure), not the original EPERM.
+      expect(outcome.result.error).toContain('copyfile')
+      expect(outcome.result.error).toMatch(/backup may be incomplete at/)
       // The failure must be logged with the backup path so the user can recover manually.
       expect(errorLogSpy).toHaveBeenCalledWith(
         expect.stringContaining('Failed to back up existing install'),
@@ -881,6 +890,66 @@ describe('installManagedCodex', () => {
     } finally {
       fsFaults.renameOnDestBackup = false
       fsFaults.cpFailure = false
+    }
+  })
+
+  it('surfaces the backup path when a non-EPERM staged rename fails and restore also fails', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
+    const platform = resolveManagedCodexPlatform({ platform: 'linux', arch: 'x64' })
+    const adapterTgz = buildTgz([
+      { name: 'package/dist/index.js', content: Buffer.from('adapter-eio'), mode: 0o755 }
+    ])
+    const nativeTgz = buildTgz([
+      {
+        name: `package/vendor/${platform.target}/bin/codex`,
+        content: Buffer.from('codex-eio'),
+        mode: 0o755
+      }
+    ])
+    const fetchJson = async (url: string): Promise<unknown> =>
+      url.includes('agentclientprotocol%2fcodex-acp')
+        ? { dist: { tarball: 'https://reg/adapter.tgz', integrity: sha512(adapterTgz) } }
+        : { dist: { tarball: 'https://reg/codex.tgz', integrity: sha512(nativeTgz) } }
+    const fetchTarball = async (
+      url: string
+    ): Promise<{ stream: NodeJS.ReadableStream; totalBytes?: number }> => ({
+      stream: Readable.from(url.includes('adapter') ? adapterTgz : nativeTgz)
+    })
+
+    // Pre-seed an existing install so hasBackup=true when the staged rename fails.
+    await mkdir(managedCodexRoot(root), { recursive: true })
+    await writeFile(join(managedCodexRoot(root), 'previous-runtime'), 'keep-me')
+
+    // rename(staged→destination) throws EIO (not EPERM — no cp fallback), then the restore
+    // rename also throws EPERM: the previous install survives only at the backup path.
+    fsFaults.renameOnStagedMoveEio = true
+    fsFaults.renameOnRestore = true
+    try {
+      const outcome = await installManagedCodex({
+        installId: 'codex-eio-restore-fail',
+        onEvent: () => undefined,
+        dataRoot: root,
+        registries: ['https://reg'],
+        platform,
+        fetchJson,
+        fetchTarball,
+        verifyAdapter: () => Promise.resolve('1.1.4'),
+        verifyCodex: () => Promise.resolve('0.144.6'),
+        verifyPair: vi.fn().mockResolvedValue(undefined),
+        integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
+      })
+
+      expect(outcome.result.ok).toBe(false)
+      // The real cause (EIO) must surface, annotated with the backup path for manual recovery.
+      expect(outcome.result.error).toContain('EIO')
+      expect(outcome.result.error).toMatch(/backup retained at/)
+      expect(errorLogSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to restore backup'),
+        expect.anything()
+      )
+    } finally {
+      fsFaults.renameOnStagedMoveEio = false
+      fsFaults.renameOnRestore = false
     }
   })
 

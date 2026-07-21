@@ -558,6 +558,24 @@ const errorCode = (error: unknown): string | undefined =>
     ? String((error as { code?: unknown }).code)
     : undefined
 
+// Move the backup back into place after a failed install step, then rethrow the original cause.
+// When even the restore fails, the previous install survives only at the random backup path —
+// log it and annotate the error so the caller can surface where to recover it manually.
+const restoreBackupOrThrow = async (
+  backup: string,
+  destination: string,
+  cause: unknown
+): Promise<never> => {
+  try {
+    await rename(backup, destination)
+  } catch (restoreError) {
+    log.error(`Failed to restore backup. Backup retained at: ${backup}`, restoreError)
+    const msg = cause instanceof Error ? cause.message : String(cause)
+    throw new Error(`${msg} (backup retained at ${backup})`)
+  }
+  throw cause
+}
+
 const replaceDirectory = async (staged: string, destination: string): Promise<void> => {
   const backup = `${destination}.backup-${randomUUID()}`
   let hasBackup = false
@@ -580,12 +598,14 @@ const replaceDirectory = async (staged: string, destination: string): Promise<vo
         hasBackup = true
       } catch (fallbackError) {
         // The backup fallback failed partway: the existing install may be partially deleted and
-        // the backup may be incomplete — log its path so the user can recover manually.
+        // the backup may be incomplete. Surface the real cause (not the original EPERM) plus
+        // the backup path so the user can recover manually.
         log.error(
           `Failed to back up existing install before replacement. Backup may be incomplete at: ${backup}`,
           fallbackError
         )
-        throw error
+        const msg = fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+        throw new Error(`${msg} (backup may be incomplete at ${backup})`)
       }
     } else {
       throw error
@@ -604,23 +624,11 @@ const replaceDirectory = async (staged: string, destination: string): Promise<vo
       } catch (copyError) {
         // Copy failed — try to restore the backup so the user's previous install survives.
         await rm(destination, { recursive: true, force: true }).catch(() => undefined)
-        if (hasBackup) {
-          try {
-            await rename(backup, destination)
-          } catch (restoreError) {
-            // Restore also failed; log the backup path so the user can recover manually.
-            log.error(
-              `Failed to restore backup after copy error. Backup retained at: ${backup}`,
-              restoreError
-            )
-            const msg = copyError instanceof Error ? copyError.message : String(copyError)
-            throw new Error(`${msg} (backup retained at ${backup})`)
-          }
-        }
+        if (hasBackup) await restoreBackupOrThrow(backup, destination, copyError)
         throw copyError
       }
     } else {
-      if (hasBackup) await rename(backup, destination).catch(() => undefined)
+      if (hasBackup) await restoreBackupOrThrow(backup, destination, renameError)
       throw renameError
     }
   }
