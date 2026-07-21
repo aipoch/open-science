@@ -273,18 +273,47 @@ describe('logger: errorLogFields', () => {
     expect(line).toContain('[max depth]')
   })
 
-  it('returns a fixed fallback (never throws) when message access itself throws', () => {
-    const hostile = {}
+  it('degrades a throwing message getter to a field marker while keeping the other Error fields', () => {
+    // An Error whose message accessor throws must NOT send the whole record to the outer fallback: the
+    // still-readable code/data survive, only the message degrades.
+    const hostile = new Error() as Error & { code?: string }
+    hostile.code = 'EHOSTILE'
+    ;(hostile as unknown as { data?: unknown }).data = { detail: 'kept' }
     Object.defineProperty(hostile, 'message', {
-      enumerable: true,
+      configurable: true,
       get() {
         throw new Error('message trap')
       }
     })
 
-    const fields = errorLogFields(hostile)
-    // The message getter throws during field enumeration; the field degrades but the call still returns.
-    expect(fields).toBeTypeOf('object')
+    const fields = errorLogFields(hostile) as {
+      error: string
+      code: string
+      data: { detail: string }
+      serializationFailed?: boolean
+    }
+    expect(fields.serializationFailed).toBeUndefined()
+    expect(fields.error).toBe('')
+    expect(fields.code).toBe('EHOSTILE')
+    expect(fields.data).toEqual({ detail: 'kept' })
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('hits the outer fallback (serializationFailed) when even type inspection throws', () => {
+    // A Proxy whose getPrototypeOf trap throws makes `value instanceof Error` throw — the very first
+    // thing errorLogFields does — so only the outermost guard can catch it.
+    const hostile = new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw new Error('proto trap')
+        }
+      }
+    )
+
+    const fields = errorLogFields(hostile) as { error: string; serializationFailed?: boolean }
+    expect(fields.serializationFailed).toBe(true)
+    expect(typeof fields.error).toBe('string')
     expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
   })
 

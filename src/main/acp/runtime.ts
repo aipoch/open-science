@@ -226,13 +226,19 @@ const LARGE_DATA_FILE_SYSTEM_PROMPT_APPEND = [
   '</open_science_large_file_instructions>'
 ].join('\n')
 
-// Converts unknown thrown values into user-visible error text.
+// Converts unknown thrown values into user-visible error text. Total: a hostile message getter or a
+// throwing String() coercion (e.g. a Proxy-wrapped Error) must not escape, or it would replace the
+// original failure and, when called before a log, lose the record entirely.
 const errorMessage = (error: unknown): string => {
-  if (error instanceof Error) {
-    return error.message
-  }
+  try {
+    if (error instanceof Error) {
+      return error.message
+    }
 
-  return String(error)
+    return String(error)
+  } catch {
+    return 'unknown error'
+  }
 }
 
 // Internal wrapper thrown when framework.spawn() fails, carrying the framework the spawn targeted so
@@ -692,7 +698,17 @@ class AcpRuntime {
         title: 'Connection failed',
         text: this.error
       })
-      await this.disconnectCurrent(false)
+      // Cleanup must not mask the original failure: a throw from session.dispose(), connection.close(),
+      // or a teardown hook is logged with context but never replaces `cause`, and the error status +
+      // re-throw of the original value always run.
+      try {
+        await this.disconnectCurrent(false)
+      } catch (cleanupError) {
+        log.error('agent connection cleanup failed', {
+          ...errorLogFields(cleanupError),
+          ...processFields
+        })
+      }
       this.status = 'error'
       this.emitState()
       throw cause

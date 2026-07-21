@@ -116,13 +116,32 @@ const safeRead = (value: object, key: string): unknown => {
   }
 }
 
+// String() can itself throw (a hostile Symbol.toPrimitive/toString); never let it escape.
+const safeToString = (value: unknown): string => {
+  try {
+    return String(value)
+  } catch {
+    return '[unstringifiable]'
+  }
+}
+
 // Formats one Error into a flat, JSON-safe record: message under `error`, plus stack, the common
 // diagnostic detail keys, and a (recursively sanitized) cause. The caller must have already added
 // `error` to `seen`, so a cause that points back to it becomes the circular marker rather than recursing.
+// Every field — message and stack included — is read through safeRead so a single throwing accessor
+// degrades just that field rather than sending the whole Error to the outer fallback (which would drop
+// the still-readable code/data/cause).
 const formatError = (error: Error, seen: Set<object>, depth: number): Record<string, unknown> => {
+  const rawMessage = safeRead(error, 'message')
+  const rawStack = safeRead(error, 'stack')
   const fields: Record<string, unknown> = {
-    error: typeof error.message === 'string' ? error.message : String(safeRead(error, 'message')),
-    stack: typeof error.stack === 'string' ? error.stack : undefined
+    error:
+      typeof rawMessage === 'string'
+        ? rawMessage
+        : rawMessage === undefined
+          ? ''
+          : safeToString(rawMessage),
+    stack: typeof rawStack === 'string' ? rawStack : undefined
   }
 
   for (const key of ERROR_DETAIL_KEYS) {

@@ -4013,4 +4013,50 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
     const spawned = infoLogSpy.mock.calls.find(([message]) => message === 'agent process spawned')
     expect((spawned?.[1] as { pid: number }).pid).toBe(7654)
   })
+
+  it('logs "ensureConnected: connection is null after connect" when connect resolves without a connection', async () => {
+    errorLogSpy.mockClear()
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['null-conn-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    // Simulate the defensive branch: connect() resolves but never establishes this.connection.
+    vi.spyOn(runtime, 'connect').mockResolvedValue(runtime.getSnapshot())
+
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(
+      /ACP connection failed/
+    )
+
+    const messages = errorLogSpy.mock.calls.map(([message]) => message)
+    expect(messages).toContain('ensureConnected: connection is null after connect')
+  })
+
+  it('does not let a cleanup failure mask the original connection error', async () => {
+    errorLogSpy.mockClear()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => {
+        throw new Error('spawn boom')
+      }
+    })
+    // First disconnectCurrent (pre-connect teardown) succeeds; the catch-path cleanup then throws.
+    const disconnectSpy = vi.spyOn(
+      runtime as unknown as { disconnectCurrent: () => Promise<unknown> },
+      'disconnectCurrent'
+    )
+    disconnectSpy.mockResolvedValueOnce(runtime.getSnapshot())
+    disconnectSpy.mockRejectedValueOnce(new Error('cleanup boom'))
+
+    // The rejection is the ORIGINAL spawn failure, not the cleanup error.
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(/spawn boom/)
+
+    const messages = errorLogSpy.mock.calls.map(([message]) => message)
+    // Both the original failure and the (non-masking) cleanup failure are recorded.
+    expect(messages).toContain('agent connection failed')
+    expect(messages).toContain('agent connection cleanup failed')
+  })
 })
