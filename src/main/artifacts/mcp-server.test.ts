@@ -116,6 +116,28 @@ describe('artifact MCP server', () => {
     await expect(readFile(artifact.path, 'utf8')).resolves.toBe('<svg />')
   })
 
+  it('treats a bare filename with no source as a localPath under the session workspace', async () => {
+    // The same convenience default outside a notebook turn: the agent saved into the session
+    // workspace (its cwd) with plain tools, then called write_artifact_file with just the filename.
+    // The static import roots double as the resolution base, so the bare name resolves.
+    const root = await createStorageRoot()
+    const workspace = join(root, 'workspace')
+    await mkdir(workspace, { recursive: true })
+    await writeFile(join(workspace, 'plot.svg'), '<svg />', 'utf8')
+    const repository = new ArtifactRepository(root)
+    const environment = {
+      ...(await createEnvironment(root, { runId: 'run-1' })),
+      allowedImportRoots: [workspace]
+    }
+
+    const artifact = await writeArtifactFileForCurrentRun(repository, environment, {
+      filename: 'plot.svg',
+      mimeType: 'image/svg+xml'
+    })
+
+    await expect(readFile(artifact.path, 'utf8')).resolves.toBe('<svg />')
+  })
+
   it('resolves a relative localPath against the handoff notebook data dir', async () => {
     const root = await createStorageRoot()
     const sessionRoot = join(root, 'notebook-session')
@@ -128,6 +150,57 @@ describe('artifact MCP server', () => {
       notebookDataDir: dataDir,
       notebookSessionRoot: sessionRoot
     })
+
+    const artifact = await writeArtifactFileForCurrentRun(repository, environment, {
+      filename: 'plot.svg',
+      source: { kind: 'localPath', path: 'plot.svg' }
+    })
+
+    await expect(readFile(artifact.path, 'utf8')).resolves.toBe('<svg />')
+  })
+
+  it('resolves an explicit relative localPath against the session workspace outside a notebook turn', async () => {
+    // Regression for the P2 follow-up: with no notebook data dir in the handoff, the static import
+    // roots (in production exactly the session workspace) serve as the resolution base, so a bare
+    // filename the agent saved into the workspace resolves instead of reporting "does not exist".
+    const root = await createStorageRoot()
+    const workspace = join(root, 'workspace')
+    await mkdir(workspace, { recursive: true })
+    await writeFile(join(workspace, 'plot.svg'), '<svg />', 'utf8')
+    const repository = new ArtifactRepository(root)
+    const environment = {
+      ...(await createEnvironment(root, { runId: 'run-1' })),
+      allowedImportRoots: [workspace]
+    }
+
+    const artifact = await writeArtifactFileForCurrentRun(repository, environment, {
+      filename: 'plot.svg',
+      source: { kind: 'localPath', path: 'plot.svg' }
+    })
+
+    await expect(readFile(artifact.path, 'utf8')).resolves.toBe('<svg />')
+  })
+
+  it('falls back to the session workspace when the file is not under the notebook data dir', async () => {
+    // A plain-chat turn inside a notebook-capable runtime: the handoff pins the notebook data dir
+    // (no kernel ran this turn, so nothing is there) while the agent saved with plain shell tools
+    // into the session workspace. The workspace base must catch what the data dir missed.
+    const root = await createStorageRoot()
+    const sessionRoot = join(root, 'notebook-session')
+    const dataDir = join(sessionRoot, 'data')
+    const workspace = join(root, 'workspace')
+    await mkdir(dataDir, { recursive: true })
+    await mkdir(workspace, { recursive: true })
+    await writeFile(join(workspace, 'plot.svg'), '<svg />', 'utf8')
+    const repository = new ArtifactRepository(root)
+    const environment = {
+      ...(await createEnvironment(root, {
+        runId: 'run-1',
+        notebookDataDir: dataDir,
+        notebookSessionRoot: sessionRoot
+      })),
+      allowedImportRoots: [workspace]
+    }
 
     const artifact = await writeArtifactFileForCurrentRun(repository, environment, {
       filename: 'plot.svg',

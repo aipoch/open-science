@@ -68,7 +68,7 @@ const writeArtifactFileToolSchema = {
           .string()
           .min(1)
           .describe(
-            'Path to an ALREADY-SAVED file. A bare filename or relative path (e.g. "plot.png") resolves against the notebook session data dir (the kernel cwd) — pass the same name you saved with. An absolute path also works. Do NOT rebuild a path from an env var; the kernel cwd already IS the data dir. The file must exist before you call this — the app copies it.'
+            'Path to an ALREADY-SAVED file. A bare filename or relative path (e.g. "plot.png") resolves against the notebook session data dir (the kernel cwd), or the session workspace when there is no notebook data dir this turn — pass the same name you saved with. An absolute path also works. Do NOT rebuild a path from an env var; the kernel cwd already IS the data dir. The file must exist before you call this — the app copies it.'
           )
       })
     ])
@@ -104,12 +104,16 @@ const readCurrentRunContext = async (currentRunFile: string): Promise<ArtifactRu
 }
 
 // Normalizes the legacy content/encoding shape and the new source shape into one repository input.
-// relativeBaseDir is the notebook kernel cwd for this turn (undefined outside a notebook turn); it
-// decides whether the bare-filename convenience default is meaningful.
+// relativeBaseDir is the turn's primary resolution base (notebook data dir, else the first static
+// import root); it decides whether the bare-filename convenience default is meaningful.
 const normalizeArtifactToolWriteInput = (
   input: ArtifactToolWriteInput,
   relativeBaseDir: string | undefined
 ): ArtifactWriteSource => {
+  // An explicit source passes through untouched; the repository resolves a relative localPath
+  // against the turn's ordered base dirs (never the MCP/app process cwd) and rejects when the turn
+  // carries no base at all, so the caller gets a clear "pass an absolute path" error instead of a
+  // spurious not-found from the wrong cwd.
   if (input.source) return input.source
 
   if (typeof input.content === 'string') {
@@ -121,13 +125,13 @@ const normalizeArtifactToolWriteInput = (
   }
 
   // Neither source nor inline content. The bare-filename default only makes sense when there is a
-  // notebook data dir to resolve it against (kernel cwd): `write_artifact_file(filename: "plot.png")`
-  // right after `plt.savefig("plot.png")` just works. Outside a notebook turn there is no base, so a
-  // bare filename would silently resolve against the MCP process cwd and fail the allow-root check —
+  // base dir to resolve it against (kernel cwd or session workspace): `write_artifact_file(filename:
+  // "plot.png")` right after `plt.savefig("plot.png")` just works. With no base at all a bare
+  // filename would silently resolve against the MCP process cwd and fail the allow-root check —
   // keep the explicit contract error instead so the caller learns what to pass.
   if (!relativeBaseDir) {
     throw new Error(
-      'write_artifact_file requires source or content when no notebook session data dir is available.'
+      'write_artifact_file requires source or content: no notebook session data dir or allowed import root to resolve a bare filename against.'
     )
   }
 
@@ -141,7 +145,15 @@ const writeArtifactFileForCurrentRun = async (
   input: ArtifactToolWriteInput
 ): Promise<ArtifactFile> => {
   const context = await readCurrentRunContext(environment.currentRunFile)
-  const source = normalizeArtifactToolWriteInput(input, context.notebookDataDir)
+  // Ordered resolution bases for relative paths: the handoff's notebook data dir first (kernel cwd
+  // wins when both produced a same-named file this turn), then the static import roots — which in
+  // production are exactly the session workspace, so a plain shell save resolves there. The bases
+  // are a subset of the authorized roots, so a probed hit can never fail the allow-root check.
+  const relativeBaseDirs = [
+    ...(context.notebookDataDir ? [context.notebookDataDir] : []),
+    ...environment.allowedImportRoots
+  ]
+  const source = normalizeArtifactToolWriteInput(input, relativeBaseDirs[0])
 
   return repository.writePendingFile(
     {
@@ -159,7 +171,7 @@ const writeArtifactFileForCurrentRun = async (
       allowedImportRoots: context.notebookSessionRoot
         ? [...environment.allowedImportRoots, context.notebookSessionRoot]
         : environment.allowedImportRoots,
-      relativeBaseDir: context.notebookDataDir
+      relativeBaseDirs
     }
   )
 }
@@ -179,7 +191,7 @@ const createArtifactMcpServer = (
     {
       title: 'Write artifact file',
       description:
-        'Attach a file this turn generated as a downloadable artifact (chart, image, report, CSV, archive, …). The file must ALREADY EXIST on disk before you call this. Simplest use inside a notebook: save with a relative name (e.g. plt.savefig("plot.png") / R png("plot.png")) then call this with just `filename: "plot.png"` — the app resolves it against the notebook session data dir (the kernel cwd) and copies it. You may also pass an explicit `source`: {kind:"localPath", path} where path is a bare filename, a path relative to the notebook data dir, or an absolute path to an already-saved file; or {kind:"inline", content} for small in-memory text. The app assigns session/message ownership; do not call this before the file is written.',
+        'Attach a file this turn generated as a downloadable artifact (chart, image, report, CSV, archive, …). The file must ALREADY EXIST on disk before you call this. Simplest use inside a notebook: save with a relative name (e.g. plt.savefig("plot.png") / R png("plot.png")) then call this with just `filename: "plot.png"` — the app resolves it against the notebook session data dir (the kernel cwd) and copies it. You may also pass an explicit `source`: {kind:"localPath", path} where path is a bare filename, a path relative to the notebook data dir or session workspace, or an absolute path to an already-saved file; or {kind:"inline", content} for small in-memory text. The app assigns session/message ownership; do not call this before the file is written.',
       inputSchema: writeArtifactFileToolSchema
     },
     async (input) => {

@@ -129,7 +129,7 @@ describe('artifact repository', () => {
         filename: 'plot.png',
         source: { kind: 'localPath', path: 'plot.png' }
       },
-      { allowedImportRoots: [dataDir], relativeBaseDir: dataDir }
+      { allowedImportRoots: [dataDir], relativeBaseDirs: [dataDir] }
     )
 
     await expect(readFile(artifact.path)).resolves.toEqual(Buffer.from([9, 8, 7]))
@@ -152,10 +152,87 @@ describe('artifact repository', () => {
         filename: 'chart.png',
         source: { kind: 'localPath', path: sourcePath }
       },
-      { allowedImportRoots: [dataDir], relativeBaseDir: dataDir }
+      { allowedImportRoots: [dataDir], relativeBaseDirs: [dataDir] }
     )
 
     await expect(readFile(artifact.path)).resolves.toEqual(Buffer.from([4, 5, 6]))
+  })
+
+  it('falls back to the next relative base dir when the file is not under the first', async () => {
+    // A plain-chat turn inside a notebook-capable runtime: the base list leads with the notebook
+    // data dir (no kernel ran, so nothing is there) and the session workspace second; the file the
+    // agent saved with plain shell tools must still resolve.
+    const root = await createStorageRoot()
+    const dataDir = join(root, 'notebook-session', 'data')
+    const workspace = join(root, 'workspace')
+    await mkdir(dataDir, { recursive: true })
+    await mkdir(workspace, { recursive: true })
+    await writeFile(join(workspace, 'plot.png'), Buffer.from([1, 1, 1]))
+
+    const repository = new ArtifactRepository(root)
+    const artifact = await repository.writePendingFile(
+      {
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        filename: 'plot.png',
+        source: { kind: 'localPath', path: 'plot.png' }
+      },
+      { allowedImportRoots: [dataDir, workspace], relativeBaseDirs: [dataDir, workspace] }
+    )
+
+    await expect(readFile(artifact.path)).resolves.toEqual(Buffer.from([1, 1, 1]))
+  })
+
+  it('prefers the first relative base dir when the file exists under several', async () => {
+    // The notebook data dir leads the base list, so a same-named file the agent left in the session
+    // workspace must not shadow the kernel output of the current turn.
+    const root = await createStorageRoot()
+    const dataDir = join(root, 'notebook-session', 'data')
+    const workspace = join(root, 'workspace')
+    await mkdir(dataDir, { recursive: true })
+    await mkdir(workspace, { recursive: true })
+    await writeFile(join(dataDir, 'plot.png'), Buffer.from([9, 9, 9]))
+    await writeFile(join(workspace, 'plot.png'), Buffer.from([2, 2, 2]))
+
+    const repository = new ArtifactRepository(root)
+    const artifact = await repository.writePendingFile(
+      {
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        filename: 'plot.png',
+        source: { kind: 'localPath', path: 'plot.png' }
+      },
+      { allowedImportRoots: [dataDir, workspace], relativeBaseDirs: [dataDir, workspace] }
+    )
+
+    await expect(readFile(artifact.path)).resolves.toEqual(Buffer.from([9, 9, 9]))
+  })
+
+  it('rejects a relative local source path when no relative base dir is set', async () => {
+    // Without a notebook data dir there is no base to resolve against; falling back to the process
+    // cwd (the app process for the in-process HTTP MCP host) reports "does not exist" even when the
+    // file sits inside an allowed root. Reject up front and demand an absolute path instead.
+    const root = await createStorageRoot()
+    const allowedRoot = join(root, 'workspace')
+    await mkdir(allowedRoot, { recursive: true })
+    await writeFile(join(allowedRoot, 'plot.png'), Buffer.from([1, 2, 3]))
+
+    const repository = new ArtifactRepository(root)
+
+    const attempt = repository.writePendingFile(
+      {
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        filename: 'plot.png',
+        source: { kind: 'localPath', path: 'plot.png' }
+      },
+      { allowedImportRoots: [allowedRoot] }
+    )
+    await expect(attempt).rejects.toThrow(/does not exist/)
+    await expect(attempt).rejects.toThrow(/absolute path/i)
   })
 
   it('rejects local source files outside allowed import roots', async () => {

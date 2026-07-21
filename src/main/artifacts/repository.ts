@@ -43,10 +43,12 @@ type ArtifactMetadata = {
 
 type ArtifactRepositoryWriteOptions = {
   allowedImportRoots?: string[]
-  // Base directory a RELATIVE localPath is resolved against — the notebook kernel's cwd (the session
-  // data dir). Lets the agent pass the same bare filename it saved (e.g. "plot.png") instead of
-  // rebuilding a brittle absolute path. Absolute paths ignore this (path.resolve drops the base).
-  relativeBaseDir?: string
+  // Ordered base directories a RELATIVE localPath is resolved against — the notebook kernel's cwd
+  // (the session data dir) first, then the session workspace. Lets the agent pass the same bare
+  // filename it saved (e.g. "plot.png") whether it saved through the kernel or with plain shell
+  // tools; the first base where the file EXISTS wins. Absolute paths ignore these. With no bases a
+  // relative path is REJECTED — it is never resolved against the process cwd.
+  relativeBaseDirs?: string[]
 }
 
 // Accepts only path segments that cannot escape the managed artifact layout.
@@ -137,30 +139,44 @@ const importRootsError = (filePath: string, allowedImportRoots: string[]): Error
 const resolveAllowedImportFilePath = async (
   filePath: string,
   allowedImportRoots: string[],
-  relativeBaseDir?: string
+  relativeBaseDirs: string[] = []
 ): Promise<string> => {
   if (allowedImportRoots.length === 0) {
     throw importRootsError(filePath, allowedImportRoots)
   }
 
-  // Resolve a relative path against the notebook data dir (the kernel's cwd) when provided, so a bare
-  // "plot.png" points at the file the agent just saved — not the MCP process's own cwd. An absolute
-  // path is unaffected: path.resolve ignores earlier segments once it hits an absolute one.
-  const requestedPath =
-    relativeBaseDir && !isAbsolute(filePath)
-      ? resolve(relativeBaseDir, filePath)
-      : resolve(filePath)
+  // A relative path with no base dir must NOT fall back to path.resolve's default (the process cwd):
+  // the HTTP MCP host runs inside the app process, whose cwd is not the session workspace, so the
+  // file would report "does not exist" even when it sits inside an allowed root — or worse, pick up
+  // an unrelated same-named file under cwd. Reject and ask for an absolute path instead.
+  if (relativeBaseDirs.length === 0 && !isAbsolute(filePath)) {
+    throw new Error(
+      `Artifact local source path does not exist: "${filePath}". A relative path resolves against the notebook session data dir or the session workspace, but this turn carries neither — pass an absolute path to the already-saved file instead.`
+    )
+  }
 
-  let resolvedFilePath: string
-  try {
-    resolvedFilePath = await realpath(requestedPath)
-  } catch (error) {
-    if (isMissingFileError(error)) {
-      throw new Error(
-        `Artifact local source path does not exist: "${filePath}". Save the file to disk (inside the notebook session workspace) before calling write_artifact_file, or pass inline content instead.`
-      )
+  // Resolve a relative path against the turn's base dirs in order — the notebook data dir (the
+  // kernel's cwd) first, then the session workspace — taking the first candidate that EXISTS, so a
+  // bare "plot.png" points at the file the agent just saved wherever it saved it, never at the MCP
+  // process's own cwd. An absolute path skips the bases entirely.
+  const candidates = isAbsolute(filePath)
+    ? [resolve(filePath)]
+    : relativeBaseDirs.map((baseDir) => resolve(baseDir, filePath))
+
+  let resolvedFilePath: string | undefined
+  for (const candidate of candidates) {
+    try {
+      resolvedFilePath = await realpath(candidate)
+      break
+    } catch (error) {
+      if (!isMissingFileError(error)) throw error
     }
-    throw error
+  }
+
+  if (!resolvedFilePath) {
+    throw new Error(
+      `Artifact local source path does not exist: "${filePath}". Save the file to disk (inside the notebook session workspace) before calling write_artifact_file, or pass inline content instead.`
+    )
   }
   const resolvedRoots = (
     await Promise.all(
@@ -226,7 +242,7 @@ class ArtifactRepository {
         const sourcePath = await resolveAllowedImportFilePath(
           request.source.path,
           options.allowedImportRoots ?? [],
-          options.relativeBaseDir
+          options.relativeBaseDirs
         )
 
         await copyFile(sourcePath, temporaryPath)
