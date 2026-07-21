@@ -2088,8 +2088,9 @@ class SettingsService {
     })
     await this.writeAgentConfigFiles(modelConfig.configFiles)
 
-    // opencode picks the model from its own provider config; drive the app's active model over the ACP
-    // session model configOption (applied best-effort per session by the runtime).
+    // Protocol-driven frameworks apply an explicit model through the ACP session configOption. A Codex
+    // subscription with no explicit selection leaves this undefined so Codex uses the account default.
+    const sessionModel = modelConfig.sessionModel ?? provider.model
     return {
       framework,
       backendId: `${framework.id}:${backendProviderId}`,
@@ -2101,8 +2102,8 @@ class SettingsService {
           : {})
       },
       args: modelConfig.args,
-      sessionModel: modelConfig.sessionModel ?? provider.model,
-      ...(framework.id === 'codex' && isCodexSubscriptionProvider(provider.type)
+      sessionModel,
+      ...(framework.id === 'codex' && isCodexSubscriptionProvider(provider.type) && sessionModel
         ? { sessionModelRequired: true }
         : {}),
       authentication: modelConfig.authentication,
@@ -2257,10 +2258,9 @@ class SettingsService {
     return Boolean(provider.keyRef) && tryDecryptKey(provider.keyRef) !== undefined
   }
 
-  // Models selectable for a provider: Codex subscriptions share the app's curated OpenAI coding
-  // catalog, official providers use their vendor catalog, and custom/local providers expose their
-  // single configured override. codex-acp validates the chosen id against its live session options
-  // before applying it, so an account-specific omission safely leaves the account default in place.
+  // Models selectable for a provider: Codex subscriptions expose the app's curated candidate catalog,
+  // official providers use their vendor catalog, and custom/local providers expose their configured
+  // override. Codex validates an explicit candidate against the live session options before applying it.
   private availableModels(provider: StoredProvider): string[] {
     if (isCodexSubscriptionProvider(provider.type)) {
       return getOfficialVendor('openai')?.models ?? []
@@ -2276,8 +2276,8 @@ class SettingsService {
     return provider.model ? [provider.model] : []
   }
 
-  // Picks the model to activate: the requested one when the provider offers it, else the first
-  // available (falling back to a provider's own stored model).
+  // Picks the model to activate. Codex subscriptions keep an omitted/unknown selection undefined so the
+  // account default is used; other providers retain their catalog/default fallback behavior.
   private resolveActiveModel(
     provider: StoredProvider | undefined,
     requested?: string
@@ -2287,6 +2287,7 @@ class SettingsService {
     const available = this.availableModels(provider)
 
     if (requested && available.includes(requested)) return requested
+    if (isCodexSubscriptionProvider(provider.type)) return undefined
     // Prefer the provider's chosen default (custom's only model, or an official vendor's picked one).
     if (provider.model && available.includes(provider.model)) return provider.model
 

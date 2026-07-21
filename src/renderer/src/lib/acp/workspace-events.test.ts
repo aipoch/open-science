@@ -226,6 +226,12 @@ describe('workspace runtime events', () => {
   })
 
   it('suppresses non-actionable Codex startup and transport fallback diagnostics', async () => {
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        agentFrameworkId: 'codex'
+      }))
+    }))
     const diagnostic = [
       'Warning: Skill descriptions were shortened to fit the 2% skills context budget.',
       'Codex can still see every skill, but some descriptions are shorter.',
@@ -245,6 +251,17 @@ describe('workspace runtime events', () => {
 
     expect(applied).toBe(true)
     expect(useSessionStore.getState().sessions[0].agentStatus).toBeUndefined()
+  })
+
+  it('surfaces Codex-shaped diagnostics from non-Codex sessions', async () => {
+    const diagnostic = 'Warning: Falling back from WebSockets to HTTPS transport. request timed out'
+
+    const applied = await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'event-other-warning', kind: 'system', level: 'warning', text: diagnostic })
+    )
+
+    expect(applied).toBe(true)
+    expect(useSessionStore.getState().sessions[0].agentStatus).toBe(diagnostic)
   })
 
   it('does not append Codex diagnostic assistant chunks to the transcript', async () => {

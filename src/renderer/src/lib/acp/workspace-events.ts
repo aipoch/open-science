@@ -318,7 +318,10 @@ const applyWorkspaceRuntimeEvent = async (
   // the waiting indicator so a long silent turn (e.g. the agent retrying a slow request) shows a hint
   // rather than a blank spinner. setAgentStatus no-ops unless the session is still running.
   if (event.kind === 'system' && event.level === 'warning' && event.sessionId && event.text) {
-    if (isNonActionableCodexDiagnostic(event.text)) return true
+    const session = store.sessions.find((candidate) => candidate.id === event.sessionId)
+    if (session?.agentFrameworkId === 'codex' && isNonActionableCodexDiagnostic(event.text)) {
+      return true
+    }
 
     store.setAgentStatus(event.sessionId, event.text)
     return true

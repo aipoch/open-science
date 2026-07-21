@@ -12,6 +12,7 @@ import type {
 import {
   CODEX_SUBSCRIPTION_PROVIDER_ID,
   SETTINGS_FILE_VERSION,
+  codexSubscriptionProviderIdentity,
   isCodexSubscriptionProvider,
   isCodexSubscriptionProviderId
 } from '../../shared/settings'
@@ -330,7 +331,7 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
           {
             ...selectedCodexProvider,
             id: CODEX_SUBSCRIPTION_PROVIDER_ID,
-            name: 'Codex subscription'
+            name: codexSubscriptionProviderIdentity().name
           }
         ]
       : [])

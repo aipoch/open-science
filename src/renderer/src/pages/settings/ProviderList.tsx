@@ -6,6 +6,7 @@ import type {
   ProviderView
 } from '../../../../shared/settings'
 import {
+  codexSubscriptionProviderIdentity,
   isCodexSubscriptionProvider,
   providerEndpoints,
   providerValidationFailed
@@ -63,7 +64,7 @@ const ENDPOINT_PATHS: Record<ChatApiEndpoint, string> = {
 const describeType = (provider: ProviderView): string => {
   if (provider.type === 'custom') return 'Custom'
   if (provider.type === 'claude-default') return 'Local Claude'
-  if (isCodexSubscriptionProvider(provider.type)) return 'Codex subscription'
+  if (isCodexSubscriptionProvider(provider.type)) return codexSubscriptionProviderIdentity().name
 
   return provider.vendorId
     ? (getOfficialVendor(provider.vendorId)?.label ?? 'Official')
@@ -96,7 +97,9 @@ const ProviderList = ({
     codexProviders.find((provider) => provider.id === activeProviderId) ?? codexProviders[0]
   const displayedProviders = [
     ...providers.filter((provider) => !isCodexSubscriptionProvider(provider.type)),
-    ...(selectedCodexProvider ? [{ ...selectedCodexProvider, name: 'Codex subscription' }] : [])
+    ...(selectedCodexProvider
+      ? [{ ...selectedCodexProvider, name: codexSubscriptionProviderIdentity().name }]
+      : [])
   ]
 
   return (

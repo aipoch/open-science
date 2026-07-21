@@ -216,6 +216,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const [statusMessage, setStatusMessage] = useState<string | undefined>(undefined)
   const [statusOk, setStatusOk] = useState(false)
   const [busyProviderId, setBusyProviderId] = useState<string | undefined>(undefined)
+  const [providerTestError, setProviderTestError] = useState<string | undefined>(undefined)
 
   // Refresh settings whenever the dialog opens so external changes are reflected.
   useEffect(() => {
@@ -524,11 +525,16 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
 
   const handleTest = async (provider: ProviderView): Promise<void> => {
     setBusyProviderId(provider.id)
+    setProviderTestError(undefined)
 
     try {
       // The pass/fail result is reflected on the provider's card (green check or warning), not as a
       // separate status line.
       await validateProvider({ providerId: provider.id })
+    } catch (error) {
+      setProviderTestError(
+        error instanceof Error ? error.message : 'Could not test the provider connection.'
+      )
     } finally {
       setBusyProviderId(undefined)
     }
@@ -902,6 +908,11 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                         onCancelCodexLogin={() => void cancelCodexLogin()}
                         onLogoutIsolatedCodex={() => void logoutIsolatedCodex()}
                       />
+                      {providerTestError ? (
+                        <p className="text-sm text-destructive" role="alert">
+                          {providerTestError}
+                        </p>
+                      ) : null}
                     </SettingsSection>
                   </div>
                 )}

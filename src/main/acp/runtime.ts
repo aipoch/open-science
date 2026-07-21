@@ -504,8 +504,9 @@ class AcpRuntime {
 
   // Applies the active model to a freshly built/resumed session via the ACP model configOption, for
   // frameworks that select the model over the protocol (opencode). No-op for env-driven frameworks
-  // (pendingSessionModel undefined) or when the agent advertises no matching model option — the agent
-  // then keeps its own default. Best-effort: a failure is logged, never fatal to the session.
+  // (pendingSessionModel undefined). Optional selections keep the agent default when no matching option
+  // exists or application fails; required selections fail visibly rather than silently running another
+  // model.
   private async applySessionModel(session: ActiveSession): Promise<void> {
     if (!this.pendingSessionModel || !this.connection) return
 

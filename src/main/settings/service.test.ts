@@ -224,6 +224,15 @@ describe('SettingsService: providers', () => {
     expect(stored.providers.every((provider) => provider.lastValidatedAt !== undefined)).toBe(true)
   })
 
+  it('keeps the Codex account default when a subscription is activated without a model', async () => {
+    const service = createService()
+    const provider = (await service.upsertProvider({ type: 'codex-shared' })).providers[0]
+
+    const snapshot = await service.setActiveProvider(provider.id)
+
+    expect(snapshot.activeModel).toBeUndefined()
+  })
+
   it.each([
     ['codex-shared', 'codex-isolated'],
     ['codex-isolated', 'codex-shared']
@@ -921,6 +930,35 @@ describe('SettingsService: preflight & spawn config', () => {
         'model = "account-default"\ncli_auth_credentials_store = "ephemeral"\n'
       )
     }
+  })
+
+  it('resolves an unpinned subscription backend to the Codex account default', async () => {
+    const adapterPath = join(storageRoot, 'bin', 'codex-acp')
+    await mkdir(dirname(adapterPath), { recursive: true })
+    await writeFile(adapterPath, '', 'utf8')
+    const service = createService(undefined, {
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' }
+    })
+    await repository.setCodexInfo({
+      resolvedPath: adapterPath,
+      version: '1.1.4',
+      nativePath: '/data/codex-managed/native/codex',
+      nativeVersion: '0.144.6'
+    })
+    await repository.setAgentFramework('codex')
+    await repository.upsertProvider({
+      id: CODEX_SHARED_PROVIDER_ID,
+      type: 'codex-shared',
+      name: 'Codex subscription',
+      apiEndpoints: ['responses'],
+      lastValidatedAt: 100
+    })
+    await service.setActiveProvider(CODEX_SHARED_PROVIDER_ID)
+
+    const backend = await service.resolveActiveAgentBackend()
+
+    expect(backend.sessionModel).toBeUndefined()
+    expect(backend.sessionModelRequired).toBeUndefined()
   })
 
   it('declares the model image capability in the resolved OpenCode backend config', async () => {
