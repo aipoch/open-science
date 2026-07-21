@@ -763,6 +763,127 @@ describe('installManagedCodex', () => {
     }
   })
 
+  it('restores the previous install when cp fails during EPERM fallback and restore succeeds', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
+    const platform = resolveManagedCodexPlatform({ platform: 'linux', arch: 'x64' })
+    const adapterTgz = buildTgz([
+      { name: 'package/dist/index.js', content: Buffer.from('adapter-restore'), mode: 0o755 }
+    ])
+    const nativeTgz = buildTgz([
+      {
+        name: `package/vendor/${platform.target}/bin/codex`,
+        content: Buffer.from('codex-restore'),
+        mode: 0o755
+      }
+    ])
+    const fetchJson = async (url: string): Promise<unknown> =>
+      url.includes('agentclientprotocol%2fcodex-acp')
+        ? { dist: { tarball: 'https://reg/adapter.tgz', integrity: sha512(adapterTgz) } }
+        : { dist: { tarball: 'https://reg/codex.tgz', integrity: sha512(nativeTgz) } }
+    const fetchTarball = async (
+      url: string
+    ): Promise<{ stream: NodeJS.ReadableStream; totalBytes?: number }> => ({
+      stream: Readable.from(url.includes('adapter') ? adapterTgz : nativeTgz)
+    })
+
+    // Pre-seed an existing install so hasBackup=true when the copy fallback runs.
+    await mkdir(managedCodexRoot(root), { recursive: true })
+    await writeFile(join(managedCodexRoot(root), 'previous-runtime'), 'keep-me')
+
+    // rename(staged→destination) throws EPERM, cp throws EPERM, the restore rename succeeds.
+    fsFaults.renameOnStagedMove = true
+    fsFaults.cpFailure = true
+    try {
+      const outcome = await installManagedCodex({
+        installId: 'codex-restore-ok',
+        onEvent: () => undefined,
+        dataRoot: root,
+        registries: ['https://reg'],
+        platform,
+        fetchJson,
+        fetchTarball,
+        verifyAdapter: () => Promise.resolve('1.1.4'),
+        verifyCodex: () => Promise.resolve('0.144.6'),
+        verifyPair: vi.fn().mockResolvedValue(undefined),
+        integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
+      })
+
+      // Install must fail with the raw copy error — no "backup retained" annotation needed,
+      // because the backup was successfully moved back into place.
+      expect(outcome.result.ok).toBe(false)
+      expect(outcome.result.error).toContain('copyfile')
+      expect(outcome.result.error).not.toMatch(/backup retained at/)
+      // The previous install must be back at the destination, intact.
+      expect(await readFile(join(managedCodexRoot(root), 'previous-runtime'), 'utf8')).toBe(
+        'keep-me'
+      )
+      expect(errorLogSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining('Failed to restore backup'),
+        expect.anything()
+      )
+    } finally {
+      fsFaults.renameOnStagedMove = false
+      fsFaults.cpFailure = false
+    }
+  })
+
+  it('logs the backup path when the destination→backup cp fallback also fails', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
+    const platform = resolveManagedCodexPlatform({ platform: 'linux', arch: 'x64' })
+    const adapterTgz = buildTgz([
+      { name: 'package/dist/index.js', content: Buffer.from('adapter-backup-fail'), mode: 0o755 }
+    ])
+    const nativeTgz = buildTgz([
+      {
+        name: `package/vendor/${platform.target}/bin/codex`,
+        content: Buffer.from('codex-backup-fail'),
+        mode: 0o755
+      }
+    ])
+    const fetchJson = async (url: string): Promise<unknown> =>
+      url.includes('agentclientprotocol%2fcodex-acp')
+        ? { dist: { tarball: 'https://reg/adapter.tgz', integrity: sha512(adapterTgz) } }
+        : { dist: { tarball: 'https://reg/codex.tgz', integrity: sha512(nativeTgz) } }
+    const fetchTarball = async (
+      url: string
+    ): Promise<{ stream: NodeJS.ReadableStream; totalBytes?: number }> => ({
+      stream: Readable.from(url.includes('adapter') ? adapterTgz : nativeTgz)
+    })
+
+    // Pre-seed an existing install so step 1 tries to back it up.
+    await mkdir(managedCodexRoot(root), { recursive: true })
+    await writeFile(join(managedCodexRoot(root), 'previous-runtime'), 'keep-me')
+
+    // rename(destination→backup) throws EPERM, then the cp fallback also throws EPERM.
+    fsFaults.renameOnDestBackup = true
+    fsFaults.cpFailure = true
+    try {
+      const outcome = await installManagedCodex({
+        installId: 'codex-backup-fail',
+        onEvent: () => undefined,
+        dataRoot: root,
+        registries: ['https://reg'],
+        platform,
+        fetchJson,
+        fetchTarball,
+        verifyAdapter: () => Promise.resolve('1.1.4'),
+        verifyCodex: () => Promise.resolve('0.144.6'),
+        verifyPair: vi.fn().mockResolvedValue(undefined),
+        integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
+      })
+
+      expect(outcome.result.ok).toBe(false)
+      // The failure must be logged with the backup path so the user can recover manually.
+      expect(errorLogSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to back up existing install'),
+        expect.anything()
+      )
+    } finally {
+      fsFaults.renameOnDestBackup = false
+      fsFaults.cpFailure = false
+    }
+  })
+
   it('uninstalls only the managed Codex tree and is idempotent', async () => {
     root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
     await mkdir(join(managedCodexRoot(root), 'adapter', 'dist'), { recursive: true })

@@ -578,7 +578,13 @@ const replaceDirectory = async (staged: string, destination: string): Promise<vo
         await cp(destination, backup, { recursive: true })
         await rm(destination, { recursive: true, force: true })
         hasBackup = true
-      } catch {
+      } catch (fallbackError) {
+        // The backup fallback failed partway: the existing install may be partially deleted and
+        // the backup may be incomplete — log its path so the user can recover manually.
+        log.error(
+          `Failed to back up existing install before replacement. Backup may be incomplete at: ${backup}`,
+          fallbackError
+        )
         throw error
       }
     } else {
