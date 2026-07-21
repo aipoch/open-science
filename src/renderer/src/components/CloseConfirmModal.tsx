@@ -110,12 +110,16 @@ export const CloseConfirmModal = (): React.JSX.Element | null => {
                   reply('cancel')
                 }
                 return (
-                  <li key={`${session.kind}:${session.sessionId}`}>
+                  // title lives on the li, not the button: a disabled button dispatches no hover
+                  // events, so a button-level tooltip would be dead exactly on truncated unresolved rows.
+                  <li
+                    key={`${session.kind}:${session.sessionId}`}
+                    title={`${row.project} — ${row.title}`}
+                  >
                     <button
                       type="button"
                       onClick={openThisSession}
                       disabled={!row.projectId}
-                      title={`${row.project} — ${row.title}`}
                       className="block w-full truncate rounded-lg border border-border bg-muted/40 p-2 text-left text-foreground enabled:cursor-pointer enabled:hover:bg-muted disabled:cursor-default"
                     >
                       {truncate(row.project)} — {truncate(row.title)}
