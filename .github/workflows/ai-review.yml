@@ -7,6 +7,7 @@ name: AI PR Review
 # ANTHROPIC_AUTH_TOKEN is also passed to the Claude action's required API-key input; do not add a
 # separate ANTHROPIC_API_KEY secret.
 # Set ENABLE_CLAUDE_REVIEW=false or ENABLE_CODEX_REVIEW=false to disable either reviewer.
+# Successful enabled reviews add the ai-reviewed label; a new review run first removes the label.
 # Pull requests from forks are skipped because GitHub does not expose Actions secrets to them.
 on:
   pull_request:
@@ -15,8 +16,32 @@ on:
     types: [opened, synchronize, reopened]
 
 jobs:
+  clear_ai_review_label:
+    name: Clear stale AI review label
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Remove ai-reviewed label
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                name: 'ai-reviewed',
+              });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+
   claude_review:
     name: Claude architecture review
+    needs: clear_ai_review_label
     if: >-
       ${{ vars.ENABLE_CLAUDE_REVIEW != 'false' &&
           github.event.pull_request.head.repo.full_name == github.repository }}
@@ -76,6 +101,7 @@ jobs:
 
   codex_review:
     name: Codex correctness review
+    needs: clear_ai_review_label
     if: >-
       ${{ github.event.action == 'opened' &&
           vars.ENABLE_CODEX_REVIEW != 'false' &&
@@ -195,4 +221,47 @@ jobs:
               repo: context.repo.repo,
               issue_number: context.payload.pull_request.number,
               body: process.env.CODEX_FINAL_MESSAGE,
+            });
+
+  mark_ai_reviewed:
+    name: Mark AI review complete
+    needs: [clear_ai_review_label, claude_review, codex_review, post_codex_feedback]
+    if: >-
+      ${{
+        always() &&
+        needs.clear_ai_review_label.result == 'success' &&
+        (vars.ENABLE_CLAUDE_REVIEW == 'false' || needs.claude_review.result == 'success') &&
+        (github.event.action != 'opened' || vars.ENABLE_CODEX_REVIEW == 'false' ||
+          (needs.codex_review.result == 'success' && needs.post_codex_feedback.result == 'success')) &&
+        (vars.ENABLE_CLAUDE_REVIEW != 'false' ||
+          (github.event.action == 'opened' && vars.ENABLE_CODEX_REVIEW != 'false'))
+      }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Add ai-reviewed label
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const name = 'ai-reviewed';
+
+            try {
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name,
+                color: '1f883d',
+                description: 'Automated AI review completed successfully.',
+              });
+            } catch (error) {
+              if (error.status !== 422) throw error;
+            }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              labels: [name],
             });
