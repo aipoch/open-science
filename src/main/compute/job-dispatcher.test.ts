@@ -9,7 +9,8 @@ import {
   buildLauncherScript,
   toBase64,
   hashCommand,
-  computeRemoteWorkdir
+  computeRemoteWorkdir,
+  quoteRemotePath
 } from './job-dispatcher'
 
 // Mock resolveSshTarget at module level so all tests bypass the real ssh -G call.
@@ -160,6 +161,27 @@ describe('computeRemoteWorkdir', () => {
   })
 })
 
+describe('quoteRemotePath', () => {
+  it('keeps a leading ~/ outside the quotes so the shell expands it', () => {
+    // A tilde inside double quotes is NOT expanded by bash; it must stay unquoted.
+    expect(quoteRemotePath('~/.openscience/jobs/job-1')).toBe("~/'.openscience/jobs/job-1'")
+  })
+
+  it('single-quotes an absolute path wholesale (no tilde to expand)', () => {
+    expect(quoteRemotePath('/gpfs/scratch/.openscience/jobs/job-1')).toBe(
+      "'/gpfs/scratch/.openscience/jobs/job-1'"
+    )
+  })
+
+  it('escapes embedded single quotes safely', () => {
+    expect(quoteRemotePath("/tmp/a'b")).toBe("'/tmp/a'\\''b'")
+  })
+
+  it('leaves a bare ~ unquoted', () => {
+    expect(quoteRemotePath('~')).toBe('~')
+  })
+})
+
 // ---------------------------------------------------------------------------
 // Dispatcher state machine
 // ---------------------------------------------------------------------------
@@ -191,6 +213,31 @@ describe('dispatchJob', () => {
     const handle = JSON.parse(updateCall.remoteHandle as string)
     expect(handle.pid).toBe(12345)
     expect(onJobUpdated).toHaveBeenCalled()
+  })
+
+  it('does not double-quote a leading ~ in the dispatch command (tilde must expand)', async () => {
+    const job = makeJob() // remote_workdir = ~/.openscience/jobs/job-1
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: '12345\n',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeJobRepo(job)
+
+    await dispatchJob(job.job_id, {
+      runner,
+      hostRepository: makeHostRepo(sampleHost()) as unknown as ComputeHostRepository,
+      jobRepository: repo as unknown as ComputeJobRepository
+    })
+
+    const dispatchCmd = (runner.run as ReturnType<typeof vi.fn>).mock.calls[0]![1] as string
+    // The tilde must remain unquoted so bash expands it to $HOME.
+    expect(dispatchCmd).toContain("mkdir -p ~/'.openscience/jobs/job-1'")
+    expect(dispatchCmd).toContain("cd ~/'.openscience/jobs/job-1'")
+    // Regression guard: never emit a double-quoted tilde.
+    expect(dispatchCmd).not.toContain('"~/')
   })
 
   it('transitions to error with host_unreachable when SSH fails (exit 255)', async () => {

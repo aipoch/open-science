@@ -1,9 +1,11 @@
+import { randomBytes } from 'node:crypto'
+
 import type { ComputeJob } from '../../shared/compute'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 import type { SshRunner } from './ssh-runner'
 import { resolveSshTarget } from './ssh-runner'
-import type { RemoteHandle } from './job-dispatcher'
+import { quoteRemotePath, type RemoteHandle } from './job-dispatcher'
 
 // Polling interval: 15 seconds (design.md §8).
 export const POLL_INTERVAL_MS = 15_000
@@ -29,6 +31,8 @@ export type JobPollerDeps = {
   // Injectable timer for tests (defaults to global setInterval/clearInterval).
   setInterval?: (fn: () => void, ms: number) => ReturnType<typeof setInterval>
   clearInterval?: (handle: ReturnType<typeof setInterval>) => void
+  // Injectable nonce generator for tests (defaults to a random per-tick hex string).
+  makeNonce?: () => string
 }
 
 // Per-job vanish counter (lives here because the poller is the only thing that increments it).
@@ -43,10 +47,13 @@ export class JobPoller {
   // Injectable timers (tests override to control ticks synchronously).
   private readonly setIntervalFn: (fn: () => void, ms: number) => ReturnType<typeof setInterval>
   private readonly clearIntervalFn: (handle: ReturnType<typeof setInterval>) => void
+  // Injectable nonce generator (tests override for deterministic marker matching).
+  private readonly makeNonceFn: () => string
 
   constructor(private readonly deps: JobPollerDeps) {
     this.setIntervalFn = deps.setInterval ?? ((fn, ms) => setInterval(fn, ms))
     this.clearIntervalFn = deps.clearInterval ?? ((h) => clearInterval(h))
+    this.makeNonceFn = deps.makeNonce ?? (() => randomBytes(12).toString('hex') + '_')
   }
 
   // Starts the poller. Polls once immediately (picks up jobs that were running before restart),
@@ -123,28 +130,34 @@ export class JobPoller {
       return
     }
 
+    // Per-tick random nonce prefixed onto every structural marker. Job stdout/stderr tails are
+    // interleaved into the same stream, so bare markers (JOB_START:/alive:/STDOUT_END:/...) printed
+    // by the job could otherwise hijack section splitting or field parsing. An unpredictable nonce
+    // the job cannot know makes such collisions effectively impossible.
+    const nonce = this.makeNonceFn()
+
     // Build per-job check commands, batched into one SSH round-trip.
-    // Format per job:
-    //   echo "job:<jobId>"
-    //   kill -0 <pid> 2>/dev/null && echo "alive:1" || echo "alive:0"
+    // Format per job (each marker carries the nonce prefix):
+    //   echo "<nonce>JOB_START:<jobId>"
+    //   kill -0 <pid> 2>/dev/null && echo "<nonce>alive:1" || echo "<nonce>alive:0"
     //   test -f <exit_code_path> && cat <exit_code_path> || echo ""
     //   tail -c 65536 <stdout_path> 2>/dev/null || true
-    //   echo "---stdout_end---"
+    //   echo "<nonce>STDOUT_END:<jobId>"
     //   tail -c 65536 <stderr_path> 2>/dev/null || true
-    //   echo "---stderr_end---"
+    //   echo "<nonce>STDERR_END:<jobId>"
     const parts: string[] = []
     for (const job of withHandle) {
       const handle = this._parseHandle(job.remote_handle)
       if (!handle) continue
 
       parts.push(
-        `echo "JOB_START:${job.job_id}"`,
-        `kill -0 ${handle.pid} 2>/dev/null && echo "alive:1" || echo "alive:0"`,
-        `if [ -f ${JSON.stringify(handle.exit_code_path)} ]; then cat ${JSON.stringify(handle.exit_code_path)}; else echo ""; fi`,
-        `tail -c ${TAIL_MAX_BYTES} ${JSON.stringify(handle.stdout_path)} 2>/dev/null || true`,
-        `echo "STDOUT_END:${job.job_id}"`,
-        `tail -c ${TAIL_MAX_BYTES} ${JSON.stringify(handle.stderr_path)} 2>/dev/null || true`,
-        `echo "STDERR_END:${job.job_id}"`
+        `echo "${nonce}JOB_START:${job.job_id}"`,
+        `kill -0 ${handle.pid} 2>/dev/null && echo "${nonce}alive:1" || echo "${nonce}alive:0"`,
+        `if [ -f ${quoteRemotePath(handle.exit_code_path)} ]; then cat ${quoteRemotePath(handle.exit_code_path)}; else echo ""; fi`,
+        `tail -c ${TAIL_MAX_BYTES} ${quoteRemotePath(handle.stdout_path)} 2>/dev/null || true`,
+        `echo "${nonce}STDOUT_END:${job.job_id}"`,
+        `tail -c ${TAIL_MAX_BYTES} ${quoteRemotePath(handle.stderr_path)} 2>/dev/null || true`,
+        `echo "${nonce}STDERR_END:${job.job_id}"`
       )
     }
 
@@ -168,9 +181,9 @@ export class JobPoller {
       return
     }
 
-    // Parse the batched output.
+    // Parse the batched output using the same nonce-prefixed markers we emitted.
     const output = runResult.stdout
-    await this._parsePollOutput(output, withHandle)
+    await this._parsePollOutput(output, withHandle, nonce)
   }
 
   private _parseHandle(raw: string | undefined): RemoteHandle | null {
@@ -182,10 +195,12 @@ export class JobPoller {
     }
   }
 
-  // Parses the batched poll output and updates each job accordingly.
-  private async _parsePollOutput(output: string, jobs: ComputeJob[]): Promise<void> {
-    // Split output into per-job sections by the JOB_START marker.
-    const sections = output.split(/^JOB_START:/m)
+  // Parses the batched poll output and updates each job accordingly. All structural markers carry
+  // the per-tick `nonce` prefix so adversarial job tail content cannot collide with them.
+  private async _parsePollOutput(output: string, jobs: ComputeJob[], nonce: string): Promise<void> {
+    // Split output into per-job sections by the nonce-prefixed JOB_START marker.
+    const escapedNonce = nonce.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const sections = output.split(new RegExp(`^${escapedNonce}JOB_START:`, 'm'))
 
     for (const section of sections) {
       if (!section.trim()) continue
@@ -197,15 +212,16 @@ export class JobPoller {
       const job = jobs.find((j) => j.job_id === jobId)
       if (!job) continue
 
-      // Extract alive line.
-      const aliveMatch = body.match(/^alive:([01])/m)
+      // Extract alive line (nonce-prefixed).
+      const aliveMatch = body.match(new RegExp(`^${escapedNonce}alive:([01])`, 'm'))
       const alive = aliveMatch?.[1] === '1'
 
-      // Extract exit code (line after alive).
+      // Extract exit code (line after the nonce-prefixed alive line).
+      const alivePrefix = `${nonce}alive:`
       const lines = body.split('\n')
       let exitCodeRaw = ''
       for (let i = 0; i < lines.length; i++) {
-        if (lines[i]?.startsWith('alive:')) {
+        if (lines[i]?.startsWith(alivePrefix)) {
           exitCodeRaw = lines[i + 1]?.trim() ?? ''
           break
         }
@@ -214,8 +230,8 @@ export class JobPoller {
       const hasExitCode = exitCode !== null && Number.isFinite(exitCode)
 
       // Extract stdout tail (between the third line after JOB_START and STDOUT_END marker).
-      const stdoutEndMarker = `STDOUT_END:${jobId}`
-      const stderrEndMarker = `STDERR_END:${jobId}`
+      const stdoutEndMarker = `${nonce}STDOUT_END:${jobId}`
+      const stderrEndMarker = `${nonce}STDERR_END:${jobId}`
       const stdoutStart = body.indexOf('\n', body.indexOf('\n', body.indexOf('\n') + 1) + 1) + 1
       const stdoutEnd = body.indexOf(stdoutEndMarker)
       const stdoutTail =

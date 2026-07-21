@@ -25,6 +25,16 @@ vi.mock('./ssh-runner', async (importOriginal) => {
 // Helpers
 // ---------------------------------------------------------------------------
 
+// Fixed nonce injected into the poller under test so fixtures can mirror the marker format the
+// poller emits. Production uses a random per-tick nonce (see JobPoller#makeNonce default).
+const NONCE = 'NONCE123_'
+
+// Prefixes structural marker lines with the fixed nonce, mirroring what the poller emits/parses.
+const withNonce = (lines: string[]): string =>
+  lines
+    .map((l) => (/^(JOB_START:|alive:|STDOUT_END:|STDERR_END:)/.test(l) ? NONCE + l : l))
+    .join('\n')
+
 const makeSshRunner = (result: Awaited<ReturnType<SshRunner['run']>>): SshRunner => ({
   run: vi.fn(() => Promise.resolve(result))
 })
@@ -101,7 +111,7 @@ describe('JobPoller', () => {
     } as unknown as ComputeHostRepository
 
     // Poll output: pid alive, exit_code=0, tails.
-    const pollOutput = [
+    const pollOutput = withNonce([
       'JOB_START:job-1',
       'alive:1',
       '0',
@@ -109,7 +119,7 @@ describe('JobPoller', () => {
       'STDOUT_END:job-1',
       '',
       'STDERR_END:job-1'
-    ].join('\n')
+    ])
 
     const runner = makeSshRunner({
       exitCode: 0,
@@ -124,7 +134,8 @@ describe('JobPoller', () => {
       runner,
       hostRepository: hostRepo,
       jobRepository: jobRepo,
-      onJobUpdated
+      onJobUpdated,
+      makeNonce: () => NONCE
     })
 
     await poller.tick()
@@ -147,7 +158,7 @@ describe('JobPoller', () => {
       get: vi.fn(() => Promise.resolve(sampleHost()))
     } as unknown as ComputeHostRepository
 
-    const pollOutput = [
+    const pollOutput = withNonce([
       'JOB_START:job-1',
       'alive:0',
       '3',
@@ -155,7 +166,7 @@ describe('JobPoller', () => {
       'STDOUT_END:job-1',
       'error msg\n',
       'STDERR_END:job-1'
-    ].join('\n')
+    ])
 
     const runner = makeSshRunner({
       exitCode: 0,
@@ -165,7 +176,12 @@ describe('JobPoller', () => {
       timedOut: false
     })
 
-    const poller = new JobPoller({ runner, hostRepository: hostRepo, jobRepository: jobRepo })
+    const poller = new JobPoller({
+      runner,
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      makeNonce: () => NONCE
+    })
     await poller.tick()
 
     expect(update).toHaveBeenCalledWith(
@@ -185,7 +201,7 @@ describe('JobPoller', () => {
       get: vi.fn(() => Promise.resolve(sampleHost()))
     } as unknown as ComputeHostRepository
 
-    const pollOutput = [
+    const pollOutput = withNonce([
       'JOB_START:job-1',
       'alive:0',
       '124',
@@ -193,7 +209,7 @@ describe('JobPoller', () => {
       'STDOUT_END:job-1',
       '',
       'STDERR_END:job-1'
-    ].join('\n')
+    ])
 
     const runner = makeSshRunner({
       exitCode: 0,
@@ -203,7 +219,12 @@ describe('JobPoller', () => {
       timedOut: false
     })
 
-    const poller = new JobPoller({ runner, hostRepository: hostRepo, jobRepository: jobRepo })
+    const poller = new JobPoller({
+      runner,
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      makeNonce: () => NONCE
+    })
     await poller.tick()
 
     expect(update).toHaveBeenCalledWith(
@@ -224,7 +245,7 @@ describe('JobPoller', () => {
     } as unknown as ComputeHostRepository
 
     // pid gone, no exit_code (empty exit code line)
-    const pollOutput = [
+    const pollOutput = withNonce([
       'JOB_START:job-1',
       'alive:0',
       '',
@@ -232,7 +253,7 @@ describe('JobPoller', () => {
       'STDOUT_END:job-1',
       '',
       'STDERR_END:job-1'
-    ].join('\n')
+    ])
 
     const runner: SshRunner = {
       run: vi.fn(() => {
@@ -246,7 +267,12 @@ describe('JobPoller', () => {
       })
     }
 
-    const poller = new JobPoller({ runner, hostRepository: hostRepo, jobRepository: jobRepo })
+    const poller = new JobPoller({
+      runner,
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      makeNonce: () => NONCE
+    })
 
     // First tick — vanish counter = 1, not yet failed.
     await poller.tick()
@@ -260,6 +286,59 @@ describe('JobPoller', () => {
     expect(update).toHaveBeenCalledWith(
       'job-1',
       expect.objectContaining({ status: 'failed', errorCode: 'process_vanished' })
+    )
+  })
+
+  it('is not corrupted by job stdout that contains bare marker lines', async () => {
+    // A job whose stdout tail prints lines that look like our structural markers (but WITHOUT the
+    // per-tick nonce prefix) must not be able to hijack the parser. True result: exit_code=0.
+    const job = makeJob()
+    const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      update
+    } as unknown as ComputeJobRepository
+    const hostRepo = {
+      get: vi.fn(() => Promise.resolve(sampleHost()))
+    } as unknown as ComputeHostRepository
+
+    // Built manually (not via withNonce) so the adversarial lines stay BARE (no nonce), exactly as
+    // they would arrive from real job stdout, while the real structural markers carry the nonce.
+    const pollOutput = [
+      `${NONCE}JOB_START:job-1`,
+      `${NONCE}alive:1`,
+      '0',
+      'JOB_START:job-1', // adversarial line inside the stdout tail
+      'alive:0', // adversarial line inside the stdout tail
+      `${NONCE}STDOUT_END:job-1`,
+      '',
+      `${NONCE}STDERR_END:job-1`
+    ].join('\n')
+
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: pollOutput,
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+
+    const poller = new JobPoller({
+      runner,
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      makeNonce: () => NONCE
+    })
+    await poller.tick()
+
+    // Parser must read the authoritative exit_code (0 → success), not the adversarial 'alive:0'.
+    expect(update).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({ status: 'success', exitCode: 0 })
+    )
+    expect(update).not.toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({ errorCode: 'process_vanished' })
     )
   })
 
