@@ -195,6 +195,55 @@ describe('PreviewFileContent', () => {
     expect(container.textContent).toContain('beta')
   })
 
+  it('renders a truncated TSV table with bounded rows and columns', async () => {
+    const headers = Array.from({ length: 26 }, (_, index) => `column-${index + 1}`)
+    const rows = Array.from({ length: 101 }, (_, rowIndex) =>
+      headers.map((_, columnIndex) => `r${rowIndex + 1}c${columnIndex + 1}`).join('\t')
+    )
+    vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
+      content: [headers.join('\t'), ...rows].join('\n'),
+      encoding: 'utf8',
+      size: 10_000,
+      truncated: true
+    })
+
+    await renderFile(createFileItem({ format: 'csv', name: 'measurements.tsv' }))
+
+    expect(container.textContent).toContain('100+ rows · 26 columns')
+    expect(container.textContent).toContain('Showing 100 rows · 24 columns')
+    expect(container.textContent).toContain('2 more columns hidden in this preview')
+    expect(container.textContent).toContain('r1c1')
+    expect(container.textContent).not.toContain('r101c1')
+  })
+
+  it('shows the parser error without discarding CSV rows that can still be previewed', async () => {
+    vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
+      content: 'sample,value\ncontrol,1\n"incomplete,2',
+      encoding: 'utf8',
+      size: 37,
+      truncated: false
+    })
+
+    await renderFile(createFileItem({ format: 'csv', name: 'results.csv' }))
+
+    expect(container.textContent).toContain('control')
+    expect(container.querySelector('.text-danger-000')?.textContent).not.toBe('')
+  })
+
+  it('uses the CSV fallback for a non-UTF8 preview', async () => {
+    vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
+      content: 'AAECAw==',
+      encoding: 'base64',
+      size: 4,
+      truncated: false
+    })
+
+    await renderFile(createFileItem({ format: 'csv', name: 'binary.csv' }))
+
+    expect(container.textContent).toContain("CSV couldn't be read for preview")
+    expect(container.querySelector('table')).toBeNull()
+  })
+
   it('loads the next bounded page of a large text preview on demand', async () => {
     vi.mocked(window.api.artifacts.readPreview).mockImplementation(async (request) =>
       request.offset === 5

@@ -41,7 +41,21 @@ export default defineConfig({
         lines: 66,
         functions: 62,
         branches: 57,
-        statements: 64
+        statements: 64,
+        // Keep the now-covered update wiring from being masked by the global aggregate.
+        'src/main/update/**': {
+          lines: 85,
+          functions: 75,
+          branches: 70,
+          statements: 80
+        },
+        // CSV is a user-facing renderer with bounded-data and fallback behavior worth protecting.
+        'src/renderer/src/pages/workspace/previews/renderers/CsvPreview.tsx': {
+          lines: 95,
+          functions: 95,
+          branches: 80,
+          statements: 95
+        }
       }
     }
   }

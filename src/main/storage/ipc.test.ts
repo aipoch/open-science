@@ -540,12 +540,17 @@ describe('storage IPC handlers', () => {
     await writeFile(join(dataRoot, 'artifacts', 'keep.txt'), 'must survive')
 
     let releaseSetDataRoot: (() => void) | undefined
+    let signalSetDataRootStarted!: () => void
+    const setDataRootStarted = new Promise<void>((resolve) => {
+      signalSetDataRootStarted = resolve
+    })
     const deps = fakeDeps({
       settingsService: {
         setDataRoot: vi.fn(
           () =>
             new Promise<void>((resolve) => {
               releaseSetDataRoot = resolve
+              signalSetDataRootStarted()
             })
         ),
         markOnboardingComplete: vi.fn().mockResolvedValue(undefined),
@@ -557,7 +562,9 @@ describe('storage IPC handlers', () => {
     await invoke('storage:migrate', { parent: targetParent })
 
     const commitPromise = invoke('storage:commit-and-relaunch', { parent: targetParent })
-    await tick()
+    // Wait for the commit to own the resolution lock; a fixed delay flakes when coverage instrumentation
+    // slows filesystem work and can otherwise leave the mocked persistence promise unresolved.
+    await setDataRootStarted
     await invoke('storage:discard-migrated-copy', { parent: targetParent })
     releaseSetDataRoot?.()
     await commitPromise
