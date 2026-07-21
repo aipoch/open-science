@@ -944,13 +944,12 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                         label="Reasoning effort"
                         description={
                           <>
-                            How much reasoning the agent puts into each request — higher levels
-                            think longer, lower levels respond faster. Applied to subsequent
-                            requests; a level the active model doesn&apos;t offer maps to its
-                            closest supported one.
+                            Higher levels think longer, lower levels respond faster. Applies to
+                            subsequent requests.
                           </>
                         }
                         className={`border-b border-border${providers.length > 0 ? '' : ' pt-0'}`}
+                        controlClassName="w-auto justify-self-end"
                       >
                         <ReasoningEffortSelect />
                       </SettingsRow>
