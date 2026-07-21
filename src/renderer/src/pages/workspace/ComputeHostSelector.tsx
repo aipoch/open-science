@@ -104,11 +104,13 @@ const ComputeHostSelector = ({
                     >
                       {host.displayName}
                     </span>
+                    {/* pointer-events-none: the Switch is a visual indicator only;
+                        the row's onSelect is the single toggle entry point. */}
                     <Switch
                       checked={isEnabled}
-                      onCheckedChange={(checked) => handleToggle(host.providerId, checked)}
-                      aria-label={`${isEnabled ? 'Disable' : 'Enable'} ${host.displayName}`}
-                      onPointerDown={(e) => e.stopPropagation()}
+                      aria-hidden="true"
+                      tabIndex={-1}
+                      className="pointer-events-none"
                     />
                   </DropdownMenuItem>
                 )
