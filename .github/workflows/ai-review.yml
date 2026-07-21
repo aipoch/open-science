@@ -1,8 +1,8 @@
 name: AI PR Review
 
 # Required repository configuration:
-# - Secrets: ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, and OPENAI_API_KEY
-# - Variable: CODEX_BASE_URL (without a trailing slash), or the full /v1/responses endpoint
+# - Secrets: ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, OPENAI_API_KEY, and CODEX_BASE_URL
+#   (the URL may omit the trailing slash or include the full /v1/responses endpoint)
 # - Variable: CLAUDE_CODE_ATTRIBUTION_HEADER=0
 # Set ENABLE_CLAUDE_REVIEW=false or ENABLE_CODEX_REVIEW=false to disable either reviewer.
 # Pull requests from forks are skipped because GitHub does not expose Actions secrets to them.
@@ -94,13 +94,13 @@ jobs:
       - name: Resolve Responses API endpoint
         id: responses_endpoint
         env:
-          CODEX_BASE_URL: ${{ vars.CODEX_BASE_URL }}
+          CODEX_BASE_URL: ${{ secrets.CODEX_BASE_URL }}
         shell: bash
         run: |
           set -euo pipefail
 
           if [[ -z "$CODEX_BASE_URL" ]]; then
-            echo "Repository variable CODEX_BASE_URL is required." >&2
+            echo "Repository secret CODEX_BASE_URL is required." >&2
             exit 1
           fi
 
