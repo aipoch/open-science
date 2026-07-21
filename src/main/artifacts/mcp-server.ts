@@ -20,9 +20,16 @@ type ArtifactMcpEnvironment = {
   sessionId: string
   currentRunFile: string
   allowedImportRoots: string[]
-  // The notebook kernel's cwd (session data dir). A relative localPath / bare filename is resolved
-  // against this, so the agent can pass the same name it saved instead of rebuilding an absolute path.
+}
+
+// The per-turn run context the main process writes into current-run.json. runId attributes writes to
+// the active turn; the notebook fields (present only in a notebook-enabled turn) carry the kernel's
+// FINAL data dir + session root — resolved from the real ACP session id at turn start, so they are
+// alias-proof, unlike the static session-creation env which only knows the pre-start alias.
+type ArtifactRunContext = {
+  runId: string
   notebookDataDir?: string
+  notebookSessionRoot?: string
 }
 
 type ArtifactMcpServerConfigRequest = ArtifactMcpEnvironment & {
@@ -61,7 +68,7 @@ const writeArtifactFileToolSchema = {
           .string()
           .min(1)
           .describe(
-            'Path to an ALREADY-SAVED file. A bare filename or a relative path (e.g. "plot.png") is resolved against the notebook session data dir (the kernel cwd) — pass the same name you saved with. An absolute path also works. Do NOT rebuild a path from OPEN_SCIENCE_NOTEBOOK_DIR; the kernel cwd is the data dir. The file must exist before you call this — the app copies it.'
+            'Path to an ALREADY-SAVED file. A bare filename or relative path (e.g. "plot.png") resolves against the notebook session data dir (the kernel cwd) — pass the same name you saved with. An absolute path also works. Do NOT rebuild a path from an env var; the kernel cwd already IS the data dir. The file must exist before you call this — the app copies it.'
           )
       })
     ])
@@ -74,8 +81,8 @@ const writeArtifactFileToolSchema = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-// Reads the app-owned active run id instead of accepting ids from the model tool call.
-const readCurrentRunId = async (currentRunFile: string): Promise<string> => {
+// Reads the app-owned per-turn run context instead of accepting ids/paths from the model tool call.
+const readCurrentRunContext = async (currentRunFile: string): Promise<ArtifactRunContext> => {
   const rawContext = await readFile(currentRunFile, 'utf8')
   const context = JSON.parse(rawContext) as unknown
   const runId = isRecord(context) && typeof context.runId === 'string' ? context.runId : ''
@@ -84,7 +91,16 @@ const readCurrentRunId = async (currentRunFile: string): Promise<string> => {
     throw new Error('No active artifact run is available.')
   }
 
-  return runId
+  const notebookDataDir =
+    isRecord(context) && typeof context.notebookDataDir === 'string'
+      ? context.notebookDataDir
+      : undefined
+  const notebookSessionRoot =
+    isRecord(context) && typeof context.notebookSessionRoot === 'string'
+      ? context.notebookSessionRoot
+      : undefined
+
+  return { runId, notebookDataDir, notebookSessionRoot }
 }
 
 // Normalizes the legacy content/encoding shape and the new source shape into one repository input.
@@ -111,21 +127,26 @@ const writeArtifactFileForCurrentRun = async (
   environment: ArtifactMcpEnvironment,
   input: ArtifactToolWriteInput
 ): Promise<ArtifactFile> => {
-  const runId = await readCurrentRunId(environment.currentRunFile)
+  const context = await readCurrentRunContext(environment.currentRunFile)
   const source = normalizeArtifactToolWriteInput(input)
 
   return repository.writePendingFile(
     {
       projectName: environment.projectName,
       sessionId: environment.sessionId,
-      runId,
+      runId: context.runId,
       filename: input.filename,
       mimeType: input.mimeType,
       source
     },
     {
-      allowedImportRoots: environment.allowedImportRoots,
-      relativeBaseDir: environment.notebookDataDir
+      // The kernel's final session root (from the per-turn handoff) is the authoritative import root
+      // for notebook writes; add it to the static roots so a resolved relative path is accepted even
+      // when the env was built under a pre-start alias.
+      allowedImportRoots: context.notebookSessionRoot
+        ? [...environment.allowedImportRoots, context.notebookSessionRoot]
+        : environment.allowedImportRoots,
+      relativeBaseDir: context.notebookDataDir
     }
   )
 }
@@ -174,8 +195,7 @@ const createArtifactMcpServerConfig = ({
   projectName,
   sessionId,
   currentRunFile,
-  allowedImportRoots,
-  notebookDataDir
+  allowedImportRoots
 }: ArtifactMcpServerConfigRequest): McpServerStdio => ({
   name: ARTIFACT_MCP_SERVER_NAME,
   command,
@@ -189,10 +209,7 @@ const createArtifactMcpServerConfig = ({
     {
       name: 'OPEN_SCIENCE_ARTIFACT_ALLOWED_IMPORT_ROOTS',
       value: JSON.stringify(allowedImportRoots)
-    },
-    ...(notebookDataDir
-      ? [{ name: 'OPEN_SCIENCE_ARTIFACT_NOTEBOOK_DATA_DIR', value: notebookDataDir }]
-      : [])
+    }
   ]
 })
 
@@ -221,8 +238,7 @@ const createArtifactMcpEnvironmentFromProcess = (
   projectName: requireEnvironmentVariable(env, 'OPEN_SCIENCE_ARTIFACT_PROJECT_NAME'),
   sessionId: requireEnvironmentVariable(env, 'OPEN_SCIENCE_ARTIFACT_SESSION_ID'),
   currentRunFile: requireEnvironmentVariable(env, 'OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE'),
-  allowedImportRoots: parseAllowedImportRoots(env.OPEN_SCIENCE_ARTIFACT_ALLOWED_IMPORT_ROOTS),
-  notebookDataDir: env.OPEN_SCIENCE_ARTIFACT_NOTEBOOK_DATA_DIR || undefined
+  allowedImportRoots: parseAllowedImportRoots(env.OPEN_SCIENCE_ARTIFACT_ALLOWED_IMPORT_ROOTS)
 })
 
 // Runs only the artifact MCP server; Electron app modules are intentionally not loaded in this mode.
@@ -245,4 +261,4 @@ export {
   writeArtifactFileToolSchema,
   writeArtifactFileForCurrentRun
 }
-export type { ArtifactMcpEnvironment, ArtifactToolWriteInput }
+export type { ArtifactMcpEnvironment, ArtifactRunContext, ArtifactToolWriteInput }

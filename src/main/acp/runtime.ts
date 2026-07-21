@@ -71,7 +71,8 @@ import { applyCurrentModeUpdate } from './permission-profile-controller'
 import {
   ARTIFACT_MCP_SERVER_NAME,
   createArtifactMcpServerConfig,
-  type ArtifactMcpEnvironment
+  type ArtifactMcpEnvironment,
+  type ArtifactRunContext
 } from '../artifacts/mcp-server'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { ArtifactRepository, getArtifactCurrentRunFilePath } from '../artifacts/repository'
@@ -2188,14 +2189,9 @@ class AcpRuntime {
   ): ArtifactMcpEnvironment | undefined {
     if (!this.artifactOptions || !artifactSessionId) return undefined
 
-    const hasNotebook = Boolean(this.notebookOptions && notebookSessionId)
-    // The notebook kernel's cwd — where relative artifact paths (and bare filenames) resolve.
-    const notebookDataDir = hasNotebook
-      ? getNotebookDataRoot(this.artifactOptions.dataRoot, projectName, notebookSessionId)
-      : undefined
     const allowedImportRoots = [
       sessionCwd,
-      ...(hasNotebook
+      ...(this.notebookOptions && notebookSessionId
         ? [getNotebookSessionRoot(this.artifactOptions.dataRoot, projectName, notebookSessionId)]
         : [])
     ]
@@ -2205,8 +2201,7 @@ class AcpRuntime {
       projectName,
       sessionId: artifactSessionId,
       currentRunFile: this.getArtifactCurrentRunFile(artifactSessionId, projectName),
-      allowedImportRoots,
-      notebookDataDir
+      allowedImportRoots
     }
   }
 
@@ -2519,18 +2514,37 @@ class AcpRuntime {
 
     this.artifactRunSequence += 1
     const artifactSessionId = this.artifactSessionIds.get(sessionId) ?? sessionId
-    const currentRunFile = this.getArtifactCurrentRunFile(
-      artifactSessionId,
-      this.resolveSessionProjectName(sessionId)
-    )
+    const projectName = this.resolveSessionProjectName(sessionId)
+    const currentRunFile = this.getArtifactCurrentRunFile(artifactSessionId, projectName)
     const artifactRun = {
       runId: `artifact-run-${Date.now()}-${this.artifactRunSequence}`,
       artifactSessionId,
       currentRunFile
     }
 
+    // Notebook kernels are keyed by the FINAL ACP session id (the notebook RPC layer rewrites the
+    // pre-start alias to it before touching disk). This handoff runs per turn with that final id, so
+    // it — not the session-creation env, which only had the alias — is the correct place to pin the
+    // kernel's data dir + session root for relative/bare artifact imports.
+    const runContext: ArtifactRunContext =
+      this.notebookOptions && this.artifactOptions
+        ? {
+            runId: artifactRun.runId,
+            notebookDataDir: getNotebookDataRoot(
+              this.artifactOptions.dataRoot,
+              projectName,
+              sessionId
+            ),
+            notebookSessionRoot: getNotebookSessionRoot(
+              this.artifactOptions.dataRoot,
+              projectName,
+              sessionId
+            )
+          }
+        : { runId: artifactRun.runId }
+
     await mkdir(dirname(currentRunFile), { recursive: true })
-    await writeFile(currentRunFile, `${JSON.stringify({ runId: artifactRun.runId })}\n`, 'utf8')
+    await writeFile(currentRunFile, `${JSON.stringify(runContext)}\n`, 'utf8')
 
     return artifactRun
   }

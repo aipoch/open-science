@@ -18,10 +18,13 @@ const createStorageRoot = async (): Promise<string> => {
   return storageRoot
 }
 
-const createEnvironment = async (root: string): Promise<ArtifactMcpEnvironment> => {
+const createEnvironment = async (
+  root: string,
+  runContext: Record<string, unknown> = { runId: 'run-1' }
+): Promise<ArtifactMcpEnvironment> => {
   const currentRunFile = join(root, 'current-run.json')
 
-  await writeFile(currentRunFile, JSON.stringify({ runId: 'run-1' }), 'utf8')
+  await writeFile(currentRunFile, JSON.stringify(runContext), 'utf8')
 
   return {
     storageRoot: root,
@@ -87,23 +90,48 @@ describe('artifact MCP server', () => {
     await expect(readFile(artifact.path, 'utf8')).resolves.toBe('<svg />')
   })
 
-  it('treats a bare filename with no source as a localPath under the notebook data dir', async () => {
+  it('treats a bare filename with no source as a localPath under the handoff notebook data dir', async () => {
     // The common flow: plt.savefig("plot.svg") in the kernel cwd, then write_artifact_file with just
-    // the filename. No source/content and no rebuilt path — it must resolve against notebookDataDir.
+    // the filename. No source/content and no rebuilt path — it must resolve against the notebook data
+    // dir carried by the per-turn handoff (current-run.json), and the session root authorizes it.
     const root = await createStorageRoot()
-    const dataDir = join(root, 'notebook-session', 'data')
+    const sessionRoot = join(root, 'notebook-session')
+    const dataDir = join(sessionRoot, 'data')
     await mkdir(dataDir, { recursive: true })
     await writeFile(join(dataDir, 'plot.svg'), '<svg />', 'utf8')
     const repository = new ArtifactRepository(root)
-    const environment = {
-      ...(await createEnvironment(root)),
-      allowedImportRoots: [dataDir],
-      notebookDataDir: dataDir
-    }
+    // allowedImportRoots is intentionally empty here: authorization must come from the handoff's
+    // notebookSessionRoot, proving relative writes work even when the static env root is stale.
+    const environment = await createEnvironment(root, {
+      runId: 'run-1',
+      notebookDataDir: dataDir,
+      notebookSessionRoot: sessionRoot
+    })
 
     const artifact = await writeArtifactFileForCurrentRun(repository, environment, {
       filename: 'plot.svg',
       mimeType: 'image/svg+xml'
+    })
+
+    await expect(readFile(artifact.path, 'utf8')).resolves.toBe('<svg />')
+  })
+
+  it('resolves a relative localPath against the handoff notebook data dir', async () => {
+    const root = await createStorageRoot()
+    const sessionRoot = join(root, 'notebook-session')
+    const dataDir = join(sessionRoot, 'data')
+    await mkdir(dataDir, { recursive: true })
+    await writeFile(join(dataDir, 'plot.svg'), '<svg />', 'utf8')
+    const repository = new ArtifactRepository(root)
+    const environment = await createEnvironment(root, {
+      runId: 'run-1',
+      notebookDataDir: dataDir,
+      notebookSessionRoot: sessionRoot
+    })
+
+    const artifact = await writeArtifactFileForCurrentRun(repository, environment, {
+      filename: 'plot.svg',
+      source: { kind: 'localPath', path: 'plot.svg' }
     })
 
     await expect(readFile(artifact.path, 'utf8')).resolves.toBe('<svg />')
@@ -179,38 +207,29 @@ describe('artifact MCP server', () => {
       projectName: 'default-project',
       sessionId: 'session-1',
       currentRunFile: '/tmp/current-run.json',
-      allowedImportRoots: ['/Users/example/workspace', '/Users/example/.open-science/notebooks'],
-      notebookDataDir: undefined
+      allowedImportRoots: ['/Users/example/workspace', '/Users/example/.open-science/notebooks']
     })
   })
 
-  it('passes the notebook data dir through the config and back from the process env', () => {
-    const dataDir = '/Users/example/.open-science/notebooks/default-project/session-1/data'
-    const config = createArtifactMcpServerConfig({
-      command: '/app/bin',
-      entryPath: '/app/out/main/index.js',
-      storageRoot: '/Users/example/.open-science',
-      projectName: 'default-project',
-      sessionId: 'session-1',
-      currentRunFile: '/tmp/current-run.json',
-      allowedImportRoots: ['/Users/example/workspace'],
-      notebookDataDir: dataDir
+  it('reads the notebook data dir and session root from the per-turn handoff', async () => {
+    // The notebook context is carried in current-run.json (written per turn with the final session
+    // id), not in the process env — so a stale session-creation alias can never poison the base dir.
+    const root = await createStorageRoot()
+    const sessionRoot = join(root, 'notebook-session')
+    const dataDir = join(sessionRoot, 'data')
+    await mkdir(dataDir, { recursive: true })
+    await writeFile(join(dataDir, 'out.csv'), 'a,b\n1,2\n', 'utf8')
+    const repository = new ArtifactRepository(root)
+    const environment = await createEnvironment(root, {
+      runId: 'run-1',
+      notebookDataDir: dataDir,
+      notebookSessionRoot: sessionRoot
     })
 
-    expect(config.env).toContainEqual({
-      name: 'OPEN_SCIENCE_ARTIFACT_NOTEBOOK_DATA_DIR',
-      value: dataDir
+    const artifact = await writeArtifactFileForCurrentRun(repository, environment, {
+      filename: 'out.csv'
     })
 
-    expect(
-      createArtifactMcpEnvironmentFromProcess({
-        OPEN_SCIENCE_ARTIFACT_STORAGE_ROOT: '/Users/example/.open-science',
-        OPEN_SCIENCE_ARTIFACT_PROJECT_NAME: 'default-project',
-        OPEN_SCIENCE_ARTIFACT_SESSION_ID: 'session-1',
-        OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE: '/tmp/current-run.json',
-        OPEN_SCIENCE_ARTIFACT_ALLOWED_IMPORT_ROOTS: JSON.stringify(['/Users/example/workspace']),
-        OPEN_SCIENCE_ARTIFACT_NOTEBOOK_DATA_DIR: dataDir
-      }).notebookDataDir
-    ).toBe(dataDir)
+    await expect(readFile(artifact.path, 'utf8')).resolves.toBe('a,b\n1,2\n')
   })
 })

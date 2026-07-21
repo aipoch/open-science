@@ -2,7 +2,7 @@ import * as acp from '@agentclientprotocol/sdk'
 import type { ContentBlock, SessionConfigOption, SessionModeState } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
@@ -13,6 +13,7 @@ import { terminateProcessTree } from '../process-tree'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
 import { ArtifactRepository } from '../artifacts/repository'
+import { writeArtifactFileForCurrentRun } from '../artifacts/mcp-server'
 import type { UploadedAttachment } from '../../shared/uploads'
 import { UploadRepository } from '../uploads/repository'
 import { MAX_INLINE_IMAGE_TOTAL_BASE64_BYTES } from '../uploads/attachment-media'
@@ -1626,6 +1627,85 @@ describe('ACP runtime session management', () => {
       mimeType: 'application/octet-stream',
       uri: expect.stringContaining('data.bin')
     })
+  })
+
+  it('resolves a bare-filename artifact write against the final-session notebook dir despite the alias', async () => {
+    // Regression for the alias/final-id mismatch: the notebook MCP env is built at session creation
+    // under a pre-start alias, but kernels write under the FINAL ACP session id. The per-turn handoff
+    // must pin the kernel dir/root by that final id so a relative/bare artifact write resolves — and
+    // the write must succeed even though the static allowedImportRoots only knew the alias.
+    const root = await createTemporaryRoot()
+    const artifactRepository = new ArtifactRepository(root)
+    const finalSessionId = 'remote-session-1'
+    // The kernel's real cwd for this session, keyed by the FINAL id (not the notebook alias).
+    const notebookDataDir = join(root, 'notebooks', 'default-project', finalSessionId, 'data')
+    await mkdir(notebookDataDir, { recursive: true })
+    await writeFile(join(notebookDataDir, 'sine.png'), 'PNGDATA', 'utf8')
+
+    let writtenPath: string | undefined
+    let capturedContext: Record<string, unknown> | undefined
+    let captureError: unknown
+
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, [finalSessionId], {
+      // Runs mid-turn, exactly when the artifact MCP tool would fire and the handoff is still active
+      // (clearArtifactRun blanks it in the post-prompt finally).
+      onPrompt: async () => {
+        try {
+          const projectDir = join(root, 'artifacts', 'default-project')
+          const [artifactSessionId] = await readdir(projectDir)
+          const currentRunFile = join(projectDir, artifactSessionId, '.pending', 'current-run.json')
+          capturedContext = JSON.parse(await readFile(currentRunFile, 'utf8'))
+
+          // A bare filename with no source must resolve against the handoff's notebook data dir.
+          const artifact = await writeArtifactFileForCurrentRun(
+            artifactRepository,
+            {
+              storageRoot: root,
+              projectName: 'default-project',
+              sessionId: artifactSessionId,
+              currentRunFile,
+              allowedImportRoots: [] // authorization must come from the handoff session root
+            },
+            { filename: 'sine.png', mimeType: 'image/png' }
+          )
+          writtenPath = artifact.path
+        } catch (error) {
+          captureError = error
+        }
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
+      },
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        repository: artifactRepository
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'plot a sine wave' })
+
+    if (captureError) throw captureError
+    // The handoff pins the kernel dir by the FINAL id, never the notebook-session-* alias.
+    expect(capturedContext?.notebookDataDir).toBe(notebookDataDir)
+    expect(capturedContext?.notebookSessionRoot).toBe(
+      join(root, 'notebooks', 'default-project', finalSessionId)
+    )
+    expect(capturedContext?.notebookDataDir).not.toContain('notebook-session-')
+    // And the bare-filename write actually copied the kernel file into pending artifacts.
+    expect(writtenPath).toBeDefined()
+    await expect(readFile(writtenPath as string, 'utf8')).resolves.toBe('PNGDATA')
   })
 
   it('gives opencode the stdio artifact MCP server + tool guidance (it accepts stdio like Claude)', async () => {
