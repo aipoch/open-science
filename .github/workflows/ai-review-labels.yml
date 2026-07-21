@@ -163,7 +163,9 @@ jobs:
             // format each reviewer's prompt requires for its pull request comment. A rename or
             // prompt-format change on either side silently disables labeling. Verdicts are read
             // via issues.listComments, so reviewers must post timeline comments (as `gh pr
-            // comment` / issues.createComment does), not pull request reviews.
+            // comment` / issues.createComment does), not pull request reviews, and only comments
+            // authored by github-actions[bot] are trusted as verdicts.
+            // scripts/ai-review-workflows.test.ts asserts these strings do not drift apart.
             const reviewers = [
               { jobName: 'Claude architecture review', header: '## Claude Architecture Review' },
               { jobName: 'Codex correctness review', header: '## Codex Correctness Review' },
@@ -208,21 +210,25 @@ jobs:
               return;
             }
 
-            // A verdict only counts when its reviewer succeeded in this run and posted the
-            // comment after the run started, so stale comments from older commits are ignored.
+            // A verdict only counts when its reviewer succeeded in this run and the review bot
+            // posted the comment after the run started, so stale comments from older commits —
+            // and forged verdict comments from other authors — are ignored.
+            const runStartedAt = new Date(context.payload.workflow_run.created_at);
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: pullRequest.number,
+              since: runStartedAt.toISOString(),
               per_page: 100,
             });
-            const runStartedAt = new Date(context.payload.workflow_run.created_at);
             const verdicts = [];
             for (const { jobName, header } of present) {
               const comment = comments
                 .filter(
-                  ({ body, created_at }) =>
-                    body?.includes(header) && new Date(created_at) >= runStartedAt,
+                  ({ body, created_at, user }) =>
+                    body?.includes(header) &&
+                    new Date(created_at) >= runStartedAt &&
+                    user?.login === 'github-actions[bot]',
                 )
                 .at(-1);
               const verdict = comment?.body.match(/\*\*Verdict:\s*(mergeable|needs changes)\*\*/)?.[1];
