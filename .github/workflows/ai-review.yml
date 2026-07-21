@@ -1,10 +1,9 @@
 name: AI PR Review
 
 # Required repository configuration:
-# - Secrets: ANTHROPIC_AUTH_TOKEN and OPENAI_API_KEY
+# - Secrets: ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, and OPENAI_API_KEY
 # - Variable: CODEX_BASE_URL (without a trailing slash), or the full /v1/responses endpoint
-# - Variables: ANTHROPIC_BASE_URL for the Anthropic-compatible endpoint and
-#   CLAUDE_CODE_ATTRIBUTION_HEADER=0
+# - Variable: CLAUDE_CODE_ATTRIBUTION_HEADER=0
 # Set ENABLE_CLAUDE_REVIEW=false or ENABLE_CODEX_REVIEW=false to disable either reviewer.
 # Pull requests from forks are skipped because GitHub does not expose Actions secrets to them.
 on:
@@ -39,7 +38,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         env:
           ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
-          ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
+          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
           CLAUDE_CODE_ATTRIBUTION_HEADER: ${{ vars.CLAUDE_CODE_ATTRIBUTION_HEADER }}
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
