@@ -7,6 +7,7 @@ import {
   mkdir,
   mkdtemp,
   open,
+  readdir,
   rename,
   rm,
   writeFile,
@@ -670,6 +671,11 @@ export const installManagedCodex = async ({
     const adapterTgz = join(scratch, 'adapter.tgz')
     const codexTgz = join(scratch, 'codex.tgz')
 
+    // Tracks whether the install has left the registry-dependent phase: the staged bits are
+    // byte-identical across registries (pinned versions + integrities), so a replaceDirectory
+    // failure is a deterministic local filesystem error — retrying the next registry would
+    // re-download the same bits into the same error and overwrite the backup path it carries.
+    let reachedLocalInstall = false
     try {
       onEvent({ kind: 'progress', installId, phase: 'resolving' })
       const adapter = await resolvePinnedPackage(
@@ -733,6 +739,7 @@ export const installManagedCodex = async ({
       // the final runtime, so anything Codex might write here must not ride along into the install.
       await verifyPair(stagedAdapter, stagedCodex, join(scratch, 'smoke-home'))
 
+      reachedLocalInstall = true
       await replaceDirectory(stagedRoot, managedCodexRoot(dataRoot))
 
       return {
@@ -744,6 +751,16 @@ export const installManagedCodex = async ({
       }
     } catch (error) {
       lastError = describeError(error)
+      if (reachedLocalInstall) {
+        // Local install failure — do not attribute it to the registry or try the next one.
+        onEvent({
+          kind: 'log',
+          installId,
+          stream: 'system',
+          chunk: `install failed: ${lastError}\n`
+        })
+        return { result: { installId, ok: false, error: lastError } }
+      }
       onEvent({
         kind: 'log',
         installId,
@@ -760,4 +777,14 @@ export const installManagedCodex = async ({
 
 export const uninstallManagedCodex = async (dataRoot: string): Promise<void> => {
   await rm(managedCodexRoot(dataRoot), { recursive: true, force: true }).catch(() => undefined)
+  // Failed installs can leave orphaned `codex-managed.backup-*` dirs (retained for manual
+  // recovery) — uninstall removes them along with the managed tree.
+  const entries = await readdir(dataRoot).catch(() => [] as string[])
+  await Promise.all(
+    entries
+      .filter((entry) => entry.startsWith('codex-managed.backup-'))
+      .map((entry) =>
+        rm(join(dataRoot, entry), { recursive: true, force: true }).catch(() => undefined)
+      )
+  )
 }

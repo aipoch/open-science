@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 import { Readable } from 'node:stream'
@@ -951,6 +951,138 @@ describe('installManagedCodex', () => {
       fsFaults.renameOnStagedMoveEio = false
       fsFaults.renameOnRestore = false
     }
+  })
+
+  it('does not retry the next registry when the local replace step fails', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
+    const platform = resolveManagedCodexPlatform({ platform: 'linux', arch: 'x64' })
+    const adapterTgz = buildTgz([
+      { name: 'package/dist/index.js', content: Buffer.from('adapter-local-fail'), mode: 0o755 }
+    ])
+    const nativeTgz = buildTgz([
+      {
+        name: `package/vendor/${platform.target}/bin/codex`,
+        content: Buffer.from('codex-local-fail'),
+        mode: 0o755
+      }
+    ])
+    const fetchJson = async (url: string): Promise<unknown> =>
+      url.includes('agentclientprotocol%2fcodex-acp')
+        ? { dist: { tarball: 'https://reg-a/adapter.tgz', integrity: sha512(adapterTgz) } }
+        : { dist: { tarball: 'https://reg-a/codex.tgz', integrity: sha512(nativeTgz) } }
+    const fetchJsonSpy = vi.fn(fetchJson)
+    const fetchTarball = async (
+      url: string
+    ): Promise<{ stream: NodeJS.ReadableStream; totalBytes?: number }> => ({
+      stream: Readable.from(url.includes('adapter') ? adapterTgz : nativeTgz)
+    })
+
+    // rename(staged→destination) throws EPERM, then the cp fallback also throws EPERM — a
+    // deterministic local filesystem failure, identical for every registry.
+    fsFaults.renameOnStagedMove = true
+    fsFaults.cpFailure = true
+    try {
+      const outcome = await installManagedCodex({
+        installId: 'codex-local-fail',
+        onEvent: () => undefined,
+        dataRoot: root,
+        registries: ['https://reg-a', 'https://reg-b'],
+        platform,
+        fetchJson: fetchJsonSpy,
+        fetchTarball,
+        verifyAdapter: () => Promise.resolve('1.1.4'),
+        verifyCodex: () => Promise.resolve('0.144.6'),
+        verifyPair: vi.fn().mockResolvedValue(undefined),
+        integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
+      })
+
+      expect(outcome.result.ok).toBe(false)
+      expect(outcome.result.error).toContain('copyfile')
+      // The second registry must never be contacted for a local filesystem failure
+      // (2 fetchJson calls = a single resolve round, all against reg-a).
+      expect(fetchJsonSpy).toHaveBeenCalledTimes(2)
+      expect(
+        fetchJsonSpy.mock.calls.every(([url]) => String(url).startsWith('https://reg-a/'))
+      ).toBe(true)
+    } finally {
+      fsFaults.renameOnStagedMove = false
+      fsFaults.cpFailure = false
+    }
+  })
+
+  it('keeps the backup-path error and the orphaned backup when restore fails', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
+    const platform = resolveManagedCodexPlatform({ platform: 'linux', arch: 'x64' })
+    const adapterTgz = buildTgz([
+      { name: 'package/dist/index.js', content: Buffer.from('adapter-orphan'), mode: 0o755 }
+    ])
+    const nativeTgz = buildTgz([
+      {
+        name: `package/vendor/${platform.target}/bin/codex`,
+        content: Buffer.from('codex-orphan'),
+        mode: 0o755
+      }
+    ])
+    const fetchJson = async (url: string): Promise<unknown> =>
+      url.includes('agentclientprotocol%2fcodex-acp')
+        ? { dist: { tarball: 'https://reg/adapter.tgz', integrity: sha512(adapterTgz) } }
+        : { dist: { tarball: 'https://reg/codex.tgz', integrity: sha512(nativeTgz) } }
+    const fetchTarball = async (
+      url: string
+    ): Promise<{ stream: NodeJS.ReadableStream; totalBytes?: number }> => ({
+      stream: Readable.from(url.includes('adapter') ? adapterTgz : nativeTgz)
+    })
+
+    // Pre-seed an existing install so the failed replace leaves an orphaned backup behind.
+    await mkdir(managedCodexRoot(root), { recursive: true })
+    await writeFile(join(managedCodexRoot(root), 'previous-runtime'), 'keep-me')
+
+    // rename(staged→destination) throws EPERM, cp throws EPERM, restore rename throws EPERM.
+    fsFaults.renameOnStagedMove = true
+    fsFaults.cpFailure = true
+    fsFaults.renameOnRestore = true
+    try {
+      const outcome = await installManagedCodex({
+        installId: 'codex-restore-orphan',
+        onEvent: () => undefined,
+        dataRoot: root,
+        registries: ['https://reg-a', 'https://reg-b'],
+        platform,
+        fetchJson,
+        fetchTarball,
+        verifyAdapter: () => Promise.resolve('1.1.4'),
+        verifyCodex: () => Promise.resolve('0.144.6'),
+        verifyPair: vi.fn().mockResolvedValue(undefined),
+        integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
+      })
+
+      expect(outcome.result.ok).toBe(false)
+      // The backup-path error must survive — not overwritten by a second registry round.
+      expect(outcome.result.error).toMatch(/backup retained at/)
+      // The orphaned backup dir is deliberately retained for manual recovery.
+      const entries = await readdir(root)
+      expect(entries.some((entry) => entry.startsWith('codex-managed.backup-'))).toBe(true)
+    } finally {
+      fsFaults.renameOnStagedMove = false
+      fsFaults.cpFailure = false
+      fsFaults.renameOnRestore = false
+    }
+  })
+
+  it('uninstall also removes orphaned backup dirs left behind by failed installs', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
+    await mkdir(join(managedCodexRoot(root), 'adapter', 'dist'), { recursive: true })
+    await writeFile(managedCodexAdapterEntry(root), 'adapter')
+    const orphanBackup = `${managedCodexRoot(root)}.backup-orphan`
+    await mkdir(orphanBackup, { recursive: true })
+    await writeFile(join(orphanBackup, 'stranded-runtime'), 'stuck')
+    await writeFile(join(root, 'unrelated-runtime'), 'keep-me')
+
+    await uninstallManagedCodex(root)
+
+    await expect(readFile(managedCodexAdapterEntry(root))).rejects.toThrow()
+    await expect(readFile(join(orphanBackup, 'stranded-runtime'))).rejects.toThrow()
+    expect(await readFile(join(root, 'unrelated-runtime'), 'utf8')).toBe('keep-me')
   })
 
   it('uninstalls only the managed Codex tree and is idempotent', async () => {
