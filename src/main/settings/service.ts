@@ -1484,8 +1484,10 @@ class SettingsService {
     )
     // The provider can be edited while the browser flow is open. Unless the stored record is still
     // the isolated subscription the login was started for, the outcome is stale and discarded —
-    // recording it could stamp a switched-to-shared (and unauthenticated) profile as verified.
-    if (provider?.type !== 'codex-isolated') return result
+    // recording it could stamp a switched-to-shared (and unauthenticated) profile as verified. Flag
+    // it as not-applied so a caller gating navigation on success (onboarding) does not advance on a
+    // result the stored provider never received.
+    if (provider?.type !== 'codex-isolated') return { ...result, applied: false }
 
     await this.repository.upsertProvider(
       result.ok
@@ -1506,7 +1508,7 @@ class SettingsService {
           }
     )
 
-    return result
+    return { ...result, applied: true }
   }
 
   async logoutIsolatedCodex(): Promise<SettingsSnapshot> {
@@ -1572,17 +1574,22 @@ class SettingsService {
         })
 
     if (resolved.storedId) {
+      // Each early return here means the tested target no longer matches what is stored (a newer test
+      // superseded this one, the provider was deleted, or it was edited mid-flight). The outcome is
+      // real but was not recorded, so `applied: false` tells a success-gated caller not to advance.
       if (this.providerValidationGenerations.get(resolved.storedId) !== validationGeneration) {
-        return result
+        return { ...result, applied: false }
       }
       const latestSettings = await this.repository.getSettings()
       const stored = latestSettings.providers.find((provider) => provider.id === resolved.storedId)
-      if (!stored) return result
+      if (!stored) return { ...result, applied: false }
       const latestResolved = this.resolveProvider(
         stored,
         latestSettings.activeProviderId === stored.id ? latestSettings.activeModel : undefined
       )
-      if (!this.sameValidationTarget(resolved.provider, latestResolved)) return result
+      if (!this.sameValidationTarget(resolved.provider, latestResolved)) {
+        return { ...result, applied: false }
+      }
 
       // Success stamps the validated time and clears any prior failure. A failure keeps the provider
       // but records why, so the list can flag it and the model pickers exclude it until it passes.
@@ -1604,6 +1611,8 @@ class SettingsService {
               }
             }
       )
+
+      return { ...result, applied: true }
     }
 
     return result

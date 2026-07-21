@@ -305,6 +305,12 @@ export type ValidateProviderResult = {
   category: ValidationCategory
   status?: number
   message?: string
+  // Whether the outcome was actually recorded on the stored provider. A result can be authenticated
+  // (`ok: true`) yet discarded — the provider was switched, deleted, or superseded by a newer test
+  // while an async sign-in/probe was in flight. Callers that gate navigation on success (onboarding)
+  // must treat `applied === false` as "do not advance": the stored provider does not reflect it.
+  // Absent means applied (the ordinary synchronous path).
+  applied?: boolean
 }
 
 // Request to refresh a saved provider's model list from the vendor's live API (fills the bundled

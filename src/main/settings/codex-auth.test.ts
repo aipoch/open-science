@@ -89,8 +89,12 @@ describe('CodexAuthController', () => {
       'private@example.test'
     )
 
+    // A signed-out adapter that also cannot offer ChatGPT login has nothing to connect: that is the
+    // genuine capability failure. (A signed-out adapter that DOES advertise chat-gpt is merely
+    // unauthenticated — covered below — not a capability failure.)
     const unsupported = session({
-      initialize: vi.fn().mockResolvedValue({ authMethods: [{ id: 'api-key' }] })
+      initialize: vi.fn().mockResolvedValue({ authMethods: [{ id: 'api-key' }] }),
+      status: vi.fn().mockResolvedValue({ type: 'unauthenticated' })
     })
     const unsupportedController = new CodexAuthController({
       openSession: vi.fn().mockResolvedValue(unsupported)
@@ -101,6 +105,28 @@ describe('CodexAuthController', () => {
       authenticated: false,
       message: 'The installed codex-acp does not advertise ChatGPT authentication.'
     })
+  })
+
+  it('reports a chat-gpt-less adapter that already holds a credential as authenticated', async () => {
+    // Regression: getStatus must not gate on the chat-gpt capability before reading status. An adapter
+    // advertising only api-key, already carrying an api-key/gateway credential, runs fine — reporting
+    // it signed out (a capability failure) would wrongly block an otherwise working provider.
+    for (const type of ['api-key', 'gateway'] as const) {
+      const credentialed = session({
+        initialize: vi.fn().mockResolvedValue({ authMethods: [{ id: 'api-key' }] }),
+        status: vi.fn().mockResolvedValue({ type })
+      })
+      const controller = new CodexAuthController({
+        openSession: vi.fn().mockResolvedValue(credentialed)
+      })
+
+      await expect(controller.getStatus('shared')).resolves.toEqual({
+        mode: 'shared',
+        supported: true,
+        authenticated: true
+      })
+      expect(vi.mocked(credentialed.close)).toHaveBeenCalledOnce()
+    }
   })
 
   it('treats api-key and gateway profiles as authenticated', async () => {
@@ -124,6 +150,54 @@ describe('CodexAuthController', () => {
         authenticated: true
       })
       expect(apiKeySession.authenticateChatGpt).not.toHaveBeenCalled()
+    }
+  })
+
+  it('reports an unauthenticated but chat-gpt-capable profile as supported, not a capability failure', async () => {
+    const signedOut = session({ status: vi.fn().mockResolvedValue({ type: 'unauthenticated' }) })
+    const controller = new CodexAuthController({
+      openSession: vi.fn().mockResolvedValue(signedOut)
+    })
+
+    await expect(controller.getStatus('shared')).resolves.toEqual({
+      mode: 'shared',
+      supported: true,
+      authenticated: false
+    })
+  })
+
+  it('times out a stalled status read and closes the late session', async () => {
+    vi.useFakeTimers()
+    let resolveStatus!: (value: { type: 'unauthenticated' }) => void
+    const stalledStatus = new Promise<{ type: 'unauthenticated' }>((resolve) => {
+      resolveStatus = resolve
+    })
+    const stalled = session({ status: vi.fn(() => stalledStatus) })
+    const controller = new CodexAuthController({
+      openSession: vi.fn().mockResolvedValue(stalled),
+      statusTimeoutMs: 10
+    })
+    let outcome: Awaited<ReturnType<CodexAuthController['getStatus']>> | undefined
+    const pending = controller.getStatus('shared').then((result) => {
+      outcome = result
+    })
+
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(10)
+    await pending
+
+    try {
+      expect(outcome).toEqual({
+        mode: 'shared',
+        supported: true,
+        authenticated: false,
+        message: 'Codex status check timed out.'
+      })
+      // The stalled read is abandoned, but the session must still be torn down, not leaked.
+      expect(vi.mocked(stalled.close)).toHaveBeenCalledOnce()
+    } finally {
+      resolveStatus({ type: 'unauthenticated' })
+      vi.useRealTimers()
     }
   })
 

@@ -423,6 +423,17 @@ const OnboardingWizard = (): React.JSX.Element => {
           codexLoginPendingRef.current = false
         })
 
+        // A discarded sign-in (the provider was switched/edited while the browser flow was open) can
+        // report ok but was never recorded on the stored provider — advancing would finish onboarding
+        // on an unverified profile. Keep the user here to retry against the provider they now have.
+        if (validation.applied === false) {
+          setValidationOk(false)
+          setValidationMessage(
+            'The Codex provider changed during sign-in. Review the selection and try again.'
+          )
+          return
+        }
+
         setValidationOk(validation.ok)
         setValidationMessage(describeValidation(validation))
 
@@ -436,6 +447,15 @@ const OnboardingWizard = (): React.JSX.Element => {
       }
 
       const { validation } = await saveAndActivateProvider(toUpsertRequest(formValue))
+
+      // A validation superseded by a newer test (or a provider removed/edited mid-test) reports its
+      // outcome but was not recorded; do not finish onboarding on a result the stored provider never
+      // received.
+      if (validation.applied === false) {
+        setValidationOk(false)
+        setValidationMessage('The provider changed during testing. Try again.')
+        return
+      }
 
       setValidationOk(validation.ok)
       setValidationMessage(describeValidation(validation))

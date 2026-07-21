@@ -41,6 +41,10 @@ export type CodexAuthLaunch = {
 type CodexAuthControllerOptions = {
   openSession: (mode: CodexAuthMode) => Promise<CodexAuthSession>
   loginTimeoutMs?: number
+  // Bounds the read-only status check (open + initialize + status). Unlike the browser login this
+  // never waits on a human, so a much shorter deadline keeps a stalled adapter from hanging save/test
+  // indefinitely.
+  statusTimeoutMs?: number
 }
 
 const CODEX_ENV_KEYS = [
@@ -117,23 +121,55 @@ const toPublicStatus = (
 export class CodexAuthController {
   private readonly openSession: (mode: CodexAuthMode) => Promise<CodexAuthSession>
   private readonly loginTimeoutMs: number
+  private readonly statusTimeoutMs: number
   private activeLogin: AbortController | undefined
 
   constructor(options: CodexAuthControllerOptions) {
     this.openSession = options.openSession
     this.loginTimeoutMs = options.loginTimeoutMs ?? 5 * 60_000
+    this.statusTimeoutMs = options.statusTimeoutMs ?? 30_000
   }
 
   async getStatus(mode: CodexAuthMode): Promise<CodexAuthStatus> {
-    const authSession = await this.openSession(mode)
+    const abort = new AbortController()
+    const timeout = setTimeout(() => abort.abort('timeout'), this.statusTimeoutMs)
+    let authSession: CodexAuthSession | undefined
+
     try {
-      const initialized = await authSession.initialize()
+      // Close a session that only arrives after the deadline so a stalled open never leaks a process.
+      const sessionPromise = this.openSession(mode)
+      void sessionPromise
+        .then(async (session) => {
+          if (abort.signal.aborted && authSession !== session) await session.close()
+        })
+        .catch(() => undefined)
+      authSession = await waitForOperation(sessionPromise, abort.signal)
+
+      const initialized = await waitForOperation(authSession.initialize(), abort.signal)
       const supported = initialized.authMethods?.some((method) => method.id === 'chat-gpt') ?? false
+
+      // Read the live status regardless of the advertised methods: an adapter can hold a usable
+      // api-key/gateway credential without offering ChatGPT login, and that profile is authenticated.
+      // Only when the profile is signed out AND ChatGPT login is unavailable is there nothing to do —
+      // that is the genuine capability failure.
+      const status = await waitForOperation(authSession.status(), abort.signal)
+      if (isAuthenticated(status)) return toPublicStatus(mode, true, status)
       if (!supported) return capabilityFailure(mode)
 
-      return toPublicStatus(mode, true, await authSession.status())
+      return toPublicStatus(mode, true, status)
+    } catch (error) {
+      if (abort.signal.aborted) {
+        return {
+          mode,
+          supported: true,
+          authenticated: false,
+          message: 'Codex status check timed out.'
+        }
+      }
+      throw error
     } finally {
-      await authSession.close()
+      clearTimeout(timeout)
+      await authSession?.close()
     }
   }
 

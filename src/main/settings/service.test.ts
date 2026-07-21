@@ -269,7 +269,8 @@ describe('SettingsService: providers', () => {
 
     await expect(service.loginIsolatedCodex()).resolves.toMatchObject({
       ok: true,
-      category: 'ok'
+      category: 'ok',
+      applied: true
     })
     expect((await repository.getSettings()).providers[0].lastValidatedAt).toBeDefined()
 
@@ -322,7 +323,9 @@ describe('SettingsService: providers', () => {
     await service.upsertProvider({ type: 'codex-shared' })
     resolveLogin({ mode: 'isolated', supported: true, authenticated: true })
 
-    await expect(pending).resolves.toMatchObject({ ok: true })
+    // ok reflects the sign-in itself, but applied:false marks it as discarded so a success-gated
+    // caller (onboarding) does not advance on a profile the store never recorded it against.
+    await expect(pending).resolves.toMatchObject({ ok: true, applied: false })
     const stored = (await repository.getSettings()).providers[0]
     expect(stored.type).toBe('codex-shared')
     expect(stored.lastValidatedAt).toBeUndefined()
@@ -606,6 +609,44 @@ describe('SettingsService: validation', () => {
     const stored = (await repository.getSettings()).providers[0]
     expect(stored.lastValidatedAt).toBeUndefined()
     expect(stored.lastValidationFailure).toMatchObject({ category: 'auth' })
+  })
+
+  it('marks a superseded validation as not applied and leaves the newer stamp intact', async () => {
+    const service = createService()
+    const created = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'G',
+        baseUrl: 'https://g/v1',
+        model: 'm',
+        key: 'k'
+      })
+    ).providers[0]
+
+    // A slow probe lets a second, faster validation start and bump the generation before the first
+    // resolves. The first is stale: it must report applied:false and never write over the newer run.
+    let releaseSlow!: () => void
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseSlow = () => resolve({ status: 401 } as Response)
+          })
+      )
+      .mockResolvedValue({ status: 200 } as Response)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const slow = service.validateProvider({ providerId: created.id })
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+    const fast = await service.validateProvider({ providerId: created.id })
+    expect(fast).toMatchObject({ ok: true, applied: true })
+
+    releaseSlow()
+    await expect(slow).resolves.toMatchObject({ ok: false, applied: false })
+
+    // The newer success stands: the superseded failure must not have cleared it.
+    expect((await repository.getSettings()).providers[0].lastValidatedAt).toBeGreaterThan(0)
   })
 
   it.each([

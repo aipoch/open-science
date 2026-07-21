@@ -3,9 +3,20 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { EnvironmentCheckResult } from '../../../../shared/settings'
+import type { EnvironmentCheckResult, ValidateProviderResult } from '../../../../shared/settings'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { OnboardingWizard } from './OnboardingWizard'
+
+// The Codex authentication picker is a Radix Select, which calls pointer-capture and scroll APIs
+// jsdom does not implement.
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = (): boolean => false
+  Element.prototype.setPointerCapture = (): void => undefined
+  Element.prototype.releasePointerCapture = (): void => undefined
+}
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = (): void => undefined
+}
 
 let container: HTMLDivElement
 let root: Root
@@ -70,6 +81,44 @@ const goToLocationStep = async (): Promise<void> => {
   await clickButton(/continue/i)
   await fillRequiredProviderFields()
   await clickButton(/test & continue/i)
+}
+
+// Opens a Radix Select trigger and clicks an option by visible text (options portal to body). Mirrors
+// the proven ActiveModelSelect.render.test.tsx pattern, since jsdom needs the pointer events.
+const selectOption = async (triggerLabel: string, optionText: string): Promise<void> => {
+  const trigger = document.body.querySelector<HTMLButtonElement>(`[aria-label="${triggerLabel}"]`)
+  await act(async () => {
+    trigger?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+    trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  })
+  const option = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+    (candidate) => candidate.textContent?.includes(optionText)
+  )
+  await act(async () => {
+    option?.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, button: 0 }))
+    option?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  })
+}
+
+// A Codex-ready environment so the wizard opens straight onto the Codex provider step on Continue.
+const codexReadyState = (): Partial<ReturnType<typeof createInitialSettingsState>> => ({
+  agentFrameworkId: 'codex' as const,
+  preflight: {
+    claudeReady: false,
+    opencodeReady: false,
+    codexReady: true,
+    agentFrameworkId: 'codex' as const,
+    agentReady: true,
+    activeProviderReady: false
+  },
+  environmentCheck: { ...environment(true), agentFrameworkId: 'codex' as const }
+})
+
+// Walks to the Codex provider step and switches the auth picker to the isolated "Sign in with Open
+// Science" mode — the only path that runs the browser login (loginIsolatedCodex).
+const goToIsolatedCodexStep = async (): Promise<void> => {
+  await clickButton(/^continue$/i)
+  await selectOption('Codex authentication', 'Sign in with Open Science')
 }
 
 beforeEach(() => {
@@ -455,6 +504,101 @@ describe('OnboardingWizard', () => {
     expect(container.querySelector('[aria-label="Model"]')).toBeNull()
     expect(container.querySelector('[aria-label="API format"]')).toBeNull()
     expect(container.querySelector('[aria-label="API key"]')).toBeNull()
+  })
+
+  it('runs the isolated Codex sign-in then advances to the location step', async () => {
+    const persistProvider = vi.fn().mockResolvedValue('builtin-codex-isolated')
+    const loginIsolatedCodex = vi
+      .fn()
+      .mockResolvedValue({ ok: true, category: 'ok', applied: true })
+    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      ...codexReadyState(),
+      persistProvider,
+      loginIsolatedCodex,
+      setActiveProvider
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+    await goToIsolatedCodexStep()
+    await clickButton(/sign in & continue/i)
+
+    // Persist happens before the browser login, and only a recorded success activates + advances.
+    expect(persistProvider).toHaveBeenCalledOnce()
+    expect(loginIsolatedCodex).toHaveBeenCalledOnce()
+    expect(setActiveProvider).toHaveBeenCalledWith('builtin-codex-isolated')
+    expect(container.textContent).toContain('Where should Open Science store your data?')
+  })
+
+  it('keeps the user on the provider step when the isolated sign-in fails', async () => {
+    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      ...codexReadyState(),
+      persistProvider: vi.fn().mockResolvedValue('builtin-codex-isolated'),
+      loginIsolatedCodex: vi.fn().mockResolvedValue({
+        ok: false,
+        category: 'auth',
+        applied: true,
+        message: 'Codex sign-in was cancelled.'
+      }),
+      setActiveProvider
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+    await goToIsolatedCodexStep()
+    await clickButton(/sign in & continue/i)
+
+    // A failed sign-in never activates and never leaves the provider step; the reason is surfaced.
+    expect(setActiveProvider).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('Codex sign-in was cancelled.')
+    expect(container.textContent).not.toContain('Where should Open Science store your data?')
+  })
+
+  it('does not advance when an authenticated sign-in was discarded (applied:false)', async () => {
+    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      ...codexReadyState(),
+      persistProvider: vi.fn().mockResolvedValue('builtin-codex-isolated'),
+      // ok but discarded: the provider was switched/edited mid-login, so the store never recorded it.
+      loginIsolatedCodex: vi.fn().mockResolvedValue({ ok: true, category: 'ok', applied: false }),
+      setActiveProvider
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+    await goToIsolatedCodexStep()
+    await clickButton(/sign in & continue/i)
+
+    expect(setActiveProvider).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('The Codex provider changed during sign-in')
+    expect(container.textContent).not.toContain('Where should Open Science store your data?')
+  })
+
+  it('cancels an in-flight isolated sign-in when the wizard unmounts', async () => {
+    const cancelCodexLogin = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      ...codexReadyState(),
+      persistProvider: vi.fn().mockResolvedValue('builtin-codex-isolated'),
+      // Never resolves: the login is still pending when the wizard unmounts (app quit/relaunch).
+      loginIsolatedCodex: vi.fn(() => new Promise<ValidateProviderResult>(() => undefined)),
+      cancelCodexLogin
+    })
+
+    await act(async () => {
+      root.render(<OnboardingWizard />)
+    })
+    await goToIsolatedCodexStep()
+    await clickButton(/sign in & continue/i)
+
+    // Teardown must abort the main-process login so the next attempt starts clean.
+    expect(cancelCodexLogin).not.toHaveBeenCalled()
+    await act(async () => root.unmount())
+    expect(cancelCodexLogin).toHaveBeenCalledOnce()
   })
 
   const twoFrameworks = [
