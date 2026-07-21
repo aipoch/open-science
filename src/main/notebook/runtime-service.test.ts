@@ -72,16 +72,30 @@ describe('resolveShellInvocation', () => {
   })
 
   it('uses a non-interactive PowerShell command on Windows instead of assuming sh exists', () => {
-    expect(resolveShellInvocation('cp "source.png" "destination.png"', 'win32')).toEqual({
-      executable: 'powershell.exe',
-      args: [
-        '-NoLogo',
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        'cp "source.png" "destination.png"'
-      ]
-    })
+    const invocation = resolveShellInvocation('cp "source.png" "destination.png"', 'win32')
+
+    expect(invocation.executable).toBe('powershell.exe')
+    expect(invocation.args.slice(0, -1)).toEqual([
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-EncodedCommand'
+    ])
+
+    const script = Buffer.from(invocation.args.at(-1) ?? '', 'base64').toString('utf16le')
+    expect(script).toContain('[Console]::OutputEncoding = $openScienceUtf8')
+    expect(script).toContain('$OutputEncoding = $openScienceUtf8')
+    expect(script).toContain("$ErrorActionPreference = 'Stop'")
+    expect(script).toContain('catch {')
+    expect(script).toContain('[Console]::Error.WriteLine($_.ToString())')
+    expect(script).toContain('cp "source.png" "destination.png"')
+    expect(script).toContain('$openScienceSucceeded = $?')
+    expect(script).toContain('exit $openScienceNativeExitCode')
+    expect(script).toMatch(/if \(\$openScienceSucceeded\) \{ exit 0 \}/)
+    expect(script.indexOf('exit $openScienceNativeExitCode')).toBeLessThan(
+      script.indexOf('if ($openScienceSucceeded) { exit 0 }')
+    )
+    expect(script).toMatch(/exit 1\s*$/)
   })
 })
 
@@ -606,6 +620,41 @@ describe('notebook runtime service', () => {
       })
       expect(state.runs[0].text.stdout).toContain('hi')
     })
+
+    it.skipIf(process.platform !== 'win32')(
+      'propagates PowerShell cmdlet/native failures and preserves UTF-8 output on Windows',
+      async () => {
+        const root = await createStorageRoot()
+        const service = new NotebookRuntimeService({
+          configRoot: root,
+          dataRoot: root,
+          projectName: 'default-project',
+          repository: new NotebookRunRepository(root)
+        })
+
+        const cmdletFailure = await service.executeShell({
+          sessionId: 'session-1',
+          workspaceCwd: root,
+          command: 'Get-Item "missing-open-science-file"; Write-Output "continued"'
+        })
+        const nativeFailure = await service.executeShell({
+          sessionId: 'session-1',
+          workspaceCwd: root,
+          command: 'cmd.exe /d /c exit 7 | Out-Null'
+        })
+        const unicodeOutput = await service.executeShell({
+          sessionId: 'session-1',
+          workspaceCwd: root,
+          command: 'Write-Output "分析完成"'
+        })
+
+        expect(cmdletFailure.exitCode).toBe(1)
+        expect(cmdletFailure.stdout).not.toContain('continued')
+        expect(nativeFailure.exitCode).toBe(7)
+        expect(unicodeOutput).toMatchObject({ exitCode: 0 })
+        expect(unicodeOutput.stdout).toContain('分析完成')
+      }
+    )
 
     // POSIX-only: reads env via the shell. bash must NOT inherit arbitrary host env (secrets), only an
     // allowlist + the handoff channel — so a leaked connector token / API key can't reach the shell.

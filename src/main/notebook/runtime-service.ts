@@ -432,6 +432,32 @@ type ShellInvocation = {
   args: string[]
 }
 
+// Windows PowerShell expects -EncodedCommand payloads as UTF-16LE. Encoding the complete script keeps
+// quotes, newlines, Unicode, and shell metacharacters out of command-line parsing while the script
+// normalizes output to UTF-8 and converts PowerShell's two failure channels into a real process exit
+// code: $? for cmdlets and $LASTEXITCODE for native programs.
+const encodePowerShellCommand = (command: string): string => {
+  const script = [
+    '$openScienceUtf8 = [System.Text.UTF8Encoding]::new($false)',
+    '[Console]::OutputEncoding = $openScienceUtf8',
+    '$OutputEncoding = $openScienceUtf8',
+    '$global:LASTEXITCODE = 0',
+    "$ErrorActionPreference = 'Stop'",
+    'try {',
+    command,
+    '$openScienceSucceeded = $?',
+    '$openScienceNativeExitCode = $LASTEXITCODE',
+    'if ($openScienceNativeExitCode -is [int] -and $openScienceNativeExitCode -ne 0) { exit $openScienceNativeExitCode }',
+    'if ($openScienceSucceeded) { exit 0 }',
+    '} catch {',
+    '[Console]::Error.WriteLine($_.ToString())',
+    '}',
+    'exit 1'
+  ].join('\n')
+
+  return Buffer.from(script, 'utf16le').toString('base64')
+}
+
 // Resolve the command interpreter explicitly instead of using shell:true. Node's Windows default is
 // cmd.exe, whose command language cannot run the POSIX-style commands agents commonly emit.
 const resolveShellInvocation = (
@@ -441,7 +467,13 @@ const resolveShellInvocation = (
   platform === 'win32'
     ? {
         executable: 'powershell.exe',
-        args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command]
+        args: [
+          '-NoLogo',
+          '-NoProfile',
+          '-NonInteractive',
+          '-EncodedCommand',
+          encodePowerShellCommand(command)
+        ]
       }
     : { executable: 'sh', args: ['-c', command] }
 
@@ -524,11 +556,13 @@ const runShellCommand = (options: {
       })
     }, timeoutMs)
 
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString('utf8')
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk
     })
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString('utf8')
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk
     })
     child.once('error', (error) => {
       finish({ stdout, stderr: stderr || error.message, exitCode: null })

@@ -157,12 +157,21 @@ const buildShellExecuteDoc = (platform: NodeJS.Platform = process.platform): str
       : 'Run one shell command with `sh -c` in the shared session workspace.'
   const handoffVariable =
     platform === 'win32' ? '$env:OPEN_SCIENCE_HANDOFF_DIR' : '$OPEN_SCIENCE_HANDOFF_DIR'
+  const platformContract =
+    platform === 'win32'
+      ? 'Target Windows PowerShell 5.1 syntax. PowerShell aliases such as cp/ls/mv/rm are not POSIX utilities: do not pass POSIX-only flags. `&&` is unavailable in Windows PowerShell 5.1; use `if ($?) { ... }` when the next command depends on success.'
+      : undefined
+  const exitCodeContract =
+    platform === 'win32'
+      ? 'Returns { stdout, stderr, exitCode }. PowerShell host/cmdlet text is normalized to UTF-8; native programs must emit UTF-8 themselves or their output may be garbled. A failed native program preserves its exit code, while an unhandled cmdlet failure returns exitCode 1; inspect exitCode instead of assuming success.'
+      : 'Returns { stdout, stderr, exitCode } and does not throw on a non-zero exit; inspect exitCode instead of assuming success.'
 
   return [
     shellDescription,
+    ...(platformContract ? [platformContract] : []),
     'Stateless: every call spawns a fresh process, so shell state (cwd changes, exported variables, background jobs, shell functions) does NOT persist between calls — write files if you need results to carry over.',
     `Runs in the same workspace directory the python/r data kernels start in, and can read/write ./handoff/ (also at ${handoffVariable}), the same shared channel repl_execute uses to hand data to the data kernels.`,
-    'Returns { stdout, stderr, exitCode } and does not throw on a non-zero exit; inspect exitCode instead of assuming success.',
+    exitCodeContract,
     'Distinct from notebook_execute and repl_execute: those run on persistent python/r/control-plane kernels with state that survives across calls; this tool is for one-off command-line inspection and package CLI probes, not for anything relying on shell state persisting.',
     "Do NOT copy a generated notebook output into the workspace with this tool. For a final chart, image, report, CSV, or other user-facing file, call `write_artifact_file` with the generated file's absolute local path; it copies the file safely on every platform.",
     'Do NOT use this to run analysis code: never write a python/R script to disk and execute it with `python`/`Rscript`/`node`, and never pipe code via `-e`/`-c`/a heredoc. Run python via notebook_execute (language:"python"), R via notebook_execute (language:"r"), and JavaScript via repl_execute — those kernels persist state, capture figures and outputs into the notebook, and install packages via manage_packages. A shell escape hatch bypasses all of that and its results are lost to the notebook.',
