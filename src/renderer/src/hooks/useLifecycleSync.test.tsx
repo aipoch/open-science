@@ -12,7 +12,7 @@ import type { Project } from '../../../shared/projects'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
-import { useLifecycleSync, type LifecycleSyncResult } from './useLifecycleSync'
+import { useLifecycleSync } from './useLifecycleSync'
 
 const listeners: {
   projectCreated?: (project: Project) => void
@@ -22,11 +22,17 @@ const listeners: {
   sessionDeleted?: (event: SessionDeletedEvent) => void
 } = {}
 
-let current: LifecycleSyncResult | undefined
-
-const Harness = (): null => {
-  current = useLifecycleSync()
-  return null
+const Harness = (): React.JSX.Element => {
+  const lifecycleSync = useLifecycleSync()
+  return (
+    <button
+      type="button"
+      data-notice-session={lifecycleSync.notice?.sessionId ?? ''}
+      onClick={lifecycleSync.viewNotice}
+    >
+      View notice
+    </button>
+  )
 }
 
 const project: Project = {
@@ -59,7 +65,6 @@ describe('useLifecycleSync', () => {
     useProjectStore.setState(createInitialProjectState())
     useSessionStore.setState(createInitialSessionState())
     useNavigationStore.setState({ view: 'home', activeProjectId: undefined })
-    current = undefined
 
     const subscribe =
       <Payload,>(key: keyof typeof listeners) =>
@@ -97,16 +102,17 @@ describe('useLifecycleSync', () => {
 
     expect(useProjectStore.getState().projects).toEqual([project])
     expect(useSessionStore.getState().sessions[0]?.id).toBe(session.id)
-    expect(current?.notice).toMatchObject({ sessionId: session.id, projectId: project.id })
+    const noticeButton = container.querySelector<HTMLButtonElement>('button')
+    expect(noticeButton?.dataset.noticeSession).toBe(session.id)
 
-    await act(async () => current?.viewNotice())
+    await act(async () => noticeButton?.click())
 
     expect(useNavigationStore.getState()).toMatchObject({
       view: 'workspace',
       activeProjectId: project.id
     })
     expect(useSessionStore.getState().selectedSessionId).toBe(session.id)
-    expect(current?.notice).toBeUndefined()
+    expect(noticeButton?.dataset.noticeSession).toBe('')
   })
 
   it('removes externally deleted data and returns an active project to Home', async () => {
@@ -114,7 +120,7 @@ describe('useLifecycleSync', () => {
       listeners.projectCreated?.(project)
       listeners.sessionSaved?.({ session, created: true })
     })
-    await act(async () => current?.viewNotice())
+    await act(async () => container.querySelector<HTMLButtonElement>('button')?.click())
     await act(async () => {
       listeners.projectDeleted?.({ projectId: project.id })
     })
