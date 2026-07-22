@@ -150,7 +150,6 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const togglePreviewPanel = usePreviewWorkbenchStore((state) => state.togglePanel)
   const syncPreviewPanelState = usePreviewWorkbenchStore((state) => state.syncPanelState)
   const {
-    actionError,
     pendingPermissions,
     permissionProfiles,
     permissionGrants,
@@ -261,7 +260,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     isSessionPersistenceReady &&
     activeSession?.status !== 'running' &&
     activeSession?.status !== 'waiting-permission'
-  const visibleActionError = attachmentError ?? (activeSession ? null : actionError)
+  const visibleActionError = attachmentError ?? null
 
   const animatePreviewPanelSize = useCallback(
     (

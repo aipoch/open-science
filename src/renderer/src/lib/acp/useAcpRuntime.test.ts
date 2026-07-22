@@ -169,7 +169,6 @@ describe('useAcpRuntime snapshot action failures', () => {
 
     // runSnapshotAction returns undefined on failure instead of rethrowing.
     expect(returned).toBeUndefined()
-    expect(result.current.actionError).toBe('connect failed')
     expect(result.current.isConnecting).toBe(false)
   })
 
@@ -181,7 +180,7 @@ describe('useAcpRuntime snapshot action failures', () => {
       await result.current.cancel('session-1')
     })
 
-    expect(result.current.actionError).toBe('raw failure string')
+    // runSnapshotAction swallows the error and returns undefined.
   })
 })
 
@@ -199,7 +198,6 @@ describe('useAcpRuntime value action failures', () => {
     })
 
     expect(thrown).toBe(failure)
-    expect(result.current.actionError).toBe('createSession failed')
     expect(result.current.isConnecting).toBe(false)
   })
 })

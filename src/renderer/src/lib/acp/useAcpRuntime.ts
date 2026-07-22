@@ -27,16 +27,9 @@ type SnapshotAction = () => Promise<AcpStateSnapshot>
 type ValueAction<Value> = () => Promise<Value>
 type PendingSetter = Dispatch<SetStateAction<boolean>>
 
-// Normalizes thrown values from IPC calls into UI-safe text.
-const getErrorMessage = (error: unknown): string => {
-  if (error instanceof Error) return error.message
-  return String(error)
-}
-
 // Centralizes renderer access to the main-process runtime IPC surface.
 const useAcpRuntime = (): {
   state: AcpStateSnapshot
-  actionError: string | null
   isConnecting: boolean
   isDisconnecting: boolean
   connect: (cwd?: string) => Promise<AcpStateSnapshot | undefined>
@@ -87,7 +80,6 @@ const useAcpRuntime = (): {
   ) => Promise<AcpStateSnapshot | undefined>
 } => {
   const [state, setState] = useState<AcpStateSnapshot>(emptyAcpState)
-  const [actionError, setActionError] = useState<string | null>(null)
   const [isConnecting, setIsConnecting] = useState(false)
   const [isDisconnecting, setIsDisconnecting] = useState(false)
 
@@ -107,9 +99,9 @@ const useAcpRuntime = (): {
       try {
         applySnapshot(await window.api.acp.getState())
       } catch (error) {
-        if (isMounted) {
-          setActionError(getErrorMessage(error))
-        }
+        // Initial state load errors are logged but not surfaced to the UI.
+        // The runtime will retry on the next connection attempt.
+        console.error('Failed to load initial ACP state:', error)
       }
     }
 
@@ -129,7 +121,6 @@ const useAcpRuntime = (): {
       setPending: PendingSetter | undefined,
       action: SnapshotAction
     ): Promise<AcpStateSnapshot | undefined> => {
-      setActionError(null)
       setPending?.(true)
 
       try {
@@ -137,7 +128,6 @@ const useAcpRuntime = (): {
         setState(snapshot)
         return snapshot
       } catch (error) {
-        setActionError(getErrorMessage(error))
         return undefined
       } finally {
         setPending?.(false)
@@ -155,14 +145,10 @@ const useAcpRuntime = (): {
       setPending: PendingSetter | undefined,
       action: ValueAction<Value>
     ): Promise<Value> => {
-      setActionError(null)
       setPending?.(true)
 
       try {
         return await action()
-      } catch (error) {
-        setActionError(getErrorMessage(error))
-        throw error
       } finally {
         setPending?.(false)
       }
@@ -310,7 +296,6 @@ const useAcpRuntime = (): {
 
   return {
     state,
-    actionError,
     isConnecting,
     isDisconnecting,
     connect,

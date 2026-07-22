@@ -55,9 +55,7 @@ type SendWorkspaceMessageResult = {
 type WorkspaceMessageRuntime = Pick<
   ReturnType<typeof useAcpRuntime>,
   'state' | 'createSession' | 'resumeSession' | 'resetSessionContext' | 'sendPrompt'
-> & {
-  actionError?: string | null
-}
+>
 
 type WorkspaceDeletionRuntime = Pick<ReturnType<typeof useAcpRuntime>, 'deleteSession'>
 type PersistSessionDeletion = (request: { projectId: string; sessionId: string }) => Promise<void>
@@ -805,7 +803,6 @@ const deleteWorkspaceSession = async (
 }
 
 const useWorkspaceAgentRuntime = (): {
-  actionError: string | null
   isConnecting: boolean
   pendingPermissions: AcpPermissionRequest[]
   permissionProfiles: Record<string, SessionPermissionProfileState>
@@ -941,7 +938,6 @@ const useWorkspaceAgentRuntime = (): {
   )
 
   return {
-    actionError: runtime.actionError,
     isConnecting: runtime.isConnecting,
     pendingPermissions: runtime.state.pendingPermissions,
     permissionProfiles: runtime.state.permissionProfiles,
