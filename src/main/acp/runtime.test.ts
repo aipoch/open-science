@@ -118,6 +118,9 @@ const startFakeAgent = (
     // A plain handler error is serialized by the ACP SDK as -32603 with the original message in
     // data.details. This mirrors agents that do not translate their resume failure to resourceNotFound.
     resumeInternalErrorDetails?: string
+    // Some agents preserve a machine-readable reason in the Internal error data instead of relying on
+    // the human-facing detail string.
+    resumeInternalErrorData?: unknown
     // When true, the agent does NOT advertise session/close capability, so the runtime must fall back to
     // the session/cancel notification on delete instead of a close request.
     supportsClose?: boolean
@@ -205,6 +208,10 @@ const startFakeAgent = (
 
       if (options.resumeInternalErrorDetails) {
         throw new Error(options.resumeInternalErrorDetails)
+      }
+
+      if (options.resumeInternalErrorData !== undefined) {
+        throw acp.RequestError.internalError(options.resumeInternalErrorData)
       }
 
       resumedSessions.push({
@@ -3227,11 +3234,34 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.prompts).toEqual([{ sessionId: 'adopted-session-1', text: 'keep going' }])
   })
 
-  it('keeps an unrelated detailed Internal error visible instead of adopting a fresh session', async () => {
+  it('adopts a fresh session from a language-independent session-loss reason', async () => {
     const process = new FakeAgentProcess()
-    const fakeAgent = startFakeAgent(process, [], {
-      resumeInternalErrorDetails: 'Authentication failed while configuring the provider'
+    const fakeAgent = startFakeAgent(process, ['adopted-session-1'], {
+      resumeInternalErrorData: {
+        errorKind: 'session-not-found',
+        details: 'The agent supplied a localized diagnostic'
+      }
     })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await expect(
+      runtime.resumeSession({ sessionId: 'restarted-session', cwd: '/workspace' })
+    ).resolves.toMatchObject({ sessionId: 'restarted-session', contextReset: true })
+    expect(fakeAgent.newSessions).toHaveLength(1)
+  })
+
+  it.each([
+    'Authentication failed while configuring the provider',
+    'Failed to load session provider credentials',
+    'Unable to load Model Context Protocol server for this session',
+    'Unknown model context for this conversation'
+  ])('keeps unrelated Internal error details visible: %s', async (details) => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, [], { resumeInternalErrorDetails: details })
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
@@ -3243,8 +3273,28 @@ describe('ACP runtime session management', () => {
     ).rejects.toMatchObject({
       code: -32603,
       message: 'Internal error',
-      data: { details: 'Authentication failed while configuring the provider' }
+      data: { details }
     })
+    expect(fakeAgent.newSessions).toEqual([])
+  })
+
+  it('trusts an unrelated structured reason over a session-like detail', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, [], {
+      resumeInternalErrorData: {
+        errorKind: 'provider-error',
+        details: 'Failed to restore the previous conversation'
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await expect(
+      runtime.resumeSession({ sessionId: 'restarted-session', cwd: '/workspace' })
+    ).rejects.toMatchObject({ code: -32603, data: { errorKind: 'provider-error' } })
     expect(fakeAgent.newSessions).toEqual([])
   })
 

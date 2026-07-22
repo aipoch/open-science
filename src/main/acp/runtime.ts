@@ -298,18 +298,53 @@ const safeLogError = (message: string, data?: unknown): void => {
   }
 }
 
+const UNRESUMABLE_SESSION_ERROR_KINDS = new Set([
+  'session_not_found',
+  'conversation_not_found',
+  'session_missing',
+  'conversation_missing',
+  'session_resume_failed',
+  'conversation_restore_failed'
+])
+
+const isUnresumableSessionErrorKind = (errorKind: unknown): boolean =>
+  typeof errorKind === 'string' &&
+  UNRESUMABLE_SESSION_ERROR_KINDS.has(
+    errorKind
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_|_$/g, '')
+  )
+
+// Legacy agents may expose only an English diagnostic. Keep this fallback deliberately narrow: a
+// false positive silently resets agent-side context, while a false negative leaves the real error
+// visible and can be fixed by teaching the backend to emit a machine-readable errorKind.
 const describesUnresumableSession = (details: unknown): boolean => {
   if (typeof details !== 'string') return false
-
-  const mentionsSession = /\b(?:session|conversation|context)\b/i.test(details)
-  if (!mentionsSession) return false
+  if (
+    /\b(?:auth|authentication|authorization|credential|provider|mcp|model|tool|server)\b/i.test(
+      details
+    )
+  )
+    return false
 
   const describesMissingSession =
-    /\b(?:not found|does not exist|unknown|missing)\b/i.test(details) ||
-    /\bno\s+(?:saved\s+)?(?:session|conversation|context)\b/i.test(details)
+    /\b(?:session|conversation)(?:\s+(?:id|identifier))?\s+(?:(?:was|is)\s+)?(?:not found|missing|unknown)\b/i.test(
+      details
+    ) ||
+    /\b(?:session|conversation)(?:\s+(?:id|identifier))?\s+does not exist\b/i.test(details) ||
+    /\b(?:no|missing|unknown)\s+(?:saved\s+|previous\s+)?(?:session|conversation)\b/i.test(details)
   const describesFailedResume =
-    /\b(?:failed|unable|cannot|can't|could not)\b/i.test(details) &&
-    /\b(?:resume|restore|load|reopen|reattach)\w*\b/i.test(details)
+    /\b(?:failed|unable|cannot|can't|could not)\s+to\s+(?:resume|restore|reopen|reattach)\b.{0,80}\b(?:session|conversation)\b/i.test(
+      details
+    ) ||
+    /\b(?:session|conversation)\b.{0,40}\b(?:failed|was unable)\s+to\s+(?:resume|restore|reopen|reattach)\b/i.test(
+      details
+    ) ||
+    /\b(?:session|conversation)\b.{0,40}\b(?:could not|cannot|can't)\s+be\s+(?:resumed|restored|reopened|reattached)\b/i.test(
+      details
+    )
 
   return describesMissingSession || describesFailedResume
 }
@@ -323,20 +358,27 @@ const describesUnresumableSession = (details: unknown): boolean => {
 const isUnresumableSessionError = (error: unknown): boolean => {
   if (typeof error !== 'object' || error === null) return false
 
-  const candidate = error as { code?: number; message?: string; data?: { details?: unknown } }
+  const candidate = error as {
+    code?: number
+    message?: string
+    data?: { details?: unknown; errorKind?: unknown }
+  }
   const message = candidate.message ?? ''
 
   if (candidate.code === -32002 || /resource not found|session not found/i.test(message))
     return true
 
-  // The ACP SDK wraps a plain agent exception as a generic Internal error and stores its message in
-  // data.details. Recover that shape only when the detail identifies a missing/unrestorable session;
-  // unrelated auth, MCP, and provider failures must remain visible. Detail-free Internal errors keep the
-  // existing fallback because some agents discard the cause entirely.
+  if (candidate.code !== -32603 || !/^internal error\.?$/i.test(message.trim())) return false
+
+  // A structured reason is authoritative and language-independent. Unknown reasons propagate even when
+  // their detail happens to look session-related, preventing provider/MCP errors from being swallowed.
+  if (candidate.data?.errorKind !== undefined) {
+    return isUnresumableSessionErrorKind(candidate.data.errorKind)
+  }
+
+  // Detail-free Internal errors keep the existing fallback because some agents discard the cause.
   return (
-    candidate.code === -32603 &&
-    /^internal error\.?$/i.test(message.trim()) &&
-    (candidate.data?.details === undefined || describesUnresumableSession(candidate.data.details))
+    candidate.data?.details === undefined || describesUnresumableSession(candidate.data.details)
   )
 }
 
