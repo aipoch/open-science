@@ -16,6 +16,9 @@ export type ProvisionProgress = {
   // provisioning independently — the provisioner serializes the two runs, but neither card should look
   // cancelled when the other is requested (undefined for language-agnostic events: upgrade/restore).
   language?: NotebookLanguage
+  // Present during the pack-download phase so the UI can show speed/ETA/resume detail alongside the
+  // coarse `progress` fraction.
+  download?: import('./download-progress').DownloadProgress
 }
 export type RuntimeBundleSource = {
   kind: 'official' | 'override'

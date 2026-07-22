@@ -17,6 +17,7 @@ import {
   fetchLanguagePack,
   type LanguagePackFetchDeps
 } from './language-pack-fetch'
+import type { ProvisionProgress } from './provisioner'
 
 const makeDestDir = (): string => mkdtempSync(join(tmpdir(), 'os-pack-'))
 
@@ -167,9 +168,23 @@ describe('createFetchBundleAdapter', () => {
     const deps = makeDeps({}, m)
     const writeDownload = deps.download
     deps.download = vi.fn(async (url, destPath, onProgress) => {
-      onProgress?.(50, 200)
+      onProgress?.({
+        phase: 'downloading',
+        transferred: 50,
+        total: 200,
+        percent: 25,
+        bytesPerSecond: 1000,
+        attempt: 0
+      })
       await writeDownload(url, destPath)
-      onProgress?.(200, 200)
+      onProgress?.({
+        phase: 'downloading',
+        transferred: 200,
+        total: 200,
+        percent: 100,
+        bytesPerSecond: 1000,
+        attempt: 0
+      })
     })
     const extract = vi.fn(async (_archivePath: string, destDir: string) => {
       await mkdir(destDir, { recursive: true })
@@ -179,7 +194,7 @@ describe('createFetchBundleAdapter', () => {
       )
       await writeFile(join(destDir, 'package-1.conda'), packageBytes)
     })
-    const progress: Array<{ message: string; progress: number }> = []
+    const progress: ProvisionProgress[] = []
     const adapter = createFetchBundleAdapter(root, 'https://cdn/envs', {
       ...deps,
       subdir: 'osx-arm64',
@@ -209,6 +224,9 @@ describe('createFetchBundleAdapter', () => {
       'Downloading managed python runtime (100%)'
     )
     expect(progress.map((event) => event.message)).toContain('Downloaded python-3.12.tar.zst')
+    // A download-phase event carries the nested DownloadProgress detail for the UI speed line.
+    const withDownload = progress.find((event) => event.download)
+    expect(withDownload?.download).toMatchObject({ phase: 'downloading', attempt: 0 })
     await rm(root, { recursive: true, force: true })
   })
 
