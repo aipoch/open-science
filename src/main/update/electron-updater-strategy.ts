@@ -234,13 +234,27 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       this.setStatus({ state: 'up-to-date', latest: i.version })
     })
     this.updater.on('download-progress', (p) => {
-      const info = p as { percent?: number; transferred?: number; total?: number }
+      const info = p as {
+        percent?: number
+        transferred?: number
+        total?: number
+        bytesPerSecond?: number
+      }
       const percent = Math.round(info.percent ?? 0)
       const transferred = info.transferred ?? this.status.downloadedBytes ?? 0
       // Preserve the known artifact size when the event lacks a usable total, so a progress
       // event omitting it can't clobber the size extracted at check time with 0.
       const total = info.total || this.status.totalBytes || 0
-      this.broadcast('update:progress', { percent, transferred, total })
+      // electron-updater handles its own retries internally, so downloads only ever surface as the
+      // 'downloading' phase with attempt 0; its native bytesPerSecond feeds the shared speed display.
+      this.broadcast('update:progress', {
+        phase: 'downloading',
+        percent,
+        transferred,
+        total,
+        bytesPerSecond: info.bytesPerSecond ?? 0,
+        attempt: 0
+      })
       this.setStatus({
         ...this.status,
         state: 'downloading',
