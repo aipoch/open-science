@@ -184,6 +184,7 @@ describe('statusCommand', () => {
     expect(deps.log).toHaveBeenCalledWith(
       expect.stringContaining('is running (PID 4242, port 44100)')
     )
+    expect(deps.log.mock.calls.flat().join('\n')).not.toContain('token-abc')
     expect(process.exitCode).toBeUndefined()
   })
 

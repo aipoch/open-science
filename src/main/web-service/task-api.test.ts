@@ -14,6 +14,75 @@ const project = {
 }
 
 describe('HeadlessTaskApi', () => {
+  it('supports project, session, and artifact queries through the public interface', async () => {
+    const session: PersistedChatSession = {
+      id: 'session-query',
+      projectId: project.id,
+      title: 'Query session',
+      cwd: '/workspace/query',
+      status: 'idle',
+      messages: [],
+      artifacts: [
+        {
+          id: 'artifact-query',
+          kind: 'managed-file',
+          path: '/artifacts/query.csv',
+          name: 'query.csv',
+          mimeType: 'text/csv',
+          size: 12
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    }
+    const invoke = vi.fn(async (channel: string, _clientId: string, args: unknown[]) => {
+      if (channel === 'projects:list') return [project]
+      if (channel === 'projects:create') {
+        return { ...project, ...(args[0] as object), id: 'project-created' }
+      }
+      if (channel === 'sessions:load-all') {
+        return { sessions: [session], manifest: { version: 1 } }
+      }
+      if (channel === 'preview-resources:acquire') {
+        return {
+          id: 'resource-query',
+          url: 'open-science-preview://resource-query/query.csv',
+          size: 12,
+          mimeType: 'text/csv'
+        }
+      }
+      if (channel === 'preview-resources:release') return undefined
+      throw new Error(`Unexpected RPC channel: ${channel}`)
+    })
+    const api = new HeadlessTaskApi({ invoke })
+
+    await expect(api.createProject({ name: 'Created' })).resolves.toMatchObject({
+      id: 'project-created',
+      name: 'Created'
+    })
+    await expect(api.listSessions(project.name)).resolves.toEqual([
+      expect.objectContaining({ id: session.id, artifactCount: 1 })
+    ])
+    await expect(api.getSession(session.id)).resolves.toMatchObject({ title: session.title })
+    await expect(api.listArtifacts(session.id)).resolves.toEqual(session.artifacts)
+    await expect(api.acquireArtifact('artifact-query')).resolves.toMatchObject({
+      resourceId: 'resource-query',
+      name: 'query.csv'
+    })
+    await api.releaseArtifact('resource-query')
+
+    expect(invoke).toHaveBeenCalledWith('preview-resources:acquire', expect.any(String), [
+      {
+        source: 'artifact',
+        path: '/artifacts/query.csv',
+        mimeType: 'text/csv'
+      }
+    ])
+    expect(invoke).toHaveBeenCalledWith('preview-resources:release', expect.any(String), [
+      { resourceId: 'resource-query' }
+    ])
+  })
+
   it('rejects malformed public run requests before invoking internal RPC', async () => {
     const invoke = vi.fn()
     const api = new HeadlessTaskApi({ invoke })

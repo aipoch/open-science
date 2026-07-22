@@ -103,6 +103,10 @@ export class OpenScienceClient {
     const waiters = []
     let finished = false
     let failure
+    let resolveReady
+    const ready = new Promise((resolve) => {
+      resolveReady = resolve
+    })
 
     const flush = () => {
       while (waiters.length && queue.length) waiters.shift().resolve(queue.shift())
@@ -116,10 +120,12 @@ export class OpenScienceClient {
       queue.push(JSON.parse(String(event.data)))
       flush()
     })
+    socket.addEventListener('open', () => resolveReady())
     socket.addEventListener('error', () => {
       failure = new OpenScienceApiError('Open Science event stream failed.', {
         code: 'event_stream_failed'
       })
+      resolveReady()
       finished = true
       flush()
     })
@@ -131,6 +137,7 @@ export class OpenScienceClient {
     signal?.addEventListener('abort', abort, { once: true })
 
     return {
+      ready,
       [Symbol.asyncIterator]() {
         return this
       },

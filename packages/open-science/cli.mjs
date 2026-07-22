@@ -68,6 +68,15 @@ const VALUE_OPTIONS = {
 const TASK_COMMANDS = new Set(['project', 'run', 'session', 'artifacts'])
 const GROUP_COMMANDS = new Set(['project', 'session', 'artifacts'])
 
+export class CliUsageError extends Error {
+  constructor(message) {
+    super(message)
+    this.name = 'CliUsageError'
+    this.code = 'invalid_cli_usage'
+    this.exitCode = 2
+  }
+}
+
 export const parseCliArgs = (argv) => {
   const args = [...argv]
   const command = args.shift()
@@ -87,15 +96,15 @@ export const parseCliArgs = (argv) => {
     else if (arg === '--wait') options.wait = true
     else if (arg === '--skill') {
       const value = args.shift()
-      if (!value) throw new Error('--skill requires a value.')
+      if (!value) throw new CliUsageError('--skill requires a value.')
       options.skills = [...(options.skills ?? []), value]
     } else if (arg === '-h' || arg === '--help') options.help = true
     else if (Object.hasOwn(VALUE_OPTIONS, arg)) {
       const value = args.shift()
-      if (!value) throw new Error(`${arg} requires a value.`)
+      if (!value) throw new CliUsageError(`${arg} requires a value.`)
       options[VALUE_OPTIONS[arg]] = value
     } else if (arg.startsWith('-')) {
-      throw new Error(`Unknown option: ${arg}`)
+      throw new CliUsageError(`Unknown option: ${arg}`)
     } else {
       positionals.push(arg)
     }
@@ -103,14 +112,16 @@ export const parseCliArgs = (argv) => {
   if (options.port !== undefined) {
     const port = Number.parseInt(options.port, 10)
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      throw new Error(`Invalid port: ${options.port}`)
+      throw new CliUsageError(`Invalid port: ${options.port}`)
     }
     options.port = port
   }
   if (options.approvalProfile && !['ask', 'auto', 'full'].includes(options.approvalProfile)) {
-    throw new Error(`Invalid approval profile: ${options.approvalProfile}`)
+    throw new CliUsageError(`Invalid approval profile: ${options.approvalProfile}`)
   }
-  if (options.json && options.jsonl) throw new Error('Use only one of --json or --jsonl.')
+  if (options.json && options.jsonl) {
+    throw new CliUsageError('Use only one of --json or --jsonl.')
+  }
   return {
     command,
     ...(subcommand ? { subcommand } : {}),
@@ -262,8 +273,8 @@ const startCommand = async (options, deps = DEFAULT_DEPS) => {
   if (await healthCheck(existing, deps)) {
     const url = await authenticatedUrl(existing, deps)
     deps.log(`Open Science is already running (PID ${existing.pid}).`)
-    deps.log(url)
     if (options.open) openBrowser(url)
+    else deps.log('Run "open-science url" to print a browser login URL.')
     return
   }
 
@@ -310,8 +321,8 @@ const startCommand = async (options, deps = DEFAULT_DEPS) => {
   }
   const url = await authenticatedUrl(state, deps)
   deps.log(`Open Science started (PID ${state.pid}).`)
-  deps.log(url)
   if (options.open) openBrowser(url)
+  else deps.log('Run "open-science url" to print a browser login URL.')
 }
 
 const findCurrentState = async (options, deps = DEFAULT_DEPS) => {
@@ -382,7 +393,6 @@ export const statusCommand = async (options, deps = DEFAULT_DEPS) => {
     deps.log(JSON.stringify(running ? { running: true, ...state } : { running: false }, null, 2))
   } else if (running) {
     deps.log(`Open Science is running (PID ${state.pid}, port ${state.port}).`)
-    deps.log(await authenticatedUrl(state, deps))
   } else {
     deps.log('Open Science is not running.')
   }
@@ -431,29 +441,37 @@ const outputValue = (value, options, deps) => {
 
 const readPrompt = async (options, deps) => {
   const sources = [options.prompt !== undefined, options.promptFile !== undefined].filter(Boolean)
-  if (sources.length > 1) throw new Error('Use only one of --prompt or --prompt-file.')
+  if (sources.length > 1) throw new CliUsageError('Use only one of --prompt or --prompt-file.')
   if (options.prompt !== undefined) return options.prompt.trim()
   if (options.promptFile !== undefined) return (await deps.readFile(options.promptFile)).trim()
-  if (deps.stdinIsTTY)
-    throw new Error('Provide --prompt, --prompt-file, or pipe a prompt on stdin.')
+  if (deps.stdinIsTTY) {
+    throw new CliUsageError('Provide --prompt, --prompt-file, or pipe a prompt on stdin.')
+  }
   return (await deps.readStdin()).trim()
 }
 
-const streamRunEvents = async (client, sessionIdRef, options, deps, signal) => {
+const emitRunEvent = (event, options, deps) => {
+  if (options.jsonl) {
+    deps.log(JSON.stringify(event))
+  } else if (
+    event.type === 'run.event' &&
+    event.data?.kind !== 'message' &&
+    (event.data?.title || event.data?.text)
+  ) {
+    deps.log(event.data.title ?? event.data.text)
+  }
+}
+
+const streamRunEvents = async (eventStream, sessionIdRef, options, deps, signal) => {
   try {
-    for await (const event of client.events({ signal })) {
+    for await (const event of eventStream) {
       const eventSessionId = event?.data?.sessionId
-      if (sessionIdRef.current && eventSessionId && eventSessionId !== sessionIdRef.current)
+      if (!sessionIdRef.current) {
+        sessionIdRef.pending.push(event)
         continue
-      if (options.jsonl) {
-        deps.log(JSON.stringify(event))
-      } else if (
-        event.type === 'run.event' &&
-        event.data?.kind !== 'message' &&
-        (event.data?.title || event.data?.text)
-      ) {
-        deps.log(event.data.title ?? event.data.text)
       }
+      if (eventSessionId && eventSessionId !== sessionIdRef.current) continue
+      emitRunEvent(event, options, deps)
     }
   } catch (error) {
     if (!signal.aborted) throw error
@@ -471,7 +489,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
   }
   if (command === 'project' && subcommand === 'create') {
     const name = positionals.join(' ').trim()
-    if (!name) throw new Error('Project name is required.')
+    if (!name) throw new CliUsageError('Project name is required.')
     outputValue(
       await client.createProject({ name, description: options.description }),
       options,
@@ -481,35 +499,39 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
   }
   if (command === 'session' && subcommand === 'status') {
     const sessionId = positionals[0]
-    if (!sessionId) throw new Error('Session id is required.')
+    if (!sessionId) throw new CliUsageError('Session id is required.')
     outputValue(await client.getSession(sessionId), options, deps)
     return
   }
   if (command === 'artifacts' && subcommand === 'list') {
     const sessionId = positionals[0]
-    if (!sessionId) throw new Error('Session id is required.')
+    if (!sessionId) throw new CliUsageError('Session id is required.')
     outputValue(await client.listArtifacts(sessionId), options, deps)
     return
   }
   if (command === 'artifacts' && subcommand === 'download') {
     const artifactId = positionals[0]
-    if (!artifactId) throw new Error('Artifact id is required.')
-    if (!options.output) throw new Error('--output is required.')
+    if (!artifactId) throw new CliUsageError('Artifact id is required.')
+    if (!options.output) throw new CliUsageError('--output is required.')
     const response = await client.downloadArtifact(artifactId)
     await deps.writeDownload(response, options.output)
     outputValue({ artifactId, output: resolve(options.output) }, options, deps)
     return
   }
   if (command === 'run') {
-    if (!options.project) throw new Error('--project is required.')
+    if (!options.project) throw new CliUsageError('--project is required.')
     const prompt = await readPrompt(options, deps)
-    if (!prompt) throw new Error('Prompt is required.')
-    const sessionIdRef = { current: options.session }
+    if (!prompt) throw new CliUsageError('Prompt is required.')
+    const sessionIdRef = { current: options.session, pending: [] }
     const abortController = new AbortController()
-    const eventTask =
+    const eventStream =
       options.wait && !options.json && typeof client.events === 'function'
-        ? streamRunEvents(client, sessionIdRef, options, deps, abortController.signal)
+        ? client.events({ signal: abortController.signal })
         : undefined
+    await eventStream?.ready
+    const eventTask = eventStream
+      ? streamRunEvents(eventStream, sessionIdRef, options, deps, abortController.signal)
+      : undefined
     let result
     try {
       const started = await client.startRun({
@@ -520,6 +542,12 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
         ...(options.skills?.length ? { skillIds: options.skills } : {})
       })
       sessionIdRef.current = started.sessionId
+      for (const event of sessionIdRef.pending.splice(0)) {
+        const eventSessionId = event?.data?.sessionId
+        if (!eventSessionId || eventSessionId === sessionIdRef.current) {
+          emitRunEvent(event, options, deps)
+        }
+      }
       result = options.wait ? await client.waitForRun(started.id) : started
     } finally {
       abortController.abort()
@@ -533,7 +561,35 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     return
   }
 
-  throw new Error(`Unknown command: ${[command, subcommand].filter(Boolean).join(' ')}`)
+  throw new CliUsageError(`Unknown command: ${[command, subcommand].filter(Boolean).join(' ')}`)
+}
+
+export const reportCliError = (error, argv = process.argv.slice(2), dependencies = {}) => {
+  const deps = {
+    error: (...args) => console.error(...args),
+    setExitCode: (code) => {
+      process.exitCode = code
+    },
+    ...dependencies
+  }
+  const code = error?.code ?? 'command_failed'
+  const message = error instanceof Error ? error.message : String(error)
+  const exitCode =
+    error?.exitCode ??
+    (code === 'daemon_unavailable'
+      ? 3
+      : ['project_not_found', 'session_not_found', 'run_not_found', 'artifact_not_found'].includes(
+            code
+          )
+        ? 4
+        : 1)
+  if (argv.includes('--json') || argv.includes('--jsonl')) {
+    deps.error(JSON.stringify({ error: { code, message }, exitCode }))
+  } else {
+    deps.error(message)
+  }
+  deps.setExitCode(exitCode)
+  return exitCode
 }
 
 export const runCli = async (argv = process.argv.slice(2)) => {
@@ -548,14 +604,11 @@ export const runCli = async (argv = process.argv.slice(2)) => {
   else if (command === 'status') await statusCommand(options)
   else if (command === 'url') await urlCommand(options)
   else if (TASK_COMMANDS.has(command)) await runTaskCommand(parsed)
-  else throw new Error(`Unknown command: ${command}\n\n${usage}`)
+  else throw new CliUsageError(`Unknown command: ${command}\n\n${usage}`)
 }
 
 const isEntryPoint =
   process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))
 if (isEntryPoint) {
-  runCli().catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error))
-    process.exitCode = 1
-  })
+  runCli().catch((error) => reportCliError(error))
 }

@@ -83,7 +83,7 @@ export class OpenScienceClient {
   }): AsyncIterable<{
     type: 'run.event' | 'permission.requested'
     data: unknown
-  }>
+  }> & { ready: Promise<void> }
 }
 
 export function connectToOpenScience(options?: {
