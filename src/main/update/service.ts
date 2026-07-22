@@ -118,12 +118,14 @@ export class UpdateService implements UpdateStrategy {
         })
         return this.status
       }
+      const download = selectDownload(manifest, this.platform, this.arch) ?? undefined
       this.setStatus({
         state: 'available',
         current: this.currentVersion,
         latest: manifest.version,
         notes: manifest.notes,
-        download: selectDownload(manifest, this.platform, this.arch) ?? undefined
+        download,
+        totalBytes: download?.size
       })
     } catch (error) {
       this.setStatus({

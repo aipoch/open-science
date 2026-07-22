@@ -145,7 +145,7 @@ import type {
   StorageInfo
 } from '../shared/storage'
 import type { CliLauncherStatus } from '../shared/cli'
-import type { AppInfo, UpdateStatus } from '../shared/update'
+import type { AppInfo, DownloadProgress, UpdateStatus } from '../shared/update'
 import type {
   DeleteUploadRequest,
   FinalizeUploadSessionRequest,
@@ -295,7 +295,7 @@ type OpenScienceAPI = {
     cancel: () => Promise<UpdateStatus>
     apply: () => Promise<UpdateStatus>
     onStatus: (listener: (status: UpdateStatus) => void) => RemoveListener
-    onProgress: (listener: (percent: number) => void) => RemoveListener
+    onProgress: (listener: (progress: DownloadProgress) => void) => RemoveListener
   }
   projects: {
     list: () => Promise<Project[]>

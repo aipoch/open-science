@@ -345,4 +345,22 @@ describe('ElectronUpdaterStrategy', () => {
     const status = await strategy.check()
     expect(status.notes).toBe('')
   })
+
+  it('hydrates totalBytes from the CDN manifest when the version matches', async () => {
+    const updater = new FakeUpdater()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      platform: 'darwin',
+      arch: 'arm64',
+      broadcast: vi.fn(),
+      fetchImpl: manifestFetch({
+        version: '0.3.0',
+        downloads: { 'mac-arm64': { url: 'https://cdn/x.dmg', size: 99000, sha256: 'a' } },
+        notes: 'notes'
+      })
+    })
+    const status = await strategy.check()
+    expect(status.totalBytes).toBe(99000)
+  })
 })
