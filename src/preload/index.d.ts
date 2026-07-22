@@ -44,7 +44,7 @@ import type { OpenSessionFromNotificationRequest } from '../shared/notifications
 import type {
   ProjectDeletedEvent,
   SessionDeletedEvent,
-  SessionSavedEvent
+  SessionUpsertEvent
 } from '../shared/lifecycle-events'
 import type {
   AppendNotebookCodeCellRequest,
@@ -189,6 +189,9 @@ interface OpenScienceAPI {
     chrome: string
     node: string
   }
+  lifecycle: {
+    getClientId(): Promise<string>
+  }
   acp: {
     getState(): Promise<AcpStateSnapshot>
     connect(request?: AcpConnectRequest): Promise<AcpStateSnapshot>
@@ -211,7 +214,8 @@ interface OpenScienceAPI {
     saveSession(session: PersistedChatSession): Promise<void>
     deleteSession(request: DeleteSessionRequest): Promise<void>
     saveManifest(request: SaveSessionManifestRequest): Promise<void>
-    onSaved(listener: AcpListener<SessionSavedEvent>): RemoveListener
+    onCreated(listener: AcpListener<SessionUpsertEvent>): RemoveListener
+    onUpdated(listener: AcpListener<SessionUpsertEvent>): RemoveListener
     onDeleted(listener: AcpListener<SessionDeletedEvent>): RemoveListener
   }
   settings: {

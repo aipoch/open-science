@@ -1,9 +1,9 @@
 import type { Project } from './projects'
 import type { PersistedChatSession } from './session-persistence'
 
-type SessionSavedEvent = {
+type SessionUpsertEvent = {
   session: PersistedChatSession
-  created: boolean
+  originClientId: string
 }
 
 type ProjectDeletedEvent = {
@@ -16,12 +16,14 @@ type SessionDeletedEvent = {
 }
 
 const LIFECYCLE_CHANNELS = {
+  clientId: 'lifecycle:client-id',
   projectCreated: 'project:created',
   projectUpdated: 'project:updated',
   projectDeleted: 'project:deleted',
-  sessionSaved: 'session:saved',
+  sessionCreated: 'session:created',
+  sessionUpdated: 'session:updated',
   sessionDeleted: 'session:deleted'
 } as const
 
 export { LIFECYCLE_CHANNELS }
-export type { Project, ProjectDeletedEvent, SessionDeletedEvent, SessionSavedEvent }
+export type { Project, ProjectDeletedEvent, SessionDeletedEvent, SessionUpsertEvent }

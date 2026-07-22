@@ -51,6 +51,23 @@ describe('project store', () => {
     expect(useProjectStore.getState().projects).toEqual([])
   })
 
+  it('ignores an older project load that resolves after a newer request', async () => {
+    const first = createDeferred<Project[]>()
+    const second = createDeferred<Project[]>()
+    setProjectsApi({
+      list: vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    })
+
+    const firstLoad = useProjectStore.getState().loadProjects()
+    const secondLoad = useProjectStore.getState().loadProjects()
+    second.resolve([createProject({ id: 'new', updatedAt: 2 })])
+    await secondLoad
+    first.resolve([createProject({ id: 'old', updatedAt: 1 })])
+    await firstLoad
+
+    expect(useProjectStore.getState().projects.map((candidate) => candidate.id)).toEqual(['new'])
+  })
+
   it('merges a created project into the cache and returns it', async () => {
     const created = createProject({ id: 'created', name: 'New', updatedAt: 500 })
     setProjectsApi({ create: vi.fn().mockResolvedValue(created) })
@@ -73,3 +90,11 @@ describe('project store', () => {
     expect(useProjectStore.getState().projects.map((project) => project.id)).toEqual(['keep'])
   })
 })
+
+const createDeferred = <T>(): { promise: Promise<T>; resolve: (value: T) => void } => {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((innerResolve) => {
+    resolve = innerResolve
+  })
+  return { promise, resolve }
+}

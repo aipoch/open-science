@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
-import type { SessionSavedEvent } from '../../../shared/lifecycle-events'
+import type { SessionUpsertEvent } from '../../../shared/lifecycle-events'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
@@ -17,53 +17,103 @@ type LifecycleSyncResult = {
   viewNotice: () => void
 }
 
-const useLifecycleSync = (): LifecycleSyncResult => {
-  const [notice, setNotice] = useState<ExternalSessionNotice | undefined>()
+type LifecycleSyncOptions = {
+  isSessionPersistenceReady: boolean
+}
 
-  useEffect(() => {
+const useLifecycleSync = ({
+  isSessionPersistenceReady
+}: LifecycleSyncOptions): LifecycleSyncResult => {
+  const [notice, setNotice] = useState<ExternalSessionNotice | undefined>()
+  const isProjectPersistenceReady = useProjectStore((state) => state.isLoaded)
+  const isHydrated = isSessionPersistenceReady && isProjectPersistenceReady
+  const isHydratedRef = useRef(isHydrated)
+  const lifecycleClientIdRef = useRef<string | null | undefined>(undefined)
+  const pendingActionsRef = useRef<Array<() => void>>([])
+
+  const flushPendingActions = useCallback((): void => {
+    if (!isHydratedRef.current || lifecycleClientIdRef.current === undefined) return
+
+    const pendingActions = pendingActionsRef.current.splice(0)
+    for (const action of pendingActions) action()
+  }, [])
+
+  useLayoutEffect(() => {
+    isHydratedRef.current = isHydrated
+    flushPendingActions()
+  }, [flushPendingActions, isHydrated])
+
+  useLayoutEffect(() => {
+    let isSubscribed = true
+    const applyOrQueue = (action: () => void): void => {
+      if (isHydratedRef.current && lifecycleClientIdRef.current !== undefined) action()
+      else pendingActionsRef.current.push(action)
+    }
+    void window.api.lifecycle
+      .getClientId()
+      .then((clientId) => {
+        if (!isSubscribed) return
+        lifecycleClientIdRef.current = clientId
+        flushPendingActions()
+      })
+      .catch((error: unknown) => {
+        if (!isSubscribed) return
+        console.warn('Unable to identify lifecycle client', error)
+        lifecycleClientIdRef.current = null
+        flushPendingActions()
+      })
     const removeProjectCreated = window.api.projects.onCreated((project) => {
-      useProjectStore.getState().upsertProject(project)
+      applyOrQueue(() => useProjectStore.getState().upsertProject(project))
     })
     const removeProjectUpdated = window.api.projects.onUpdated((project) => {
-      useProjectStore.getState().upsertProject(project)
+      applyOrQueue(() => useProjectStore.getState().upsertProject(project))
     })
     const removeProjectDeleted = window.api.projects.onDeleted(({ projectId }) => {
-      useProjectStore.getState().removeProject(projectId)
-      useSessionStore.getState().removeSessionsForProject(projectId)
-      if (useNavigationStore.getState().activeProjectId === projectId) {
-        useNavigationStore.getState().goHome()
-      }
-      setNotice((current) => (current?.projectId === projectId ? undefined : current))
-    })
-    const removeSessionSaved = window.api.sessions.onSaved(
-      ({ session, created }: SessionSavedEvent) => {
-        const existed = useSessionStore
-          .getState()
-          .sessions.some((candidate) => candidate.id === session.id)
-        useSessionStore.getState().upsertPersistedSession(session)
-
-        if (created && !existed) {
-          setNotice({
-            projectId: session.projectId,
-            sessionId: session.id,
-            title: session.title
-          })
+      applyOrQueue(() => {
+        useProjectStore.getState().removeProject(projectId)
+        useSessionStore.getState().removeSessionsForProject(projectId)
+        if (useNavigationStore.getState().activeProjectId === projectId) {
+          useNavigationStore.getState().goHome()
         }
+        setNotice((current) => (current?.projectId === projectId ? undefined : current))
+      })
+    })
+    const removeSessionCreated = window.api.sessions.onCreated(
+      ({ session, originClientId }: SessionUpsertEvent) => {
+        applyOrQueue(() => {
+          useSessionStore.getState().upsertPersistedSession(session)
+
+          if (originClientId !== lifecycleClientIdRef.current) {
+            setNotice({
+              projectId: session.projectId,
+              sessionId: session.id,
+              title: session.title
+            })
+          }
+        })
       }
     )
+    const removeSessionUpdated = window.api.sessions.onUpdated(({ session }) => {
+      applyOrQueue(() => useSessionStore.getState().upsertPersistedSession(session))
+    })
     const removeSessionDeleted = window.api.sessions.onDeleted(({ sessionId }) => {
-      useSessionStore.getState().deleteSession(sessionId)
-      setNotice((current) => (current?.sessionId === sessionId ? undefined : current))
+      applyOrQueue(() => {
+        useSessionStore.getState().deleteSession(sessionId)
+        setNotice((current) => (current?.sessionId === sessionId ? undefined : current))
+      })
     })
 
     return () => {
+      isSubscribed = false
       removeProjectCreated()
       removeProjectUpdated()
       removeProjectDeleted()
-      removeSessionSaved()
+      removeSessionCreated()
+      removeSessionUpdated()
       removeSessionDeleted()
+      pendingActionsRef.current = []
     }
-  }, [])
+  }, [flushPendingActions])
 
   const dismissNotice = useCallback(() => setNotice(undefined), [])
   const viewNotice = useCallback(() => {
@@ -76,4 +126,4 @@ const useLifecycleSync = (): LifecycleSyncResult => {
 }
 
 export { useLifecycleSync }
-export type { ExternalSessionNotice, LifecycleSyncResult }
+export type { ExternalSessionNotice, LifecycleSyncOptions, LifecycleSyncResult }

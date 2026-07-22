@@ -14,7 +14,11 @@ vi.mock('electron', () => ({
       ipcHandlers.set(channel, handler)
   }
 }))
-vi.mock('../lifecycle-broadcast', () => ({ broadcastLifecycleEvent }))
+vi.mock('../lifecycle-broadcast', () => ({
+  broadcastLifecycleEvent,
+  getLifecycleClientId: (event: { sender: { id: number; lifecycleClientId?: string } }) =>
+    event.sender.lifecycleClientId ?? `electron:${event.sender.id}`
+}))
 
 import {
   createSessionPersistenceHandlers,
@@ -133,7 +137,7 @@ describe('session persistence IPC handlers', () => {
     const loadResult = { sessions: [session], manifest: { version: 1 as const } }
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn().mockResolvedValue(loadResult),
-      saveSession: vi.fn().mockResolvedValue(true),
+      saveSession: vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false),
       deleteSession: vi.fn().mockResolvedValue(undefined),
       deleteProjectSessions: vi.fn().mockResolvedValue(undefined),
       saveManifest: vi.fn().mockResolvedValue(undefined)
@@ -150,18 +154,25 @@ describe('session persistence IPC handlers', () => {
 
     const deleteRequest = { projectId: 'project-a', sessionId: 'session-1' }
     const manifestRequest = { lastProjectId: 'project-a', lastSessionId: 'session-1' }
+    const event = { sender: { id: -2, lifecycleClientId: 'web:browser-1' } }
     await expect(ipcHandlers.get('sessions:load-all')?.()).resolves.toBe(loadResult)
-    await ipcHandlers.get('sessions:save-session')?.(undefined, session)
-    await ipcHandlers.get('sessions:delete-session')?.(undefined, deleteRequest)
+    await ipcHandlers.get('sessions:save-session')?.(event, session)
+    const updatedSession = { ...session, title: 'Updated session', updatedAt: 1710000000001 }
+    await ipcHandlers.get('sessions:save-session')?.(event, updatedSession)
+    await ipcHandlers.get('sessions:delete-session')?.(event, deleteRequest)
     await ipcHandlers.get('sessions:save-manifest')?.(undefined, manifestRequest)
 
     expect(repository.saveSession).toHaveBeenCalledWith(session)
     expect(repository.deleteSession).toHaveBeenCalledWith('project-a', 'session-1')
     expect(reviewRepository.deleteReviewsForSession).toHaveBeenCalledWith('session-1')
     expect(repository.saveManifest).toHaveBeenCalledWith(manifestRequest)
-    expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:saved', {
+    expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:created', {
       session,
-      created: true
+      originClientId: 'web:browser-1'
+    })
+    expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:updated', {
+      session: updatedSession,
+      originClientId: 'web:browser-1'
     })
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:deleted', deleteRequest)
   })

@@ -46,7 +46,7 @@ import type { OpenSessionFromNotificationRequest } from '../shared/notifications
 import type {
   ProjectDeletedEvent,
   SessionDeletedEvent,
-  SessionSavedEvent
+  SessionUpsertEvent
 } from '../shared/lifecycle-events'
 import type {
   AppendNotebookCodeCellRequest,
@@ -212,6 +212,9 @@ type OpenScienceAPI = {
     chrome: string
     node: string
   }
+  lifecycle: {
+    getClientId: () => Promise<string>
+  }
   acp: {
     getState: () => Promise<AcpStateSnapshot>
     connect: (request?: AcpConnectRequest) => Promise<AcpStateSnapshot>
@@ -234,7 +237,8 @@ type OpenScienceAPI = {
     saveSession: (session: PersistedChatSession) => Promise<void>
     deleteSession: (request: DeleteSessionRequest) => Promise<void>
     saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
-    onSaved: (listener: AcpListener<SessionSavedEvent>) => RemoveListener
+    onCreated: (listener: AcpListener<SessionUpsertEvent>) => RemoveListener
+    onUpdated: (listener: AcpListener<SessionUpsertEvent>) => RemoveListener
     onDeleted: (listener: AcpListener<SessionDeletedEvent>) => RemoveListener
   }
   settings: {
@@ -565,6 +569,9 @@ const api: OpenScienceAPI = {
     chrome: process.versions.chrome,
     node: process.versions.node
   }),
+  lifecycle: {
+    getClientId: () => ipcRenderer.invoke('lifecycle:client-id') as Promise<string>
+  },
   acp: {
     getState: () => ipcRenderer.invoke('acp:get-state') as Promise<AcpStateSnapshot>,
     connect: (request = {}) =>
@@ -602,7 +609,8 @@ const api: OpenScienceAPI = {
     // Persists the last-open project/session pointer.
     saveManifest: (request) =>
       ipcRenderer.invoke('sessions:save-manifest', request) as Promise<void>,
-    onSaved: (listener) => onIpcMessage('session:saved', listener),
+    onCreated: (listener) => onIpcMessage('session:created', listener),
+    onUpdated: (listener) => onIpcMessage('session:updated', listener),
     onDeleted: (listener) => onIpcMessage('session:deleted', listener)
   },
   settings: {

@@ -1,3 +1,6 @@
+import { ipcMain } from 'electron'
+
+import { LIFECYCLE_CHANNELS } from '../shared/lifecycle-events'
 import { createLogger } from './logger'
 import { broadcastToRenderers } from './renderer-broadcast'
 
@@ -16,4 +19,12 @@ const broadcastLifecycleEvent = <Payload>(channel: string, payload: Payload): vo
   }
 }
 
-export { broadcastLifecycleEvent }
+const getLifecycleClientId = (event: {
+  sender: { id: number; lifecycleClientId?: string }
+}): string => event.sender.lifecycleClientId ?? `electron:${event.sender.id}`
+
+const registerLifecycleIpcHandlers = (): void => {
+  ipcMain.handle(LIFECYCLE_CHANNELS.clientId, (event) => getLifecycleClientId(event))
+}
+
+export { broadcastLifecycleEvent, getLifecycleClientId, registerLifecycleIpcHandlers }

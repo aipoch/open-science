@@ -85,8 +85,12 @@ const reportPersistenceError = (error: unknown): void => {
 }
 
 // Hydrates the in-memory session store from the per-session files loaded by the main process.
-const loadPersistedSessions = async (api: SessionPersistenceApi): Promise<void> => {
+const loadPersistedSessions = async (
+  api: SessionPersistenceApi,
+  shouldHydrate: () => boolean = () => true
+): Promise<void> => {
   const { sessions, manifest } = await api.loadAll()
+  if (!shouldHydrate()) return
 
   useSessionStore.getState().hydrateSessions(sessions, manifest)
 }
@@ -171,7 +175,7 @@ const useSessionPersistence = (): boolean => {
     // Loads before subscribing so the initial empty store cannot overwrite disk state.
     const startPersistence = async (): Promise<void> => {
       try {
-        await loadPersistedSessions(window.api.sessions)
+        await loadPersistedSessions(window.api.sessions, () => isMounted)
       } catch (error) {
         reportPersistenceError(error)
       }

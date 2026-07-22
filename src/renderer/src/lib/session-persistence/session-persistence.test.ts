@@ -128,6 +128,17 @@ describe('renderer session persistence bridge', () => {
     expect(useSessionStore.getState().selectedSessionId).toBe('session-1')
   })
 
+  it('does not hydrate a session snapshot after its startup effect is cancelled', async () => {
+    const deferred = createDeferred<LoadAllSessionsResult>()
+    const api = createApi({ loadAll: vi.fn().mockReturnValue(deferred.promise) })
+    const load = loadPersistedSessions(api, () => false)
+
+    deferred.resolve(createLoadResult())
+    await load
+
+    expect(useSessionStore.getState().sessions).toEqual([])
+  })
+
   it('does not echo an externally hydrated session back to persistence', async () => {
     const api = createApi()
     const save = createStoreSaver(api)

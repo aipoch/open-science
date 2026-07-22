@@ -7,7 +7,7 @@ import type {
   SaveSessionManifestRequest
 } from '../../shared/session-persistence'
 import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
-import { broadcastLifecycleEvent } from '../lifecycle-broadcast'
+import { broadcastLifecycleEvent, getLifecycleClientId } from '../lifecycle-broadcast'
 import { resolveStorageRoot } from '../storage-root'
 import { SessionRepository } from './repository'
 import { ReviewRepository } from '../reviewer/repository'
@@ -68,9 +68,15 @@ const registerSessionPersistenceIpcHandlers = (
 
   // Keep persistence IPC separate from ACP runtime commands; it owns durable UI state only.
   ipcMain.handle('sessions:load-all', () => handlers.loadAll())
-  ipcMain.handle('sessions:save-session', async (_event, session: PersistedChatSession) => {
+  ipcMain.handle('sessions:save-session', async (event, session: PersistedChatSession) => {
     const created = await handlers.saveSession(session)
-    broadcastLifecycleEvent(LIFECYCLE_CHANNELS.sessionSaved, { session, created })
+    broadcastLifecycleEvent(
+      created ? LIFECYCLE_CHANNELS.sessionCreated : LIFECYCLE_CHANNELS.sessionUpdated,
+      {
+        session,
+        originClientId: getLifecycleClientId(event)
+      }
+    )
   })
   ipcMain.handle('sessions:delete-session', async (_event, request: DeleteSessionRequest) => {
     await handlers.deleteSession(request)

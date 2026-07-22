@@ -27,7 +27,7 @@ import { useUpdateStore } from '@/stores/update-store'
 const App = (): React.JSX.Element | null => {
   // Persistence is started once at the top so sessions stay loaded for both Home and Workspace.
   const isSessionPersistenceReady = useSessionPersistence()
-  const lifecycleSync = useLifecycleSync()
+  const lifecycleSync = useLifecycleSync({ isSessionPersistenceReady })
   const view = useNavigationStore((state) => state.view)
   // Cmd+W / Ctrl+W closes the open preview panel before it closes the window.
   useCloseActivePaneShortcut()

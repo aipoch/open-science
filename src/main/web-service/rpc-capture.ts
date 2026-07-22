@@ -6,10 +6,12 @@ type IpcHandler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown
 
 class WebIpcSender extends EventEmitter {
   readonly id: number
+  readonly lifecycleClientId: string
 
-  constructor(id: number) {
+  constructor(id: number, clientId: string) {
     super()
     this.id = id
+    this.lifecycleClientId = `web:${clientId}`
   }
 
   destroy(): void {
@@ -39,7 +41,7 @@ const installRpcCapture = (ipcMain: IpcMain): RpcCapture => {
   const senderFor = (clientId: string): WebIpcSender => {
     const existing = senders.get(clientId)
     if (existing) return existing
-    const sender = new WebIpcSender(nextSenderId--)
+    const sender = new WebIpcSender(nextSenderId--, clientId)
     senders.set(clientId, sender)
     return sender
   }

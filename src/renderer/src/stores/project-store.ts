@@ -32,6 +32,8 @@ const upsertProjectList = (projects: Project[], project: Project): Project[] => 
   return sortByUpdatedDesc([project, ...withoutProject])
 }
 
+let projectLoadSequence = 0
+
 export const createInitialProjectState = (): ProjectStoreData => ({
   projects: [],
   isLoaded: false,
@@ -45,11 +47,14 @@ export const useProjectStore = create<ProjectStore>((set) => ({
   // Loads the full project list once at startup and after mutations that need a resync. A DB/IPC
   // failure is recorded (not thrown) so the home screen can show an error instead of a silent empty list.
   loadProjects: async () => {
+    const loadSequence = ++projectLoadSequence
     try {
       const projects = await window.api.projects.list()
+      if (loadSequence !== projectLoadSequence) return
 
       set({ projects: sortByUpdatedDesc(projects), isLoaded: true, loadError: undefined })
     } catch (error) {
+      if (loadSequence !== projectLoadSequence) return
       set({ isLoaded: true, loadError: describeError(error) })
     }
   },
