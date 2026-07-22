@@ -1207,8 +1207,16 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(backend.authentication).toBeUndefined()
     expect(backend.providerConfiguration).toBeUndefined()
     expect(backend.env.CODEX_API_KEY).toBeUndefined()
-    expect(backend.env.CODEX_CONFIG).toBeUndefined()
-    expect(backend.env.MODEL_PROVIDER).toBeUndefined()
+    if (type === 'codex-isolated') {
+      // Seed the selected model into CODEX_CONFIG so codex-acp uses it from session start and the
+      // first prompt doesn't wait for the late session/set_config_option model switch (issue #277).
+      // The ChatGPT subscription is codex-acp's default provider, so no model_provider override.
+      expect(JSON.parse(backend.env.CODEX_CONFIG ?? '{}')).toEqual({ model: 'gpt-5.6-terra' })
+      expect(backend.env.MODEL_PROVIDER).toBeUndefined()
+    } else {
+      expect(backend.env.CODEX_CONFIG).toBeUndefined()
+      expect(backend.env.MODEL_PROVIDER).toBeUndefined()
+    }
     expect(backend.env.NO_BROWSER).toBeUndefined()
     expect(backend.env.CODEX_PATH).toBe('/data/codex-managed/native/codex')
     expect(backend.env.CODEX_HOME).toBe(

@@ -90,6 +90,30 @@ const normalizeResponsesBaseUrl = (value: string | undefined): string | undefine
   return normalized
 }
 
+// Codex config takes low|medium|high|xhigh; the app's top level 'max' maps onto 'xhigh'.
+// 'default' is filtered upstream (never reaches here), but stay defensive and omit it too.
+const codexReasoningEffortFor = (effort: ReasoningEffort | undefined): string | undefined =>
+  effort === 'max'
+    ? 'xhigh'
+    : effort === 'low' || effort === 'medium' || effort === 'high'
+      ? effort
+      : undefined
+
+// Just the model + reasoning-effort fields a Codex config can carry, with no provider plumbing.
+// The bridge path layers the open-science custom provider on top of this; the codex-isolated path
+// uses it on its own so codex-acp can drive the ChatGPT subscription with the user's selected
+// model from session start (issue #277).
+const buildCodexModelOptions = (input: {
+  model?: string
+  reasoningEffort?: ReasoningEffort
+}): Record<string, unknown> => {
+  const codexEffort = codexReasoningEffortFor(input.reasoningEffort)
+  return {
+    ...(input.model ? { model: input.model } : {}),
+    ...(codexEffort ? { model_reasoning_effort: codexEffort } : {})
+  }
+}
+
 const buildCodexConfig = (provider: {
   baseUrl?: string
   model?: string
@@ -97,20 +121,9 @@ const buildCodexConfig = (provider: {
   reasoningEffort?: ReasoningEffort
 }): Record<string, unknown> => {
   const baseUrl = normalizeResponsesBaseUrl(provider.baseUrl)
-  // Codex config takes low|medium|high|xhigh; the app's top level 'max' maps onto 'xhigh'.
-  // 'default' is filtered upstream (never reaches here), but stay defensive and omit it too.
-  const codexEffort =
-    provider.reasoningEffort === 'max'
-      ? 'xhigh'
-      : provider.reasoningEffort === 'low' ||
-          provider.reasoningEffort === 'medium' ||
-          provider.reasoningEffort === 'high'
-        ? provider.reasoningEffort
-        : undefined
 
   return {
-    ...(provider.model ? { model: provider.model } : {}),
-    ...(codexEffort ? { model_reasoning_effort: codexEffort } : {}),
+    ...buildCodexModelOptions(provider),
     model_provider: CODEX_PROVIDER_ID,
     model_providers: {
       [CODEX_PROVIDER_ID]: {
@@ -219,12 +232,28 @@ export const createCodexFramework = ({
 
   prepareModelConfig(provider, ctx: ModelConfigContext): AgentModelConfig {
     if (isCodexSubscriptionProvider(provider.type)) {
-      return {
-        env:
-          provider.type === 'codex-isolated'
-            ? { CODEX_HOME: codexSubscriptionStorageDir(ctx.storageRoot) }
-            : {}
+      if (provider.type === 'codex-isolated') {
+        // The isolated home has no pre-existing config.toml and no CODEX_CONFIG of its own, so without
+        // a model here codex-acp falls back to its account default and we have to switch models via
+        // session/set_config_option AFTER session creation. That late switch makes the first prompt of
+        // every new session wait ~2 min for the new model to come online (issue #277). Seed the model
+        // + reasoning effort into CODEX_CONFIG so codex-acp uses the right model from session start
+        // and the first prompt is fast. No model_provider/model_providers override here — the ChatGPT
+        // subscription is codex-acp's default provider, configured by the user's stored credentials.
+        const modelOptions = buildCodexModelOptions({
+          model: provider.model,
+          reasoningEffort: ctx.reasoningEffort
+        })
+        const codexConfigJson =
+          Object.keys(modelOptions).length > 0 ? JSON.stringify(modelOptions) : undefined
+        return {
+          env: {
+            CODEX_HOME: codexSubscriptionStorageDir(ctx.storageRoot),
+            ...(codexConfigJson ? { CODEX_CONFIG: codexConfigJson } : {})
+          }
+        }
       }
+      return { env: {} }
     }
 
     const bridge = ctx.responsesBridge

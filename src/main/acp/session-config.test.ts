@@ -29,7 +29,10 @@ describe('matchSessionModelOption', () => {
   })
 
   it('prefers an exact value match over a suffix match', () => {
-    const options = [modelOption(['claude-sonnet-4-5', 'anthropic/claude-sonnet-4-5'])]
+    // currentValue is pinned to a different option so the desired value actually needs to be applied.
+    const options = [
+      modelOption(['openai/gpt-5', 'claude-sonnet-4-5', 'anthropic/claude-sonnet-4-5'])
+    ]
 
     expect(matchSessionModelOption(options, 'claude-sonnet-4-5')).toEqual({
       configId: 'model',
@@ -70,6 +73,30 @@ describe('matchSessionModelOption', () => {
     expect(matchSessionModelOption(options, 'y-model')).toEqual({
       configId: 'primary_model',
       value: 'x/y-model'
+    })
+  })
+
+  it("skips the round-trip when the desired model is already the option's current value", () => {
+    // codex-acp treats every session/set_config_option as a model reload, so re-sending the same
+    // value stalls the first prompt of a freshly created session (issue #277). When the option is
+    // already at the desired value there is nothing to apply — return undefined and let the runtime
+    // skip the call.
+    const options = [modelOption(['gpt-5.6-terra', 'gpt-5', 'gpt-5-mini'])]
+
+    expect(matchSessionModelOption(options, 'gpt-5.6-terra')).toBeUndefined()
+  })
+
+  it('still applies when currentValue differs from the desired model even if a value matches', () => {
+    // Sanity check that the skip is gated on currentValue === desiredModel and not on any value
+    // match within the option: currentValue is pinned to a different model so the desired one
+    // genuinely needs to be applied.
+    const options = [
+      modelOption(['gpt-5', 'gpt-5.6-terra', 'gpt-5-mini'], { currentValue: 'gpt-5' })
+    ]
+
+    expect(matchSessionModelOption(options, 'gpt-5.6-terra')).toEqual({
+      configId: 'model',
+      value: 'gpt-5.6-terra'
     })
   })
 })

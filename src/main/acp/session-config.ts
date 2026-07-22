@@ -34,7 +34,9 @@ const collectSelectValues = (options: unknown): string[] => {
 // drive an agent's per-session model (opencode surfaces model as a `model` configOption). Matches the
 // desired model against option values exactly, else by the segment after the last '/', since opencode
 // ids are `<provider>/<model>` while the app stores the bare model. Returns undefined when there is no
-// model option or no matching value, so the agent keeps its own default rather than erroring.
+// model option, no matching value, or the desired value already matches the option's current value —
+// the last case avoids a redundant session/set_config_option round-trip that, on codex-acp, looks like
+// a model reload and stalls the first prompt of a new session (issue #277).
 export const matchSessionModelOption = (
   configOptions: readonly SessionConfigOption[] | null | undefined,
   desiredModel: string | undefined
@@ -47,6 +49,11 @@ export const matchSessionModelOption = (
   )
 
   if (!option || option.type !== 'select') return undefined
+
+  // Skip the round-trip when the desired model is already the option's current selection. codex-acp
+  // treats set_config_option as a model switch and reloads on every call, so even sending the same
+  // value back would make the first prompt of a freshly created session wait ~2 min for nothing.
+  if (option.currentValue === desiredModel) return undefined
 
   const values = collectSelectValues(option.options)
   const match =
