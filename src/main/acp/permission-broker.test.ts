@@ -221,7 +221,7 @@ describe('ACP permission broker', () => {
     expect(emittedRequests).toHaveLength(2)
   })
 
-  it('remembers Always for shell by full command signature, not just the executable', async () => {
+  it('remembers Always for shell by leading executable', async () => {
     const emittedRequests: string[] = []
     const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))
 
@@ -231,23 +231,23 @@ describe('ACP permission broker', () => {
     broker.respond({ requestId: emittedRequests[0], optionId: 'allow-always' })
     await firstBash
 
-    // The exact same command auto-approves.
-    const sameBash = broker.requestPermission(
-      createToolPermissionRequest({ title: 'python a.py', providerToolName: 'Bash' })
+    // The same executable with different arguments auto-approves.
+    const secondBash = broker.requestPermission(
+      createToolPermissionRequest({ title: 'python b.py', providerToolName: 'Bash' })
     )
-    await expect(sameBash).resolves.toEqual({
+    await expect(secondBash).resolves.toEqual({
       outcome: { outcome: 'selected', optionId: 'allow-once' }
     })
     expect(emittedRequests).toHaveLength(1)
 
-    // Different arguments to the same executable are a distinct signature and still prompt.
+    // A different executable still prompts.
     broker.requestPermission(
-      createToolPermissionRequest({ title: 'python b.py', providerToolName: 'Bash' })
+      createToolPermissionRequest({ title: 'rm -rf x', providerToolName: 'Bash' })
     )
     expect(emittedRequests).toHaveLength(2)
   })
 
-  it('normalizes leading env assignments in the shell command signature', async () => {
+  it('normalizes leading env assignments in the shell executable category', async () => {
     const emittedRequests: string[] = []
     const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))
 
@@ -257,18 +257,18 @@ describe('ACP permission broker', () => {
     broker.respond({ requestId: emittedRequests[0], optionId: 'allow-always' })
     await firstBash
 
-    // The same command without the leading env assignment shares the signature and auto-approves.
+    // The same executable without the leading env assignment shares the category and auto-approves.
     const secondBash = broker.requestPermission(
-      createToolPermissionRequest({ title: 'node build.js', kind: 'execute' })
+      createToolPermissionRequest({ title: 'node serve.js', kind: 'execute' })
     )
     await expect(secondBash).resolves.toEqual({
       outcome: { outcome: 'selected', optionId: 'allow-once' }
     })
     expect(emittedRequests).toHaveLength(1)
 
-    // A different command still prompts.
+    // A different executable still prompts.
     broker.requestPermission(
-      createToolPermissionRequest({ title: 'node serve.js', kind: 'execute' })
+      createToolPermissionRequest({ title: 'python serve.py', kind: 'execute' })
     )
     expect(emittedRequests).toHaveLength(2)
   })
@@ -412,7 +412,7 @@ describe('ACP permission broker', () => {
     expect(broker.listGrants('session-1')).toEqual(
       expect.arrayContaining([
         { categoryKey: 'tool:Write', kind: 'tool', label: 'Write' },
-        { categoryKey: 'bash:python a.py', kind: 'shell', label: 'python a.py' },
+        { categoryKey: 'bash:python', kind: 'shell', label: 'python' },
         {
           categoryKey: 'mcp:mcp__open-science-notebook__notebook_execute',
           kind: 'mcp',
@@ -428,7 +428,7 @@ describe('ACP permission broker', () => {
         .listGrants('session-1')
         .map((grant) => grant.categoryKey)
         .sort()
-    ).toEqual(['bash:python a.py', 'mcp:mcp__open-science-notebook__notebook_execute'].sort())
+    ).toEqual(['bash:python', 'mcp:mcp__open-science-notebook__notebook_execute'].sort())
 
     const countBeforeWrite = emittedRequests.length
     broker.requestPermission(

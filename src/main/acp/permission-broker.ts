@@ -24,15 +24,35 @@ type EmitPermissionRequest = (request: AcpPermissionRequest) => void
 const ALLOW_ALWAYS_OPTION_KIND = 'allow_always'
 const ALLOW_ONCE_OPTION_KIND = 'allow_once'
 
+const commandFromRawInput = (rawInput: unknown): string | undefined => {
+  if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) return undefined
+
+  const command = (rawInput as Record<string, unknown>).command
+
+  return typeof command === 'string' && command.trim() ? command : undefined
+}
+
+// codex-acp command approvals omit title but retain the exact command in rawInput. Prefer that
+// security-relevant value over opaque call ids and generic provider titles.
+const resolvePermissionTitle = (params: RequestPermissionRequest): string =>
+  commandFromRawInput(params.toolCall.rawInput) ??
+  params.toolCall.title ??
+  params.toolCall.toolCallId
+
 // Trivial `KEY=VALUE` env assignment prefixing a shell command (e.g. `FOO=bar python a.py`). Values
 // containing whitespace/quotes are not covered (already split away) and fall back to the raw token.
 const ENV_ASSIGNMENT_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=[^\s]*$/
 
-// Derives the command signature used to group shell/execute permissions. Leading trivial env
-// assignments are dropped, then the remaining command (executable plus its arguments) is normalized
-// to single-spaced form. Keying on the full command — not just the executable — keeps "Always" on
-// `python a.py` from also allowing `python b.py`.
-const commandSignature = (command: string): string => {
+// Strips a single matching pair of surrounding quotes from a shell token.
+const stripSurroundingQuotes = (token: string): string => {
+  const match = token.match(/^(["'])(.*)\1$/)
+
+  return match ? match[2] : token
+}
+
+// Derives the executable category used to group shell/execute permissions. Leading trivial env
+// assignments are skipped so `FOO=bar python a.py` still groups under `python`.
+const leadingExecutable = (command: string): string => {
   const tokens = command.trim().split(/\s+/)
   let index = 0
 
@@ -40,15 +60,13 @@ const commandSignature = (command: string): string => {
     index += 1
   }
 
-  const rest = tokens.slice(index)
-
-  return rest.length > 0 ? rest.join(' ') : command.trim()
+  return stripSurroundingQuotes(tokens[index] ?? command.trim())
 }
 
 // Derives a session-scoped "Always" category key from a permission request (first match wins):
 // 1. MCP tool (recognized across frameworks — Claude's mcp__ prefix or an opencode <server>_ name):
 //    keyed by the tool name, no args.
-// 2. Shell/execute tool (provider tool name Bash, or execute kind): keyed by full command signature.
+// 2. Shell/execute tool (provider tool name Bash, or execute kind): keyed by leading executable.
 // 3. Other built-ins (Write/Edit/WebFetch/…): keyed by provider tool name (falls back to title).
 // The MCP check runs before the execute branch so an opencode MCP tool reporting kind:execute (e.g. a
 // notebook execute-cell) is grouped as its own MCP tool, not misrouted to the shared Bash category.
@@ -57,7 +75,7 @@ const resolveCategoryKey = (
   mcpServerNames: readonly string[] = []
 ): string => {
   const { toolCall } = params
-  const title = toolCall.title ?? toolCall.toolCallId
+  const title = resolvePermissionTitle(params)
   const providerToolName = extractProviderToolName(toolCall)
 
   if (
@@ -68,7 +86,7 @@ const resolveCategoryKey = (
   }
 
   if (providerToolName === 'Bash' || toolCall.kind === 'execute') {
-    return `bash:${commandSignature(title)}`
+    return `bash:${leadingExecutable(title)}`
   }
 
   return `tool:${providerToolName ?? title}`
@@ -134,7 +152,7 @@ class AcpPermissionBroker {
       requestId,
       sessionId: params.sessionId,
       toolCallId: params.toolCall.toolCallId,
-      title: params.toolCall.title ?? params.toolCall.toolCallId,
+      title: resolvePermissionTitle(params),
       status: params.toolCall.status ?? undefined,
       providerToolName: extractProviderToolName(params.toolCall),
       isMcp: categoryKey.startsWith('mcp:'),
