@@ -191,6 +191,40 @@ describe('ACP permission broker', () => {
     await expect(otherSessionResponse).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
   })
 
+  it('removes Codex policy amendments when execute metadata is absent', () => {
+    const emitted: Array<Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]> = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const request = createCodexCommandPermissionRequest()
+    request.toolCall.kind = undefined
+
+    void broker.requestPermission(request, { profile: 'ask', frameworkId: 'codex' })
+
+    expect(emitted[0].options.map((option) => option.optionId)).toEqual([
+      'allow_once',
+      'allow_always',
+      'reject_once'
+    ])
+  })
+
+  it('fails closed when a Codex command omits canonical session actions', () => {
+    const emitted: Array<Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]> = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const request = createCodexCommandPermissionRequest()
+    request.options = request.options.filter((option) => option.optionId !== 'allow_always')
+    request.options.splice(2, 0, {
+      optionId: 'accept_networkpolicy_amendment',
+      name: 'Allow network access persistently',
+      kind: 'allow_always'
+    })
+
+    void broker.requestPermission(request, { profile: 'ask', frameworkId: 'codex' })
+
+    expect(emitted[0].options.map((option) => option.optionId)).toEqual([
+      'allow_once',
+      'reject_once'
+    ])
+  })
+
   it('cancels a Codex policy amendment response that was not exposed', async () => {
     const emittedRequests: string[] = []
     const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))

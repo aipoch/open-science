@@ -24,6 +24,7 @@ type EmitPermissionRequest = (request: AcpPermissionRequest) => void
 const ALLOW_ALWAYS_OPTION_KIND = 'allow_always'
 const ALLOW_ONCE_OPTION_KIND = 'allow_once'
 const CODEX_SESSION_COMMAND_OPTION_IDS = new Set(['allow_once', 'allow_always', 'reject_once'])
+const CODEX_POLICY_AMENDMENT_OPTION_ID_PATTERN = /^accept_.*policy_amendment$/
 
 const commandFromRawInput = (rawInput: unknown): string | undefined => {
   if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) return undefined
@@ -69,25 +70,27 @@ const commandSignature = (command: string): string => {
   return rest.length > 0 ? rest.join(' ') : command.trim()
 }
 
-// Open Science owns per-session grants, so Codex command approvals expose the same three actions as
-// Claude Code. Native exec/network policy amendments persist outside the app's visible, revocable
-// session grant model and are intentionally omitted when Codex supplies the canonical session choices.
+// Open Science owns per-session grants, so Codex command approvals expose only its canonical session
+// actions. Native exec/network policy amendments persist outside the app's visible, revocable grant
+// model. Their presence also identifies command requests when optional execute metadata is absent.
 const projectPermissionOptions = (
   params: RequestPermissionRequest,
-  policyContext: PermissionPolicyContext | undefined
+  policyContext: PermissionPolicyContext | undefined,
+  isMcp: boolean
 ): RequestPermissionRequest['options'] => {
-  if (policyContext?.frameworkId !== 'codex' || params.toolCall.kind !== 'execute') {
+  const hasPolicyAmendment = params.options.some((option) =>
+    CODEX_POLICY_AMENDMENT_OPTION_ID_PATTERN.test(option.optionId)
+  )
+
+  if (
+    policyContext?.frameworkId !== 'codex' ||
+    isMcp ||
+    (params.toolCall.kind !== 'execute' && !hasPolicyAmendment)
+  ) {
     return params.options
   }
 
-  const optionIds = new Set(params.options.map((option) => option.optionId))
-  const hasCanonicalSessionActions = Array.from(CODEX_SESSION_COMMAND_OPTION_IDS).every(
-    (optionId) => optionIds.has(optionId)
-  )
-
-  return hasCanonicalSessionActions
-    ? params.options.filter((option) => CODEX_SESSION_COMMAND_OPTION_IDS.has(option.optionId))
-    : params.options
+  return params.options.filter((option) => CODEX_SESSION_COMMAND_OPTION_IDS.has(option.optionId))
 }
 
 // Derives a session-scoped "Always" category key from a permission request (first match wins):
@@ -178,7 +181,7 @@ class AcpPermissionBroker {
     const requestId = randomUUID()
     const categoryKey = resolveCategoryKey(params, policyContext?.mcpServerNames)
     const isMcp = categoryKey.startsWith('mcp:')
-    const permissionOptions = projectPermissionOptions(params, policyContext)
+    const permissionOptions = projectPermissionOptions(params, policyContext, isMcp)
     const request: AcpPermissionRequest = {
       requestId,
       sessionId: params.sessionId,
