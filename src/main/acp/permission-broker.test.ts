@@ -225,6 +225,23 @@ describe('ACP permission broker', () => {
     ])
   })
 
+  it('does not auto-select a Codex amendment under Full Access when it is the only allow option', () => {
+    const emitted: Array<Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]> = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const request = createCodexCommandPermissionRequest()
+    // Only the persistent policy amendment remains as an allow-kind option.
+    request.options = request.options.filter(
+      (option) => option.optionId !== 'allow_once' && option.optionId !== 'allow_always'
+    )
+
+    void broker.requestPermission(request, { profile: 'full', frameworkId: 'codex' })
+
+    // The amendment is projected away, so Full Access finds no allow option and must prompt instead
+    // of auto-approving a grant that persists outside the app's revocable model.
+    expect(emitted).toHaveLength(1)
+    expect(emitted[0].options.map((option) => option.optionId)).toEqual(['reject_once'])
+  })
+
   it('cancels a Codex policy amendment response that was not exposed', async () => {
     const emittedRequests: string[] = []
     const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))

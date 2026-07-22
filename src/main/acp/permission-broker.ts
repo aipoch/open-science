@@ -203,7 +203,12 @@ class AcpPermissionBroker {
     }
 
     // A model-independent fallback auto-reviews only structured, workspace-contained low-risk tools.
-    const automaticOptionId = resolveAutomaticPermission(params, policyContext)
+    // Resolve against the projected options so a stripped policy amendment can never be an automatic
+    // outcome — the "amendments are never selectable" invariant must hold on the auto path too.
+    const automaticOptionId = resolveAutomaticPermission(
+      { ...params, options: permissionOptions },
+      policyContext
+    )
 
     if (automaticOptionId) {
       return Promise.resolve({
