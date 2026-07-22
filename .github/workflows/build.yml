@@ -36,7 +36,7 @@ jobs:
   # never publish installers that were never tested. Runs once on Apple Silicon to match the
   # release/verification environment (see pr-check.yml for why macOS). The build matrix `needs` this.
   verify:
-    name: Verify (lint + typecheck + test)
+    name: Verify (lint + typecheck + test + package)
     # Skipped by the notarization dry-run (skip_verify), which only needs a signed mac build.
     if: ${{ !inputs.skip_verify }}
     runs-on: macos-14
@@ -61,6 +61,9 @@ jobs:
 
       - name: Test (with coverage)
         run: npm run test:coverage
+
+      - name: Check CLI package
+        run: npm run check:cli-package
 
   # Resolve the platform matrix. mac_only trims it to the two mac archs — used by the notarization
   # dry-run (notarize-dryrun.yml), which only needs a signed mac build. With mac_only false (the

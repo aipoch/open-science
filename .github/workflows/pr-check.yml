@@ -66,6 +66,14 @@ jobs:
       - name: Check web API map
         run: npm run check:web-api-map
 
+      # The general suite discovers these tests, but Linux/Windows tests are advisory. Keep the
+      # zero-dependency CLI/SDK contract and publishable tarball hard-gated on every platform.
+      - name: Test CLI and SDK
+        run: npm run test:cli
+
+      - name: Check CLI package
+        run: npm run check:cli-package
+
       # Full test suite + coverage gate on macOS (thresholds live in vitest.config.ts).
       - name: Test (with coverage)
         if: matrix.os == 'macos-14'
