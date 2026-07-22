@@ -149,7 +149,9 @@ const buildOpenAiValidationRequest = (
 }
 
 // A minimal OpenAI Responses request. Responses is a separate wire protocol from Chat Completions;
-// normalize either a root, `/v1`, or full `/v1/responses` value to exactly one endpoint suffix.
+// normalize the base to exactly one endpoint suffix: a versioned OpenAI base (an official vendor's
+// `/v1`, or Volcengine Ark's `/api/v3`) takes `/responses` directly, while a bare root (the official
+// OpenAI entry, custom gateways) gains the `/v1` segment first.
 const buildResponsesValidationRequest = (provider: ResolvedProvider): ValidationHttpRequest => {
   let url: string
 
@@ -157,8 +159,9 @@ const buildResponsesValidationRequest = (provider: ResolvedProvider): Validation
     const base = (provider.openaiBaseUrl ?? provider.baseUrl ?? '')
       .trim()
       .replace(/\/+$/, '')
-      .replace(/\/v1(\/responses)?$/i, '')
-    url = new URL(`${base}/v1/responses`).toString()
+      .replace(/\/responses$/i, '')
+    const root = /\/v\d+[\w.]*$/i.test(base) ? base : `${base}/v1`
+    url = new URL(`${root}/responses`).toString()
   } catch {
     throw new Error('Invalid base URL.')
   }

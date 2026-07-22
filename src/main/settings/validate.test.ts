@@ -133,6 +133,21 @@ describe('validate: request construction', () => {
       max_output_tokens: 16
     })
   })
+
+  it('appends /responses to a versioned OpenAI base instead of forcing /v1', () => {
+    // Volcengine Ark versions its OpenAI-compatible root as /api/v3, so its Responses endpoint is
+    // /api/v3/responses — not the /v1/responses a /v1-only normalization would produce.
+    const request = buildValidationRequest({
+      type: 'custom',
+      baseUrl: 'https://ark.cn-beijing.volces.com/api/compatible',
+      openaiBaseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+      model: 'doubao-seed-2-1-pro-260628',
+      key: 'test-token',
+      apiEndpoints: ['anthropic', 'openai', 'responses']
+    })
+
+    expect(request.url).toBe('https://ark.cn-beijing.volces.com/api/v3/responses')
+  })
 })
 
 describe('validate: classification', () => {

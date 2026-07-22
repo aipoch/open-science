@@ -128,8 +128,8 @@ describe('provider registry', () => {
     expect(defaultVendorModel('sensenova')).toBe('sensenova-6.7-flash-lite')
   })
 
-  it('routes Volcengine Ark through both APIs with a curated Doubao Seed catalog', () => {
-    expect(resolveVendorApiEndpoints('volcengine')).toEqual(['anthropic', 'openai'])
+  it('routes Volcengine Ark through all three APIs with a curated Doubao Seed catalog', () => {
+    expect(resolveVendorApiEndpoints('volcengine')).toEqual(['anthropic', 'openai', 'responses'])
     expect(resolveVendorBaseUrl('volcengine')).toBe(
       'https://ark.cn-beijing.volces.com/api/compatible'
     )

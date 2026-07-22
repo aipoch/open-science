@@ -298,12 +298,13 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   {
     id: 'volcengine',
     label: 'Volcengine Ark',
-    // ByteDance's Volcengine Ark serves both routes on one host: the Anthropic-compatible
-    // /v1/messages under /api/compatible and the OpenAI-compatible /v1/chat/completions under
-    // /api/v3. The same model ids work on both. No modelsListUrl: Ark's catalog also serves
-    // embedding, image (Seedream), and video (Seedance) models alongside the chat ids, and the
-    // refresh has no modality filter — so the Doubao Seed chat catalog stays curated.
-    apiEndpoints: ['anthropic', 'openai'],
+    // ByteDance's Volcengine Ark serves all three routes on one host: the Anthropic-compatible
+    // /v1/messages under /api/compatible, the OpenAI-compatible /v1/chat/completions under /api/v3,
+    // and OpenAI Responses at /api/v3/responses (the probe derives it from `openaiBaseUrl`). The same
+    // model ids work on all three. No modelsListUrl: Ark's catalog also serves embedding, image
+    // (Seedream), and video (Seedance) models alongside the chat ids, and the refresh has no
+    // modality filter — so the Doubao Seed chat catalog stays curated.
+    apiEndpoints: ['anthropic', 'openai', 'responses'],
     baseUrl: 'https://ark.cn-beijing.volces.com/api/compatible',
     openaiBaseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
     apiKeyUrl: 'https://console.volcengine.com/ark/region:ark+cn-beijing/apikey',
