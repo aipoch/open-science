@@ -41,6 +41,7 @@
     "@bokuweb/zstd-wasm": "^0.0.27",
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
+    "@lobehub/icons": "^5.14.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@prisma/client": "^6.19.3",
     "electron-updater": "^6.3.9",

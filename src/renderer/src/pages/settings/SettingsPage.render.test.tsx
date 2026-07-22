@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SettingsPage } from './SettingsPage'
+import { clickRadixMenuItem, openRadixMenu } from './test-utils'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 
 let container: HTMLDivElement
@@ -116,6 +117,24 @@ afterEach(() => {
   delete (window as unknown as { api?: unknown }).api
 })
 
+// Opens the Agent sub-panel via the left nav (the agent framework lives there; the Model panel
+// itself shows providers).
+const openAgentPanel = async (): Promise<void> => {
+  const item = Array.from(
+    document.body.querySelectorAll<HTMLButtonElement>('nav[aria-label="Settings"] button')
+  ).find((candidate) => candidate.textContent?.trim() === 'Agent')
+  await act(async () => item?.click())
+}
+
+// Finds a left-nav button by its exact label.
+const navButton = (label: string): HTMLButtonElement | undefined =>
+  Array.from(
+    document.body.querySelectorAll<HTMLButtonElement>('nav[aria-label="Settings"] button')
+  ).find((candidate) => candidate.textContent?.trim() === label)
+
+// The Agent sub-item's <li> wrapper, whose grid-rows class drives the expand/collapse animation.
+const agentItem = (): HTMLElement | null => navButton('Agent')?.closest('li') ?? null
+
 describe('SettingsPage layout', () => {
   it('mounts the sidebar + content with grouped nav items and a close control', () => {
     useSettingsStore.setState({
@@ -148,8 +167,8 @@ describe('SettingsPage layout', () => {
     expect(dialog?.getAttribute('data-slot')).toBe('settings-surface')
     expect(dialog?.className).toContain('overscroll-contain')
 
-    // Left navigation grouped as Capabilities (Skills, Connectors, Network) and Workspace (Model,
-    // Runtimes, Storage, General).
+    // Left navigation grouped as Capabilities (Skills, Connectors, Network) and Workspace (Model
+    // with its Agent sub-item, Runtimes, Storage, General).
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
     expect(nav?.className).toContain('bg-background')
@@ -157,14 +176,15 @@ describe('SettingsPage layout', () => {
     expect(nav?.textContent).toContain('Capabilities')
     expect(nav?.textContent).toContain('Workspace')
     const navItems = nav?.querySelectorAll('li') ?? []
-    expect(navItems).toHaveLength(7)
+    expect(navItems).toHaveLength(8)
     expect(navItems[0]?.textContent).toContain('Skills')
     expect(navItems[1]?.textContent).toContain('Connectors')
     expect(navItems[2]?.textContent).toContain('Network')
     expect(navItems[3]?.textContent).toContain('Model')
-    expect(navItems[4]?.textContent).toContain('Runtimes')
-    expect(navItems[5]?.textContent).toContain('Storage')
-    expect(navItems[6]?.textContent).toContain('General')
+    expect(navItems[4]?.textContent).toContain('Agent')
+    expect(navItems[5]?.textContent).toContain('Runtimes')
+    expect(navItems[6]?.textContent).toContain('Storage')
+    expect(navItems[7]?.textContent).toContain('General')
     // Model is the default active panel.
     expect(nav?.querySelector('[aria-current="page"]')?.textContent).toContain('Model')
 
@@ -177,13 +197,72 @@ describe('SettingsPage layout', () => {
       'button'
     )
 
-    // The Model panel content is present (Claude + Providers sections).
-    expect(document.body.textContent).toContain('Claude')
+    // The Model panel splits Active model and Reasoning effort (their own sections) from provider
+    // management; the agent framework moved to the Agent sub-panel.
+    expect(document.body.textContent).toContain('Active model')
+    expect(document.body.textContent).toContain('Reasoning effort')
     expect(document.body.textContent).toContain('Providers')
+    expect(document.body.textContent).not.toContain('Agent framework')
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(3)
+    // The add action lives with the list as a dashed ghost row, not a section-header button.
+    const addRow = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Add provider'
+    )
+    expect(addRow?.className).toContain('border-dashed')
+  })
+
+  it('shows the agent framework on the Agent sub-panel', async () => {
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+
+    await openAgentPanel()
+
     expect(document.body.textContent).toContain('Agent framework')
-    // Agent framework (holds both selectable runtime cards) + Providers.
-    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(2)
-    expect(document.body.querySelector('[data-slot="settings-row"]')).not.toBeNull()
+    expect(document.body.textContent).not.toContain('Add provider')
+    expect(document.body.querySelector('nav [aria-current="page"]')?.textContent?.trim()).toBe(
+      'Agent'
+    )
+  })
+
+  it('keeps the Agent sub-item expanded once the Model branch is opened', async () => {
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+
+    // Model is the default panel, so the branch starts expanded…
+    expect(agentItem()?.className).toContain('grid-rows-[1fr]')
+
+    // …and switching to another top-level panel never collapses it.
+    await act(async () => navButton('General')?.click())
+    expect(agentItem()?.className).toContain('grid-rows-[1fr]')
+    expect(navButton('Agent')?.tabIndex).toBe(0)
+  })
+
+  it('collapses the Agent sub-item when a skill mention deep-links in, until Model is clicked', async () => {
+    // Render the default (Model) landing first: the component stays mounted across opens, so a
+    // deep link arrives as a store update AFTER mount — the exact path the regression hit.
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+
+    expect(agentItem()?.className).toContain('grid-rows-[1fr]')
+
+    // A skill mention deep-links settings to the Skills panel (the seeding effect re-seeds history).
+    await act(async () => {
+      useSettingsStore.setState({ pendingSkillId: 'alpha' })
+    })
+    expect(agentItem()?.className).toContain('grid-rows-[0fr]')
+    expect(navButton('Agent')?.tabIndex).toBe(-1)
+
+    // Clicking Model expands it…
+    await act(async () => navButton('Model')?.click())
+    expect(agentItem()?.className).toContain('grid-rows-[1fr]')
+    expect(navButton('Agent')?.tabIndex).toBe(0)
+
+    // …and it stays expanded after leaving the branch again.
+    await act(async () => navButton('General')?.click())
+    expect(agentItem()?.className).toContain('grid-rows-[1fr]')
   })
 
   it('opens Add provider as a history-driven sub-page and returns via the back arrow', () => {
@@ -576,6 +655,7 @@ describe('SettingsPage uninstall confirmation', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
+    await openAgentPanel()
 
     // The inactive managed Claude card exposes an Uninstall action, and no confirmation is open yet.
     const cardUninstall = findButton(document.body, 'Uninstall')
@@ -616,6 +696,7 @@ describe('SettingsPage uninstall confirmation', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
+    await openAgentPanel()
 
     const cardUninstall = findButton(document.body, 'Uninstall')
     expect(cardUninstall).toBeDefined()
@@ -653,6 +734,7 @@ describe('SettingsPage uninstall confirmation', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
+    await openAgentPanel()
 
     // Selecting the inactive OpenCode card opens the switch confirmation without switching yet.
     const opencodeRadio = document.body.querySelector<HTMLButtonElement>(
@@ -721,11 +803,13 @@ describe('SettingsPage Codex framework', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
+    await openAgentPanel()
 
     const codexRadio = document.body.querySelector<HTMLButtonElement>('[aria-label="Use Codex"]')
     expect(codexRadio).not.toBeNull()
-    expect(document.body.textContent).toContain('Adapter version')
-    expect(document.body.textContent).toContain('Native Codex version')
+    // The adapter version shows as a muted v-tag after the name; the repo link points at the ACP adapter.
+    expect(document.body.textContent).toContain('v1.1.4')
+    expect(document.body.textContent).toContain('agentclientprotocol/codex-acp')
 
     await act(async () => codexRadio?.click())
     const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
@@ -768,14 +852,74 @@ describe('SettingsPage Codex framework', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
+    await openAgentPanel()
 
-    const install = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Install with one click'
+    const installTrigger = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Install Codex"]'
     )
-    expect(install).toBeDefined()
-    await act(async () => install?.click())
+    expect(installTrigger).not.toBeNull()
+    openRadixMenu(installTrigger)
+
+    // The Install button opens a source menu; the app-managed source is the recommended default.
+    const managedItem = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find((item) => item.textContent?.includes('App-managed download (recommended)'))
+    expect(managedItem).toBeDefined()
+    clickRadixMenuItem(managedItem)
 
     expect(installCodex).toHaveBeenCalledWith({ source: 'managed' })
+  })
+
+  it('groups cards by install state and re-detects every framework from the section action', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    const snapshot = {
+      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
+      codex: {},
+      providers: [],
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: frameworks,
+      claudeManaged: true,
+      opencodeManaged: false,
+      codexManaged: false
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue(snapshot)
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      claudeReady: true,
+      opencodeReady: true,
+      codexReady: false,
+      agentFrameworkId: 'claude-code',
+      agentReady: true,
+      activeProviderReady: false
+    })
+    const detectClaude = vi.fn().mockResolvedValue(snapshot)
+    const detectOpencode = vi.fn().mockResolvedValue(snapshot)
+    const detectCodex = vi.fn().mockResolvedValue(snapshot)
+    api.settings.detectClaude = detectClaude
+    api.settings.detectOpencode = detectOpencode
+    api.settings.detectCodex = detectCodex
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await openAgentPanel()
+
+    // Two ready runtimes land in the Installed group; Codex (not ready) in Available.
+    expect(document.body.textContent).toContain('Installed · 2')
+    expect(document.body.textContent).toContain('Available · 1')
+    // Claude is renamed in this panel only.
+    expect(document.body.textContent).toContain('Claude Agent')
+
+    // The section-level Re-detect re-scans all three frameworks at once.
+    const redetect = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Re-detect'
+    )
+    expect(redetect).toBeDefined()
+    await act(async () => redetect?.click())
+
+    expect(detectClaude).toHaveBeenCalledTimes(1)
+    expect(detectOpencode).toHaveBeenCalledTimes(1)
+    expect(detectCodex).toHaveBeenCalledTimes(1)
   })
 
   it('routes isolated subscription sign-out from the provider list', async () => {

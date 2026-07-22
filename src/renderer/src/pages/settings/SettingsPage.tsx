@@ -5,7 +5,6 @@ import {
   Globe,
   Maximize2,
   Minimize2,
-  Plus,
   ScrollText,
   Settings2,
   SlidersHorizontal,
@@ -15,21 +14,13 @@ import {
 import { Dialog } from 'radix-ui'
 import { useEffect, useState } from 'react'
 
-import {
-  isCodexSubscriptionProvider,
-  type AgentFrameworkId,
-  type ProviderView,
-  type UpsertProviderRequest
-} from '../../../../shared/settings'
+import type { ProviderView, UpsertProviderRequest } from '../../../../shared/settings'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import { selectAnyInstalling, useSettingsStore } from '@/stores/settings-store'
-import { ModelFrameworkCompatibilityAlert } from './ModelFrameworkCompatibilityAlert'
-import { ClaudeInstallCard } from './ClaudeInstallCard'
-import { ClaudeStatusCard } from './ClaudeStatusCard'
-import { CodexStatusCard } from './CodexStatusCard'
-import { OpencodeStatusCard } from './OpencodeStatusCard'
+import { useSettingsStore } from '@/stores/settings-store'
+import { AgentPanel } from './AgentPanel'
+import { ProvidersPanel } from './ProvidersPanel'
 import { GeneralPanel } from './GeneralPanel'
 import { NetworkPanel } from './NetworkPanel'
 import { StoragePanel } from './StoragePanel'
@@ -40,7 +31,6 @@ import { ConnectorDetailView } from './ConnectorDetailView'
 import { ConnectorAddForm } from './ConnectorAddForm'
 import { ConnectorsNavIcon } from './connector-icons'
 import { resolveVendorModelsUrl } from '../../../../shared/provider-registry'
-import { ActiveModelSelect } from './ActiveModelSelect'
 import { ProviderForm } from './ProviderForm'
 import {
   createEmptyProviderFormValue,
@@ -50,11 +40,6 @@ import {
   providerKindPatch,
   type ProviderFormValue
 } from './provider-form-value'
-import { ProviderList } from './ProviderList'
-import { ReasoningEffortSelect } from './ReasoningEffortSelect'
-import { SettingsRow, SettingsSection } from './SettingsLayout'
-import { UninstallRuntimeDialog } from './UninstallRuntimeDialog'
-import { SwitchFrameworkDialog } from './SwitchFrameworkDialog'
 
 type SettingsPageProps = {
   open: boolean
@@ -94,14 +79,19 @@ const toUpsertRequest = (
 })
 
 // Left-nav panels, grouped in the sidebar. "Capabilities" holds agent extensions (Skills); "Workspace"
-// holds environment/config (Model manages Claude + providers, General holds app settings incl. logs).
+// holds environment/config (Model manages providers, its Agent sub-panel manages agent frameworks,
+// General holds app settings incl. logs).
 type SettingsPanelId =
-  'model' | 'skills' | 'connectors' | 'general' | 'storage' | 'network' | 'runtimes'
+  'model' | 'agent' | 'skills' | 'connectors' | 'general' | 'storage' | 'network' | 'runtimes'
 
 type SettingsPanel = {
   id: SettingsPanelId
   label: string
-  Icon: React.ComponentType<{ className?: string }>
+  // Top-level entries carry a nav icon; sub-items (see `parent`) render indented without one.
+  Icon?: React.ComponentType<{ className?: string }>
+  // Marks this panel as a sub-item of another panel in the nav (e.g. Agent under Model). Sub-items
+  // are still full panels in the location/history model — `parent` only affects nav presentation.
+  parent?: SettingsPanelId
 }
 
 const SETTINGS_GROUPS: ReadonlyArray<{ label: string; panels: ReadonlyArray<SettingsPanel> }> = [
@@ -117,6 +107,7 @@ const SETTINGS_GROUPS: ReadonlyArray<{ label: string; panels: ReadonlyArray<Sett
     label: 'Workspace',
     panels: [
       { id: 'model', label: 'Model', Icon: SlidersHorizontal },
+      { id: 'agent', label: 'Agent', parent: 'model' },
       { id: 'runtimes', label: 'Runtimes', Icon: TerminalSquare },
       { id: 'storage', label: 'Storage', Icon: Cloud },
       { id: 'general', label: 'General', Icon: Settings2 }
@@ -154,45 +145,18 @@ const INITIAL_LOCATION: NavLocation = {
 // App-level model settings surface. Reuses the onboarding cards/form; manages providers (CRUD +
 // activate + test). Opened from the Home/Workspace gear entry.
 const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element => {
-  const claude = useSettingsStore((state) => state.claude)
-  const preflight = useSettingsStore((state) => state.preflight)
   const providers = useSettingsStore((state) => state.providers)
-  const activeProviderId = useSettingsStore((state) => state.activeProviderId)
-  const isDetectingClaude = useSettingsStore((state) => state.isDetectingClaude)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
-  const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
-  const setAgentFramework = useSettingsStore((state) => state.setAgentFramework)
   const opencode = useSettingsStore((state) => state.opencode)
   const isDetectingOpencode = useSettingsStore((state) => state.isDetectingOpencode)
   const detectOpencode = useSettingsStore((state) => state.detectOpencode)
-  const installOpencode = useSettingsStore((state) => state.installOpencode)
   const codex = useSettingsStore((state) => state.codex)
   const isDetectingCodex = useSettingsStore((state) => state.isDetectingCodex)
   const detectCodex = useSettingsStore((state) => state.detectCodex)
-  const installCodex = useSettingsStore((state) => state.installCodex)
-  // Per-runtime install slices: each card renders only its own progress/logs/error (issue #278).
-  const claudeInstall = useSettingsStore((state) => state.installStates['claude-code'])
-  const opencodeInstall = useSettingsStore((state) => state.installStates.opencode)
-  const codexInstall = useSettingsStore((state) => state.installStates.codex)
-  // Any install running locks the framework selector and every card's uninstall button.
-  const anyInstalling = useSettingsStore(selectAnyInstalling)
-  const npmAvailable = useSettingsStore((state) => state.npmAvailable)
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
-  const claudeManaged = useSettingsStore((state) => state.claudeManaged)
-  const opencodeManaged = useSettingsStore((state) => state.opencodeManaged)
-  const codexManaged = useSettingsStore((state) => state.codexManaged)
-  const uninstallClaude = useSettingsStore((state) => state.uninstallClaude)
-  const uninstallOpencode = useSettingsStore((state) => state.uninstallOpencode)
-  const uninstallCodex = useSettingsStore((state) => state.uninstallCodex)
   const load = useSettingsStore((state) => state.load)
-  const detectClaude = useSettingsStore((state) => state.detectClaude)
-  const installClaude = useSettingsStore((state) => state.installClaude)
   const persistProvider = useSettingsStore((state) => state.persistProvider)
-  const deleteProvider = useSettingsStore((state) => state.deleteProvider)
   const validateProvider = useSettingsStore((state) => state.validateProvider)
-  const cancelCodexLogin = useSettingsStore((state) => state.cancelCodexLogin)
-  const loginIsolatedCodex = useSettingsStore((state) => state.loginIsolatedCodex)
-  const logoutIsolatedCodex = useSettingsStore((state) => state.logoutIsolatedCodex)
   const refreshProviderModels = useSettingsStore((state) => state.refreshProviderModels)
   const pendingSkillId = useSettingsStore((state) => state.pendingSkillId)
   const consumePendingSkill = useSettingsStore((state) => state.consumePendingSkill)
@@ -211,20 +175,16 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   )
   const [isSaving, setIsSaving] = useState(false)
   const [isRefreshingModels, setIsRefreshingModels] = useState(false)
-  // The app-managed runtime pending an uninstall confirmation (null = dialog closed), plus the in-flight
-  // flag so the dialog and status cards can show progress and stay locked during removal.
-  const [pendingUninstall, setPendingUninstall] = useState<'claude' | 'opencode' | 'codex' | null>(
-    null
-  )
-  const [isUninstalling, setIsUninstalling] = useState(false)
-  // The framework the user picked (via a card) but hasn't confirmed switching to yet.
-  const [pendingSwitch, setPendingSwitch] = useState<AgentFrameworkId | null>(null)
   const [statusMessage, setStatusMessage] = useState<string | undefined>(undefined)
   const [statusOk, setStatusOk] = useState(false)
+  // Shared with ProvidersPanel: the post-save validation and the list's manual test both mark the
+  // provider busy so its card shows "Testing…".
   const [busyProviderId, setBusyProviderId] = useState<string | undefined>(undefined)
-  // True while the explicit isolated Codex sign-in is open in the browser; drives the cancel action.
-  const [isCodexLoginPending, setIsCodexLoginPending] = useState(false)
-  const [providerTestError, setProviderTestError] = useState<string | undefined>(undefined)
+  // The Model branch's sub-item (Agent) starts expanded (settings lands on Model by default) and
+  // stays expanded once the user opens the branch — other panels never collapse it. Deep-linking
+  // elsewhere (e.g. a skill mention) collapses it: that case arrives AFTER mount (this component
+  // stays mounted while closed), so it is handled in the seeding block below, not the initializer.
+  const [agentMenuExpanded, setAgentMenuExpanded] = useState(true)
 
   // Refresh settings whenever the dialog opens so external changes are reflected.
   useEffect(() => {
@@ -238,6 +198,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const [seededSkillId, setSeededSkillId] = useState<string | undefined>(undefined)
   if (open && pendingSkillId !== undefined && pendingSkillId !== seededSkillId) {
     setSeededSkillId(pendingSkillId)
+    // Landing outside the Model branch starts the Agent sub-item collapsed; clicking Model
+    // re-expands it (sticky from then on).
+    setAgentMenuExpanded(false)
     setHistory([
       {
         panel: 'skills',
@@ -452,44 +415,6 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const closeForm = (): void =>
     navigate({ panel: 'model', skills: currentLocation.skills, model: { kind: 'list' } })
 
-  // Removes the app-managed runtime for the framework awaiting confirmation, then closes the dialog.
-  // The store applies the refreshed snapshot (which may auto-switch the active framework) and main
-  // reconnects the agent, so the cards and readiness gate update without a manual re-detect.
-  const handleConfirmUninstall = async (): Promise<void> => {
-    if (!pendingUninstall) return
-
-    setIsUninstalling(true)
-
-    try {
-      if (pendingUninstall === 'claude') await uninstallClaude()
-      else if (pendingUninstall === 'opencode') await uninstallOpencode()
-      else await uninstallCodex()
-
-      setPendingUninstall(null)
-    } finally {
-      setIsUninstalling(false)
-    }
-  }
-
-  // Selecting a card requests a framework switch; a no-op when it's already the active one. The actual
-  // switch is deferred to the confirmation, since it starts a fresh agent session.
-  const requestSwitch = (target: AgentFrameworkId): void => {
-    if (target !== agentFrameworkId) setPendingSwitch(target)
-  }
-
-  const confirmSwitch = (): void => {
-    if (pendingSwitch) void setAgentFramework(pendingSwitch)
-    setPendingSwitch(null)
-  }
-
-  const activeFramework = agentFrameworks.find((framework) => framework.id === agentFrameworkId)
-  const visibleProviders = providers.filter(
-    (provider) => agentFrameworkId === 'codex' || !isCodexSubscriptionProvider(provider.type)
-  )
-  const pendingSwitchName = agentFrameworks.find(
-    (framework) => framework.id === pendingSwitch
-  )?.displayName
-
   const handleSave = async (): Promise<void> => {
     setIsSaving(true)
     setStatusMessage(undefined)
@@ -534,61 +459,6 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
     }
   }
 
-  const handleTest = async (provider: ProviderView): Promise<void> => {
-    setBusyProviderId(provider.id)
-    setProviderTestError(undefined)
-
-    try {
-      // The pass/fail result is reflected on the provider's card (green check or warning), not as a
-      // separate status line.
-      await validateProvider({ providerId: provider.id })
-    } catch (error) {
-      setProviderTestError(
-        error instanceof Error ? error.message : 'Could not test the provider connection.'
-      )
-    } finally {
-      setBusyProviderId(undefined)
-    }
-  }
-
-  // The explicit isolated sign-in: opens the browser login and records the outcome on the provider,
-  // so the card flips to verified (or shows the failure reason) when the flow settles. Infrastructure
-  // failures (adapter spawn, IPC) surface through the same error line a failed test uses.
-  const handleCodexLogin = async (): Promise<void> => {
-    setIsCodexLoginPending(true)
-    setProviderTestError(undefined)
-
-    try {
-      await loginIsolatedCodex()
-    } catch (error) {
-      setProviderTestError(error instanceof Error ? error.message : 'Could not sign in to Codex.')
-    } finally {
-      setIsCodexLoginPending(false)
-    }
-  }
-
-  const handleCodexLogout = async (): Promise<void> => {
-    setProviderTestError(undefined)
-
-    try {
-      const result = await logoutIsolatedCodex()
-      // A timeout or other failure leaves the credential in place; surface the reason so the user
-      // knows to retry rather than assuming they are signed out.
-      if (!result.ok) {
-        setProviderTestError(result.message ?? 'Codex sign-out did not complete. Try again.')
-      }
-    } catch (error) {
-      setProviderTestError(error instanceof Error ? error.message : 'Could not sign out of Codex.')
-    }
-  }
-
-  // A pending sign-in lives in the main process for up to five minutes — outliving this dialog, which
-  // stays mounted (only its `open` flag flips). Closing Settings mid-flow would orphan the flow (no
-  // cancel affordance on reopen), so tear it down together with the dialog.
-  useEffect(() => {
-    if (!open && isCodexLoginPending) void cancelCodexLogin()
-  }, [open, isCodexLoginPending, cancelCodexLogin])
-
   return (
     <Dialog.Root open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
       <Dialog.Portal>
@@ -625,35 +495,66 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                   {group.label}
                 </div>
                 <ul className="flex flex-col gap-0.5">
-                  {group.panels.map(({ id, label, Icon }) => {
+                  {group.panels.map(({ id, label, Icon, parent }) => {
                     const isActive = activePanel === id
+                    // A sub-item (Agent under Model) expands once the user enters the Model branch
+                    // and then stays expanded — selecting other panels never collapses it.
+                    const subItemExpanded = parent === undefined || agentMenuExpanded
 
-                    return (
-                      <li key={id}>
-                        <button
-                          type="button"
-                          aria-current={isActive ? 'page' : undefined}
-                          onClick={() =>
-                            navigate({
-                              panel: id,
-                              skills: { kind: 'list' },
-                              model: { kind: 'list' }
-                            })
-                          }
-                          className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors duration-150 motion-reduce:transition-none ${
-                            isActive
-                              ? 'bg-muted font-medium text-foreground'
-                              : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                          }`}
-                        >
+                    const button = (
+                      <button
+                        type="button"
+                        aria-current={isActive ? 'page' : undefined}
+                        // A collapsed sub-item is height-0/opacity-0 — keep it out of the tab order too.
+                        tabIndex={parent && !subItemExpanded ? -1 : undefined}
+                        onClick={() => {
+                          // Entering the Model branch expands its sub-item (sticky — see above).
+                          if (id === 'model' || id === 'agent') setAgentMenuExpanded(true)
+                          navigate({
+                            panel: id,
+                            skills: { kind: 'list' },
+                            model: { kind: 'list' }
+                          })
+                        }}
+                        className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors duration-150 motion-reduce:transition-none ${
+                          parent ? 'h-7 text-[13px] ' : ''
+                        }${
+                          isActive
+                            ? 'bg-muted font-medium text-foreground'
+                            : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                        }`}
+                      >
+                        {Icon ? (
                           <Icon
                             className="size-4 shrink-0 text-muted-foreground"
                             aria-hidden="true"
                           />
-                          <span className="min-w-0 flex-1 truncate">{label}</span>
-                        </button>
-                      </li>
+                        ) : null}
+                        <span className="min-w-0 flex-1 truncate">{label}</span>
+                      </button>
                     )
+
+                    // Sub-items render inside a height-animated wrapper (0fr → 1fr) with a tree
+                    // guide line dropped from the parent's icon gutter, marking the relationship.
+                    if (parent) {
+                      return (
+                        <li
+                          key={id}
+                          className={cn(
+                            'grid transition-[grid-template-rows,opacity] duration-200 motion-reduce:transition-none',
+                            subItemExpanded
+                              ? 'grid-rows-[1fr] opacity-100'
+                              : 'grid-rows-[0fr] opacity-0'
+                          )}
+                        >
+                          <div className="ml-[15px] min-h-0 overflow-hidden border-l border-border pl-[9px]">
+                            {button}
+                          </div>
+                        </li>
+                      )
+                    }
+
+                    return <li key={id}>{button}</li>
                   })}
                 </ul>
               </div>
@@ -790,6 +691,8 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                   <NetworkPanel view={networkView} onNavigate={navigateNetwork} />
                 ) : activePanel === 'general' ? (
                   <GeneralPanel />
+                ) : activePanel === 'agent' ? (
+                  <AgentPanel />
                 ) : isProviderFormOpen ? (
                   // Add/edit provider is a secondary page reached via the shared back/forward arrows.
                   <div className="p-5">
@@ -841,167 +744,18 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-5 p-5">
-                    <ModelFrameworkCompatibilityAlert />
-
-                    {/* The runtime cards double as the framework selector: pick a card to make it
-                        the active backend (confirmed, since it starts a fresh session). Both are always
-                        shown so either app-managed runtime can be detected, installed, or uninstalled —
-                        but the active runtime can't be uninstalled (switch to the other one first). */}
-                    <SettingsSection
-                      title="Agent framework"
-                      aria-label="Agent framework"
-                      description={
-                        <>
-                          Choose which coding-agent backend drives your sessions. Select a card to
-                          switch; switching starts a fresh agent session, and open conversations
-                          have their transcript replayed to the new backend. The active runtime
-                          can&apos;t be uninstalled — switch to the other one first.
-                        </>
-                      }
-                      separated
-                    >
-                      <div className="space-y-3">
-                        <ClaudeStatusCard
-                          claude={claude}
-                          claudeReady={preflight.claudeReady}
-                          isDetecting={isDetectingClaude}
-                          onDetect={() => void detectClaude()}
-                          active={agentFrameworkId === 'claude-code'}
-                          onSelect={() => requestSwitch('claude-code')}
-                          selectDisabled={anyInstalling || isUninstalling}
-                          managed={claudeManaged}
-                          isUninstalling={isUninstalling && pendingUninstall === 'claude'}
-                          isInstalling={anyInstalling}
-                          onUninstall={() => setPendingUninstall('claude')}
-                        />
-                        {!preflight.claudeReady ? (
-                          <ClaudeInstallCard
-                            isInstalling={claudeInstall.isInstalling}
-                            installLogs={claudeInstall.installLogs}
-                            installProgress={claudeInstall.installProgress}
-                            installError={claudeInstall.installError}
-                            installBusy={anyInstalling}
-                            npmAvailable={npmAvailable}
-                            onInstall={(source) => void installClaude(source)}
-                          />
-                        ) : null}
-                        <OpencodeStatusCard
-                          opencode={opencode}
-                          opencodeReady={preflight.opencodeReady}
-                          isDetecting={isDetectingOpencode}
-                          onDetect={() => void detectOpencode()}
-                          isInstalling={opencodeInstall.isInstalling}
-                          installLogs={opencodeInstall.installLogs}
-                          installProgress={opencodeInstall.installProgress}
-                          installError={opencodeInstall.installError}
-                          installBusy={anyInstalling}
-                          npmAvailable={npmAvailable}
-                          onInstall={(source) => void installOpencode(source)}
-                          active={agentFrameworkId === 'opencode'}
-                          onSelect={() => requestSwitch('opencode')}
-                          selectDisabled={anyInstalling || isUninstalling}
-                          managed={opencodeManaged}
-                          isUninstalling={isUninstalling && pendingUninstall === 'opencode'}
-                          onUninstall={() => setPendingUninstall('opencode')}
-                        />
-                        <CodexStatusCard
-                          codex={codex}
-                          codexReady={preflight.codexReady}
-                          isDetecting={isDetectingCodex}
-                          onDetect={() => void detectCodex()}
-                          isInstalling={codexInstall.isInstalling}
-                          installLogs={codexInstall.installLogs}
-                          installProgress={codexInstall.installProgress}
-                          installError={codexInstall.installError}
-                          installBusy={anyInstalling}
-                          npmAvailable={npmAvailable}
-                          onInstall={(source) => void installCodex(source)}
-                          active={agentFrameworkId === 'codex'}
-                          onSelect={() => requestSwitch('codex')}
-                          selectDisabled={anyInstalling || isUninstalling}
-                          managed={codexManaged}
-                          isUninstalling={isUninstalling && pendingUninstall === 'codex'}
-                          onUninstall={() => setPendingUninstall('codex')}
-                        />
-                        {activeFramework && !activeFramework.supportsSkills ? (
-                          <p className="text-xs text-muted-foreground">
-                            Skills aren&apos;t available with {activeFramework.displayName}; use
-                            Claude Code for skill-based workflows.
-                          </p>
-                        ) : null}
-                      </div>
-                    </SettingsSection>
-
-                    <SettingsSection
-                      title="Providers"
-                      aria-label="Providers"
-                      separated
-                      action={
-                        <Button type="button" variant="outline" onClick={openCreate}>
-                          <Plus className="size-4" aria-hidden="true" />
-                          Add provider
-                        </Button>
-                      }
-                    >
-                      {visibleProviders.length > 0 ? (
-                        <SettingsRow label="Active model" className="border-b border-border pt-0">
-                          <ActiveModelSelect />
-                        </SettingsRow>
-                      ) : null}
-
-                      <SettingsRow
-                        label="Reasoning effort"
-                        description={
-                          <>
-                            Higher levels think longer, lower levels respond faster. Applies to
-                            subsequent requests.
-                          </>
-                        }
-                        className={`border-b border-border${providers.length > 0 ? '' : ' pt-0'}`}
-                        controlClassName="w-auto justify-self-end"
-                      >
-                        <ReasoningEffortSelect />
-                      </SettingsRow>
-
-                      <div className="mt-3">
-                        <ProviderList
-                          providers={visibleProviders}
-                          activeProviderId={activeProviderId}
-                          busyProviderId={busyProviderId}
-                          onEdit={openEdit}
-                          onDelete={(provider) => void deleteProvider(provider.id)}
-                          onTest={(provider) => void handleTest(provider)}
-                          isCodexLoginPending={isCodexLoginPending}
-                          onCancelCodexLogin={() => void cancelCodexLogin()}
-                          onLoginIsolatedCodex={() => void handleCodexLogin()}
-                          onLogoutIsolatedCodex={() => void handleCodexLogout()}
-                        />
-                      </div>
-                      {providerTestError ? (
-                        <p className="text-sm text-destructive" role="alert">
-                          {providerTestError}
-                        </p>
-                      ) : null}
-                    </SettingsSection>
-                  </div>
+                  <ProvidersPanel
+                    onCreateProvider={openCreate}
+                    onEditProvider={openEdit}
+                    busyProviderId={busyProviderId}
+                    onBusyProviderChange={setBusyProviderId}
+                  />
                 )}
               </div>
             </div>
           </div>
         </Dialog.Content>
       </Dialog.Portal>
-      <UninstallRuntimeDialog
-        framework={pendingUninstall}
-        isUninstalling={isUninstalling}
-        onCancel={() => setPendingUninstall(null)}
-        onConfirm={() => void handleConfirmUninstall()}
-      />
-      <SwitchFrameworkDialog
-        targetName={pendingSwitchName ?? null}
-        onCancel={() => setPendingSwitch(null)}
-        onConfirm={confirmSwitch}
-      />
     </Dialog.Root>
   )
 }
