@@ -103,20 +103,31 @@ const GeneralPanel = (): React.JSX.Element => {
         description={
           <>
             Get a desktop notification when a task finishes, fails, or waits for your approval while
-            you&apos;re away from the app. Selecting it brings Open Science back to the front and
-            opens the task.
+            you&apos;re away from the app.
           </>
         }
         aria-label="Notifications"
         separated
       >
-        <SettingsRow label="Task notifications" className="pt-0">
-          <SettingsToggle
-            enabled={notificationsEnabled}
-            aria-label="Toggle task notifications"
-            onToggle={() => void setNotificationsEnabled(!notificationsEnabled)}
-          />
+        <SettingsRow
+          label="Task notifications"
+          description="Selecting a notification brings Open Science back to the front and opens the task."
+          className="pt-0"
+        >
+          <div className="flex justify-end">
+            <SettingsToggle
+              enabled={notificationsEnabled}
+              aria-label="Toggle task notifications"
+              onToggle={() => void setNotificationsEnabled(!notificationsEnabled)}
+            />
+          </div>
         </SettingsRow>
+
+        <p className="mt-1 text-xs text-muted-foreground">
+          Notifications only appear while you&apos;re using another app. Tasks you cancel and
+          failures the app retries automatically stay silent. Your operating system may ask for
+          notification permission the first time one appears.
+        </p>
       </SettingsSection>
 
       <SettingsSection
