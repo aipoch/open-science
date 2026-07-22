@@ -150,7 +150,7 @@ import { renderConnectorInstructions, renderSkillDoc } from '../connectors/skill
 import { syncConnectorSkillDocs } from '../connectors/provision'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
 import { UserSkillRepository } from '../skills/user-skill-repository'
-import { netFetch } from '../skills/net-fetch'
+import { netFetch, netFetchStandard } from '../skills/net-fetch'
 import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limits'
 import { readSkillFile } from '../skills/skill-files'
 import { NOTEBOOK_MCP_SERVER_NAME, NOTEBOOK_RPC_TOOLS } from '../notebook/mcp-server'
@@ -1611,6 +1611,11 @@ class SettingsService {
             'Not signed in. Use Sign in to connect your ChatGPT account.'
           )
         : await validateProvider(resolved.provider, {
+            // Probe over Electron's network stack, which honors the system/VPN proxy. Node's global
+            // fetch (undici) takes a direct path and ignores that proxy, so an official vendor reachable
+            // only through a proxy (e.g. api.openai.com) would fail the probe as a false `network` error
+            // even with a valid key. The local Responses-bridge loopback stays on the direct fetch.
+            fetchImpl: netFetchStandard,
             runClaudeProbe:
               resolved.provider.type === 'claude-default'
                 ? () => this.runClaudeProbe(resolved.provider, settings)

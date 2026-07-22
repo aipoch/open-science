@@ -21,7 +21,9 @@ vi.mock('electron', () => ({
     }
   },
   app: { getPath: () => '/home', getAppPath: () => '/home/no-such-app-root', isPackaged: false },
-  net: { fetch: vi.fn() }
+  // The provider-validation probe fetches over net.fetch (proxy-aware in production). Delegate to the
+  // global fetch each test stubs, so the existing vi.stubGlobal('fetch', …) probe expectations hold.
+  net: { fetch: vi.fn((...args: Parameters<typeof fetch>) => globalThis.fetch(...args)) }
 }))
 
 const { SettingsService } = await import('./service')
@@ -31,6 +33,9 @@ const { SkillRegistry } = await import('../skills/registry')
 const { managedClaudeDir } = await import('./managed-claude')
 const { managedOpencodeDir } = await import('./managed-opencode')
 const { netFetch } = await import('../skills/net-fetch')
+const { net: mockedNet } = (await import('electron')) as unknown as {
+  net: { fetch: ReturnType<typeof vi.fn> }
+}
 
 let storageRoot: string
 let repository: InstanceType<typeof SettingsRepository>
@@ -593,6 +598,29 @@ describe('SettingsService: validation', () => {
 
     expect(result.ok).toBe(true)
     expect((await repository.getSettings()).providers[0].lastValidatedAt).toBeGreaterThan(0)
+  })
+
+  it('probes over the proxy-aware net.fetch, not Node global fetch directly', async () => {
+    const service = createService()
+    // A direct undici fetch ignores the system proxy, so an official vendor reachable only through a
+    // proxy fails as a false network error. The probe must go through net.fetch (Chromium stack).
+    mockedNet.fetch.mockClear()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 200 }))
+
+    const created = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'G',
+        baseUrl: 'https://g/v1',
+        model: 'm',
+        key: 'k'
+      })
+    ).providers[0]
+
+    await service.validateProvider({ providerId: created.id })
+
+    expect(mockedNet.fetch).toHaveBeenCalledTimes(1)
+    expect(mockedNet.fetch.mock.calls[0][0]).toContain('https://g')
   })
 
   it('records the failure (not lastValidatedAt) for a saved provider on failure', async () => {
