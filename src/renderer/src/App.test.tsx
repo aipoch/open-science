@@ -147,7 +147,12 @@ describe('App startup routing', () => {
     window.api = {
       storage: { getInfo: mocks.getInfo },
       settings: { onConnectorApprovalRequest: vi.fn(() => vi.fn()) },
-      notifications: mocks.notifications
+      notifications: mocks.notifications,
+      compute: {
+        onApprovalRequest: vi.fn(() => vi.fn()),
+        onJobUpdated: vi.fn(() => vi.fn()),
+        enabledHostsSet: vi.fn(() => Promise.resolve())
+      }
     } as unknown as Window['api']
     mocks.openSessionById.mockClear()
     mocks.notifications.onOpenSession.mockClear()

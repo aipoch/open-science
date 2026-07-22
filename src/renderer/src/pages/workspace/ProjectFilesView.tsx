@@ -1,4 +1,4 @@
-import { Check, ChevronDown, File, Folder, Paperclip } from 'lucide-react'
+import { Check, ChevronDown, File, Folder, Paperclip, Plus, Server } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
@@ -7,6 +7,7 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
@@ -14,6 +15,8 @@ import { cn, formatByteSize } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { useSessionStore } from '@/stores/session-store'
+import { useComputeStore } from '@/stores/compute-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type {
   ArtifactGroupItem,
@@ -31,6 +34,7 @@ import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
 import { createPreviewFileItem } from './preview-file-item'
 import type { MessageArtifact } from './preview-file-item'
 import { FilePreviewDialog } from './FilePreviewDialog'
+import { FileBrowserModal } from '../settings/FileBrowserModal'
 import { getPreviewThumbnailReadEncoding } from './preview-support'
 import { createKeyedRequestReader } from './project-file-preview-queue'
 import { isUnavailableFileError, FILE_MISSING_TAG } from './previews/preview-errors'
@@ -562,7 +566,8 @@ const ProjectFilesFilterMenu = ({
   selectedOptionId,
   onSelect,
   canLoadMoreOptions,
-  onLoadMoreOptions
+  onLoadMoreOptions,
+  onBrowseRemoteHost
 }: {
   label: string
   options: ProjectFilesFilterOption[]
@@ -570,51 +575,100 @@ const ProjectFilesFilterMenu = ({
   onSelect: (optionId: string) => void
   canLoadMoreOptions: boolean
   onLoadMoreOptions: () => void
-}): React.JSX.Element => (
-  <DropdownMenu>
-    <DropdownMenuTrigger asChild>
-      <Button
-        type="button"
-        variant="outline"
-        className="max-w-[220px] gap-1.5"
-        aria-label="Filter project files"
-      >
-        <File className="size-3.5 shrink-0 text-text-300" strokeWidth={1.8} aria-hidden="true" />
-        <span className="min-w-0 truncate">{label}</span>
-        <ChevronDown
-          className="size-3.5 shrink-0 text-text-300"
-          strokeWidth={2}
-          aria-hidden="true"
-        />
-      </Button>
-    </DropdownMenuTrigger>
-    <DropdownMenuContent
-      align="start"
-      className="max-h-[360px] w-[320px] overflow-y-auto"
-      onScroll={(event) => {
-        const element = event.currentTarget
-        if (
-          canLoadMoreOptions &&
-          element.scrollHeight - element.scrollTop - element.clientHeight < 48
-        ) {
-          onLoadMoreOptions()
-        }
-      }}
-    >
-      <DropdownMenuLabel>Artifacts</DropdownMenuLabel>
-      <DropdownMenuGroup>
-        {options.map((option) => (
-          <FilterMenuItem
-            key={option.id}
-            option={option}
-            isSelected={option.id === selectedOptionId}
-            onSelect={onSelect}
+  onBrowseRemoteHost: (providerId: string) => void
+}): React.JSX.Element => {
+  const hosts = useComputeStore((state) => state.hosts)
+  const openSettingsToCompute = useSettingsStore((state) => state.openSettingsToCompute)
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          className="max-w-[220px] gap-1.5"
+          aria-label="Filter project files"
+        >
+          <File className="size-3.5 shrink-0 text-text-300" strokeWidth={1.8} aria-hidden="true" />
+          <span className="min-w-0 truncate">{label}</span>
+          <ChevronDown
+            className="size-3.5 shrink-0 text-text-300"
+            strokeWidth={2}
+            aria-hidden="true"
           />
-        ))}
-      </DropdownMenuGroup>
-    </DropdownMenuContent>
-  </DropdownMenu>
-)
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        className="max-h-[360px] w-[320px] overflow-y-auto"
+        onScroll={(event) => {
+          const element = event.currentTarget
+          if (
+            canLoadMoreOptions &&
+            element.scrollHeight - element.scrollTop - element.clientHeight < 48
+          ) {
+            onLoadMoreOptions()
+          }
+        }}
+      >
+        <DropdownMenuLabel>Artifacts</DropdownMenuLabel>
+        <DropdownMenuGroup>
+          {options.map((option) => (
+            <FilterMenuItem
+              key={option.id}
+              option={option}
+              isSelected={option.id === selectedOptionId}
+              onSelect={onSelect}
+            />
+          ))}
+        </DropdownMenuGroup>
+
+        {/* REMOTE section: SSH compute hosts */}
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel>REMOTE</DropdownMenuLabel>
+        <DropdownMenuGroup>
+          {hosts.map((host) => {
+            const reachable = host.probeResult?.ok === true
+            return (
+              <DropdownMenuItem
+                key={host.providerId}
+                disabled={!reachable}
+                onSelect={() => {
+                  if (reachable) onBrowseRemoteHost(host.providerId)
+                }}
+                className={cn('gap-2', !reachable && 'opacity-50 cursor-not-allowed')}
+              >
+                <span
+                  className={cn(
+                    'size-1.5 shrink-0 rounded-full',
+                    reachable ? 'bg-emerald-400' : 'bg-muted-foreground/40'
+                  )}
+                  aria-hidden="true"
+                />
+                <Server
+                  className="size-4 shrink-0 text-text-300"
+                  strokeWidth={1.8}
+                  aria-hidden="true"
+                />
+                <span className="min-w-0 flex-1 truncate">{host.displayName}</span>
+                {!reachable && (
+                  <span className="shrink-0 text-[11px] text-text-300">Host unreachable</span>
+                )}
+              </DropdownMenuItem>
+            )
+          })}
+          <DropdownMenuItem
+            className="gap-2 text-muted-foreground"
+            onSelect={() => openSettingsToCompute()}
+          >
+            <Plus className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+            <span>Add SSH host…</span>
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
 
 // Renders one independently paginated artifact collection. All mode reveals local batches of 20 with
 // a compact button, while a selected session consumes its cursor through the intersection sentinel.
@@ -728,6 +782,9 @@ const ProjectFilesViewContent = ({
   const [allVisibleItemLimits, setAllVisibleItemLimits] = useState<Record<string, number>>({})
   // Files-tab previews are transient dialog state; opening a file must not create a workbench tab.
   const [dialogItem, setDialogItem] = useState<PreviewFileItem | undefined>(undefined)
+
+  // Remote file browser modal state — set to a providerId when a REMOTE host is selected.
+  const [browseProviderId, setBrowseProviderId] = useState<string | undefined>(undefined)
   const handleIndexChanged = useCallback(
     (event: ProjectFilesChangedEvent): void => {
       const currentSessions = useSessionStore.getState().sessions
@@ -1044,6 +1101,7 @@ const ProjectFilesViewContent = ({
           onSelect={selectFilter}
           canLoadMoreOptions={Boolean(index.groups.nextCursor) && !index.groups.isLoading}
           onLoadMoreOptions={() => void index.loadMoreGroups()}
+          onBrowseRemoteHost={(providerId) => setBrowseProviderId(providerId)}
         />
         <div className="text-[11px] text-text-300">{visibleFileCount} files</div>
       </div>
@@ -1205,6 +1263,11 @@ const ProjectFilesViewContent = ({
         ) : null}
       </div>
       <FilePreviewDialog item={dialogItem} onClose={() => setDialogItem(undefined)} />
+      <FileBrowserModal
+        open={browseProviderId !== undefined}
+        onClose={() => setBrowseProviderId(undefined)}
+        initialProviderId={browseProviderId}
+      />
     </div>
   )
 }
