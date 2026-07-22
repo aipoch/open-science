@@ -483,4 +483,297 @@ describe('ComputeJob schema migration (integration)', () => {
     // Empty array is a no-op.
     await expect(repo.markNotificationsConsumed([])).resolves.toBeUndefined()
   })
+
+  it('countNonTerminalByProvider counts active jobs across all sessions', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-count-provider-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await ensureProjectSchema(client)
+    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+
+    // Create jobs for provider-a in different sessions
+    await repo.create({
+      id: 'job-1',
+      providerId: 'ssh:provider-a',
+      shape: 'direct_ssh',
+      sessionId: 'session-1',
+      projectId: 'p1',
+      intent: 'test',
+      command: 'echo a',
+      commandHash: 'h1'
+    })
+    await repo.update('job-1', { status: 'running' })
+
+    await repo.create({
+      id: 'job-2',
+      providerId: 'ssh:provider-a',
+      shape: 'direct_ssh',
+      sessionId: 'session-2',
+      projectId: 'p1',
+      intent: 'test',
+      command: 'echo b',
+      commandHash: 'h2'
+    })
+    // job-2 stays in submitted state
+
+    // Create a terminal job for provider-a (should NOT be counted)
+    await repo.create({
+      id: 'job-3',
+      providerId: 'ssh:provider-a',
+      shape: 'direct_ssh',
+      sessionId: 'session-1',
+      projectId: 'p1',
+      intent: 'test',
+      command: 'echo c',
+      commandHash: 'h3'
+    })
+    await repo.update('job-3', { status: 'success', finishedAt: new Date() })
+
+    // Create a job for provider-b (should NOT be counted)
+    await repo.create({
+      id: 'job-4',
+      providerId: 'ssh:provider-b',
+      shape: 'direct_ssh',
+      sessionId: 'session-1',
+      projectId: 'p1',
+      intent: 'test',
+      command: 'echo d',
+      commandHash: 'h4'
+    })
+
+    // Count for provider-a should be 2 (job-1 running + job-2 submitted)
+    const count = await repo.countNonTerminalByProvider('ssh:provider-a')
+    expect(count).toBe(2)
+
+    // Count for provider-b should be 1
+    const countB = await repo.countNonTerminalByProvider('ssh:provider-b')
+    expect(countB).toBe(1)
+
+    // Count for non-existent provider should be 0
+    const countC = await repo.countNonTerminalByProvider('ssh:provider-c')
+    expect(countC).toBe(0)
+  })
+
+  it('countNonTerminalBySession counts active jobs across all providers', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-count-session-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await ensureProjectSchema(client)
+    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+
+    // Create jobs for session-1 on different providers
+    await repo.create({
+      id: 'job-1',
+      providerId: 'ssh:provider-a',
+      shape: 'direct_ssh',
+      sessionId: 'session-1',
+      projectId: 'p1',
+      intent: 'test',
+      command: 'echo a',
+      commandHash: 'h1'
+    })
+    await repo.update('job-1', { status: 'running' })
+
+    await repo.create({
+      id: 'job-2',
+      providerId: 'ssh:provider-b',
+      shape: 'direct_ssh',
+      sessionId: 'session-1',
+      projectId: 'p1',
+      intent: 'test',
+      command: 'echo b',
+      commandHash: 'h2'
+    })
+    // job-2 stays in submitted state
+
+    // Create a terminal job for session-1 (should NOT be counted)
+    await repo.create({
+      id: 'job-3',
+      providerId: 'ssh:provider-a',
+      shape: 'direct_ssh',
+      sessionId: 'session-1',
+      projectId: 'p1',
+      intent: 'test',
+      command: 'echo c',
+      commandHash: 'h3'
+    })
+    await repo.update('job-3', { status: 'failed', finishedAt: new Date() })
+
+    // Create a job for session-2 (should NOT be counted)
+    await repo.create({
+      id: 'job-4',
+      providerId: 'ssh:provider-a',
+      shape: 'direct_ssh',
+      sessionId: 'session-2',
+      projectId: 'p1',
+      intent: 'test',
+      command: 'echo d',
+      commandHash: 'h4'
+    })
+
+    // Count for session-1 should be 2 (job-1 running + job-2 submitted)
+    const count = await repo.countNonTerminalBySession('session-1')
+    expect(count).toBe(2)
+
+    // Count for session-2 should be 1
+    const countB = await repo.countNonTerminalBySession('session-2')
+    expect(countB).toBe(1)
+
+    // Count for non-existent session should be 0
+    const countC = await repo.countNonTerminalBySession('session-3')
+    expect(countC).toBe(0)
+  })
+
+  it('countQueuedJobs returns accurate global queued job count', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-count-queued-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await ensureProjectSchema(client)
+    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+
+    // Initially no queued jobs
+    expect(await repo.countQueuedJobs()).toBe(0)
+
+    // Create queued jobs across different sessions and providers
+    await repo.create({
+      id: 'job-1',
+      providerId: 'ssh:provider-a',
+      shape: 'direct_ssh',
+      sessionId: 'session-1',
+      projectId: 'p1',
+      intent: 'test',
+      command: 'echo a',
+      commandHash: 'h1'
+    })
+    await repo.update('job-1', { status: 'queued' })
+
+    await repo.create({
+      id: 'job-2',
+      providerId: 'ssh:provider-b',
+      shape: 'direct_ssh',
+      sessionId: 'session-2',
+      projectId: 'p1',
+      intent: 'test',
+      command: 'echo b',
+      commandHash: 'h2'
+    })
+    await repo.update('job-2', { status: 'queued' })
+
+    // Create non-queued jobs (should NOT be counted)
+    await repo.create({
+      id: 'job-3',
+      providerId: 'ssh:provider-a',
+      shape: 'direct_ssh',
+      sessionId: 'session-1',
+      projectId: 'p1',
+      intent: 'test',
+      command: 'echo c',
+      commandHash: 'h3'
+    })
+    // job-3 stays in submitted state
+
+    await repo.create({
+      id: 'job-4',
+      providerId: 'ssh:provider-a',
+      shape: 'direct_ssh',
+      sessionId: 'session-1',
+      projectId: 'p1',
+      intent: 'test',
+      command: 'echo d',
+      commandHash: 'h4'
+    })
+    await repo.update('job-4', { status: 'success', finishedAt: new Date() })
+
+    // Count should be 2 (only queued jobs)
+    const count = await repo.countQueuedJobs()
+    expect(count).toBe(2)
+
+    // Transition one job out of queued state
+    await repo.update('job-1', { status: 'submitted' })
+    expect(await repo.countQueuedJobs()).toBe(1)
+  })
+
+  it('findQueuedJobs returns jobs in createdAt ascending order', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-find-queued-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await ensureProjectSchema(client)
+    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+
+    // Create jobs with deliberate timing
+    await repo.create({
+      id: 'job-oldest',
+      providerId: 'ssh:provider-a',
+      shape: 'direct_ssh',
+      sessionId: 'session-1',
+      projectId: 'p1',
+      intent: 'oldest',
+      command: 'echo a',
+      commandHash: 'h1'
+    })
+    await repo.update('job-oldest', { status: 'queued' })
+
+    // Small delay to ensure different timestamps
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    await repo.create({
+      id: 'job-middle',
+      providerId: 'ssh:provider-b',
+      shape: 'direct_ssh',
+      sessionId: 'session-2',
+      projectId: 'p1',
+      intent: 'middle',
+      command: 'echo b',
+      commandHash: 'h2'
+    })
+    await repo.update('job-middle', { status: 'queued' })
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    await repo.create({
+      id: 'job-newest',
+      providerId: 'ssh:provider-a',
+      shape: 'direct_ssh',
+      sessionId: 'session-1',
+      projectId: 'p1',
+      intent: 'newest',
+      command: 'echo c',
+      commandHash: 'h3'
+    })
+    await repo.update('job-newest', { status: 'queued' })
+
+    // Create a non-queued job (should NOT be returned)
+    await repo.create({
+      id: 'job-running',
+      providerId: 'ssh:provider-a',
+      shape: 'direct_ssh',
+      sessionId: 'session-1',
+      projectId: 'p1',
+      intent: 'running',
+      command: 'echo d',
+      commandHash: 'h4'
+    })
+    await repo.update('job-running', { status: 'running' })
+
+    // Find queued jobs
+    const queuedJobs = await repo.findQueuedJobs()
+
+    // Should return 3 queued jobs in createdAt ascending order
+    expect(queuedJobs).toHaveLength(3)
+    expect(queuedJobs[0]!.job_id).toBe('job-oldest')
+    expect(queuedJobs[1]!.job_id).toBe('job-middle')
+    expect(queuedJobs[2]!.job_id).toBe('job-newest')
+
+    // Verify timestamps are in ascending order
+    expect(queuedJobs[0]!.created_at).toBeLessThan(queuedJobs[1]!.created_at)
+    expect(queuedJobs[1]!.created_at).toBeLessThan(queuedJobs[2]!.created_at)
+  })
 })

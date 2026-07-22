@@ -3,8 +3,12 @@ import type { ComputeJobStatus } from '../../../shared/compute'
 // Maps job status to badge styling. Follows design.md §6 badge pattern (same conventions as ReviewCard).
 // Terminal statuses consolidate under semantic groups: success=Done, error/failed/timeout=Failed.
 const STATUS_STYLE: Record<ComputeJobStatus, { label: string; className: string }> = {
-  submitted: {
+  queued: {
     label: 'Queued',
+    className: 'bg-slate-100 text-slate-600 border-slate-200'
+  },
+  submitted: {
+    label: 'Submitted',
     className: 'bg-slate-100 text-slate-600 border-slate-200'
   },
   running: {

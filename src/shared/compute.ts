@@ -91,7 +91,7 @@ export type ExecResult = {
 // retry_after_user_action=true means the system will NOT retry automatically — the user must fix
 // an external condition first (e.g. SSH connectivity).
 export type ComputeCallError = {
-  error_code: 'host_unreachable' | 'timeout' | 'approval_denied'
+  error_code: 'host_unreachable' | 'timeout' | 'approval_denied' | 'queue_full'
   message: string
   retry_after_user_action: boolean
 }
@@ -125,7 +125,8 @@ export type ComputeApprovalRequest = {
 }
 
 // The job status values for the Phase 3a state machine. 'queued' is reserved for Phase 3c.
-export type ComputeJobStatus = 'submitted' | 'running' | 'success' | 'failed' | 'timeout' | 'error'
+export type ComputeJobStatus =
+  'queued' | 'submitted' | 'running' | 'success' | 'failed' | 'timeout' | 'error'
 
 // A compute job record, normalized for cross-process sharing (main → renderer via IPC, main → repl
 // via JSON RPC). Timestamps are epoch milliseconds; JSON columns are parsed at the repository
@@ -209,7 +210,7 @@ export type JobResult = {
 export type SubmitJobResult = {
   job_id: string
   provider_id: string
-  status: 'submitted'
+  status: 'queued' | 'submitted'
   remote_workdir: string
 }
 
