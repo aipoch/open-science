@@ -11,6 +11,9 @@ import type {
   ExecuteNotebookCodeRequest,
   ExecuteNotebookControlRequest,
   ExecuteShellRequest,
+  ExportNotebookAllRequest,
+  ExportNotebookAllResult,
+  ExportNotebookKernelRequest,
   ExportNotebookResult,
   FinishNotebookCodeCellRequest,
   NotebookEnvironmentStatus,
@@ -29,6 +32,7 @@ import type {
   NotebookWorkingFile,
   NotebookWriteLock
 } from '../../shared/notebook'
+import { resolveDataKernelForTab } from '../../shared/notebook'
 import type {
   EnvironmentInfo,
   ManageEnvironmentsRequest,
@@ -36,8 +40,14 @@ import type {
   ProvisionProgress
 } from '../../shared/notebook-env'
 import type { PackageMirror } from '../../shared/mirror'
-import { runDocumentToIpynb, type NbformatOutput, type ResolvedArtifact } from './ipynb-export'
+import {
+  runDocumentToIpynbByKernel,
+  runDocumentToIpynbForKernel,
+  type NbformatOutput,
+  type ResolvedArtifact
+} from './ipynb-export'
 import { NotebookKernelExecutor, type NotebookKernelExecutorOptions } from './kernel-executor'
+import { saveIpynbAll } from './save-ipynb-all'
 import type { KernelProcessKind } from './kernel-executor'
 import { effectiveMirrorAsync, type ProbeDeps } from './mirror-probe'
 import {
@@ -308,6 +318,9 @@ type NotebookRuntimeServiceOptions = {
   appVersion?: string
   // Save-dialog seam for notebook export tests. Production falls back to Electron's native dialog.
   saveIpynb?: (suggestedName: string, data: string) => Promise<ExportNotebookResult>
+  // Save-directory seam for the "Download all" path. Production falls back to a directory picker
+  // dialog and writes one file per data kernel under the user's chosen directory.
+  saveIpynbAll?: (files: Array<{ kernel: 'python' | 'r'; name: string; data: string }>) => Promise<ExportNotebookAllResult>
   // Resolves app-managed artifact paths with the artifact repository's canonical/symlink checks,
   // bound to the artifact's declaring project/session subtree.
   resolveArtifactPath?: (request: {
@@ -384,6 +397,11 @@ const saveIpynbWithDialog = async (
   await writeFile(filePath, data, 'utf8')
   return { saved: true, filePath }
 }
+
+// Writes one .ipynb per data kernel under a user-picked directory. Used by the "Download all" path;
+// the per-tab path (a single .ipynb) goes through `saveIpynbWithDialog` instead. The actual
+// orchestration (directory picker, conflict check, partial-write cleanup) lives in save-ipynb-all
+// so tests can exercise the real path with a mocked electron instead of bypassing via the seam.
 
 const isPathInside = (root: string, candidate: string): boolean => {
   const relativePath = relative(resolve(root), resolve(candidate))
@@ -2004,9 +2022,49 @@ class NotebookRuntimeService {
     }
   }
 
-  // Exports the durable history as an nbformat projection; run.json remains the source of truth.
-  // Artifact IO is resolved first, then the projection runs as a pure function over the result.
-  async exportIpynb(request: NotebookSessionRequest): Promise<ExportNotebookResult> {
+  // Exports the .ipynb for the kernel the caller is currently viewing (tab = choose language).
+  // Replaces the legacy "always use the dominant kernel" rule: a user on the R tab expects the
+  // file to come back as `kernelspec.name='ir'`, and a user on the repl tab gets the .ipynb
+  // scoped to whichever data kernel was most recently active when repl ran.
+  async exportIpynb(request: ExportNotebookKernelRequest): Promise<ExportNotebookResult> {
+    const projectName = request.projectName ?? this.options.projectName
+    const document = await this.repository.findExisting(projectName, request.sessionId)
+    if (!document) {
+      throw new Error(`Notebook session not found: ${request.sessionId}`)
+    }
+
+    const dataKernel = resolveDataKernelForTab(document.runs, request.kernel)
+    if (!dataKernel) {
+      // The session has no python/r runs at all — every run is a control-plane run, so there is no
+      // kernelspec we'd be honest about. Refuse rather than synthesize a phantom notebook.
+      throw new Error(
+        `No ${request.kernel === 'repl' || request.kernel === 'bash' ? 'data-kernel' : request.kernel} runs in this session. Run a Python or R cell first.`
+      )
+    }
+
+    const artifactOutputs = await resolveNotebookArtifactOutputs(
+      document,
+      this.options.resolveArtifactPath
+    )
+    const notebook = runDocumentToIpynbForKernel(
+      document,
+      dataKernel,
+      {
+        appVersion: this.options.appVersion,
+        artifactOutputs
+      }
+    )
+    const suggestedName = `session-${request.sessionId.slice(0, 8)}-${dataKernel}.ipynb`
+    const serialized = `${JSON.stringify(notebook, null, 2)}\n`
+
+    return (this.options.saveIpynb ?? saveIpynbWithDialog)(suggestedName, serialized)
+  }
+
+  // The "Download all" path: writes one .ipynb per data kernel that has runs to a directory the
+  // user picks. Triggered by the secondary footer button when the session actually spans multiple
+  // data kernels — a single-kernel session's "Download all" would be a confusing duplicate of the
+  // main button, so the renderer gates the secondary button on `kindsWithRuns.has('python') && has('r')`.
+  async exportIpynbAll(request: ExportNotebookAllRequest): Promise<ExportNotebookAllResult> {
     const projectName = request.projectName ?? this.options.projectName
     const document = await this.repository.findExisting(projectName, request.sessionId)
     if (!document) {
@@ -2017,14 +2075,27 @@ class NotebookRuntimeService {
       document,
       this.options.resolveArtifactPath
     )
-    const notebook = runDocumentToIpynb(document, {
+    const notebooks = runDocumentToIpynbByKernel(document, {
       appVersion: this.options.appVersion,
       artifactOutputs
     })
-    const suggestedName = `session-${request.sessionId.slice(0, 8)}.ipynb`
-    const serialized = `${JSON.stringify(notebook, null, 2)}\n`
 
-    return (this.options.saveIpynb ?? saveIpynbWithDialog)(suggestedName, serialized)
+    const prefix = `session-${request.sessionId.slice(0, 8)}`
+    const files: Array<{ kernel: 'python' | 'r'; name: string; data: string }> = (
+      ['python', 'r'] as const
+    )
+      .filter((kernel) => notebooks[kernel] !== undefined)
+      .map((kernel) => ({
+        kernel,
+        name: `${prefix}-${kernel}.ipynb`,
+        data: `${JSON.stringify(notebooks[kernel], null, 2)}\n`
+      }))
+
+    if (files.length === 0) {
+      throw new Error('No data-kernel runs in this session. Run a Python or R cell first.')
+    }
+
+    return (this.options.saveIpynbAll ?? saveIpynbAll)(files)
   }
 
   // Replaces the interpreter process while preserving cells and durable run history. Prefers the

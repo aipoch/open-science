@@ -224,11 +224,49 @@ export type NotebookSessionRequest = {
   workspaceCwd: string
 }
 
+// Resolves the data kernel ('python' or 'r') that owns a given tab. For python/r tabs the
+// answer is the tab itself; for repl/bash tabs it is the most recent data kernel that was
+// active when the control run executed. Returns undefined when no data run has ever occurred.
+export const resolveDataKernelForTab = (
+  runs: NotebookRunRecord[],
+  tab: NotebookKernelKind
+): 'python' | 'r' | undefined => {
+  if (tab === 'python' || tab === 'r') return tab
+  for (let i = runs.length - 1; i >= 0; i--) {
+    const run = runs[i]
+    if (run && (run.kernelKind === 'python' || run.kernelKind === 'r')) return run.kernelKind
+  }
+  return undefined
+}
+
 export type ExportNotebookResult =
   | { saved: false }
   | {
       saved: true
       filePath: string
+    }
+
+// Targets the data kernel for an export. The renderer passes the active tab's kernel so the
+// resulting .ipynb uses the matching kernelspec and never falls back to "dominant" — that earlier
+// silent rule made mixed sessions misleadingly export the wrong notebook. `repl` and `bash` are
+// control-plane runs with no standalone kernelspec; the service translates them to the kernel of the
+// most recent data run, or rejects the call when no data run has ever occurred.
+export type ExportNotebookKernelRequest = NotebookSessionRequest & {
+  kernel: NotebookKernelKind
+}
+
+// "Download all" path: every data kernel that actually has runs gets its own .ipynb in a directory
+// the user picks, with control-plane runs grouped under the data kernel that was active at the time.
+export type ExportNotebookAllRequest = NotebookSessionRequest
+
+export type ExportNotebookAllResult =
+  | { saved: false }
+  | {
+      saved: true
+      // The directory the user picked plus the kernel → file basename map. The renderer uses this to
+      // confirm "saved <count> notebooks to <dir>" in the footer banner.
+      directory: string
+      files: Array<{ kernel: 'python' | 'r'; filePath: string }>
     }
 
 // Starts a streamed code write into a notebook cell.

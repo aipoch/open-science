@@ -69,7 +69,7 @@ describe('notebook IPC handlers', () => {
     })
     await handlers.restart({ sessionId: 'session-1', workspaceCwd: '/workspace' })
     await handlers.shutdown({ sessionId: 'session-1', workspaceCwd: '/workspace' })
-    await handlers.exportIpynb({ sessionId: 'session-1', workspaceCwd: '/workspace' })
+    await handlers.exportIpynb({ sessionId: 'session-1', workspaceCwd: '/workspace', kernel: 'python' })
 
     expect(service.execute).toHaveBeenCalledWith({
       sessionId: 'session-1',
@@ -93,7 +93,8 @@ describe('notebook IPC handlers', () => {
     })
     expect(service.exportIpynb).toHaveBeenCalledWith({
       sessionId: 'session-1',
-      workspaceCwd: '/workspace'
+      workspaceCwd: '/workspace',
+      kernel: 'python'
     })
   })
 
@@ -121,6 +122,7 @@ describe('notebook IPC handlers', () => {
       'notebook:run-cell',
       'notebook:execute',
       'notebook:export-ipynb',
+      'notebook:export-ipynb-all',
       'notebook:restart',
       'notebook:shutdown'
     ])

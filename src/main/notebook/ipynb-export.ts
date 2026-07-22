@@ -77,6 +77,10 @@ type ResolvedArtifact = {
   data: unknown
 }
 
+// The "Download all" projection: at most one .ipynb per data kernel that has runs. Omitted kernels
+// are skipped rather than written as an empty notebook.
+type KernelSplitIpynb = Partial<Record<'python' | 'r', IpynbNotebook>>
+
 type RunDocumentToIpynbOptions = {
   appVersion?: string
   // Per-run artifact outputs keyed by runId, produced by the caller's async IO phase (artifact
@@ -269,13 +273,17 @@ const runToCell = (
 // 4.5 notebook, without changing run.json. All IO (artifact file reads) happens in the caller
 // beforehand and arrives via options.artifactOutputs, so the output is byte-identical for the same
 // (document, artifactOutputs, appVersion) inputs and never depends on filesystem state.
+//
+// `kernel` is the data kernel the caller wants the notebook scoped to. When omitted, falls back to
+// the legacy `dominantKernel` rule so the single-export path (no explicit tab) stays unchanged.
 const runDocumentToIpynb = (
   document: NotebookRunDocument,
-  options: RunDocumentToIpynbOptions = {}
+  options: RunDocumentToIpynbOptions = {},
+  kernel: 'python' | 'r' | undefined = undefined
 ): IpynbNotebook => {
-  const kernel = dominantKernel(document.runs)
-  const kernelspec = kernelspecFor(kernel)
-  const environment = dominantEnvironment(document.runs, kernel)
+  const resolvedKernel = kernel ?? dominantKernel(document.runs)
+  const kernelspec = kernelspecFor(resolvedKernel)
+  const environment = dominantEnvironment(document.runs, resolvedKernel)
   const seen = new Set<string>()
 
   return {
@@ -296,5 +304,81 @@ const runDocumentToIpynb = (
   }
 }
 
-export { runDocumentToIpynb }
-export type { IpynbNotebook, NbformatOutput, ResolvedArtifact, RunDocumentToIpynbOptions }
+// Builds the .ipynb for a single data-kernel scope (the "Download this tab" path). Control-plane
+// runs (repl/bash) follow the most recent data run so their `%%bash\n…` / `%%javascript\n…` cells
+// land next to the cells they supported — a Python cell that called `await host.mcp()` in repl then
+// re-ran in R should NOT bleed into the R notebook. Throws when the requested kernel has no runs;
+// the runtime service resolves repl/bash against the most recent data run before reaching here.
+//
+// Pre-data control runs (repl/bash issued before any data run) are buffered and flushed to the FIRST
+// data run that matches the requested kernel. This matches what the user did in the session: the
+// very first shell command is part of the Python workflow they're starting, not some other language's
+// work. Initializing `activeKernel` to `null` (rather than the target or the dominant kernel) avoids
+// two failure modes: a dominant-R kernel pulling a leading `bash` into the R notebook when the first
+// actual data run is Python, and a target-equals-default kernel absorbing pre-data runs before it
+// has earned them.
+const runDocumentToIpynbForKernel = (
+  document: NotebookRunDocument,
+  kernel: 'python' | 'r',
+  options: RunDocumentToIpynbOptions = {}
+): IpynbNotebook => {
+  // Resolves control-plane run ownership: each repl/bash cell joins the kernel that was most recently
+  // active at the time it ran. This is the "follow last active kernel" rule that keeps shell context
+  // adjacent to the data cells it served instead of duplicating across notebooks.
+  const groups: Record<'python' | 'r', NotebookRunRecord[]> = { python: [], r: [] }
+  // Control runs that appeared before the first data run; flushed to the first data run matching
+  // the target kernel (so a session that starts with `ls` then runs Python gets `ls` in the Python
+  // notebook, not orphaned or silently dropped).
+  const preDataBuffer: NotebookRunRecord[] = []
+  let activeKernel: 'python' | 'r' | null = null
+  for (const run of document.runs) {
+    if (run.kernelKind === 'python' || run.kernelKind === 'r') {
+      const firstMatchingData = activeKernel === null && run.kernelKind === kernel
+      activeKernel = run.kernelKind
+      if (activeKernel === kernel) {
+        if (firstMatchingData && preDataBuffer.length > 0) {
+          // The first data run on the target kernel adopts any earlier control-plane runs: the
+          // user clearly intended them as part of the workflow that starts here.
+          groups[kernel].push(...preDataBuffer.splice(0))
+        }
+        groups[kernel].push(run)
+      }
+    } else if (activeKernel === null) {
+      // No data run has occurred yet — stash the control run for adoption by the first matching
+      // data kernel. If no data run ever matches, the run is dropped (the split path only emits
+      // notebooks for kernels that have data runs, so there is no scope for these runs to land in).
+      preDataBuffer.push(run)
+    } else if (activeKernel === kernel) {
+      groups[kernel].push(run)
+    }
+    // else: control run between data runs of the OTHER kernel; it stays with that other kernel's
+    // notebook and is not duplicated into the current target.
+  }
+
+  return runDocumentToIpynb({ ...document, runs: groups[kernel] }, options, kernel)
+}
+
+// Splits a mixed history into per-data-kernel projections for the "Download all" path. Every
+// data kernel that has at least one run gets its own .ipynb; control-plane runs follow the
+// "follow last active kernel" rule above and are never duplicated.
+const runDocumentToIpynbByKernel = (
+  document: NotebookRunDocument,
+  options: RunDocumentToIpynbOptions = {}
+): KernelSplitIpynb => {
+  const result: KernelSplitIpynb = {}
+  for (const kernel of ['python', 'r'] as const) {
+    const hasRuns = document.runs.some((run) => run.kernelKind === kernel)
+    if (!hasRuns) continue
+    result[kernel] = runDocumentToIpynbForKernel(document, kernel, options)
+  }
+  return result
+}
+
+export { runDocumentToIpynb, runDocumentToIpynbByKernel, runDocumentToIpynbForKernel }
+export type {
+  IpynbNotebook,
+  KernelSplitIpynb,
+  NbformatOutput,
+  ResolvedArtifact,
+  RunDocumentToIpynbOptions
+}

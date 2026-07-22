@@ -46,7 +46,7 @@ describe('NotebookRuntimeService exportIpynb', () => {
     } as unknown as NotebookRunRepository
     const saveIpynb = vi
       .fn()
-      .mockResolvedValue({ saved: true, filePath: '/downloads/session.ipynb' })
+      .mockResolvedValue({ saved: true, filePath: '/downloads/session-12345678-python.ipynb' })
     const service = new NotebookRuntimeService({
       configRoot: '/config',
       dataRoot: '/storage',
@@ -58,12 +58,13 @@ describe('NotebookRuntimeService exportIpynb', () => {
 
     const result = await service.exportIpynb({
       sessionId: '12345678-abcd',
-      workspaceCwd: '/workspace'
+      workspaceCwd: '/workspace',
+      kernel: 'python'
     })
 
     expect(repository.findExisting).toHaveBeenCalledWith('default-project', '12345678-abcd')
     expect(saveIpynb).toHaveBeenCalledOnce()
-    expect(saveIpynb.mock.calls[0][0]).toBe('session-12345678.ipynb')
+    expect(saveIpynb.mock.calls[0][0]).toBe('session-12345678-python.ipynb')
     const exported = JSON.parse(saveIpynb.mock.calls[0][1]) as {
       nbformat: number
       metadata: { open_science: { appVersion: string } }
@@ -74,7 +75,7 @@ describe('NotebookRuntimeService exportIpynb', () => {
       metadata: { open_science: { appVersion: '1.2.3' } }
     })
     expect(exported.cells[0].source).toEqual(['print("hello")'])
-    expect(result).toEqual({ saved: true, filePath: '/downloads/session.ipynb' })
+    expect(result).toEqual({ saved: true, filePath: '/downloads/session-12345678-python.ipynb' })
   })
 
   it('rejects an unknown session before opening the save dialog', async () => {
@@ -91,7 +92,7 @@ describe('NotebookRuntimeService exportIpynb', () => {
     })
 
     await expect(
-      service.exportIpynb({ sessionId: 'missing', workspaceCwd: '/workspace' })
+      service.exportIpynb({ sessionId: 'missing', workspaceCwd: '/workspace', kernel: 'python' })
     ).rejects.toThrow('Notebook session not found: missing')
     expect(saveIpynb).not.toHaveBeenCalled()
   })
@@ -161,7 +162,7 @@ describe('NotebookRuntimeService exportIpynb', () => {
         ...(options.resolveArtifactPath ? { resolveArtifactPath: options.resolveArtifactPath } : {})
       })
 
-      await service.exportIpynb({ sessionId: '12345678-abcd', workspaceCwd: '/workspace' })
+      await service.exportIpynb({ sessionId: '12345678-abcd', workspaceCwd: '/workspace', kernel: 'python' })
 
       const json = saveIpynb.mock.calls[0][1] as string
       const notebook = JSON.parse(json) as {

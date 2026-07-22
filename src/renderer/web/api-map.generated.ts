@@ -28,6 +28,7 @@ export const WEB_INVOKE_CHANNELS = {
   'notebook.beginCodeCell': 'notebook:begin-code-cell',
   'notebook.execute': 'notebook:execute',
   'notebook.exportIpynb': 'notebook:export-ipynb',
+  'notebook.exportIpynbAll': 'notebook:export-ipynb-all',
   'notebook.finishCodeCell': 'notebook:finish-code-cell',
   'notebook.getReference': 'notebook:reference',
   'notebook.restart': 'notebook:restart',

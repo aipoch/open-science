@@ -6,6 +6,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn } from '@/lib/utils'
 import type { ChatSession } from '@/stores/session-store'
 
+import { resolveDataKernelForTab } from '../../../../shared/notebook'
 import type { NotebookKernelKind, NotebookRunRecord } from '../../../../shared/notebook'
 import { NotebookCodeBlock } from './notebook-code'
 import { NotebookRunOutputs } from './NotebookRunOutputs'
@@ -79,7 +80,8 @@ type SessionNotebookContentProps = {
   status: SessionNotebookStatus
   error?: string
   onClose: () => void
-  onExport: () => Promise<void>
+  onExport: (kernel: NotebookKernelKind) => Promise<void>
+  onExportAll: () => Promise<string | undefined>
 }
 
 // Pure presentational body of the dialog: header summary, empty/loading/error/populated states,
@@ -91,11 +93,14 @@ const SessionNotebookContent = ({
   status,
   error,
   onClose,
-  onExport
+  onExport,
+  onExportAll
 }: SessionNotebookContentProps): React.JSX.Element => {
   const [activeKind, setActiveKind] = useState<NotebookKernelKind>('python')
   const [exporting, setExporting] = useState(false)
+  const [exportingAll, setExportingAll] = useState(false)
   const [exportError, setExportError] = useState<string>()
+  const [exportSuccess, setExportSuccess] = useState<string>()
   const shortId = sessionId.slice(0, 8)
   const agents = runs.some((run) => run.source === 'agent') ? 1 : 0
   // Only python/r runs are "cells" in the notebook sense; repl/bash are control-plane/shell runs
@@ -119,13 +124,24 @@ const SessionNotebookContent = ({
     ? activeKind
     : (KERNEL_KIND_ORDER.find((kind) => kindsWithRuns.has(kind)) ?? visibleKinds[0] ?? 'python')
   const visibleRuns = runs.filter((run) => resolveRunKernelKind(run) === effectiveActiveKind)
-  const exportDisabled = status !== 'ready' || runs.length === 0 || exporting
+  const busy = exporting || exportingAll
+  const exportDisabled = status !== 'ready' || runs.length === 0 || busy
+
+  // The main button's "current tab" = the kernel whose .ipynb will be saved. repl/bash tabs fold
+  // into the most recent data kernel so the file still has a real kernelspec; sessions that never
+  // ran a data cell have no .ipynb to download and we hide the button via exportDisabled below.
+  const dataKernelsWithRuns = ['python', 'r'].filter((kernel) =>
+    kindsWithRuns.has(kernel as NotebookKernelKind)
+  )
+  const mixedDataKernels = dataKernelsWithRuns.length >= 2
+  const resolvedDataKernel = resolveDataKernelForTab(runs, effectiveActiveKind)
 
   const handleExport = async (): Promise<void> => {
     setExporting(true)
     setExportError(undefined)
+    setExportSuccess(undefined)
     try {
-      await onExport()
+      await onExport(effectiveActiveKind)
     } catch (exportFailure) {
       // A canceled Save As resolves rather than throws, so reaching here is a real failure —
       // keep a diagnostic trail in addition to the footer banner.
@@ -135,6 +151,26 @@ const SessionNotebookContent = ({
       setExporting(false)
     }
   }
+
+  const handleExportAll = async (): Promise<void> => {
+    setExportingAll(true)
+    setExportError(undefined)
+    setExportSuccess(undefined)
+    try {
+      const message = await onExportAll()
+      if (message) setExportSuccess(message)
+    } catch (exportFailure) {
+      console.error('Failed to export notebooks by kernel:', exportFailure)
+      setExportError(getErrorMessage(exportFailure))
+    } finally {
+      setExportingAll(false)
+    }
+  }
+
+  // The "Download all" path is only useful when there's more than one data kernel to write; a
+  // single-kernel session's secondary button would just duplicate the main button. The data-kernel
+  // count comes from `kindsWithRuns` (control-plane kinds don't generate their own .ipynb).
+  const exportAllCount = dataKernelsWithRuns.length
 
   return (
     <>
@@ -184,7 +220,10 @@ const SessionNotebookContent = ({
                   role="tab"
                   aria-selected={effectiveActiveKind === kind}
                   data-testid={`session-notebook-tab-${kind}`}
-                  onClick={() => setActiveKind(kind)}
+                  onClick={() => {
+                    setActiveKind(kind)
+                    setExportSuccess(undefined)
+                  }}
                   className={cn(
                     'flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors',
                     effectiveActiveKind === kind
@@ -212,35 +251,85 @@ const SessionNotebookContent = ({
       </div>
 
       <div className="flex items-center justify-between gap-3 border-t border-border-300/15 px-5 py-3.5">
-        <p className="min-w-0 truncate text-xs text-danger-000" role="alert">
-          {exportError}
+        <p
+          className={cn(
+            'min-w-0 truncate text-xs',
+            exportError ? 'text-danger-000' : 'text-emerald-600'
+          )}
+          role={exportError ? 'alert' : 'status'}
+        >
+          {exportError ?? exportSuccess}
         </p>
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              {/* Wrapper span keeps the tooltip reachable while the button is disabled. */}
-              <span>
-                <button
-                  type="button"
-                  disabled={exportDisabled}
-                  onClick={() => void handleExport()}
-                  className="flex shrink-0 items-center justify-center gap-1.5 rounded px-2 py-1 text-xs text-text-200 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50"
-                  aria-label="Download as .ipynb"
-                >
-                  {exporting ? (
-                    <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
-                  ) : (
-                    <Download className="size-3.5" aria-hidden="true" />
-                  )}
-                  {exporting ? 'Exporting…' : '.ipynb'}
-                </button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>
-              {runs.length === 0 ? 'No runs to export' : 'Download as .ipynb'}
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        <div className="flex shrink-0 items-center gap-2">
+          {/* Secondary action: only when there's more than one data kernel to write, otherwise
+              it would just duplicate the main button. The "Download all (N)" label surfaces the
+              count so the user knows how many files they're about to create. */}
+          {mixedDataKernels ? (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span>
+                    <button
+                      type="button"
+                      disabled={exportDisabled}
+                      onClick={() => void handleExportAll()}
+                      data-testid="session-notebook-export-all"
+                      className="flex items-center justify-center gap-1.5 rounded px-2 py-1 text-xs text-text-200 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50"
+                      aria-label={`Download separate notebooks by kernel (${exportAllCount})`}
+                    >
+                      {exportingAll ? (
+                        <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <Download className="size-3.5" aria-hidden="true" />
+                      )}
+                      {exportingAll ? 'Exporting…' : `All (${exportAllCount})`}
+                    </button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Save one .ipynb per data kernel ({exportAllCount} files) to a chosen directory.
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : null}
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                {/* Wrapper span keeps the tooltip reachable while the button is disabled. */}
+                <span>
+                  <button
+                    type="button"
+                    disabled={exportDisabled || resolvedDataKernel === undefined}
+                    onClick={() => void handleExport()}
+                    data-testid="session-notebook-export"
+                    className="flex items-center justify-center gap-1.5 rounded px-2 py-1 text-xs text-text-200 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50"
+                    aria-label={
+                      resolvedDataKernel
+                        ? `Download ${resolvedDataKernel} as .ipynb`
+                        : 'Download as .ipynb'
+                    }
+                  >
+                    {exporting ? (
+                      <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Download className="size-3.5" aria-hidden="true" />
+                    )}
+                    {exporting ? 'Exporting…' : '.ipynb'}
+                  </button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {resolvedDataKernel
+                  ? `Download ${kernelKindLabel(resolvedDataKernel)} cells as .ipynb${
+                      effectiveActiveKind !== resolvedDataKernel
+                        ? ' (control tab falls back to most recent data kernel)'
+                        : ''
+                    }`
+                  : 'Run a Python or R cell first to enable .ipynb export.'}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
       </div>
     </>
   )
@@ -325,12 +414,24 @@ const SessionNotebookDialog = ({
               status={status}
               error={error}
               onClose={onClose}
-              onExport={async () => {
+              onExport={async (kernel) => {
                 await window.api.notebook.exportIpynb({
+                  sessionId: session.id,
+                  projectName: session.projectId,
+                  workspaceCwd: session.cwd ?? '',
+                  kernel
+                })
+              }}
+              onExportAll={async () => {
+                const result = await window.api.notebook.exportIpynbAll({
                   sessionId: session.id,
                   projectName: session.projectId,
                   workspaceCwd: session.cwd ?? ''
                 })
+                if (result.saved) {
+                  return `Saved ${result.files.length} notebooks to ${result.directory}`
+                }
+                return undefined
               }}
             />
           ) : null}

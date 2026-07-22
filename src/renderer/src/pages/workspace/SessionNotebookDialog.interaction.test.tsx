@@ -40,7 +40,7 @@ afterEach(() => {
 })
 
 describe('SessionNotebookContent export', () => {
-  it('invokes the export callback from the enabled .ipynb button', async () => {
+  it('invokes the export callback with the active tab kernel', async () => {
     const onExport = vi.fn().mockResolvedValue(undefined)
     await act(async () => {
       root.render(
@@ -50,12 +50,13 @@ describe('SessionNotebookContent export', () => {
           status="ready"
           onClose={vi.fn()}
           onExport={onExport}
+          onExportAll={vi.fn()}
         />
       )
     })
 
     const button = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Download as .ipynb"]'
+      'button[aria-label="Download python as .ipynb"]'
     )
     expect(button?.disabled).toBe(false)
 
@@ -64,7 +65,46 @@ describe('SessionNotebookContent export', () => {
       await Promise.resolve()
     })
 
+    // The active tab defaults to python; the callback receives the kernel that names the file.
     expect(onExport).toHaveBeenCalledOnce()
+    expect(onExport).toHaveBeenCalledWith('python')
+  })
+
+  it('passes the clicked tab kernel to the export callback after switching tabs', async () => {
+    const onExport = vi.fn().mockResolvedValue(undefined)
+    const mixedRuns: NotebookRunRecord[] = [run, { ...run, runId: 'r1', kernelKind: 'r', environment: 'default-r' }]
+    await act(async () => {
+      root.render(
+        <SessionNotebookContent
+          sessionId="session-1"
+          runs={mixedRuns}
+          status="ready"
+          onClose={vi.fn()}
+          onExport={onExport}
+          onExportAll={vi.fn()}
+        />
+      )
+    })
+
+    // Click the R tab before exporting so the callback sees the new activeKind.
+    const rTab = container.querySelector<HTMLButtonElement>(
+      'button[data-testid="session-notebook-tab-r"]'
+    )
+    await act(async () => {
+      rTab?.click()
+      await Promise.resolve()
+    })
+
+    const exportButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Download r as .ipynb"]'
+    )
+    expect(exportButton).not.toBeNull()
+    await act(async () => {
+      exportButton?.click()
+      await Promise.resolve()
+    })
+
+    expect(onExport).toHaveBeenCalledWith('r')
   })
 
   it('surfaces export failures and re-enables the button', async () => {
@@ -77,12 +117,13 @@ describe('SessionNotebookContent export', () => {
           status="ready"
           onClose={vi.fn()}
           onExport={onExport}
+          onExportAll={vi.fn()}
         />
       )
     })
 
     const button = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Download as .ipynb"]'
+      'button[aria-label="Download python as .ipynb"]'
     )
     await act(async () => {
       button?.click()
@@ -104,12 +145,15 @@ describe('SessionNotebookContent export', () => {
           status="ready"
           onClose={vi.fn()}
           onExport={onExport}
+          onExportAll={vi.fn()}
         />
       )
     })
 
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="Download as .ipynb"]')?.click()
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="Download python as .ipynb"]')
+        ?.click()
       await Promise.resolve()
     })
 
@@ -127,12 +171,15 @@ describe('SessionNotebookContent export', () => {
           status="ready"
           onClose={vi.fn()}
           onExport={failingExport}
+          onExportAll={vi.fn()}
         />
       )
     })
 
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="Download as .ipynb"]')?.click()
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="Download python as .ipynb"]')
+        ?.click()
       await Promise.resolve()
     })
     expect(container.querySelector('[role="alert"]')?.textContent).toBe('Disk is full')
@@ -147,10 +194,61 @@ describe('SessionNotebookContent export', () => {
           status="ready"
           onClose={vi.fn()}
           onExport={vi.fn()}
+          onExportAll={vi.fn()}
         />
       )
     })
 
-    expect(container.querySelector('[role="alert"]')?.textContent).toBe('')
+    expect(container.querySelector('[role="alert"], [role="status"]')?.textContent).toBe('')
+  })
+
+  it('invokes onExportAll for the "Download all" button on mixed sessions', async () => {
+    const onExportAll = vi.fn().mockResolvedValue(undefined)
+    const mixedRuns: NotebookRunRecord[] = [run, { ...run, runId: 'r1', kernelKind: 'r', environment: 'default-r' }]
+    await act(async () => {
+      root.render(
+        <SessionNotebookContent
+          sessionId="session-1"
+          runs={mixedRuns}
+          status="ready"
+          onClose={vi.fn()}
+          onExport={vi.fn()}
+          onExportAll={onExportAll}
+        />
+      )
+    })
+
+    const allButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Download separate notebooks by kernel (2)"]'
+    )
+    expect(allButton).not.toBeNull()
+    await act(async () => {
+      allButton?.click()
+      await Promise.resolve()
+    })
+
+    expect(onExportAll).toHaveBeenCalledOnce()
+  })
+
+  it('hides the "Download all" button when only one data kernel has runs', async () => {
+    const onExportAll = vi.fn()
+    await act(async () => {
+      root.render(
+        <SessionNotebookContent
+          sessionId="session-1"
+          runs={[run]}
+          status="ready"
+          onClose={vi.fn()}
+          onExport={vi.fn()}
+          onExportAll={onExportAll}
+        />
+      )
+    })
+
+    const allButton = container.querySelector<HTMLButtonElement>(
+      'button[data-testid="session-notebook-export-all"]'
+    )
+    expect(allButton).toBeNull()
+    expect(onExportAll).not.toHaveBeenCalled()
   })
 })

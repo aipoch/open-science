@@ -4,7 +4,7 @@ import Ajv from 'ajv'
 import { describe, expect, it } from 'vitest'
 
 import type { NotebookRunDocument, NotebookRunRecord } from '../../shared/notebook'
-import { runDocumentToIpynb, type NbformatOutput } from './ipynb-export'
+import { runDocumentToIpynb, runDocumentToIpynbByKernel, type NbformatOutput } from './ipynb-export'
 
 const makeRun = (overrides: Partial<NotebookRunRecord> = {}): NotebookRunRecord => ({
   runId: 'run-1',
@@ -294,5 +294,89 @@ describe('runDocumentToIpynb', () => {
     const notebook = runDocumentToIpynb(document, { appVersion: '1.2.3', artifactOutputs })
 
     await validateAgainstNbformatSchema(notebook)
+  })
+})
+
+describe('runDocumentToIpynbByKernel pre-data control run attribution', () => {
+  const makeRun = (overrides: Partial<NotebookRunRecord> = {}): NotebookRunRecord => ({
+    runId: 'run',
+    cellId: 'cell',
+    source: 'agent',
+    kernelKind: 'python',
+    script: '',
+    status: 'completed',
+    startedAt: 1,
+    text: { stdout: '', stderr: '', traceback: '', plain: [] },
+    outputs: [],
+    artifacts: [],
+    workingFiles: [],
+    ...overrides
+  })
+
+  const makeDocument = (runs: NotebookRunRecord[]): NotebookRunDocument => ({
+    version: 1,
+    projectName: 'default-project',
+    sessionId: 'session-123',
+    workspaceCwd: '/workspace',
+    notebookSessionRoot: '/data/notebooks/default-project/session-123',
+    dataRoot: '/data/notebooks/default-project/session-123/data',
+    kernel: {
+      language: 'python',
+      kernelName: 'python3',
+      runtimeRoot: '/data/runtime',
+      lastKnownStatus: 'idle'
+    },
+    runs,
+    updatedAt: 1
+  })
+
+  it('attaches pre-data control runs to the first data kernel, not the dominant one', () => {
+    // [bash, python, r, r]: a leading `bash` should land in the Python notebook (the first
+    // data kernel the user actually invoked), not the R notebook (which would win a count-based
+    // dominant-kernel fallback). The same buffer flushes into whichever notebook projects the
+    // Python data: that is the notebook whose export this PR renamed "Download all (N)".
+    const split = runDocumentToIpynbByKernel(
+      makeDocument([
+        makeRun({ runId: 'leading-bash', kernelKind: 'bash', script: 'pwd' }),
+        makeRun({ runId: 'p1', kernelKind: 'python', script: 'print(1)' }),
+        makeRun({ runId: 'r1', kernelKind: 'r', script: 'print(2)' }),
+        makeRun({ runId: 'r2', kernelKind: 'r', script: 'print(3)' })
+      ])
+    )
+
+    const pythonCells = (split.python?.cells ?? []).map((cell) => cell.id)
+    expect(pythonCells).toEqual(['leading-bash', 'p1'])
+
+    const rCells = (split.r?.cells ?? []).map((cell) => cell.id)
+    // The leading bash already belongs to the Python notebook and is not duplicated into R.
+    expect(rCells).toEqual(['r1', 'r2'])
+  })
+
+  it('routes an intermediate control run to the most recent data kernel', () => {
+    // [python, bash, r]: bash between python and r belongs to python (the most recent data
+    // kernel at the time bash ran), not to r.
+    const split = runDocumentToIpynbByKernel(
+      makeDocument([
+        makeRun({ runId: 'p1', kernelKind: 'python' }),
+        makeRun({ runId: 'bash-between', kernelKind: 'bash' }),
+        makeRun({ runId: 'r1', kernelKind: 'r' })
+      ])
+    )
+
+    expect((split.python?.cells ?? []).map((cell) => cell.id)).toEqual(['p1', 'bash-between'])
+    expect((split.r?.cells ?? []).map((cell) => cell.id)).toEqual(['r1'])
+  })
+
+  it('drops pre-data control runs when no data run ever matches the target kernel', () => {
+    // [bash, bash]: a control-only session has no notebook to project into. The buffer is
+    // dropped because neither python nor r has any data runs to flush it into, and the split
+    // path only emits kernels with data.
+    const split = runDocumentToIpynbByKernel(
+      makeDocument([
+        makeRun({ runId: 'bash-1', kernelKind: 'bash' }),
+        makeRun({ runId: 'bash-2', kernelKind: 'bash' })
+      ])
+    )
+    expect(split).toEqual({})
   })
 })
