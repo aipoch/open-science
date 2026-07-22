@@ -71,7 +71,7 @@ const UpdateDialog = (): React.JSX.Element | null => {
             <div className="mt-4">
               <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground tabular-nums">
                 <span>
-                  {status.downloadedBytes != null && status.totalBytes
+                  {status.downloadedBytes != null && status.totalBytes && status.downloadedBytes > 0
                     ? `${formatBytes(status.downloadedBytes)} / ${formatBytes(status.totalBytes)}`
                     : `${status.progress ?? 0}%`}
                 </span>

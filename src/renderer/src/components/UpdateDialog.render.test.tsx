@@ -138,4 +138,40 @@ describe('UpdateDialog', () => {
     expect(document.body.textContent).toContain('9.8 KB')
     expect(document.body.textContent).toContain('42%')
   })
+
+  it('falls back to percent-only when byte counts are missing while downloading', () => {
+    // When transferred/total are unknown the label should show only the percent, not "0 B / 0 B".
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: {
+        state: 'downloading',
+        current: '0.1.0',
+        latest: '0.2.0',
+        progress: 35,
+        downloadedBytes: undefined,
+        totalBytes: undefined
+      }
+    })
+    act(() => root.render(<UpdateDialog />))
+    // Should NOT show byte formatting — just the percent.
+    expect(document.body.textContent).not.toContain('0 B')
+  })
+
+  it('falls back to percent-only when downloadedBytes is 0 while downloading', () => {
+    // A fresh download that hasn't received its first progress event yet: downloadedBytes is 0,
+    // so the label should show percent, not "0 B / 9.8 KB".
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: {
+        state: 'downloading',
+        current: '0.1.0',
+        latest: '0.2.0',
+        progress: 0,
+        downloadedBytes: 0,
+        totalBytes: 10000
+      }
+    })
+    act(() => root.render(<UpdateDialog />))
+    expect(document.body.textContent).not.toContain('0 B')
+  })
 })

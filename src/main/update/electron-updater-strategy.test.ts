@@ -36,7 +36,11 @@ class FakeUpdater extends EventEmitter {
   private downloadPromise: Promise<void> | null = null
   checkForUpdates = vi.fn(async () => {
     this.emit('checking-for-update')
-    this.emit('update-available', { version: '0.3.0', releaseNotes: 'notes' })
+    this.emit('update-available', {
+      version: '0.3.0',
+      releaseNotes: 'notes',
+      files: [{ size: 10000 }]
+    })
   })
   downloadUpdate = vi.fn((token?: FakeToken): Promise<void> => {
     if (this.downloadPromise != null) return this.downloadPromise
@@ -346,21 +350,99 @@ describe('ElectronUpdaterStrategy', () => {
     expect(status.notes).toBe('')
   })
 
-  it('hydrates totalBytes from the CDN manifest when the version matches', async () => {
+  it('extracts totalBytes from the updater feed artifact files at check time', async () => {
     const updater = new FakeUpdater()
+    updater.checkForUpdates = vi.fn(async () => {
+      updater.emit('update-available', {
+        version: '0.3.0',
+        files: [{ size: 99000 }, { size: 12000 }]
+      })
+    })
     const strategy = new ElectronUpdaterStrategy({
       updater,
       currentVersion: '0.2.0',
-      platform: 'darwin',
-      arch: 'arm64',
       broadcast: vi.fn(),
-      fetchImpl: manifestFetch({
-        version: '0.3.0',
-        downloads: { 'mac-arm64': { url: 'https://cdn/x.dmg', size: 99000, sha256: 'a' } },
-        notes: 'notes'
-      })
+      fetchImpl: offlineFetch()
     })
     const status = await strategy.check()
     expect(status.totalBytes).toBe(99000)
+  })
+
+  it('preserves check-time totalBytes when download-progress omits total', async () => {
+    // Artifacts published with a size in the feed should keep that size even if a progress event
+    // arrives without a total field.
+    const updater = new FakeUpdater()
+    updater.checkForUpdates = vi.fn(async () => {
+      updater.emit('update-available', { version: '0.3.0', files: [{ size: 50000 }] })
+    })
+    updater.runDownload = async () => {
+      // Progress event intentionally omits total — must not clobber the known 50000.
+      updater.emit('download-progress', { percent: 10, transferred: 5000 })
+      updater.emit('update-downloaded', { version: '0.3.0' })
+    }
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    await strategy.check()
+    expect(strategy.getStatus().totalBytes).toBe(50000)
+
+    const status = await strategy.download()
+    expect(status.totalBytes).toBe(50000)
+    expect(status.downloadedBytes).toBe(5000)
+  })
+
+  it('omits totalBytes when the updater feed has no artifact size', async () => {
+    const updater = new FakeUpdater()
+    updater.checkForUpdates = vi.fn(async () => {
+      updater.emit('update-available', { version: '0.3.0' })
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    const status = await strategy.check()
+    expect(status.totalBytes).toBeUndefined()
+  })
+
+  it('resets downloadedBytes to 0 when starting a new download', async () => {
+    // A retry after cancel must not carry over the previous download's transferred bytes.
+    const updater = new FakeUpdater()
+    let starts = 0
+    let release: (() => void) | undefined
+    updater.runDownload = async (token) => {
+      starts += 1
+      if (starts === 1) {
+        await new Promise<void>((resolve) => (release = resolve))
+        if (token?.cancelled) throw new Error('cancelled')
+      } else {
+        updater.emit('download-progress', { percent: 55, transferred: 5500, total: 10000 })
+        updater.emit('update-downloaded', { version: '0.3.0' })
+      }
+    }
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    await strategy.check()
+
+    const first = strategy.download()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(strategy.getStatus().downloadedBytes).toBe(0)
+
+    await strategy.cancel()
+    release?.()
+    const retry = await strategy.download()
+    expect(retry.state).toBe('ready')
+    expect(starts).toBe(2)
+    // The retry's progress event should report fresh transferred, not stale bytes.
+    expect(retry.downloadedBytes).toBe(5500)
+    await first
   })
 })

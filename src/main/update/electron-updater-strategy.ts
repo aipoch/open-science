@@ -3,7 +3,6 @@ import { autoUpdater, CancellationToken } from 'electron-updater'
 
 import { APP } from '../../shared/app-config'
 import type { UpdateStatus } from '../../shared/update'
-import { selectDownload } from '../../shared/update'
 import { fetchManifest } from './manifest'
 import type { InstallGate, UpdateStrategy } from './strategy'
 import { broadcastToRenderers } from '../renderer-broadcast'
@@ -33,8 +32,6 @@ export interface MinimalAutoUpdater {
 export type ElectronUpdaterDeps = {
   updater?: MinimalAutoUpdater
   currentVersion?: string
-  platform?: NodeJS.Platform
-  arch?: string
   broadcast?: (channel: string, payload: unknown) => void
   // Factory for the per-download cancellation token; defaults to electron-updater's CancellationToken.
   // Injectable so tests can drive cancel() without the real class.
@@ -75,8 +72,6 @@ const notesToString = (notes: unknown): string => {
 export class ElectronUpdaterStrategy implements UpdateStrategy {
   private readonly updater: MinimalAutoUpdater
   private readonly currentVersion: string
-  private readonly platform: NodeJS.Platform
-  private readonly arch: string
   private readonly broadcast: (channel: string, payload: unknown) => void
   private readonly fetchImpl?: typeof fetch
   private readonly manifestUrl: string
@@ -101,8 +96,6 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   constructor(deps: ElectronUpdaterDeps = {}) {
     this.updater = deps.updater ?? (autoUpdater as unknown as MinimalAutoUpdater)
     this.currentVersion = deps.currentVersion ?? app?.getVersion?.() ?? '0.0.0'
-    this.platform = deps.platform ?? process.platform
-    this.arch = deps.arch ?? process.arch
     this.broadcast = deps.broadcast ?? defaultBroadcast
     this.fetchImpl = deps.fetchImpl
     this.manifestUrl = deps.manifestUrl ?? APP.update.manifestUrl
@@ -123,11 +116,16 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private subscribe(): void {
     this.updater.on('checking-for-update', () => this.setStatus({ state: 'checking' }))
     this.updater.on('update-available', (info) => {
-      const i = info as { version?: string; releaseNotes?: unknown }
+      const i = info as { version?: string; releaseNotes?: unknown; files?: { size?: number }[] }
+      // The size comes from electron-updater's own feed (the artifact it will actually download —
+      // e.g. a macOS ZIP or Linux AppImage), not the CDN manifest's installer entry (DMG/deb) which
+      // is a different file with a different size.
+      const totalBytes = i.files?.find((f) => f.size != null)?.size
       this.setStatus({
         state: 'available',
         latest: i.version,
-        notes: notesToString(i.releaseNotes)
+        notes: notesToString(i.releaseNotes),
+        ...(totalBytes != null ? { totalBytes } : {})
       })
       // electron-updater's *.yml feed carries no release notes, so the dialog would only get a
       // GitHub link. Hydrate the notes from the CDN manifest (the same version.json the installer
@@ -141,9 +139,9 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.updater.on('download-progress', (p) => {
       const info = p as { percent?: number; transferred?: number; total?: number }
       const percent = Math.round(info.percent ?? 0)
-      const transferred = info.transferred ?? 0
-      // Preserve the manifest-hydrated size when the event lacks a usable total, so a progress
-      // event omitting it can't clobber the known installer size with 0.
+      const transferred = info.transferred ?? this.status.downloadedBytes ?? 0
+      // Preserve the known artifact size when the event lacks a usable total, so a progress
+      // event omitting it can't clobber the size extracted at check time with 0.
       const total = info.total || this.status.totalBytes || 0
       this.broadcast('update:progress', { percent, transferred, total })
       this.setStatus({
@@ -178,22 +176,17 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     return this.status
   }
 
-  // Fetch the CDN manifest and, when it matches the offered update, merge in release notes and the
-  // download size. Any failure (network, parse, version drift) leaves the existing fallbacks in place —
-  // notes link to GitHub and totalBytes is absent until download-progress starts reporting.
+  // Fetch the CDN manifest and, when it matches the offered update and actually carries notes,
+  // merge them into the current status. Any failure (network, parse, version drift) leaves the
+  // GitHub-link fallback in place — notes are best-effort and never block the update.
   private async hydrateNotes(version: string): Promise<void> {
     try {
       const manifest = await fetchManifest(this.manifestUrl, this.fetchImpl)
-      if (manifest.version === version && this.status.latest === version) {
-        const download = selectDownload(manifest, this.platform, this.arch)
-        this.setStatus({
-          ...this.status,
-          notes: manifest.notes || this.status.notes,
-          totalBytes: download?.size ?? this.status.totalBytes
-        })
+      if (manifest.version === version && manifest.notes && this.status.latest === version) {
+        this.setStatus({ ...this.status, notes: manifest.notes })
       }
     } catch {
-      // Keep the fallbacks that link out to the GitHub release and omit totalBytes.
+      // Keep the fallback that links out to the GitHub release.
     }
   }
 
@@ -226,7 +219,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     const generation = ++this.downloadGeneration
     const token = this.createCancellationToken()
     this.downloadToken = token
-    this.setStatus({ ...this.status, state: 'downloading', progress: 0 })
+    this.setStatus({ ...this.status, state: 'downloading', progress: 0, downloadedBytes: 0 })
 
     const lifecycle = (async () => {
       try {
