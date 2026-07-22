@@ -7,6 +7,7 @@ type ComputeJobClientProvider = () => Promise<ComputeJobClient>
 
 const asStatus = (value: string): ComputeJobStatus => {
   const valid: ComputeJobStatus[] = [
+    'queued',
     'submitted',
     'running',
     'success',
@@ -131,11 +132,11 @@ export class ComputeJobRepository {
     return row ? toJob(row) : null
   }
 
-  // Returns all non-terminal jobs (submitted + running) for the poller to resume after restart.
+  // Returns all non-terminal jobs (queued + submitted + running) for the poller to resume after restart.
   async findNonTerminal(): Promise<ComputeJob[]> {
     const client = await this.getClient()
     const rows = await client.computeJob.findMany({
-      where: { status: { in: ['submitted', 'running'] } },
+      where: { status: { in: ['queued', 'submitted', 'running'] } },
       orderBy: { createdAt: 'asc' }
     })
     return rows.map(toJob)
@@ -159,7 +160,7 @@ export class ComputeJobRepository {
   async findNonTerminalByProvider(providerId: string): Promise<ComputeJob[]> {
     const client = await this.getClient()
     const rows = await client.computeJob.findMany({
-      where: { providerId, status: { in: ['submitted', 'running'] } },
+      where: { providerId, status: { in: ['queued', 'submitted', 'running'] } },
       orderBy: { createdAt: 'asc' }
     })
     return rows.map(toJob)
@@ -208,7 +209,7 @@ export class ComputeJobRepository {
   async hasActiveJobsForProvider(providerId: string): Promise<boolean> {
     const client = await this.getClient()
     const count = await client.computeJob.count({
-      where: { providerId, status: { in: ['submitted', 'running'] } }
+      where: { providerId, status: { in: ['queued', 'submitted', 'running'] } }
     })
     return count > 0
   }
@@ -241,6 +242,50 @@ export class ComputeJobRepository {
       },
       data: { notificationConsumedAt: new Date() }
     })
+  }
+
+  // Counts non-terminal jobs (queued, submitted, running) across all sessions for a given provider.
+  // Used by ConcurrencyManager to enforce provider ceilings.
+  async countNonTerminalByProvider(providerId: string): Promise<number> {
+    const client = await this.getClient()
+    return await client.computeJob.count({
+      where: {
+        providerId,
+        status: { in: ['queued', 'submitted', 'running'] }
+      }
+    })
+  }
+
+  // Counts non-terminal jobs (queued, submitted, running) across all providers for a given session.
+  // Used by ConcurrencyManager to enforce session limits.
+  async countNonTerminalBySession(sessionId: string): Promise<number> {
+    const client = await this.getClient()
+    return await client.computeJob.count({
+      where: {
+        sessionId,
+        status: { in: ['queued', 'submitted', 'running'] }
+      }
+    })
+  }
+
+  // Counts all queued jobs globally (across all sessions and providers).
+  // Used by ConcurrencyManager to enforce the global queue limit (100).
+  async countQueuedJobs(): Promise<number> {
+    const client = await this.getClient()
+    return await client.computeJob.count({
+      where: { status: 'queued' }
+    })
+  }
+
+  // Returns all queued jobs ordered by createdAt ascending (FIFO).
+  // Used by ConcurrencyManager to dispatch the next eligible job when a slot frees up.
+  async findQueuedJobs(): Promise<ComputeJob[]> {
+    const client = await this.getClient()
+    const rows = await client.computeJob.findMany({
+      where: { status: 'queued' },
+      orderBy: { createdAt: 'asc' }
+    })
+    return rows.map(toJob)
   }
 }
 
