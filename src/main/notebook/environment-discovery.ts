@@ -259,12 +259,15 @@ export const defaultCandidatePaths =
         try {
           entries = await readdir(rRoot)
         } catch (err: unknown) {
-          // Skip if R root doesn't exist or is inaccessible (ENOENT, EACCES, EPERM).
-          // These are expected on locked-down corporate machines where Program Files may be ACL-restricted.
+          // Discovery is best-effort: absorb all errors and continue. ENOENT/EACCES/EPERM are expected
+          // on locked-down corporate machines, but unexpected errors (EIO, ENOTDIR, EMFILE) can also
+          // occur (e.g., network-mapped Program Files with dropped shares). Log unexpected codes for
+          // observability but do not reject the entire Promise.all that would block Python discovery too.
           const code = (err as NodeJS.ErrnoException).code
-          if (code === 'ENOENT' || code === 'EACCES' || code === 'EPERM') continue
-          // Rethrow unexpected errors (e.g., ENOTDIR, EIO) for observability
-          throw err
+          if (code !== 'ENOENT' && code !== 'EACCES' && code !== 'EPERM') {
+            console.warn('[cran-r] unexpected error scanning', rRoot, code)
+          }
+          continue
         }
         for (const ver of entries) {
           // Match R-x.y.z or R-x.y.z-suffix (e.g., R-4.2.0-ucrt for CRAN's UCRT builds)
