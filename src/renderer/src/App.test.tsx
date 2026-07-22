@@ -3,35 +3,44 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({
-  settings: {
-    isLoaded: false,
-    onboardingCompletedAt: undefined as number | undefined,
-    isEnvironmentRepairOpen: false,
-    isSettingsOpen: false,
-    isSettingsLoaded: true,
-    enqueueApproval: vi.fn(),
-    load: vi.fn().mockResolvedValue(undefined),
-    checkEnvironment: vi.fn().mockResolvedValue(undefined),
-    closeSettings: vi.fn()
-  },
-  navigation: { view: 'home' as 'home' | 'workspace' },
-  environment: {
-    ui: { state: 'idle' },
-    init: vi.fn().mockResolvedValue(undefined),
-    retry: vi.fn().mockResolvedValue(undefined)
-  },
-  loadProjects: vi.fn().mockResolvedValue(undefined),
-  initUpdates: vi.fn(),
-  openSessionById: vi.fn(),
-  notifications: {
-    onOpenSession: vi.fn(() => vi.fn()),
-    takePendingOpenSession: vi.fn().mockResolvedValue(null)
-  },
-  sessionPersistenceReady: true,
-  startupView: 'home' as 'home' | 'onboarding',
-  getInfo: vi.fn()
-}))
+const mocks = vi.hoisted(() => {
+  // Captures the onOpenSession listener so tests can fire the notification nudge directly.
+  const notificationNudgeBox: { current: (() => void) | undefined } = { current: undefined }
+
+  return {
+    settings: {
+      isLoaded: false,
+      onboardingCompletedAt: undefined as number | undefined,
+      isEnvironmentRepairOpen: false,
+      isSettingsOpen: false,
+      isSettingsLoaded: true,
+      enqueueApproval: vi.fn(),
+      load: vi.fn().mockResolvedValue(undefined),
+      checkEnvironment: vi.fn().mockResolvedValue(undefined),
+      closeSettings: vi.fn()
+    },
+    navigation: { view: 'home' as 'home' | 'workspace' },
+    environment: {
+      ui: { state: 'idle' },
+      init: vi.fn().mockResolvedValue(undefined),
+      retry: vi.fn().mockResolvedValue(undefined)
+    },
+    loadProjects: vi.fn().mockResolvedValue(undefined),
+    initUpdates: vi.fn(),
+    openSessionById: vi.fn(),
+    notificationNudgeBox,
+    notifications: {
+      onOpenSession: vi.fn((listener: () => void) => {
+        notificationNudgeBox.current = listener
+        return () => undefined
+      }),
+      takePendingOpenSession: vi.fn().mockResolvedValue(null)
+    },
+    sessionPersistenceReady: true,
+    startupView: 'home' as 'home' | 'onboarding',
+    getInfo: vi.fn()
+  }
+})
 
 vi.mock('@/lib/session-persistence/session-persistence', () => ({
   useSessionPersistence: () => mocks.sessionPersistenceReady
@@ -143,6 +152,7 @@ describe('App startup routing', () => {
     mocks.openSessionById.mockClear()
     mocks.notifications.onOpenSession.mockClear()
     mocks.notifications.takePendingOpenSession.mockReset().mockResolvedValue(null)
+    mocks.notificationNudgeBox.current = undefined
   })
 
   afterEach(async () => {
@@ -234,9 +244,10 @@ describe('App startup routing', () => {
 
     await render()
 
-    const nudge = mocks.notifications.onOpenSession.mock.calls[0]?.[0] as () => void
+    const nudge = mocks.notificationNudgeBox.current
+    expect(nudge).toBeDefined()
     await act(async () => {
-      nudge()
+      nudge?.()
     })
 
     expect(mocks.openSessionById).toHaveBeenCalledWith('s-3')
