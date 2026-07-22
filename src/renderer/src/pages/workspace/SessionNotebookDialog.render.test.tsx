@@ -36,6 +36,7 @@ const renderContent = (props: {
       onExport={vi.fn()}
       onExportAll={vi.fn()}
       onImport={vi.fn()}
+      onOpenJupyterLab={vi.fn()}
       {...props}
     />
   )

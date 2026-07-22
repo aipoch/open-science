@@ -11,6 +11,7 @@ import type {
   FinishNotebookCodeCellRequest,
   ImportNotebookResult,
   NotebookRunSummary,
+  OpenJupyterLabResult,
   NotebookSessionReference,
   NotebookSessionRequest,
   NotebookSessionState,
@@ -36,6 +37,7 @@ type NotebookHandlers = {
   exportIpynb: (request: ExportNotebookKernelRequest) => Promise<ExportNotebookResult>
   exportIpynbAll: (request: ExportNotebookAllRequest) => Promise<ExportNotebookAllResult>
   importIpynb: (request: NotebookSessionRequest) => Promise<ImportNotebookResult>
+  openInJupyterLab: (request: NotebookSessionRequest) => Promise<OpenJupyterLabResult>
   restart: (request: NotebookSessionRequest) => Promise<NotebookSessionState>
   shutdown: (request: NotebookSessionRequest) => ReturnType<NotebookRuntimeService['shutdown']>
 }
@@ -64,6 +66,7 @@ const createNotebookHandlers = (service: NotebookRuntimeService): NotebookHandle
   exportIpynb: (request) => service.exportIpynb(request),
   exportIpynbAll: (request) => service.exportIpynbAll(request),
   importIpynb: (request) => withDataRootWrite(() => service.importIpynb(request)),
+  openInJupyterLab: (request) => service.openInJupyterLab(request),
   restart: (request) => withDataRootWrite(() => service.restart(request)),
   shutdown: (request) => withDataRootWrite(() => service.shutdown(request))
 })
@@ -101,6 +104,9 @@ const registerNotebookIpcHandlers = (service: NotebookRuntimeService): void => {
   )
   ipcMain.handle('notebook:import-ipynb', (_event, request: NotebookSessionRequest) =>
     handlers.importIpynb(request)
+  )
+  ipcMain.handle('notebook:open-jupyterlab', (_event, request: NotebookSessionRequest) =>
+    handlers.openInJupyterLab(request)
   )
   ipcMain.handle('notebook:restart', (_event, request: NotebookSessionRequest) =>
     handlers.restart(request)

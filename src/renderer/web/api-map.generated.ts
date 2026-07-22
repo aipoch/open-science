@@ -60,6 +60,7 @@ export const WEB_INVOKE_CHANNELS = {
   'notebook.finishCodeCell': 'notebook:finish-code-cell',
   'notebook.getReference': 'notebook:reference',
   'notebook.importIpynb': 'notebook:import-ipynb',
+  'notebook.openInJupyterLab': 'notebook:open-jupyterlab',
   'notebook.readInputPreview': 'notebook:read-input-preview',
   'notebook.restart': 'notebook:restart',
   'notebook.runCell': 'notebook:run-cell',

@@ -519,6 +519,12 @@ export type ImportNotebookResult =
       environmentNotice?: { recorded: string[]; bound: string[] }
     }
 
+export type OpenJupyterLabResult = {
+  opened: true
+  url: string
+  alreadyRunning: boolean
+}
+
 // Starts a streamed code write into a notebook cell.
 export type BeginNotebookCodeCellRequest = NotebookSessionRequest & {
   cellId?: string

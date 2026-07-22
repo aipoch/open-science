@@ -52,6 +52,9 @@ describe('notebook IPC handlers', () => {
       runCell: vi.fn().mockResolvedValue({ runId: 'run-2', status: 'completed' }),
       exportIpynb: vi.fn().mockResolvedValue({ saved: true, filePath: '/tmp/session.ipynb' }),
       importIpynb: vi.fn().mockResolvedValue({ imported: true, cellCount: 1 }),
+      openInJupyterLab: vi
+        .fn()
+        .mockResolvedValue({ opened: true, url: 'http://localhost:8888', alreadyRunning: false }),
       beginCodeCell: vi.fn().mockResolvedValue({ cellId: 'cell-1', writeId: 'write-1' }),
       appendCodeCell: vi.fn().mockResolvedValue({ receivedBytes: 5 }),
       finishCodeCell: vi.fn().mockResolvedValue({ status: 'idle' }),
@@ -96,6 +99,7 @@ describe('notebook IPC handlers', () => {
       kernel: 'python'
     })
     await handlers.importIpynb({ sessionId: 'session-1', workspaceCwd: '/workspace' })
+    await handlers.openInJupyterLab({ sessionId: 'session-1', workspaceCwd: '/workspace' })
 
     expect(service.execute).toHaveBeenCalledWith({
       sessionId: 'session-1',
@@ -126,6 +130,10 @@ describe('notebook IPC handlers', () => {
       sessionId: 'session-1',
       workspaceCwd: '/workspace'
     })
+    expect(service.openInJupyterLab).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    })
   })
 
   it('registers every notebook channel and forwards the renderer payload unchanged', async () => {
@@ -139,6 +147,11 @@ describe('notebook IPC handlers', () => {
       execute: vi.fn().mockResolvedValue({ runId: 'run-2', status: 'completed' }),
       exportIpynb: vi.fn().mockResolvedValue({ saved: false }),
       importIpynb: vi.fn().mockResolvedValue({ imported: false }),
+      openInJupyterLab: vi.fn().mockResolvedValue({
+        opened: true,
+        url: 'http://localhost:8888',
+        alreadyRunning: false
+      }),
       restart: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
       shutdown: vi.fn().mockResolvedValue({ sessionId: 'session-1', status: 'shutdown' })
     } as unknown as NotebookRuntimeService
@@ -155,6 +168,7 @@ describe('notebook IPC handlers', () => {
       'notebook:export-ipynb',
       'notebook:export-ipynb-all',
       'notebook:import-ipynb',
+      'notebook:open-jupyterlab',
       'notebook:restart',
       'notebook:shutdown'
     ])
@@ -187,6 +201,7 @@ describe('notebook IPC handlers', () => {
     await ipcHandlers.get('notebook:execute')?.(undefined, execute)
     await ipcHandlers.get('notebook:export-ipynb')?.(undefined, session)
     await ipcHandlers.get('notebook:import-ipynb')?.(undefined, session)
+    await ipcHandlers.get('notebook:open-jupyterlab')?.(undefined, session)
     await ipcHandlers.get('notebook:restart')?.(undefined, session)
     await ipcHandlers.get('notebook:shutdown')?.(undefined, session)
 
@@ -199,6 +214,7 @@ describe('notebook IPC handlers', () => {
     expect(service.execute).toHaveBeenCalledWith(publicExecute)
     expect(service.exportIpynb).toHaveBeenCalledWith(session)
     expect(service.importIpynb).toHaveBeenCalledWith(session)
+    expect(service.openInJupyterLab).toHaveBeenCalledWith(session)
     expect(service.restart).toHaveBeenCalledWith(session)
     expect(service.shutdown).toHaveBeenCalledWith(session)
   })

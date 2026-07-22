@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Download, LoaderCircle, Upload, X } from 'lucide-react'
+import { Download, ExternalLink, LoaderCircle, Upload, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
@@ -124,6 +124,7 @@ type SessionNotebookContentProps = {
   onExport: (kernel: NotebookKernelKind) => Promise<void>
   onExportAll: () => Promise<string | undefined>
   onImport: () => Promise<string | undefined>
+  onOpenJupyterLab: () => Promise<void>
 }
 
 // Pure presentational body of the dialog: header summary, empty/loading/error/populated states,
@@ -138,7 +139,8 @@ const SessionNotebookContent = ({
   onClose,
   onExport,
   onExportAll,
-  onImport
+  onImport,
+  onOpenJupyterLab
 }: SessionNotebookContentProps): React.JSX.Element => {
   const [activeKind, setActiveKind] = useState<NotebookKernelKind>('python')
   const [exporting, setExporting] = useState(false)
@@ -147,6 +149,8 @@ const SessionNotebookContent = ({
   const [footerSuccess, setFooterSuccess] = useState<string>()
   const [importing, setImporting] = useState(false)
   const [importError, setImportError] = useState<string>()
+  const [openingJupyterLab, setOpeningJupyterLab] = useState(false)
+  const [jupyterLabError, setJupyterLabError] = useState<string>()
   const shortId = sessionId.slice(0, 8)
   const agents = runs.some((run) => run.source === 'agent') ? 1 : 0
   // Only python/r runs are "cells" in the notebook sense; repl/bash are control-plane/shell runs
@@ -170,7 +174,7 @@ const SessionNotebookContent = ({
     ? activeKind
     : (KERNEL_KIND_ORDER.find((kind) => kindsWithRuns.has(kind)) ?? visibleKinds[0] ?? 'python')
   const visibleRuns = runs.filter((run) => resolveRunKernelKind(run) === effectiveActiveKind)
-  const busy = exporting || exportingAll || importing
+  const busy = exporting || exportingAll || importing || openingJupyterLab
   const exportDisabled = status !== 'ready' || runs.length === 0 || busy
   const importDisabled = status !== 'ready' || busy
 
@@ -187,6 +191,7 @@ const SessionNotebookContent = ({
     setExporting(true)
     setExportError(undefined)
     setImportError(undefined)
+    setJupyterLabError(undefined)
     setFooterSuccess(undefined)
     try {
       await onExport(effectiveActiveKind)
@@ -204,6 +209,7 @@ const SessionNotebookContent = ({
     setExportingAll(true)
     setExportError(undefined)
     setImportError(undefined)
+    setJupyterLabError(undefined)
     setFooterSuccess(undefined)
     try {
       const message = await onExportAll()
@@ -220,6 +226,7 @@ const SessionNotebookContent = ({
     setImporting(true)
     setImportError(undefined)
     setExportError(undefined)
+    setJupyterLabError(undefined)
     setFooterSuccess(undefined)
     try {
       const message = await onImport()
@@ -228,6 +235,21 @@ const SessionNotebookContent = ({
       setImportError(getErrorMessage(importFailure))
     } finally {
       setImporting(false)
+    }
+  }
+
+  const handleOpenJupyterLab = async (): Promise<void> => {
+    setOpeningJupyterLab(true)
+    setJupyterLabError(undefined)
+    setImportError(undefined)
+    setExportError(undefined)
+    setFooterSuccess(undefined)
+    try {
+      await onOpenJupyterLab()
+    } catch (openFailure) {
+      setJupyterLabError(getErrorMessage(openFailure))
+    } finally {
+      setOpeningJupyterLab(false)
     }
   }
 
@@ -323,15 +345,29 @@ const SessionNotebookContent = ({
         <p
           className={cn(
             'min-w-0 truncate text-xs',
-            importError || exportError
+            jupyterLabError || importError || exportError
               ? 'text-danger-000'
               : 'text-emerald-600 dark:text-emerald-400'
           )}
-          role={importError || exportError ? 'alert' : 'status'}
+          role={jupyterLabError || importError || exportError ? 'alert' : 'status'}
         >
-          {importError ?? exportError ?? footerSuccess}
+          {jupyterLabError ?? importError ?? exportError ?? footerSuccess}
         </p>
         <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            disabled={exportDisabled}
+            onClick={() => void handleOpenJupyterLab()}
+            className="flex items-center justify-center gap-1.5 rounded px-2 py-1 text-xs text-text-200 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="Open in JupyterLab"
+          >
+            {openingJupyterLab ? (
+              <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+            ) : (
+              <ExternalLink className="size-3.5" aria-hidden="true" />
+            )}
+            {openingJupyterLab ? 'Opening…' : 'JupyterLab'}
+          </button>
           <button
             type="button"
             disabled={importDisabled}
@@ -542,6 +578,13 @@ const SessionNotebookDialog = ({
                 setRuns(await loadSessionNotebookRuns(window.api.notebook, request))
                 setStatus('ready')
                 return formatImportResultMessage(result)
+              }}
+              onOpenJupyterLab={async () => {
+                await window.api.notebook.openInJupyterLab({
+                  sessionId: dialogSession.id,
+                  projectName: dialogSession.projectId,
+                  workspaceCwd: dialogSession.cwd ?? ''
+                })
               }}
             />
           ) : null}
