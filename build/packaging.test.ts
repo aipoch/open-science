@@ -88,12 +88,13 @@ describe('NSIS installer include (build/installer.nsh)', () => {
 
   it('retries the old uninstaller exactly once', () => {
     // A single follow-up attempt after the kill; the original ExecWait lives in
-    // electron-builder's uninstallOldVersion, so exactly one may appear here.
+    // electron-builder's uninstallOldVersion, so exactly one may appear here. Assert the
+    // invocation's semantic parts rather than the full literal line, so a benign reformat
+    // (flag reorder, whitespace) does not break the test without a behavior change.
     const attempts = include.match(/ExecWait '"\$PLUGINSDIR\\old-uninstaller\.exe/g) ?? []
     expect(attempts).toHaveLength(1)
-    expect(include).toContain(
-      `ExecWait '"$PLUGINSDIR\\old-uninstaller.exe" /S /KEEP_APP_DATA $0 _?=\${DIR}' $R0`
-    )
+    expect(include).toContain('/S /KEEP_APP_DATA $0')
+    expect(include).toContain('_?=${DIR}')
   })
 
   it('passes the install dir to PowerShell as an argument, with a directory-boundary match', () => {
@@ -134,5 +135,21 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     expect(code).not.toContain('$IsPowerShellAvailable')
     expect(code).not.toContain('IS_POWERSHELL_AVAILABLE')
     expect(code).not.toContain('KILL_PROCESS')
+  })
+
+  it('the installed electron-builder still inserts the customUnInstallCheck hooks', () => {
+    // The recovery runs only if app-builder-lib's handleUninstallResult keeps inserting these two
+    // macro names. electron-builder is a caret-ranged dependency, so a routine bump could rename
+    // or drop the insertion points — the macros would compile into dead code while every
+    // assertion above stays green. Guard the integration contract itself so such an upgrade
+    // fails here instead of silently reverting to the fatal dialog.
+    const installUtil = readFileSync(
+      join(repoRoot, 'node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh'),
+      'utf8'
+    )
+    expect(installUtil).toContain('!ifmacrodef customUnInstallCheck')
+    expect(installUtil).toContain('!insertmacro customUnInstallCheck')
+    expect(installUtil).toContain('!ifmacrodef customUnInstallCheckCurrentUser')
+    expect(installUtil).toContain('!insertmacro customUnInstallCheckCurrentUser')
   })
 })
