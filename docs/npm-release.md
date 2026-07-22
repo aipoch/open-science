@@ -1,5 +1,9 @@
 # npm Package Release
 
+> [!IMPORTANT]
+> The first npm publication is deferred. Do not create `npm-v0.1.0` or publish the package until the
+> standalone CLI runtime direction is resolved. This workflow and guide are release preparation only.
+
 The `@aipoch/open-science` SDK and CLI use a version and release tag namespace independent of the
 desktop application. Desktop releases use `v*`; npm releases use `npm-v*`.
 
