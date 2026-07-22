@@ -5,8 +5,6 @@ import {
   Globe,
   Maximize2,
   Minimize2,
-  Plus,
-  RefreshCw,
   ScrollText,
   Settings2,
   SlidersHorizontal,
@@ -16,32 +14,13 @@ import {
 import { Dialog } from 'radix-ui'
 import { useEffect, useState } from 'react'
 
-import {
-  isCodexSubscriptionProvider,
-  type AgentFrameworkId,
-  type ClaudeInstallSource,
-  type ClaudeInstallSourceInfo,
-  type ProviderView,
-  type UpsertProviderRequest
-} from '../../../../shared/settings'
-import {
-  getClaudeInstallSources,
-  getCodexInstallSources,
-  getOpencodeInstallSources
-} from '../../../../shared/settings'
-// Import the bare Mono/Color components straight from their modules: each icon's entry point
-// eagerly attaches its Avatar/Combine companions, which drag in @lobehub/ui (antd-style + an
-// emoji-mart JSON import vitest can't parse). The Mono/Color components are self-contained.
-import ClaudeColor from '@lobehub/icons/es/Claude/components/Color'
-import Codex from '@lobehub/icons/es/Codex/components/Mono'
-import OpenCode from '@lobehub/icons/es/OpenCode/components/Mono'
-import { ExternalTextLink } from '@/components/ExternalTextLink'
+import type { ProviderView, UpsertProviderRequest } from '../../../../shared/settings'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import { selectAnyInstalling, useSettingsStore } from '@/stores/settings-store'
-import { ModelFrameworkCompatibilityAlert } from './ModelFrameworkCompatibilityAlert'
-import { AgentFrameworkCard } from './AgentFrameworkCard'
+import { useSettingsStore } from '@/stores/settings-store'
+import { AgentPanel } from './AgentPanel'
+import { ProvidersPanel } from './ProvidersPanel'
 import { GeneralPanel } from './GeneralPanel'
 import { NetworkPanel } from './NetworkPanel'
 import { StoragePanel } from './StoragePanel'
@@ -52,7 +31,6 @@ import { ConnectorDetailView } from './ConnectorDetailView'
 import { ConnectorAddForm } from './ConnectorAddForm'
 import { ConnectorsNavIcon } from './connector-icons'
 import { resolveVendorModelsUrl } from '../../../../shared/provider-registry'
-import { ActiveModelSelect } from './ActiveModelSelect'
 import { ProviderForm } from './ProviderForm'
 import {
   createEmptyProviderFormValue,
@@ -60,11 +38,6 @@ import {
   hasProviderFormErrors,
   type ProviderFormValue
 } from './provider-form-value'
-import { ProviderList } from './ProviderList'
-import { ReasoningEffortSelect } from './ReasoningEffortSelect'
-import { SettingsSection } from './SettingsLayout'
-import { UninstallRuntimeDialog } from './UninstallRuntimeDialog'
-import { SwitchFrameworkDialog } from './SwitchFrameworkDialog'
 
 type SettingsPageProps = {
   open: boolean
@@ -170,45 +143,18 @@ const INITIAL_LOCATION: NavLocation = {
 // App-level model settings surface. Reuses the onboarding cards/form; manages providers (CRUD +
 // activate + test). Opened from the Home/Workspace gear entry.
 const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element => {
-  const claude = useSettingsStore((state) => state.claude)
-  const preflight = useSettingsStore((state) => state.preflight)
   const providers = useSettingsStore((state) => state.providers)
-  const activeProviderId = useSettingsStore((state) => state.activeProviderId)
-  const isDetectingClaude = useSettingsStore((state) => state.isDetectingClaude)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
-  const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
-  const setAgentFramework = useSettingsStore((state) => state.setAgentFramework)
   const opencode = useSettingsStore((state) => state.opencode)
   const isDetectingOpencode = useSettingsStore((state) => state.isDetectingOpencode)
   const detectOpencode = useSettingsStore((state) => state.detectOpencode)
-  const installOpencode = useSettingsStore((state) => state.installOpencode)
   const codex = useSettingsStore((state) => state.codex)
   const isDetectingCodex = useSettingsStore((state) => state.isDetectingCodex)
   const detectCodex = useSettingsStore((state) => state.detectCodex)
-  const installCodex = useSettingsStore((state) => state.installCodex)
-  // Per-runtime install slices: each card renders only its own progress/logs/error (issue #278).
-  const claudeInstall = useSettingsStore((state) => state.installStates['claude-code'])
-  const opencodeInstall = useSettingsStore((state) => state.installStates.opencode)
-  const codexInstall = useSettingsStore((state) => state.installStates.codex)
-  // Any install running locks the framework selector and every card's uninstall button.
-  const anyInstalling = useSettingsStore(selectAnyInstalling)
-  const npmAvailable = useSettingsStore((state) => state.npmAvailable)
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
-  const claudeManaged = useSettingsStore((state) => state.claudeManaged)
-  const opencodeManaged = useSettingsStore((state) => state.opencodeManaged)
-  const codexManaged = useSettingsStore((state) => state.codexManaged)
-  const uninstallClaude = useSettingsStore((state) => state.uninstallClaude)
-  const uninstallOpencode = useSettingsStore((state) => state.uninstallOpencode)
-  const uninstallCodex = useSettingsStore((state) => state.uninstallCodex)
   const load = useSettingsStore((state) => state.load)
-  const detectClaude = useSettingsStore((state) => state.detectClaude)
-  const installClaude = useSettingsStore((state) => state.installClaude)
   const persistProvider = useSettingsStore((state) => state.persistProvider)
-  const deleteProvider = useSettingsStore((state) => state.deleteProvider)
   const validateProvider = useSettingsStore((state) => state.validateProvider)
-  const cancelCodexLogin = useSettingsStore((state) => state.cancelCodexLogin)
-  const loginIsolatedCodex = useSettingsStore((state) => state.loginIsolatedCodex)
-  const logoutIsolatedCodex = useSettingsStore((state) => state.logoutIsolatedCodex)
   const refreshProviderModels = useSettingsStore((state) => state.refreshProviderModels)
   const pendingSkillId = useSettingsStore((state) => state.pendingSkillId)
   const consumePendingSkill = useSettingsStore((state) => state.consumePendingSkill)
@@ -227,25 +173,16 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   )
   const [isSaving, setIsSaving] = useState(false)
   const [isRefreshingModels, setIsRefreshingModels] = useState(false)
-  // The app-managed runtime pending an uninstall confirmation (null = dialog closed), plus the in-flight
-  // flag so the dialog and status cards can show progress and stay locked during removal.
-  const [pendingUninstall, setPendingUninstall] = useState<'claude' | 'opencode' | 'codex' | null>(
-    null
-  )
-  const [isUninstalling, setIsUninstalling] = useState(false)
-  // The framework the user picked (via a card) but hasn't confirmed switching to yet.
-  const [pendingSwitch, setPendingSwitch] = useState<AgentFrameworkId | null>(null)
   const [statusMessage, setStatusMessage] = useState<string | undefined>(undefined)
   const [statusOk, setStatusOk] = useState(false)
+  // Shared with ProvidersPanel: the post-save validation and the list's manual test both mark the
+  // provider busy so its card shows "Testing…".
   const [busyProviderId, setBusyProviderId] = useState<string | undefined>(undefined)
   // The Model branch's sub-item (Agent) starts expanded (settings lands on Model by default) and
   // stays expanded once the user opens the branch — other panels never collapse it. Deep-linking
   // elsewhere (e.g. a skill mention) collapses it: that case arrives AFTER mount (this component
   // stays mounted while closed), so it is handled in the seeding block below, not the initializer.
   const [agentMenuExpanded, setAgentMenuExpanded] = useState(true)
-  // True while the explicit isolated Codex sign-in is open in the browser; drives the cancel action.
-  const [isCodexLoginPending, setIsCodexLoginPending] = useState(false)
-  const [providerTestError, setProviderTestError] = useState<string | undefined>(undefined)
 
   // Refresh settings whenever the dialog opens so external changes are reflected.
   useEffect(() => {
@@ -473,180 +410,6 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const closeForm = (): void =>
     navigate({ panel: 'model', skills: currentLocation.skills, model: { kind: 'list' } })
 
-  // Removes the app-managed runtime for the framework awaiting confirmation, then closes the dialog.
-  // The store applies the refreshed snapshot (which may auto-switch the active framework) and main
-  // reconnects the agent, so the cards and readiness gate update without a manual re-detect.
-  const handleConfirmUninstall = async (): Promise<void> => {
-    if (!pendingUninstall) return
-
-    setIsUninstalling(true)
-
-    try {
-      if (pendingUninstall === 'claude') await uninstallClaude()
-      else if (pendingUninstall === 'opencode') await uninstallOpencode()
-      else await uninstallCodex()
-
-      setPendingUninstall(null)
-    } finally {
-      setIsUninstalling(false)
-    }
-  }
-
-  // Selecting a card requests a framework switch; a no-op when it's already the active one. The actual
-  // switch is deferred to the confirmation, since it starts a fresh agent session.
-  const requestSwitch = (target: AgentFrameworkId): void => {
-    if (target !== agentFrameworkId) setPendingSwitch(target)
-  }
-
-  const confirmSwitch = (): void => {
-    if (pendingSwitch) void setAgentFramework(pendingSwitch)
-    setPendingSwitch(null)
-  }
-
-  const activeFramework = agentFrameworks.find((framework) => framework.id === agentFrameworkId)
-  const visibleProviders = providers.filter(
-    (provider) => agentFrameworkId === 'codex' || !isCodexSubscriptionProvider(provider.type)
-  )
-  const pendingSwitchName = agentFrameworks.find(
-    (framework) => framework.id === pendingSwitch
-  )?.displayName
-
-  // The section-level Re-detect re-scans all three frameworks at once; the per-card detect buttons
-  // were removed in favor of this single action.
-  const isDetectingAnyFramework = isDetectingClaude || isDetectingOpencode || isDetectingCodex
-  const handleDetectAllFrameworks = (): void => {
-    void detectClaude()
-    void detectOpencode()
-    void detectCodex()
-  }
-
-  // One descriptor per agent framework, in canonical display order. Cards are grouped by install
-  // state (Installed / Available) below, preserving this order within each group. The source link
-  // points at each agent's own repository — for Codex that is the ACP adapter repo, since the app
-  // talks to Codex through the agentclientprotocol/codex-acp bridge.
-  type FrameworkCardModel = {
-    key: 'claude' | 'opencode' | 'codex'
-    frameworkId: AgentFrameworkId
-    name: string
-    icon: React.ReactNode
-    description: string
-    ready: boolean
-    version?: string
-    path?: string
-    sourceLabel: string
-    sourceUrl: string
-    notReadyHint: React.ReactNode
-    uninstallCommand: string
-    managed: boolean
-    installSources: ClaudeInstallSourceInfo[]
-    // This runtime's own install slice from the store (per-runtime install state, issue #278) —
-    // each card renders only its own progress/logs/error.
-    install: typeof claudeInstall
-    onInstall: (source: ClaudeInstallSource) => void
-  }
-
-  const frameworkCards: FrameworkCardModel[] = [
-    {
-      key: 'claude',
-      frameworkId: 'claude-code',
-      name: 'Claude Agent',
-      icon: <ClaudeColor size={24} />,
-      description: "Anthropic's agentic coding tool for the terminal.",
-      ready: preflight.claudeReady,
-      version: claude.version,
-      path: claude.resolvedPath,
-      sourceLabel: 'anthropics/claude-code',
-      sourceUrl: 'https://github.com/anthropics/claude-code',
-      notReadyHint: 'Install Claude Agent below, or install it manually and re-detect.',
-      uninstallCommand: 'npm uninstall -g @anthropic-ai/claude-code',
-      managed: claudeManaged,
-      installSources: getClaudeInstallSources(window.api?.platform),
-      install: claudeInstall,
-      onInstall: (source) => void installClaude(source)
-    },
-    {
-      key: 'opencode',
-      frameworkId: 'opencode',
-      name: 'OpenCode',
-      icon: <OpenCode size={24} className="text-foreground" />,
-      description: 'Open-source coding agent for the terminal.',
-      ready: preflight.opencodeReady,
-      version: opencode.version,
-      path: opencode.resolvedPath,
-      sourceLabel: 'anomalyco/opencode',
-      sourceUrl: 'https://github.com/anomalyco/opencode',
-      notReadyHint: (
-        <>
-          OpenCode is required for this framework. Install it below, or install it manually (see{' '}
-          <ExternalTextLink href="https://opencode.ai/docs">opencode.ai/docs</ExternalTextLink>) and
-          re-detect.
-        </>
-      ),
-      uninstallCommand: 'npm uninstall -g opencode-ai',
-      managed: opencodeManaged,
-      installSources: getOpencodeInstallSources(window.api?.platform),
-      install: opencodeInstall,
-      onInstall: (source) => void installOpencode(source)
-    },
-    {
-      key: 'codex',
-      frameworkId: 'codex',
-      name: 'Codex',
-      icon: <Codex size={24} className="text-foreground" />,
-      description: "OpenAI's coding agent, connected through the Codex ACP adapter.",
-      ready: preflight.codexReady,
-      version: codex.version,
-      path: codex.resolvedPath,
-      sourceLabel: 'agentclientprotocol/codex-acp',
-      sourceUrl: 'https://github.com/agentclientprotocol/codex-acp',
-      notReadyHint: codex.resolvedPath
-        ? 'The adapter or its paired native Codex runtime did not pass detection. Reinstall the managed pair below, or repair your manual installation and re-detect.'
-        : 'Codex ACP is required for this framework. Install it below, or install it manually and re-detect.',
-      uninstallCommand: 'npm uninstall -g @agentclientprotocol/codex-acp',
-      managed: codexManaged,
-      installSources: getCodexInstallSources(),
-      install: codexInstall,
-      // Codex has no official-script source; the guard keeps the shared install-source type happy.
-      onInstall: (source) => {
-        if (source !== 'official-script') void installCodex(source)
-      }
-    }
-  ]
-
-  const installedFrameworks = frameworkCards.filter((card) => card.ready)
-  const availableFrameworks = frameworkCards.filter((card) => !card.ready)
-
-  // Maps one framework descriptor to its card, wiring in the page-level concerns: radio selection
-  // (via the switch confirmation), the uninstall dialog, and the per-runtime install slice that
-  // drives the card's own progress UI (anyInstalling still locks selection and uninstall globally).
-  const renderFrameworkCard = (card: FrameworkCardModel): React.JSX.Element => (
-    <AgentFrameworkCard
-      key={card.key}
-      icon={card.icon}
-      name={card.name}
-      description={card.description}
-      ready={card.ready}
-      version={card.version}
-      path={card.path}
-      sourceLabel={card.sourceLabel}
-      sourceUrl={card.sourceUrl}
-      notReadyHint={card.notReadyHint}
-      active={agentFrameworkId === card.frameworkId}
-      onSelect={() => requestSwitch(card.frameworkId)}
-      selectDisabled={anyInstalling || isUninstalling}
-      uninstallCommand={card.uninstallCommand}
-      managed={card.managed}
-      isUninstalling={isUninstalling && pendingUninstall === card.key}
-      isDetecting={isDetectingAnyFramework}
-      onUninstall={() => setPendingUninstall(card.key)}
-      installSources={card.installSources}
-      install={card.install}
-      installRunning={anyInstalling}
-      npmAvailable={npmAvailable}
-      onInstall={(source) => card.onInstall(source)}
-    />
-  )
-
   const handleSave = async (): Promise<void> => {
     setIsSaving(true)
     setStatusMessage(undefined)
@@ -691,61 +454,6 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
     }
   }
 
-  const handleTest = async (provider: ProviderView): Promise<void> => {
-    setBusyProviderId(provider.id)
-    setProviderTestError(undefined)
-
-    try {
-      // The pass/fail result is reflected on the provider's card (green check or warning), not as a
-      // separate status line.
-      await validateProvider({ providerId: provider.id })
-    } catch (error) {
-      setProviderTestError(
-        error instanceof Error ? error.message : 'Could not test the provider connection.'
-      )
-    } finally {
-      setBusyProviderId(undefined)
-    }
-  }
-
-  // The explicit isolated sign-in: opens the browser login and records the outcome on the provider,
-  // so the card flips to verified (or shows the failure reason) when the flow settles. Infrastructure
-  // failures (adapter spawn, IPC) surface through the same error line a failed test uses.
-  const handleCodexLogin = async (): Promise<void> => {
-    setIsCodexLoginPending(true)
-    setProviderTestError(undefined)
-
-    try {
-      await loginIsolatedCodex()
-    } catch (error) {
-      setProviderTestError(error instanceof Error ? error.message : 'Could not sign in to Codex.')
-    } finally {
-      setIsCodexLoginPending(false)
-    }
-  }
-
-  const handleCodexLogout = async (): Promise<void> => {
-    setProviderTestError(undefined)
-
-    try {
-      const result = await logoutIsolatedCodex()
-      // A timeout or other failure leaves the credential in place; surface the reason so the user
-      // knows to retry rather than assuming they are signed out.
-      if (!result.ok) {
-        setProviderTestError(result.message ?? 'Codex sign-out did not complete. Try again.')
-      }
-    } catch (error) {
-      setProviderTestError(error instanceof Error ? error.message : 'Could not sign out of Codex.')
-    }
-  }
-
-  // A pending sign-in lives in the main process for up to five minutes — outliving this dialog, which
-  // stays mounted (only its `open` flag flips). Closing Settings mid-flow would orphan the flow (no
-  // cancel affordance on reopen), so tear it down together with the dialog.
-  useEffect(() => {
-    if (!open && isCodexLoginPending) void cancelCodexLogin()
-  }, [open, isCodexLoginPending, cancelCodexLogin])
-
   return (
     <Dialog.Root open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
       <Dialog.Portal>
@@ -786,14 +494,14 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                     const isActive = activePanel === id
                     // A sub-item (Agent under Model) expands once the user enters the Model branch
                     // and then stays expanded — selecting other panels never collapses it.
-                    const branchActive = parent === undefined || agentMenuExpanded
+                    const subItemExpanded = parent === undefined || agentMenuExpanded
 
                     const button = (
                       <button
                         type="button"
                         aria-current={isActive ? 'page' : undefined}
                         // A collapsed sub-item is height-0/opacity-0 — keep it out of the tab order too.
-                        tabIndex={parent && !branchActive ? -1 : undefined}
+                        tabIndex={parent && !subItemExpanded ? -1 : undefined}
                         onClick={() => {
                           // Entering the Model branch expands its sub-item (sticky — see above).
                           if (id === 'model' || id === 'agent') setAgentMenuExpanded(true)
@@ -829,7 +537,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                           key={id}
                           className={cn(
                             'grid transition-[grid-template-rows,opacity] duration-200 motion-reduce:transition-none',
-                            branchActive
+                            subItemExpanded
                               ? 'grid-rows-[1fr] opacity-100'
                               : 'grid-rows-[0fr] opacity-0'
                           )}
@@ -979,71 +687,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                 ) : activePanel === 'general' ? (
                   <GeneralPanel />
                 ) : activePanel === 'agent' ? (
-                  <div className="space-y-5 p-5">
-                    <ModelFrameworkCompatibilityAlert />
-
-                    {/* The runtime cards double as the framework selector: pick a card to make it
-                        the active backend (confirmed, since it starts a fresh session). Cards are
-                        grouped by install state so management (Installed) and acquisition
-                        (Available) don't compete for attention — but the active runtime can't be
-                        uninstalled (switch to the other one first). */}
-                    <SettingsSection
-                      title="Agent framework"
-                      aria-label="Agent framework"
-                      description={
-                        <>
-                          Choose which coding-agent backend drives your sessions. Select a card to
-                          switch; switching starts a fresh agent session, and open conversations
-                          have their transcript replayed to the new backend. The active runtime
-                          can&apos;t be uninstalled — switch to the other one first.
-                        </>
-                      }
-                      action={
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={handleDetectAllFrameworks}
-                          disabled={isDetectingAnyFramework || anyInstalling || isUninstalling}
-                        >
-                          <RefreshCw
-                            className={isDetectingAnyFramework ? 'animate-spin' : ''}
-                            aria-hidden="true"
-                          />
-                          {isDetectingAnyFramework ? 'Detecting…' : 'Re-detect'}
-                        </Button>
-                      }
-                    >
-                      <div className="space-y-5">
-                        {installedFrameworks.length > 0 ? (
-                          <div className="space-y-2">
-                            <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                              Installed · {installedFrameworks.length}
-                            </p>
-                            <div className="space-y-3">
-                              {installedFrameworks.map(renderFrameworkCard)}
-                            </div>
-                          </div>
-                        ) : null}
-                        {availableFrameworks.length > 0 ? (
-                          <div className="space-y-2">
-                            <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                              Available · {availableFrameworks.length}
-                            </p>
-                            <div className="space-y-3">
-                              {availableFrameworks.map(renderFrameworkCard)}
-                            </div>
-                          </div>
-                        ) : null}
-                        {activeFramework && !activeFramework.supportsSkills ? (
-                          <p className="text-xs text-muted-foreground">
-                            Skills aren&apos;t available with {activeFramework.displayName}; use
-                            Claude Code for skill-based workflows.
-                          </p>
-                        ) : null}
-                      </div>
-                    </SettingsSection>
-                  </div>
+                  <AgentPanel />
                 ) : isProviderFormOpen ? (
                   // Add/edit provider is a secondary page reached via the shared back/forward arrows.
                   <div className="p-5">
@@ -1095,81 +739,18 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-5 p-5">
-                    {/* Active model is its own section so the current selection reads separately
-                        from provider management. */}
-                    {visibleProviders.length > 0 ? (
-                      <SettingsSection
-                        title="Active model"
-                        aria-label="Active model"
-                        description="The model that drives new agent sessions."
-                      >
-                        <div className="max-w-md">
-                          <ActiveModelSelect />
-                        </div>
-                      </SettingsSection>
-                    ) : null}
-
-                    {/* Model-level generation tuning; always visible, unlike the Active model
-                        section above which needs at least one provider. */}
-                    <SettingsSection
-                      title="Reasoning effort"
-                      aria-label="Reasoning effort"
-                      description="Higher levels think longer, lower levels respond faster. Applies to subsequent requests."
-                      separated={visibleProviders.length > 0}
-                    >
-                      <div className="max-w-md">
-                        <ReasoningEffortSelect />
-                      </div>
-                    </SettingsSection>
-
-                    <SettingsSection title="Providers" aria-label="Providers" separated>
-                      <ProviderList
-                        providers={visibleProviders}
-                        activeProviderId={activeProviderId}
-                        busyProviderId={busyProviderId}
-                        onEdit={openEdit}
-                        onDelete={(provider) => void deleteProvider(provider.id)}
-                        onTest={(provider) => void handleTest(provider)}
-                        isCodexLoginPending={isCodexLoginPending}
-                        onCancelCodexLogin={() => void cancelCodexLogin()}
-                        onLoginIsolatedCodex={() => void handleCodexLogin()}
-                        onLogoutIsolatedCodex={() => void handleCodexLogout()}
-                      />
-                      {providerTestError ? (
-                        <p className="mt-2 text-sm text-destructive" role="alert">
-                          {providerTestError}
-                        </p>
-                      ) : null}
-                      {/* The add action lives with the list: a dashed ghost row appended after the
-                          last provider, matching the Available-group placeholder treatment. */}
-                      <button
-                        type="button"
-                        onClick={openCreate}
-                        className="mt-2 flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border text-sm text-muted-foreground transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/60 hover:text-foreground"
-                      >
-                        <Plus className="size-4" aria-hidden="true" />
-                        Add provider
-                      </button>
-                    </SettingsSection>
-                  </div>
+                  <ProvidersPanel
+                    onCreateProvider={openCreate}
+                    onEditProvider={openEdit}
+                    busyProviderId={busyProviderId}
+                    onBusyProviderChange={setBusyProviderId}
+                  />
                 )}
               </div>
             </div>
           </div>
         </Dialog.Content>
       </Dialog.Portal>
-      <UninstallRuntimeDialog
-        framework={pendingUninstall}
-        isUninstalling={isUninstalling}
-        onCancel={() => setPendingUninstall(null)}
-        onConfirm={() => void handleConfirmUninstall()}
-      />
-      <SwitchFrameworkDialog
-        targetName={pendingSwitchName ?? null}
-        onCancel={() => setPendingSwitch(null)}
-        onConfirm={confirmSwitch}
-      />
     </Dialog.Root>
   )
 }
