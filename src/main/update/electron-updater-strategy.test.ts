@@ -391,6 +391,7 @@ describe('ElectronUpdaterStrategy', () => {
       currentVersion: '0.2.0',
       platform: 'darwin',
       arch: 'x64',
+      isRosetta: () => false,
       broadcast: vi.fn(),
       fetchImpl: offlineFetch()
     })

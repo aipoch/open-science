@@ -56,12 +56,15 @@ export type ElectronUpdaterDeps = {
 
 // Detects whether an x64 process is running under Rosetta 2 on Apple Silicon. Electron-updater's
 // MacUpdater.filterFilesForArch uses the same sysctl key to pick the arm64 entry, so we must match
-// it to show the correct pre-download size. Returns undefined when neither Electron's
-// runningUnderARM64Translation nor the sysctl probe could give a definitive answer — the caller then
-// omits size to avoid advertising the wrong arch's ZIP.
+// it to show the correct pre-download size. Prefers Electron's app.runningUnderARM64Translation — a
+// definitive boolean — when available; falls back to sysctl only when the Electron property is absent
+// (e.g. test without Electron). Returns undefined only when the sysctl fallback is inconclusive.
 const defaultIsRosetta = (): boolean | undefined => {
   try {
-    if (app?.runningUnderARM64Translation) return true
+    // Electron's property is a definitive boolean — return it directly without falling through.
+    if (typeof app?.runningUnderARM64Translation === 'boolean') {
+      return app.runningUnderARM64Translation
+    }
   } catch {
     // app not available (test without Electron)
   }
@@ -181,11 +184,12 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     // Resolve the effective arch: an x64 app under Rosetta on Apple Silicon downloads the arm64
     // artifact (electron-updater does the same), so promote x64 → arm64 to match the correct size.
     const rawArch = deps.arch ?? process.arch
-    const isRosetta = deps.isRosetta ?? defaultIsRosetta
     let arch = rawArch
     if (this.platform === 'darwin' && rawArch === 'x64') {
-      if (isRosetta() === true) arch = 'arm64'
-      else if (isRosetta() === undefined) {
+      const rosetta = (deps.isRosetta ?? defaultIsRosetta)()
+      if (rosetta === true) {
+        arch = 'arm64'
+      } else if (rosetta === undefined) {
         // Can't determine Rosetta status — electron-updater might still pick arm64. Blank the arch
         // token so extractArtifactSize sees a multi-arch feed as ambiguous and omits the size.
         arch = ''
