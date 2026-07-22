@@ -361,14 +361,23 @@ const isUnresumableSessionError = (error: unknown): boolean => {
   const candidate = error as {
     code?: number
     message?: string
-    data?: { details?: unknown; errorKind?: unknown }
+    data?: { details?: unknown; errorKind?: unknown; service?: unknown }
   }
   const message = candidate.message ?? ''
 
   if (candidate.code === -32002 || /resource not found|session not found/i.test(message))
     return true
 
-  if (candidate.code !== -32603 || !/^internal error\.?$/i.test(message.trim())) return false
+  if (candidate.code !== -32603) return false
+
+  // opencode reports a lost session as an Internal error tagged with the failing service
+  // (`{ service: 'session' }`) and a descriptive message suffix, rather than the bare message or the
+  // details string the fallbacks below expect. This marker is machine-readable and language-
+  // independent, so a session-service failure is authoritative — adopt a fresh session regardless of
+  // the suffix. A non-session service (provider, mcp, …) still propagates as a genuine failure.
+  if (candidate.data?.service === 'session') return true
+
+  if (!/^internal error\.?$/i.test(message.trim())) return false
 
   // A structured reason is authoritative and language-independent. Unknown reasons propagate even when
   // their detail happens to look session-related, preventing provider/MCP errors from being swallowed.

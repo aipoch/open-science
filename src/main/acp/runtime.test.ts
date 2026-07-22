@@ -121,6 +121,9 @@ const startFakeAgent = (
     // Some agents preserve a machine-readable reason in the Internal error data instead of relying on
     // the human-facing detail string.
     resumeInternalErrorData?: unknown
+    // opencode rejects a lost session with an Internal error tagged by the failing service and a
+    // descriptive message suffix (e.g. `{ service: 'session' }` + "OpenCode service failure").
+    resumeServiceFailure?: { service: string; message: string }
     // When true, the agent does NOT advertise session/close capability, so the runtime must fall back to
     // the session/cancel notification on delete instead of a close request.
     supportsClose?: boolean
@@ -212,6 +215,13 @@ const startFakeAgent = (
 
       if (options.resumeInternalErrorData !== undefined) {
         throw acp.RequestError.internalError(options.resumeInternalErrorData)
+      }
+
+      if (options.resumeServiceFailure) {
+        throw acp.RequestError.internalError(
+          { service: options.resumeServiceFailure.service },
+          options.resumeServiceFailure.message
+        )
       }
 
       resumedSessions.push({
@@ -3295,6 +3305,43 @@ describe('ACP runtime session management', () => {
     await expect(
       runtime.resumeSession({ sessionId: 'restarted-session', cwd: '/workspace' })
     ).rejects.toMatchObject({ code: -32603, data: { errorKind: 'provider-error' } })
+    expect(fakeAgent.newSessions).toEqual([])
+  })
+
+  it('adopts a fresh session when opencode tags a lost session with its failing service', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['adopted-session-1'], {
+      resumeServiceFailure: { service: 'session', message: 'OpenCode service failure' }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await expect(
+      runtime.resumeSession({ sessionId: 'restarted-session', cwd: '/workspace' })
+    ).resolves.toMatchObject({ sessionId: 'restarted-session', contextReset: true })
+    expect(fakeAgent.newSessions).toHaveLength(1)
+
+    await runtime.sendPrompt({ sessionId: 'restarted-session', text: 'keep going' })
+    expect(fakeAgent.prompts).toEqual([{ sessionId: 'adopted-session-1', text: 'keep going' }])
+  })
+
+  it('keeps an Internal error from a non-session service visible', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, [], {
+      resumeServiceFailure: { service: 'provider', message: 'OpenCode service failure' }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await expect(
+      runtime.resumeSession({ sessionId: 'restarted-session', cwd: '/workspace' })
+    ).rejects.toMatchObject({ code: -32603, data: { service: 'provider' } })
     expect(fakeAgent.newSessions).toEqual([])
   })
 
