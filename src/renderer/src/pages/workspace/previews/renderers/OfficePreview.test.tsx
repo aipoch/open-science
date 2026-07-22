@@ -140,6 +140,39 @@ describe('OfficePreviewRenderer', () => {
     host.remove()
   })
 
+  it('keeps a native preview host visible while its resizable panel is being dragged', () => {
+    const group = document.createElement('div')
+    group.dataset.group = 'true'
+    const panel = document.createElement('div')
+    panel.dataset.panel = 'true'
+    panel.style.pointerEvents = 'none'
+    const host = document.createElement('div')
+    const separator = document.createElement('div')
+    separator.dataset.separator = 'active'
+    panel.appendChild(host)
+    group.append(panel, separator)
+    document.body.appendChild(group)
+    const visibleRect = {
+      left: 10,
+      top: 10,
+      right: 110,
+      bottom: 110,
+      width: 100,
+      height: 100,
+      x: 10,
+      y: 10,
+      toJSON: () => ({})
+    } as DOMRect
+    Object.defineProperty(document, 'elementsFromPoint', {
+      configurable: true,
+      value: vi.fn(() => [group])
+    })
+
+    expect(isOfficePreviewHostVisible(host, visibleRect)).toBe(true)
+
+    group.remove()
+  })
+
   afterEach(async () => {
     await act(async () => root.unmount())
     container.remove()

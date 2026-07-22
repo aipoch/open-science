@@ -72,6 +72,15 @@ const isOfficePreviewHostVisible = (host: HTMLElement, rect: DOMRect): boolean =
   })
   if (overlappingOverlay) return false
 
+  // react-resizable-panels disables pointer events on the active panel while dragging its separator.
+  // The DOM hit test then cannot see this host even though the native preview remains visible.
+  const panel = host.closest<HTMLElement>('[data-panel]')
+  const isPanelResizeActive =
+    panel !== null &&
+    window.getComputedStyle(panel).pointerEvents === 'none' &&
+    document.querySelector('[data-separator="active"]') !== null
+  if (isPanelResizeActive) return true
+
   const elementsFromPoint = document.elementsFromPoint?.bind(document)
   if (!elementsFromPoint) return true
   const centerX = rect.left + rect.width / 2

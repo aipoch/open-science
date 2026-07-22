@@ -292,7 +292,8 @@ class OfficePreviewSupervisor {
     }
     session.requestedVisible = bounds.visible && normalized.width > 0 && normalized.height > 0
     session.view.setBounds(normalized)
-    session.view.setVisible(session.ready && session.requestedVisible)
+    // Frame-based Office renderers must remain drawable before ready or their first paint can stall.
+    session.view.setVisible(session.requestedVisible)
   }
 
   private publishState(

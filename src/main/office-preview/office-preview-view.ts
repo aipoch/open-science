@@ -18,6 +18,7 @@ type PlatformView = {
   webContents: PlatformWebContents
   setBounds: (bounds: { x: number; y: number; width: number; height: number }) => void
   setVisible: (visible: boolean) => void
+  setBackgroundColor?: (color: string) => void
   setPreviewResourceId?: (resourceId: string) => void
   dispose?: () => void
 }
@@ -45,6 +46,8 @@ const createOfficePreviewViewFactory = (
     if (!parentWindow) throw new Error('Office preview parent window is unavailable')
 
     const view = dependencies.createPlatformView(options.sessionId, options.parentOwnerId)
+    // The child is drawable during loading, so its transparent surface lets the parent status show through.
+    view.setBackgroundColor?.('#00000000')
     const contents = view.webContents
     let closed = false
     let goneReported = false

@@ -8,6 +8,7 @@ describe('createOfficePreviewViewFactory', () => {
     const removeChildView = vi.fn()
     const send = vi.fn()
     const close = vi.fn()
+    const setBackgroundColor = vi.fn()
     const listeners = new Map<string, (...args: unknown[]) => void>()
     const webContents = {
       id: 91,
@@ -23,7 +24,8 @@ describe('createOfficePreviewViewFactory', () => {
     const platformView = {
       webContents,
       setBounds: vi.fn(),
-      setVisible: vi.fn()
+      setVisible: vi.fn(),
+      setBackgroundColor
     }
     let runtimeStateListener:
       ((senderId: number, state: { sessionId: string; phase: 'ready' }) => void) | undefined
@@ -60,6 +62,7 @@ describe('createOfficePreviewViewFactory', () => {
     runtimeStateListener?.(91, { sessionId: 'session-1', phase: 'ready' })
 
     expect(addChildView).toHaveBeenCalledWith(platformView)
+    expect(setBackgroundColor).toHaveBeenCalledWith('#00000000')
     expect(loadRuntime).toHaveBeenCalledWith(webContents)
     expect(send).toHaveBeenCalledWith('office-preview-runtime:start', start)
     expect(onState).toHaveBeenCalledTimes(1)

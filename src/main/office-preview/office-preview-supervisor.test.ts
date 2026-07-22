@@ -208,6 +208,43 @@ describe('OfficePreviewSupervisor', () => {
     expect(view.setVisible).toHaveBeenLastCalledWith(true)
   })
 
+  it('keeps a requested child view drawable before ready so frame-based renderers can finish', async () => {
+    const resource = {
+      id: 'resource-1',
+      url: 'open-science-preview://resource-1/report.pptx',
+      size: 1024,
+      mimeType: 'application/octet-stream',
+      version: 2
+    }
+    const view = {
+      ownerId: 91,
+      start: vi.fn().mockResolvedValue(undefined),
+      setBounds: vi.fn(),
+      setVisible: vi.fn(),
+      close: vi.fn()
+    }
+    const supervisor = new OfficePreviewSupervisor({
+      inspectResource: vi
+        .fn()
+        .mockResolvedValue({ size: resource.size, version: resource.version }),
+      acquireResource: vi.fn().mockResolvedValue(resource),
+      releaseResource: vi.fn(),
+      createView: vi.fn().mockReturnValue(view),
+      createSessionId: () => 'session-1'
+    })
+
+    await supervisor.open(7, { ...request, name: 'report.pptx', extension: 'pptx' })
+    supervisor.setBounds(7, 'session-1', {
+      x: 10,
+      y: 20,
+      width: 500,
+      height: 300,
+      visible: true
+    })
+
+    expect(view.setVisible).toHaveBeenLastCalledWith(true)
+  })
+
   it('turns a child process exit into a recoverable error and releases the session', async () => {
     const resource = {
       id: 'resource-1',
@@ -295,7 +332,7 @@ describe('OfficePreviewSupervisor', () => {
 
     expect(view.setBounds).toHaveBeenCalledTimes(1)
     expect(view.setBounds).toHaveBeenCalledWith({ x: 10, y: 21, width: 500, height: 301 })
-    expect(view.setVisible).toHaveBeenLastCalledWith(false)
+    expect(view.setVisible).toHaveBeenLastCalledWith(true)
   })
 
   it('destroys an unfinished child when its size-based deadline expires', async () => {

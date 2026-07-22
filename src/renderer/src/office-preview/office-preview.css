@@ -6,7 +6,18 @@ body,
   min-height: 0;
 }
 
+html,
+body {
+  background: transparent;
+}
+
 #office-preview-root {
   overflow: auto;
+  opacity: 0;
+  background: transparent;
+}
+
+#office-preview-root[data-office-preview-ready='true'] {
+  opacity: 1;
   background: var(--bg-000);
 }

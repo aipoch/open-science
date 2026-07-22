@@ -29,6 +29,8 @@ const connectOfficePreviewRuntime = (
     const currentGeneration = ++generation
     activeTask = activeTask
       .then(async () => {
+        // Keep vendor output transparent while it performs frame-dependent first-paint work.
+        options.container.dataset.officePreviewReady = 'false'
         await cleanup?.()
         cleanup = undefined
         options.container.replaceChildren()
@@ -38,7 +40,10 @@ const connectOfficePreviewRuntime = (
           start,
           container: options.container,
           fetchFile: fetch,
-          reportState: options.bridge.reportState
+          reportState: (state) => {
+            if (state.phase === 'ready') options.container.dataset.officePreviewReady = 'true'
+            options.bridge.reportState(state)
+          }
         })
         if (disconnected || currentGeneration !== generation) {
           await nextCleanup()
@@ -48,6 +53,7 @@ const connectOfficePreviewRuntime = (
       })
       .catch((error) => {
         if (disconnected || currentGeneration !== generation) return
+        options.container.dataset.officePreviewReady = 'false'
         console.error('Failed to render isolated Office preview', error)
         options.bridge.reportState({
           sessionId: start.sessionId,
@@ -65,6 +71,7 @@ const connectOfficePreviewRuntime = (
     await activeTask
     await cleanup?.()
     cleanup = undefined
+    options.container.dataset.officePreviewReady = 'false'
     options.container.replaceChildren()
   }
 }

@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { connectOfficePreviewRuntime } from './office-preview-controller'
-import { OfficePreviewRuntimeError } from './office-preview-runtime'
+import { OfficePreviewRuntimeError, type RunOfficePreviewOptions } from './office-preview-runtime'
 
 describe('connectOfficePreviewRuntime', () => {
   it('runs the received session and disposes it with the runtime subscription', async () => {
@@ -42,7 +42,7 @@ describe('connectOfficePreviewRuntime', () => {
       start,
       container,
       fetchFile: fetch,
-      reportState
+      reportState: expect.any(Function)
     })
 
     await disconnect()
@@ -91,5 +91,51 @@ describe('connectOfficePreviewRuntime', () => {
         error: 'INVALID_PACKAGE'
       })
     })
+  })
+
+  it('keeps rendered content hidden until the runtime reports ready', async () => {
+    let startListener: ((start: never) => void) | undefined
+    const container = document.createElement('div')
+    const reportState = vi.fn((state: { phase: string }) => {
+      if (state.phase === 'ready') {
+        expect(container.dataset.officePreviewReady).toBe('true')
+      }
+    })
+    const bridge = {
+      onStart: vi.fn((listener) => {
+        startListener = listener
+        return vi.fn()
+      }),
+      reportState
+    }
+    const start = {
+      sessionId: 'session-1',
+      resource: {
+        id: 'resource-1',
+        url: 'open-science-preview://resource-1/report.pptx',
+        size: 1024,
+        mimeType: 'application/octet-stream',
+        version: 1
+      },
+      extension: 'pptx' as const,
+      name: 'report.pptx',
+      attempt: 0
+    }
+    const runPreview = vi.fn(async (options: RunOfficePreviewOptions) => {
+      expect(container.dataset.officePreviewReady).toBe('false')
+      options.reportState({
+        sessionId: start.sessionId,
+        phase: 'rendering',
+        title: 'Rendering the preview'
+      })
+      expect(container.dataset.officePreviewReady).toBe('false')
+      options.reportState({ sessionId: start.sessionId, phase: 'ready' })
+      return vi.fn()
+    })
+
+    connectOfficePreviewRuntime({ bridge, container, runPreview })
+    startListener?.(start as never)
+
+    await vi.waitFor(() => expect(reportState).toHaveBeenCalledTimes(2))
   })
 })
