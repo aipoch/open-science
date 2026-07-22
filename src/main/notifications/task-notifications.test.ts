@@ -174,7 +174,7 @@ describe('describeTaskNotification', () => {
       text: 'budget\n\rexceeded\u0007 extra'
     }
 
-    // Newlines and the bell get stripped; whitespace folds to a single space.
+    // Control characters become spaces, then whitespace folds — no word concatenation.
     expect(describeTaskNotification(event, 'Plot the curve')?.body).toBe(
       '"Plot the curve" finished without a clean completion status (budget exceeded extra).'
     )
@@ -549,5 +549,38 @@ describe('TaskNotificationService', () => {
     const { service } = createService({})
 
     expect(service.trackPrompt({ sessionId: 'session-1', text: '  \n ' })).toBeUndefined()
+  })
+
+  it('does not deliver if the user switches back during the settings read', async () => {
+    // The focus check passes before the async settings read, but the user returns mid-read.
+    const focusState = { focused: false }
+    const { service, shown } = createService({
+      isAppFocused: () => focusState.focused,
+      isEnabled: async () => {
+        // Simulate the user switching back during the disk read.
+        focusState.focused = true
+        return true
+      }
+    })
+
+    service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
+    await service.handleRuntimeEvent(stopEvent('end_turn'))
+
+    expect(shown).toHaveLength(0)
+  })
+
+  it('cleans up a stale token from deadTokens when untrack follows a terminal event', async () => {
+    const { service } = createService({})
+
+    const tracked = service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
+    await service.handleRuntimeEvent(stopEvent('end_turn'))
+
+    // The terminal event cleared the chain; the late untrack must also clean the deadToken set.
+    service.untrackPrompt('session-1', tracked as NonNullable<typeof tracked>)
+
+    // Access the private set via a cast to verify it's empty.
+    const deadTokens = (service as unknown as { deadTokens: Set<number> }).deadTokens
+    expect(deadTokens.has(tracked!.token)).toBe(false)
+    expect(deadTokens.size).toBe(0)
   })
 })

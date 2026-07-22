@@ -67,13 +67,15 @@ const EARLY_STOP_BODY: Record<string, (taskName?: string) => string> = {
 // Strips control characters, folds whitespace, and turns underscores into spaces so an arbitrary
 // stop-reason text (or one from a future ACP extension) reads naturally and can't smuggle newlines
 // or terminal escapes into a single-line OS-notification body — some platforms truncate hard or
-// render control glyphs.
+// render control glyphs. Control characters (including \n, \r, \t) become spaces first, then
+// whitespace folds, so "budget\nexceeded" reads as "budget exceeded" rather than "budgetexceeded".
 const sanitizeReason = (text: string): string => {
   let stripped = ''
   for (const ch of text) {
     const code = ch.charCodeAt(0)
-    // 0x00–0x1F (C0 control) and 0x7F (DEL) are non-printable; everything else keeps its shape.
-    if (code >= 0x20 && code !== 0x7f) stripped += ch
+    // 0x00–0x1F (C0 control) and 0x7F (DEL) become spaces; everything else keeps its shape.
+    if (code < 0x20 || code === 0x7f) stripped += ' '
+    else stripped += ch
   }
   return stripped.replace(/_/g, ' ').replace(/\s+/g, ' ').trim()
 }
@@ -273,31 +275,38 @@ export class TaskNotificationService {
   untrackPrompt(sessionId: string, tracked: TrackedPrompt): void {
     this.deadTokens.add(tracked.token)
 
-    let chain = this.tracks.get(sessionId)
+    const chain = this.tracks.get(sessionId)
 
-    if (!chain || chain.length === 0) return
-
-    while (chain.length > 0 && this.deadTokens.has(chain[chain.length - 1].token)) {
-      const popped = chain[chain.length - 1]
-      this.deadTokens.delete(popped.token)
-      chain = chain.slice(0, -1)
+    // A terminal event already cleared the chain for this session; the token is stale, so remove
+    // it from the dead set too — otherwise it leaks forever.
+    if (!chain || chain.length === 0) {
+      this.deadTokens.delete(tracked.token)
+      return
     }
 
-    if (chain.length === 0 || chain[chain.length - 1].token !== tracked.token) {
+    let updated = chain
+
+    while (updated.length > 0 && this.deadTokens.has(updated[updated.length - 1].token)) {
+      const popped = updated[updated.length - 1]
+      this.deadTokens.delete(popped.token)
+      updated = updated.slice(0, -1)
+    }
+
+    if (updated.length === 0 || updated[updated.length - 1].token !== tracked.token) {
       // A newer track superseded this one; the chain is already correct.
-      if (chain.length === 0) this.tracks.delete(sessionId)
-      else this.tracks.set(sessionId, chain)
+      if (updated.length === 0) this.tracks.delete(sessionId)
+      else this.tracks.set(sessionId, updated)
       return
     }
 
     // Our token was the live head; pop it (the chain may still hold an older live track).
     this.deadTokens.delete(tracked.token)
-    chain = chain.slice(0, -1)
+    updated = updated.slice(0, -1)
 
-    if (chain.length === 0) {
+    if (updated.length === 0) {
       this.tracks.delete(sessionId)
     } else {
-      this.tracks.set(sessionId, chain)
+      this.tracks.set(sessionId, updated)
     }
   }
 
@@ -363,7 +372,8 @@ export class TaskNotificationService {
   // Shared gates and delivery: a focused app and a disabled preference stay silent (and a settings
   // read failure fails closed), and a throwing Notification can never surface as an unhandled
   // rejection on the broadcast path that callers void. Clicks route through the activation handler
-  // only when the notification belongs to a known session.
+  // only when the notification belongs to a known session. Focus is checked both before and after
+  // the settings read so a user who switches back during the async gap doesn't get a spurious banner.
   private async deliver(notification: TaskNotification, sessionId?: string): Promise<void> {
     if (this.deps.isAppFocused()) return
 
@@ -377,6 +387,9 @@ export class TaskNotificationService {
     }
 
     if (!enabled) return
+
+    // Re-check focus after the async settings read: the user may have switched back during the gap.
+    if (this.deps.isAppFocused()) return
 
     // Delivery is best-effort: a throwing Notification must never surface as an unhandled
     // rejection on the broadcast path that callers void.
