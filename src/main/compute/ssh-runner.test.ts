@@ -170,7 +170,7 @@ describe('parseProbeOutput probe output contract', () => {
 
 describe('resolveSshTarget', () => {
   // Pretend `ssh -G aliyun-xt-test` output — non-default identityfile is the key detail.
-  const fakeSshG = () => ({
+  const fakeSshG = (): Record<string, string> => ({
     user: 'ewen',
     hostname: '47.98.96.100',
     port: '22',
@@ -189,7 +189,11 @@ describe('resolveSshTarget', () => {
   })
 
   it('passes -i <path> when an explicit identityFile override is provided', async () => {
-    const target = await resolveSshTarget('aliyun-xt-test', { identityFile: '/keys/custom.pem' }, async () => fakeSshG())
+    const target = await resolveSshTarget(
+      'aliyun-xt-test',
+      { identityFile: '/keys/custom.pem' },
+      async () => fakeSshG()
+    )
     const iIdx = target.extraArgs.indexOf('-i')
     expect(iIdx).toBeGreaterThan(-1)
     expect(target.extraArgs[iIdx + 1]).toBe('/keys/custom.pem')

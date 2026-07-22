@@ -132,7 +132,10 @@ export const resolveSshTarget = async (
   overrides: SshOverrides | undefined,
   // Test seam: inject the ssh -G config reader so resolveSshTarget is unit-testable without
   // spawning ssh. Production callers omit it and get the real readEffectiveConfig.
-  readConfig: (alias: string, sshBinary: string) => Promise<Record<string, string>> = readEffectiveConfig
+  readConfig: (
+    alias: string,
+    sshBinary: string
+  ) => Promise<Record<string, string>> = readEffectiveConfig
 ): Promise<ResolvedSshTarget> => {
   const sshBinary = resolveSshBinary()
 
@@ -141,7 +144,10 @@ export const resolveSshTarget = async (
 
   const extraArgs: string[] = []
 
-  // User: override > ssh -G user > alias itself.
+  // User/Port: explicit override, or the value ssh -G resolves for this alias. Passing the alias as
+  // `host` below already makes ssh apply these from config, so these flags are technically redundant
+  // when no override is set — but harmless (values match) and kept for clarity. IdentityFile, by
+  // contrast, is override-only because ssh picks it up from config via the alias.
   const resolvedUser = overrides?.user?.trim() ?? sshGConfig['user']
   if (resolvedUser && resolvedUser !== alias) {
     extraArgs.push('-o', `User=${resolvedUser}`)
