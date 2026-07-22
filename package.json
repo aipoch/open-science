@@ -26,14 +26,15 @@
     "dev:web": "node scripts/dev-app-branding.cjs && node scripts/dev-web.cjs",
     "dev:headless": "node scripts/dev-app-branding.cjs && node scripts/dev-web.cjs --headless",
     "cli": "node cli/index.mjs",
-    "build": "npm run typecheck && electron-vite build && npm run build:web",
+    "gen:prisma": "prisma generate",
+    "build": "npm run gen:prisma && npm run typecheck && electron-vite build && npm run build:web",
     "postinstall": "prisma generate && electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",
-    "build:mac": "npm run build:web && electron-vite build && electron-builder --mac",
-    "build:linux": "npm run build:web && electron-vite build && electron-builder --linux",
-    "build:win": "npm run build:web && electron-vite build && electron-builder --win",
+    "build:mac": "npm run gen:prisma && npm run build:web && electron-vite build && electron-builder --mac",
+    "build:linux": "npm run gen:prisma && npm run build:web && electron-vite build && electron-builder --linux",
+    "build:win": "npm run gen:prisma && npm run build:web && electron-vite build && electron-builder --win",
     "stage-default-envs": "node scripts/stage-default-envs.mjs",
-    "predev": "node scripts/dev-app-branding.cjs"
+    "predev": "prisma generate && node scripts/dev-app-branding.cjs"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.60.0",
