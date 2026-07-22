@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Download, LoaderCircle, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import type { ChatSession } from '@/stores/session-store'
 
@@ -126,6 +127,9 @@ const SessionNotebookContent = ({
     try {
       await onExport()
     } catch (exportFailure) {
+      // A canceled Save As resolves rather than throws, so reaching here is a real failure —
+      // keep a diagnostic trail in addition to the footer banner.
+      console.error('Failed to export notebook as .ipynb:', exportFailure)
       setExportError(getErrorMessage(exportFailure))
     } finally {
       setExporting(false)
@@ -211,20 +215,32 @@ const SessionNotebookContent = ({
         <p className="min-w-0 truncate text-xs text-danger-000" role="alert">
           {exportError}
         </p>
-        <button
-          type="button"
-          disabled={exportDisabled}
-          onClick={() => void handleExport()}
-          className="flex shrink-0 items-center justify-center gap-1.5 rounded px-2 py-1 text-xs text-text-200 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50"
-          aria-label="Download as .ipynb"
-        >
-          {exporting ? (
-            <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
-          ) : (
-            <Download className="size-3.5" aria-hidden="true" />
-          )}
-          {exporting ? 'Exporting…' : '.ipynb'}
-        </button>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              {/* Wrapper span keeps the tooltip reachable while the button is disabled. */}
+              <span>
+                <button
+                  type="button"
+                  disabled={exportDisabled}
+                  onClick={() => void handleExport()}
+                  className="flex shrink-0 items-center justify-center gap-1.5 rounded px-2 py-1 text-xs text-text-200 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label="Download as .ipynb"
+                >
+                  {exporting ? (
+                    <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Download className="size-3.5" aria-hidden="true" />
+                  )}
+                  {exporting ? 'Exporting…' : '.ipynb'}
+                </button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              {runs.length === 0 ? 'No runs to export' : 'Download as .ipynb'}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </div>
     </>
   )
@@ -300,6 +316,10 @@ const SessionNotebookDialog = ({
           <Dialog.Title className="sr-only">Session notebook</Dialog.Title>
           {session ? (
             <SessionNotebookContent
+              // Remount per session: the dialog is mounted once and the session prop swaps in
+              // place, so per-session export state (a failure banner, an in-flight setState from
+              // a superseded export) must be discarded rather than leak into the next session.
+              key={session.id}
               sessionId={session.id}
               runs={runs}
               status={status}

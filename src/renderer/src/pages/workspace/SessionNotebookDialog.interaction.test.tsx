@@ -27,6 +27,7 @@ let container: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
+  vi.spyOn(console, 'error').mockImplementation(() => {})
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -35,6 +36,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
+  vi.restoreAllMocks()
 })
 
 describe('SessionNotebookContent export', () => {
@@ -89,5 +91,66 @@ describe('SessionNotebookContent export', () => {
 
     expect(container.querySelector('[role="alert"]')?.textContent).toBe('Disk is full')
     expect(button?.disabled).toBe(false)
+  })
+
+  it('logs export failures for diagnostics, not just the footer banner', async () => {
+    const failure = new Error('Disk is full')
+    const onExport = vi.fn().mockRejectedValue(failure)
+    await act(async () => {
+      root.render(
+        <SessionNotebookContent
+          sessionId="session-1"
+          runs={[run]}
+          status="ready"
+          onClose={vi.fn()}
+          onExport={onExport}
+        />
+      )
+    })
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="Download as .ipynb"]')?.click()
+      await Promise.resolve()
+    })
+
+    expect(console.error).toHaveBeenCalledWith('Failed to export notebook as .ipynb:', failure)
+  })
+
+  it('discards a failed export state when the content remounts for another session', async () => {
+    const failingExport = vi.fn().mockRejectedValue(new Error('Disk is full'))
+    await act(async () => {
+      root.render(
+        <SessionNotebookContent
+          key="session-a"
+          sessionId="session-a"
+          runs={[run]}
+          status="ready"
+          onClose={vi.fn()}
+          onExport={failingExport}
+        />
+      )
+    })
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="Download as .ipynb"]')?.click()
+      await Promise.resolve()
+    })
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('Disk is full')
+
+    // The container remounts SessionNotebookContent with key={session.id} on session switch.
+    await act(async () => {
+      root.render(
+        <SessionNotebookContent
+          key="session-b"
+          sessionId="session-b"
+          runs={[run]}
+          status="ready"
+          onClose={vi.fn()}
+          onExport={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('')
   })
 })
