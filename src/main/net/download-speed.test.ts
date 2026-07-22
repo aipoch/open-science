@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { SpeedMeter } from './download-speed'
 
 describe('SpeedMeter', () => {
-  const clock = (start = 0) => {
+  const clock = (start = 0): { now: () => number; advance: (ms: number) => number } => {
     let t = start
     return { now: () => t, advance: (ms: number) => (t += ms) }
   }

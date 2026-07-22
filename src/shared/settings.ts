@@ -549,6 +549,9 @@ export type ClaudeInstallResult = {
   // The official installer returned a region-block HTML page instead of the script (common in
   // regions where claude.ai is unavailable); the installer auto-falls-back to npm when it can.
   regionBlocked?: boolean
+  // The install failed with output matching a transient network fault (registry timeout, connection
+  // reset); the runner retries the same source a few times before surfacing the failure.
+  retryableNetworkFailure?: boolean
 }
 
 // Availability of npm on the host, used to gate the npm source.

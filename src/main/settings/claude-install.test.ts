@@ -304,6 +304,62 @@ describe('claude-install: run with region-block fallback', () => {
     expect(commands).toEqual(['bash'])
     expect(result.ok).toBe(false)
   })
+
+  it('retries on a transient network failure and succeeds on the second attempt', async () => {
+    let spawnCallCount = 0
+    const networkFailSpawn = vi.fn(() => {
+      const child = new FakeChild()
+      const isFirst = spawnCallCount++ === 0
+      setImmediate(() => {
+        if (isFirst) child.stderr.emit('data', Buffer.from('npm ERR! network ETIMEDOUT'))
+        child.emit('exit', isFirst ? 1 : 0)
+      })
+      return child
+    })
+
+    const events: string[] = []
+    const result = await runInstallWithFallback({
+      source: 'npm',
+      installId: 'install-retry-1',
+      onEvent: (e) => {
+        if (e.kind === 'log' && e.stream === 'system') events.push(e.chunk)
+      },
+      spawnImpl: networkFailSpawn as never,
+      platform: 'linux',
+      npmProbe: () => Promise.resolve(),
+      maxNetworkRetries: 2,
+      retrySleep: async () => {}
+    })
+
+    expect(result.ok).toBe(true)
+    expect(networkFailSpawn.mock.calls.length).toBe(2)
+    expect(events.some((e) => e.includes('retrying'))).toBe(true)
+  })
+
+  it('surfaces the failure after exhausting retries', async () => {
+    const networkFailSpawn = vi.fn(() => {
+      const child = new FakeChild()
+      setImmediate(() => {
+        child.stderr.emit('data', Buffer.from('npm ERR! network ECONNRESET'))
+        child.emit('exit', 1)
+      })
+      return child
+    })
+
+    const result = await runInstallWithFallback({
+      source: 'npm',
+      installId: 'install-retry-2',
+      onEvent: () => undefined,
+      spawnImpl: networkFailSpawn as never,
+      platform: 'linux',
+      npmProbe: () => Promise.resolve(),
+      maxNetworkRetries: 1,
+      retrySleep: async () => {}
+    })
+
+    expect(result.ok).toBe(false)
+    expect(networkFailSpawn.mock.calls.length).toBe(2) // initial + 1 retry
+  })
 })
 
 describe('claude-install: npm availability', () => {

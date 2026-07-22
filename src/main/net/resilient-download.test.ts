@@ -1,18 +1,21 @@
 import { createHash } from 'node:crypto'
 import { PassThrough, Readable } from 'node:stream'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, type MockedFunction } from 'vitest'
 
 import { DownloadChecksumError, resilientDownload } from './resilient-download'
 
 // Builds a fake fetch honoring Range header; `cutAfter` truncates the body to simulate a drop.
-const sha = (buf: Buffer) => createHash('sha256').update(buf).digest('hex')
+const sha = (buf: Buffer): string => createHash('sha256').update(buf).digest('hex')
 
 // Builds a fake fetch that honors Range for resume assertions. When `cutAfter` is set, it reports
 // the FULL remaining content-length (simulating a real mid-stream drop where the server announced
 // the size but closed the socket early) but only delivers `cutAfter` bytes of payload.
 // When `opts.status` is explicitly 200, the Range header is ignored and the full body is served
 // (simulates a server that does not support Range requests).
-const fakeFetch = (body: Buffer, opts: { cutAfter?: number; status?: number } = {}) =>
+const fakeFetch = (
+  body: Buffer,
+  opts: { cutAfter?: number; status?: number } = {}
+): MockedFunction<typeof fetch> =>
   vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
     const headers = (init?.headers ?? {}) as Record<string, string>
     const range = headers['Range'] ?? headers['range']
@@ -35,7 +38,14 @@ const fakeFetch = (body: Buffer, opts: { cutAfter?: number; status?: number } = 
   })
 
 // In-memory fs doubles keyed by path with append/truncate semantics.
-const memFs = () => {
+const memFs = (): {
+  files: Map<string, Buffer>
+  createWriteStreamImpl: (path: string, o?: { flags?: string }) => import('node:fs').WriteStream
+  statImpl: (path: string) => Promise<{ size: number }>
+  rmImpl: (path: string) => Promise<void>
+  renameImpl: (from: string, to: string) => Promise<void>
+  openReadStreamImpl: (path: string) => import('node:fs').ReadStream
+} => {
   const files = new Map<string, Buffer>()
   return {
     files,
