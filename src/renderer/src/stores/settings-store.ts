@@ -359,6 +359,13 @@ const runRuntimeInstall = async (
 ): Promise<ClaudeInstallResult> => {
   // Refuse to start a second concurrent install. The check + set is synchronous (no await between them),
   // so it's atomic against the single-threaded event loop: two callers can't both pass the guard.
+  //
+  // This is a safety backstop, not a user-facing path: the UI already disables every Install button while
+  // any runtime installs (selectAnyInstalling + the cards' busy/installBusy props), so a user cannot reach
+  // this branch. It exists only for a stray/programmatic caller or a mid-switch race. The rejection is
+  // therefore intentionally silent — it writes to no slice (writing an error here would surface a phantom
+  // failure on a runtime the user never touched, the inverse of the #278 bug) and callers ignore the
+  // result. If a real UI trigger for this path is ever added, surface the error on the target slice then.
   if (selectAnyInstalling(get())) {
     return { installId: '', ok: false, error: 'Another install is already in progress.' }
   }
