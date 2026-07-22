@@ -1,23 +1,32 @@
 import type { PackageMirror } from '../../shared/mirror'
 import { CURATED_MIRRORS, effectiveMirror } from './mirror'
 
-// A candidate mirror bundle + a cheap URL to measure reachability/latency. Public endpoints only (no
-// secrets). probeUrl points at each mirror's conda-forge repodata, HEAD-ed so no body is downloaded.
-export type MirrorCandidate = { name: string; mirror: PackageMirror; probeUrl: string }
+// A candidate mirror bundle + cheap URLs to measure both required conda channels. Public endpoints
+// only (no secrets). The repodata URLs are HEAD-ed so no body is downloaded.
+export type MirrorCandidate = {
+  name: string
+  mirror: PackageMirror
+  probeUrl: string
+  biocondaProbeUrl: string
+}
 
 const condaRepodata = (base: string): string =>
   `${base}anaconda/cloud/conda-forge/noarch/repodata.json`
+const biocondaRepodata = (base: string): string =>
+  `${base}anaconda/cloud/bioconda/noarch/repodata.json`
 
 export const MIRROR_CANDIDATES: MirrorCandidate[] = [
   {
     name: 'public',
     mirror: {},
-    probeUrl: 'https://conda.anaconda.org/conda-forge/noarch/repodata.json'
+    probeUrl: 'https://conda.anaconda.org/conda-forge/noarch/repodata.json',
+    biocondaProbeUrl: 'https://conda.anaconda.org/bioconda/noarch/repodata.json'
   },
   {
     name: 'tuna',
     mirror: { ...CURATED_MIRRORS.cn },
-    probeUrl: condaRepodata('https://mirrors.tuna.tsinghua.edu.cn/')
+    probeUrl: condaRepodata('https://mirrors.tuna.tsinghua.edu.cn/'),
+    biocondaProbeUrl: biocondaRepodata('https://mirrors.tuna.tsinghua.edu.cn/')
   },
   {
     name: 'ustc',
@@ -26,7 +35,8 @@ export const MIRROR_CANDIDATES: MirrorCandidate[] = [
       pypiIndex: 'https://mirrors.ustc.edu.cn/pypi/web/simple',
       cranMirror: 'https://mirrors.ustc.edu.cn/CRAN/'
     },
-    probeUrl: condaRepodata('https://mirrors.ustc.edu.cn/')
+    probeUrl: condaRepodata('https://mirrors.ustc.edu.cn/'),
+    biocondaProbeUrl: biocondaRepodata('https://mirrors.ustc.edu.cn/')
   },
   {
     name: 'aliyun',
@@ -35,7 +45,8 @@ export const MIRROR_CANDIDATES: MirrorCandidate[] = [
       pypiIndex: 'https://mirrors.aliyun.com/pypi/simple',
       cranMirror: 'https://mirrors.aliyun.com/CRAN/'
     },
-    probeUrl: condaRepodata('https://mirrors.aliyun.com/')
+    probeUrl: condaRepodata('https://mirrors.aliyun.com/'),
+    biocondaProbeUrl: biocondaRepodata('https://mirrors.aliyun.com/')
   }
 ]
 
@@ -56,8 +67,9 @@ export type ProbeDeps = {
   timeoutMs?: number
 }
 
-// Probes every candidate in parallel and returns the mirror of the fastest that responds, or
-// undefined when none respond within the timeout (caller then falls back to the locale default).
+// Probes every candidate's conda-forge and bioconda channels in parallel. A candidate is reachable only
+// when both respond; its score is the slower response because both channels are required for installs.
+// Returns undefined when no complete candidate responds (caller then falls back to the locale default).
 export const pickFastestMirror = async (
   deps: ProbeDeps = {}
 ): Promise<PackageMirror | undefined> => {
@@ -68,7 +80,11 @@ export const pickFastestMirror = async (
   const timed = await Promise.all(
     candidates.map(async (candidate) => {
       try {
-        return { candidate, ms: await probe(candidate.probeUrl, timeoutMs) }
+        const [condaMs, biocondaMs] = await Promise.all([
+          probe(candidate.probeUrl, timeoutMs),
+          probe(candidate.biocondaProbeUrl, timeoutMs)
+        ])
+        return { candidate, ms: Math.max(condaMs, biocondaMs) }
       } catch {
         return undefined
       }
