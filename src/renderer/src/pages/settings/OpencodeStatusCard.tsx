@@ -23,10 +23,13 @@ type OpencodeStatusCardProps = {
   isDetecting: boolean
   onDetect: () => void
   // Install picker (managed / npm / script, managed first) shown when opencode isn't detected.
+  // `isInstalling` is OpenCode's OWN install state (drives this card's progress/label); `installBusy`
+  // is true while ANY runtime installs and only locks the controls (one install at a time).
   isInstalling: boolean
   installLogs: string[]
   installProgress: ClaudeInstallProgressEvent | null
   installError: string | undefined
+  installBusy?: boolean
   npmAvailable: boolean
   onInstall: (source: ClaudeInstallSource) => void
   // Marks this as the runtime the selected agent framework uses, so it stands out when both cards show.
@@ -57,6 +60,7 @@ const OpencodeStatusCard = ({
   installLogs,
   installProgress,
   installError,
+  installBusy,
   npmAvailable,
   onInstall,
   active = false,
@@ -66,6 +70,8 @@ const OpencodeStatusCard = ({
   isUninstalling = false,
   onUninstall
 }: OpencodeStatusCardProps): React.JSX.Element => {
+  // Any install (this runtime's or another's) locks the uninstall button; default to this card's own.
+  const anyInstalling = installBusy ?? isInstalling
   const found = Boolean(opencode.resolvedPath)
   const installSources = useMemo(() => getOpencodeInstallSources(window.api?.platform), [])
   // Only a ready runtime can be chosen as the active framework — switching to a missing or unrunnable
@@ -126,7 +132,7 @@ const OpencodeStatusCard = ({
                 active={active}
                 isUninstalling={isUninstalling}
                 isDetecting={isDetecting}
-                isInstalling={isInstalling}
+                isInstalling={anyInstalling}
                 onUninstall={onUninstall}
               />
             ) : null}
@@ -171,6 +177,7 @@ const OpencodeStatusCard = ({
               installLogs={installLogs}
               installProgress={installProgress}
               installError={installError}
+              busy={anyInstalling}
               npmAvailable={npmAvailable}
               onInstall={onInstall}
             />

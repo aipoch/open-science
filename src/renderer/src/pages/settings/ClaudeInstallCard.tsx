@@ -23,6 +23,10 @@ type ClaudeInstallCardProps = {
   // Whether npm is available on the host; disables/deprioritizes the npm source when false.
   npmAvailable: boolean
   onInstall: (source: ClaudeInstallSource) => void
+  // Whether another runtime's install is in flight. Only one install runs at a time, so this locks the
+  // source picker and Install button (without showing this card's own "Installing…" state) so a second
+  // install can't start and cross-contaminate the shared install-event channel. Defaults to isInstalling.
+  busy?: boolean
   embedded?: boolean
   // The install sources to offer; defaults to Claude's. Pass getOpencodeInstallSources to reuse this
   // card for OpenCode (same picker, progress bar, log pane, and copyable command).
@@ -39,9 +43,12 @@ const ClaudeInstallCard = ({
   installError,
   npmAvailable,
   onInstall,
+  busy,
   embedded = false,
   sources
 }: ClaudeInstallCardProps): React.JSX.Element => {
+  // The picker/Install button lock while THIS runtime installs or while ANY other install runs.
+  const locked = isInstalling || (busy ?? false)
   // Default to the app-managed download — it needs no Node.js/npm and works behind region blocks.
   const [source, setSource] = useState<ClaudeInstallSource>('managed')
   const [showLog, setShowLog] = useState(false)
@@ -80,7 +87,7 @@ const ClaudeInstallCard = ({
           </label>
           <Select
             value={source}
-            disabled={isInstalling}
+            disabled={locked}
             onValueChange={(next) => setSource(next as ClaudeInstallSource)}
           >
             <SelectTrigger id="install-source" aria-label="Install source">
@@ -140,7 +147,7 @@ const ClaudeInstallCard = ({
             type="button"
             size="sm"
             onClick={() => onInstall(source)}
-            disabled={isInstalling || npmMissing}
+            disabled={locked || npmMissing}
           >
             {isInstalling ? 'Installing…' : 'Install with one click'}
           </Button>

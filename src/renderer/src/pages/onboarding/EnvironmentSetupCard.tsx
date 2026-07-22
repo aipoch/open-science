@@ -24,7 +24,11 @@ import { describeInstallProgress } from '../settings/claude-install-progress'
 type EnvironmentSetupCardProps = {
   environment: EnvironmentCheckResult | undefined
   isChecking: boolean
+  // `isInstalling` drives this card's own progress/label (the selected runtime's install). `busy` locks
+  // the action buttons while ANY runtime installs — including one still finishing on the previously
+  // selected framework during an async switch — so a second install can't start. Defaults to isInstalling.
   isInstalling: boolean
+  busy?: boolean
   installLogs: string[]
   installProgress?: ClaudeInstallProgressEvent | null
   error?: string
@@ -148,12 +152,16 @@ const EnvironmentSetupCard = ({
   environment,
   isChecking,
   isInstalling,
+  busy,
   installLogs,
   installProgress,
   error,
   onCheck,
   onInstall
 }: EnvironmentSetupCardProps): React.JSX.Element => {
+  // Any install running (this runtime's or one finishing on a just-switched-away framework) locks the
+  // buttons; default to this card's own install when the caller doesn't pass a global signal.
+  const anyInstalling = busy ?? isInstalling
   const structuredProgress = installProgress ? describeInstallProgress(installProgress) : undefined
   const progress =
     structuredProgress?.fraction !== undefined
@@ -174,7 +182,7 @@ const EnvironmentSetupCard = ({
           variant="outline"
           size="sm"
           onClick={onCheck}
-          disabled={isChecking || isInstalling}
+          disabled={isChecking || anyInstalling}
         >
           <RefreshCw className={cn(isChecking && 'animate-spin')} aria-hidden="true" />
           {isChecking ? 'Checking…' : 'Check again'}

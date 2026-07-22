@@ -898,8 +898,26 @@ describe('OnboardingWizard', () => {
         activeProviderReady: false
       },
       environmentCheck: environment(false),
-      isInstalling: true,
-      installLogs: ['Downloading Claude — 5 MB / 10.0 MB']
+      installStates: {
+        'claude-code': {
+          isInstalling: true,
+          installLogs: ['Downloading Claude — 5 MB / 10.0 MB'],
+          installProgress: null,
+          installError: undefined
+        },
+        opencode: {
+          isInstalling: false,
+          installLogs: [],
+          installProgress: null,
+          installError: undefined
+        },
+        codex: {
+          isInstalling: false,
+          installLogs: [],
+          installProgress: null,
+          installError: undefined
+        }
+      }
     })
 
     await act(async () => {

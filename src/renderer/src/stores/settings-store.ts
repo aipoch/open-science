@@ -1,4 +1,4 @@
-import { create } from 'zustand'
+import { create, type StoreApi } from 'zustand'
 
 import type { OfficialVendorId } from '../../../shared/provider-registry'
 import {
@@ -57,6 +57,18 @@ type SaveProviderResult = {
   validation: ValidateProviderResult
 }
 
+// One runtime's install state. Each framework (Claude / OpenCode / Codex) owns an isolated copy, so an
+// install event is attributed to its runtime and rendered by that card only — starting a Codex install
+// never drives the OpenCode or Claude card (issue #278).
+type RuntimeInstallState = {
+  isInstalling: boolean
+  installLogs: string[]
+  // Latest progress tick driving this runtime's install bar; null when no install is active for it.
+  installProgress: ClaudeInstallProgressEvent | null
+  // Error message from this runtime's last install attempt; drives auto-expansion of its log pane.
+  installError: string | undefined
+}
+
 type SettingsStoreData = {
   isLoaded: boolean
   claude: ClaudeInfo
@@ -105,13 +117,9 @@ type SettingsStoreData = {
   isDetectingClaude: boolean
   isDetectingOpencode: boolean
   isDetectingCodex: boolean
-  isInstalling: boolean
-  installLogs: string[]
-  // Latest progress tick driving the install progress bar; null when no install is active.
-  installProgress: ClaudeInstallProgressEvent | null
-  // Error message from the last install attempt; drives auto-expansion of the log pane. Undefined on
-  // success or before the first attempt.
-  installError: string | undefined
+  // Per-runtime install state, keyed by framework id. Each runtime's install writes only to its own
+  // slice so its progress/logs/error render in its own card alone — never mirrored onto the others.
+  installStates: Record<AgentFrameworkId, RuntimeInstallState>
   // Explicit repair navigation. Completed users stay on Home during background checks and enter the
   // environment page only after choosing the required-item alert.
   isEnvironmentRepairOpen: boolean
@@ -137,7 +145,7 @@ type SettingsStore = SettingsStoreData & {
     source: ClaudeInstallSource,
     managedRegistry?: ManagedClaudeRegistry
   ) => Promise<ClaudeInstallResult>
-  // App-managed OpenCode install; shares the install progress/log state with installClaude.
+  // App-managed OpenCode install; writes only to the OpenCode install slice.
   installOpencode: (source?: ClaudeInstallSource) => Promise<ClaudeInstallResult>
   installCodex: (source?: CodexInstallSource) => Promise<ClaudeInstallResult>
   // Removes the app-managed runtime for a framework (guarded main-side to app-managed installs) and
@@ -145,7 +153,8 @@ type SettingsStore = SettingsStoreData & {
   uninstallClaude: () => Promise<void>
   uninstallOpencode: () => Promise<void>
   uninstallCodex: () => Promise<void>
-  clearInstallLogs: () => void
+  // Clears the transient logs/progress/error for one runtime (or every runtime when omitted).
+  clearInstallLogs: (runtime?: AgentFrameworkId) => void
   openEnvironmentRepair: () => void
   closeEnvironmentRepair: () => void
   // Persists the draft (create/update) without testing it, returning the affected provider id. The
@@ -238,6 +247,20 @@ type SettingsStore = SettingsStoreData & {
   setPackageMirror: (mirror: PackageMirror) => Promise<void>
 }
 
+const createInitialRuntimeInstallState = (): RuntimeInstallState => ({
+  isInstalling: false,
+  installLogs: [],
+  installProgress: null,
+  installError: undefined
+})
+
+// True while any runtime install is running. Only one install runs at a time, so the settings/onboarding
+// pages use this to lock the framework selector and every card's uninstall button during an install.
+export const selectAnyInstalling = (state: SettingsStoreData): boolean =>
+  state.installStates['claude-code'].isInstalling ||
+  state.installStates.opencode.isInstalling ||
+  state.installStates.codex.isInstalling
+
 const createInitialPreflight = (): Preflight => ({
   claudeReady: false,
   opencodeReady: false,
@@ -277,10 +300,11 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   isDetectingClaude: false,
   isDetectingOpencode: false,
   isDetectingCodex: false,
-  isInstalling: false,
-  installLogs: [],
-  installProgress: null,
-  installError: undefined,
+  installStates: {
+    'claude-code': createInitialRuntimeInstallState(),
+    opencode: createInitialRuntimeInstallState(),
+    codex: createInitialRuntimeInstallState()
+  },
   isEnvironmentRepairOpen: false,
   isSettingsOpen: false,
   pendingSkillId: undefined,
@@ -305,6 +329,84 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   opencodeManaged: snapshot.opencodeManaged,
   codexManaged: snapshot.codexManaged ?? false
 })
+
+// Merges a patch into one runtime's install slice, leaving the other runtimes' slices untouched. This
+// isolation is the fix for issue #278: an install event only ever mutates the runtime it belongs to.
+const patchInstallState = (
+  set: StoreApi<SettingsStore>['setState'],
+  runtime: AgentFrameworkId,
+  patch: Partial<RuntimeInstallState>
+): void =>
+  set((state) => ({
+    installStates: {
+      ...state.installStates,
+      [runtime]: { ...state.installStates[runtime], ...patch }
+    }
+  }))
+
+// Shared install driver for all three runtimes. Streams the (single-channel) install events into the
+// given runtime's slice only, then reconciles the snapshot/preflight and records that runtime's error.
+// `onInstallLog` is a broadcast channel, so correct attribution requires exactly one live subscription:
+// the guard below enforces the single-install invariant in the store itself (not just via the UI lock),
+// so even a stray caller or a mid-switch UI race can't start a second install that cross-contaminates
+// another runtime's slice (issue #278). Every event the lone subscription sees therefore belongs to
+// `runtime`.
+const runRuntimeInstall = async (
+  set: StoreApi<SettingsStore>['setState'],
+  get: StoreApi<SettingsStore>['getState'],
+  runtime: AgentFrameworkId,
+  invoke: () => Promise<ClaudeInstallResult>
+): Promise<ClaudeInstallResult> => {
+  // Refuse to start a second concurrent install. The check + set is synchronous (no await between them),
+  // so it's atomic against the single-threaded event loop: two callers can't both pass the guard.
+  if (selectAnyInstalling(get())) {
+    return { installId: '', ok: false, error: 'Another install is already in progress.' }
+  }
+
+  patchInstallState(set, runtime, {
+    isInstalling: true,
+    installLogs: [],
+    installProgress: null,
+    installError: undefined
+  })
+
+  const unsubscribe = window.api.settings.onInstallLog((event) => {
+    if (event.kind === 'progress') {
+      patchInstallState(set, runtime, { installProgress: event })
+    } else {
+      set((state) => ({
+        installStates: {
+          ...state.installStates,
+          [runtime]: {
+            ...state.installStates[runtime],
+            installLogs: [...state.installStates[runtime].installLogs, event.chunk]
+          }
+        }
+      }))
+    }
+  })
+
+  try {
+    const result = await invoke()
+
+    // A successful install re-detected/persisted the runtime in main; reload so the card reflects it.
+    set(applySnapshot(await window.api.settings.getSettings()))
+    await get().refreshPreflight()
+    patchInstallState(set, runtime, {
+      installError: result.ok ? undefined : (result.error ?? 'Install failed.')
+    })
+
+    return result
+  } catch (error) {
+    patchInstallState(set, runtime, {
+      installError: error instanceof Error ? error.message : 'Install failed.'
+    })
+    throw error
+  } finally {
+    unsubscribe()
+    patchInstallState(set, runtime, { isInstalling: false, installProgress: null })
+  }
+}
 
 // Stable fallback reference so the selector returns the same array identity across renders
 // (a fresh literal would make useSettingsStore re-render every tick and loop).
@@ -493,91 +595,20 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     }
   },
 
-  // Runs a one-click install, streaming events into installProgress/installLogs, then refreshes
-  // settings/preflight. Log and progress share one channel, routed here by `kind`.
-  installClaude: async (source, managedRegistry) => {
-    set({ isInstalling: true, installLogs: [], installProgress: null, installError: undefined })
+  // Runs a one-click Claude install, streaming events into the Claude slice only, then refreshes
+  // settings/preflight. Log and progress share one channel, routed by `kind` into this runtime's card.
+  installClaude: async (source, managedRegistry) =>
+    runRuntimeInstall(set, get, 'claude-code', () =>
+      window.api.settings.installClaude({ source, managedRegistry })
+    ),
 
-    const unsubscribe = window.api.settings.onInstallLog((event) => {
-      if (event.kind === 'progress') {
-        set({ installProgress: event })
-      } else {
-        set((state) => ({ installLogs: [...state.installLogs, event.chunk] }))
-      }
-    })
+  // App-managed OpenCode install; streams into the OpenCode slice only.
+  installOpencode: async (source = 'managed') =>
+    runRuntimeInstall(set, get, 'opencode', () => window.api.settings.installOpencode({ source })),
 
-    try {
-      const result = await window.api.settings.installClaude({ source, managedRegistry })
-
-      // A successful install re-detects claude in main; reload so the cache reflects it.
-      const snapshot = await window.api.settings.getSettings()
-
-      set(applySnapshot(snapshot))
-      await get().refreshPreflight()
-
-      set({ installError: result.ok ? undefined : (result.error ?? 'Install failed.') })
-
-      return result
-    } catch (error) {
-      set({ installError: error instanceof Error ? error.message : 'Install failed.' })
-      throw error
-    } finally {
-      unsubscribe()
-      set({ isInstalling: false, installProgress: null })
-    }
-  },
-
-  // App-managed OpenCode install, mirroring installClaude's shared progress/log handling.
-  installOpencode: async (source = 'managed') => {
-    set({ isInstalling: true, installLogs: [], installProgress: null, installError: undefined })
-
-    const unsubscribe = window.api.settings.onInstallLog((event) => {
-      if (event.kind === 'progress') {
-        set({ installProgress: event })
-      } else {
-        set((state) => ({ installLogs: [...state.installLogs, event.chunk] }))
-      }
-    })
-
-    try {
-      const result = await window.api.settings.installOpencode({ source })
-
-      // A successful install persisted opencode's path/version in main; reload so the card reflects it.
-      set(applySnapshot(await window.api.settings.getSettings()))
-      await get().refreshPreflight()
-      set({ installError: result.ok ? undefined : (result.error ?? 'Install failed.') })
-
-      return result
-    } catch (error) {
-      set({ installError: error instanceof Error ? error.message : 'Install failed.' })
-      throw error
-    } finally {
-      unsubscribe()
-      set({ isInstalling: false, installProgress: null })
-    }
-  },
-
-  installCodex: async (source = 'managed') => {
-    set({ isInstalling: true, installLogs: [], installProgress: null, installError: undefined })
-    const unsubscribe = window.api.settings.onInstallLog((event) => {
-      if (event.kind === 'progress') set({ installProgress: event })
-      else set((state) => ({ installLogs: [...state.installLogs, event.chunk] }))
-    })
-
-    try {
-      const result = await window.api.settings.installCodex({ source })
-      set(applySnapshot(await window.api.settings.getSettings()))
-      await get().refreshPreflight()
-      set({ installError: result.ok ? undefined : (result.error ?? 'Install failed.') })
-      return result
-    } catch (error) {
-      set({ installError: error instanceof Error ? error.message : 'Install failed.' })
-      throw error
-    } finally {
-      unsubscribe()
-      set({ isInstalling: false, installProgress: null })
-    }
-  },
+  // App-managed / npm Codex install; streams into the Codex slice only.
+  installCodex: async (source = 'managed') =>
+    runRuntimeInstall(set, get, 'codex', () => window.api.settings.installCodex({ source })),
 
   // Removes the app-managed Claude runtime; main deletes it, re-detects, and may auto-switch the active
   // framework. Applies the refreshed snapshot and re-evaluates the readiness gate.
@@ -597,7 +628,15 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     await get().refreshPreflight()
   },
 
-  clearInstallLogs: () => set({ installLogs: [], installProgress: null, installError: undefined }),
+  clearInstallLogs: (runtime) =>
+    set((state) => {
+      const runtimes: AgentFrameworkId[] = runtime
+        ? [runtime]
+        : ['claude-code', 'opencode', 'codex']
+      const installStates = { ...state.installStates }
+      for (const id of runtimes) installStates[id] = createInitialRuntimeInstallState()
+      return { installStates }
+    }),
 
   openEnvironmentRepair: () => set({ isEnvironmentRepairOpen: true }),
 

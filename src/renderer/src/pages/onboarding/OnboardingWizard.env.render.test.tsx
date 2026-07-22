@@ -13,10 +13,26 @@ vi.mock('../../stores/settings-store', () => {
     claude: {},
     preflight: { claudeReady: true, activeProviderReady: false },
     isDetectingClaude: false,
-    isInstalling: false,
-    installLogs: [] as string[],
-    installProgress: undefined,
-    installError: undefined,
+    installStates: {
+      'claude-code': {
+        isInstalling: false,
+        installLogs: [] as string[],
+        installProgress: null,
+        installError: undefined
+      },
+      opencode: {
+        isInstalling: false,
+        installLogs: [],
+        installProgress: null,
+        installError: undefined
+      },
+      codex: {
+        isInstalling: false,
+        installLogs: [],
+        installProgress: null,
+        installError: undefined
+      }
+    },
     npmAvailable: true,
     encryptionAvailable: true,
     onboardingCompletedAt: undefined,
@@ -52,7 +68,8 @@ vi.mock('../../stores/settings-store', () => {
   const useSettingsStore = (sel: (s: typeof state) => unknown): unknown => sel(state)
   // The wizard reads endpoints via this selector; return a stable default so a provider looks usable.
   const selectFrameworkApiEndpoints = (): string[] => ['anthropic']
-  return { useSettingsStore, selectFrameworkApiEndpoints }
+  const selectAnyInstalling = (): boolean => false
+  return { useSettingsStore, selectFrameworkApiEndpoints, selectAnyInstalling }
 })
 
 let container: HTMLDivElement

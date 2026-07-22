@@ -23,7 +23,11 @@ import type {
 } from '../../../../shared/settings'
 import { isProviderUsableByFramework } from '../../../../shared/settings'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
-import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
+import {
+  selectAnyInstalling,
+  selectFrameworkApiEndpoints,
+  useSettingsStore
+} from '@/stores/settings-store'
 import { DataRootWarning } from '@/components/DataRootWarning'
 import { ClaudeInstallCard } from '../settings/ClaudeInstallCard'
 import { ClaudeStatusCard } from '../settings/ClaudeStatusCard'
@@ -132,10 +136,15 @@ const OnboardingWizard = (): React.JSX.Element => {
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
   const preflight = useSettingsStore((state) => state.preflight)
   const isDetectingClaude = useSettingsStore((state) => state.isDetectingClaude)
-  const isInstalling = useSettingsStore((state) => state.isInstalling)
-  const installLogs = useSettingsStore((state) => state.installLogs)
-  const installProgress = useSettingsStore((state) => state.installProgress)
-  const storeInstallError = useSettingsStore((state) => state.installError)
+  // Onboarding shows one framework's card at a time, so read that framework's own install slice. Any
+  // install running still locks the framework switcher below (only one install runs at a time).
+  const installStates = useSettingsStore((state) => state.installStates)
+  const anyInstalling = useSettingsStore(selectAnyInstalling)
+  const activeInstall = installStates[agentFrameworkId]
+  const isInstalling = activeInstall.isInstalling
+  const installLogs = activeInstall.installLogs
+  const installProgress = activeInstall.installProgress
+  const storeInstallError = activeInstall.installError
   const npmAvailable = useSettingsStore((state) => state.npmAvailable)
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const onboardingCompletedAt = useSettingsStore((state) => state.onboardingCompletedAt)
@@ -636,6 +645,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                           environment={environmentCheck}
                           isChecking={isCheckingEnvironment}
                           isInstalling={isInstalling}
+                          busy={anyInstalling}
                           installLogs={installLogs}
                           installProgress={installProgress}
                           error={
@@ -671,6 +681,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                             installLogs={installLogs}
                             installProgress={installProgress}
                             installError={storeInstallError}
+                            installBusy={anyInstalling}
                             npmAvailable={npmAvailable}
                             onInstall={(source) => void handleInstall(source, 'codex')}
                           />
@@ -684,6 +695,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                             installLogs={installLogs}
                             installProgress={installProgress}
                             installError={storeInstallError}
+                            installBusy={anyInstalling}
                             npmAvailable={npmAvailable}
                             onInstall={(source) => void handleInstall(source, 'opencode')}
                           />
@@ -705,6 +717,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                                   installLogs={installLogs}
                                   installProgress={installProgress}
                                   installError={storeInstallError}
+                                  busy={anyInstalling}
                                   npmAvailable={npmAvailable}
                                   onInstall={(source) => void handleInstall(source, 'claude-code')}
                                   embedded
@@ -762,7 +775,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                                   onClick={() => handlePickFramework(framework.id)}
                                   disabled={
                                     isCheckingEnvironment ||
-                                    isInstalling ||
+                                    anyInstalling ||
                                     isDetectingClaude ||
                                     isDetectingOpencode ||
                                     isDetectingCodex
