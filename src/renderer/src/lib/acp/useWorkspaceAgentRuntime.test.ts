@@ -1593,22 +1593,19 @@ describe('resendEditedWorkspaceMessage', () => {
     vi.unstubAllGlobals()
   })
 
-  it('truncates at the edited message and resends with the kept history replayed', async () => {
+  it('shows the resent bubble as a live run immediately, then replays the kept history', async () => {
     seedConversation()
 
+    const resetGate = createDeferred<{ sessionId: string; cwd: string; contextReset: boolean }>()
     const runtime = {
       state: createSnapshot(['session-1']),
       createSession: vi.fn(),
       resumeSession: vi.fn(),
-      resetSessionContext: vi.fn().mockResolvedValue({
-        sessionId: 'session-1',
-        cwd: '/workspace/project',
-        contextReset: true
-      }),
+      resetSessionContext: vi.fn(() => resetGate.promise),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
-    const resent = await resendEditedWorkspaceMessage(runtime, {
+    const resentPromise = resendEditedWorkspaceMessage(runtime, {
       sessionId: 'session-1',
       messageId: 'user-2',
       text: 'second prompt, edited',
@@ -1618,6 +1615,26 @@ describe('resendEditedWorkspaceMessage', () => {
     })
     await flushRuntimeTasks()
 
+    // While the context reset is still in flight, the transcript already shows the adjusted prompt
+    // as a live run — the same immediate feedback as a composer send.
+    const duringReset = useSessionStore.getState().sessions[0]
+    expect(duringReset?.messages.map((message) => message.id)).toEqual([
+      'user-1',
+      'agent-1',
+      expect.any(String)
+    ])
+    expect(duringReset?.messages.at(-1)).toMatchObject({
+      role: 'user',
+      content: 'second prompt, edited'
+    })
+    expect(duringReset?.status).toBe('running')
+    expect(duringReset?.activeRun?.promptMessageId).toBe(duringReset?.messages.at(-1)?.id)
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+
+    resetGate.resolve({ sessionId: 'session-1', cwd: '/workspace/project', contextReset: true })
+    const resent = await resentPromise
+    await flushRuntimeTasks()
+
     expect(resent).toBe(true)
     expect(runtime.resetSessionContext).toHaveBeenCalledWith(
       'session-1',
@@ -1625,11 +1642,6 @@ describe('resendEditedWorkspaceMessage', () => {
       'default-project',
       'ask'
     )
-
-    // The edited message and every later turn are gone; the resend appends the adjusted prompt.
-    const messages = useSessionStore.getState().sessions[0]?.messages ?? []
-    expect(messages.map((message) => message.id)).toEqual(['user-1', 'agent-1', expect.any(String)])
-    expect(messages[2]).toMatchObject({ role: 'user', content: 'second prompt, edited' })
 
     // The kept turns replay as a text preamble (the edited turn is not duplicated into it), and the
     // picked skill goes out as a forced skill on the resent prompt.
