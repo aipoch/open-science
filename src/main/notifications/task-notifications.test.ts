@@ -523,10 +523,11 @@ describe('TaskNotificationService', () => {
     // is C), then C rejected (pops both B and C from the chain; A's snippet survives).
     const trackedA = service.trackPrompt({ sessionId: 'session-1', text: 'Prompt A' })
     const trackedB = service.trackPrompt({ sessionId: 'session-1', text: 'Prompt B' })
-    service.trackPrompt({ sessionId: 'session-1', text: 'Prompt C' })
+    const trackedC = service.trackPrompt({ sessionId: 'session-1', text: 'Prompt C' })
 
     void trackedA
     service.untrackPrompt('session-1', trackedB as NonNullable<typeof trackedB>)
+    service.untrackPrompt('session-1', trackedC as NonNullable<typeof trackedC>)
     await service.handleRuntimeEvent(stopEvent('end_turn'))
 
     expect(shown[0]?.body).toBe('"Prompt A" finished.')
