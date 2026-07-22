@@ -127,7 +127,7 @@ const useAcpRuntime = (): {
         const snapshot = await action()
         setState(snapshot)
         return snapshot
-      } catch (error) {
+      } catch {
         return undefined
       } finally {
         setPending?.(false)
