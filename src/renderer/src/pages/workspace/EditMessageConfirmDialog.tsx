@@ -12,7 +12,7 @@ type EditMessageConfirmDialogProps = {
 const cancelButtonClassName =
   'border-border-200 bg-bg-000 text-text-000 hover:bg-bg-200 hover:text-text-000'
 const confirmButtonClassName =
-  'border-transparent bg-danger-000 text-white hover:bg-danger-000/90 hover:text-white'
+  'border-transparent bg-amber-500 text-white hover:bg-amber-500/90 hover:text-white'
 
 // Confirms the destructive half of an inline edit: the turns after the edited message are
 // permanently dropped before the adjusted prompt is resent.
