@@ -1,0 +1,106 @@
+name: Publish npm package
+
+# npm package releases use their own version namespace, independent of desktop app `v*` tags.
+# A manual run verifies and uploads the tarball without publishing. Pushing `npm-v<package-version>`
+# publishes that exact verified tarball after the protected npm environment is approved.
+on:
+  push:
+    tags:
+      - 'npm-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-npm-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify npm package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          # npm trusted publishing requires npm CLI 11.5.1 or later; Node 24 ships a compatible CLI.
+          node-version: 24
+          cache: npm
+
+      - name: Install test dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Validate release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: node scripts/validate-npm-release.mjs "$GITHUB_REF_NAME"
+
+      - name: Verify release commit is on main
+        if: startsWith(github.ref, 'refs/tags/')
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Test release guard
+        run: npm run test:npm-release
+
+      - name: Test CLI and SDK
+        run: npm run test:cli
+
+      - name: Check package contents
+        run: npm run check:cli-package
+
+      - name: Build publish tarball
+        run: |
+          mkdir -p npm-package
+          npm pack ./packages/open-science \
+            --pack-destination npm-package \
+            --cache ./node_modules/.cache/npm-pack
+
+      - name: Verify npm publish input
+        run: npm publish npm-package/*.tgz --dry-run --access public
+
+      - name: Upload verified tarball
+        uses: actions/upload-artifact@v7
+        with:
+          name: open-science-npm-package
+          path: npm-package/*.tgz
+          if-no-files-found: error
+          retention-days: 5
+
+  publish:
+    name: Publish to npm
+    needs: verify
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/npm-v')
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download verified tarball
+        uses: actions/download-artifact@v8
+        with:
+          name: open-science-npm-package
+          path: npm-package
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Configure bootstrap token
+        env:
+          # Only needed to bootstrap the package. Remove this environment secret after configuring
+          # npm Trusted Publisher; npm then authenticates through the job's GitHub OIDC identity.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$NODE_AUTH_TOKEN" ]; then
+            npm config set //registry.npmjs.org/:_authToken "$NODE_AUTH_TOKEN"
+          fi
+
+      - name: Publish with provenance
+        run: npm publish npm-package/*.tgz --access public --provenance --registry https://registry.npmjs.org

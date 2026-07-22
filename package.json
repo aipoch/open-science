@@ -15,6 +15,7 @@
     "lint": "eslint --cache .",
     "test": "vitest run",
     "test:cli": "vitest run packages/open-science",
+    "test:npm-release": "vitest run scripts/validate-npm-release.test.ts",
     "test:coverage": "vitest run --coverage",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
