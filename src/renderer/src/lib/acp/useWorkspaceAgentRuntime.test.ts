@@ -11,6 +11,7 @@ import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
 } from '../../stores/preview-workbench-store'
+import { applyWorkspaceRuntimeEvent } from './workspace-events'
 import {
   createWorkspaceRuntimeEventProcessor,
   deleteWorkspaceSession,
@@ -1668,5 +1669,111 @@ describe('resendEditedWorkspaceMessage', () => {
       'user-3'
     ])
     expect(useSessionStore.getState().sessions[0]?.status).toBe('error')
+  })
+})
+
+describe('edit resend reply streaming', () => {
+  beforeEach(() => {
+    useSessionStore.setState(createInitialSessionState())
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('grows an agent bubble from streamed reply events after the truncate-and-resend', async () => {
+    const baseTime = 1710000000000
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'default-project',
+          title: 'Conversation',
+          cwd: '/workspace/project',
+          status: 'idle' as const,
+          messages: [
+            {
+              id: 'user-1',
+              role: 'user' as const,
+              content: 'first prompt',
+              status: 'complete' as const,
+              eventIds: [],
+              createdAt: baseTime,
+              updatedAt: baseTime
+            },
+            {
+              id: 'agent-1',
+              role: 'agent' as const,
+              content: 'first answer',
+              status: 'complete' as const,
+              eventIds: [],
+              createdAt: baseTime + 100,
+              updatedAt: baseTime + 100
+            },
+            {
+              id: 'user-2',
+              role: 'user' as const,
+              content: 'second prompt',
+              status: 'complete' as const,
+              eventIds: [],
+              createdAt: baseTime + 200,
+              updatedAt: baseTime + 200
+            }
+          ],
+          createdAt: baseTime,
+          updatedAt: baseTime + 200
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        contextReset: true
+      }),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    const resent = await resendEditedWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      messageId: 'user-2',
+      text: 'second prompt, edited'
+    })
+    await flushRuntimeTasks()
+
+    expect(resent).toBe(true)
+    const afterResend = useSessionStore.getState().sessions[0]
+    // The adjusted prompt is appended as the latest user turn and the run is live.
+    expect(afterResend?.messages.at(-1)).toMatchObject({
+      role: 'user',
+      content: 'second prompt, edited'
+    })
+    expect(afterResend?.status).toBe('running')
+
+    // The agent's streamed reply lands as a new bubble answering the resent prompt.
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-reply-1',
+        sessionId: 'session-1',
+        role: 'assistant',
+        messageId: 'agent-reply-1',
+        text: 'edited answer'
+      })
+    )
+
+    const messages = useSessionStore.getState().sessions[0]?.messages ?? []
+    expect(messages.at(-1)).toMatchObject({
+      role: 'agent',
+      content: 'edited answer',
+      status: 'streaming',
+      responseToMessageId: afterResend?.activeRun?.promptMessageId
+    })
   })
 })

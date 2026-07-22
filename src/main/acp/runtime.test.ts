@@ -5027,3 +5027,40 @@ describe('ACP runtime — failure-path robustness (errorMessage coercion + sync-
     }
   })
 })
+
+describe('prompt streaming after a context reset', () => {
+  it('streams the assistant reply as events for a prompt sent right after the reset', async () => {
+    const process = new FakeAgentProcess()
+    const events: Array<{ kind: string; sessionId?: string; role?: string; text?: string }> = []
+    // A second agent session id backs the fresh adoption the reset performs.
+    startFakeAgent(process, ['remote-session-1', 'remote-session-2'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'first turn' })
+    await runtime.resetSessionContext({ sessionId: session.sessionId, cwd: '/workspace' })
+
+    events.length = 0
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'edited turn',
+      historyPreamble: 'first turn\n\nreply for first turn'
+    })
+
+    // The fresh agent session's reply streams through the same event channel, labelled with the
+    // app-facing session id so the renderer grows the truncated conversation.
+    const assistantChunks = events.filter(
+      (event) => event.kind === 'message' && event.role === 'assistant'
+    )
+    expect(assistantChunks.length).toBeGreaterThan(0)
+    expect(assistantChunks[0]).toMatchObject({
+      sessionId: session.sessionId,
+      text: 'reply for remote-session-2'
+    })
+  })
+})
