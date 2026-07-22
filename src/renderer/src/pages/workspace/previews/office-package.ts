@@ -23,6 +23,7 @@ const MAX_ZIP_ENTRIES = 4000
 const MAX_ZIP_ENTRY_BYTES = 32 * 1024 * 1024
 const MAX_ZIP_TOTAL_BYTES = 256 * 1024 * 1024
 const MAX_DOCX_TOTAL_BYTES = 128 * 1024 * 1024
+const MAX_XLSX_TOTAL_BYTES = 128 * 1024 * 1024
 const MAX_PPTX_MEDIA_BYTES = 192 * 1024 * 1024
 const MAX_RELATIONSHIPS_XML_BYTES = 4 * 1024 * 1024
 const MAX_RELATIONSHIPS = 20_000
@@ -38,6 +39,14 @@ const getMaxZipEntryBytes = (extension: OfficeFileExtension, entryName: string):
   extension === 'xlsx' && entryName.toLowerCase().startsWith('xl/worksheets/')
     ? MAX_ZIP_TOTAL_BYTES
     : MAX_ZIP_ENTRY_BYTES
+
+// Declared and measured expansion checks share one format budget so oversized spreadsheets are
+// rejected from ZIP metadata before the in-memory workbook parser starts.
+const getMaxZipTotalBytes = (extension: Exclude<OfficeFileExtension, 'xls'>): number => {
+  if (extension === 'docx') return MAX_DOCX_TOTAL_BYTES
+  if (extension === 'xlsx') return MAX_XLSX_TOTAL_BYTES
+  return MAX_ZIP_TOTAL_BYTES
+}
 const EOCD_SIGNATURE = 0x06054b50
 const CENTRAL_ENTRY_SIGNATURE = 0x02014b50
 const LOCAL_ENTRY_SIGNATURE = 0x04034b50
@@ -185,6 +194,7 @@ const inspectOoxmlPackage = (
   const decoder = new TextDecoder()
   const entries: OoxmlPackageEntry[] = []
   const names = new Set<string>()
+  const maxTotalBytes = getMaxZipTotalBytes(extension)
   let offset = centralDirectoryOffset
   let totalUncompressedBytes = 0
   let totalPptxMediaBytes = 0
@@ -226,7 +236,7 @@ const inspectOoxmlPackage = (
     }
 
     totalUncompressedBytes += uncompressedSize
-    if (totalUncompressedBytes > MAX_ZIP_TOTAL_BYTES) {
+    if (totalUncompressedBytes > maxTotalBytes) {
       throw resourceLimit('This Office package expands too large to preview safely')
     }
     if (
@@ -559,11 +569,5 @@ export const validateOfficePackage = async (
     throw invalidPackage(`This isn't a valid ${extension.toUpperCase()} package`)
   }
 
-  await verifyActualInflatedSizes(
-    bytes,
-    entries,
-    extension === 'docx' ? MAX_DOCX_TOTAL_BYTES : MAX_ZIP_TOTAL_BYTES,
-    extension,
-    signal
-  )
+  await verifyActualInflatedSizes(bytes, entries, getMaxZipTotalBytes(extension), extension, signal)
 }

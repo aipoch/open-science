@@ -252,6 +252,71 @@ describe('validateOfficePackage', () => {
     await expect(validateOfficePackage(xlsx, 'xlsx')).resolves.toBeUndefined()
   })
 
+  it('rejects an XLSX package whose declared total expansion exceeds 128 MiB', async () => {
+    const worksheetBytes = 8 * 1024 * 1024
+    const compressedWorksheet = deflateRawSync(new Uint8Array(worksheetBytes))
+    const xlsx = createZip([
+      { name: '[Content_Types].xml' },
+      { name: 'xl/workbook.xml' },
+      ...Array.from({ length: 17 }, (_, index) => ({
+        name: `xl/worksheets/sheet${index + 1}.xml`,
+        compressionMethod: 8 as const,
+        data: compressedWorksheet,
+        uncompressedSize: worksheetBytes
+      }))
+    ])
+
+    await expect(validateOfficePackage(xlsx, 'xlsx')).rejects.toMatchObject({
+      code: 'RESOURCE_LIMIT_EXCEEDED'
+    })
+  })
+
+  it('allows an XLSX package whose actual total expansion is exactly 128 MiB', async () => {
+    const worksheetBytes = 8 * 1024 * 1024
+    const markerBytes = validEntries.xlsx.reduce(
+      (total, name) => total + getEntryData({ name }).byteLength,
+      0
+    )
+    const compressedWorksheet = deflateRawSync(new Uint8Array(worksheetBytes))
+    const finalWorksheetBytes = worksheetBytes - markerBytes
+    const compressedFinalWorksheet = deflateRawSync(new Uint8Array(finalWorksheetBytes))
+    const xlsx = createZip([
+      { name: '[Content_Types].xml' },
+      { name: 'xl/workbook.xml' },
+      ...Array.from({ length: 15 }, (_, index) => ({
+        name: `xl/worksheets/sheet${index + 1}.xml`,
+        compressionMethod: 8 as const,
+        data: compressedWorksheet,
+        uncompressedSize: worksheetBytes
+      })),
+      {
+        name: 'xl/worksheets/sheet16.xml',
+        compressionMethod: 8,
+        data: compressedFinalWorksheet,
+        uncompressedSize: finalWorksheetBytes
+      }
+    ])
+
+    await expect(validateOfficePackage(xlsx, 'xlsx')).resolves.toBeUndefined()
+  })
+
+  it('keeps the 256 MiB total expansion budget for PPTX packages', async () => {
+    const embeddedBytes = 8 * 1024 * 1024
+    const compressedEmbedding = deflateRawSync(new Uint8Array(embeddedBytes))
+    const pptx = createZip([
+      { name: '[Content_Types].xml' },
+      { name: 'ppt/presentation.xml' },
+      ...Array.from({ length: 17 }, (_, index) => ({
+        name: `ppt/embeddings/object${index + 1}.bin`,
+        compressionMethod: 8 as const,
+        data: compressedEmbedding,
+        uncompressedSize: embeddedBytes
+      }))
+    ])
+
+    await expect(validateOfficePackage(pptx, 'pptx')).resolves.toBeUndefined()
+  })
+
   it('rejects a non-worksheet XLSX entry larger than 32 MiB', async () => {
     const xlsx = createZip([
       { name: '[Content_Types].xml' },
