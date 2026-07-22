@@ -76,7 +76,7 @@ const HostCard = ({
 
       <button type="button" onClick={onOpen} className="min-w-0 flex-1 text-left">
         <span className="flex items-baseline gap-2">
-          <span className="truncate text-sm font-semibold text-foreground">{host.displayName}</span>
+          <span className="truncate text-sm font-medium text-foreground">{host.displayName}</span>
           <span className="truncate font-mono text-xs text-muted-foreground">
             {host.providerId}
           </span>
@@ -190,8 +190,8 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
 
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-base font-semibold text-foreground">SSH hosts</h3>
-          <p className="mt-0.5 max-w-2xl text-[13px] leading-5 text-muted-foreground">
+          <h3 className="text-base font-medium text-foreground">SSH hosts</h3>
+          <p className="mt-0.5 max-w-2xl text-sm leading-5 text-muted-foreground">
             Servers, clusters or job submission nodes from your SSH host lists
           </p>
         </div>

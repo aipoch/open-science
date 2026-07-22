@@ -1,4 +1,4 @@
-import { AlertTriangle, Cpu, HardDrive, MemoryStick, Pin, RefreshCw, Zap } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronUp, Cpu, HardDrive, MemoryStick, Pin, RefreshCw, Zap } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 import type { ComputeHost } from '../../../../shared/compute'
@@ -68,12 +68,24 @@ export function ComputeHostDetail({
   const [concurrencySaving, setConcurrencySaving] = useState(false)
   const [concurrencyError, setConcurrencyError] = useState<string | undefined>(undefined)
 
+  // Details expand/collapse state
+  const [isDetailsExpanded, setIsDetailsExpanded] = useState(false)
+  const [needsExpand, setNeedsExpand] = useState(false)
+  const detailsRef = useRef<HTMLPreElement>(null)
+
   useEffect(() => {
     if (!isLoaded) void loadHosts()
   }, [isLoaded, loadHosts])
 
   const host = hosts.find((entry) => entry.providerId === providerId)
   const isProbing = probingIds.has(providerId)
+
+  // Check if details content needs expand button
+  useEffect(() => {
+    if (!detailsRef.current || isEditingDetails) return
+    const { scrollHeight, clientHeight } = detailsRef.current
+    setNeedsExpand(scrollHeight > clientHeight + 10) // 10px threshold
+  }, [detailsDoc, isEditingDetails])
 
   // Load the details doc (with skeleton synthesis) when the host is first available.
   useEffect(() => {
@@ -312,7 +324,7 @@ export function ComputeHostDetail({
 
       {/* Resource summary — shown only when a successful probe has populated resource fields */}
       {status === 'connected' && probed ? (
-        <div className="mt-5 flex flex-col gap-2">
+        <div className="mt-6 flex flex-col gap-2">
           <h4 className="text-sm font-medium text-foreground">Resources</h4>
           <div className="flex flex-wrap gap-3">
             {probed.cpus != null ? (
@@ -364,7 +376,7 @@ export function ComputeHostDetail({
       ) : null}
 
       {/* Details document block */}
-      <div className="mt-6">
+      <div className="mt-8">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h4 className="text-sm font-medium text-foreground">Details</h4>
@@ -386,7 +398,7 @@ export function ComputeHostDetail({
         </div>
 
         {isEditingDetails ? (
-          <div className="mt-2 flex flex-col gap-2">
+          <div className="mt-3 flex flex-col gap-2">
             <textarea
               className="min-h-[160px] w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring"
               value={detailsDoc}
@@ -437,37 +449,57 @@ export function ComputeHostDetail({
             ) : null}
           </div>
         ) : detailsDoc ? (
-          <pre
-            className={cn(
-              'mt-2 overflow-x-auto whitespace-pre-wrap rounded-md border border-border bg-muted/30 px-3 py-2 font-mono text-xs text-foreground',
-              isSkeleton && 'border-dashed opacity-70'
-            )}
-          >
-            {detailsDoc}
-            {isSkeleton ? (
-              <span className="ml-2 text-muted-foreground">(auto-generated from probe)</span>
+          <div className="mt-3">
+            <div className="relative overflow-hidden rounded-lg border border-border bg-muted/20">
+              <pre
+                ref={detailsRef}
+                className={cn(
+                  'overflow-x-auto whitespace-pre-wrap px-4 py-3 font-mono text-xs text-foreground/80 transition-all',
+                  !isDetailsExpanded && 'max-h-[200px]',
+                  isSkeleton && 'opacity-70'
+                )}
+              >
+                {detailsDoc}
+                {isSkeleton ? (
+                  <span className="ml-2 text-muted-foreground">(auto-generated from probe)</span>
+                ) : null}
+              </pre>
+              {!isDetailsExpanded && needsExpand ? (
+                <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-muted/20 to-transparent" />
+              ) : null}
+            </div>
+            {needsExpand ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsDetailsExpanded(!isDetailsExpanded)}
+                className="mt-2 text-xs text-muted-foreground hover:text-foreground"
+              >
+                {isDetailsExpanded ? (
+                  <>
+                    Show less <ChevronUp className="ml-1 size-3" />
+                  </>
+                ) : (
+                  <>
+                    Show more <ChevronDown className="ml-1 size-3" />
+                  </>
+                )}
+              </Button>
             ) : null}
-          </pre>
+          </div>
         ) : (
-          <p className="mt-2 text-xs text-muted-foreground italic">
+          <p className="mt-3 text-xs italic text-muted-foreground">
             No notes yet. Click Edit to add details about this provider.
           </p>
         )}
       </div>
 
       {/* Scratch root block */}
-      <div className="mt-6">
+      <div className="mt-7">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h4 className="text-sm font-medium text-foreground">Scratch root</h4>
-              {host.scratchPinned ? (
-                <Badge variant="secondary" className="flex items-center gap-1 py-0 text-xs">
-                  <Pin className="size-3" aria-hidden="true" />
-                  PINNED
-                </Badge>
-              ) : null}
-            </div>
+            <h4 className="text-sm font-medium text-foreground">Scratch root</h4>
             <p className="mt-0.5 text-xs text-muted-foreground">
               Working directory for remote jobs. Pinned paths are never overwritten by re-probe.
             </p>
@@ -486,10 +518,10 @@ export function ComputeHostDetail({
         </div>
 
         {isEditingScratch ? (
-          <div className="mt-2 flex flex-col gap-2">
+          <div className="mt-3 flex flex-col gap-2">
             <input
               type="text"
-              className="w-full rounded-md border border-input bg-background px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              className="w-full rounded-md border border-input bg-background px-3 py-1.5 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring"
               value={scratchInput}
               onChange={(e) => {
                 setScratchInput(e.target.value)
@@ -529,16 +561,26 @@ export function ComputeHostDetail({
             </div>
           </div>
         ) : host.scratchRoot ? (
-          <p className="mt-1 font-mono text-sm text-foreground">{host.scratchRoot}</p>
+          <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/20 px-3.5 py-2.5">
+            <span className="flex-1 font-mono text-xs text-muted-foreground">
+              {host.scratchRoot}
+            </span>
+            {host.scratchPinned ? (
+              <Badge variant="secondary" className="flex items-center gap-1 py-0 text-[10px]">
+                <Pin className="size-3" aria-hidden="true" />
+                PINNED
+              </Badge>
+            ) : null}
+          </div>
         ) : (
-          <p className="mt-1 text-xs text-muted-foreground italic">
+          <p className="mt-3 text-xs italic text-muted-foreground">
             Not set. Will be updated from $SCRATCH on next probe.
           </p>
         )}
       </div>
 
       {/* Concurrent job limit block */}
-      <div className="mt-6">
+      <div className="mt-7">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h4 className="text-sm font-medium text-foreground">Concurrent job limit</h4>
@@ -560,12 +602,12 @@ export function ComputeHostDetail({
         </div>
 
         {isEditingConcurrency ? (
-          <div className="mt-2 flex flex-col gap-2">
+          <div className="mt-3 flex flex-col gap-2">
             <input
               type="number"
               min={1}
               max={500}
-              className="w-32 rounded-md border border-input bg-background px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              className="w-32 rounded-md border border-input bg-background px-3 py-1.5 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring"
               value={concurrencyInput}
               onChange={(e) => {
                 setConcurrencyInput(e.target.value)
@@ -604,10 +646,12 @@ export function ComputeHostDetail({
               </Button>
             </div>
           </div>
-        ) : host.concurrencyLimit != null ? (
-          <p className="mt-1 font-mono text-sm text-foreground">{host.concurrencyLimit}</p>
         ) : (
-          <p className="mt-1 text-xs text-muted-foreground italic">(default)</p>
+          <div className="mt-3 rounded-lg border border-border bg-muted/20 px-3.5 py-2.5">
+            <span className="font-mono text-xs text-muted-foreground">
+              {host.concurrencyLimit != null ? host.concurrencyLimit : '100 (default)'}
+            </span>
+          </div>
         )}
       </div>
     </div>
