@@ -17,7 +17,8 @@ const DEFAULT_CONNECT_TIMEOUT_SECS = 10
 export type ResolvedSshTarget = {
   // Full path to the ssh binary (e.g. /usr/bin/ssh, C:\Windows\System32\OpenSSH\ssh.exe).
   sshBinary: string
-  // Hostname or alias to pass to ssh.
+  // The ssh target to pass to ssh/scp. This is the ~/.ssh/config alias (not the resolved IP) so the
+  // "Host <alias>" block and all its directives (HostName, IdentityFile, ProxyJump, …) are applied.
   host: string
   // Connection flags resolved from `ssh -G <alias>` plus overrides: -p, -l/-o User, -i, control args.
   extraArgs: string[]
@@ -98,28 +99,62 @@ const parseSshG = (output: string): Record<string, string> => {
   return result
 }
 
+// Reads the effective ~/.ssh/config for `alias` by running `ssh -G <alias>`. Returns a lowercased
+// key→value map. Returns an empty map on failure (e.g. no ~/.ssh/config) so the caller can still
+// build a usable connection from overrides and defaults. Extracted so resolveSshTarget can inject a
+// fake in tests without spawning ssh.
+const readEffectiveConfig = async (
+  alias: string,
+  sshBinary: string
+): Promise<Record<string, string>> => {
+  const execFileAsync = promisify(execFile)
+  try {
+    const { stdout } = await execFileAsync(sshBinary, ['-G', alias], { timeout: 5000 })
+    return parseSshG(stdout)
+  } catch {
+    return {}
+  }
+}
+
 // Resolves a ResolvedSshTarget for the given alias + optional overrides. Runs `ssh -G <alias>` to
 // read the effective config, then layers the overrides on top. BatchMode=yes and ConnectTimeout are
 // always set so the process never hangs on passphrase or slow networks.
+//
+// The returned `host` is the alias itself — NOT the hostname resolved by ssh -G. This is deliberate:
+// passing the alias makes ssh/scp match the user's ~/.ssh/config "Host" block and apply every
+// directive there (HostName, User, Port, IdentityFile, ProxyJump, HostKeyAlias, …) exactly like the
+// CLI. Returning the resolved IP instead made ssh skip Host-alias matching, silently dropping a
+// non-default IdentityFile and causing "Permission denied (publickey,password)" even though
+// `ssh <alias>` on the CLI works. ssh -G is still consulted only to surface explicit overrides
+// (user/port) on top of whatever config the alias resolves.
 export const resolveSshTarget = async (
   alias: string,
-  overrides: SshOverrides | undefined
+  overrides: SshOverrides | undefined,
+  // Test seam: inject the ssh -G config reader so resolveSshTarget is unit-testable without
+  // spawning ssh. Production callers omit it and get the real readEffectiveConfig.
+  readConfig: (
+    alias: string,
+    sshBinary: string
+  ) => Promise<Record<string, string>> = readEffectiveConfig
 ): Promise<ResolvedSshTarget> => {
   const sshBinary = resolveSshBinary()
-  const execFileAsync = promisify(execFile)
 
-  // Read the effective connection config from ~/.ssh/config for this alias.
+  // Read the effective connection config from ~/.ssh/config for this alias. Wrapped in try/catch so
+  // a failing readConfig (e.g. ssh -G process error) never breaks connection resolution — the
+  // caller falls back to the bare alias + defaults.
   let sshGConfig: Record<string, string> = {}
   try {
-    const { stdout } = await execFileAsync(sshBinary, ['-G', alias], { timeout: 5000 })
-    sshGConfig = parseSshG(stdout)
+    sshGConfig = await readConfig(alias, sshBinary)
   } catch {
-    // ssh -G failed (e.g. no ~/.ssh/config) — proceed with overrides and defaults only.
+    // readConfig failed — proceed with overrides and defaults only.
   }
 
   const extraArgs: string[] = []
 
-  // User: override > ssh -G user > alias itself.
+  // User/Port: explicit override, or the value ssh -G resolves for this alias. Passing the alias as
+  // `host` below already makes ssh apply these from config, so these flags are technically redundant
+  // when no override is set — but harmless (values match) and kept for clarity. IdentityFile, by
+  // contrast, is override-only because ssh picks it up from config via the alias.
   const resolvedUser = overrides?.user?.trim() ?? sshGConfig['user']
   if (resolvedUser && resolvedUser !== alias) {
     extraArgs.push('-o', `User=${resolvedUser}`)
@@ -132,7 +167,9 @@ export const resolveSshTarget = async (
     extraArgs.push('-p', sshGConfig['port'])
   }
 
-  // Identity file: override only (ssh -G resolves it for us when not overriding).
+  // Identity file: explicit override only. When no override is given, the alias (returned as
+  // `host` below) makes ssh/scp read IdentityFile straight from ~/.ssh/config — the same way the
+  // CLI does — so non-default key paths (e.g. ~/.ssh/myhost.pem) work without the app touching keys.
   if (overrides?.identityFile?.trim()) {
     extraArgs.push('-i', overrides.identityFile.trim())
   }
@@ -147,8 +184,10 @@ export const resolveSshTarget = async (
   // ControlMaster on mac/linux for connection reuse across the probe bundle.
   extraArgs.push(...controlMasterArgs(alias))
 
-  // Resolve the hostname from ssh -G (may differ from the alias due to HostName directives).
-  const host = sshGConfig['hostname'] ?? alias
+  // Pass the alias — NOT the resolved hostname — as the connection target (see the function
+  // docstring above). ControlMaster's ControlPath uses %h, which ssh expands to the real HostName,
+  // so the mux socket is identical whether the alias or the IP is the target.
+  const host = alias
 
   return { sshBinary, host, extraArgs }
 }

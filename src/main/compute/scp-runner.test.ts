@@ -191,6 +191,34 @@ describe('buildScpArgs', () => {
 })
 
 // ---------------------------------------------------------------------------
+// resolveSshTarget → buildScpArgs integration
+// Locks the contract that the alias (not the resolved IP) flows into the scp
+// remote spec and that ControlMaster args from resolveSshTarget are preserved.
+// ---------------------------------------------------------------------------
+
+describe('resolveSshTarget → buildScpArgs integration', () => {
+  it('passes the alias as the scp remote spec and preserves ControlMaster', async () => {
+    const { resolveSshTarget } = await import('./ssh-runner')
+    const target = await resolveSshTarget('aliyun-xt-test', undefined, async () => ({
+      user: 'ewen',
+      hostname: '47.98.96.100',
+      port: '22',
+      identityfile: '~/.ssh/aliyun-xt-test.pem'
+    }))
+    const args = buildScpArgs(target, '/remote/data.csv', '/local/data.csv')
+
+    // The remote spec must use the alias, NOT the resolved IP — scp matches the
+    // ~/.ssh/config "Host" block on the alias to apply IdentityFile etc.
+    expect(args).toContain('aliyun-xt-test:/remote/data.csv')
+    expect(args).not.toContain('47.98.96.100:/remote/data.csv')
+
+    // ControlMaster args from resolveSshTarget must survive the -p → Port translation.
+    expect(args).toContain('ControlMaster=auto')
+    expect(args.some((a) => a.startsWith('ControlPath='))).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // inferMimeType
 // ---------------------------------------------------------------------------
 
