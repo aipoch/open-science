@@ -526,6 +526,55 @@ describe('ACP runtime migration write-gate', () => {
     )
   })
 
+  it('skips set_config_option when a required subscription model already matches currentValue', async () => {
+    // codex-acp reloads on every session/set_config_option call, which would stall the first prompt
+    // of a new session for ~2 min when the model was already seeded via CODEX_CONFIG (issue #277).
+    // When the agent reflects that seeded model as its option's currentValue, applySessionModel must
+    // treat it as a successful no-op instead of (a) re-applying the same value or (b) collapsing it
+    // into the required-model "not available" failure path. Verified end-to-end here.
+    const process = new FakeAgentProcess()
+    const configOptions = [
+      {
+        type: 'select',
+        id: 'model',
+        name: 'Model',
+        category: 'model',
+        currentValue: 'gpt-5.6-terra',
+        options: [
+          { value: 'gpt-5', name: 'GPT-5' },
+          { value: 'gpt-5.6-terra', name: 'GPT-5.6 Terra' }
+        ]
+      } as SessionConfigOption
+    ]
+    const fakeAgent = startFakeAgent(process, ['subscription-session'], {
+      modes: {
+        currentModeId: 'agent',
+        availableModes: ['read-only', 'agent', 'agent-full-access'].map((id) => ({ id, name: id }))
+      },
+      configOptions
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codex-acp',
+        env: {},
+        sessionModel: 'gpt-5.6-terra',
+        sessionModelRequired: true
+      }),
+      framework: codexFramework
+    })
+
+    // createSession must succeed: the model is required, but it is already current — the runtime
+    // must not mistake that for an unavailable model.
+    const created = await runtime.createSession({ cwd: '/workspace' })
+    expect(created.sessionId).toBe('subscription-session')
+    // And it must NOT re-send set_config_option: that is exactly the round-trip we are trying to
+    // avoid for codex-isolated subscriptions whose model is already seeded via CODEX_CONFIG.
+    expect(fakeAgent.configChanges).toEqual([])
+  })
+
   it('rejects sendPrompt while a data-root migration is pending, then resumes once cleared', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['gated-session'])

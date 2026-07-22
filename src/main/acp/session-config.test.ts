@@ -20,7 +20,11 @@ const modelOption = (
 
 describe('matchSessionModelOption', () => {
   it('matches an opencode provider/model value by its bare-model suffix', () => {
-    const options = [modelOption(['anthropic/claude-sonnet-4-5', 'openai/gpt-5'])]
+    // currentValue is pinned to a different option so the desired value still needs to be applied
+    // and we can verify the bare-model suffix match on its own.
+    const options = [
+      modelOption(['anthropic/claude-sonnet-4-5', 'openai/gpt-5'], { currentValue: 'openai/gpt-5' })
+    ]
 
     expect(matchSessionModelOption(options, 'claude-sonnet-4-5')).toEqual({
       configId: 'model',
@@ -46,7 +50,7 @@ describe('matchSessionModelOption', () => {
       id: 'model',
       name: 'Model',
       category: 'model',
-      currentValue: 'anthropic/claude-opus-4-8',
+      currentValue: 'openai/gpt-5',
       options: [
         { name: 'Anthropic', options: [{ value: 'anthropic/claude-opus-4-8', name: 'Opus' }] }
       ]
@@ -68,7 +72,9 @@ describe('matchSessionModelOption', () => {
   })
 
   it('identifies the model option by category even when its id differs', () => {
-    const options = [modelOption(['x/y-model'], { id: 'primary_model' })]
+    const options = [
+      modelOption(['x/y-model'], { id: 'primary_model', currentValue: 'openai/gpt-5' })
+    ]
 
     expect(matchSessionModelOption(options, 'y-model')).toEqual({
       configId: 'primary_model',
@@ -76,20 +82,37 @@ describe('matchSessionModelOption', () => {
     })
   })
 
-  it("skips the round-trip when the desired model is already the option's current value", () => {
+  it("returns alreadyCurrent when the desired model already matches the option's current value", () => {
     // codex-acp treats every session/set_config_option as a model reload, so re-sending the same
-    // value stalls the first prompt of a freshly created session (issue #277). When the option is
-    // already at the desired value there is nothing to apply — return undefined and let the runtime
-    // skip the call.
+    // value stalls the first prompt of a freshly created session (issue #277). The selection carries
+    // alreadyCurrent=true so the runtime can skip the round-trip — this MUST stay distinct from the
+    // undefined "no match" return so a required-model guard does not misfire on a successful seed.
     const options = [modelOption(['gpt-5.6-terra', 'gpt-5', 'gpt-5-mini'])]
 
-    expect(matchSessionModelOption(options, 'gpt-5.6-terra')).toBeUndefined()
+    expect(matchSessionModelOption(options, 'gpt-5.6-terra')).toEqual({
+      configId: 'model',
+      value: 'gpt-5.6-terra',
+      alreadyCurrent: true
+    })
+  })
+
+  it('returns alreadyCurrent when opencode surfaces a prefixed currentValue and the app stores the bare model', () => {
+    // opencode advertises model ids as `<provider>/<model>` while the app stores the bare model.
+    // The skip must compare names rather than raw strings, otherwise every session creation re-applies
+    // the same selection for free. (Claude review Low finding on PR #301.)
+    const options = [modelOption(['openai/gpt-5', 'anthropic/claude-sonnet-4-5'])]
+
+    expect(matchSessionModelOption(options, 'gpt-5')).toEqual({
+      configId: 'model',
+      value: 'openai/gpt-5',
+      alreadyCurrent: true
+    })
   })
 
   it('still applies when currentValue differs from the desired model even if a value matches', () => {
-    // Sanity check that the skip is gated on currentValue === desiredModel and not on any value
-    // match within the option: currentValue is pinned to a different model so the desired one
-    // genuinely needs to be applied.
+    // Sanity check that the skip is gated on currentValue matching the desired model (with
+    // suffix-equivalence), not on any value match within the option. Pin currentValue to a different
+    // model so the desired one genuinely needs to be applied.
     const options = [
       modelOption(['gpt-5', 'gpt-5.6-terra', 'gpt-5-mini'], { currentValue: 'gpt-5' })
     ]

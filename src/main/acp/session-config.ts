@@ -1,9 +1,14 @@
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 
-// The config option id + value to apply via session/set_config_option.
+// The config option id + value to apply via session/set_config_option. `alreadyCurrent` flags the
+// case where the option's currentValue already equals the desired model — the caller should treat
+// that as a successful no-op instead of re-sending set_config_option, which on codex-acp triggers a
+// model reload and stalls the first prompt of a new session (issue #277). It must NOT collapse into
+// "no match": the runtime's required-model guard treats that as a hard failure.
 export type SessionModelSelection = {
   configId: string
   value: string
+  alreadyCurrent?: boolean
 }
 
 // Flattens a select option's values, tolerating both the flat and grouped option shapes.
@@ -30,13 +35,28 @@ const collectSelectValues = (options: unknown): string[] => {
   return values
 }
 
+// True when `a` and `b` denote the same model under either spelling — exact or `<provider>/<bare>`
+// suffix. opencode advertises model ids as `<provider>/<model>` while the app stores the bare model,
+// so a strict `===` check would miss the no-op case across the two namespaces.
+const sameModel = (a: string, b: string): boolean =>
+  a === b || a.split('/').pop() === b || a === b.split('/').pop()
+
 // Finds the session's model select option and the value id matching the desired model, so the app can
 // drive an agent's per-session model (opencode surfaces model as a `model` configOption). Matches the
 // desired model against option values exactly, else by the segment after the last '/', since opencode
-// ids are `<provider>/<model>` while the app stores the bare model. Returns undefined when there is no
-// model option, no matching value, or the desired value already matches the option's current value —
-// the last case avoids a redundant session/set_config_option round-trip that, on codex-acp, looks like
-// a model reload and stalls the first prompt of a new session (issue #277).
+// ids are `<provider>/<model>` while the app stores the bare model.
+//
+// Returns:
+// - `{ alreadyCurrent: true, ... }` when the option's `currentValue` already equals the desired
+//   model. The caller should treat this as a successful no-op (skip session/set_config_option) —
+//   codex-acp reloads on every set_config_option call, and even sending the same value back stalled
+//   the first prompt of a new session for ~2 min (issue #277). Suffix normalization matches the
+//   opencode `<provider>/<bare>` form, so a currentValue like `openai/gpt-5` against the bare
+//   `gpt-5` still short-circuits instead of re-applying.
+// - `{ alreadyCurrent: undefined, ... }` when the desired model matches an option value but is not
+//   currently selected. Caller sends session/set_config_option.
+// - `undefined` when there is no model option or no matching value. The runtime treats this as a
+//   hard failure when the model is required (subscription-backed Codex).
 export const matchSessionModelOption = (
   configOptions: readonly SessionConfigOption[] | null | undefined,
   desiredModel: string | undefined
@@ -50,10 +70,9 @@ export const matchSessionModelOption = (
 
   if (!option || option.type !== 'select') return undefined
 
-  // Skip the round-trip when the desired model is already the option's current selection. codex-acp
-  // treats set_config_option as a model switch and reloads on every call, so even sending the same
-  // value back would make the first prompt of a freshly created session wait ~2 min for nothing.
-  if (option.currentValue === desiredModel) return undefined
+  if (option.currentValue && sameModel(option.currentValue, desiredModel)) {
+    return { configId: option.id, value: option.currentValue, alreadyCurrent: true }
+  }
 
   const values = collectSelectValues(option.options)
   const match =

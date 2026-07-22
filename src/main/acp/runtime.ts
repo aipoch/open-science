@@ -574,6 +574,18 @@ class AcpRuntime {
       return undefined
     }
 
+    // The agent already has the desired model — typically because the framework seeded it via
+    // CODEX_CONFIG (codex-isolated subscription) or because the previous call landed on it. Skip the
+    // redundant session/set_config_option round-trip: codex-acp reloads on every call, and even
+    // sending the same value back stalled the first prompt of a new session for ~2 min (issue #277).
+    if (selection.alreadyCurrent) {
+      log.info('session model already current', {
+        sessionId: session.sessionId,
+        model: selection.value
+      })
+      return configOptions ?? null
+    }
+
     try {
       const response = (await this.connection.agent.request(
         acp.methods.agent.session.setConfigOption,
