@@ -174,21 +174,22 @@ const PermissionApprovalControls = ({
         <span className="flex flex-wrap items-center justify-end gap-1 w-full overflow-hidden">
           {getOrderedPermissionOptions(request.options).map((option) => {
             const actionKind = getPermissionActionKind(option)
+            const hasMultipleOptionsForAction = (actionCounts.get(actionKind) ?? 0) > 1
             const actionLabel = getPermissionActionLabel(
               option,
               actionKind,
-              (actionCounts.get(actionKind) ?? 0) > 1
+              hasMultipleOptionsForAction
             )
 
             return (
               <button
                 key={option.optionId}
                 type="button"
-                className="max-w-full break-words rounded-md border border-amber-300 bg-white px-2 py-1 text-[12px] hover:bg-amber-100"
+                className="inline-flex min-w-0 max-w-full items-center rounded-md border border-amber-300 bg-white px-2 py-1 text-[12px] hover:bg-amber-100"
                 aria-label={`${actionLabel}: ${request.title}`}
                 onClick={() => onRespond(request.requestId, option.optionId)}
               >
-                <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                <span className="min-w-0 whitespace-normal break-words text-left">
                   {actionLabel}
                 </span>
               </button>
