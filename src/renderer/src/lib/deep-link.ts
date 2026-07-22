@@ -49,7 +49,7 @@ const useDeepLinkNavigation = (isSessionPersistenceReady: boolean): void => {
     isWebLocation() ? readDeepLinkParams() : undefined
   )
   const initialized = useRef(!isWebLocation())
-  const [isInitialized, setIsInitialized] = useState(initialized.current)
+  const [isInitialized, setIsInitialized] = useState(() => !isWebLocation())
 
   useEffect(() => {
     if (initialized.current || !isProjectsLoaded || !isSessionPersistenceReady) return
