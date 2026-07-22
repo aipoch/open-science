@@ -70,6 +70,7 @@ local/
 .codegraph/
 .mcp.json
 .codex/
+.playwright-cli/
 .claude/
 .ai/
 .aider*

@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-import { app, ipcMain } from 'electron'
+import { app, ipcMain, webContents } from 'electron'
 
 import { createDefaultNotebookRuntimeService, registerAcpIpcHandlers } from './acp/ipc'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
@@ -29,6 +29,9 @@ import {
 import { registerManagedPreviewIpcHandlers } from './managed-preview-ipc'
 import { registerManagedPreviewProtocol } from './managed-preview-protocol'
 import { ManagedPreviewResources } from './managed-preview-resources'
+import { createElectronOfficePreviewViewFactory } from './office-preview/electron-office-preview-view'
+import { registerOfficePreviewIpcHandlers } from './office-preview/office-preview-ipc'
+import { OfficePreviewSupervisor } from './office-preview/office-preview-supervisor'
 import { registerNotebookIpcHandlers } from './notebook/ipc'
 import { registerRuntimeIpcHandlers } from './notebook/runtime-ipc'
 import { getRuntimeRoot } from './notebook/repository'
@@ -38,6 +41,7 @@ import { createProductionProvisioner, type RuntimeProvisioner } from './notebook
 import { runtimeRoot } from './notebook/runtime-paths'
 import type { NotebookEnvironmentManager } from './notebook/runtime-service'
 import type { NotebookLanguage } from '../shared/notebook'
+import { OFFICE_PREVIEW_STATE_CHANNEL } from '../shared/office-preview'
 import { prepareExternalPythonRuntime } from './notebook/venv-overlay'
 import {
   createDefaultPreviewStateRepository,
@@ -335,6 +339,28 @@ const registerIpcHandlers = async ({
   })
   registerManagedPreviewIpcHandlers(previewResources)
   registerManagedPreviewProtocol(previewResources)
+  const createOfficePreviewView = createElectronOfficePreviewViewFactory({
+    preloadPath: join(__dirname, '../preload/office-preview.js'),
+    runtimeHtmlPath: join(__dirname, '../renderer/office-preview.html'),
+    devServerUrl: process.env['ELECTRON_RENDERER_URL'],
+    registerPreviewProtocol: (targetProtocol, isResourceAllowed) =>
+      registerManagedPreviewProtocol(previewResources, targetProtocol, { isResourceAllowed })
+  })
+  const officePreviewSupervisor = new OfficePreviewSupervisor({
+    inspectResource: ({ source, path }) => previewResources.inspect({ source, path }),
+    acquireResource: (ownerId, request, snapshot, maxBytes) =>
+      previewResources.acquire(
+        ownerId,
+        { source: request.source, path: request.path },
+        { snapshot, maxBytes }
+      ),
+    releaseResource: (ownerId, resourceId) => previewResources.release(ownerId, { resourceId }),
+    createView: createOfficePreviewView,
+    createSessionId: randomUUID,
+    publishState: (ownerId, state) =>
+      webContents.fromId(ownerId)?.send(OFFICE_PREVIEW_STATE_CHANNEL, state)
+  })
+  registerOfficePreviewIpcHandlers(officePreviewSupervisor)
 
   // Resolve the shared conda base under the app data root (relocatable, where the runtime install
   // lives) and start the env readiness gate. The conda channel comes from the effective package mirror

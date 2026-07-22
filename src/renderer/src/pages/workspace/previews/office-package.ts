@@ -1,15 +1,29 @@
 import { SaxesParser } from 'saxes'
 
-export type OfficeFileExtension = 'docx' | 'xls' | 'xlsx' | 'pptx'
+import { OFFICE_PREVIEW_MAX_FILE_BYTES } from '../../../../../shared/office-preview'
 
-export const OFFICE_PREVIEW_MAX_COMPRESSED_BYTES = 50 * 1024 * 1024
-export const DOCX_PREVIEW_MAX_COMPRESSED_BYTES = 10 * 1024 * 1024
+export type OfficeFileExtension = 'docx' | 'xls' | 'xlsx' | 'pptx'
+export type OfficePackageValidationErrorCode = 'INVALID_PACKAGE' | 'RESOURCE_LIMIT_EXCEEDED'
+
+export class OfficePackageValidationError extends Error {
+  constructor(
+    readonly code: OfficePackageValidationErrorCode,
+    message: string
+  ) {
+    super(message)
+    this.name = 'OfficePackageValidationError'
+  }
+}
+
+export const OFFICE_PREVIEW_MAX_COMPRESSED_BYTES = OFFICE_PREVIEW_MAX_FILE_BYTES
+export const DOCX_PREVIEW_MAX_COMPRESSED_BYTES = OFFICE_PREVIEW_MAX_FILE_BYTES
 
 // Bound both ZIP metadata and actual decompression work before any third-party renderer sees input.
 const MAX_ZIP_ENTRIES = 4000
 const MAX_ZIP_ENTRY_BYTES = 32 * 1024 * 1024
 const MAX_ZIP_TOTAL_BYTES = 256 * 1024 * 1024
-const MAX_DOCX_TOTAL_BYTES = 32 * 1024 * 1024
+const MAX_DOCX_TOTAL_BYTES = 128 * 1024 * 1024
+const MAX_PPTX_MEDIA_BYTES = 192 * 1024 * 1024
 const MAX_RELATIONSHIPS_XML_BYTES = 4 * 1024 * 1024
 const MAX_RELATIONSHIPS = 20_000
 const MAX_DOCX_DOCUMENT_XML_BYTES = 8 * 1024 * 1024
@@ -18,6 +32,12 @@ const MAX_DOCX_DOCUMENT_DEPTH = 128
 const XML_PARSE_CHUNK_BYTES = 64 * 1024
 const MAX_EOCD_TRAILING_WHITESPACE_BYTES = 16
 const MAX_EOCD_SEARCH_BYTES = 65_557 + MAX_EOCD_TRAILING_WHITESPACE_BYTES
+
+// Large worksheet XML is permitted under the total budget; every other OOXML part stays at 32 MiB.
+const getMaxZipEntryBytes = (extension: OfficeFileExtension, entryName: string): number =>
+  extension === 'xlsx' && entryName.toLowerCase().startsWith('xl/worksheets/')
+    ? MAX_ZIP_TOTAL_BYTES
+    : MAX_ZIP_ENTRY_BYTES
 const EOCD_SIGNATURE = 0x06054b50
 const CENTRAL_ENTRY_SIGNATURE = 0x02014b50
 const LOCAL_ENTRY_SIGNATURE = 0x04034b50
@@ -55,7 +75,12 @@ const hasPrefix = (bytes: Uint8Array, prefix: Uint8Array): boolean =>
 export const isLegacyExcelFile = (bytes: Uint8Array): boolean =>
   bytes.length >= 512 && hasPrefix(bytes, XLS_COMPOUND_FILE_SIGNATURE)
 
-const invalidPackage = (): Error => new Error('This Office file is damaged or unsupported')
+const invalidPackage = (
+  message = 'This Office file is damaged or unsupported'
+): OfficePackageValidationError => new OfficePackageValidationError('INVALID_PACKAGE', message)
+
+const resourceLimit = (message: string): OfficePackageValidationError =>
+  new OfficePackageValidationError('RESOURCE_LIMIT_EXCEEDED', message)
 
 // Walks ZIP extra fields as length-delimited records and rejects truncated metadata while scanning.
 const hasExtraField = (
@@ -143,13 +168,13 @@ const inspectOoxmlPackage = (
     centralDirectorySize === 0xffffffff ||
     centralDirectoryOffset === 0xffffffff
   ) {
-    throw new Error('ZIP64 Office packages are not supported for preview')
+    throw invalidPackage('ZIP64 Office packages are not supported for preview')
   }
   if (entryCount > MAX_ZIP_ENTRIES) {
-    throw new Error('This Office package has too many entries to preview safely')
+    throw resourceLimit('This Office package has too many entries to preview safely')
   }
   if (diskNumber !== 0 || centralDirectoryDisk !== 0 || entriesOnDisk !== entryCount) {
-    throw new Error('Multi-disk Office packages are not supported for preview')
+    throw invalidPackage('Multi-disk Office packages are not supported for preview')
   }
 
   const centralDirectoryEnd = centralDirectoryOffset + centralDirectorySize
@@ -162,6 +187,7 @@ const inspectOoxmlPackage = (
   const names = new Set<string>()
   let offset = centralDirectoryOffset
   let totalUncompressedBytes = 0
+  let totalPptxMediaBytes = 0
 
   for (let index = 0; index < entryCount; index += 1) {
     if (
@@ -180,28 +206,30 @@ const inspectOoxmlPackage = (
     const commentLength = view.getUint16(offset + 32, true)
     const localEntryOffset = view.getUint32(offset + 42, true)
     const nextOffset = offset + 46 + nameLength + extraLength + commentLength
+    const centralNameStart = offset + 46
 
     if ((flags & 0x0001) !== 0) {
-      throw new Error('Encrypted Office packages cannot be previewed')
+      throw invalidPackage('Encrypted Office packages cannot be previewed')
     }
     if (
       compressedSize === 0xffffffff ||
       uncompressedSize === 0xffffffff ||
       localEntryOffset === 0xffffffff
     ) {
-      throw new Error('ZIP64 Office packages are not supported for preview')
+      throw invalidPackage('ZIP64 Office packages are not supported for preview')
     }
-    const maxEntryBytes = extension === 'xlsx' ? MAX_ZIP_TOTAL_BYTES : MAX_ZIP_ENTRY_BYTES
+    if (nextOffset > centralDirectoryEnd) throw invalidPackage()
+    const name = decoder.decode(bytes.subarray(centralNameStart, centralNameStart + nameLength))
+    const maxEntryBytes = getMaxZipEntryBytes(extension, name)
     if (uncompressedSize > maxEntryBytes) {
-      throw new Error('An Office package entry is too large to preview safely')
+      throw resourceLimit('An Office package entry is too large to preview safely')
     }
 
     totalUncompressedBytes += uncompressedSize
     if (totalUncompressedBytes > MAX_ZIP_TOTAL_BYTES) {
-      throw new Error('This Office package expands too large to preview safely')
+      throw resourceLimit('This Office package expands too large to preview safely')
     }
     if (
-      nextOffset > centralDirectoryEnd ||
       localEntryOffset + 30 > centralDirectoryOffset ||
       view.getUint32(localEntryOffset, true) !== LOCAL_ENTRY_SIGNATURE
     ) {
@@ -212,7 +240,6 @@ const inspectOoxmlPackage = (
     const localCompressionMethod = view.getUint16(localEntryOffset + 8, true)
     const localNameLength = view.getUint16(localEntryOffset + 26, true)
     const localExtraLength = view.getUint16(localEntryOffset + 28, true)
-    const centralNameStart = offset + 46
     const centralExtraStart = centralNameStart + nameLength
     const localNameStart = localEntryOffset + 30
     const localExtraStart = localNameStart + localNameLength
@@ -231,10 +258,17 @@ const inspectOoxmlPackage = (
       throw invalidPackage()
     }
     if (compressionMethod !== 0 && compressionMethod !== 8) {
-      throw new Error('This Office package uses an unsupported compression method')
+      throw invalidPackage('This Office package uses an unsupported compression method')
     }
 
-    const name = decoder.decode(bytes.subarray(centralNameStart, centralNameStart + nameLength))
+    if (extension === 'pptx' && name.toLowerCase().startsWith('ppt/media/')) {
+      totalPptxMediaBytes += uncompressedSize
+      if (totalPptxMediaBytes > MAX_PPTX_MEDIA_BYTES) {
+        throw resourceLimit(
+          'This PowerPoint presentation contains too much media to preview safely'
+        )
+      }
+    }
     names.add(name)
     entries.push({
       name,
@@ -285,10 +319,10 @@ const measureInflatedEntry = async (
 
   if (entry.compressionMethod === 0) {
     if (entry.compressedSize > maxEntryBytes) {
-      throw new Error('An Office package entry is too large to preview safely')
+      throw resourceLimit('An Office package entry is too large to preview safely')
     }
     if (totalBeforeEntry + entry.compressedSize > maxTotalBytes) {
-      throw new Error('This Office package expands too large to preview safely')
+      throw resourceLimit('This Office package expands too large to preview safely')
     }
     if (capture && entry.compressedSize > capture.maxBytes) throw capture.tooLargeError()
 
@@ -320,11 +354,11 @@ const measureInflatedEntry = async (
       inflatedSize += value.byteLength
       if (inflatedSize > maxEntryBytes) {
         await reader.cancel()
-        throw new Error('An Office package entry is too large to preview safely')
+        throw resourceLimit('An Office package entry is too large to preview safely')
       }
       if (totalBeforeEntry + inflatedSize > maxTotalBytes) {
         await reader.cancel()
-        throw new Error('This Office package expands too large to preview safely')
+        throw resourceLimit('This Office package expands too large to preview safely')
       }
       if (capture && inflatedSize > capture.maxBytes) {
         await reader.cancel()
@@ -379,7 +413,7 @@ const parsePackageXml = (
   try {
     parser.write(decoder.decode()).close()
   } catch (error) {
-    if (error instanceof Error) throw error
+    if (error instanceof OfficePackageValidationError) throw error
     throw invalidPackage()
   }
 }
@@ -387,7 +421,7 @@ const parsePackageXml = (
 // Allows inert OOXML hyperlinks while blocking relationships that could fetch external resources.
 const assertNoExternalResources = (data: Uint8Array): void => {
   if (data.byteLength > MAX_RELATIONSHIPS_XML_BYTES) {
-    throw new Error('This Office relationship file is too large to preview safely')
+    throw resourceLimit('This Office relationship file is too large to preview safely')
   }
 
   let relationshipCount = 0
@@ -397,7 +431,7 @@ const assertNoExternalResources = (data: Uint8Array): void => {
 
       relationshipCount += 1
       if (relationshipCount > MAX_RELATIONSHIPS) {
-        throw new Error('This Office package has too many relationships to preview safely')
+        throw resourceLimit('This Office package has too many relationships to preview safely')
       }
 
       const targetMode = Object.values(tag.attributes)
@@ -411,7 +445,7 @@ const assertNoExternalResources = (data: Uint8Array): void => {
         if (relationshipType && OOXML_EXTERNAL_HYPERLINK_TYPES.has(relationshipType)) {
           return
         }
-        throw new Error('Office files with external resources cannot be previewed')
+        throw invalidPackage('Office files with external resources cannot be previewed')
       }
     })
   })
@@ -420,7 +454,7 @@ const assertNoExternalResources = (data: Uint8Array): void => {
 // Caps every DOCX XML part before docx-preview converts attacker-controlled trees into browser DOM.
 const assertDocxXmlComplexity = (data: Uint8Array): void => {
   if (data.byteLength > MAX_DOCX_DOCUMENT_XML_BYTES) {
-    throw new Error('This Word document is too complex to preview safely')
+    throw resourceLimit('This Word document is too complex to preview safely')
   }
 
   let depth = 0
@@ -430,7 +464,7 @@ const assertDocxXmlComplexity = (data: Uint8Array): void => {
       depth += 1
       elementCount += 1
       if (elementCount > MAX_DOCX_DOCUMENT_ELEMENTS || depth > MAX_DOCX_DOCUMENT_DEPTH) {
-        throw new Error('This Word document is too complex to preview safely')
+        throw resourceLimit('This Word document is too complex to preview safely')
       }
     })
     parser.on('closetag', () => {
@@ -449,21 +483,23 @@ const verifyActualInflatedSizes = async (
   signal?: AbortSignal
 ): Promise<void> => {
   let totalInflatedBytes = 0
+  let totalPptxMediaBytes = 0
 
   for (const entry of entries) {
     const capture = hasEntryExtension(entry.name, '.rels')
       ? {
           maxBytes: MAX_RELATIONSHIPS_XML_BYTES,
           tooLargeError: () =>
-            new Error('This Office relationship file is too large to preview safely')
+            resourceLimit('This Office relationship file is too large to preview safely')
         }
       : extension === 'docx' && hasEntryExtension(entry.name, '.xml')
         ? {
             maxBytes: MAX_DOCX_DOCUMENT_XML_BYTES,
-            tooLargeError: () => new Error('This Word document is too complex to preview safely')
+            tooLargeError: () =>
+              resourceLimit('This Word document is too complex to preview safely')
           }
         : undefined
-    const maxEntryBytes = extension === 'xlsx' ? MAX_ZIP_TOTAL_BYTES : MAX_ZIP_ENTRY_BYTES
+    const maxEntryBytes = getMaxZipEntryBytes(extension, entry.name)
     const inflated = await measureInflatedEntry(
       bytes,
       entry,
@@ -474,6 +510,14 @@ const verifyActualInflatedSizes = async (
       signal
     )
     if (inflated.size !== entry.declaredUncompressedSize) throw invalidPackage()
+    if (extension === 'pptx' && entry.name.toLowerCase().startsWith('ppt/media/')) {
+      totalPptxMediaBytes += inflated.size
+      if (totalPptxMediaBytes > MAX_PPTX_MEDIA_BYTES) {
+        throw resourceLimit(
+          'This PowerPoint presentation contains too much media to preview safely'
+        )
+      }
+    }
 
     if (inflated.data && hasEntryExtension(entry.name, '.rels')) {
       assertNoExternalResources(inflated.data)
@@ -495,15 +539,15 @@ export const validateOfficePackage = async (
   throwIfAborted(signal)
 
   if (bytes.length > OFFICE_PREVIEW_MAX_COMPRESSED_BYTES) {
-    throw new Error('This Office file is too large to preview safely')
+    throw resourceLimit('This Office file is too large to preview safely')
   }
   if (extension === 'docx' && bytes.length > DOCX_PREVIEW_MAX_COMPRESSED_BYTES) {
-    throw new Error('This Word file is too large to preview safely')
+    throw resourceLimit('This Word file is too large to preview safely')
   }
 
   if (extension === 'xls') {
     if (!isLegacyExcelFile(bytes)) {
-      throw new Error("This isn't a valid legacy Excel file")
+      throw invalidPackage("This isn't a valid legacy Excel file")
     }
     return
   }
@@ -512,7 +556,7 @@ export const validateOfficePackage = async (
   const hasExpectedMarkers = OOXML_MARKERS[extension].every((name) => names.has(name))
 
   if (!hasExpectedMarkers) {
-    throw new Error(`This isn't a valid ${extension.toUpperCase()} package`)
+    throw invalidPackage(`This isn't a valid ${extension.toUpperCase()} package`)
   }
 
   await verifyActualInflatedSizes(

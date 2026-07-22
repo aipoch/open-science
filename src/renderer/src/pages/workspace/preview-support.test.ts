@@ -75,6 +75,12 @@ describe('preview support format detection', () => {
       )
     ).toBe('unknown')
     expect(getPreviewFormat('', 'application/msword')).toBe('unknown')
+    expect(
+      getPreviewFormat(
+        'ppt',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+      )
+    ).toBe('unknown')
   })
 
   it('derives the preview format from source-neutral file metadata', () => {

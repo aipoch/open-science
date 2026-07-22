@@ -60,6 +60,18 @@ import type {
   SavePreviewStateRequest
 } from '../shared/preview-state'
 import type {
+  OfficePreviewBounds,
+  OfficePreviewOpenRequest,
+  OfficePreviewOpenResult,
+  OfficePreviewRuntimeState
+} from '../shared/office-preview'
+import {
+  OFFICE_PREVIEW_CLOSE_CHANNEL,
+  OFFICE_PREVIEW_OPEN_CHANNEL,
+  OFFICE_PREVIEW_SET_BOUNDS_CHANNEL,
+  OFFICE_PREVIEW_STATE_CHANNEL
+} from '../shared/office-preview'
+import type {
   AcquireManagedPreviewRequest,
   ManagedPreviewRangeResult,
   ManagedPreviewResource,
@@ -294,6 +306,12 @@ type OpenScienceAPI = {
     acquire: (request: AcquireManagedPreviewRequest) => Promise<ManagedPreviewResource>
     readRange: (request: ReadManagedPreviewRangeRequest) => Promise<ManagedPreviewRangeResult>
     release: (request: ReleaseManagedPreviewRequest) => Promise<void>
+  }
+  officePreview: {
+    open: (request: OfficePreviewOpenRequest) => Promise<OfficePreviewOpenResult>
+    setBounds: (sessionId: string, bounds: OfficePreviewBounds) => Promise<void>
+    close: (sessionId: string) => Promise<void>
+    onState: (listener: (state: OfficePreviewRuntimeState) => void) => RemoveListener
   }
   artifacts: {
     // Finalizes files produced during one runtime event after the renderer has selected a message.
@@ -648,6 +666,15 @@ const api: OpenScienceAPI = {
         request
       ) as Promise<ManagedPreviewRangeResult>,
     release: (request) => ipcRenderer.invoke('preview-resources:release', request) as Promise<void>
+  },
+  officePreview: {
+    open: (request) =>
+      ipcRenderer.invoke(OFFICE_PREVIEW_OPEN_CHANNEL, request) as Promise<OfficePreviewOpenResult>,
+    setBounds: (sessionId, bounds) =>
+      ipcRenderer.invoke(OFFICE_PREVIEW_SET_BOUNDS_CHANNEL, sessionId, bounds) as Promise<void>,
+    close: (sessionId) =>
+      ipcRenderer.invoke(OFFICE_PREVIEW_CLOSE_CHANNEL, sessionId) as Promise<void>,
+    onState: (listener) => onIpcMessage(OFFICE_PREVIEW_STATE_CHANNEL, listener)
   },
   artifacts: {
     // Keep generated file movement in the main process where filesystem trust checks live.

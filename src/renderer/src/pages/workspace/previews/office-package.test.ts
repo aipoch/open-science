@@ -109,6 +109,11 @@ const validEntries = {
 } as const
 
 describe('validateOfficePackage', () => {
+  it('uses one 40 MiB compressed-file admission limit for every Office format', () => {
+    expect(OFFICE_PREVIEW_MAX_COMPRESSED_BYTES).toBe(40 * 1024 * 1024)
+    expect(DOCX_PREVIEW_MAX_COMPRESSED_BYTES).toBe(OFFICE_PREVIEW_MAX_COMPRESSED_BYTES)
+  })
+
   it.each(Object.entries(validEntries))(
     'accepts a valid %s package index',
     async (extension, names) => {
@@ -194,15 +199,15 @@ describe('validateOfficePackage', () => {
   })
 
   it('rejects packages with more than 4000 entries', async () => {
-    await expect(
-      validateOfficePackage(
-        createZip(
-          validEntries.xlsx.map((name) => ({ name })),
-          { reportedEntryCount: 4001 }
-        ),
-        'xlsx'
-      )
-    ).rejects.toThrow(/too many/i)
+    const validation = validateOfficePackage(
+      createZip(
+        validEntries.xlsx.map((name) => ({ name })),
+        { reportedEntryCount: 4001 }
+      ),
+      'xlsx'
+    )
+    await expect(validation).rejects.toMatchObject({ code: 'RESOURCE_LIMIT_EXCEEDED' })
+    await expect(validation).rejects.toThrow(/too many/i)
   })
 
   it('rejects a single entry larger than 32 MiB', async () => {
@@ -214,6 +219,20 @@ describe('validateOfficePackage', () => {
     await expect(validateOfficePackage(createZip(entries), 'docx')).rejects.toThrow(
       /entry is too large/i
     )
+  })
+
+  it('rejects PPTX media whose declared total exceeds the renderer budget', async () => {
+    const entries: ZipEntry[] = [
+      ...validEntries.pptx.map((name) => ({ name })),
+      ...Array.from({ length: 7 }, (_, index) => ({
+        name: `ppt/media/video-${index}.bin`,
+        uncompressedSize: 32 * 1024 * 1024
+      }))
+    ]
+
+    const validation = validateOfficePackage(createZip(entries), 'pptx')
+    await expect(validation).rejects.toMatchObject({ code: 'RESOURCE_LIMIT_EXCEEDED' })
+    await expect(validation).rejects.toThrow(/too much media/i)
   })
 
   it('allows a large XLSX worksheet entry within the package expansion limit', async () => {
@@ -233,11 +252,39 @@ describe('validateOfficePackage', () => {
     await expect(validateOfficePackage(xlsx, 'xlsx')).resolves.toBeUndefined()
   })
 
+  it('rejects a non-worksheet XLSX entry larger than 32 MiB', async () => {
+    const xlsx = createZip([
+      { name: '[Content_Types].xml' },
+      { name: 'xl/workbook.xml' },
+      { name: 'xl/sharedStrings.xml', uncompressedSize: 32 * 1024 * 1024 + 1 }
+    ])
+
+    await expect(validateOfficePackage(xlsx, 'xlsx')).rejects.toMatchObject({
+      code: 'RESOURCE_LIMIT_EXCEEDED'
+    })
+  })
+
+  it('allows a DOCX package to expand beyond the former 32 MiB total limit', async () => {
+    const media = deflateRawSync(new Uint8Array(10 * 1024 * 1024))
+    const docx = createZip([
+      { name: '[Content_Types].xml' },
+      { name: 'word/document.xml', data: encoder.encode('<document><body/></document>') },
+      ...Array.from({ length: 4 }, (_, index) => ({
+        name: `word/media/image-${index}.bin`,
+        compressionMethod: 8 as const,
+        data: media,
+        uncompressedSize: 10 * 1024 * 1024
+      }))
+    ])
+
+    await expect(validateOfficePackage(docx, 'docx')).resolves.toBeUndefined()
+  })
+
   it('rejects a package expanding beyond 256 MiB in total', async () => {
     const entries: ZipEntry[] = [
       ...validEntries.pptx.map((name) => ({ name })),
       ...Array.from({ length: 9 }, (_, index) => ({
-        name: `ppt/media/${index}.bin`,
+        name: `ppt/embeddings/${index}.bin`,
         uncompressedSize: 32 * 1024 * 1024
       }))
     ]
@@ -436,14 +483,11 @@ describe('validateOfficePackage', () => {
   })
 
   it('rejects an Office file larger than the compressed-size limit', async () => {
-    await expect(
-      validateOfficePackage(new Uint8Array(OFFICE_PREVIEW_MAX_COMPRESSED_BYTES + 1), 'xlsx')
-    ).rejects.toThrow(/too large to preview/i)
-  })
-
-  it('uses a lower compressed-size limit for main-thread DOCX parsing', async () => {
-    await expect(
-      validateOfficePackage(new Uint8Array(DOCX_PREVIEW_MAX_COMPRESSED_BYTES + 1), 'docx')
-    ).rejects.toThrow(/Word file is too large/i)
+    const validation = validateOfficePackage(
+      new Uint8Array(OFFICE_PREVIEW_MAX_COMPRESSED_BYTES + 1),
+      'xlsx'
+    )
+    await expect(validation).rejects.toMatchObject({ code: 'RESOURCE_LIMIT_EXCEEDED' })
+    await expect(validation).rejects.toThrow(/too large to preview/i)
   })
 })

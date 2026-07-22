@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { renderOfficeFile } from './office-renderers'
+import {
+  BoundedBlobUrlCache,
+  collectReferencedPptxMediaUrls,
+  MAX_PPTX_MEDIA_URLS,
+  releaseDecodedPptxMedia,
+  renderOfficeFile
+} from './office-renderers'
 
 const mocks = vi.hoisted(() => ({
   renderDocx: vi.fn(),
@@ -9,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   constructPptx: vi.fn(),
   openPptx: vi.fn(),
   destroyPptx: vi.fn(),
+  exposePptxMediaCache: true,
+  exposePptxMediaResolver: true,
   zipLimits: { maxEntries: 4000 }
 }))
 
@@ -27,6 +35,15 @@ vi.mock('@aiden0z/pptx-renderer', () => {
     destroy = mocks.destroyPptx
     slideWidth = 960
     slideHeight = 540
+    mediaUrlCache = mocks.exposePptxMediaCache ? new Map<string, string>() : undefined
+    presentationData = mocks.exposePptxMediaResolver
+      ? {
+          mediaResolver: {
+            media: new Map<string, Uint8Array>(),
+            loadedPaths: new Set<string>()
+          }
+        }
+      : { mediaResolver: {} }
 
     constructor(container: HTMLElement, options: unknown) {
       mocks.constructPptx(container, options)
@@ -45,19 +62,23 @@ describe('renderOfficeFile', () => {
     static instances: ReadyWorker[] = []
 
     terminate = vi.fn()
+    messages: Array<{ message: unknown; transfer?: Transferable[] }> = []
 
     constructor() {
       super()
       ReadyWorker.instances.push(this)
     }
 
-    postMessage(): void {
+    postMessage(message: unknown, transfer?: Transferable[]): void {
+      this.messages.push({ message, transfer })
       queueMicrotask(() => this.dispatchEvent(new MessageEvent('message')))
     }
   }
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.exposePptxMediaCache = true
+    mocks.exposePptxMediaResolver = true
     ReadyWorker.instances = []
     vi.stubGlobal('Worker', ReadyWorker)
     container = document.createElement('div')
@@ -68,6 +89,83 @@ describe('renderOfficeFile', () => {
     container.remove()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+  })
+
+  it('waits for slide unmount before evicting PPTX media Blob URLs', () => {
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+    const cache = new BoundedBlobUrlCache()
+    const onEvict = vi.fn()
+    cache.setEvictionHandler(onEvict)
+
+    for (let index = 0; index <= MAX_PPTX_MEDIA_URLS; index += 1) {
+      cache.set(`media-${index}`, `blob:media-${index}`)
+    }
+
+    expect(cache.size).toBe(MAX_PPTX_MEDIA_URLS + 1)
+    expect(revokeObjectUrl).not.toHaveBeenCalled()
+
+    cache.trim(new Set(['blob:media-0']))
+
+    expect(cache.size).toBe(MAX_PPTX_MEDIA_URLS)
+    expect(cache.has('media-0')).toBe(true)
+    expect(cache.has('media-1')).toBe(false)
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:media-1')
+    expect(onEvict).toHaveBeenCalledWith('media-1')
+
+    cache.set('media-overflow', 'blob:media-overflow')
+    cache.trim(new Set(cache.values()))
+    expect(cache.size).toBe(MAX_PPTX_MEDIA_URLS + 1)
+    expect(revokeObjectUrl).not.toHaveBeenCalledWith('blob:media-0')
+  })
+
+  it('releases every decoded resolver alias when a PPTX media URL is evicted', () => {
+    const decoded = new Uint8Array([1, 2, 3])
+    const resolver = {
+      media: new Map([
+        ['ppt/media/image%201.png', decoded],
+        ['ppt/media/image 1.png', decoded],
+        ['ppt/media/other.png', new Uint8Array([4])]
+      ]),
+      loadedPaths: new Set(['ppt/media/image%201.png', 'ppt/media/other.png'])
+    }
+
+    releaseDecodedPptxMedia(resolver, 'ppt/media/image%201.png')
+
+    expect(resolver.media.has('ppt/media/image%201.png')).toBe(false)
+    expect(resolver.media.has('ppt/media/image 1.png')).toBe(false)
+    expect(resolver.media.has('ppt/media/other.png')).toBe(true)
+    expect(resolver.loadedPaths.has('ppt/media/image%201.png')).toBe(false)
+  })
+
+  it.each([':emf-pdf', ':emf-bitmap'])(
+    'releases decoded media for the %s derived URL',
+    (suffix) => {
+      const mediaPath = 'ppt/media/vector.emf'
+      const decoded = new Uint8Array([1, 2, 3])
+      const resolver = {
+        media: new Map([[mediaPath, decoded]]),
+        loadedPaths: new Set([mediaPath])
+      }
+
+      releaseDecodedPptxMedia(resolver, `${mediaPath}${suffix}`)
+
+      expect(resolver.media.has(mediaPath)).toBe(false)
+      expect(resolver.loadedPaths.has(mediaPath)).toBe(false)
+    }
+  )
+
+  it('detects Blob URLs still referenced by mounted PPTX slide elements', () => {
+    const cache = new Map([
+      ['image', 'blob:active-image'],
+      ['background', 'blob:active-background'],
+      ['old', 'blob:inactive-image']
+    ])
+    container.innerHTML =
+      '<img src="blob:active-image"><div style="background-image:url(blob:active-background)"></div>'
+
+    expect(collectReferencedPptxMediaUrls(container, cache)).toEqual(
+      new Set(['blob:active-image', 'blob:active-background'])
+    )
   })
 
   it('renders DOCX with active-content features disabled and cleans up Blob URLs', async () => {
@@ -191,6 +289,12 @@ describe('renderOfficeFile', () => {
     expect(pageStyle.boxShadow).toBe('0 2px 8px rgba(0, 0, 0, 0.15)')
     expect(container.querySelector('style[data-open-science-docx-fit]')?.textContent).toContain(
       'box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15)'
+    )
+    expect(container.querySelector('style[data-open-science-docx-fit]')?.textContent).toContain(
+      'content-visibility: auto'
+    )
+    expect(container.querySelector('style[data-open-science-docx-fit]')?.textContent).toContain(
+      'contain-intrinsic-size: auto'
     )
     expect(pageStyle.marginBottom).toBe('30px')
 
@@ -379,6 +483,43 @@ describe('renderOfficeFile', () => {
     }
   )
 
+  it('transfers spreadsheet workbook ownership to the parsing Worker', async () => {
+    const unmount = vi.fn()
+    let workbook: ArrayBuffer | undefined
+    mocks.renderSpreadsheet.mockImplementation(async (buffer, _target, _type, context) => {
+      workbook = buffer
+      const worker = new Worker(context?.options?.spreadsheet?.workerUrl, {
+        type: 'module'
+      }) as unknown as ReadyWorker
+      worker.postMessage({ type: 'parseWorkbook', payload: { workbook: buffer } })
+      queueMicrotask(() => context?.onProgressiveRender?.())
+      return { unmount }
+    })
+
+    const cleanup = await renderOfficeFile({
+      bytes,
+      extension: 'xlsx',
+      name: 'results.xlsx',
+      container,
+      signal
+    })
+
+    const parseMessage = ReadyWorker.instances[0]?.messages.find(
+      ({ message }) =>
+        typeof message === 'object' &&
+        message !== null &&
+        'payload' in message &&
+        typeof message.payload === 'object' &&
+        message.payload !== null &&
+        'workbook' in message.payload &&
+        message.payload.workbook === workbook
+    )
+    expect(workbook).toBe(bytes.buffer)
+    expect(parseMessage?.transfer).toEqual([workbook])
+
+    await cleanup()
+  })
+
   it('hides the vendor blocking loader before parsing while preserving background progress', async () => {
     const unmount = vi.fn()
     const onStatus = vi.fn()
@@ -419,8 +560,14 @@ describe('renderOfficeFile', () => {
       'style[data-open-science-spreadsheet-status]'
     )
     expect(onStatus).toHaveBeenCalledWith({
+      phase: 'parsing',
       title: 'Parsing the Excel workbook',
       description: 'Preparing worksheets, styles, and virtualized viewport data.'
+    })
+    expect(onStatus).toHaveBeenCalledWith({
+      phase: 'rendering',
+      title: 'Rendering the preview',
+      description: 'Building the document view.'
     })
     expect(getComputedStyle(container.querySelector<HTMLElement>('.loading')!).display).toBe('none')
     expect(style?.textContent).toContain('.excel-wrapper .sheet-loading')
@@ -631,6 +778,8 @@ describe('renderOfficeFile', () => {
       lazyMedia: true,
       scrollContainer: container,
       pdfjs: false,
+      onRenderStart: expect.any(Function),
+      onSlideUnmounted: expect.any(Function),
       onSlideRendered: expect.any(Function)
     })
     expect(mocks.openPptx).toHaveBeenCalledWith(expect.any(ArrayBuffer), {
@@ -644,6 +793,40 @@ describe('renderOfficeFile', () => {
     await cleanup()
     expect(mocks.destroyPptx).toHaveBeenCalledOnce()
     expect(container.childNodes).toHaveLength(0)
+  })
+
+  it('rejects an incompatible PPTX media-cache contract before opening the file', async () => {
+    mocks.exposePptxMediaCache = false
+
+    await expect(
+      renderOfficeFile({
+        bytes,
+        extension: 'pptx',
+        name: 'slides.pptx',
+        container,
+        signal
+      })
+    ).rejects.toThrow(/media cache contract changed/i)
+
+    expect(mocks.openPptx).not.toHaveBeenCalled()
+    expect(mocks.destroyPptx).toHaveBeenCalledOnce()
+  })
+
+  it('rejects an incompatible PPTX media-resolver contract after opening the file', async () => {
+    mocks.exposePptxMediaResolver = false
+
+    await expect(
+      renderOfficeFile({
+        bytes,
+        extension: 'pptx',
+        name: 'slides.pptx',
+        container,
+        signal
+      })
+    ).rejects.toThrow(/media resolver contract changed/i)
+
+    expect(mocks.openPptx).toHaveBeenCalledOnce()
+    expect(mocks.destroyPptx).toHaveBeenCalledOnce()
   })
 
   it('uses the provided Office scroll container for windowed PPTX mounting', async () => {

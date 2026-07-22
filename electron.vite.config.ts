@@ -6,7 +6,16 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   main: {},
-  preload: {},
+  preload: {
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve('src/preload/index.ts'),
+          'office-preview': resolve('src/preload/office-preview.ts')
+        }
+      }
+    }
+  },
   renderer: {
     // Regenerate lazy optimized chunks so a persisted Electron page cannot request stale hashes.
     optimizeDeps: { force: true },
@@ -30,6 +39,14 @@ export default defineConfig({
       }),
       react(),
       tailwindcss()
-    ]
+    ],
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve('src/renderer/index.html'),
+          'office-preview': resolve('src/renderer/office-preview.html')
+        }
+      }
+    }
   }
 })

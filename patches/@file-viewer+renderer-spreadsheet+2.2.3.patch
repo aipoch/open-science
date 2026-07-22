@@ -1,0 +1,241 @@
+diff --git a/node_modules/@file-viewer/renderer-spreadsheet/dist/spreadsheet.js b/node_modules/@file-viewer/renderer-spreadsheet/dist/spreadsheet.js
+index 3378e4a..d779036 100644
+--- a/node_modules/@file-viewer/renderer-spreadsheet/dist/spreadsheet.js
++++ b/node_modules/@file-viewer/renderer-spreadsheet/dist/spreadsheet.js
+@@ -4,6 +4,8 @@ import { buildRows, clampWindowStart, collectWindowStarts, createEmptyVirtualSta
+ import { buildColumns, createTableConfig, detectIndexOffset, getDisplayColumns, getRowHeight, HEADER_HEIGHT, INDEX_COLUMN_WIDTH, normalizeCellStyle, normalizeRowHeight, RESIZABLE_COLUMN_MIN_WIDTH, RESIZABLE_ROW_MIN_HEIGHT, } from './spreadsheet/view.js';
+ const EXCEL_IMAGE_SCROLLBAR_GUARD = 18;
+ const DEFAULT_SPREADSHEET_WORKER_AUTO_THRESHOLD = 1 * 1024 * 1024;
++const MAX_CACHED_WINDOWS = 6;
++const MAX_CACHED_SHEETS = 2;
+ const E_VIRT_TABLE_STYLE_MARKERS = [
+     '.e-virt-table-container',
+     '.e-virt-table-overlayer',
+@@ -618,6 +620,18 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+     const sheetStateCache = new Map();
+     const sheetImageCache = new Map();
+     const sheetChartCache = new Map();
++    const cacheSheetState = (sheetId, state) => {
++        sheetStateCache.delete(sheetId);
++        sheetStateCache.set(sheetId, state);
++        while (sheetStateCache.size > MAX_CACHED_SHEETS) {
++            const oldestSheetId = sheetStateCache.keys().next().value;
++            if (oldestSheetId === undefined)
++                break;
++            sheetStateCache.delete(oldestSheetId);
++            sheetImageCache.delete(oldestSheetId);
++            sheetChartCache.delete(oldestSheetId);
++        }
++    };
+     let table = null;
+     let resizeObserver = null;
+     let resizeFrame = 0;
+@@ -625,6 +639,8 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+     let layoutRefreshToken = 0;
+     const layoutRefreshTimers = [];
+     let viewportRange = { start: 0, end: 0 };
++    const pendingWindowRequests = new Map();
++    let queuedInitialWindowRequest = null;
+     let scrollDirection = 1;
+     let lastScrollY = 0;
+     let sheetSessionId = 0;
+@@ -905,7 +921,7 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+             endRow,
+             direction: scrollDirection,
+             totalRows: virtualState.totalRows,
+-        }).forEach(windowStart => requestWindow(windowStart, true));
++        }).slice(0, MAX_CACHED_WINDOWS).forEach(windowStart => requestWindow(windowStart, true));
+     };
+     const scheduleViewportLoad = () => {
+         if (!table || disposed) {
+@@ -1086,7 +1102,7 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+         }
+         const activeSheetId = getActiveSheetId();
+         if (activeSheetId !== undefined) {
+-            sheetStateCache.set(activeSheetId, virtualState);
++            cacheSheetState(activeSheetId, virtualState);
+         }
+         clearTableResizableHeaderCache();
+         syncTableLayout();
+@@ -1109,19 +1125,55 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+         virtualState.rowHeightCache.set(rowIndex, baseHeight);
+         const activeSheetId = getActiveSheetId();
+         if (activeSheetId !== undefined) {
+-            sheetStateCache.set(activeSheetId, virtualState);
++            cacheSheetState(activeSheetId, virtualState);
+         }
+         syncTableLayout();
+     }
++    const flushQueuedInitialWindowRequest = () => {
++        const queued = queuedInitialWindowRequest;
++        if (!queued || disposed || pendingWindowRequests.size >= MAX_CACHED_WINDOWS) {
++            return;
++        }
++        if (queued.sessionId !== sheetSessionId || queued.sheet !== getActiveSheetId()) {
++            queuedInitialWindowRequest = null;
++            return;
++        }
++        queuedInitialWindowRequest = null;
++        requestWindow(queued.startRow, false);
++    };
+     function requestWindow(startRow = 0, silent = true) {
+         const sheetId = getActiveSheetId();
+         if (sheetId === undefined) {
+             return;
+         }
+         const windowStart = clampWindowStart(startRow, virtualState.totalRows);
+-        if (virtualState.loadedWindows.has(windowStart) || virtualState.loadingWindows.has(windowStart)) {
++        if (virtualState.loadedWindows.has(windowStart)) {
++            virtualState.loadedWindows.delete(windowStart);
++            virtualState.loadedWindows.add(windowStart);
++            return;
++        }
++        if (virtualState.loadingWindows.has(windowStart)) {
+             return;
+         }
++        if (pendingWindowRequests.size >= MAX_CACHED_WINDOWS) {
++            if (!silent) {
++                queuedInitialWindowRequest = {
++                    sessionId: sheetSessionId,
++                    sheet: sheetId,
++                    startRow: windowStart,
++                };
++            }
++            return;
++        }
++        if (!silent && queuedInitialWindowRequest?.sessionId === sheetSessionId) {
++            queuedInitialWindowRequest = null;
++        }
++        const requestKey = `${sheetSessionId}:${sheetId}:${windowStart}`;
++        pendingWindowRequests.set(requestKey, {
++            sessionId: sheetSessionId,
++            sheet: sheetId,
++            startRow: windowStart,
++        });
+         virtualState.loadingWindows.add(windowStart);
+         syncWindowStats();
+         if (virtualState.active) {
+@@ -1233,6 +1285,41 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+         });
+         virtualState.windowCells.set(meta.startRow, keys);
+     };
++    const evictWindow = (windowStart) => {
++        const rowIndexes = virtualState.windowRows.get(windowStart) || [];
++        rowIndexes.forEach((absoluteRow) => {
++            const row = virtualState.rows[absoluteRow];
++            if (!row)
++                return;
++            clearVirtualRow(row);
++            row[ROW_STATE_FIELD] = RowState.Placeholder;
++            virtualState.rowHeightCache.delete(absoluteRow);
++            delete row.__baseHeight;
++            delete row._height;
++        });
++        const cellKeys = virtualState.windowCells.get(windowStart) || [];
++        cellKeys.forEach((key) => virtualState.cellCache.delete(key));
++        virtualState.windowRows.delete(windowStart);
++        virtualState.windowCells.delete(windowStart);
++        virtualState.loadedWindows.delete(windowStart);
++    };
++    const trimWindowCache = () => {
++        if (virtualState.loadedWindows.size <= MAX_CACHED_WINDOWS)
++            return;
++        const protectedWindows = new Set(collectWindowStarts({
++            startRow: viewportRange.start,
++            endRow: viewportRange.end,
++            direction: scrollDirection,
++            totalRows: virtualState.totalRows,
++        }).slice(0, MAX_CACHED_WINDOWS));
++        while (virtualState.loadedWindows.size > MAX_CACHED_WINDOWS) {
++            const cachedWindows = Array.from(virtualState.loadedWindows);
++            const candidate = cachedWindows.find((windowStart) => !protectedWindows.has(windowStart));
++            if (candidate === undefined)
++                break;
++            evictWindow(candidate);
++        }
++    };
+     const setSheetMerges = (merges) => {
+         virtualState.mergeStartMap.clear();
+         virtualState.mergeCoveredMap.clear();
+@@ -1297,13 +1384,15 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+         applySheetStructure(ws);
+         applyWindowRows(ws);
+         applyWindowCells(ws);
++        virtualState.loadedWindows.delete(meta.startRow);
+         virtualState.loadedWindows.add(meta.startRow);
+         virtualState.loadingWindows.delete(meta.startRow);
++        trimWindowCache();
+         syncWindowStats();
+         hasInitialWindow = true;
+         const activeSheetId = getActiveSheetId();
+         if (activeSheetId !== undefined) {
+-            sheetStateCache.set(activeSheetId, virtualState);
++            cacheSheetState(activeSheetId, virtualState);
+         }
+         if (isFirstWindow) {
+             renderTable(ensureTable(), virtualState.columns, virtualState.rows, true);
+@@ -1321,9 +1410,7 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+         if (isFirstWindow) {
+             scheduleStableFirstPaintRefresh();
+         }
+-        const start = viewportRange.start || meta.startRow;
+-        const end = Math.max(viewportRange.end, meta.endRow - 1, meta.startRow);
+-        ensureViewportWindows(start, end);
++        ensureViewportWindows(viewportRange.start, viewportRange.end);
+     };
+     const resetViewState = () => {
+         errorMessage = '';
+@@ -1350,13 +1437,14 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+         if (sheetId === undefined || !virtualState.active) {
+             return;
+         }
+-        sheetStateCache.set(sheetId, virtualState);
++        cacheSheetState(sheetId, virtualState);
+     };
+     const restoreCachedSheetState = (sheetId) => {
+         const cached = sheetStateCache.get(sheetId);
+         if (!cached) {
+             return false;
+         }
++        cacheSheetState(sheetId, cached);
+         cached.loadingWindows.clear();
+         virtualState = cached;
+         errorMessage = '';
+@@ -1431,13 +1519,28 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+         renderChrome();
+     });
+     controller.onWorkerEvent('parseSheet', ({ sessionId, sheet, sheetData: ws }) => {
++        const startRow = ws.meta?.startRow;
++        if (typeof startRow === 'number') {
++            pendingWindowRequests.delete(`${sessionId}:${sheet}:${startRow}`);
++        }
++        flushQueuedInitialWindowRequest();
+         if (sessionId !== sheetSessionId || sheet !== getActiveSheetId()) {
++            ensureViewportWindows(viewportRange.start, viewportRange.end);
+             return;
+         }
+         applyVirtualWindow(ws);
+     });
+     controller.onWorkerEvent('parseError', ({ sessionId, startRow, message }) => {
++        if (typeof startRow === 'number') {
++            for (const [requestKey, request] of pendingWindowRequests) {
++                if (request.sessionId === sessionId && request.startRow === startRow) {
++                    pendingWindowRequests.delete(requestKey);
++                }
++            }
++        }
++        flushQueuedInitialWindowRequest();
+         if (sessionId && sessionId !== sheetSessionId) {
++            ensureViewportWindows(viewportRange.start, viewportRange.end);
+             return;
+         }
+         sheetInitializing = false;
+@@ -1458,6 +1561,8 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+         renderChrome();
+     });
+     controller.onWorkerError((event) => {
++        pendingWindowRequests.clear();
++        queuedInitialWindowRequest = null;
+         sheetInitializing = false;
+         loadingState = false;
+         errorMessage = event.message || t('spreadsheet.error.workerFailed');

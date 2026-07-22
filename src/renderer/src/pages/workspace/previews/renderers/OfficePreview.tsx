@@ -1,71 +1,115 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { FileWarning } from 'lucide-react'
 
 import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-store'
+import type {
+  OfficePreviewErrorCode,
+  OfficePreviewRequestedExtension,
+  OfficePreviewRuntimeState
+} from '../../../../../../shared/office-preview'
 
-import { readManagedFileBytes } from '../managed-file-bytes'
-import type { OfficeFileExtension } from '../office-package'
-import {
-  DOCX_PREVIEW_MAX_COMPRESSED_BYTES,
-  isLegacyExcelFile,
-  OFFICE_PREVIEW_MAX_COMPRESSED_BYTES,
-  validateOfficePackage
-} from '../office-package'
-import {
-  renderOfficeFile,
-  type OfficeRenderCleanup,
-  type OfficeRenderStatus
-} from '../office-renderers'
+import { ManagedFileDownloadButton } from '../../ManagedFileDownloadButton'
 import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
 import { usePreviewRuntime } from '../preview-runtime-context'
 import type { PreviewFileRendererProps } from '../preview-types'
+import { officePreviewHostLeaseCoordinator } from './office-preview-lease'
+import { isOfficePreviewHostVisible } from './office-preview-visibility'
 
-export const OFFICE_PREVIEW_TIMEOUT_MS = 30_000
-export const LARGE_SPREADSHEET_PREVIEW_TIMEOUT_MS = 120_000
+type OfficeHostState =
+  | { kind: 'loading'; title?: string; description?: string }
+  | { kind: 'ready' }
+  | { kind: 'too-large' }
+  | { kind: 'error'; error?: OfficePreviewErrorCode }
 
-const LARGE_SPREADSHEET_PREVIEW_BYTES = 20 * 1024 * 1024
-const MAX_OFFICE_RETRY_TIMEOUT_MS = 300_000
-
-// Every retry gets one fixed doubled allowance; repeated retries never compound the timeout.
-const getOfficePreviewTimeoutMs = (item: PreviewFileItem, attempt: number): number => {
-  const defaultTimeout =
-    item.format === 'spreadsheet' && (item.size ?? 0) >= LARGE_SPREADSHEET_PREVIEW_BYTES
-      ? LARGE_SPREADSHEET_PREVIEW_TIMEOUT_MS
-      : OFFICE_PREVIEW_TIMEOUT_MS
-
-  return attempt > 0 ? Math.min(defaultTimeout * 2, MAX_OFFICE_RETRY_TIMEOUT_MS) : defaultTimeout
+const OFFICE_CHECKING_STATE: OfficeHostState = {
+  kind: 'loading',
+  title: 'Checking the Office file'
 }
 
-type OfficeRenderState = {
-  key: string
-  status: 'ready' | 'error'
-  message?: string
-}
-
-type OfficeLoadingState = OfficeRenderStatus & {
-  key: string
-}
-
-// Resolves ambiguous spreadsheet names from their container signature while other formats are fixed.
-const resolveOfficeExtension = (item: PreviewFileItem, bytes: Uint8Array): OfficeFileExtension => {
+const resolveOfficeExtension = (item: PreviewFileItem): OfficePreviewRequestedExtension => {
   if (item.format === 'word') return 'docx'
   if (item.format === 'presentation') return 'pptx'
-  if (item.name.toLowerCase().endsWith('.xls')) return 'xls'
-  if (item.name.toLowerCase().endsWith('.xlsx')) return 'xlsx'
-
-  return isLegacyExcelFile(bytes) ? 'xls' : 'xlsx'
+  const normalizedName = item.name.toLowerCase()
+  if (normalizedName.endsWith('.xls')) return 'xls'
+  if (normalizedName.endsWith('.xlsx')) return 'xlsx'
+  return 'spreadsheet'
 }
 
-// Runs sync or async vendor cleanup without letting disposal failures break React lifecycle cleanup.
-const disposeOfficeRender = (cleanup: OfficeRenderCleanup | undefined): void => {
-  if (!cleanup) return
+const isRetryableOfficeError = (error: OfficePreviewErrorCode | undefined): boolean =>
+  error === undefined ||
+  error === 'FILE_READ_FAILED' ||
+  error === 'PREVIEW_TIMEOUT' ||
+  error === 'PREVIEW_PROCESS_CRASHED' ||
+  error === 'RENDER_FAILED'
 
-  Promise.resolve(cleanup()).catch((error) => {
-    console.error('Failed to dispose Office preview', error)
-  })
+let fallbackOfficePreviewRequestSequence = 0
+
+// Separates stable host leasing from one-shot state routing across retries and file switches.
+const createOfficePreviewRequestId = (hostId: string): string => {
+  const uniquePart = globalThis.crypto?.randomUUID?.()
+  fallbackOfficePreviewRequestSequence += 1
+  return `${hostId}:${uniquePart ?? `${Date.now()}-${fallbackOfficePreviewRequestSequence}`}`
 }
 
-// Owns the read, preflight, renderer, timeout, and cleanup lifecycle for one managed Office file.
+const OfficeDownloadFallback = ({
+  item,
+  source,
+  title,
+  message
+}: {
+  item: PreviewFileItem
+  source: PreviewFileSource
+  title: string
+  message: string
+}): React.JSX.Element => (
+  <div data-preview-status="error" className="flex size-full items-center justify-center px-6 py-8">
+    <div className="grid w-full max-w-[19rem] grid-cols-[2.25rem_minmax(0,1fr)] items-start gap-x-3">
+      <div className="grid size-9 place-items-center rounded-lg border border-danger-000/15 bg-danger-900/45 text-danger-000">
+        <FileWarning className="size-4" aria-hidden />
+      </div>
+      <div className="min-w-0 pt-px">
+        <div className="text-[12px] font-medium text-text-000">{title}</div>
+        <p className="mt-0.5 text-[10px] leading-4 text-text-300">{message}</p>
+        <ManagedFileDownloadButton
+          source={source}
+          path={item.path}
+          suggestedName={item.name}
+          appearance="primary"
+          wrapperClassName="mt-3"
+        />
+      </div>
+    </div>
+  </div>
+)
+
+const OfficeFileTooLarge = ({
+  item,
+  source
+}: {
+  item: PreviewFileItem
+  source: PreviewFileSource
+}): React.JSX.Element => (
+  <OfficeDownloadFallback
+    item={item}
+    source={source}
+    title="File too large to preview"
+    message="This file is larger than 40 MB. Download it to view."
+  />
+)
+
+const getDownloadOnlyErrorMessage = (
+  error: OfficePreviewErrorCode | undefined
+): string | undefined => {
+  if (error === 'INVALID_PACKAGE') {
+    return 'This Office file is damaged or unsupported. Download it to view.'
+  }
+  if (error === 'RESOURCE_LIMIT_EXCEEDED') {
+    return 'This Office file exceeds the safe preview limits. Download it to view.'
+  }
+  return undefined
+}
+
+// Owns only native-view coordination; Office bytes and vendor libraries stay in the child runtime.
 export const OfficePreviewContent = ({
   item,
   source = 'artifact'
@@ -73,134 +117,204 @@ export const OfficePreviewContent = ({
   item: PreviewFileItem
   source?: PreviewFileSource
 }): React.JSX.Element => {
-  const containerRef = useRef<HTMLDivElement | null>(null)
-  const [renderState, setRenderState] = useState<OfficeRenderState | null>(null)
-  const [loadingState, setLoadingState] = useState<OfficeLoadingState | null>(null)
-  const attempt = usePreviewRuntime()?.attempt ?? 0
-  const renderKey = `${source}:${item.path}:${item.name}:${item.format}`
-  const timeoutMs = getOfficePreviewTimeoutMs(item, attempt)
+  const hostRef = useRef<HTMLDivElement | null>(null)
+  const hostId = useId()
+  const runtime = usePreviewRuntime()
+  const attempt = runtime?.attempt ?? 0
+  const extension = resolveOfficeExtension(item)
+  const requestKey = JSON.stringify([attempt, extension, item.name, item.path, source])
+  const requestKeyRef = useRef(requestKey)
+  const [ownsLease, setOwnsLease] = useState(false)
+  const [stateSnapshot, setStateSnapshot] = useState<{
+    key: string
+    value: OfficeHostState
+  }>({ key: requestKey, value: OFFICE_CHECKING_STATE })
+  const [sessionSnapshot, setSessionSnapshot] = useState<{
+    key: string
+    value?: string
+  }>({ key: requestKey })
+  const state: OfficeHostState =
+    stateSnapshot.key === requestKey ? stateSnapshot.value : OFFICE_CHECKING_STATE
+  const sessionId = sessionSnapshot.key === requestKey ? sessionSnapshot.value : undefined
 
   useEffect(() => {
-    const container = containerRef.current
-    if (!container) return
+    requestKeyRef.current = requestKey
+  }, [requestKey])
 
-    // Each generation gets a disposable child target so an unabortable stale renderer can only
-    // mutate detached DOM after the next file replaces it.
-    const renderTarget = container.ownerDocument.createElement('div')
-    renderTarget.className = 'size-full'
-    container.replaceChildren(renderTarget)
+  useEffect(
+    () =>
+      officePreviewHostLeaseCoordinator.register(hostId, (active) => {
+        setOwnsLease(active)
+        setStateSnapshot({ key: requestKeyRef.current, value: OFFICE_CHECKING_STATE })
+        setSessionSnapshot({ key: requestKeyRef.current })
+      }),
+    [hostId]
+  )
 
-    const controller = new AbortController()
-    let canceled = false
-    let timedOut = false
-    let cleanup: OfficeRenderCleanup | undefined
+  useEffect(() => {
+    if (!ownsLease) return
 
-    const timeout = window.setTimeout(() => {
-      if (canceled) return
+    const requestId = createOfficePreviewRequestId(hostId)
+    let active = true
+    let openedSessionId: string | undefined
+    let pendingState: OfficePreviewRuntimeState | undefined
+    const updateState = (value: OfficeHostState): void =>
+      setStateSnapshot({ key: requestKey, value })
 
-      timedOut = true
-      controller.abort(new Error('Office preview timed out'))
-      disposeOfficeRender(cleanup)
-      cleanup = undefined
-      setRenderState({
-        key: renderKey,
-        status: 'error',
-        message: 'This Office file took too long to preview'
+    const applyRuntimeState = (nextState: OfficePreviewRuntimeState): void => {
+      if (nextState.phase === 'ready') {
+        updateState({ kind: 'ready' })
+      } else if (nextState.phase === 'error') {
+        // Main destroys terminal sessions, so release native-view observers at the same boundary.
+        setSessionSnapshot({ key: requestKey })
+        updateState({ kind: 'error', error: nextState.error })
+      } else {
+        updateState({
+          kind: 'loading',
+          title: nextState.title,
+          description: nextState.description
+        })
+      }
+    }
+    const removeStateListener = window.api.officePreview.onState(
+      (nextState: OfficePreviewRuntimeState) => {
+        if (!active || nextState.requestId !== requestId) return
+        if (!openedSessionId) {
+          pendingState = nextState
+          return
+        }
+        if (nextState.sessionId === openedSessionId) applyRuntimeState(nextState)
+      }
+    )
+
+    void window.api.officePreview
+      .open({ requestId, source, path: item.path, name: item.name, extension, attempt })
+      .then((result) => {
+        if (!active) {
+          if (result.kind === 'started') void window.api.officePreview.close(result.sessionId)
+          return
+        }
+        if (result.kind === 'cancelled') return
+        if (result.kind === 'unavailable') {
+          updateState(
+            result.reason === 'FILE_TOO_LARGE'
+              ? { kind: 'too-large' }
+              : { kind: 'error', error: result.reason }
+          )
+          return
+        }
+
+        openedSessionId = result.sessionId
+        setSessionSnapshot({ key: requestKey, value: result.sessionId })
+        if (pendingState?.sessionId === result.sessionId) applyRuntimeState(pendingState)
+        pendingState = undefined
       })
-    }, timeoutMs)
-
-    const render = async (): Promise<void> => {
-      // Check the format-specific limit against managed stat metadata before any range transfer.
-      const maxBytes =
-        item.format === 'word'
-          ? DOCX_PREVIEW_MAX_COMPRESSED_BYTES
-          : OFFICE_PREVIEW_MAX_COMPRESSED_BYTES
-      const bytes = await readManagedFileBytes(item.path, source, maxBytes)
-      if (canceled || controller.signal.aborted) return
-
-      const extension = resolveOfficeExtension(item, bytes)
-      await validateOfficePackage(bytes, extension, controller.signal)
-      const nextCleanup = await renderOfficeFile({
-        bytes,
-        extension,
-        name: item.name,
-        container: renderTarget,
-        scrollContainer: container,
-        signal: controller.signal,
-        // The application remains the sole owner of blocking loading chrome across vendor phases.
-        onStatus: (status) => {
-          if (canceled || controller.signal.aborted) return
-          setLoadingState({ key: renderKey, ...status })
+      .catch((error) => {
+        if (!active) return
+        console.error('Failed to start Office preview', error)
+        if (pendingState?.phase === 'error') {
+          applyRuntimeState(pendingState)
+          pendingState = undefined
+        } else {
+          updateState({ kind: 'error', error: 'FILE_READ_FAILED' })
         }
       })
 
-      // Some third-party renderers ignore AbortSignal; dispose their late result immediately.
-      if (canceled || controller.signal.aborted) {
-        disposeOfficeRender(nextCleanup)
-        return
-      }
-
-      cleanup = nextCleanup
-      window.clearTimeout(timeout)
-      setRenderState({ key: renderKey, status: 'ready' })
+    return () => {
+      active = false
+      removeStateListener()
+      if (openedSessionId) void window.api.officePreview.close(openedSessionId)
     }
+  }, [attempt, extension, hostId, item.name, item.path, ownsLease, requestKey, source])
 
-    render().catch((error) => {
-      if (canceled || timedOut || controller.signal.aborted) return
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host || !sessionId) return
 
-      window.clearTimeout(timeout)
-      console.error('Failed to render Office preview', error)
-      setRenderState({ key: renderKey, status: 'error' })
+    let animationFrame: number | undefined
+    let isIntersecting = true
+    const syncBounds = (): void => {
+      animationFrame = undefined
+      const rect = host.getBoundingClientRect()
+      void window.api.officePreview.setBounds(sessionId, {
+        x: rect.left,
+        y: rect.top,
+        width: rect.width,
+        height: rect.height,
+        visible: isIntersecting && isOfficePreviewHostVisible(host, rect)
+      })
+    }
+    const scheduleBounds = (): void => {
+      if (animationFrame !== undefined) return
+      animationFrame = window.requestAnimationFrame(syncBounds)
+    }
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(scheduleBounds)
+    resizeObserver?.observe(host)
+    const intersectionObserver =
+      typeof IntersectionObserver === 'undefined'
+        ? undefined
+        : new IntersectionObserver((entries) => {
+            isIntersecting = entries.some((entry) => entry.target === host && entry.isIntersecting)
+            scheduleBounds()
+          })
+    intersectionObserver?.observe(host)
+    const mutationObserver =
+      typeof MutationObserver === 'undefined' ? undefined : new MutationObserver(scheduleBounds)
+    mutationObserver?.observe(document.body, {
+      attributes: true,
+      attributeFilter: ['aria-hidden', 'class', 'data-state', 'hidden', 'open', 'style'],
+      childList: true,
+      subtree: true
     })
+    window.addEventListener('resize', scheduleBounds)
+    window.addEventListener('scroll', scheduleBounds, true)
+    document.addEventListener('visibilitychange', scheduleBounds)
+    syncBounds()
 
     return () => {
-      canceled = true
-      window.clearTimeout(timeout)
-      controller.abort()
-      disposeOfficeRender(cleanup)
-      cleanup = undefined
+      resizeObserver?.disconnect()
+      intersectionObserver?.disconnect()
+      mutationObserver?.disconnect()
+      window.removeEventListener('resize', scheduleBounds)
+      window.removeEventListener('scroll', scheduleBounds, true)
+      document.removeEventListener('visibilitychange', scheduleBounds)
+      if (animationFrame !== undefined) window.cancelAnimationFrame(animationFrame)
     }
-  }, [item, renderKey, source, timeoutMs])
+  }, [sessionId])
 
-  const state = renderState?.key === renderKey ? renderState : null
-  const loading = loadingState?.key === renderKey ? loadingState : null
-  if (state?.status === 'error') {
+  if (state.kind === 'too-large') return <OfficeFileTooLarge item={item} source={source} />
+  if (state.kind === 'error') {
+    const downloadOnlyMessage = getDownloadOnlyErrorMessage(state.error)
+    if (downloadOnlyMessage) {
+      return (
+        <OfficeDownloadFallback
+          item={item}
+          source={source}
+          title="Preview unavailable"
+          message={downloadOnlyMessage}
+        />
+      )
+    }
     return (
       <PreviewFallbackCard
         icon={FileWarning}
         name={item.name}
-        title={state.message ? 'Preview timed out' : 'Preview unavailable'}
-        message={state.message ?? "This Office file couldn't be rendered for preview"}
-        retryable
+        message="This Office file couldn't be rendered for preview"
+        retryable={isRetryableOfficeError(state.error)}
       />
     )
   }
 
-  // Preview content is read-only; block both primary and auxiliary activation of generated links.
-  const blockDocumentLink = (event: React.MouseEvent<HTMLDivElement>): void => {
-    const target = event.target
-    if (!(target instanceof Element) || !target.closest('a')) return
-
-    event.preventDefault()
-    event.stopPropagation()
-  }
-
   return (
     <div
-      data-office-preview-state={state ? 'ready' : 'loading'}
+      ref={hostRef}
+      data-office-preview-state={state.kind}
       className="relative size-full overflow-hidden bg-bg-000"
     >
-      {!state ? (
-        <PreviewLoadingContent title={loading?.title} description={loading?.description} />
+      {state.kind === 'loading' ? (
+        <PreviewLoadingContent title={state.title} description={state.description} />
       ) : null}
-      <div
-        ref={containerRef}
-        // Keep the vendor target measurable while preventing partial renderer chrome from leaking.
-        className={`office-preview-content absolute inset-0 size-full overflow-auto p-4 ${state ? '' : 'invisible'}`}
-        aria-hidden={state ? undefined : true}
-        onClickCapture={blockDocumentLink}
-        onAuxClickCapture={blockDocumentLink}
-      />
     </div>
   )
 }

@@ -7,10 +7,16 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': resolve('src/renderer/src'),
-      '@renderer': resolve('src/renderer/src')
+      '@renderer': resolve('src/renderer/src'),
+      'e-virt-table/dist/index.es.js': resolve('test/fixtures/fake-e-virt-table.ts')
     }
   },
   test: {
+    server: {
+      deps: {
+        inline: ['@file-viewer/renderer-spreadsheet']
+      }
+    },
     // Keep vitest's defaults (node_modules, dist, .git, ...) and also ignore git worktrees created
     // under .claude/worktrees — those hold full source + node_modules copies that would otherwise be
     // discovered and run as duplicate (and often stale) suites during local runs.

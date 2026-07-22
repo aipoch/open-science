@@ -22,6 +22,10 @@ const HTML_PREVIEW_CSP = [
 ].join('; ')
 
 type FetchManagedFile = (filePath: string, request: Request) => Promise<Response>
+type PreviewProtocolRegistrar = Pick<typeof protocol, 'handle' | 'unhandle'>
+type ManagedPreviewProtocolOptions = {
+  isResourceAllowed?: (resourceId: string) => boolean
+}
 
 // Forward the original request so Chromium range headers and cancellation reach the file stream.
 const defaultFetchManagedFile: FetchManagedFile = (filePath, request) =>
@@ -46,22 +50,129 @@ const createLoadErrorResponse = (): Response =>
     }
   )
 
+const parseRange = (
+  rangeHeader: string | null,
+  size: number
+): { start: number; end: number } | undefined => {
+  if (!rangeHeader) return size > 0 ? { start: 0, end: size - 1 } : undefined
+  const match = /^bytes=(\d+)-(\d*)$/.exec(rangeHeader.trim())
+  if (!match) throw new Error('Managed preview range is invalid.')
+
+  const start = Number(match[1])
+  const requestedEnd = match[2] ? Number(match[2]) : size - 1
+  const end = Math.min(requestedEnd, size - 1)
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start > end) {
+    throw new Error('Managed preview range is outside the file.')
+  }
+  return { start, end }
+}
+
+// Streams only the admitted byte range from the already-verified FileHandle.
+const createStrictFileResponse = async (
+  resource: Extract<
+    Awaited<ReturnType<ManagedPreviewResources['resolveProtocolResource']>>,
+    {
+      fileHandle: unknown
+    }
+  >,
+  request: Request
+): Promise<Response> => {
+  let closed = false
+  const closeHandle = async (): Promise<void> => {
+    if (closed) return
+    closed = true
+    await resource.fileHandle.close()
+  }
+
+  try {
+    const rangeHeader = request.headers.get('range')
+    const range = parseRange(rangeHeader, resource.size)
+    const isPartial = rangeHeader !== null
+    const headers = new Headers({
+      'accept-ranges': 'bytes',
+      'content-length': String(range ? range.end - range.start + 1 : 0)
+    })
+    if (isPartial && range) {
+      headers.set('content-range', `bytes ${range.start}-${range.end}/${resource.size}`)
+    }
+
+    if (request.method === 'HEAD' || !range) {
+      await resource.verifyUnchanged()
+      await closeHandle()
+      return new Response(null, { status: isPartial ? 206 : 200, headers })
+    }
+
+    let position = range.start
+    const body = new ReadableStream<Uint8Array>({
+      pull: async (controller) => {
+        try {
+          if (request.signal.aborted) {
+            throw request.signal.reason ?? new DOMException('Preview read aborted', 'AbortError')
+          }
+          const length = Math.min(64 * 1024, range.end - position + 1)
+          const buffer = new Uint8Array(length)
+          let chunkOffset = 0
+          while (chunkOffset < length) {
+            const { bytesRead } = await resource.fileHandle.read(
+              buffer,
+              chunkOffset,
+              length - chunkOffset,
+              position + chunkOffset
+            )
+            if (bytesRead === 0) {
+              throw new Error('Managed preview file changed during streaming.')
+            }
+            chunkOffset += bytesRead
+          }
+
+          position += chunkOffset
+          const complete = position > range.end
+          if (complete) await resource.verifyUnchanged()
+          controller.enqueue(buffer)
+          if (complete) {
+            await closeHandle()
+            controller.close()
+          }
+        } catch (error) {
+          await closeHandle().catch(() => undefined)
+          controller.error(error)
+        }
+      },
+      cancel: async () => {
+        await closeHandle()
+      }
+    })
+    return new Response(body, { status: isPartial ? 206 : 200, headers })
+  } catch (error) {
+    await closeHandle()
+    throw error
+  }
+}
+
 // Builds a streaming protocol handler without exposing filesystem paths to the renderer.
 const createManagedPreviewProtocolHandler = (
   resources: ManagedPreviewResources,
-  fetchFile: FetchManagedFile = defaultFetchManagedFile
+  fetchFile: FetchManagedFile = defaultFetchManagedFile,
+  options: ManagedPreviewProtocolOptions = {}
 ): ((request: Request) => Promise<Response>) => {
   return async (request) => {
     try {
       const url = new URL(request.url)
-      const resource = resources.resolveProtocolResource(url.hostname)
-      const fileResponse = await fetchFile(resource.filePath, request)
+      if (options.isResourceAllowed && !options.isResourceAllowed(url.hostname)) {
+        throw new Error('Managed preview resource is not assigned to this session.')
+      }
+      const resource = await resources.resolveProtocolResource(url.hostname)
+      const fileResponse =
+        'fileHandle' in resource
+          ? await createStrictFileResponse(resource, request)
+          : await fetchFile(resource.filePath, request)
       const headers = new Headers(fileResponse.headers)
 
       // Preserve the streaming body and byte-range status while enforcing app-owned headers.
       headers.set('content-type', resource.mimeType)
       headers.set('cache-control', 'no-store')
       headers.set('x-content-type-options', 'nosniff')
+      headers.set('access-control-allow-origin', '*')
       if (resource.mimeType.split(';', 1)[0]?.trim().toLowerCase() === 'text/html') {
         headers.set('content-security-policy', HTML_PREVIEW_CSP)
       }
@@ -77,9 +188,17 @@ const createManagedPreviewProtocolHandler = (
   }
 }
 
-const registerManagedPreviewProtocol = (resources: ManagedPreviewResources): void => {
-  protocol.handle(PREVIEW_SCHEME, createManagedPreviewProtocolHandler(resources))
+const registerManagedPreviewProtocol = (
+  resources: ManagedPreviewResources,
+  targetProtocol: PreviewProtocolRegistrar = protocol,
+  options: ManagedPreviewProtocolOptions = {}
+): (() => void) => {
+  targetProtocol.handle(
+    PREVIEW_SCHEME,
+    createManagedPreviewProtocolHandler(resources, undefined, options)
+  )
+  return () => targetProtocol.unhandle(PREVIEW_SCHEME)
 }
 
 export { createManagedPreviewProtocolHandler, registerManagedPreviewProtocol }
-export type { FetchManagedFile }
+export type { FetchManagedFile, ManagedPreviewProtocolOptions, PreviewProtocolRegistrar }

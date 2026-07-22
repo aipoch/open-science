@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Office Preview</title>
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: open-science-preview:; font-src 'self' data: blob:; media-src 'self' data: blob:; connect-src open-science-preview:; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+  </head>
+  <body>
+    <div id="office-preview-root"></div>
+    <script type="module" src="/src/office-preview/main.ts"></script>
+  </body>
+</html>

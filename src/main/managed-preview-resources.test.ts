@@ -28,10 +28,16 @@ describe('ManagedPreviewResources', () => {
     return filePath
   }
 
-  it('registers the preview scheme for streaming without broad CORS access', () => {
+  it('registers the preview scheme for streaming and cross-scheme capability fetches', () => {
     expect(MANAGED_PREVIEW_SCHEME).toEqual({
       scheme: 'open-science-preview',
-      privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true }
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        corsEnabled: true,
+        stream: true
+      }
     })
   })
 
@@ -65,6 +71,96 @@ describe('ManagedPreviewResources', () => {
       total: 10,
       data: new Uint8Array(Buffer.from('2345'))
     })
+  })
+
+  it('inspects authoritative metadata without minting a resource capability', async () => {
+    const filePath = await createFile(Buffer.from('office'))
+    const createId = vi.fn(() => 'resource-1')
+    const resources = new ManagedPreviewResources({
+      resolvePath: async () => filePath,
+      createId
+    })
+
+    await expect(resources.inspect({ source: 'artifact', path: filePath })).resolves.toEqual({
+      size: 6,
+      version: expect.any(Number)
+    })
+    expect(createId).not.toHaveBeenCalled()
+  })
+
+  it('enforces a caller-owned limit again before minting a capability', async () => {
+    const filePath = await createFile(Buffer.from('01234567890'))
+    const createId = vi.fn(() => 'resource-1')
+    const resources = new ManagedPreviewResources({
+      resolvePath: async () => filePath,
+      createId
+    })
+    const request = { source: 'artifact' as const, path: filePath }
+    const snapshot = await resources.inspect(request)
+
+    await expect(resources.acquire(17, request, { snapshot, maxBytes: 10 })).rejects.toMatchObject({
+      code: 'FILE_TOO_LARGE',
+      size: 11,
+      limit: 10
+    })
+    expect(createId).not.toHaveBeenCalled()
+  })
+
+  it('rejects a file that changed after its admission snapshot', async () => {
+    const filePath = await createFile(Buffer.from('before'))
+    const createId = vi.fn(() => 'resource-1')
+    const resources = new ManagedPreviewResources({
+      resolvePath: async () => filePath,
+      createId
+    })
+    const request = { source: 'artifact' as const, path: filePath }
+    const snapshot = await resources.inspect(request)
+    await writeFile(filePath, Buffer.from('changed-size'))
+
+    await expect(
+      resources.acquire(17, request, { snapshot, maxBytes: 40 * 1024 * 1024 })
+    ).rejects.toThrow(/changed/i)
+    expect(createId).not.toHaveBeenCalled()
+  })
+
+  it('revokes a capability when the file changes before protocol streaming', async () => {
+    const filePath = await createFile(Buffer.from('before'))
+    const resources = new ManagedPreviewResources({
+      resolvePath: async () => filePath,
+      createId: () => 'resource-1'
+    })
+    const request = { source: 'artifact' as const, path: filePath }
+    const snapshot = await resources.inspect(request)
+    const resource = await resources.acquire(17, request, {
+      snapshot,
+      maxBytes: 40 * 1024 * 1024
+    })
+    await writeFile(filePath, Buffer.from('changed-size'))
+
+    await expect(resources.resolveProtocolResource(resource.id)).rejects.toThrow(/changed/i)
+    expect(() => resources.release(17, { resourceId: resource.id })).not.toThrow()
+  })
+
+  it('opens strict Office resources by stable file handle instead of returning a mutable path', async () => {
+    const filePath = await createFile(Buffer.from('office'))
+    const resources = new ManagedPreviewResources({
+      resolvePath: async () => filePath,
+      createId: () => 'resource-1'
+    })
+    const request = { source: 'artifact' as const, path: filePath }
+    const snapshot = await resources.inspect(request)
+    const resource = await resources.acquire(17, request, { snapshot, maxBytes: 6 })
+
+    const protocolResource = await resources.resolveProtocolResource(resource.id)
+
+    expect(protocolResource).toMatchObject({
+      size: 6,
+      mimeType: 'application/pdf',
+      verifyUnchanged: expect.any(Function)
+    })
+    expect('fileHandle' in protocolResource).toBe(true)
+    expect('filePath' in protocolResource).toBe(false)
+    if ('fileHandle' in protocolResource) await protocolResource.fileHandle.close()
   })
 
   it('rejects oversized ranges and access from another owner', async () => {

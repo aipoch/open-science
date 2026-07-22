@@ -116,8 +116,8 @@ export const getPreviewFormat = (extension: string, mimeType?: string): PreviewF
   const extensionFormat = PREVIEW_SUPPORTED_EXTENSIONS[normalizedExtension]
 
   if (extensionFormat) return extensionFormat
-  // Legacy Word documents must not enter the DOCX renderer through a misleading MIME type.
-  if (normalizedExtension === 'doc') return 'unknown'
+  // Legacy Office formats must not enter OOXML renderers through misleading MIME metadata.
+  if (normalizedExtension === 'doc' || normalizedExtension === 'ppt') return 'unknown'
 
   return getPreviewFormatForMimeType(mimeType ?? '')
 }

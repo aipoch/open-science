@@ -2,6 +2,7 @@ import type { OfficeFileExtension } from './office-package'
 
 export type OfficeRenderCleanup = () => void | Promise<void>
 export type OfficeRenderStatus = {
+  phase: 'parsing' | 'rendering'
   title: string
   description: string
 }
@@ -16,7 +17,16 @@ type RenderOfficeFileOptions = {
   onStatus?: (status: OfficeRenderStatus) => void
 }
 
-const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer => Uint8Array.from(bytes).buffer
+const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer => {
+  if (
+    bytes.buffer instanceof ArrayBuffer &&
+    bytes.byteOffset === 0 &&
+    bytes.byteLength === bytes.buffer.byteLength
+  ) {
+    return bytes.buffer
+  }
+  return bytes.slice().buffer
+}
 
 // Collects renderer-owned Blob URLs from attributes and generated styles for deterministic cleanup.
 const collectBlobUrls = (container: HTMLElement): Set<string> => {
@@ -53,6 +63,8 @@ const DOCX_FIT_STYLE = `
 }
 .docx-wrapper > section.docx {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 1123px;
   zoom: var(${DOCX_SCALE_PROPERTY}, 1);
   transform-origin: top center;
 }
@@ -124,6 +136,101 @@ type PptxFitMetrics = {
 }
 
 const PPTX_FALLBACK_WIDTH = 960
+const MAX_PPTX_MEDIA_URLS = 64
+
+type PptxMediaResolverInternals = {
+  media?: Map<string, Uint8Array>
+  loadedPaths?: Set<string>
+}
+
+// Isolates the only pinned-version private hook and fails closed when the vendor shape changes.
+const installPptxMediaUrlCache = (viewer: unknown, cache: Map<string, string>): void => {
+  const contract = viewer as { mediaUrlCache?: unknown }
+  if (!(contract.mediaUrlCache instanceof Map)) {
+    throw new Error('PPTX renderer media cache contract changed')
+  }
+  contract.mediaUrlCache = cache
+}
+
+// Decoded-media eviction needs the lazy resolver's pinned internal stores to remain available.
+const requirePptxMediaResolverInternals = (resolver: unknown): PptxMediaResolverInternals => {
+  const contract = resolver as PptxMediaResolverInternals | undefined
+  if (!(contract?.media instanceof Map) || !(contract.loadedPaths instanceof Set)) {
+    throw new Error('PPTX renderer media resolver contract changed')
+  }
+  return contract
+}
+
+// Drops every alias for one decoded media buffer so the lazy resolver can decode it again later.
+const releaseDecodedPptxMedia = (
+  resolver: PptxMediaResolverInternals | undefined,
+  mediaPath: string
+): void => {
+  const media = resolver?.media
+  // EMF rendering stores derived Blob URLs under suffixed keys while decoded bytes use the path.
+  const sourceMediaPath = mediaPath.replace(/:emf-(?:pdf|bitmap)$/, '')
+  const decoded = media?.get(sourceMediaPath)
+  if (!media || !decoded) return
+
+  for (const [path, value] of media) {
+    if (value !== decoded) continue
+    media.delete(path)
+    resolver.loadedPaths?.delete(path)
+  }
+}
+
+// Uses a soft cap: the active viewport working set may exceed it, but inactive media cannot.
+class BoundedBlobUrlCache extends Map<string, string> {
+  private onEvict?: (key: string) => void
+
+  setEvictionHandler(handler: (key: string) => void): void {
+    this.onEvict = handler
+  }
+
+  override get(key: string): string | undefined {
+    const value = super.get(key)
+    if (value === undefined) return undefined
+    super.delete(key)
+    super.set(key, value)
+    return value
+  }
+
+  override set(key: string, value: string): this {
+    const previous = super.get(key)
+    if (previous && previous !== value) URL.revokeObjectURL(previous)
+    super.delete(key)
+    super.set(key, value)
+    return this
+  }
+
+  trim(protectedUrls: ReadonlySet<string> = new Set()): void {
+    while (this.size > MAX_PPTX_MEDIA_URLS) {
+      const candidate = [...this.entries()].find(([, url]) => !protectedUrls.has(url))
+      if (!candidate) break
+      const [oldestKey, oldestUrl] = candidate
+      super.delete(oldestKey)
+      URL.revokeObjectURL(oldestUrl)
+      this.onEvict?.(oldestKey)
+    }
+  }
+}
+
+// Reads rendered attributes so shared media stays alive while any mounted slide still references it.
+const collectReferencedPptxMediaUrls = (
+  container: HTMLElement,
+  cache: ReadonlyMap<string, string>
+): Set<string> => {
+  const cachedUrls = new Set(cache.values())
+  const referenced = new Set<string>()
+  for (const element of container.querySelectorAll('*')) {
+    for (const attribute of element.attributes) {
+      for (const url of cachedUrls) {
+        if (attribute.value.includes(url)) referenced.add(url)
+      }
+    }
+  }
+  return referenced
+}
 
 const getPptxFitMetrics = (
   container: HTMLElement,
@@ -225,8 +332,14 @@ const SPREADSHEET_WORKER_STARTUP_TIMEOUT_MS = 5_000
 const SPREADSHEET_STATUS_SCOPE_ATTRIBUTE = 'data-open-science-spreadsheet-preview'
 const SPREADSHEET_STATUS_SCOPE = `[${SPREADSHEET_STATUS_SCOPE_ATTRIBUTE}]`
 const SPREADSHEET_PARSING_STATUS: OfficeRenderStatus = {
+  phase: 'parsing',
   title: 'Parsing the Excel workbook',
   description: 'Preparing worksheets, styles, and virtualized viewport data.'
+}
+const RENDERING_STATUS: OfficeRenderStatus = {
+  phase: 'rendering',
+  title: 'Rendering the preview',
+  description: 'Building the document view.'
 }
 const SPREADSHEET_STATUS_STYLE = `
 ${SPREADSHEET_STATUS_SCOPE} .excel-wrapper .loading {
@@ -339,6 +452,46 @@ const createReadySpreadsheetWorker = async (
   }
 }
 
+// Transfers the renderer-owned workbook copy into the parsing Worker instead of cloning it again.
+const installTransferableSpreadsheetWorkbook = (worker: Worker): OfficeRenderCleanup => {
+  const ownDescriptor = Object.getOwnPropertyDescriptor(worker, 'postMessage')
+  const originalPostMessage = worker.postMessage.bind(worker) as (
+    message: unknown,
+    transferOrOptions?: Transferable[] | StructuredSerializeOptions
+  ) => void
+  const patchedPostMessage = (
+    message: unknown,
+    transferOrOptions?: Transferable[] | StructuredSerializeOptions
+  ): void => {
+    const payload =
+      typeof message === 'object' && message !== null && 'payload' in message
+        ? message.payload
+        : undefined
+    const workbook =
+      typeof payload === 'object' && payload !== null && 'workbook' in payload
+        ? payload.workbook
+        : undefined
+    const isWorkbookParse =
+      typeof message === 'object' &&
+      message !== null &&
+      'type' in message &&
+      message.type === 'parseWorkbook' &&
+      workbook instanceof ArrayBuffer
+
+    if (isWorkbookParse && transferOrOptions === undefined) {
+      originalPostMessage(message, [workbook])
+      return
+    }
+    originalPostMessage(message, transferOrOptions)
+  }
+  worker.postMessage = patchedPostMessage as Worker['postMessage']
+
+  return () => {
+    if (ownDescriptor) Object.defineProperty(worker, 'postMessage', ownDescriptor)
+    else Reflect.deleteProperty(worker, 'postMessage')
+  }
+}
+
 // Supplies the already-handshaken Worker to a vendor API that otherwise constructs its own Worker.
 const renderWithReadySpreadsheetWorker = async <T>(
   workerUrl: string,
@@ -404,6 +557,7 @@ export const renderOfficeFile = async ({
     const { renderAsync } = await import('docx-preview')
 
     try {
+      onStatus?.(RENDERING_STATUS)
       await renderAsync(bytes, container, container, {
         breakPages: true,
         ignoreLastRenderedPageBreak: false,
@@ -436,8 +590,10 @@ export const renderOfficeFile = async ({
     ])
     const workerUrl = resolveSpreadsheetWorkerUrl(importedWorkerUrl, container)
     const readyWorker = await createReadySpreadsheetWorker(workerUrl, container, signal)
+    const disposeTransferableWorkbook = installTransferableSpreadsheetWorkbook(readyWorker)
     const MutationObserverCtor = container.ownerDocument.defaultView?.MutationObserver
     if (!MutationObserverCtor) {
+      disposeTransferableWorkbook()
       readyWorker.terminate()
       throw new Error('Spreadsheet preview error observer is unavailable')
     }
@@ -464,6 +620,7 @@ export const renderOfficeFile = async ({
       if (firstPaintSettled) return
       firstPaintSettled = true
       errorObserver.disconnect()
+      onStatus?.(RENDERING_STATUS)
       resolveFirstPaint()
     }
     errorObserver.observe(container, {
@@ -500,6 +657,7 @@ export const renderOfficeFile = async ({
     } catch (error) {
       errorObserver.disconnect()
       disposeStatusStyle()
+      disposeTransferableWorkbook()
       readyWorker.terminate()
       clearContainer(container)
       throw error
@@ -516,6 +674,7 @@ export const renderOfficeFile = async ({
         else await instance.destroy()
       } finally {
         disposeStatusStyle()
+        disposeTransferableWorkbook()
         readyWorker.terminate()
         clearContainer(container)
       }
@@ -570,7 +729,14 @@ export const renderOfficeFile = async ({
   // Construct explicitly so a failed open still leaves an instance that can be destroyed.
   const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import('@aiden0z/pptx-renderer')
   const viewerDimensionsRef: { current?: PptxViewerDimensions } = {}
+  const mediaUrlCache = new BoundedBlobUrlCache()
   let currentFit: PptxFitMetrics | undefined
+  let reportedRendering = false
+  const reportRendering = (): void => {
+    if (reportedRendering) return
+    reportedRendering = true
+    onStatus?.(RENDERING_STATUS)
+  }
   const viewer = new PptxViewer(container, {
     // A fixed width disables the vendor's resize path, which clears and rebuilds every slide.
     width: container.clientWidth || PPTX_FALLBACK_WIDTH,
@@ -579,6 +745,9 @@ export const renderOfficeFile = async ({
     lazyMedia: true,
     scrollContainer: scrollContainer ?? container,
     pdfjs: false,
+    onRenderStart: reportRendering,
+    onSlideUnmounted: () =>
+      mediaUrlCache.trim(collectReferencedPptxMediaUrls(container, mediaUrlCache)),
     // Windowed slides can mount after a resize, so apply the latest fit before their next paint.
     onSlideRendered: (_index, element) => {
       const viewerDimensions = viewerDimensionsRef.current
@@ -602,6 +771,7 @@ export const renderOfficeFile = async ({
   }
 
   try {
+    installPptxMediaUrlCache(viewer, mediaUrlCache)
     await viewer.open(toArrayBuffer(bytes), {
       renderMode: 'list',
       listOptions: { windowed: true, initialSlides: 4, batchSize: 4 },
@@ -609,6 +779,9 @@ export const renderOfficeFile = async ({
       lazyMedia: true,
       signal
     })
+    reportRendering()
+    const resolver = requirePptxMediaResolverInternals(viewer.presentationData?.mediaResolver)
+    mediaUrlCache.setEvictionHandler((mediaPath) => releaseDecodedPptxMedia(resolver, mediaPath))
     disposeFit = installPptxFit(container, viewer, (metrics) => {
       currentFit = metrics
     })
@@ -622,4 +795,12 @@ export const renderOfficeFile = async ({
   }
 
   return destroyViewer
+}
+
+export {
+  BoundedBlobUrlCache,
+  collectReferencedPptxMediaUrls,
+  installPptxMediaUrlCache,
+  MAX_PPTX_MEDIA_URLS,
+  releaseDecodedPptxMedia
 }
