@@ -8,6 +8,7 @@ import { UpdateDialog } from '@/components/UpdateDialog'
 import { HomePage } from '@/pages/home/HomePage'
 import { OnboardingWizard } from '@/pages/onboarding/OnboardingWizard'
 import { resolveStartupView } from '@/pages/onboarding/startup-gate'
+import { ComputeApprovalDialog } from '@/pages/settings/ComputeApprovalDialog'
 import { ConnectorApprovalDialog } from '@/pages/settings/ConnectorApprovalDialog'
 import { SettingsPage } from '@/pages/settings/SettingsPage'
 import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
@@ -17,6 +18,8 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useComputeStore } from '@/stores/compute-store'
+import { useSessionJobStore } from '@/stores/session-job-store'
 import { useUpdateStore } from '@/stores/update-store'
 
 const App = (): React.JSX.Element | null => {
@@ -34,6 +37,8 @@ const App = (): React.JSX.Element | null => {
   const isSettingsOpen = useSettingsStore((state) => state.isSettingsOpen)
   const closeSettings = useSettingsStore((state) => state.closeSettings)
   const enqueueApproval = useSettingsStore((state) => state.enqueueApproval)
+  const enqueueComputeApproval = useComputeStore((state) => state.enqueueApproval)
+  const applyJobUpdate = useSessionJobStore((state) => state.applyUpdate)
   const initUpdates = useUpdateStore((state) => state.init)
   const initEnv = useNotebookEnvStore((state) => state.init)
   const envUi = useNotebookEnvStore((state) => state.ui)
@@ -104,6 +109,16 @@ const App = (): React.JSX.Element | null => {
     if (isSessionPersistenceReady) void openPendingNotificationSession()
   }, [isSessionPersistenceReady, openPendingNotificationSession])
 
+  // Subscribe once to compute approval requests. The card must be answered before the SSH call runs.
+  useEffect(
+    () => window.api.compute.onApprovalRequest(enqueueComputeApproval),
+    [enqueueComputeApproval]
+  )
+
+  // Subscribe once to job-updated broadcasts so the session job feed stays live for the badge and
+  // inline job rows. Updates are applied globally — the store filters by sessionId at query time.
+  useEffect(() => window.api.compute.onJobUpdated(applyJobUpdate), [applyJobUpdate])
+
   // Load the project list once on startup so Home can render immediately after hydration.
   useEffect(() => {
     void loadProjects()
@@ -145,6 +160,7 @@ const App = (): React.JSX.Element | null => {
       )}
       <SettingsPage open={isSettingsOpen} onClose={closeSettings} />
       <ConnectorApprovalDialog />
+      <ComputeApprovalDialog />
       <UpdateDialog />
       <CloseConfirmModal />
       <DataRootMissingDialog

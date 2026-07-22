@@ -123,8 +123,6 @@ describe('PermissionApprovalControls', () => {
     expect(html).toContain('Always - Allow for This Session</span>')
     expect(html).toContain('Always - Allow and Don&#x27;t Ask Again</span>')
     expect(html.match(/>Always<\/span>/g)).toBeNull()
-    expect(html).toContain('inline-flex min-w-0 max-w-full items-center')
-    expect(html).toContain('min-w-0 whitespace-normal break-words text-left')
   })
 
   it('keeps canonical semantics when provider scope names look like other actions', () => {

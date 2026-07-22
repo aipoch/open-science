@@ -134,6 +134,8 @@ type SettingsStoreData = {
   reasoningEffort: ReasoningEffort
   // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
   notificationsEnabled: boolean
+  // When true, the settings dialog opens directly to the Compute panel.
+  pendingComputePanel?: boolean
 }
 
 type SettingsStore = SettingsStoreData & {
@@ -191,6 +193,8 @@ type SettingsStore = SettingsStoreData & {
   closeSettings: () => void
   // Opens the dialog straight onto a skill's detail page (used by clickable skill mentions).
   openSettingsToSkill: (skillId: string) => void
+  // Opens the dialog straight to the Compute panel (used by Files panel "Add SSH host…" link).
+  openSettingsToCompute: () => void
   // Clears the pending skill once its detail view has been seeded, so a later open starts fresh.
   consumePendingSkill: () => void
   // Loads the bundled-skill list (enabled state included) from the main process.
@@ -315,7 +319,8 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   pendingSkillId: undefined,
   packageMirror: undefined,
   reasoningEffort: DEFAULT_REASONING_EFFORT,
-  notificationsEnabled: DEFAULT_NOTIFICATIONS_ENABLED
+  notificationsEnabled: DEFAULT_NOTIFICATIONS_ENABLED,
+  pendingComputePanel: undefined
 })
 
 // Applies a fresh main-process snapshot to the renderer cache.
@@ -874,9 +879,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   openSettings: () => set({ isSettingsOpen: true }),
 
   // Clearing the pending skill on close stops a later normal open from jumping back to a stale skill.
-  closeSettings: () => set({ isSettingsOpen: false, pendingSkillId: undefined }),
+  closeSettings: () =>
+    set({ isSettingsOpen: false, pendingSkillId: undefined, pendingComputePanel: undefined }),
 
   openSettingsToSkill: (skillId) => set({ isSettingsOpen: true, pendingSkillId: skillId }),
+
+  // Opens the dialog directly to the Compute panel.
+  openSettingsToCompute: () => set({ isSettingsOpen: true, pendingComputePanel: true }),
 
   consumePendingSkill: () => set({ pendingSkillId: undefined }),
 
