@@ -3776,6 +3776,9 @@ describe('ACP runtime session management', () => {
         append: expect.stringContaining('writable session workspace')
       }
     })
+    const createdSessionMeta = JSON.stringify(fakeAgent.newSessions[0]._meta)
+    expect(createdSessionMeta).toContain('mcp__open-science-notebook__notebook_execute')
+    expect(createdSessionMeta).not.toContain('`notebook_execute`')
   })
 
   it('passes only the workspace as a static allowed import root, not the pre-start notebook alias', async () => {
