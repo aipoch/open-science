@@ -278,7 +278,10 @@ const SessionNotebookDialog = ({
         data: new TextEncoder().encode(exported.json).buffer
       })
       setIpynbExportStatus('idle')
-    } catch {
+    } catch (exportError) {
+      // A canceled Save As resolves instead of throwing, so reaching here means a real failure —
+      // keep a diagnostic trail instead of collapsing it into the generic banner alone.
+      console.error('Failed to export notebook as .ipynb:', exportError)
       setIpynbExportStatus('error')
     }
   }
@@ -293,6 +296,9 @@ const SessionNotebookDialog = ({
       setStatus('loading')
       setError(undefined)
       setRuns([])
+      // The dialog is mounted once and the session prop swaps in place, so per-session export
+      // state (notably a prior failure banner) must not leak into the next session.
+      setIpynbExportStatus('idle')
 
       void loadSessionNotebookRuns(window.api.notebook, {
         sessionId,
