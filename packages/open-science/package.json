@@ -16,7 +16,8 @@
     "*.mjs",
     "*.d.ts",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "CLI.md"
   ],
   "engines": {
     "node": ">=22"

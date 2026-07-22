@@ -276,89 +276,13 @@ application still shuts down agent and Notebook processes normally.
 
 ### Headless CLI and SDK
 
-The CLI manages the Electron backend as a background service. Closing the terminal does not stop
-active sessions, and the same daemon serves the browser UI, task CLI, and Node.js SDK:
+The headless CLI and zero-dependency Node.js SDK use the same local daemon, projects, sessions,
+credentials, and permissions as the desktop and web interfaces. Detailed usage lives with the
+publishable package so there is one command reference to maintain:
 
-```bash
-npm run build
-npm run cli -- start       # starts the daemon and opens the authenticated URL
-npm run cli -- status
-npm run cli -- url
-npm run cli -- stop        # graceful agent and Notebook shutdown
-```
-
-Use `--no-open` to start without opening a browser, `--port <port>` to choose a port, and `--json`
-with `status` for machine-readable output. Development builds are discovered from the repository.
-For an installed build, the CLI checks standard installation locations; override discovery with
-`--app-path <executable>` or `OPEN_SCIENCE_APP_PATH`. Use `--config-root <directory>` when an
-explicit configuration location is required.
-
-Once the daemon is running, research tasks do not require a browser:
-
-```bash
-open-science project list --json
-open-science project create systematic-review
-
-open-science run \
-  --project systematic-review \
-  --prompt-file task.md \
-  --approval-profile auto \
-  --wait \
-  --json
-
-cat follow-up.md | open-science run \
-  --project systematic-review \
-  --session <session-id> \
-  --wait
-
-open-science session status <session-id> --json
-open-science run status <run-id> --json
-open-science artifacts list <session-id> --json
-open-science artifacts download <artifact-id> --output ./report.md
-```
-
-Prompts may come from `--prompt`, `--prompt-file`, or stdin. Without `--wait`, `run` returns after
-the daemon accepts the task. Use `--json` for one stable result object or `--jsonl` to stream task
-events followed by the final result. The default approval profile is `ask`, which may pause until a
-browser client approves a tool call. Unattended workflows must explicitly choose `auto` or `full`
-only when that permission level is appropriate for the environment.
-
-The zero-dependency package under `packages/open-science` exposes the same functionality as a Node.js
-SDK:
-
-```js
-import { connectToOpenScience } from '@aipoch/open-science'
-
-const client = await connectToOpenScience()
-const run = await client.startRun({
-  project: 'systematic-review',
-  prompt: 'Summarize the evidence.',
-  permissionProfile: 'auto'
-})
-const result = await client.waitForRun(run.id)
-console.log(result.output)
-```
-
-The CLI and SDK discover the local daemon through its state file and send the local authentication
-token only in authenticated requests. Normal status, task, and JSON output never includes the token;
-`open-science url` remains the explicit command for printing a browser login URL.
-
-#### Installing the command from an installed app
-
-After installing the packaged app, open **Settings → General → Command line tool** and choose
-**Install command**. This adds an `open-science` launcher to your PATH (`~/.local/bin` on macOS and
-Linux; a per-user directory added to your PATH on Windows) that runs the bundled CLI using the app's
-own runtime — no separate Node.js install is needed. Then, from any terminal:
-
-```bash
-open-science start       # start the backend and open the authenticated URL
-open-science status
-open-science url
-open-science stop        # graceful agent and Notebook shutdown
-```
-
-If the launcher's directory is not yet on your PATH, the Settings panel shows the one line to add
-(open a new terminal afterwards). Use **Uninstall command** to remove the launcher.
+- [CLI guide](packages/open-science/CLI.md) - installation, service lifecycle, task automation,
+  artifacts, output formats, and exit codes
+- [SDK package overview](packages/open-science/README.md) - Node.js quick start and package entry point
 
 ## Building From Source
 
