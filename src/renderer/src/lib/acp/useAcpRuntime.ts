@@ -171,10 +171,13 @@ const useAcpRuntime = (): {
   )
 
   // Specialized helper for sendPrompt: rethrows errors (like runValueAction) but does NOT
-  // set actionError, avoiding stale-state reads in .catch() handlers. Also performs the
-  // state-sync side-effect that runSnapshotAction provides, since callers use `void sendPrompt(...)`.
+  // record actionError on failure, avoiding stale-state reads in .catch() handlers. Also performs
+  // the state-sync side-effect that runSnapshotAction provides, since callers use `void sendPrompt(...)`.
   const runSendPromptAction = useCallback(
     async (action: () => Promise<AcpStateSnapshot>): Promise<AcpStateSnapshot> => {
+      // Clear on entry so the helper is self-consistent with the other action helpers and does
+      // not rely on WorkspacePage's active-session visibility gate to hide a stale actionError.
+      setActionError(null)
       const snapshot = await action()
       // Apply state-sync side-effect before returning, matching runSnapshotAction's contract.
       // Without this, callers that do `void runtime.sendPrompt(...)` would discard the snapshot
