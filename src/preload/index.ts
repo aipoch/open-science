@@ -32,6 +32,11 @@ import type {
 } from '../shared/file-save'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
+  ProjectDeletedEvent,
+  SessionDeletedEvent,
+  SessionSavedEvent
+} from '../shared/lifecycle-events'
+import type {
   AppendNotebookCodeCellRequest,
   BeginNotebookCodeCellRequest,
   NotebookAvailableEvent,
@@ -216,6 +221,8 @@ type OpenScienceAPI = {
     saveSession: (session: PersistedChatSession) => Promise<void>
     deleteSession: (request: DeleteSessionRequest) => Promise<void>
     saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
+    onSaved: (listener: AcpListener<SessionSavedEvent>) => RemoveListener
+    onDeleted: (listener: AcpListener<SessionDeletedEvent>) => RemoveListener
   }
   settings: {
     getPreflight: () => Promise<Preflight>
@@ -303,6 +310,9 @@ type OpenScienceAPI = {
     create: (request: CreateProjectRequest) => Promise<Project>
     update: (request: UpdateProjectRequest) => Promise<Project>
     delete: (request: DeleteProjectRequest) => Promise<void>
+    onCreated: (listener: AcpListener<Project>) => RemoveListener
+    onUpdated: (listener: AcpListener<Project>) => RemoveListener
+    onDeleted: (listener: AcpListener<ProjectDeletedEvent>) => RemoveListener
   }
   projectFiles: {
     getOverview: (request: { projectId: string }) => Promise<ProjectFilesOverview>
@@ -520,7 +530,9 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('sessions:delete-session', request) as Promise<void>,
     // Persists the last-open project/session pointer.
     saveManifest: (request) =>
-      ipcRenderer.invoke('sessions:save-manifest', request) as Promise<void>
+      ipcRenderer.invoke('sessions:save-manifest', request) as Promise<void>,
+    onSaved: (listener) => onIpcMessage('session:saved', listener),
+    onDeleted: (listener) => onIpcMessage('session:deleted', listener)
   },
   settings: {
     // Model-settings/onboarding surface: secrets stay in main, the renderer only sees masked views.
@@ -665,7 +677,10 @@ const api: OpenScienceAPI = {
     get: (id) => ipcRenderer.invoke('projects:get', id) as Promise<Project | null>,
     create: (request) => ipcRenderer.invoke('projects:create', request) as Promise<Project>,
     update: (request) => ipcRenderer.invoke('projects:update', request) as Promise<Project>,
-    delete: (request) => ipcRenderer.invoke('projects:delete', request) as Promise<void>
+    delete: (request) => ipcRenderer.invoke('projects:delete', request) as Promise<void>,
+    onCreated: (listener) => onIpcMessage('project:created', listener),
+    onUpdated: (listener) => onIpcMessage('project:updated', listener),
+    onDeleted: (listener) => onIpcMessage('project:deleted', listener)
   },
   // Files exposes metadata pages only. Thumbnail/full-preview bytes continue through the existing
   // artifact/upload APIs after a visible item has been selected or rendered.

@@ -128,6 +128,16 @@ describe('renderer session persistence bridge', () => {
     expect(useSessionStore.getState().selectedSessionId).toBe('session-1')
   })
 
+  it('does not echo an externally hydrated session back to persistence', async () => {
+    const api = createApi()
+    const save = createStoreSaver(api)
+
+    useSessionStore.getState().upsertPersistedSession(createPersistedSession())
+    await save(useSessionStore.getState())
+
+    expect(api.saveSession).not.toHaveBeenCalled()
+  })
+
   it('saves only the session whose reference changed', async () => {
     const api = createApi()
     const save = createStoreSaver(api)

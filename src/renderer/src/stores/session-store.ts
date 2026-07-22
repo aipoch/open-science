@@ -178,6 +178,7 @@ type SessionStore = SessionStoreData & {
   recordArtifactError: (sessionId: string, error: string) => void
   clearArtifactError: (sessionId: string) => void
   hydrateSessions: (sessions: PersistedChatSession[], manifest?: PersistedSessionManifest) => void
+  upsertPersistedSession: (session: PersistedChatSession) => void
   finishRun: (sessionId: string) => void
   failRun: (sessionId: string, error: string) => void
   // Sets the transient agent status line shown in the waiting indicator; only applies while running.
@@ -212,6 +213,7 @@ let messageSequence = 0
 let pendingSessionSequence = 0
 let timelineSequence = 0
 const ARTIFACT_ERROR_PREFIX = 'Generated file finalization failed'
+const externallyHydratedSessions = new WeakSet<ChatSession>()
 
 // Builds the empty in-memory state used by the app and isolated tests.
 export const createInitialSessionState = (): SessionStoreData => ({
@@ -703,6 +705,24 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       : hydrated[0]?.id
 
     set({ sessions: hydrated, selectedSessionId })
+  },
+
+  // Applies a durable lifecycle event without letting this client's own save echo replace newer
+  // transient runtime state. Newer external snapshots remain authoritative.
+  upsertPersistedSession: (session) => {
+    set((state) => {
+      const existing = state.sessions.find((candidate) => candidate.id === session.id)
+      if (existing && existing.updatedAt >= session.updatedAt) return state
+
+      const hydratedSession = hydrateSession(session)
+      externallyHydratedSessions.add(hydratedSession)
+      const sessions = [
+        hydratedSession,
+        ...state.sessions.filter((candidate) => candidate.id !== session.id)
+      ].sort((left, right) => right.updatedAt - left.updatedAt)
+
+      return { sessions }
+    })
   },
 
   // Appends or extends a streamed agent message using a stable stream id.
@@ -1427,3 +1447,6 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     })
   }
 }))
+
+export const isExternallyHydratedSession = (session: ChatSession): boolean =>
+  externallyHydratedSessions.has(session)

@@ -218,7 +218,10 @@ const registerIpcHandlers = async ({
     },
     saveSession: async (session) => {
       await projectDeletionCoordinator.recoverPendingDeletions()
-      return sessionPersistenceCoordinator.saveSession(session)
+      const created =
+        (await sessionRepository.loadSession(session.projectId, session.id)) === undefined
+      await sessionPersistenceCoordinator.saveSession(session)
+      return created
     },
     deleteSession: async (projectId, sessionId) => {
       await projectDeletionCoordinator.recoverPendingDeletions()

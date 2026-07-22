@@ -30,6 +30,11 @@ import type {
 } from '../shared/file-save'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
+  ProjectDeletedEvent,
+  SessionDeletedEvent,
+  SessionSavedEvent
+} from '../shared/lifecycle-events'
+import type {
   AppendNotebookCodeCellRequest,
   BeginNotebookCodeCellRequest,
   NotebookAvailableEvent,
@@ -193,6 +198,8 @@ interface OpenScienceAPI {
     saveSession(session: PersistedChatSession): Promise<void>
     deleteSession(request: DeleteSessionRequest): Promise<void>
     saveManifest(request: SaveSessionManifestRequest): Promise<void>
+    onSaved(listener: AcpListener<SessionSavedEvent>): RemoveListener
+    onDeleted(listener: AcpListener<SessionDeletedEvent>): RemoveListener
   }
   settings: {
     getPreflight(): Promise<Preflight>
@@ -278,6 +285,9 @@ interface OpenScienceAPI {
     create(request: CreateProjectRequest): Promise<Project>
     update(request: UpdateProjectRequest): Promise<Project>
     delete(request: DeleteProjectRequest): Promise<void>
+    onCreated(listener: AcpListener<Project>): RemoveListener
+    onUpdated(listener: AcpListener<Project>): RemoveListener
+    onDeleted(listener: AcpListener<ProjectDeletedEvent>): RemoveListener
   }
   projectFiles: {
     getOverview(request: { projectId: string }): Promise<ProjectFilesOverview>

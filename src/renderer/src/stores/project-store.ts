@@ -13,6 +13,8 @@ type ProjectStore = ProjectStoreData & {
   createProject: (request: CreateProjectRequest) => Promise<Project | undefined>
   updateProject: (request: UpdateProjectRequest) => Promise<Project | undefined>
   deleteProject: (id: string) => Promise<void>
+  upsertProject: (project: Project) => void
+  removeProject: (id: string) => void
 }
 
 // Surfaces DB/IPC failures as a short message instead of a silent empty list.
@@ -24,7 +26,7 @@ const sortByUpdatedDesc = (projects: Project[]): Project[] =>
   [...projects].sort((left, right) => right.updatedAt - left.updatedAt)
 
 // Replaces or inserts a project by id, then re-sorts.
-const upsertProject = (projects: Project[], project: Project): Project[] => {
+const upsertProjectList = (projects: Project[], project: Project): Project[] => {
   const withoutProject = projects.filter((existing) => existing.id !== project.id)
 
   return sortByUpdatedDesc([project, ...withoutProject])
@@ -57,7 +59,7 @@ export const useProjectStore = create<ProjectStore>((set) => ({
   createProject: async (request) => {
     const project = await window.api.projects.create(request)
 
-    set((state) => ({ projects: upsertProject(state.projects, project), loadError: undefined }))
+    set((state) => ({ projects: upsertProjectList(state.projects, project), loadError: undefined }))
 
     return project
   },
@@ -66,7 +68,7 @@ export const useProjectStore = create<ProjectStore>((set) => ({
   updateProject: async (request) => {
     const project = await window.api.projects.update(request)
 
-    set((state) => ({ projects: upsertProject(state.projects, project) }))
+    set((state) => ({ projects: upsertProjectList(state.projects, project) }))
 
     return project
   },
@@ -76,5 +78,11 @@ export const useProjectStore = create<ProjectStore>((set) => ({
     await window.api.projects.delete({ id })
 
     set((state) => ({ projects: state.projects.filter((project) => project.id !== id) }))
-  }
+  },
+
+  upsertProject: (project) =>
+    set((state) => ({ projects: upsertProjectList(state.projects, project) })),
+
+  removeProject: (id) =>
+    set((state) => ({ projects: state.projects.filter((project) => project.id !== id) }))
 }))

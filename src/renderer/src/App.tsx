@@ -4,6 +4,7 @@ import { useSessionPersistence } from '@/lib/session-persistence/session-persist
 import { CloseConfirmModal } from '@/components/CloseConfirmModal'
 import { DataRootMissingDialog } from '@/components/DataRootMissingDialog'
 import { LegacyDataMoveDialog } from '@/components/LegacyDataMoveDialog'
+import { LifecycleToast } from '@/components/LifecycleToast'
 import { UpdateDialog } from '@/components/UpdateDialog'
 import { HomePage } from '@/pages/home/HomePage'
 import { OnboardingWizard } from '@/pages/onboarding/OnboardingWizard'
@@ -13,6 +14,7 @@ import { SettingsPage } from '@/pages/settings/SettingsPage'
 import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
 import { WorkspacePage } from '@/pages/workspace/WorkspacePage'
 import { useCloseActivePaneShortcut } from '@/hooks/useCloseActivePaneShortcut'
+import { useLifecycleSync } from '@/hooks/useLifecycleSync'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useProjectStore } from '@/stores/project-store'
@@ -22,6 +24,7 @@ import { useUpdateStore } from '@/stores/update-store'
 const App = (): React.JSX.Element | null => {
   // Persistence is started once at the top so sessions stay loaded for both Home and Workspace.
   const isSessionPersistenceReady = useSessionPersistence()
+  const lifecycleSync = useLifecycleSync()
   const view = useNavigationStore((state) => state.view)
   // Cmd+W / Ctrl+W closes the open preview panel before it closes the window.
   useCloseActivePaneShortcut()
@@ -120,6 +123,11 @@ const App = (): React.JSX.Element | null => {
       )}
       <SettingsPage open={isSettingsOpen} onClose={closeSettings} />
       <ConnectorApprovalDialog />
+      <LifecycleToast
+        notice={lifecycleSync.notice}
+        onDismiss={lifecycleSync.dismissNotice}
+        onView={lifecycleSync.viewNotice}
+      />
       <UpdateDialog />
       <CloseConfirmModal />
       <DataRootMissingDialog

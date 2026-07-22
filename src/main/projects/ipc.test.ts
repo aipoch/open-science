@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PreviewStateRepository } from './preview-repository'
 import type { ProjectRepository } from './repository'
 
-const { ipcHandlers } = vi.hoisted(() => ({
+const { broadcastLifecycleEvent, ipcHandlers } = vi.hoisted(() => ({
+  broadcastLifecycleEvent: vi.fn(),
   ipcHandlers: new Map<string, (...args: unknown[]) => unknown>()
 }))
 
@@ -13,11 +14,13 @@ vi.mock('electron', () => ({
       ipcHandlers.set(channel, handler)
   }
 }))
+vi.mock('../lifecycle-broadcast', () => ({ broadcastLifecycleEvent }))
 
 import { createProjectHandlers, registerProjectIpcHandlers } from './ipc'
 
 beforeEach(() => {
   ipcHandlers.clear()
+  broadcastLifecycleEvent.mockClear()
 })
 
 describe('createProjectHandlers', () => {
@@ -141,6 +144,11 @@ describe('createProjectHandlers', () => {
     expect(repository.create).toHaveBeenCalledWith(createRequest)
     expect(repository.update).toHaveBeenCalledWith(updateRequest)
     expect(deletionCoordinator.deleteProject).toHaveBeenCalledWith('project-1')
+    expect(broadcastLifecycleEvent).toHaveBeenCalledWith('project:created', project)
+    expect(broadcastLifecycleEvent).toHaveBeenCalledWith('project:updated', project)
+    expect(broadcastLifecycleEvent).toHaveBeenCalledWith('project:deleted', {
+      projectId: 'project-1'
+    })
     expect(previewRepository.get).toHaveBeenCalledWith('project-1')
     expect(previewRepository.save).toHaveBeenCalledWith('project-1', previewState)
     expect(previewRepository.delete).toHaveBeenCalledWith('project-1')

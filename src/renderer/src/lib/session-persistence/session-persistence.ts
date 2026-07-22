@@ -7,7 +7,11 @@ import type {
   PersistedChatSession,
   SaveSessionManifestRequest
 } from '../../../../shared/session-persistence'
-import { toPersistedSession, useSessionStore } from '../../stores/session-store'
+import {
+  isExternallyHydratedSession,
+  toPersistedSession,
+  useSessionStore
+} from '../../stores/session-store'
 import type { ChatSession } from '../../stores/session-store'
 
 type SessionPersistenceApi = {
@@ -120,7 +124,7 @@ const createStoreSaver = (
     for (const session of nextSessions) {
       if (session.isPending || !session.projectId) continue
 
-      if (previousById.get(session.id) !== session) {
+      if (previousById.get(session.id) !== session && !isExternallyHydratedSession(session)) {
         const persisted = toPersistedSession(session)
 
         tasks.push(() => api.saveSession(persisted))

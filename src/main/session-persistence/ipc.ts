@@ -6,6 +6,8 @@ import type {
   PersistedChatSession,
   SaveSessionManifestRequest
 } from '../../shared/session-persistence'
+import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
+import { broadcastLifecycleEvent } from '../lifecycle-broadcast'
 import { resolveStorageRoot } from '../storage-root'
 import { SessionRepository } from './repository'
 import { ReviewRepository } from '../reviewer/repository'
@@ -16,7 +18,7 @@ const log = createLogger('session-persistence:ipc')
 
 type SessionPersistenceBackend = {
   loadAll: () => Promise<LoadAllSessionsResult>
-  saveSession: (session: PersistedChatSession) => Promise<void>
+  saveSession: (session: PersistedChatSession) => Promise<boolean>
   deleteSession: (projectId: string, sessionId: string) => Promise<void>
   deleteProjectSessions: (projectId: string) => Promise<void>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
@@ -24,7 +26,7 @@ type SessionPersistenceBackend = {
 
 type SessionPersistenceHandlers = {
   loadAll: () => Promise<LoadAllSessionsResult>
-  saveSession: (session: PersistedChatSession) => Promise<void>
+  saveSession: (session: PersistedChatSession) => Promise<boolean>
   deleteSession: (request: DeleteSessionRequest) => Promise<void>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
 }
@@ -66,12 +68,14 @@ const registerSessionPersistenceIpcHandlers = (
 
   // Keep persistence IPC separate from ACP runtime commands; it owns durable UI state only.
   ipcMain.handle('sessions:load-all', () => handlers.loadAll())
-  ipcMain.handle('sessions:save-session', (_event, session: PersistedChatSession) =>
-    handlers.saveSession(session)
-  )
-  ipcMain.handle('sessions:delete-session', (_event, request: DeleteSessionRequest) =>
-    handlers.deleteSession(request)
-  )
+  ipcMain.handle('sessions:save-session', async (_event, session: PersistedChatSession) => {
+    const created = await handlers.saveSession(session)
+    broadcastLifecycleEvent(LIFECYCLE_CHANNELS.sessionSaved, { session, created })
+  })
+  ipcMain.handle('sessions:delete-session', async (_event, request: DeleteSessionRequest) => {
+    await handlers.deleteSession(request)
+    broadcastLifecycleEvent(LIFECYCLE_CHANNELS.sessionDeleted, request)
+  })
   ipcMain.handle('sessions:save-manifest', (_event, request: SaveSessionManifestRequest) =>
     handlers.saveManifest(request)
   )

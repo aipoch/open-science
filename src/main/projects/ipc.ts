@@ -12,6 +12,8 @@ import type {
   Project,
   UpdateProjectRequest
 } from '../../shared/projects'
+import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
+import { broadcastLifecycleEvent } from '../lifecycle-broadcast'
 import type { ProjectDeletionCoordinator } from './deletion-coordinator'
 import { PreviewStateRepository } from './preview-repository'
 import { getProjectDbClient } from './prisma-client'
@@ -79,15 +81,20 @@ const registerProjectIpcHandlers = (
 
   ipcMain.handle('projects:list', () => handlers.list())
   ipcMain.handle('projects:get', (_event, id: string) => handlers.get(id))
-  ipcMain.handle('projects:create', (_event, request: CreateProjectRequest) =>
-    handlers.create(request)
-  )
-  ipcMain.handle('projects:update', (_event, request: UpdateProjectRequest) =>
-    handlers.update(request)
-  )
-  ipcMain.handle('projects:delete', (_event, request: DeleteProjectRequest) =>
-    handlers.delete(request.id)
-  )
+  ipcMain.handle('projects:create', async (_event, request: CreateProjectRequest) => {
+    const project = await handlers.create(request)
+    broadcastLifecycleEvent(LIFECYCLE_CHANNELS.projectCreated, project)
+    return project
+  })
+  ipcMain.handle('projects:update', async (_event, request: UpdateProjectRequest) => {
+    const project = await handlers.update(request)
+    broadcastLifecycleEvent(LIFECYCLE_CHANNELS.projectUpdated, project)
+    return project
+  })
+  ipcMain.handle('projects:delete', async (_event, request: DeleteProjectRequest) => {
+    await handlers.delete(request.id)
+    broadcastLifecycleEvent(LIFECYCLE_CHANNELS.projectDeleted, { projectId: request.id })
+  })
 
   ipcMain.handle(
     'preview:load',
