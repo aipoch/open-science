@@ -254,6 +254,90 @@ gate('repl_loop.js host.compute', () => {
       child.kill()
     }
   }, 60_000)
+
+  it('create().set_concurrency_limit(k) posts op=set_concurrency_limit with session_id and limit', async () => {
+    next = { status: 200, body: { result: null } }
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'tok',
+      OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-42'
+    })
+    try {
+      const r = await send(
+        "const c = host.compute.create('ssh:biowulf'); await c.set_concurrency_limit(5); return 'ok'"
+      )
+      expect(r.error).toBeNull()
+      expect(r.result).toContain('ok')
+      expect(received.params?.op).toBe('set_concurrency_limit')
+      expect(received.params?.session_id).toBe('session-42')
+      expect(received.params?.limit).toBe(5)
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
+  it('create().set_concurrency_limit() validates that k is a positive integer', async () => {
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'tok',
+      OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-42'
+    })
+    try {
+      // Negative number should throw
+      const r1 = await send(
+        "const c = host.compute.create('ssh:biowulf'); try { await c.set_concurrency_limit(-1); return 'bad' } catch (e) { return e.message }"
+      )
+      expect(r1.result).toContain('positive integer')
+
+      // Zero should throw
+      const r2 = await send(
+        "const c2 = host.compute.create('ssh:biowulf'); try { await c2.set_concurrency_limit(0); return 'bad' } catch (e) { return e.message }"
+      )
+      expect(r2.result).toContain('positive integer')
+
+      // Float should throw
+      const r3 = await send(
+        "const c3 = host.compute.create('ssh:biowulf'); try { await c3.set_concurrency_limit(2.5); return 'bad' } catch (e) { return e.message }"
+      )
+      expect(r3.result).toContain('positive integer')
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
+  it('create().status() posts op=concurrency_status and returns session status dict', async () => {
+    next = {
+      status: 200,
+      body: {
+        result: {
+          session_limit: 10,
+          active_count: 3,
+          queued_count: 1,
+          provider_ceilings: { 'ssh:biowulf': 50, 'ssh:cluster-a': 10 }
+        }
+      }
+    }
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'tok',
+      OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-42'
+    })
+    try {
+      const r = await send(
+        "const c = host.compute.create('ssh:biowulf'); const s = await c.status(); return JSON.stringify(s)"
+      )
+      expect(r.error).toBeNull()
+      const parsed = JSON.parse(r.result ?? '')
+      expect(parsed.session_limit).toBe(10)
+      expect(parsed.active_count).toBe(3)
+      expect(parsed.queued_count).toBe(1)
+      expect(parsed.provider_ceilings).toEqual({ 'ssh:biowulf': 50, 'ssh:cluster-a': 10 })
+      expect(received.params?.op).toBe('concurrency_status')
+      expect(received.params?.session_id).toBe('session-42')
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
 })
 
 gate('repl_loop.js host.mcp', () => {
