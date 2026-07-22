@@ -80,6 +80,7 @@ type SessionNotebookContentProps = {
   error?: string
   onClose: () => void
   onExport: () => Promise<void>
+  onExportByKernel: () => Promise<void>
 }
 
 // Pure presentational body of the dialog: header summary, empty/loading/error/populated states,
@@ -91,10 +92,12 @@ const SessionNotebookContent = ({
   status,
   error,
   onClose,
-  onExport
+  onExport,
+  onExportByKernel
 }: SessionNotebookContentProps): React.JSX.Element => {
   const [activeKind, setActiveKind] = useState<NotebookKernelKind>('python')
   const [exporting, setExporting] = useState(false)
+  const [splitExporting, setSplitExporting] = useState(false)
   const [exportError, setExportError] = useState<string>()
   const shortId = sessionId.slice(0, 8)
   const agents = runs.some((run) => run.source === 'agent') ? 1 : 0
@@ -119,7 +122,8 @@ const SessionNotebookContent = ({
     ? activeKind
     : (KERNEL_KIND_ORDER.find((kind) => kindsWithRuns.has(kind)) ?? visibleKinds[0] ?? 'python')
   const visibleRuns = runs.filter((run) => resolveRunKernelKind(run) === effectiveActiveKind)
-  const exportDisabled = status !== 'ready' || runs.length === 0 || exporting
+  const mixedDataKernels = kindsWithRuns.has('python') && kindsWithRuns.has('r')
+  const exportDisabled = status !== 'ready' || runs.length === 0 || exporting || splitExporting
 
   const handleExport = async (): Promise<void> => {
     setExporting(true)
@@ -133,6 +137,18 @@ const SessionNotebookContent = ({
       setExportError(getErrorMessage(exportFailure))
     } finally {
       setExporting(false)
+    }
+  }
+
+  const handleSplitExport = async (): Promise<void> => {
+    setSplitExporting(true)
+    setExportError(undefined)
+    try {
+      await onExportByKernel()
+    } catch (exportFailure) {
+      setExportError(getErrorMessage(exportFailure))
+    } finally {
+      setSplitExporting(false)
     }
   }
 
@@ -215,32 +231,50 @@ const SessionNotebookContent = ({
         <p className="min-w-0 truncate text-xs text-danger-000" role="alert">
           {exportError}
         </p>
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              {/* Wrapper span keeps the tooltip reachable while the button is disabled. */}
-              <span>
-                <button
-                  type="button"
-                  disabled={exportDisabled}
-                  onClick={() => void handleExport()}
-                  className="flex shrink-0 items-center justify-center gap-1.5 rounded px-2 py-1 text-xs text-text-200 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50"
-                  aria-label="Download as .ipynb"
-                >
-                  {exporting ? (
-                    <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
-                  ) : (
-                    <Download className="size-3.5" aria-hidden="true" />
-                  )}
-                  {exporting ? 'Exporting…' : '.ipynb'}
-                </button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>
-              {runs.length === 0 ? 'No runs to export' : 'Download as .ipynb'}
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        <div className="flex shrink-0 items-center gap-2">
+          {mixedDataKernels ? (
+            <button
+              type="button"
+              disabled={exportDisabled}
+              onClick={() => void handleSplitExport()}
+              className="flex items-center justify-center gap-1.5 rounded px-2 py-1 text-xs text-text-200 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50"
+              aria-label="Download separate notebooks by kernel"
+            >
+              {splitExporting ? (
+                <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+              ) : (
+                <Download className="size-3.5" aria-hidden="true" />
+              )}
+              {splitExporting ? 'Exporting…' : 'Split by kernel'}
+            </button>
+          ) : null}
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                {/* Wrapper span keeps the tooltip reachable while the button is disabled. */}
+                <span>
+                  <button
+                    type="button"
+                    disabled={exportDisabled}
+                    onClick={() => void handleExport()}
+                    className="flex items-center justify-center gap-1.5 rounded px-2 py-1 text-xs text-text-200 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50"
+                    aria-label="Download as .ipynb"
+                  >
+                    {exporting ? (
+                      <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Download className="size-3.5" aria-hidden="true" />
+                    )}
+                    {exporting ? 'Exporting…' : '.ipynb'}
+                  </button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {runs.length === 0 ? 'No runs to export' : 'Download as .ipynb'}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
       </div>
     </>
   )
@@ -327,6 +361,13 @@ const SessionNotebookDialog = ({
               onClose={onClose}
               onExport={async () => {
                 await window.api.notebook.exportIpynb({
+                  sessionId: session.id,
+                  projectName: session.projectId,
+                  workspaceCwd: session.cwd ?? ''
+                })
+              }}
+              onExportByKernel={async () => {
+                await window.api.notebook.exportIpynbByKernel({
                   sessionId: session.id,
                   projectName: session.projectId,
                   workspaceCwd: session.cwd ?? ''

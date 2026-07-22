@@ -50,6 +50,7 @@ describe('SessionNotebookContent export', () => {
           status="ready"
           onClose={vi.fn()}
           onExport={onExport}
+          onExportByKernel={vi.fn()}
         />
       )
     })
@@ -77,6 +78,7 @@ describe('SessionNotebookContent export', () => {
           status="ready"
           onClose={vi.fn()}
           onExport={onExport}
+          onExportByKernel={vi.fn()}
         />
       )
     })
@@ -104,6 +106,7 @@ describe('SessionNotebookContent export', () => {
           status="ready"
           onClose={vi.fn()}
           onExport={onExport}
+          onExportByKernel={vi.fn()}
         />
       )
     })
@@ -127,6 +130,7 @@ describe('SessionNotebookContent export', () => {
           status="ready"
           onClose={vi.fn()}
           onExport={failingExport}
+          onExportByKernel={vi.fn()}
         />
       )
     })
@@ -147,10 +151,37 @@ describe('SessionNotebookContent export', () => {
           status="ready"
           onClose={vi.fn()}
           onExport={vi.fn()}
+          onExportByKernel={vi.fn()}
         />
       )
     })
 
     expect(container.querySelector('[role="alert"]')?.textContent).toBe('')
+  })
+
+  it('invokes split export for mixed data kernels', async () => {
+    const onExportByKernel = vi.fn().mockResolvedValue(undefined)
+    await act(async () => {
+      root.render(
+        <SessionNotebookContent
+          sessionId="session-1"
+          runs={[run, { ...run, runId: 'run-r', cellId: 'cell-r', kernelKind: 'r' }]}
+          status="ready"
+          onClose={vi.fn()}
+          onExport={vi.fn()}
+          onExportByKernel={onExportByKernel}
+        />
+      )
+    })
+
+    const button = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Download separate notebooks by kernel"]'
+    )
+    await act(async () => {
+      button?.click()
+      await Promise.resolve()
+    })
+
+    expect(onExportByKernel).toHaveBeenCalledOnce()
   })
 })

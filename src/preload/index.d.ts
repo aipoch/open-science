@@ -36,6 +36,7 @@ import type {
   NotebookChangedEvent,
   ExecuteNotebookCodeRequest,
   ExportNotebookResult,
+  ExportNotebookSplitResult,
   FinishNotebookCodeCellRequest,
   NotebookLanguage,
   NotebookRunSummary,
@@ -337,6 +338,7 @@ interface OpenScienceAPI {
     runCell(request: RunNotebookCellRequest): Promise<NotebookRunSummary>
     execute(request: ExecuteNotebookCodeRequest): Promise<NotebookRunSummary>
     exportIpynb(request: NotebookSessionRequest): Promise<ExportNotebookResult>
+    exportIpynbByKernel(request: NotebookSessionRequest): Promise<ExportNotebookSplitResult>
     restart(request: NotebookSessionRequest): Promise<NotebookSessionState>
     shutdown(request: NotebookSessionRequest): Promise<{ sessionId: string; status: 'shutdown' }>
     onAvailable(listener: AcpListener<NotebookAvailableEvent>): RemoveListener

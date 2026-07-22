@@ -5,6 +5,7 @@ import type {
   BeginNotebookCodeCellRequest,
   ExecuteNotebookCodeRequest,
   ExportNotebookResult,
+  ExportNotebookSplitResult,
   FinishNotebookCodeCellRequest,
   NotebookRunSummary,
   NotebookSessionReference,
@@ -29,6 +30,7 @@ type NotebookHandlers = {
   runCell: (request: RunNotebookCellRequest) => Promise<NotebookRunSummary>
   execute: (request: ExecuteNotebookCodeRequest) => Promise<NotebookRunSummary>
   exportIpynb: (request: NotebookSessionRequest) => Promise<ExportNotebookResult>
+  exportIpynbByKernel: (request: NotebookSessionRequest) => Promise<ExportNotebookSplitResult>
   restart: (request: NotebookSessionRequest) => Promise<NotebookSessionState>
   shutdown: (request: NotebookSessionRequest) => ReturnType<NotebookRuntimeService['shutdown']>
 }
@@ -43,6 +45,7 @@ const createNotebookHandlers = (service: NotebookRuntimeService): NotebookHandle
   runCell: (request) => service.runCell(request),
   execute: (request) => service.execute(request),
   exportIpynb: (request) => service.exportIpynb(request),
+  exportIpynbByKernel: (request) => service.exportIpynbByKernel(request),
   restart: (request) => service.restart(request),
   shutdown: (request) => service.shutdown(request)
 })
@@ -74,6 +77,9 @@ const registerNotebookIpcHandlers = (service: NotebookRuntimeService): void => {
   )
   ipcMain.handle('notebook:export-ipynb', (_event, request: NotebookSessionRequest) =>
     handlers.exportIpynb(request)
+  )
+  ipcMain.handle('notebook:export-ipynb-by-kernel', (_event, request: NotebookSessionRequest) =>
+    handlers.exportIpynbByKernel(request)
   )
   ipcMain.handle('notebook:restart', (_event, request: NotebookSessionRequest) =>
     handlers.restart(request)

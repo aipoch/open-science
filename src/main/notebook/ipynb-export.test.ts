@@ -4,7 +4,11 @@ import Ajv from 'ajv'
 import { describe, expect, it } from 'vitest'
 
 import type { NotebookRunDocument, NotebookRunRecord } from '../../shared/notebook'
-import { runDocumentToIpynb, type NbformatOutput } from './ipynb-export'
+import {
+  runDocumentToIpynb,
+  runDocumentToIpynbByKernel,
+  type NbformatOutput
+} from './ipynb-export'
 
 const makeRun = (overrides: Partial<NotebookRunRecord> = {}): NotebookRunRecord => ({
   runId: 'run-1',
@@ -294,5 +298,28 @@ describe('runDocumentToIpynb', () => {
     const notebook = runDocumentToIpynb(document, { appVersion: '1.2.3', artifactOutputs })
 
     await validateAgainstNbformatSchema(notebook)
+  })
+})
+
+describe('runDocumentToIpynbByKernel', () => {
+  it('preserves order and assigns control runs to the most recently active data kernel', async () => {
+    const split = await runDocumentToIpynbByKernel(
+      makeDocument([
+        makeRun({ runId: 'leading-shell', kernelKind: 'bash', script: 'pwd' }),
+        makeRun({ runId: 'python', kernelKind: 'python', script: 'print(1)' }),
+        makeRun({ runId: 'python-repl', kernelKind: 'repl', script: 'await host.mcp()' }),
+        makeRun({ runId: 'r', kernelKind: 'r', script: 'print(2)' }),
+        makeRun({ runId: 'r-shell', kernelKind: 'bash', script: 'ls' })
+      ])
+    )
+
+    expect(split.python?.metadata.kernelspec.name).toBe('python3')
+    expect(split.r?.metadata.kernelspec.name).toBe('ir')
+    expect(split.python?.cells.map((cell) => cell.id)).toEqual([
+      'leading-shell',
+      'python',
+      'python-repl'
+    ])
+    expect(split.r?.cells.map((cell) => cell.id)).toEqual(['r', 'r-shell'])
   })
 })

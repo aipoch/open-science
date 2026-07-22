@@ -12,6 +12,7 @@ import type {
   ExecuteNotebookControlRequest,
   ExecuteShellRequest,
   ExportNotebookResult,
+  ExportNotebookSplitResult,
   FinishNotebookCodeCellRequest,
   NotebookEnvironmentStatus,
   NotebookKernelMetadata,
@@ -36,7 +37,12 @@ import type {
   ProvisionProgress
 } from '../../shared/notebook-env'
 import type { PackageMirror } from '../../shared/mirror'
-import { runDocumentToIpynb, type NbformatOutput, type ResolvedArtifact } from './ipynb-export'
+import {
+  runDocumentToIpynb,
+  runDocumentToIpynbByKernel,
+  type NbformatOutput,
+  type ResolvedArtifact
+} from './ipynb-export'
 import { NotebookKernelExecutor, type NotebookKernelExecutorOptions } from './kernel-executor'
 import type { KernelProcessKind } from './kernel-executor'
 import { effectiveMirrorAsync, type ProbeDeps } from './mirror-probe'
@@ -308,6 +314,9 @@ type NotebookRuntimeServiceOptions = {
   appVersion?: string
   // Save-dialog seam for notebook export tests. Production falls back to Electron's native dialog.
   saveIpynb?: (suggestedName: string, data: string) => Promise<ExportNotebookResult>
+  saveSplitIpynb?: (
+    files: Array<{ name: string; data: string }>
+  ) => Promise<ExportNotebookSplitResult>
   // Resolves app-managed artifact paths with the artifact repository's canonical/symlink checks,
   // bound to the artifact's declaring project/session subtree.
   resolveArtifactPath?: (request: {
@@ -383,6 +392,27 @@ const saveIpynbWithDialog = async (
   if (canceled || !filePath) return { saved: false }
   await writeFile(filePath, data, 'utf8')
   return { saved: true, filePath }
+}
+
+const saveSplitIpynbWithDialog = async (
+  files: Array<{ name: string; data: string }>
+): Promise<ExportNotebookSplitResult> => {
+  const { dialog } = await import('electron')
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: 'Export notebooks by kernel',
+    properties: ['openDirectory', 'createDirectory']
+  })
+  const directory = filePaths[0]
+  if (canceled || !directory) return { saved: false }
+
+  const savedPaths = await Promise.all(
+    files.map(async (file) => {
+      const filePath = join(directory, file.name)
+      await writeFile(filePath, file.data, 'utf8')
+      return filePath
+    })
+  )
+  return { saved: true, filePaths: savedPaths }
 }
 
 const isPathInside = (root: string, candidate: string): boolean => {
@@ -2025,6 +2055,34 @@ class NotebookRuntimeService {
     const serialized = `${JSON.stringify(notebook, null, 2)}\n`
 
     return (this.options.saveIpynb ?? saveIpynbWithDialog)(suggestedName, serialized)
+  }
+
+  // Exports mixed histories as one notebook per data kernel, assigning each control run to the most
+  // recently active data kernel so shell/repl context remains adjacent to the cells it supported.
+  async exportIpynbByKernel(request: NotebookSessionRequest): Promise<ExportNotebookSplitResult> {
+    const projectName = request.projectName ?? this.options.projectName
+    const document = await this.repository.findExisting(projectName, request.sessionId)
+    if (!document) {
+      throw new Error(`Notebook session not found: ${request.sessionId}`)
+    }
+
+    const artifactOutputs = await resolveNotebookArtifactOutputs(
+      document,
+      this.options.resolveArtifactPath
+    )
+    const notebooks = await runDocumentToIpynbByKernel(document, {
+      appVersion: this.options.appVersion,
+      artifactOutputs
+    })
+    const prefix = `session-${request.sessionId.slice(0, 8)}`
+    const files = (['python', 'r'] as const)
+      .filter((kernel) => notebooks[kernel] !== undefined)
+      .map((kernel) => ({
+        name: `${prefix}-${kernel}.ipynb`,
+        data: `${JSON.stringify(notebooks[kernel], null, 2)}\n`
+      }))
+
+    return (this.options.saveSplitIpynb ?? saveSplitIpynbWithDialog)(files)
   }
 
   // Replaces the interpreter process while preserving cells and durable run history. Prefers the

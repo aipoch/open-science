@@ -26,7 +26,14 @@ const renderContent = (props: {
   status: 'loading' | 'error' | 'ready'
   error?: string
 }): string =>
-  renderToStaticMarkup(<SessionNotebookContent onClose={vi.fn()} onExport={vi.fn()} {...props} />)
+  renderToStaticMarkup(
+    <SessionNotebookContent
+      onClose={vi.fn()}
+      onExport={vi.fn()}
+      onExportByKernel={vi.fn()}
+      {...props}
+    />
+  )
 
 describe('SessionNotebookContent', () => {
   it('shows the empty state when there are no runs', () => {
@@ -70,6 +77,22 @@ describe('SessionNotebookContent', () => {
     const emptyButton = empty.match(/<button[^>]*aria-label="Download as \.ipynb"[^>]*>/)?.[0]
     expect(populatedButton).not.toMatch(/\sdisabled(?:=|\s|>)/)
     expect(emptyButton).toMatch(/\sdisabled(?:=|\s|>)/)
+  })
+
+  it('offers split export only for mixed Python/R sessions', () => {
+    const mixed = renderContent({
+      sessionId: 's1',
+      runs: [makeRun(), makeRun({ runId: 'r1', kernelKind: 'r' })],
+      status: 'ready'
+    })
+    const pythonOnly = renderContent({
+      sessionId: 's1',
+      runs: [makeRun()],
+      status: 'ready'
+    })
+
+    expect(mixed).toContain('aria-label="Download separate notebooks by kernel"')
+    expect(pythonOnly).not.toContain('aria-label="Download separate notebooks by kernel"')
   })
 })
 

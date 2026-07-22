@@ -231,6 +231,13 @@ export type ExportNotebookResult =
       filePath: string
     }
 
+export type ExportNotebookSplitResult =
+  | { saved: false }
+  | {
+      saved: true
+      filePaths: string[]
+    }
+
 // Starts a streamed code write into a notebook cell.
 export type BeginNotebookCodeCellRequest = NotebookSessionRequest & {
   cellId?: string

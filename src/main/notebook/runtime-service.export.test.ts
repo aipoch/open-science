@@ -77,6 +77,60 @@ describe('NotebookRuntimeService exportIpynb', () => {
     expect(result).toEqual({ saved: true, filePath: '/downloads/session.ipynb' })
   })
 
+  it('saves mixed sessions as separate per-kernel notebooks', async () => {
+    const mixedDocument: NotebookRunDocument = {
+      ...document,
+      runs: [
+        document.runs[0],
+        {
+          ...document.runs[0],
+          runId: 'run-r',
+          cellId: 'cell-r',
+          kernelKind: 'r',
+          script: 'print(2)',
+          environment: 'default-r'
+        }
+      ]
+    }
+    const repository = {
+      findExisting: vi.fn().mockResolvedValue(mixedDocument)
+    } as unknown as NotebookRunRepository
+    const saveSplitIpynb = vi.fn().mockResolvedValue({
+      saved: true,
+      filePaths: ['/downloads/python.ipynb', '/downloads/r.ipynb']
+    })
+    const service = new NotebookRuntimeService({
+      configRoot: '/config',
+      dataRoot: '/storage',
+      projectName: 'default-project',
+      repository,
+      saveSplitIpynb
+    })
+
+    const result = await service.exportIpynbByKernel({
+      sessionId: '12345678-abcd',
+      workspaceCwd: '/workspace'
+    })
+
+    expect(saveSplitIpynb).toHaveBeenCalledOnce()
+    const files = saveSplitIpynb.mock.calls[0][0] as Array<{ name: string; data: string }>
+    expect(files.map(({ name }) => name)).toEqual([
+      'session-12345678-python.ipynb',
+      'session-12345678-r.ipynb'
+    ])
+    expect(
+      files.map(
+        ({ data }) =>
+          (JSON.parse(data) as { metadata: { kernelspec: { name: string } } }).metadata.kernelspec
+            .name
+      )
+    ).toEqual(['python3', 'ir'])
+    expect(result).toEqual({
+      saved: true,
+      filePaths: ['/downloads/python.ipynb', '/downloads/r.ipynb']
+    })
+  })
+
   it('rejects an unknown session before opening the save dialog', async () => {
     const repository = {
       findExisting: vi.fn().mockResolvedValue(null)

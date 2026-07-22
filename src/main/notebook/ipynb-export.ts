@@ -85,6 +85,8 @@ type RunDocumentToIpynbOptions = {
   artifactOutputs?: ReadonlyMap<string, NbformatOutput[]>
 }
 
+type KernelSplitIpynb = Partial<Record<'python' | 'r', IpynbNotebook>>
+
 // nbformat accepts either one string or an array of lines. Arrays make generated notebooks stable and
 // easy to diff, while preserving every original newline.
 const splitLines = (value: string): string[] => {
@@ -296,5 +298,35 @@ const runDocumentToIpynb = (
   }
 }
 
-export { runDocumentToIpynb }
-export type { IpynbNotebook, NbformatOutput, ResolvedArtifact, RunDocumentToIpynbOptions }
+// Splits a mixed history into chronological per-data-kernel projections. Control-plane runs follow
+// the most recently active data kernel (or the dominant kernel before the first data cell), preserving
+// their local context without duplicating them across notebooks.
+const runDocumentToIpynbByKernel = async (
+  document: NotebookRunDocument,
+  options: RunDocumentToIpynbOptions = {}
+): Promise<KernelSplitIpynb> => {
+  const groups: Record<'python' | 'r', NotebookRunRecord[]> = { python: [], r: [] }
+  let activeKernel = dominantKernel(document.runs)
+  for (const run of document.runs) {
+    if (run.kernelKind === 'python' || run.kernelKind === 'r') {
+      activeKernel = run.kernelKind
+    }
+    groups[activeKernel].push(run)
+  }
+
+  const result: KernelSplitIpynb = {}
+  for (const kernel of ['python', 'r'] as const) {
+    if (groups[kernel].length === 0) continue
+    result[kernel] = await runDocumentToIpynb({ ...document, runs: groups[kernel] }, options)
+  }
+  return result
+}
+
+export { runDocumentToIpynb, runDocumentToIpynbByKernel }
+export type {
+  IpynbNotebook,
+  KernelSplitIpynb,
+  NbformatOutput,
+  ResolvedArtifact,
+  RunDocumentToIpynbOptions
+}
