@@ -642,10 +642,11 @@ describe('workspace agent message sending', () => {
     await flushRuntimeTasks()
     await flushRuntimeTasks()
 
+    // The specific failure cause is preserved in the Resume banner instead of a generic message.
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'error',
       interrupted: true,
-      error: 'Connection lost — Resume to reconnect and continue.'
+      error: 'Connection timeout — Resume to reconnect and continue.'
     })
   })
 

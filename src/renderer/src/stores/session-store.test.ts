@@ -1422,5 +1422,36 @@ describe('session store', () => {
       expect(session.messages[0]).toMatchObject({ role: 'user', content: 'Read the files' })
       expect(session.messages[1]).toMatchObject({ content: 'I started', status: 'error' })
     })
+
+    it('markDisconnected preserves a specific reason in the Resume banner', () => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'transport-session-1',
+        content: 'Read the files',
+        cwd: '/workspace/project'
+      })
+
+      useSessionStore.getState().markDisconnected('transport-session-1', 'Connection timeout')
+
+      const session = useSessionStore.getState().sessions[0]
+
+      expect(session.status).toBe('error')
+      expect(session.interrupted).toBe(true)
+      // The specific cause is kept while retaining the Resume affordance.
+      expect(session.error).toBe('Connection timeout — Resume to reconnect and continue.')
+    })
+
+    it('markDisconnected falls back to a generic message for a blank reason', () => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'transport-session-1',
+        content: 'Read the files',
+        cwd: '/workspace/project'
+      })
+
+      useSessionStore.getState().markDisconnected('transport-session-1', '   ')
+
+      const session = useSessionStore.getState().sessions[0]
+
+      expect(session.error).toBe('Connection lost — Resume to reconnect and continue.')
+    })
   })
 })

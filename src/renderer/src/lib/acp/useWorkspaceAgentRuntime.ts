@@ -133,7 +133,8 @@ const failOrMarkDisconnected = async (sessionId: string, message: string): Promi
     const snapshot = await window.api.acp.getState()
 
     if (snapshot.status === 'closed' || snapshot.status === 'error') {
-      useSessionStore.getState().markDisconnected(sessionId)
+      // Keep the specific failure cause (e.g. "Connection timeout") in the Resume banner.
+      useSessionStore.getState().markDisconnected(sessionId, message)
       return
     }
   } catch {

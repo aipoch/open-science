@@ -190,7 +190,7 @@ type SessionStore = SessionStoreData & {
     agentFrameworkId?: PersistedChatSession['agentFrameworkId'],
     agentBackendId?: PersistedChatSession['agentBackendId']
   ) => void
-  markDisconnected: (sessionId: string) => void
+  markDisconnected: (sessionId: string, reason?: string) => void
   removeMessage: (sessionId: string, messageId: string) => void
   upsertToolActivity: (input: UpsertToolActivityInput) => void
   setPermissionPending: (sessionId: string) => void
@@ -1212,7 +1212,13 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
 
   // Flags a session dropped by a live connection loss so the Resume banner appears; like failRun it
   // settles any half-streamed message/open tool so nothing hangs in a perpetually-running state.
-  markDisconnected: (sessionId) => {
+  markDisconnected: (sessionId, reason) => {
+    // Preserve the specific failure cause (e.g. "Connection timeout") when the caller has one,
+    // while keeping the Resume affordance. Fall back to a generic message otherwise.
+    const trimmedReason = reason?.trim()
+    const error = trimmedReason
+      ? `${trimmedReason} — Resume to reconnect and continue.`
+      : 'Connection lost — Resume to reconnect and continue.'
     set((state) => ({
       sessions: state.sessions.map((session) =>
         session.id === sessionId
@@ -1222,7 +1228,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               activeRun: undefined,
               interrupted: true,
               compacting: undefined,
-              error: 'Connection lost — Resume to reconnect and continue.',
+              error,
               messages: failStreamingMessages(session.messages),
               activities: failOpenActivities(session.activities),
               updatedAt: Date.now()
