@@ -175,6 +175,11 @@ type NotebookExecutionRequest = {
   // Connector RPC connection injected into the kernel spawn env for host.mcp().
   mcpRpcEndpoint?: string
   mcpRpcToken?: string
+  // Notebook session id / project name injected into the REPL kernel spawn env so host.compute can
+  // carry grant-scope identity (This conversation / This project) on its call_command payloads. Only
+  // the control path sets these; data cells have no host.compute and leave them unset.
+  sessionId?: string
+  projectName?: string
 }
 
 type NotebookExecutionResult = {
@@ -1825,7 +1830,11 @@ class NotebookRuntimeService {
           protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
           timeoutMs: request.timeoutMs,
           mcpRpcEndpoint: mcpRpc?.endpoint,
-          mcpRpcToken: mcpRpc?.token
+          mcpRpcToken: mcpRpc?.token,
+          // Grant-scope identity for host.compute (This conversation / This project). The executor
+          // forwards these into the repl kernel's spawn env; only the control path carries them.
+          sessionId: session.sessionId,
+          projectName: session.projectName
         })
         .catch((error: unknown) => {
           executedOnLiveKernel = false

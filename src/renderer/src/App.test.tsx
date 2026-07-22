@@ -129,7 +129,12 @@ describe('App startup routing', () => {
     })
     window.api = {
       storage: { getInfo: mocks.getInfo },
-      settings: { onConnectorApprovalRequest: vi.fn(() => vi.fn()) }
+      settings: { onConnectorApprovalRequest: vi.fn(() => vi.fn()) },
+      compute: {
+        onApprovalRequest: vi.fn(() => vi.fn()),
+        onJobUpdated: vi.fn(() => vi.fn()),
+        enabledHostsSet: vi.fn(() => Promise.resolve())
+      }
     } as unknown as Window['api']
   })
 

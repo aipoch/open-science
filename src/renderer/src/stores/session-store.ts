@@ -199,6 +199,8 @@ type SessionStore = SessionStoreData & {
   setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => void
   // Persists the per-session auto-review toggle. true = on; false = off (default).
   setAutoReviewEnabled: (sessionId: string, enabled: boolean) => void
+  // Sets the per-session enabled compute hosts (single-select, stored as array for extensibility).
+  setEnabledComputeHosts: (sessionId: string, providerIds: string[]) => void
   // Sets or clears the per-session fix loop active flag. When true, the composer send button is
   // disabled for this session; when false (loop ended or cancelled), send is re-enabled.
   setFixLoopActive: (sessionId: string, active: boolean) => void
@@ -1351,6 +1353,20 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           ? {
               ...session,
               autoReviewEnabled: enabled,
+              updatedAt: Date.now()
+            }
+          : session
+      )
+    }))
+  },
+
+  setEnabledComputeHosts: (sessionId, providerIds) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              enabledComputeHosts: providerIds.length > 0 ? providerIds : undefined,
               updatedAt: Date.now()
             }
           : session

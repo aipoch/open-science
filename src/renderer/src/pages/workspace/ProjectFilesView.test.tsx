@@ -7,6 +7,9 @@ import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
+import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
+import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+import type { ComputeHost } from '../../../../shared/compute'
 import {
   createInitialSessionState,
   type ChatMessage,
@@ -2347,5 +2350,202 @@ describe('ProjectFilesView', () => {
     expect(thumbnailReads[1]?.[0]).toEqual(
       expect.objectContaining({ path: '/workspace/second.txt' })
     )
+  })
+})
+
+const createHost = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
+  id: 'host-1',
+  providerId: 'ssh:biowulf',
+  displayName: 'biowulf',
+  shape: 'direct_ssh',
+  sshAlias: 'biowulf',
+  sshOverrides: undefined,
+  scratchRoot: undefined,
+  scratchPinned: false,
+  concurrencyLimit: undefined,
+  probeResult: undefined,
+  detailsDoc: '',
+  detailsUpdatedAt: undefined,
+  detailsUpdatedBy: undefined,
+  createdAt: 1,
+  updatedAt: 1,
+  ...overrides
+})
+
+describe('ProjectFilesView — REMOTE section in source dropdown', () => {
+  let container: HTMLDivElement
+  let root: Root
+
+  beforeEach(() => {
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    useComputeStore.setState({ ...createInitialComputeState(), isLoaded: true })
+    useSettingsStore.setState({
+      ...createInitialSettingsState(),
+      openSettings: vi.fn(),
+      openSettingsToCompute: vi.fn()
+    } as unknown as typeof useSettingsStore extends { getState: () => infer S } ? S : never)
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    window.api = {
+      saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
+      previewResources: {
+        acquire: vi.fn().mockResolvedValue({
+          id: 'resource:test',
+          url: 'open-science-preview://resource/test',
+          size: 100,
+          mimeType: 'text/plain',
+          version: 1
+        }),
+        readRange: vi.fn(),
+        release: vi.fn().mockResolvedValue(undefined)
+      },
+      artifacts: {
+        readPreview: vi.fn().mockResolvedValue({
+          content: 'dGVzdA==',
+          encoding: 'base64',
+          size: 4,
+          truncated: false
+        })
+      },
+      uploads: {
+        readPreview: vi.fn().mockResolvedValue({
+          content: 'dGVzdA==',
+          encoding: 'base64',
+          size: 4,
+          truncated: false
+        })
+      },
+      compute: {
+        listDir: vi.fn().mockResolvedValue({
+          entries: [],
+          truncated: false,
+          roots: { home: '/home/user' },
+          resolvedPath: '/home/user'
+        }),
+        bookmarksGet: vi.fn().mockResolvedValue([]),
+        bookmarksSet: vi.fn().mockResolvedValue(undefined)
+      },
+      projectFiles: {
+        getOverview: vi.fn().mockResolvedValue({
+          totalCount: 0,
+          uploadCount: 0,
+          artifactCount: 0,
+          artifactGroupCount: 0,
+          isIndexComplete: true
+        }),
+        listFiles: vi.fn().mockResolvedValue({ items: [], totalCount: 0 }),
+        listArtifactGroups: vi.fn().mockResolvedValue({ items: [], totalCount: 0 }),
+        repairIndex: vi.fn().mockResolvedValue(undefined),
+        onChanged: vi.fn(() => vi.fn())
+      }
+    } as unknown as Window['api']
+  })
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount()
+    })
+    container.remove()
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  const renderFilesView = async (): Promise<void> => {
+    const { useSessionStore } = await import('@/stores/session-store')
+    const { useNavigationStore } = await import('@/stores/navigation-store')
+    const { createInitialSessionState } = await import('@/stores/session-store')
+    const { ProjectFilesView } = await import('./ProjectFilesView')
+
+    useSessionStore.setState({ ...createInitialSessionState(), sessions: [] })
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'default' })
+    root = createRoot(container)
+    await act(async () => {
+      root.render(<ProjectFilesView />)
+    })
+  }
+
+  it('shows REMOTE section label in source dropdown when hosts are present', async () => {
+    useComputeStore.setState({
+      ...createInitialComputeState(),
+      isLoaded: true,
+      hosts: [
+        createHost({
+          probeResult: { ok: true, probedAt: '2024-01-01', exitCode: 0, errorTail: null }
+        })
+      ]
+    })
+
+    await renderFilesView()
+
+    const filterButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Filter project files"]'
+    )
+    await act(async () => {
+      filterButton?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      filterButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(document.body.textContent).toContain('REMOTE')
+    expect(document.body.textContent).toContain('biowulf')
+  })
+
+  it('disables unreachable hosts in the REMOTE section', async () => {
+    useComputeStore.setState({
+      ...createInitialComputeState(),
+      isLoaded: true,
+      hosts: [
+        createHost({
+          probeResult: { ok: false, probedAt: '2024-01-01', exitCode: 1, errorTail: 'timeout' }
+        })
+      ]
+    })
+
+    await renderFilesView()
+
+    const filterButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Filter project files"]'
+    )
+    await act(async () => {
+      filterButton?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      filterButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(document.body.textContent).toContain('Host unreachable')
+  })
+
+  it('shows Add SSH host link that calls openSettingsToCompute', async () => {
+    useComputeStore.setState({
+      ...createInitialComputeState(),
+      isLoaded: true,
+      hosts: []
+    })
+    const openSettingsToCompute = vi.fn()
+    useSettingsStore.setState({
+      ...createInitialSettingsState(),
+      openSettings: vi.fn(),
+      openSettingsToCompute
+    } as unknown as typeof useSettingsStore extends { getState: () => infer S } ? S : never)
+
+    await renderFilesView()
+
+    const filterButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Filter project files"]'
+    )
+    await act(async () => {
+      filterButton?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      filterButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(document.body.textContent).toContain('Add SSH host')
+
+    const addButton = Array.from(document.body.querySelectorAll('[role="menuitem"]')).find((el) =>
+      el.textContent?.includes('Add SSH host')
+    ) as HTMLElement | undefined
+
+    await act(async () => {
+      addButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(openSettingsToCompute).toHaveBeenCalled()
   })
 })
