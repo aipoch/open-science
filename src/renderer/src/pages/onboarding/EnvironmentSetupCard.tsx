@@ -240,7 +240,11 @@ const EnvironmentSetupCard = ({
               <Button
                 type="button"
                 onClick={onInstall}
-                disabled={isInstalling || isChecking}
+                // Lock on anyInstalling (not just this runtime's isInstalling): while another runtime
+                // installs, clicking here would hit the store's single-install guard and surface its
+                // rejection as a phantom failure on this untouched runtime. Label still keys off
+                // isInstalling so only THIS runtime's install shows the "Installing…" state.
+                disabled={anyInstalling || isChecking}
                 className="shrink-0"
               >
                 {isInstalling ? (
