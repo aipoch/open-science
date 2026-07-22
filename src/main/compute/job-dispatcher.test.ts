@@ -116,13 +116,19 @@ describe('buildLauncherScript', () => {
   it('includes timeout_seconds in the launcher', () => {
     const script = buildLauncherScript(3600)
     expect(script).toContain('timeout -s TERM -k 30s 3600')
-    expect(script).toContain('bash -l command.sh')
+    expect(script).toContain('bash -l')
     expect(script).toContain('exit_code.tmp && mv exit_code.tmp exit_code')
   })
 
   it('uses bash -l for login shell (login_shell always on for jobs)', () => {
     const script = buildLauncherScript(86400)
-    expect(script).toContain('bash -l command.sh')
+    expect(script).toContain('bash -l')
+  })
+
+  it('isolates login shell stderr using exec pattern', () => {
+    const script = buildLauncherScript(3600)
+    // Should use -c with exec to prevent login shell initialization messages from polluting stderr
+    expect(script).toContain("bash -l -c 'exec bash command.sh'")
   })
 })
 

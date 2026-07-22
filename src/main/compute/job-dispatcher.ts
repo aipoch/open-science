@@ -27,13 +27,14 @@ export type RemoteHandle = {
 }
 
 // Builds the launcher.sh script content for a given job.
-// Uses timeout(1) with SIGTERM then SIGKILL after 30s grace. Login shell (-l) so module/conda PATH
-// is visible. exit_code is written via a tmp→rename atomic pattern so the poller never reads a
-// partial value.
+// Uses timeout(1) with SIGTERM then SIGKILL after 30s grace. Login shell (-l) loads environment
+// (module/conda PATH), then exec replaces it with a non-login shell to run command.sh. This
+// prevents login shell initialization messages (from .bashrc/.bash_profile) from polluting stderr.
+// exit_code is written via a tmp→rename atomic pattern so the poller never reads a partial value.
 export const buildLauncherScript = (timeoutSeconds: number): string => {
   return (
     '#!/usr/bin/env bash\n' +
-    `timeout -s TERM -k 30s ${timeoutSeconds} bash -l command.sh > stdout 2> stderr\n` +
+    `timeout -s TERM -k 30s ${timeoutSeconds} bash -l -c 'exec bash command.sh' > stdout 2> stderr\n` +
     'echo $? > exit_code.tmp && mv exit_code.tmp exit_code\n'
   )
 }
