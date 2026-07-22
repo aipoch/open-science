@@ -9,6 +9,7 @@ import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import {
   APP_ASSET_SUBDIRS,
   DENIED_BUILTIN_TOOLS,
+  MANAGED_BUILTIN_TOOLS,
   configDenyRules,
   provisionAppClaudeConfigDir
 } from './claude-config-provision'
@@ -49,6 +50,18 @@ afterEach(async () => {
     await rm(root, { recursive: true, force: true })
     root = undefined
   }
+})
+
+describe('built-in tool deny policy', () => {
+  // Pruning-on-removal only re-enables a tool if it is in the module-owned superset. A tool denied
+  // now but absent from MANAGED_BUILTIN_TOOLS would stay denied forever once later removed from
+  // DENIED_BUILTIN_TOOLS — the exact bug the prune step fixes. Guard the DENIED ⊆ MANAGED invariant.
+  it('keeps every denied built-in tool in the managed superset', () => {
+    const managed = new Set<string>(MANAGED_BUILTIN_TOOLS)
+    for (const tool of DENIED_BUILTIN_TOOLS) {
+      expect(managed.has(tool)).toBe(true)
+    }
+  })
 })
 
 describe('provisionAppClaudeConfigDir', () => {
