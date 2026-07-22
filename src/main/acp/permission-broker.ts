@@ -23,6 +23,7 @@ type EmitPermissionRequest = (request: AcpPermissionRequest) => void
 
 const ALLOW_ALWAYS_OPTION_KIND = 'allow_always'
 const ALLOW_ONCE_OPTION_KIND = 'allow_once'
+const CODEX_SESSION_COMMAND_OPTION_IDS = new Set(['allow_once', 'allow_always', 'reject_once'])
 
 const commandFromRawInput = (rawInput: unknown): string | undefined => {
   if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) return undefined
@@ -66,6 +67,27 @@ const commandSignature = (command: string): string => {
   const rest = tokens.slice(index)
 
   return rest.length > 0 ? rest.join(' ') : command.trim()
+}
+
+// Open Science owns per-session grants, so Codex command approvals expose the same three actions as
+// Claude Code. Native exec/network policy amendments persist outside the app's visible, revocable
+// session grant model and are intentionally omitted when Codex supplies the canonical session choices.
+const projectPermissionOptions = (
+  params: RequestPermissionRequest,
+  policyContext: PermissionPolicyContext | undefined
+): RequestPermissionRequest['options'] => {
+  if (policyContext?.frameworkId !== 'codex' || params.toolCall.kind !== 'execute') {
+    return params.options
+  }
+
+  const optionIds = new Set(params.options.map((option) => option.optionId))
+  const hasCanonicalSessionActions = Array.from(CODEX_SESSION_COMMAND_OPTION_IDS).every(
+    (optionId) => optionIds.has(optionId)
+  )
+
+  return hasCanonicalSessionActions
+    ? params.options.filter((option) => CODEX_SESSION_COMMAND_OPTION_IDS.has(option.optionId))
+    : params.options
 }
 
 // Derives a session-scoped "Always" category key from a permission request (first match wins):
@@ -156,6 +178,7 @@ class AcpPermissionBroker {
     const requestId = randomUUID()
     const categoryKey = resolveCategoryKey(params, policyContext?.mcpServerNames)
     const isMcp = categoryKey.startsWith('mcp:')
+    const permissionOptions = projectPermissionOptions(params, policyContext)
     const request: AcpPermissionRequest = {
       requestId,
       sessionId: params.sessionId,
@@ -167,7 +190,7 @@ class AcpPermissionBroker {
       toolKind: params.toolCall.kind ?? undefined,
       toolLocations: params.toolCall.locations ?? undefined,
       rawInput: params.toolCall.rawInput,
-      options: params.options.map((option) => ({
+      options: permissionOptions.map((option) => ({
         optionId: option.optionId,
         name: option.name,
         kind: option.kind
@@ -211,6 +234,13 @@ class AcpPermissionBroker {
     this.pendingRequests.delete(response.requestId)
 
     if (response.cancelled || !response.optionId) {
+      pending.resolve({ outcome: { outcome: 'cancelled' } })
+      return true
+    }
+
+    // Only options projected to the renderer are valid responses. This keeps provider-specific
+    // persistent policy actions hidden at the protocol boundary as well as in the UI.
+    if (!pending.request.options.some((option) => option.optionId === response.optionId)) {
       pending.resolve({ outcome: { outcome: 'cancelled' } })
       return true
     }

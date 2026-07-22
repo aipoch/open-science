@@ -123,6 +123,8 @@ describe('PermissionApprovalControls', () => {
     expect(html).toContain('Always - Allow for This Session</span>')
     expect(html).toContain('Always - Allow and Don&#x27;t Ask Again</span>')
     expect(html.match(/>Always<\/span>/g)).toBeNull()
+    expect(html).toContain('inline-flex min-w-0 max-w-full items-center')
+    expect(html).toContain('min-w-0 whitespace-normal break-words text-left')
   })
 
   it('keeps canonical semantics when provider scope names look like other actions', () => {
@@ -165,31 +167,6 @@ describe('PermissionApprovalControls', () => {
 
     expect(html).toContain('MCP tool access</span>')
     expect(html).not.toContain('Command execution</span>')
-  })
-
-  it('distinguishes Codex session approval from an exec-policy amendment', () => {
-    const codexRequest: AcpPermissionRequest = {
-      ...permissionRequest,
-      options: [
-        { optionId: 'allow_always', name: 'Allow for Session', kind: 'allow_always' },
-        {
-          optionId: 'accept_execpolicy_amendment',
-          name: 'Allow Commands Starting With `git worktree`',
-          kind: 'allow_always'
-        },
-        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
-        { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
-      ]
-    }
-    const html = renderToStaticMarkup(
-      <PermissionApprovalControls requests={[codexRequest]} onRespond={() => undefined} />
-    )
-
-    expect(html).toContain('Always - Allow for Session</span>')
-    expect(html).toContain('Always - Allow Commands Starting With `git worktree`</span>')
-    expect(html.match(/>Always<\/span>/g)).toBeNull()
-    expect(html).toContain('inline-flex min-w-0 max-w-full items-center')
-    expect(html).toContain('min-w-0 whitespace-normal break-words text-left')
   })
 
   it('serializes prompts by rendering only the first pending request', () => {

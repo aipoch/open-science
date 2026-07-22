@@ -63,6 +63,28 @@ const createToolPermissionRequest = (
   }
 }
 
+const createCodexCommandPermissionRequest = (
+  sessionId = 'session-1'
+): RequestPermissionRequest => ({
+  sessionId,
+  toolCall: {
+    toolCallId: `tool-${Math.random()}`,
+    title: 'git worktree add -b fix/example ../example main',
+    status: 'pending',
+    kind: 'execute'
+  },
+  options: [
+    { optionId: 'allow_once', name: 'Allow Once', kind: 'allow_once' },
+    { optionId: 'allow_always', name: 'Allow for Session', kind: 'allow_always' },
+    {
+      optionId: 'accept_execpolicy_amendment',
+      name: 'Allow Commands Starting With `git worktree add`',
+      kind: 'allow_always'
+    },
+    { optionId: 'reject_once', name: 'Reject', kind: 'reject_once' }
+  ]
+})
+
 describe('ACP permission broker', () => {
   it('preserves structured tool metadata for risk-aware approval UI', () => {
     const emitted: Array<Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]> = []
@@ -136,6 +158,54 @@ describe('ACP permission broker', () => {
         optionId: 'allow-once'
       }
     })
+  })
+
+  it('projects Codex commands to one session-scoped Always action', async () => {
+    const emitted: Array<Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]> = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const context = { profile: 'ask' as const, frameworkId: 'codex' as const }
+
+    const firstResponse = broker.requestPermission(createCodexCommandPermissionRequest(), context)
+
+    expect(emitted[0].options).toEqual([
+      { optionId: 'allow_once', name: 'Allow Once', kind: 'allow_once' },
+      { optionId: 'allow_always', name: 'Allow for Session', kind: 'allow_always' },
+      { optionId: 'reject_once', name: 'Reject', kind: 'reject_once' }
+    ])
+
+    broker.respond({ requestId: emitted[0].requestId, optionId: 'allow_always' })
+    await expect(firstResponse).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow_always' }
+    })
+
+    await expect(
+      broker.requestPermission(createCodexCommandPermissionRequest(), context)
+    ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'allow_once' } })
+
+    const otherSessionResponse = broker.requestPermission(
+      createCodexCommandPermissionRequest('session-2'),
+      context
+    )
+    expect(emitted).toHaveLength(2)
+    broker.cancelForSession('session-2')
+    await expect(otherSessionResponse).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+  })
+
+  it('cancels a Codex policy amendment response that was not exposed', async () => {
+    const emittedRequests: string[] = []
+    const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))
+    const response = broker.requestPermission(createCodexCommandPermissionRequest(), {
+      profile: 'ask',
+      frameworkId: 'codex'
+    })
+
+    broker.respond({
+      requestId: emittedRequests[0],
+      optionId: 'accept_execpolicy_amendment'
+    })
+
+    await expect(response).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+    expect(broker.listGrants('session-1')).toEqual([])
   })
 
   it('resolves pending requests as cancelled when all permissions are cancelled', async () => {
