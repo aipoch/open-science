@@ -319,6 +319,11 @@ const registerIpcHandlers = async ({
   // (Notification Center on macOS, toasts on Windows, libnotify on Linux); the service itself
   // stays Electron-free so its filtering rules are unit-testable. The click handler is bound
   // later, in index.ts, where showMainWindow exists.
+  //
+  // Headless/web-serve deployments intentionally get no notifications: with no local desktop user,
+  // a banner would surface on the server machine, so Notification.isSupported() is the deliberate
+  // gate (daemon-less Linux hosts degrade the same way), and click activation stays inert.
+  const liveNotifications = new Set<Notification>()
   const taskNotifications = new TaskNotificationService({
     isEnabled: () => settingsService.getNotificationsEnabled(),
     isAppFocused: () => BrowserWindow.getAllWindows().some((window) => window.isFocused()),
@@ -328,7 +333,14 @@ const registerIpcHandlers = async ({
 
       const notification = new Notification({ title, body })
 
-      notification.on('click', onClick)
+      // Retain the instance until the banner resolves; a GC before click would silently drop the
+      // handler on some platforms.
+      liveNotifications.add(notification)
+      notification.once('click', () => {
+        liveNotifications.delete(notification)
+        onClick()
+      })
+      notification.once('close', () => liveNotifications.delete(notification))
       notification.show()
     },
     onDeliveryError: (error) =>

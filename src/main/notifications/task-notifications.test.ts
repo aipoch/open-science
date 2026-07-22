@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
+import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
 import {
   describeTaskNotification,
   TaskNotificationService,
@@ -26,7 +27,7 @@ const errorEvent = (
   kind: 'error',
   level: 'error',
   sessionId: options.sessionId ?? 'session-1',
-  title: options.title ?? 'Prompt failed',
+  title: options.title ?? ACP_PROMPT_FAILED_EVENT_TITLE,
   text,
   ...(options.recoverable ? { recoverable: options.recoverable } : {})
 })
@@ -154,6 +155,7 @@ describe('TaskNotificationService', () => {
   it('does not notify while the app is focused', async () => {
     const { service, shown } = createService({ isAppFocused: () => true })
 
+    service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
     await service.handleRuntimeEvent(stopEvent('end_turn'))
 
     expect(shown).toHaveLength(0)
@@ -162,6 +164,7 @@ describe('TaskNotificationService', () => {
   it('does not notify when the preference is disabled', async () => {
     const { service, shown } = createService({ isEnabled: () => Promise.resolve(false) })
 
+    service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
     await service.handleRuntimeEvent(stopEvent('end_turn'))
 
     expect(shown).toHaveLength(0)
@@ -172,7 +175,18 @@ describe('TaskNotificationService', () => {
       isEnabled: () => Promise.reject(new Error('disk gone'))
     })
 
+    service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
     await service.handleRuntimeEvent(stopEvent('end_turn'))
+
+    expect(shown).toHaveLength(0)
+  })
+
+  it('stays silent for internal turns that never tracked a prompt (reviewer correction)', async () => {
+    const { service, shown } = createService({})
+
+    // The reviewer's auditor-correction calls runtime.sendPrompt directly (no IPC, no trackPrompt).
+    await service.handleRuntimeEvent(stopEvent('end_turn', 'main-session'))
+    await service.handleRuntimeEvent(errorEvent('boom', { sessionId: 'main-session' }))
 
     expect(shown).toHaveLength(0)
   })
@@ -205,10 +219,11 @@ describe('TaskNotificationService', () => {
 
     service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
     await service.handleRuntimeEvent(stopEvent('end_turn'))
-    // A later turn on the same session without a tracked prompt gets the generic body.
+    // A later terminal event on the same session without a tracked prompt is not user-initiated:
+    // no snippet remains, so it must stay silent.
     await service.handleRuntimeEvent(stopEvent('end_turn'))
 
-    expect(shown[1]?.body).toBe('The agent finished your request.')
+    expect(shown).toHaveLength(1)
   })
 
   it('routes clicks to the activation handler with the session id', async () => {
@@ -216,6 +231,7 @@ describe('TaskNotificationService', () => {
     const onActivate = vi.fn()
 
     service.setActivationHandler(onActivate)
+    service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
     await service.handleRuntimeEvent(stopEvent('end_turn'))
     shown[0]?.onClick()
 
@@ -245,6 +261,7 @@ describe('TaskNotificationService', () => {
     })
 
     // Must not reject: the caller voids this promise on the broadcast path.
+    service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
     await service.handleRuntimeEvent(stopEvent('end_turn'))
 
     expect(deliveryErrors).toEqual([boom])

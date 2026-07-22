@@ -1,4 +1,5 @@
 import type { AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
+import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
 import type { OpenSessionFromNotificationRequest } from '../../shared/notifications'
 
 // What the user sees when a task reaches a terminal state while the app is unfocused.
@@ -54,8 +55,8 @@ const quoteSnippet = (snippet: string): string => `"${snippet}"`
 // Maps a terminal runtime event to the notification to show, or null when the event should stay
 // silent: user-cancelled turns (deliberate), recoverable context overflows (the renderer
 // auto-compacts and retries, so a failure banner would be a false alarm), and session-scoped error
-// events that are not prompt failures (artifact cleanup, cancel timeout — only 'Prompt failed'
-// marks a genuinely failed task).
+// events that are not prompt failures (artifact cleanup, cancel timeout — only the shared
+// ACP_PROMPT_FAILED_EVENT_TITLE marks a genuinely failed task).
 export const describeTaskNotification = (
   event: AcpRuntimeEvent,
   promptSnippet?: string
@@ -93,7 +94,7 @@ export const describeTaskNotification = (
   }
 
   if (event.kind === 'error') {
-    if (event.title !== 'Prompt failed') return null
+    if (event.title !== ACP_PROMPT_FAILED_EVENT_TITLE) return null
     if (event.recoverable === 'context-overflow') return null
 
     const reason = event.text?.trim() || 'Unknown error.'
@@ -169,14 +170,21 @@ export class TaskNotificationService {
 
     if (!sessionId) return
 
-    const notification = describeTaskNotification(event, this.promptSnippets.get(sessionId))
+    const snippet = this.promptSnippets.get(sessionId)
 
     // Only genuinely turn-terminal events settle the prompt tracking: a stop (any reason) or a
     // prompt failure. Ancillary session-scoped errors (artifact cleanup, cancel timeout) leave the
     // snippet in place for the turn's own terminal event.
-    if (event.kind === 'stop' || event.title === 'Prompt failed') {
+    if (event.kind === 'stop' || event.title === ACP_PROMPT_FAILED_EVENT_TITLE) {
       this.promptSnippets.delete(sessionId)
     }
+
+    // Eligibility = a user-initiated turn. Internal turns (e.g. the reviewer's auditor-correction,
+    // injected via runtime.sendPrompt directly) never pass through trackPrompt, so their terminal
+    // events stay silent — the background reviewer must never notify.
+    if (!snippet) return
+
+    const notification = describeTaskNotification(event, snippet)
 
     if (!notification) return
     if (this.deps.isAppFocused()) return
