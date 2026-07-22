@@ -42,11 +42,7 @@ import {
   type PermissionProfileId,
   type SessionPermissionProfileState
 } from '../../shared/permission-profiles'
-import {
-  DEFAULT_REASONING_EFFORT,
-  type AgentFrameworkId,
-  type ReasoningEffort
-} from '../../shared/settings'
+import { DEFAULT_REASONING_EFFORT, type ReasoningEffort } from '../../shared/settings'
 import {
   claudeCodeFramework,
   type AgentFramework,
@@ -492,7 +488,7 @@ class AcpRuntime {
   // The framework each session last ran under. Deliberately NOT cleared on disconnect so a framework
   // switch (which disconnects) can still tell that an existing session belongs to the other framework
   // and skip a doomed resume. Cleaned per-session on delete.
-  private readonly sessionFrameworks = new Map<string, AgentFrameworkId>()
+  private readonly sessionFrameworks = new Map<string, string>()
   // Like sessionFrameworks, retained across disconnects. A provider/profile switch can keep the same
   // framework while moving to a different on-disk session store, where the old id is not resumable.
   private readonly sessionBackendIds = new Map<string, string>()
@@ -2955,7 +2951,6 @@ class AcpRuntime {
           : { ...normalizedParams, sessionId: appSessionId },
         {
           profile: profileState?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
-          frameworkId: this.sessionFrameworks.get(appSessionId) ?? this.framework.id,
           autoReviewStrategy: profileState?.autoReviewStrategy,
           cwd: this.sessionCwds.get(appSessionId),
           mcpServerNames
