@@ -10,7 +10,12 @@ import {
   Settings,
   Trash2
 } from 'lucide-react'
-import { DropdownMenu } from 'radix-ui'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 
 import { cn } from '@/lib/utils'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
@@ -59,15 +64,7 @@ const sessionRowClassName = cn(
 const sessionRowActionClassName =
   'relative -mr-1 rounded p-0.5 text-text-100 opacity-0 transition-[opacity,color,background-color] duration-200 ease-out hover:!opacity-100 hover:bg-bg-400 hover:text-text-000 focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100'
 
-const sessionMenuContentClassName =
-  'z-modal min-w-[9rem] rounded-xl border-[0.5px] border-border-200 bg-bg-000 p-1.5 shadow-menu'
-
-const sessionMenuItemClassName =
-  'flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-text-100 transition-colors duration-200 ease-out outline-none data-[highlighted]:bg-bg-200 data-[highlighted]:text-text-000'
-
-const sessionMenuDangerItemClassName =
-  'flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-danger-000 transition-colors duration-200 ease-out outline-none data-[highlighted]:bg-danger-900'
-
+// Shared icon wrapper inside each menu item row.
 const sessionMenuIconClassName = 'flex size-4 shrink-0 items-center justify-center'
 
 // Left navigation owns session selection, creation entry, and workspace settings.
@@ -205,8 +202,8 @@ const WorkspaceSidebar = ({
                           <span className="min-w-0 flex-1 truncate">{session.title}</span>
                         </button>
 
-                        <DropdownMenu.Root>
-                          <DropdownMenu.Trigger asChild>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
                             <button
                               type="button"
                               className={cn(sessionRowActionClassName, isActive && 'opacity-100')}
@@ -219,62 +216,59 @@ const WorkspaceSidebar = ({
                                 <MoreVertical className="size-3.5" strokeWidth={2} />
                               </span>
                             </button>
-                          </DropdownMenu.Trigger>
-                          <DropdownMenu.Portal>
-                            <DropdownMenu.Content
-                              aria-label="Session actions"
-                              className={sessionMenuContentClassName}
-                              side="right"
-                              align="start"
-                              sideOffset={6}
+                          </DropdownMenuTrigger>
+                          {/* Dark-surface menu: bg-text-000/text-bg-000 matches the app's tooltip token. */}
+                          <DropdownMenuContent
+                            aria-label="Session actions"
+                            className="min-w-[9rem] border-transparent bg-text-000 p-1.5 text-bg-000"
+                            side="right"
+                            align="start"
+                            sideOffset={6}
+                          >
+                            {/* Pin / Unpin toggles the conversation into or out of the pinned section. */}
+                            <DropdownMenuItem
+                              className="gap-2 text-bg-000/80 data-[highlighted]:bg-white/10 data-[highlighted]:text-bg-000"
+                              onSelect={() => onTogglePin(session)}
                             >
-                              {/* Pin / Unpin toggles the conversation into or out of the pinned section. */}
-                              <DropdownMenu.Item
-                                className={sessionMenuItemClassName}
-                                onSelect={() => onTogglePin(session)}
-                              >
-                                <span className={sessionMenuIconClassName}>
-                                  {session.pinned ? (
-                                    <PinOff className="size-4" strokeWidth={2} aria-hidden="true" />
-                                  ) : (
-                                    <Pin className="size-4" strokeWidth={2} aria-hidden="true" />
-                                  )}
-                                </span>
-                                {session.pinned ? 'Unpin' : 'Pin'}
-                              </DropdownMenu.Item>
-                              <DropdownMenu.Separator className="mx-1 my-1 h-px bg-border-300" />
-                              <DropdownMenu.Item
-                                className={sessionMenuItemClassName}
-                                onSelect={() => onRenameSession(session)}
-                              >
-                                <span className={sessionMenuIconClassName}>
-                                  <Pencil className="size-4" strokeWidth={2} aria-hidden="true" />
-                                </span>
-                                Rename…
-                              </DropdownMenu.Item>
-                              <DropdownMenu.Separator className="mx-1 my-1 h-px bg-border-300" />
-                              <DropdownMenu.Item
-                                className={sessionMenuItemClassName}
-                                onSelect={() => onViewNotebook(session)}
-                              >
-                                <span className={sessionMenuIconClassName}>
-                                  <BookOpen className="size-4" strokeWidth={2} aria-hidden="true" />
-                                </span>
-                                View notebook
-                              </DropdownMenu.Item>
-                              <DropdownMenu.Separator className="mx-1 my-1 h-px bg-border-300" />
-                              <DropdownMenu.Item
-                                className={sessionMenuDangerItemClassName}
-                                onSelect={() => onDeleteSession(session)}
-                              >
-                                <span className={sessionMenuIconClassName}>
-                                  <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
-                                </span>
-                                Delete
-                              </DropdownMenu.Item>
-                            </DropdownMenu.Content>
-                          </DropdownMenu.Portal>
-                        </DropdownMenu.Root>
+                              <span className={sessionMenuIconClassName}>
+                                {session.pinned ? (
+                                  <PinOff className="size-4" strokeWidth={2} aria-hidden="true" />
+                                ) : (
+                                  <Pin className="size-4" strokeWidth={2} aria-hidden="true" />
+                                )}
+                              </span>
+                              {session.pinned ? 'Unpin' : 'Pin'}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="gap-2 text-bg-000/80 data-[highlighted]:bg-white/10 data-[highlighted]:text-bg-000"
+                              onSelect={() => onRenameSession(session)}
+                            >
+                              <span className={sessionMenuIconClassName}>
+                                <Pencil className="size-4" strokeWidth={2} aria-hidden="true" />
+                              </span>
+                              Rename…
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="gap-2 text-bg-000/80 data-[highlighted]:bg-white/10 data-[highlighted]:text-bg-000"
+                              onSelect={() => onViewNotebook(session)}
+                            >
+                              <span className={sessionMenuIconClassName}>
+                                <BookOpen className="size-4" strokeWidth={2} aria-hidden="true" />
+                              </span>
+                              View notebook
+                            </DropdownMenuItem>
+                            {/* Delete uses a red accent color suited for a dark surface. */}
+                            <DropdownMenuItem
+                              className="gap-2 text-red-400 data-[highlighted]:bg-red-500/15 data-[highlighted]:text-red-300"
+                              onSelect={() => onDeleteSession(session)}
+                            >
+                              <span className={sessionMenuIconClassName}>
+                                <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
+                              </span>
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     </div>
                   )
