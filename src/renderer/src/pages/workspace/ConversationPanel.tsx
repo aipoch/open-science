@@ -20,6 +20,7 @@ import {
 import { useRef, useState } from 'react'
 
 import { FileDropOverlay } from '@/components/FileDropOverlay'
+import { RemoteJobBadge } from '@/components/RemoteJobBadge'
 import { ResizablePanel } from '@/components/ui/resizable'
 import {
   DropdownMenu,
@@ -31,6 +32,7 @@ import {
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { cn } from '@/lib/utils'
 import type { ChatSession } from '@/stores/session-store'
+import { useSessionJobStore } from '@/stores/session-job-store'
 
 import { ComposerEditor } from './composer/ComposerEditor'
 import { docToSkillIds, type ComposerDoc } from './composer/composer-doc'
@@ -105,6 +107,9 @@ type ConversationPanelProps = {
   onRevokePermissionGrant: (categoryKey: string) => void
   onClearPermissionGrants: () => void
   onAutoReviewToggle: (enabled: boolean) => void
+  // Enabled compute hosts for this session (providerIds); toggling is single-select.
+  enabledComputeHosts: string[]
+  onComputeHostToggle: (providerId: string, enabled: boolean) => void
   // Manual review: invoked by the "Request review" + menu item.
   onRequestReview: () => void
   // True when "Request review" should be disabled: no completed turn, already reviewed, or currently reviewing.
@@ -113,6 +118,8 @@ type ConversationPanelProps = {
   // conversation at that message and resends the adjusted doc.
   canEditMessage: boolean
   onSendEditedMessage: (messageId: string, doc: ComposerDoc) => void
+  // Open job list modal for a specific session.
+  onOpenJobList?: (sessionId: string) => void
 }
 
 // Middle chat surface owns the visible conversation and local message composer UI.
@@ -145,14 +152,21 @@ const ConversationPanel = ({
   onRevokePermissionGrant,
   onClearPermissionGrants,
   onAutoReviewToggle,
+  enabledComputeHosts,
+  onComputeHostToggle,
   onRequestReview,
   isRequestReviewDisabled,
   canEditMessage,
-  onSendEditedMessage
+  onSendEditedMessage,
+  onOpenJobList
 }: ConversationPanelProps): React.JSX.Element => {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   // Local so the interrupted banner can show a spinner and block a double-resume until the request settles.
   const [isResuming, setIsResuming] = useState(false)
+
+  // Unconditional hook: check if the active session has any jobs (running or finished).
+  const allJobsForSession = useSessionJobStore((s) => s.allJobsForSession)
+  const hasAnyJobs = activeSession !== undefined && allJobsForSession(activeSession.id).length > 0
 
   // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
   const handleResume = async (): Promise<void> => {
@@ -271,18 +285,29 @@ const ConversationPanel = ({
                   onRespond={onRespondToPermission}
                 />
 
-                {notebookReference ? (
+                {notebookReference || hasAnyJobs ? (
                   <div className="mb-2 flex min-h-9 items-center rounded-lg border border-border-200 bg-bg-000 px-2 shadow-card">
-                    <button
-                      type="button"
-                      className="flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-text-100 transition-colors duration-200 ease-out hover:bg-bg-200 hover:text-text-000"
-                      aria-label="Open notebook"
-                      aria-controls="right-panel"
-                      onClick={() => onOpenNotebook(notebookReference)}
-                    >
-                      <BookOpen className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                      Notebook
-                    </button>
+                    {notebookReference ? (
+                      <button
+                        type="button"
+                        className="flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-text-100 transition-colors duration-200 ease-out hover:bg-bg-200 hover:text-text-000"
+                        aria-label="Open notebook"
+                        aria-controls="right-panel"
+                        onClick={() => onOpenNotebook(notebookReference)}
+                      >
+                        <BookOpen className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                        Notebook
+                      </button>
+                    ) : null}
+                    <div className="flex-1" />
+                    {hasAnyJobs && activeSession ? (
+                      <RemoteJobBadge
+                        sessionId={activeSession.id}
+                        onOpenJobList={
+                          onOpenJobList ? () => onOpenJobList(activeSession.id) : undefined
+                        }
+                      />
+                    ) : null}
                   </div>
                 ) : null}
 
@@ -408,6 +433,8 @@ const ConversationPanel = ({
                           autoReviewEnabled={autoReviewEnabled}
                           readOnly={!canChangePermissionProfile}
                           autoReviewDisabled={!canEditDraft}
+                          enabledComputeHosts={enabledComputeHosts}
+                          onComputeHostToggle={onComputeHostToggle}
                           onProfileChange={onPermissionProfileChange}
                           onAutoReviewChange={onAutoReviewToggle}
                           onRevokeGrant={onRevokePermissionGrant}

@@ -5,6 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
 
+import type { ComputeHost } from '../../../../shared/compute'
+import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
+import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 // Select events fired through the mocked menu items, so tests can assert preventDefault
@@ -20,6 +24,12 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
   ),
   DropdownMenuTrigger: ({ children }: PropsWithChildren): React.JSX.Element => <>{children}</>,
   DropdownMenuSeparator: (): React.JSX.Element => <hr />,
+  DropdownMenuLabel: ({ children }: PropsWithChildren): React.JSX.Element => (
+    <div data-testid="dropdown-label">{children}</div>
+  ),
+  DropdownMenuGroup: ({ children }: PropsWithChildren): React.JSX.Element => (
+    <div data-testid="dropdown-group">{children}</div>
+  ),
   DropdownMenuSub: ({ children }: PropsWithChildren): React.JSX.Element => <div>{children}</div>,
   DropdownMenuSubTrigger: ({ children }: PropsWithChildren): React.JSX.Element => (
     <div>{children}</div>
@@ -74,6 +84,25 @@ vi.mock('radix-ui', () => ({
   }
 }))
 
+const createHost = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
+  id: 'host-1',
+  providerId: 'ssh:cluster-1',
+  displayName: 'cluster-1',
+  shape: 'direct_ssh',
+  sshAlias: 'cluster-1',
+  sshOverrides: undefined,
+  scratchRoot: undefined,
+  scratchPinned: false,
+  concurrencyLimit: undefined,
+  probeResult: undefined,
+  detailsDoc: '',
+  detailsUpdatedAt: undefined,
+  detailsUpdatedBy: undefined,
+  createdAt: 1,
+  updatedAt: 1,
+  ...overrides
+})
+
 let container: HTMLDivElement
 let root: Root
 
@@ -82,6 +111,26 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
+
+  // Prime the compute store with two SSH hosts so the merged compute section renders them;
+  // settings store gets a spy for the Manage compute navigation.
+  useComputeStore.setState({
+    ...createInitialComputeState(),
+    hosts: [
+      createHost({ providerId: 'ssh:cluster-1', displayName: 'cluster-1', sshAlias: 'cluster-1' }),
+      createHost({
+        id: 'host-2',
+        providerId: 'ssh:gpu-box',
+        displayName: 'gpu-box',
+        sshAlias: 'gpu-box'
+      })
+    ],
+    isLoaded: true
+  })
+  useSettingsStore.setState({
+    ...createInitialSettingsState(),
+    openSettingsToCompute: vi.fn() as () => void
+  })
 })
 
 afterEach(() => {
@@ -419,5 +468,100 @@ describe('ComposerAgentControlsMenu', () => {
     )
     expect(clearButton?.disabled).toBe(true)
     expect(revokeButton?.disabled).toBe(true)
+  })
+
+  it('renders SSH hosts from the compute store under the compute section', () => {
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          enabledComputeHosts={[]}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+          onComputeHostToggle={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('SSH')
+    expect(container.textContent).toContain('cluster-1')
+    expect(container.textContent).toContain('gpu-box')
+    expect(container.textContent).toContain('Manage compute...')
+  })
+
+  it('calls onComputeHostToggle with (providerId, true) when enabling a host', () => {
+    const onComputeHostToggle = vi.fn()
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          enabledComputeHosts={[]}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+          onComputeHostToggle={onComputeHostToggle}
+        />
+      )
+    })
+
+    act(() => findButton('cluster-1').click())
+
+    expect(onComputeHostToggle).toHaveBeenCalledWith('ssh:cluster-1', true)
+  })
+
+  it('calls onComputeHostToggle with (providerId, false) when disabling an enabled host', () => {
+    const onComputeHostToggle = vi.fn()
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          enabledComputeHosts={['ssh:cluster-1']}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+          onComputeHostToggle={onComputeHostToggle}
+        />
+      )
+    })
+
+    act(() => findButton('cluster-1').click())
+
+    expect(onComputeHostToggle).toHaveBeenCalledWith('ssh:cluster-1', false)
+  })
+
+  it('opens the settings panel from Manage compute...', () => {
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          enabledComputeHosts={[]}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+        />
+      )
+    })
+
+    act(() => findButton('Manage compute...').click())
+
+    expect(useSettingsStore.getState().openSettingsToCompute).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables host rows in read-only mode', () => {
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          readOnly={true}
+          enabledComputeHosts={[]}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+        />
+      )
+    })
+
+    expect(findButton('cluster-1').disabled).toBe(true)
   })
 })
