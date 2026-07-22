@@ -31,6 +31,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/session-persistence/session-persistence', () => ({
   useSessionPersistence: () => mocks.sessionPersistenceReady
 }))
+vi.mock('@/lib/deep-link', () => ({
+  useDeepLinkNavigation: vi.fn()
+}))
 vi.mock('@/hooks/useCloseActivePaneShortcut', () => ({
   useCloseActivePaneShortcut: vi.fn()
 }))

@@ -49,8 +49,11 @@ describe('startWebHttpServer', () => {
     const base = `http://127.0.0.1:${server.port}`
 
     expect((await fetch(base, { redirect: 'manual' })).status).toBe(401)
-    const login = await fetch(`${base}/?token=test-token`, { redirect: 'manual' })
+    const login = await fetch(`${base}/?token=test-token&project=project-1&session=session-1`, {
+      redirect: 'manual'
+    })
     expect(login.status).toBe(302)
+    expect(login.headers.get('location')).toBe('/?project=project-1&session=session-1')
     const cookie = login.headers.get('set-cookie')!.split(';', 1)[0]
 
     const bootstrap = await fetch(`${base}/api/bootstrap`, { headers: { cookie } })

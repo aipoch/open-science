@@ -193,7 +193,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
 
       if (auth.queryToken && request.method === 'GET' && url.pathname === '/') {
         persistAuthCookie(response, options.token)
-        response.writeHead(302, { location: '/' })
+        url.searchParams.delete('token')
+        response.writeHead(302, { location: `${url.pathname}${url.search}${url.hash}` })
         response.end()
         return
       }
