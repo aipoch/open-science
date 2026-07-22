@@ -354,6 +354,13 @@ const registerSettingsIpcHandlers = ({
       return snapshot
     }
   )
+  // Compute file browser bookmarks: keyed by provider_id in settings.computeBookmarks.
+  ipcMain.handle('compute:bookmarks:get', (_event, providerId: string) =>
+    service.getComputeBookmarks(providerId)
+  )
+  ipcMain.handle('compute:bookmarks:set', (_event, providerId: string, folders: string[]) =>
+    service.setComputeBookmarks(providerId, folders)
+  )
 }
 
 export { SETTINGS_INSTALL_LOG_CHANNEL, registerSettingsIpcHandlers }
