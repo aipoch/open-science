@@ -20,6 +20,7 @@ import {
 import { useRef, useState } from 'react'
 
 import { FileDropOverlay } from '@/components/FileDropOverlay'
+import { RemoteJobBadge } from '@/components/RemoteJobBadge'
 import { ResizablePanel } from '@/components/ui/resizable'
 import {
   DropdownMenu,
@@ -31,6 +32,7 @@ import {
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { cn } from '@/lib/utils'
 import type { ChatSession } from '@/stores/session-store'
+import { useSessionJobStore } from '@/stores/session-job-store'
 
 import { ComposerEditor } from './composer/ComposerEditor'
 import { docToSkillIds, type ComposerDoc } from './composer/composer-doc'
@@ -155,6 +157,11 @@ const ConversationPanel = ({
   // Local so the interrupted banner can show a spinner and block a double-resume until the request settles.
   const [isResuming, setIsResuming] = useState(false)
 
+  // Unconditional hook: check if the active session has running remote jobs.
+  const runningJobsForSession = useSessionJobStore((s) => s.runningJobsForSession)
+  const hasRunningJobs =
+    activeSession !== undefined && runningJobsForSession(activeSession.id).length > 0
+
   // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
   const handleResume = async (): Promise<void> => {
     if (isResuming) return
@@ -268,18 +275,24 @@ const ConversationPanel = ({
                   onRespond={onRespondToPermission}
                 />
 
-                {notebookReference ? (
+                {notebookReference || hasRunningJobs ? (
                   <div className="mb-2 flex min-h-9 items-center rounded-lg border border-border-200 bg-bg-000 px-2 shadow-card">
-                    <button
-                      type="button"
-                      className="flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-text-100 transition-colors duration-200 ease-out hover:bg-bg-200 hover:text-text-000"
-                      aria-label="Open notebook"
-                      aria-controls="right-panel"
-                      onClick={() => onOpenNotebook(notebookReference)}
-                    >
-                      <BookOpen className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                      Notebook
-                    </button>
+                    {notebookReference ? (
+                      <button
+                        type="button"
+                        className="flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-text-100 transition-colors duration-200 ease-out hover:bg-bg-200 hover:text-text-000"
+                        aria-label="Open notebook"
+                        aria-controls="right-panel"
+                        onClick={() => onOpenNotebook(notebookReference)}
+                      >
+                        <BookOpen className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                        Notebook
+                      </button>
+                    ) : null}
+                    <div className="flex-1" />
+                    {hasRunningJobs && activeSession ? (
+                      <RemoteJobBadge sessionId={activeSession.id} />
+                    ) : null}
                   </div>
                 ) : null}
 

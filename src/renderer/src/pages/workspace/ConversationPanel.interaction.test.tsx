@@ -58,6 +58,25 @@ vi.mock('./ComputeHostSelector', () => ({
   ComputeHostSelector: (): null => null
 }))
 
+// session-job-store mock: controls whether the active session has running jobs.
+// Default: no running jobs. Override mockHasRunningJobs per test.
+let mockHasRunningJobs = false
+
+vi.mock('@/stores/session-job-store', () => ({
+  useSessionJobStore: (
+    selector: (s: { runningJobsForSession: (id: string) => unknown[] }) => unknown
+  ) =>
+    selector({
+      runningJobsForSession: () => (mockHasRunningJobs ? [{ job_id: 'job-1' }] : [])
+    })
+}))
+
+// RemoteJobBadge renders a sentinel element when a sessionId is provided so tests can assert presence.
+vi.mock('@/components/RemoteJobBadge', () => ({
+  RemoteJobBadge: ({ sessionId }: { sessionId: string }): React.JSX.Element | null =>
+    sessionId ? <span data-testid="remote-job-badge">{sessionId}</span> : null
+}))
+
 vi.mock('./WorkspaceMessageScroller', () => ({
   WorkspaceMessageScroller: (): null => null
 }))
@@ -154,6 +173,7 @@ beforeEach(() => {
   document.body.appendChild(container)
   root = createRoot(container)
   onStageAttachmentFiles.mockClear()
+  mockHasRunningJobs = false
 })
 
 afterEach(() => {
@@ -458,5 +478,70 @@ describe('ConversationPanel compacting state', () => {
 
     expect(container.textContent).toContain('Compacting conversation to fit the context limit')
     expect(container.textContent).not.toContain('Request too large')
+  })
+})
+
+describe('ConversationPanel notebook bar', () => {
+  const session: ChatSession = {
+    id: 'session-bar',
+    projectId: 'project-a',
+    title: 'Bar session',
+    cwd: '/workspace',
+    status: 'idle',
+    messages: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }
+
+  it('hides the notebook bar when there is no notebookReference and no running job', () => {
+    mockHasRunningJobs = false
+    renderPanel({ activeSession: session, notebookReference: undefined })
+
+    expect(container.querySelector('[aria-label="Open notebook"]')).toBeNull()
+    expect(container.querySelector('[data-testid="remote-job-badge"]')).toBeNull()
+  })
+
+  it('shows only the Notebook button when notebookReference exists and no running job', () => {
+    mockHasRunningJobs = false
+    const ref = {
+      notebookId: 'nb-1',
+      sessionId: 'session-bar',
+      projectName: 'proj',
+      workspaceCwd: '/workspace',
+      notebookSessionRoot: '/nb',
+      dataRoot: '/data',
+      runtimeRoot: '/rt',
+      runJsonPath: '/run.json'
+    }
+    renderPanel({ activeSession: session, notebookReference: ref })
+
+    expect(container.querySelector('[aria-label="Open notebook"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="remote-job-badge"]')).toBeNull()
+  })
+
+  it('shows only the job badge when there is no notebookReference but there are running jobs', () => {
+    mockHasRunningJobs = true
+    renderPanel({ activeSession: session, notebookReference: undefined })
+
+    expect(container.querySelector('[aria-label="Open notebook"]')).toBeNull()
+    expect(container.querySelector('[data-testid="remote-job-badge"]')).not.toBeNull()
+  })
+
+  it('shows both the Notebook button and the job badge when both are present', () => {
+    mockHasRunningJobs = true
+    const ref = {
+      notebookId: 'nb-1',
+      sessionId: 'session-bar',
+      projectName: 'proj',
+      workspaceCwd: '/workspace',
+      notebookSessionRoot: '/nb',
+      dataRoot: '/data',
+      runtimeRoot: '/rt',
+      runJsonPath: '/run.json'
+    }
+    renderPanel({ activeSession: session, notebookReference: ref })
+
+    expect(container.querySelector('[aria-label="Open notebook"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="remote-job-badge"]')).not.toBeNull()
   })
 })
