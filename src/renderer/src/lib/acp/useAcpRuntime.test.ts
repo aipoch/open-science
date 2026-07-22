@@ -199,9 +199,40 @@ describe('useAcpRuntime value action failures', () => {
     })
 
     expect(thrown).toBe(failure)
-    // runValueAction does NOT set actionError; the error is only rethrown.
-    expect(result.current.actionError).toBeNull()
+    // runValueAction now records the error in actionError while rethrowing.
+    expect(result.current.actionError).toBe('createSession failed')
     expect(result.current.isConnecting).toBe(false)
+  })
+
+  it('sendPrompt rethrows IPC rejection without recording it in actionError', async () => {
+    const failure = new Error('Connection timeout')
+    acpApi.sendPrompt.mockRejectedValueOnce(failure)
+    const { result } = await mountRuntime()
+
+    let thrown: unknown
+    await act(async () => {
+      await result.current.sendPrompt('session-1', 'test prompt').catch((error: unknown) => {
+        thrown = error
+      })
+    })
+
+    // sendPrompt must rethrow the actual IPC error for callers to handle.
+    expect(thrown).toBe(failure)
+    // sendPrompt does NOT set actionError; the error is only rethrown.
+    expect(result.current.actionError).toBeNull()
+  })
+
+  it('sendPrompt syncs snapshot state on success', async () => {
+    const snapshot = createSnapshot({ cwd: '/new/workspace' })
+    acpApi.sendPrompt.mockResolvedValueOnce(snapshot)
+    const { result } = await mountRuntime()
+
+    await act(async () => {
+      await result.current.sendPrompt('session-1', 'test prompt')
+    })
+
+    // sendPrompt must call setState to sync the snapshot before returning.
+    expect(result.current.state.cwd).toBe('/new/workspace')
   })
 })
 

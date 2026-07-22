@@ -155,13 +155,32 @@ const useAcpRuntime = (): {
       setPending: PendingSetter | undefined,
       action: ValueAction<Value>
     ): Promise<Value> => {
+      setActionError(null)
       setPending?.(true)
 
       try {
         return await action()
+      } catch (error) {
+        setActionError(getErrorMessage(error))
+        throw error
       } finally {
         setPending?.(false)
       }
+    },
+    []
+  )
+
+  // Specialized helper for sendPrompt: rethrows errors (like runValueAction) but does NOT
+  // set actionError, avoiding stale-state reads in .catch() handlers. Also performs the
+  // state-sync side-effect that runSnapshotAction provides, since callers use `void sendPrompt(...)`.
+  const runSendPromptAction = useCallback(
+    async (action: () => Promise<AcpStateSnapshot>): Promise<AcpStateSnapshot> => {
+      const snapshot = await action()
+      // Apply state-sync side-effect before returning, matching runSnapshotAction's contract.
+      // Without this, callers that do `void runtime.sendPrompt(...)` would discard the snapshot
+      // and the UI would show stale state until the next async IPC event fires.
+      setState(snapshot)
+      return snapshot
     },
     []
   )
@@ -252,8 +271,8 @@ const useAcpRuntime = (): {
       historyImages?: AcpPromptRequest['historyImages'],
       resumeFallback?: AcpPromptRequest['resumeFallback']
     ) =>
-      runValueAction(undefined, async () => {
-        const snapshot = await window.api.acp.sendPrompt({
+      runSendPromptAction(() =>
+        window.api.acp.sendPrompt({
           sessionId,
           text,
           attachments,
@@ -267,13 +286,8 @@ const useAcpRuntime = (): {
           ...(historyImages && historyImages.length > 0 ? { historyImages } : {}),
           ...(resumeFallback ? { resumeFallback } : {})
         })
-        // Apply state-sync side-effect before returning, matching runSnapshotAction's contract.
-        // Without this, callers that do `void runtime.sendPrompt(...)` would discard the snapshot
-        // and the UI would show stale state until the next async IPC event fires.
-        setState(snapshot)
-        return snapshot
-      }),
-    [runValueAction]
+      ),
+    [runSendPromptAction]
   )
 
   // Converts a UI permission click into the response shape expected by IPC.
