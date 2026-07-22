@@ -25,7 +25,8 @@ const renderContent = (props: {
   runs: NotebookRunRecord[]
   status: 'loading' | 'error' | 'ready'
   error?: string
-}): string => renderToStaticMarkup(<SessionNotebookContent onClose={vi.fn()} {...props} />)
+}): string =>
+  renderToStaticMarkup(<SessionNotebookContent onClose={vi.fn()} onExport={vi.fn()} {...props} />)
 
 describe('SessionNotebookContent', () => {
   it('shows the empty state when there are no runs', () => {
@@ -54,12 +55,21 @@ describe('SessionNotebookContent', () => {
     expect(html).toContain('ModuleNotFoundError')
   })
 
-  it('renders the .ipynb footer button as disabled', () => {
-    const html = renderContent({ sessionId: 's1', runs: [], status: 'ready' })
+  it('enables .ipynb export for a loaded notebook and disables it when empty', () => {
+    const populated = renderContent({
+      sessionId: 's1',
+      runs: [makeRun()],
+      status: 'ready'
+    })
+    const empty = renderContent({ sessionId: 's1', runs: [], status: 'ready' })
 
-    expect(html).toContain('.ipynb')
-    // The only disabled control in the content is the placeholder export button.
-    expect(html).toContain('disabled')
+    expect(populated).toContain('.ipynb')
+    const populatedButton = populated.match(
+      /<button[^>]*aria-label="Download as \.ipynb"[^>]*>/
+    )?.[0]
+    const emptyButton = empty.match(/<button[^>]*aria-label="Download as \.ipynb"[^>]*>/)?.[0]
+    expect(populatedButton).not.toMatch(/\sdisabled(?:=|\s|>)/)
+    expect(emptyButton).toMatch(/\sdisabled(?:=|\s|>)/)
   })
 })
 

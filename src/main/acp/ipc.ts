@@ -23,7 +23,7 @@ import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../../shared/artifacts'
 import { AcpRuntime } from './runtime'
 import { installAgentShutdownGuard } from './shutdown-guard'
 import { AgentMcpHttpHost } from './mcp-http-host'
-import type { ArtifactRepository } from '../artifacts/repository'
+import { ArtifactRepository } from '../artifacts/repository'
 import type { ArtifactRunRegistry } from '../artifacts/run-registry'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import { NotebookRunRepository } from '../notebook/repository'
@@ -198,6 +198,7 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntime => {
 // Creates the shared notebook runtime used by both renderer IPC and agent MCP calls.
 const createDefaultNotebookRuntimeService = (): NotebookRuntimeService => {
   const dataRoot = resolveDataRoot()
+  const artifactRepository = new ArtifactRepository(dataRoot)
 
   return new NotebookRuntimeService({
     configRoot: resolveConfigRoot(),
@@ -207,6 +208,8 @@ const createDefaultNotebookRuntimeService = (): NotebookRuntimeService => {
     // Region default for manage_packages when no mirror is configured; the configured override is
     // wired in main/ipc.ts via setPackageMirrorResolver once the settings service is constructed.
     locale: app.getLocale(),
+    appVersion: app.getVersion(),
+    resolveArtifactPath: (path) => artifactRepository.resolveManagedFilePath({ path }),
     callbacks: {
       onNotebookAvailable: (event) => broadcast('notebook:available', event),
       onNotebookChanged: (event) => broadcast('notebook:changed', event)
