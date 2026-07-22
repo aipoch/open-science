@@ -68,7 +68,10 @@ function SelectContent({
       cancelAnimationFrame(frame)
       window.clearTimeout(settled)
     }
-  }, [scrollToTopOnOpen])
+    // Runs once on mount: SelectContent mounts fresh on every open, so the flag never changes
+    // during the content's lifetime.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <SelectPrimitive.Portal>
