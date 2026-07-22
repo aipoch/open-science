@@ -217,17 +217,24 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   {
     id: 'minimax',
     label: 'MiniMax',
+    // MiniMax serves the Anthropic /v1/messages route under `/anthropic`, plus the OpenAI-compatible
+    // /v1/chat/completions and OpenAI Responses /v1/responses under `/v1`, from a Global host (.io) and
+    // a mainland-China one (.com). `baseUrl` is the Anthropic route; `openaiBaseUrl` is the `/v1` base
+    // clients append `/chat/completions` to, and the Responses probe derives `/v1/responses` from it.
+    apiEndpoints: ['anthropic', 'openai', 'responses'],
     regions: [
       {
         id: 'global',
         label: 'Global',
         baseUrl: 'https://api.minimax.io/anthropic',
+        openaiBaseUrl: 'https://api.minimax.io/v1',
         apiKeyUrl: 'https://platform.minimax.io/user-center/basic-information/interface-key'
       },
       {
         id: 'china',
         label: 'China',
         baseUrl: 'https://api.minimaxi.com/anthropic',
+        openaiBaseUrl: 'https://api.minimaxi.com/v1',
         apiKeyUrl: 'https://platform.minimaxi.com/user-center/basic-information/interface-key'
       }
     ],

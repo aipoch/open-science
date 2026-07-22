@@ -47,6 +47,16 @@ describe('provider registry', () => {
     expect(resolveVendorBaseUrl('minimax')).toBe('https://api.minimax.io/anthropic')
   })
 
+  it('serves MiniMax over Anthropic, OpenAI, and Responses per region', () => {
+    // MiniMax exposes the Anthropic route plus the OpenAI /v1/chat/completions and /v1/responses.
+    expect(resolveVendorApiEndpoints('minimax')).toEqual(['anthropic', 'openai', 'responses'])
+    expect(resolveVendorOpenAiBaseUrl('minimax', 'global')).toBe('https://api.minimax.io/v1')
+    expect(resolveVendorOpenAiBaseUrl('minimax', 'china')).toBe('https://api.minimaxi.com/v1')
+    // Unknown / missing region falls back to the first region's OpenAI base.
+    expect(resolveVendorOpenAiBaseUrl('minimax')).toBe('https://api.minimax.io/v1')
+    expect(resolveVendorOpenAiBaseUrl('minimax', 'nope')).toBe('https://api.minimax.io/v1')
+  })
+
   it('routes GLM to Z.AI overseas and BigModel in China, on both endpoints', () => {
     expect(vendorHasRegions('zhipu')).toBe(true)
     expect(resolveVendorBaseUrl('zhipu', 'global')).toBe('https://api.z.ai/api/anthropic')
