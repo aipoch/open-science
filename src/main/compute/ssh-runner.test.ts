@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { parseProbeOutput } from './compute-service'
-import { CappedOutput, controlMasterArgs, resolveSshBinary } from './ssh-runner'
+import { CappedOutput, controlMasterArgs, resolveSshBinary, resolveSshTarget } from './ssh-runner'
 
 // Mock only mkdirSync so we can assert the ~/.ssh/ctrl dir is created; everything else stays real.
 vi.mock('node:fs', async (importOriginal) => ({
@@ -157,5 +157,58 @@ describe('parseProbeOutput probe output contract', () => {
     expect(result.detectedScheduler).toBe('none')
     expect(result.gpus).toEqual([])
     expect(result.scratchEnv).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// resolveSshTarget — host must be the alias (not the resolved IP) so that the
+// ~/.ssh/config "Host <alias>" block is applied by ssh/scp, including a
+// non-default IdentityFile. Regression guard for the "Permission denied
+// (publickey,password)" bug where the resolved hostname was passed instead,
+// silently dropping the IdentityFile directive.
+// ---------------------------------------------------------------------------
+
+describe('resolveSshTarget', () => {
+  // Pretend `ssh -G aliyun-xt-test` output — non-default identityfile is the key detail.
+  const fakeSshG = () => ({
+    user: 'ewen',
+    hostname: '47.98.96.100',
+    port: '22',
+    identityfile: '~/.ssh/aliyun-xt-test.pem'
+  })
+
+  it('returns the alias as host, NOT the resolved hostname', async () => {
+    const target = await resolveSshTarget('aliyun-xt-test', undefined, async () => fakeSshG())
+    expect(target.host).toBe('aliyun-xt-test')
+    expect(target.host).not.toBe('47.98.96.100')
+  })
+
+  it('does not pass -i when identityFile override is absent (config handles it via alias)', async () => {
+    const target = await resolveSshTarget('aliyun-xt-test', undefined, async () => fakeSshG())
+    expect(target.extraArgs).not.toContain('-i')
+  })
+
+  it('passes -i <path> when an explicit identityFile override is provided', async () => {
+    const target = await resolveSshTarget('aliyun-xt-test', { identityFile: '/keys/custom.pem' }, async () => fakeSshG())
+    const iIdx = target.extraArgs.indexOf('-i')
+    expect(iIdx).toBeGreaterThan(-1)
+    expect(target.extraArgs[iIdx + 1]).toBe('/keys/custom.pem')
+  })
+
+  it('always sets BatchMode and ConnectTimeout', async () => {
+    const target = await resolveSshTarget('aliyun-xt-test', undefined, async () => fakeSshG())
+    expect(target.extraArgs).toContain('BatchMode=yes')
+    expect(target.extraArgs).toContain('ConnectTimeout=10')
+  })
+
+  it('applies user override from ssh -G', async () => {
+    const target = await resolveSshTarget('aliyun-xt-test', undefined, async () => fakeSshG())
+    expect(target.extraArgs).toContain('User=ewen')
+  })
+
+  it('falls back to the bare alias when ssh -G fails (no ~/.ssh/config)', async () => {
+    const target = await resolveSshTarget('bare-host', undefined, async () => ({}))
+    expect(target.host).toBe('bare-host')
+    expect(target.extraArgs).toContain('BatchMode=yes')
   })
 })
