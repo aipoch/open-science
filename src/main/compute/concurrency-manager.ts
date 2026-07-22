@@ -50,20 +50,20 @@ export class ConcurrencyManager {
       return 'queue_full'
     }
 
-    // 2. Check session limit (if set)
+    // 2. Check session limit (if set) - only count active jobs (submitted + running), not queued
     const sessionLimit = this.sessionLimits.get(sessionId)
     let sessionLimitViolated = false
     if (sessionLimit !== undefined) {
-      const activeInSession = await this.jobRepository.countNonTerminalBySession(sessionId)
+      const activeInSession = await this.jobRepository.countActiveBySession(sessionId)
       if (activeInSession >= sessionLimit) {
         sessionLimitViolated = true
       }
     }
 
-    // 3. Check provider ceiling
+    // 3. Check provider ceiling - only count active jobs (submitted + running), not queued
     const host = await this.hostRepository.get(providerId)
     const providerCeiling = host?.concurrencyLimit ?? DEFAULT_PROVIDER_CEILING
-    const activeOnProvider = await this.jobRepository.countNonTerminalByProvider(providerId)
+    const activeOnProvider = await this.jobRepository.countActiveByProvider(providerId)
     const providerCeilingViolated = activeOnProvider >= providerCeiling
 
     // 4. Determine result
@@ -82,7 +82,7 @@ export class ConcurrencyManager {
   // Query session status (active/queued counts, limits, provider ceilings).
   async getStatus(sessionId: string): Promise<SessionStatus> {
     const sessionLimit = this.sessionLimits.get(sessionId) ?? null
-    const activeCount = await this.jobRepository.countNonTerminalBySession(sessionId)
+    const activeCount = await this.jobRepository.countActiveBySession(sessionId)
 
     // Find all jobs for this session to compute queued count and provider ceilings
     const allJobs = await this.jobRepository.findBySession(sessionId)
@@ -112,18 +112,18 @@ export class ConcurrencyManager {
     const queuedJobs = await this.jobRepository.findQueuedJobs()
 
     for (const job of queuedJobs) {
-      // Re-check session limit for this job's session
+      // Re-check session limit for this job's session - only count active jobs
       const sessionLimit = this.sessionLimits.get(job.session_id)
       let sessionLimitOk = true
       if (sessionLimit !== undefined) {
-        const activeInSession = await this.jobRepository.countNonTerminalBySession(job.session_id)
+        const activeInSession = await this.jobRepository.countActiveBySession(job.session_id)
         sessionLimitOk = activeInSession < sessionLimit
       }
 
-      // Re-check provider ceiling for this job's provider
+      // Re-check provider ceiling for this job's provider - only count active jobs
       const host = await this.hostRepository.get(job.provider_id)
       const providerCeiling = host?.concurrencyLimit ?? DEFAULT_PROVIDER_CEILING
-      const activeOnProvider = await this.jobRepository.countNonTerminalByProvider(job.provider_id)
+      const activeOnProvider = await this.jobRepository.countActiveByProvider(job.provider_id)
       const providerCeilingOk = activeOnProvider < providerCeiling
 
       // Dispatch if both limits allow

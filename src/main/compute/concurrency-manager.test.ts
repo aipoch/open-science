@@ -7,6 +7,8 @@ import type { ComputeJob, ComputeHost } from '../../shared/compute'
 // Mock repositories for isolated unit tests
 const createMockJobRepo = (): ComputeJobRepository =>
   ({
+    countActiveByProvider: vi.fn(),
+    countActiveBySession: vi.fn(),
     countNonTerminalByProvider: vi.fn(),
     countNonTerminalBySession: vi.fn(),
     countQueuedJobs: vi.fn(),
@@ -91,8 +93,8 @@ describe('ConcurrencyManager', () => {
     it('returns should_queue when session limit reached', async () => {
       manager.setSessionLimit('session-1', 2)
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
-      vi.mocked(jobRepo.countNonTerminalBySession).mockResolvedValue(2)
-      vi.mocked(jobRepo.countNonTerminalByProvider).mockResolvedValue(1)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(2)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(1)
       vi.mocked(hostRepo.get).mockResolvedValue({
         concurrencyLimit: 10
       } as ComputeHost)
@@ -104,14 +106,14 @@ describe('ConcurrencyManager', () => {
       })
 
       expect(result).toBe('should_queue')
-      expect(jobRepo.countNonTerminalBySession).toHaveBeenCalledWith('session-1')
+      expect(jobRepo.countActiveBySession).toHaveBeenCalledWith('session-1')
     })
 
     it('returns can_dispatch when under session limit', async () => {
       manager.setSessionLimit('session-1', 5)
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
-      vi.mocked(jobRepo.countNonTerminalBySession).mockResolvedValue(3)
-      vi.mocked(jobRepo.countNonTerminalByProvider).mockResolvedValue(2)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(3)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(2)
       vi.mocked(hostRepo.get).mockResolvedValue({
         concurrencyLimit: 10
       } as ComputeHost)
@@ -127,8 +129,8 @@ describe('ConcurrencyManager', () => {
 
     it('allows dispatch when no session limit is set', async () => {
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
-      vi.mocked(jobRepo.countNonTerminalBySession).mockResolvedValue(100)
-      vi.mocked(jobRepo.countNonTerminalByProvider).mockResolvedValue(2)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(100)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(2)
       vi.mocked(hostRepo.get).mockResolvedValue({
         concurrencyLimit: 10
       } as ComputeHost)
@@ -146,8 +148,8 @@ describe('ConcurrencyManager', () => {
   describe('enqueue - provider ceiling check', () => {
     it('returns should_queue when provider ceiling reached', async () => {
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
-      vi.mocked(jobRepo.countNonTerminalBySession).mockResolvedValue(1)
-      vi.mocked(jobRepo.countNonTerminalByProvider).mockResolvedValue(10)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(1)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(10)
       vi.mocked(hostRepo.get).mockResolvedValue({
         concurrencyLimit: 10
       } as ComputeHost)
@@ -159,13 +161,13 @@ describe('ConcurrencyManager', () => {
       })
 
       expect(result).toBe('should_queue')
-      expect(jobRepo.countNonTerminalByProvider).toHaveBeenCalledWith('ssh:cluster-a')
+      expect(jobRepo.countActiveByProvider).toHaveBeenCalledWith('ssh:cluster-a')
     })
 
     it('uses default ceiling of 10 when host.concurrencyLimit is null', async () => {
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
-      vi.mocked(jobRepo.countNonTerminalBySession).mockResolvedValue(1)
-      vi.mocked(jobRepo.countNonTerminalByProvider).mockResolvedValue(10)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(1)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(10)
       vi.mocked(hostRepo.get).mockResolvedValue({
         concurrencyLimit: undefined
       } as ComputeHost)
@@ -181,8 +183,8 @@ describe('ConcurrencyManager', () => {
 
     it('returns can_dispatch when under provider ceiling', async () => {
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
-      vi.mocked(jobRepo.countNonTerminalBySession).mockResolvedValue(1)
-      vi.mocked(jobRepo.countNonTerminalByProvider).mockResolvedValue(5)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(1)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(5)
       vi.mocked(hostRepo.get).mockResolvedValue({
         concurrencyLimit: 20
       } as ComputeHost)
@@ -201,8 +203,8 @@ describe('ConcurrencyManager', () => {
     it('requires both session limit and provider ceiling to be satisfied', async () => {
       manager.setSessionLimit('session-1', 5)
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
-      vi.mocked(jobRepo.countNonTerminalBySession).mockResolvedValue(2) // under session limit
-      vi.mocked(jobRepo.countNonTerminalByProvider).mockResolvedValue(10) // at provider ceiling
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(2) // under session limit
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(10) // at provider ceiling
       vi.mocked(hostRepo.get).mockResolvedValue({
         concurrencyLimit: 10
       } as ComputeHost)
@@ -249,8 +251,8 @@ describe('ConcurrencyManager', () => {
       ]
 
       vi.mocked(jobRepo.findQueuedJobs).mockResolvedValue(queuedJobs)
-      vi.mocked(jobRepo.countNonTerminalBySession).mockResolvedValue(0)
-      vi.mocked(jobRepo.countNonTerminalByProvider).mockResolvedValue(0)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(0)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
       vi.mocked(hostRepo.get).mockResolvedValue({
         concurrencyLimit: 10
       } as ComputeHost)
@@ -276,8 +278,8 @@ describe('ConcurrencyManager', () => {
       ]
 
       vi.mocked(jobRepo.findQueuedJobs).mockResolvedValue(queuedJobs)
-      vi.mocked(jobRepo.countNonTerminalBySession).mockResolvedValue(1)
-      vi.mocked(jobRepo.countNonTerminalByProvider).mockResolvedValue(5)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(1)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(5)
       vi.mocked(hostRepo.get).mockResolvedValue({
         concurrencyLimit: 10
       } as ComputeHost)
@@ -285,8 +287,8 @@ describe('ConcurrencyManager', () => {
 
       await manager.onJobCompleted()
 
-      expect(jobRepo.countNonTerminalBySession).toHaveBeenCalledWith('session-1')
-      expect(jobRepo.countNonTerminalByProvider).toHaveBeenCalledWith('ssh:cluster-a')
+      expect(jobRepo.countActiveBySession).toHaveBeenCalledWith('session-1')
+      expect(jobRepo.countActiveByProvider).toHaveBeenCalledWith('ssh:cluster-a')
       expect(jobRepo.update).toHaveBeenCalledWith('job-1', { status: 'submitted' })
       expect(dispatchJob).toHaveBeenCalledWith('job-1')
     })
@@ -304,8 +306,8 @@ describe('ConcurrencyManager', () => {
       ]
 
       vi.mocked(jobRepo.findQueuedJobs).mockResolvedValue(queuedJobs)
-      vi.mocked(jobRepo.countNonTerminalBySession).mockResolvedValue(2) // at limit
-      vi.mocked(jobRepo.countNonTerminalByProvider).mockResolvedValue(5)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(2) // at limit
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(5)
       vi.mocked(hostRepo.get).mockResolvedValue({
         concurrencyLimit: 10
       } as ComputeHost)
@@ -328,8 +330,8 @@ describe('ConcurrencyManager', () => {
       ]
 
       vi.mocked(jobRepo.findQueuedJobs).mockResolvedValue(queuedJobs)
-      vi.mocked(jobRepo.countNonTerminalBySession).mockResolvedValue(1)
-      vi.mocked(jobRepo.countNonTerminalByProvider).mockResolvedValue(10) // at ceiling
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(1)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(10) // at ceiling
       vi.mocked(hostRepo.get).mockResolvedValue({
         concurrencyLimit: 10
       } as ComputeHost)
@@ -360,8 +362,8 @@ describe('ConcurrencyManager', () => {
       ]
 
       vi.mocked(jobRepo.findQueuedJobs).mockResolvedValue(queuedJobs)
-      vi.mocked(jobRepo.countNonTerminalBySession).mockResolvedValue(0)
-      vi.mocked(jobRepo.countNonTerminalByProvider).mockResolvedValue(0)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(0)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
       vi.mocked(hostRepo.get).mockResolvedValue({
         concurrencyLimit: 10
       } as ComputeHost)
@@ -379,7 +381,7 @@ describe('ConcurrencyManager', () => {
   describe('getStatus', () => {
     it('returns accurate session status', async () => {
       manager.setSessionLimit('session-1', 5)
-      vi.mocked(jobRepo.countNonTerminalBySession).mockResolvedValue(3)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(3)
       vi.mocked(jobRepo.findBySession).mockResolvedValue([
         { provider_id: 'ssh:cluster-a', status: 'queued' } as ComputeJob,
         { provider_id: 'ssh:cluster-b', status: 'queued' } as ComputeJob
@@ -400,7 +402,7 @@ describe('ConcurrencyManager', () => {
     })
 
     it('returns null session_limit when not set', async () => {
-      vi.mocked(jobRepo.countNonTerminalBySession).mockResolvedValue(0)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(0)
       vi.mocked(jobRepo.findBySession).mockResolvedValue([])
 
       const status = await manager.getStatus('session-1')
@@ -411,7 +413,7 @@ describe('ConcurrencyManager', () => {
     })
 
     it('uses default ceiling of 10 when host.concurrencyLimit is undefined', async () => {
-      vi.mocked(jobRepo.countNonTerminalBySession).mockResolvedValue(1)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(1)
       vi.mocked(jobRepo.findBySession).mockResolvedValue([
         { provider_id: 'ssh:cluster-a', status: 'running' } as ComputeJob
       ])
@@ -433,13 +435,13 @@ describe('ConcurrencyManager', () => {
       manager.setSessionLimit('session-2', 3)
 
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
-      vi.mocked(jobRepo.countNonTerminalByProvider).mockResolvedValue(1)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(1)
       vi.mocked(hostRepo.get).mockResolvedValue({
         concurrencyLimit: 10
       } as ComputeHost)
 
       // Session 1 at limit
-      vi.mocked(jobRepo.countNonTerminalBySession).mockResolvedValue(2)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(2)
       const result1 = await manager.enqueue({
         jobId: 'job-1',
         sessionId: 'session-1',
@@ -448,7 +450,7 @@ describe('ConcurrencyManager', () => {
       expect(result1).toBe('should_queue')
 
       // Session 2 under limit
-      vi.mocked(jobRepo.countNonTerminalBySession).mockResolvedValue(2)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(2)
       const result2 = await manager.enqueue({
         jobId: 'job-2',
         sessionId: 'session-2',
@@ -461,10 +463,10 @@ describe('ConcurrencyManager', () => {
   describe('multi-provider scenarios', () => {
     it('enforces provider ceilings independently', async () => {
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
-      vi.mocked(jobRepo.countNonTerminalBySession).mockResolvedValue(1)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(1)
 
       // Cluster A at ceiling
-      vi.mocked(jobRepo.countNonTerminalByProvider).mockResolvedValue(10)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(10)
       vi.mocked(hostRepo.get).mockResolvedValue({
         concurrencyLimit: 10
       } as ComputeHost)
@@ -476,7 +478,7 @@ describe('ConcurrencyManager', () => {
       expect(result1).toBe('should_queue')
 
       // Cluster B under ceiling
-      vi.mocked(jobRepo.countNonTerminalByProvider).mockResolvedValue(5)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(5)
       vi.mocked(hostRepo.get).mockResolvedValue({
         concurrencyLimit: 20
       } as ComputeHost)
