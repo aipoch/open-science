@@ -105,6 +105,15 @@ const DEFAULT_REVIEWER_MAX_UPDATES = 1000
 const DEFAULT_SESSION_REFRESH_TIMEOUT_MS = 10_000
 const SESSION_REFRESH_POLL_MS = 50
 
+// A review can end without submit_findings for two very different reasons: the reviewer genuinely
+// stalled, or the permission gate rejected its own tool calls (submit_findings included). Report the
+// gate case explicitly instead of the misleading "stopped without calling submit_findings".
+const incompleteReviewMessage = (rejectedToolCalls: number): string =>
+  rejectedToolCalls > 0
+    ? `Reviewer tool calls were rejected by the permission gate (${rejectedToolCalls} blocked); ` +
+      'submit_findings never reached the orchestrator.'
+    : 'Reviewer stopped without calling submit_findings.'
+
 // Streaming content deltas are emitted one-per-chunk as the reviewer writes its message/thinking, so
 // their count tracks how much it *says*, not how much it *does*. Counting them toward the loop cap
 // made a normally-verbose review trip the guard mid-stream before it could call submit_findings. Only
@@ -736,6 +745,7 @@ const runScopedReview = async (options: {
   let mcpServer: ReviewerMcpServer | undefined
   let checksReceived: NewCheck[] = []
   let checksSubmitted = false
+  let rejectedToolCalls = 0
   const capturedLog: ReviewerLogEntry[] = []
 
   try {
@@ -788,12 +798,15 @@ const runScopedReview = async (options: {
     onReviewUpdate?.(errorWithChecks)
     return { review: errorWithChecks, submittedChecks: [] }
   } finally {
-    if (reviewerSession) acpRuntime.disposeReviewerSession(reviewerSession)
+    if (reviewerSession) {
+      rejectedToolCalls = acpRuntime.reviewerRejectedToolCallCount(reviewerSession.sessionId)
+      acpRuntime.disposeReviewerSession(reviewerSession)
+    }
     await mcpServer?.stop().catch(() => undefined)
   }
 
   if (!checksSubmitted) {
-    const errorMessage = 'Reviewer stopped without calling submit_findings.'
+    const errorMessage = incompleteReviewMessage(rejectedToolCalls)
     log.error('scoped re-review protocol incomplete', { reviewId: review.id, error: errorMessage })
     review = await reviewRepository.updateReview(review.id, {
       lifecycle: 'error',
@@ -933,6 +946,7 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
   let mcpServer: ReviewerMcpServer | undefined
   let checksReceived: NewCheck[] = []
   let checksSubmitted = false
+  let rejectedToolCalls = 0
   const capturedLog: ReviewerLogEntry[] = []
 
   try {
@@ -1001,13 +1015,17 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
 
     return errorWithFindings
   } finally {
-    // Always dispose the reviewer session and shut down the servers.
-    if (reviewerSession) acpRuntime.disposeReviewerSession(reviewerSession)
+    // Always dispose the reviewer session and shut down the servers. Capture the gate's rejection
+    // count first: dispose clears it, and an incomplete review needs it to report the real cause.
+    if (reviewerSession) {
+      rejectedToolCalls = acpRuntime.reviewerRejectedToolCallCount(reviewerSession.sessionId)
+      acpRuntime.disposeReviewerSession(reviewerSession)
+    }
     await mcpServer?.stop().catch(() => undefined)
   }
 
   if (!checksSubmitted) {
-    const errorMessage = 'Reviewer stopped without calling submit_findings.'
+    const errorMessage = incompleteReviewMessage(rejectedToolCalls)
     log.error('review protocol incomplete', { reviewId: review.id, error: errorMessage })
     review = await reviewRepository.updateReview(review.id, {
       lifecycle: 'error',

@@ -327,8 +327,19 @@ const REVIEWER_MCP_OPENCODE_TOOL_NAMES = new Set(
   Object.values(REVIEWER_MCP_TOOLS).map((toolName) => `${REVIEWER_MCP_SERVER_NAME}_${toolName}`)
 )
 const REVIEWER_MCP_LEAF_TOOL_NAMES = new Set<string>(Object.values(REVIEWER_MCP_TOOLS))
+// claude-code namespaces MCP tools as mcp__<server>__<tool> and sanitizes the server name by replacing
+// every non-alphanumeric char with an underscore, so "open-science-reviewer" becomes
+// "open_science_reviewer". Match that sanitized identity, which appears in the tool call title/id and
+// carries no provider _meta tool name.
+const REVIEWER_MCP_SERVER_NAME_SANITIZED = REVIEWER_MCP_SERVER_NAME.replace(/[^a-zA-Z0-9]/g, '_')
+const REVIEWER_MCP_CLAUDE_TOOL_NAMES = new Set(
+  Object.values(REVIEWER_MCP_TOOLS).map(
+    (toolName) => `mcp__${REVIEWER_MCP_SERVER_NAME_SANITIZED}__${toolName}`
+  )
+)
 const REVIEWER_MCP_PROVIDER_TOOL_NAMES = new Set([
   ...REVIEWER_MCP_OPENCODE_TOOL_NAMES,
+  ...REVIEWER_MCP_CLAUDE_TOOL_NAMES,
   ...Object.values(REVIEWER_MCP_TOOLS).map(
     (toolName) => `mcp__${REVIEWER_MCP_SERVER_NAME}__${toolName}`
   )
@@ -480,6 +491,10 @@ class AcpRuntime {
   // rejected. Each session also gets an empty temporary cwd so ungated read-only tools see no project data.
   private readonly reviewerSessionIds = new Set<string>()
   private readonly reviewerSessionDirectories = new Map<string, string>()
+  // Per reviewer session: count of tool calls the strict allowlist rejected. Lets the orchestrator
+  // distinguish "reviewer never called its tools" from "the gate blocked them" when a review ends
+  // without submit_findings, so the reported cause is accurate instead of misleading.
+  private readonly reviewerRejectedToolCalls = new Map<string, number>()
   // A replaced agent's own session id -> the app-facing id it was adopted under (after a provider
   // switch), so agent-origin events/permissions relabel into the conversation the renderer tracks.
   private readonly agentToAppSessionId = new Map<string, string>()
@@ -3031,6 +3046,16 @@ class AcpRuntime {
     }
   }
 
+  // Returns the leaf reviewer tool name when a claude-code MCP identity string matches the reviewer.
+  // claude-code sanitizes server names (hyphens → underscores) and may append a _<n> disambiguator to
+  // the toolCallId; strip it before checking so both the title and toolCallId forms are recognized.
+  private matchReviewerClaudeToolName(candidate: string | null | undefined): string | undefined {
+    if (typeof candidate !== 'string') return undefined
+    const stripped = candidate.replace(/_\d+$/, '')
+    if (REVIEWER_MCP_CLAUDE_TOOL_NAMES.has(stripped)) return stripped
+    return undefined
+  }
+
   // Grants only the dedicated reviewer MCP. The old implementation selected the first available option
   // for every reviewer request, which effectively approved Bash/network/filesystem tools. A denied call
   // uses a one-shot reject when offered and otherwise cancels; it never falls through to an allow option.
@@ -3055,17 +3080,32 @@ class AcpRuntime {
       reportedTitle === `mcp.${REVIEWER_MCP_SERVER_NAME}.${toolName}`
         ? toolName
         : undefined
+    // claude-code (and the OpenAI-compatible providers routed through it) emit reviewer MCP calls with
+    // no provider _meta tool name; the mcp__<sanitized-server>__<tool> identity rides only in the tool
+    // call title or its toolCallId (the latter may carry a trailing _<n> disambiguator). Recognize it
+    // there so the strict allowlist does not reject the reviewer's own tools.
+    const claudeToolName =
+      toolName == null && frameworkId === 'claude-code'
+        ? (this.matchReviewerClaudeToolName(reportedTitle) ??
+          this.matchReviewerClaudeToolName(params.toolCall?.toolCallId))
+        : undefined
     const isReviewerMcp =
       mcpServerNames.length === 1 &&
       mcpServerNames[0] === REVIEWER_MCP_SERVER_NAME &&
       ((toolName != null && REVIEWER_MCP_PROVIDER_TOOL_NAMES.has(toolName)) ||
         opencodeToolName != null ||
-        codexToolName != null)
+        codexToolName != null ||
+        claudeToolName != null)
 
     if (!isReviewerMcp) {
       const rejectOption =
         params.options.find((option) => option.kind === 'reject_once') ??
         params.options.find((option) => option.kind === 'reject_always')
+
+      this.reviewerRejectedToolCalls.set(
+        params.sessionId,
+        (this.reviewerRejectedToolCalls.get(params.sessionId) ?? 0) + 1
+      )
 
       log.warn('rejecting non-reviewer tool requested by background reviewer', {
         sessionId: params.sessionId,
@@ -3459,10 +3499,17 @@ class AcpRuntime {
     this.sessionMcpServerNames.delete(session.sessionId)
     this.codexMcpToolIdentities.delete(session.sessionId)
     this.sessionFrameworks.delete(session.sessionId)
+    this.reviewerRejectedToolCalls.delete(session.sessionId)
     const reviewerCwd = this.reviewerSessionDirectories.get(session.sessionId)
     this.reviewerSessionDirectories.delete(session.sessionId)
     session.dispose()
     if (reviewerCwd) this.removeReviewerDirectory(reviewerCwd)
+  }
+
+  // Returns how many permission requests the strict reviewer gate rejected for a given reviewer
+  // session. Non-zero means the session was active but the gate blocked its tool calls.
+  reviewerRejectedToolCallCount(sessionId: string): number {
+    return this.reviewerRejectedToolCalls.get(sessionId) ?? 0
   }
 }
 

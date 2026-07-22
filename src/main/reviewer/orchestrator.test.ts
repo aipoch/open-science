@@ -83,6 +83,9 @@ const startFakeReviewerAgent = (
   options: {
     // When set, the agent simulates the reviewer calling submit_findings via the MCP server URL.
     simulateFindingsViaHttp?: boolean
+    // When set, the agent requests a non-reviewer tool the strict gate rejects, then ends its turn
+    // without submit_findings — exercising the gate-rejection incomplete-review path.
+    emitRejectedToolCall?: boolean
     // v3: checks[] only — reasoning removed from submit_findings
     checksToSubmit?: Array<{
       status: 'pass' | 'warn' | 'fail'
@@ -128,6 +131,24 @@ const startFakeReviewerAgent = (
         .join('')
 
       prompts.push({ sessionId: ctx.params.sessionId, text })
+
+      // If requested, ask for a tool outside the reviewer allowlist; the runtime gate rejects it and
+      // increments the session's rejected-tool-call counter.
+      if (options.emitRejectedToolCall) {
+        await ctx.client.request(acp.methods.client.session.requestPermission, {
+          sessionId: ctx.params.sessionId,
+          toolCall: {
+            toolCallId: 'reviewer-blocked-bash',
+            title: 'Bash',
+            kind: 'execute',
+            status: 'pending'
+          },
+          options: [
+            { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+            { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+          ]
+        })
+      }
 
       // If requested, simulate the reviewer calling submit_findings via the HTTP MCP server.
       if (options.simulateFindingsViaHttp && newSessions.length > 0) {
@@ -383,6 +404,38 @@ describe('reviewer orchestrator', () => {
     expect(review.lifecycle).toBe('error')
     expect(review.outcome).toBeNull()
     expect(review.errorMessage).toContain('without calling submit_findings')
+    expect(review.checks).toHaveLength(0)
+
+    await client.$disconnect()
+  })
+
+  it('reports the permission gate as the cause when it rejected the reviewer tool calls', async () => {
+    const process = new FakeAgentProcess()
+    startFakeReviewerAgent(process, 'reviewer-session-1', { emitRejectedToolCall: true })
+
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const client = createProjectDbClient(temporaryRoot!)
+    await ensureProjectSchema(client)
+    const repository = new ReviewRepository(() => Promise.resolve(client))
+
+    const review = await runReview({
+      sessionId: 'session-1',
+      turnMessageId: 'msg-2',
+      projectId: 'project-1',
+      getSession: () => makeSession(),
+      reviewRepository: repository,
+      acpRuntime: runtime,
+      artifactStorageRoot: temporaryRoot!
+    })
+
+    expect(review.lifecycle).toBe('error')
+    expect(review.errorMessage).toContain('rejected by the permission gate')
+    expect(review.errorMessage).not.toContain('stopped without calling submit_findings')
     expect(review.checks).toHaveLength(0)
 
     await client.$disconnect()
