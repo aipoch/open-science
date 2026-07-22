@@ -7,7 +7,14 @@ import {
   type PersistedChatSession
 } from '../../../shared/session-persistence'
 import type { UploadedAttachment } from '../../../shared/uploads'
-import { createInitialSessionState, toPersistedSession, useSessionStore } from './session-store'
+import {
+  createInitialSessionState,
+  toPersistedSession,
+  useSessionStore,
+  type ChatMessage,
+  type ChatSession,
+  type ToolActivity
+} from './session-store'
 
 const createArtifactFile = (overrides: Partial<ArtifactFile> = {}): ArtifactFile => ({
   id: 'artifact-session-1:run-1:result.txt',
@@ -1422,5 +1429,129 @@ describe('session store', () => {
       expect(session.messages[0]).toMatchObject({ role: 'user', content: 'Read the files' })
       expect(session.messages[1]).toMatchObject({ content: 'I started', status: 'error' })
     })
+  })
+})
+
+describe('truncateSessionFromMessage', () => {
+  const baseTime = 1710000000000
+
+  const createMessage = (
+    id: string,
+    role: 'user' | 'agent',
+    createdAt: number,
+    overrides: Partial<ChatMessage> = {}
+  ): ChatMessage => ({
+    id,
+    role,
+    content: `${id} content`,
+    status: 'complete' as const,
+    eventIds: [],
+    createdAt,
+    updatedAt: createdAt,
+    ...overrides
+  })
+
+  const createActivity = (id: string, createdAt: number): ToolActivity => ({
+    id,
+    kind: 'tool' as const,
+    title: `activity ${id}`,
+    status: 'completed' as const,
+    eventIds: [`${id}-event`],
+    sortIndex: createdAt,
+    createdAt,
+    updatedAt: createdAt
+  })
+
+  const seedSession = (overrides: Partial<ChatSession> = {}): void => {
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'default-project',
+          title: 'session-1',
+          cwd: '/workspace/project',
+          status: 'idle' as const,
+          messages: [
+            createMessage('user-1', 'user', baseTime),
+            createMessage('agent-1', 'agent', baseTime + 100),
+            createMessage('user-2', 'user', baseTime + 200),
+            createMessage('agent-2', 'agent', baseTime + 300)
+          ],
+          createdAt: baseTime,
+          updatedAt: baseTime + 300,
+          ...overrides
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+  }
+
+  beforeEach(() => {
+    useSessionStore.setState(createInitialSessionState())
+  })
+
+  it('drops the cut message and every later turn, clearing run and banner state', () => {
+    seedSession({
+      status: 'error',
+      error: 'previous failure',
+      activeRun: { promptMessageId: 'user-2', startedAt: baseTime + 200 },
+      interrupted: true
+    })
+
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.messages.map((message) => message.id)).toEqual(['user-1', 'agent-1'])
+    expect(session.status).toBe('idle')
+    expect(session.activeRun).toBeUndefined()
+    expect(session.error).toBeUndefined()
+    expect(session.interrupted).toBeUndefined()
+  })
+
+  it('cuts later activities by creation time and keeps earlier ones', () => {
+    seedSession({
+      activities: [
+        createActivity('act-1', baseTime + 150),
+        createActivity('act-2', baseTime + 250),
+        createActivity('act-3', baseTime + 350)
+      ]
+    })
+
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+
+    expect(
+      useSessionStore.getState().sessions[0].activities?.map((activity) => activity.id)
+    ).toEqual(['act-1'])
+  })
+
+  it('advances filesRevision only when removed messages carry file references', () => {
+    seedSession({
+      filesRevision: 3,
+      messages: [
+        createMessage('user-1', 'user', baseTime),
+        createMessage('agent-1', 'agent', baseTime + 100),
+        createMessage('user-2', 'user', baseTime + 200, {
+          uploads: [createUploadAttachment()]
+        })
+      ]
+    })
+
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+    expect(useSessionStore.getState().sessions[0].filesRevision).toBe(4)
+
+    seedSession({ filesRevision: 3 })
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+    expect(useSessionStore.getState().sessions[0].filesRevision).toBe(3)
+  })
+
+  it('ignores unknown session or message ids', () => {
+    seedSession()
+    const before = useSessionStore.getState().sessions[0]
+
+    useSessionStore.getState().truncateSessionFromMessage('session-unknown', 'user-2')
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'message-unknown')
+
+    expect(useSessionStore.getState().sessions[0]).toBe(before)
   })
 })

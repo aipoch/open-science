@@ -24,11 +24,12 @@ import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
 // Capture the ConversationPanel props the page computes, notably canEditMessage and the resend handler.
 let conversationProps: {
   canEditMessage: boolean
-  onSendEditedMessage: (doc: ComposerDoc) => void
+  onSendEditedMessage: (messageId: string, doc: ComposerDoc) => void
 }
 
 const runtime = vi.hoisted(() => ({
   sendMessage: vi.fn(),
+  resendEditedMessage: vi.fn(),
   cancelRun: vi.fn(),
   deleteRuntimeSession: vi.fn(),
   respondToPermission: vi.fn()
@@ -46,6 +47,7 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
     actionError: null,
     pendingPermissions: [],
     sendMessage: runtime.sendMessage,
+    resendEditedMessage: runtime.resendEditedMessage,
     cancelRun: runtime.cancelRun,
     deleteRuntimeSession: runtime.deleteRuntimeSession,
     respondToPermission: runtime.respondToPermission
@@ -175,26 +177,22 @@ describe('WorkspacePage inline edit resend', () => {
     })
   }
 
-  it('resends the edited prompt as a new turn with its skills and artifacts resolved', async () => {
+  it('routes the edited prompt through the truncate-and-resend runtime flow', async () => {
     await renderPage()
 
     expect(conversationProps.canEditMessage).toBe(true)
 
     await act(async () => {
-      conversationProps.onSendEditedMessage(editedDoc)
+      conversationProps.onSendEditedMessage('message-1', editedDoc)
     })
 
-    // The resend carries the doc's text, mention parts, and skill ids, and never attaches files.
-    expect(runtime.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: 'sess-a',
-        text: 'Run /forecast tomorrow',
-        attachments: [],
-        referencedArtifacts: [],
-        parts: editedDoc.nodes,
-        forcedSkillIds: ['skill-forecast']
-      })
-    )
+    // The runtime receives the truncation point plus the adjusted prompt with its mentions resolved.
+    expect(runtime.resendEditedMessage).toHaveBeenCalledWith('sess-a', 'message-1', {
+      text: 'Run /forecast tomorrow',
+      parts: editedDoc.nodes,
+      forcedSkillIds: ['skill-forecast'],
+      referencedArtifacts: []
+    })
   })
 
   it('refuses to resend while a run is active or the edited doc is empty', async () => {
@@ -206,9 +204,9 @@ describe('WorkspacePage inline edit resend', () => {
     expect(conversationProps.canEditMessage).toBe(false)
 
     await act(async () => {
-      conversationProps.onSendEditedMessage(editedDoc)
+      conversationProps.onSendEditedMessage('message-1', editedDoc)
     })
-    expect(runtime.sendMessage).not.toHaveBeenCalled()
+    expect(runtime.resendEditedMessage).not.toHaveBeenCalled()
 
     await act(async () => {
       setSession({ messages: [promptMessage] })
@@ -216,9 +214,9 @@ describe('WorkspacePage inline edit resend', () => {
     expect(conversationProps.canEditMessage).toBe(true)
 
     await act(async () => {
-      conversationProps.onSendEditedMessage(emptyDoc)
+      conversationProps.onSendEditedMessage('message-1', emptyDoc)
     })
-    expect(runtime.sendMessage).not.toHaveBeenCalled()
+    expect(runtime.resendEditedMessage).not.toHaveBeenCalled()
   })
 
   it('gates editing while a run is active and restores it once settled', async () => {

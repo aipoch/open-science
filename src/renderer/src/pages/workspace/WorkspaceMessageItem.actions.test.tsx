@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 // Pins the user-bubble hover actions and the inline edit flow: copy writes the prompt to the
-// clipboard, and edit swaps the bubble for a multi-line editor whose confirm resends the prompt.
+// clipboard, edit swaps the bubble for a multi-line editor, and confirming resends the prompt —
+// with a warning first when several later turns would be deleted.
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { JSX, PropsWithChildren } from 'react'
@@ -40,7 +41,11 @@ const noop = (): void => {}
 
 const renderItem = async (
   message: ChatMessage,
-  options: { canEditMessage?: boolean; onSendEditedMessage?: (doc: ComposerDoc) => void } = {}
+  options: {
+    canEditMessage?: boolean
+    onSendEditedMessage?: (messageId: string, doc: ComposerDoc) => void
+    subsequentTurns?: number
+  } = {}
 ): Promise<void> => {
   await act(async () => {
     root.render(
@@ -52,6 +57,7 @@ const renderItem = async (
         onPreviewMentionArtifact={noop}
         canEditMessage={options.canEditMessage ?? false}
         onSendEditedMessage={options.onSendEditedMessage}
+        subsequentTurns={options.subsequentTurns ?? 0}
       />
     )
   })
@@ -65,6 +71,30 @@ const getButton = (label: string): HTMLButtonElement => {
 
 const getEditor = (): HTMLElement | null =>
   container.querySelector<HTMLElement>('[role="textbox"][aria-label="Edit message"]')
+
+// The editor card's Send/Cancel buttons are plain text buttons inside the item container.
+const getEditorCardButton = (label: string): HTMLButtonElement => {
+  const button = Array.from(container.querySelectorAll('button')).find(
+    (candidate) => candidate.textContent === label
+  )
+  if (!button) throw new Error(`button "${label}" not found`)
+  return button as HTMLButtonElement
+}
+
+// The confirmation dialog renders in a body-level portal, outside the item container.
+const getDialog = (): HTMLElement | null =>
+  document.querySelector<HTMLElement>('[role="alertdialog"]')
+
+const getDialogButton = (label: string): HTMLButtonElement => {
+  const dialog = getDialog()
+  const button = dialog
+    ? Array.from(dialog.querySelectorAll('button')).find(
+        (candidate) => candidate.textContent === label
+      )
+    : undefined
+  if (!button) throw new Error(`dialog button "${label}" not found`)
+  return button as HTMLButtonElement
+}
 
 const click = async (element: HTMLElement): Promise<void> => {
   await act(async () => {
@@ -172,11 +202,7 @@ describe('WorkspaceMessageItem user message actions', () => {
     await click(getButton('Edit message'))
     expect(getEditor()).not.toBeNull()
 
-    const cancelButton = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Cancel'
-    )
-    if (!cancelButton) throw new Error('Cancel button not found')
-    await click(cancelButton)
+    await click(getEditorCardButton('Cancel'))
 
     expect(getEditor()).toBeNull()
     expect(onSendEditedMessage).not.toHaveBeenCalled()
@@ -184,25 +210,71 @@ describe('WorkspaceMessageItem user message actions', () => {
     expect(container.textContent).toContain('Prompt text')
   })
 
-  it('resends the adjusted prompt as a new turn and closes the editor', async () => {
+  it('resends the adjusted prompt and closes the editor when few turns follow', async () => {
     const onSendEditedMessage = vi.fn()
-    await renderItem(createMessage(), { canEditMessage: true, onSendEditedMessage })
+    await renderItem(createMessage(), {
+      canEditMessage: true,
+      onSendEditedMessage,
+      subsequentTurns: 1
+    })
 
     await click(getButton('Edit message'))
     const editor = getEditor()
     if (!editor) throw new Error('editor not found')
 
     await typeIntoEditor(editor, 'edited prompt')
+    await click(getEditorCardButton('Send'))
 
-    const sendButton = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Send'
-    )
-    if (!sendButton) throw new Error('Send button not found')
-    await click(sendButton)
-
-    expect(onSendEditedMessage).toHaveBeenCalledWith({
+    // With fewer than two later turns the resend proceeds without the destructive warning.
+    expect(getDialog()).toBeNull()
+    expect(onSendEditedMessage).toHaveBeenCalledWith('message-1', {
       nodes: [{ type: 'text', text: 'edited prompt' }]
     })
     expect(getEditor()).toBeNull()
+  })
+
+  it('warns before a destructive resend when several turns follow the edited message', async () => {
+    const onSendEditedMessage = vi.fn()
+    await renderItem(createMessage(), {
+      canEditMessage: true,
+      onSendEditedMessage,
+      subsequentTurns: 3
+    })
+
+    await click(getButton('Edit message'))
+    await click(getEditorCardButton('Send'))
+
+    // The resend waits for explicit confirmation, and the dialog names the deletion cost.
+    expect(onSendEditedMessage).not.toHaveBeenCalled()
+    expect(getDialog()?.textContent).toContain('Resend and delete later turns?')
+    expect(getDialog()?.textContent).toContain('3 turns')
+
+    await click(getDialogButton('Delete and resend'))
+
+    expect(onSendEditedMessage).toHaveBeenCalledWith('message-1', {
+      nodes: [{ type: 'text', text: 'Prompt text' }]
+    })
+    expect(getDialog()).toBeNull()
+    expect(getEditor()).toBeNull()
+  })
+
+  it('keeps the editor open when the deletion warning is cancelled', async () => {
+    const onSendEditedMessage = vi.fn()
+    await renderItem(createMessage(), {
+      canEditMessage: true,
+      onSendEditedMessage,
+      subsequentTurns: 2
+    })
+
+    await click(getButton('Edit message'))
+    await click(getEditorCardButton('Send'))
+    expect(getDialog()).not.toBeNull()
+
+    await click(getDialogButton('Cancel'))
+
+    expect(onSendEditedMessage).not.toHaveBeenCalled()
+    expect(getDialog()).toBeNull()
+    // The editor stays open so the adjusted draft is not lost.
+    expect(getEditor()).not.toBeNull()
   })
 })

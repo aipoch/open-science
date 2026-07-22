@@ -2,7 +2,11 @@ import type { AcpRuntimeEvent, AcpStateSnapshot } from '../../../../shared/acp'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
+import {
+  createInitialSessionState,
+  useSessionStore,
+  type ChatMessage
+} from '../../stores/session-store'
 import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
@@ -15,6 +19,7 @@ import {
   processContextOverflowRecovery,
   processVisibleWorkspaceRuntimeEvents,
   recoverContextOverflowWorkspaceSession,
+  resendEditedWorkspaceMessage,
   resumeInterruptedWorkspaceSession,
   sendWorkspaceMessage
 } from './useWorkspaceAgentRuntime'
@@ -1532,5 +1537,136 @@ describe('recovering from a request-size overflow', () => {
     )
 
     expect(recover).not.toHaveBeenCalled()
+  })
+})
+
+describe('resendEditedWorkspaceMessage', () => {
+  const baseTime = 1710000000000
+
+  const createMessage = (
+    id: string,
+    role: 'user' | 'agent',
+    content: string,
+    createdAt: number
+  ): ChatMessage => ({
+    id,
+    role,
+    content,
+    status: 'complete' as const,
+    eventIds: [],
+    createdAt,
+    updatedAt: createdAt
+  })
+
+  const seedConversation = (): void => {
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'default-project',
+          title: 'Conversation',
+          cwd: '/workspace/project',
+          status: 'idle' as const,
+          messages: [
+            createMessage('user-1', 'user', 'first prompt', baseTime),
+            createMessage('agent-1', 'agent', 'first answer', baseTime + 100),
+            createMessage('user-2', 'user', 'second prompt', baseTime + 200),
+            createMessage('agent-2', 'agent', 'second answer', baseTime + 300),
+            createMessage('user-3', 'user', 'third prompt', baseTime + 400)
+          ],
+          createdAt: baseTime,
+          updatedAt: baseTime + 400
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+  }
+
+  beforeEach(() => {
+    useSessionStore.setState(createInitialSessionState())
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('truncates at the edited message and resends with the kept history replayed', async () => {
+    seedConversation()
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        contextReset: true
+      }),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    const resent = await resendEditedWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      messageId: 'user-2',
+      text: 'second prompt, edited',
+      parts: [{ type: 'text', text: 'second prompt, edited' }],
+      forcedSkillIds: ['skill-forecast'],
+      referencedArtifacts: []
+    })
+    await flushRuntimeTasks()
+
+    expect(resent).toBe(true)
+    expect(runtime.resetSessionContext).toHaveBeenCalledWith(
+      'session-1',
+      '/workspace/project',
+      'default-project',
+      'ask'
+    )
+
+    // The edited message and every later turn are gone; the resend appends the adjusted prompt.
+    const messages = useSessionStore.getState().sessions[0]?.messages ?? []
+    expect(messages.map((message) => message.id)).toEqual(['user-1', 'agent-1', expect.any(String)])
+    expect(messages[2]).toMatchObject({ role: 'user', content: 'second prompt, edited' })
+
+    // The kept turns replay as a text preamble (the edited turn is not duplicated into it), and the
+    // picked skill goes out as a forced skill on the resent prompt.
+    expect(runtime.sendPrompt.mock.calls[0]?.[1]).toBe('second prompt, edited')
+    const preamble = runtime.sendPrompt.mock.calls[0]?.[5]
+    expect(preamble).toContain('first prompt')
+    expect(preamble).toContain('first answer')
+    expect(preamble).not.toContain('second prompt')
+    expect(preamble).not.toContain('third prompt')
+    expect(runtime.sendPrompt.mock.calls[0]?.[3]).toEqual(['skill-forecast'])
+  })
+
+  it('keeps the transcript intact when the context reset fails', async () => {
+    seedConversation()
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn().mockRejectedValue(new Error('ACP connection failed')),
+      sendPrompt: vi.fn()
+    }
+
+    const resent = await resendEditedWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      messageId: 'user-2',
+      text: 'second prompt, edited'
+    })
+
+    expect(resent).toBe(false)
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]?.messages.map((message) => message.id)).toEqual([
+      'user-1',
+      'agent-1',
+      'user-2',
+      'agent-2',
+      'user-3'
+    ])
+    expect(useSessionStore.getState().sessions[0]?.status).toBe('error')
   })
 })

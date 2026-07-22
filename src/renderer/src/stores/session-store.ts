@@ -192,6 +192,7 @@ type SessionStore = SessionStoreData & {
   ) => void
   markDisconnected: (sessionId: string) => void
   removeMessage: (sessionId: string, messageId: string) => void
+  truncateSessionFromMessage: (sessionId: string, messageId: string) => void
   upsertToolActivity: (input: UpsertToolActivityInput) => void
   setPermissionPending: (sessionId: string) => void
   clearPermissionPending: (sessionId: string) => void
@@ -1248,6 +1249,42 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         return {
           ...session,
           messages: session.messages.filter((message) => message.id !== messageId),
+          filesRevision: hasFiles ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
+          updatedAt: Date.now()
+        }
+      })
+    }))
+  },
+
+  // Drops a message and every turn after it for an edited resend. Activities are cut by timestamp
+  // because message sortIndex is transient (stripped on persist) while createdAt is durable on both
+  // sides of hydration. The kept turns are what the resend replays into the fresh agent context.
+  truncateSessionFromMessage: (sessionId, messageId) => {
+    if (!sessionId || !messageId) return
+
+    set((state) => ({
+      sessions: state.sessions.map((session) => {
+        if (session.id !== sessionId) return session
+        const cutIndex = session.messages.findIndex((message) => message.id === messageId)
+        if (cutIndex < 0) return session
+
+        const cutMessage = session.messages[cutIndex]
+        const removed = session.messages.slice(cutIndex)
+        const hasFiles = removed.some(
+          (message) => (message.uploads?.length ?? 0) > 0 || (message.artifactIds?.length ?? 0) > 0
+        )
+
+        return {
+          ...session,
+          status: 'idle',
+          messages: session.messages.slice(0, cutIndex),
+          activities: session.activities?.filter(
+            (activity) => activity.createdAt < cutMessage.createdAt
+          ),
+          activeRun: undefined,
+          agentStatus: undefined,
+          error: undefined,
+          interrupted: undefined,
           filesRevision: hasFiles ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
           updatedAt: Date.now()
         }

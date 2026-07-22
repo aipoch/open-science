@@ -109,9 +109,10 @@ type ConversationPanelProps = {
   onRequestReview: () => void
   // True when "Request review" should be disabled: no completed turn, already reviewed, or currently reviewing.
   isRequestReviewDisabled: boolean
-  // Inline editing of a sent prompt is only allowed once the run settles; confirm resends the doc.
+  // Inline editing of a sent prompt is only allowed once the run settles; confirming truncates the
+  // conversation at that message and resends the adjusted doc.
   canEditMessage: boolean
-  onSendEditedMessage: (doc: ComposerDoc) => void
+  onSendEditedMessage: (messageId: string, doc: ComposerDoc) => void
 }
 
 // Middle chat surface owns the visible conversation and local message composer UI.

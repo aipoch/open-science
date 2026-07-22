@@ -33,9 +33,10 @@ import type { ComposerDoc } from './composer/composer-doc'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
-  // Gates inline editing of sent user prompts; the handler resends the edited doc as a new turn.
+  // Gates inline editing of sent user prompts; the handler truncates at the edited message and
+  // resends the adjusted doc as a fresh turn.
   canEditMessage: boolean
-  onSendEditedMessage: (doc: ComposerDoc) => void
+  onSendEditedMessage: (messageId: string, doc: ComposerDoc) => void
 }
 
 type SessionScopedActivityGroupState = {
@@ -149,6 +150,18 @@ const WorkspaceMessageScroller = ({
       : {}
   const conversationItems = groupConversationItems(createConversationItems(activeSession))
   const showAgentLoadingMessage = shouldShowAgentLoadingMessage(activeSession)
+
+  // Counts the user turns after each message; the destructive-resend warning keys off turns, not
+  // raw message count, so a single follow-up turn stays warning-free.
+  const subsequentTurnCountByMessageId = new Map<string, number>()
+  if (activeSession) {
+    let subsequentTurns = 0
+    for (let index = activeSession.messages.length - 1; index >= 0; index -= 1) {
+      const message = activeSession.messages[index]
+      subsequentTurnCountByMessageId.set(message.id, subsequentTurns)
+      if (message.role === 'user') subsequentTurns += 1
+    }
+  }
 
   // Transient "no longer available" pill shown when a mention target can't be opened.
   const [mentionNotice, setMentionNotice] = useState<string | null>(null)
@@ -323,6 +336,7 @@ const WorkspaceMessageScroller = ({
                         onPreviewMentionArtifact={onPreviewMentionArtifact}
                         canEditMessage={canEditMessage}
                         onSendEditedMessage={onSendEditedMessage}
+                        subsequentTurns={subsequentTurnCountByMessageId.get(item.message.id) ?? 0}
                         artifacts={artifacts}
                       />
                       {review ? (

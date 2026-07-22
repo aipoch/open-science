@@ -52,6 +52,18 @@ type SendWorkspaceMessageResult = {
   messageId: string
 }
 
+// Payload of an inline edit resend: the adjusted prompt text plus the mentions it carries. The
+// session/message ids stay separate because they address the truncation point, not the prompt.
+type ResendEditedMessageInput = {
+  text: string
+  // Structured mention segments of the edited draft, persisted so the resent bubble renders pills.
+  parts?: MessagePart[]
+  // Skills picked in the inline editor; force-loaded and nudged for the resent turn only.
+  forcedSkillIds?: string[]
+  // Files referenced via `@` mentions in the inline editor; attached to the resent prompt.
+  referencedArtifacts?: ArtifactReference[]
+}
+
 type WorkspaceMessageRuntime = Pick<
   ReturnType<typeof useAcpRuntime>,
   'state' | 'createSession' | 'resumeSession' | 'resetSessionContext' | 'sendPrompt'
@@ -705,6 +717,59 @@ const recoverContextOverflowWorkspaceSession = async (
   return true
 }
 
+// Resends an inline-edited prompt by truncating the conversation at the edited message: the agent
+// session is reset to a fresh context (ACP has no history truncation), the edited message and every
+// later turn are dropped, and the kept turns are replayed as a text preamble on the resent prompt.
+// Returns false when the reset fails so the transcript stays intact and the error is visible.
+const resendEditedWorkspaceMessage = async (
+  runtime: WorkspaceMessageRuntime,
+  input: ResendEditedMessageInput & { sessionId: string; messageId: string },
+  supportsImageInput?: boolean
+): Promise<boolean> => {
+  const session = useSessionStore.getState().sessions.find((item) => item.id === input.sessionId)
+
+  if (!session) return false
+
+  const resumeCwd = session.cwd || runtime.state.cwd
+
+  if (!resumeCwd) return false
+
+  // Guard the reset round-trip with the neutral compacting state so no prompt or second edit can race it.
+  useSessionStore.getState().beginCompaction(input.sessionId)
+
+  try {
+    await runtime.resetSessionContext(
+      input.sessionId,
+      resumeCwd,
+      session.projectId,
+      session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE
+    )
+  } catch (error) {
+    useSessionStore.getState().failRun(input.sessionId, getResumeFailureMessage(error))
+    return false
+  }
+
+  // Cut only after the reset succeeds so a failed reset leaves the full transcript intact.
+  useSessionStore.getState().truncateSessionFromMessage(input.sessionId, input.messageId)
+
+  await sendWorkspaceMessage(runtime, {
+    sessionId: input.sessionId,
+    text: input.text,
+    attachments: [],
+    parts: input.parts,
+    cwd: resumeCwd,
+    projectId: session.projectId,
+    permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+    forcedSkillIds: input.forcedSkillIds,
+    referencedArtifacts: input.referencedArtifacts,
+    // The fresh agent session lost the prior context, so replay the truncated transcript.
+    forceHistoryReplay: true,
+    supportsImageInput
+  })
+
+  return true
+}
+
 // Scans runtime error events for the request-size overflow and triggers one auto-recovery per event.
 // handledEventIds dedups across the repeated event snapshots a bounded window re-delivers; the recovery
 // runs only for attached sessions (a detached one uses the normal Resume path) and only once per cooldown.
@@ -815,6 +880,11 @@ const useWorkspaceAgentRuntime = (): {
   permissionProfiles: Record<string, SessionPermissionProfileState>
   permissionGrants: Record<string, AcpPermissionGrant[]>
   sendMessage: (input: SendWorkspaceMessageInput) => Promise<SendWorkspaceMessageResult | undefined>
+  resendEditedMessage: (
+    sessionId: string,
+    messageId: string,
+    input: ResendEditedMessageInput
+  ) => Promise<boolean>
   cancelRun: (sessionId: string) => Promise<void>
   resumeInterruptedSession: (sessionId: string) => Promise<void>
   deleteRuntimeSession: (sessionId: string) => Promise<boolean>
@@ -872,6 +942,14 @@ const useWorkspaceAgentRuntime = (): {
   const sendMessage = useCallback(
     (input: SendWorkspaceMessageInput): Promise<SendWorkspaceMessageResult | undefined> =>
       sendWorkspaceMessage(runtime, { ...input, supportsImageInput }),
+    [runtime, supportsImageInput]
+  )
+
+  // Truncates the conversation at the edited message, then resends the adjusted prompt with the
+  // kept history replayed into the reset agent context.
+  const resendEditedMessage = useCallback(
+    (sessionId: string, messageId: string, input: ResendEditedMessageInput): Promise<boolean> =>
+      resendEditedWorkspaceMessage(runtime, { sessionId, messageId, ...input }, supportsImageInput),
     [runtime, supportsImageInput]
   )
 
@@ -951,6 +1029,7 @@ const useWorkspaceAgentRuntime = (): {
     permissionProfiles: runtime.state.permissionProfiles,
     permissionGrants: runtime.state.permissionGrants,
     sendMessage,
+    resendEditedMessage,
     cancelRun,
     resumeInterruptedSession,
     deleteRuntimeSession,
@@ -968,6 +1047,7 @@ export {
   processContextOverflowRecovery,
   processVisibleWorkspaceRuntimeEvents,
   recoverContextOverflowWorkspaceSession,
+  resendEditedWorkspaceMessage,
   resumeInterruptedWorkspaceSession,
   sendWorkspaceMessage,
   useWorkspaceAgentRuntime

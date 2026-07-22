@@ -11,6 +11,7 @@ import { getUploadedAttachmentName } from '../../../../shared/uploads'
 
 import { ArtifactPreview } from './artifact-preview'
 import { ComposerEditor } from './composer/ComposerEditor'
+import { EditMessageConfirmDialog } from './EditMessageConfirmDialog'
 import {
   docFromMessageParts,
   docFromText,
@@ -38,9 +39,12 @@ type WorkspaceMessageItemProps = {
   onOpenSkillMention: (skillId: string, name: string) => void
   onPreviewMentionArtifact: (part: ArtifactMentionPart) => void
   artifacts?: MessageArtifact[]
-  // Inline editing is only enabled once the session's run settles; confirm resends as a new turn.
+  // Inline editing is only enabled once the session's run settles; confirming truncates the
+  // conversation at this message and resends the adjusted doc as a fresh turn.
   canEditMessage?: boolean
-  onSendEditedMessage?: (doc: ComposerDoc) => void
+  onSendEditedMessage?: (messageId: string, doc: ComposerDoc) => void
+  // Number of user turns after this message; drives the destructive-resend warning threshold.
+  subsequentTurns?: number
 }
 
 const ARTIFACT_GALLERY_VISIBLE_COUNT = 5
@@ -65,6 +69,8 @@ const editSendButtonClassName =
   'flex h-7 items-center rounded-md bg-primary px-2.5 text-[12px] font-medium text-primary-foreground transition-colors duration-200 ease-out hover:bg-primary/80 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary'
 // The inline editor ignores pasted files; plain-text paste is handled by the editor itself.
 const ignoreEditPaste = (): void => {}
+// Resending an edit drops every turn after the edited one; from this many turns up, ask first.
+const EDIT_TRUNCATION_WARNING_TURNS = 2
 // Staged uploads render as gray file pills inside the sent bubble.
 const uploadedAttachmentButtonClassName =
   'inline-flex max-w-full items-center gap-1.5 rounded-md border border-border-200 bg-bg-200 px-2 py-0.5 text-left text-[13px] leading-5 text-text-000 transition-colors hover:bg-bg-000 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-200/60'
@@ -361,6 +367,7 @@ const WorkspaceMessageItem = ({
   onPreviewMentionArtifact,
   canEditMessage = false,
   onSendEditedMessage,
+  subsequentTurns = 0,
   artifacts = []
 }: WorkspaceMessageItemProps): React.JSX.Element => {
   const isUserMessage = message.role === 'user'
@@ -370,6 +377,8 @@ const WorkspaceMessageItem = ({
   // structured parts so mention chips survive the round-trip.
   const [isEditing, setIsEditing] = useState(false)
   const [editDoc, setEditDoc] = useState<ComposerDoc>(emptyDoc)
+  // True while the destructive-resend confirmation dialog is open.
+  const [isConfirmingEdit, setIsConfirmingEdit] = useState(false)
   const copyResetTimeoutRef = useRef<number | null>(null)
 
   // Clear a pending copied-state reset so it never fires setState after unmount.
@@ -404,12 +413,24 @@ const WorkspaceMessageItem = ({
     setIsEditing(false)
   }
 
-  // Confirms the inline edit: the adjusted prompt is resent as a new turn, then the editor closes.
+  // The destructive resend itself: the conversation is truncated at this message and the adjusted
+  // prompt is resent as a fresh turn, then the editor closes.
+  const confirmEditedResend = (): void => {
+    onSendEditedMessage?.(message.id, editDoc)
+    setIsConfirmingEdit(false)
+    setIsEditing(false)
+  }
+
+  // Confirms the inline edit; with several later turns at stake, ask before the destructive resend.
   const handleConfirmEdit = (): void => {
     if (!canEditMessage || docIsEmpty(editDoc)) return
 
-    onSendEditedMessage?.(editDoc)
-    setIsEditing(false)
+    if (subsequentTurns >= EDIT_TRUNCATION_WARNING_TURNS) {
+      setIsConfirmingEdit(true)
+      return
+    }
+
+    confirmEditedResend()
   }
 
   return (
@@ -512,6 +533,12 @@ const WorkspaceMessageItem = ({
           </div>
         )}
       </div>
+      <EditMessageConfirmDialog
+        open={isConfirmingEdit}
+        subsequentTurns={subsequentTurns}
+        onCancel={() => setIsConfirmingEdit(false)}
+        onConfirm={confirmEditedResend}
+      />
     </MessageScrollerItem>
   )
 }

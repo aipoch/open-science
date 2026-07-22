@@ -156,6 +156,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     permissionProfiles,
     permissionGrants,
     sendMessage,
+    resendEditedMessage,
     cancelRun,
     resumeInterruptedSession,
     deleteRuntimeSession,
@@ -580,22 +581,17 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     })
   }
 
-  // Resends an inline-edited prompt as a new turn in the current session. The edited doc carries no
-  // attachments, and the gate mirrors canEditMessage so a resend never overlaps an in-flight turn.
-  const sendEditedMessage = (doc: ComposerDoc): void => {
-    if (!canEditMessage || docIsEmpty(doc)) return
+  // Resends an inline-edited prompt: the conversation is truncated at the edited message, the agent
+  // context resets, and the kept turns replay as a preamble on the resent prompt. The gate mirrors
+  // canEditMessage so a resend never overlaps an in-flight turn.
+  const sendEditedMessage = (messageId: string, doc: ComposerDoc): void => {
+    if (!canEditMessage || docIsEmpty(doc) || !activeSession) return
 
-    void sendMessage({
-      sessionId: activeSession?.id,
+    void resendEditedMessage(activeSession.id, messageId, {
       text: docToText(doc),
-      attachments: [],
-      referencedArtifacts: docToArtifactRefs(doc),
       parts: doc.nodes,
-      cwd: activeSession?.cwd,
-      projectId: activeSession?.projectId ?? scopedProjectId,
-      projectName: activeSession?.projectId ?? scopedProjectId,
-      permissionProfile: activePermissionProfile,
-      forcedSkillIds: docToSkillIds(doc)
+      forcedSkillIds: docToSkillIds(doc),
+      referencedArtifacts: docToArtifactRefs(doc)
     })
   }
 
