@@ -1,5 +1,6 @@
 import {
   codexSubscriptionProviderIdentity,
+  type AgentFrameworkId,
   type ChatApiEndpoint,
   type ProviderType
 } from '../../../../shared/settings'
@@ -42,6 +43,20 @@ export const createEmptyProviderFormValue = (
   key: '',
   ...overrides
 })
+
+// The provider kind pre-selected when the Add provider form opens, matched to the active agent
+// framework's most common official vendor: Claude Code → Anthropic, Codex → OpenAI,
+// OpenCode → DeepSeek.
+export const defaultProviderKindKey = (frameworkId: AgentFrameworkId): string => {
+  switch (frameworkId) {
+    case 'codex':
+      return 'official:openai'
+    case 'opencode':
+      return 'official:deepseek'
+    default:
+      return 'official:anthropic'
+  }
+}
 
 // Per-field validation errors. Custom needs base URL/model/key; official needs only a key (base URL
 // and model come from the registry); claude-default has no required fields.

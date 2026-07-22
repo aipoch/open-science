@@ -201,12 +201,15 @@ describe('SettingsPage layout', () => {
     clickByText('Add provider')
 
     // The sub-page shows a "Model › Add provider" breadcrumb and the provider-type dropdown, hiding
-    // the Claude section. There is no standalone in-content back arrow.
+    // the Claude section. There is no standalone in-content back arrow. With Claude Code as the
+    // active framework, the type defaults to Anthropic.
     const crumb = document.body.querySelector<HTMLButtonElement>('[aria-label="Back to model"]')
     expect(crumb).not.toBeNull()
     expect(document.body.textContent).toContain('Add provider')
     expect(document.body.querySelector('[aria-label="Back to providers"]')).toBeNull()
-    expect(document.body.querySelector('[aria-label="Provider type"]')).not.toBeNull()
+    const typeTrigger = document.body.querySelector('[aria-label="Provider type"]')
+    expect(typeTrigger).not.toBeNull()
+    expect(typeTrigger?.textContent).toContain('Anthropic')
     expect(document.body.querySelector('section[aria-label="Claude"]')).toBeNull()
 
     // The shared top back arrow exits the form back to the provider list.
@@ -224,6 +227,43 @@ describe('SettingsPage layout', () => {
     const rootCrumb = document.body.querySelector<HTMLButtonElement>('[aria-label="Back to model"]')
     act(() => rootCrumb?.click())
     expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
+  })
+
+  it('defaults the Add provider type to the framework vendor (Codex → OpenAI, OpenCode → DeepSeek)', async () => {
+    // Claude Code → Anthropic is covered by the history-navigation test above.
+    const scenarios = [
+      { framework: 'codex', runtime: { codex: { resolvedPath: '/x/codex' } }, label: 'OpenAI' },
+      {
+        framework: 'opencode',
+        runtime: { opencode: { resolvedPath: '/x/opencode' } },
+        label: 'DeepSeek'
+      }
+    ] as const
+
+    for (const { framework, runtime, label } of scenarios) {
+      await act(async () => {
+        root.render(<SettingsPage open onClose={vi.fn()} />)
+      })
+      // Set the framework after the initial load() settles, and give the runtime a resolved path
+      // so the detect-on-view effect doesn't overwrite it.
+      useSettingsStore.setState({ agentFrameworkId: framework, ...runtime })
+
+      const addProvider = Array.from(
+        document.body.querySelectorAll<HTMLButtonElement>('button')
+      ).find((button) => button.textContent?.trim() === 'Add provider')
+      act(() => addProvider?.click())
+
+      expect(document.body.querySelector('[aria-label="Provider type"]')?.textContent).toContain(
+        label
+      )
+
+      act(() => root.unmount())
+      container.remove()
+      document.body.innerHTML = ''
+      container = document.createElement('div')
+      document.body.appendChild(container)
+      root = createRoot(container)
+    }
   })
 
   it('switches to the General panel and shows the diagnostic log file', async () => {

@@ -44,8 +44,10 @@ import { ActiveModelSelect } from './ActiveModelSelect'
 import { ProviderForm } from './ProviderForm'
 import {
   createEmptyProviderFormValue,
+  defaultProviderKindKey,
   getProviderFormErrors,
   hasProviderFormErrors,
+  providerKindPatch,
   type ProviderFormValue
 } from './provider-form-value'
 import { ProviderList } from './ProviderList'
@@ -420,13 +422,16 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
 
   // Seed the form value when entering a create/edit sub-view (adjust-state-during-render, keyed on the
   // sub-view so typing isn't clobbered by background store updates; edit guards until the provider
-  // loads). Also clears any stale status message on entry.
+  // loads). A create pre-selects the official vendor matching the active agent framework. Also
+  // clears any stale status message on entry.
   const modelViewKey = modelView.kind === 'edit' ? `edit:${modelView.providerId}` : modelView.kind
   const [seededModelView, setSeededModelView] = useState(modelViewKey)
   if (modelViewKey !== seededModelView) {
     setSeededModelView(modelViewKey)
     if (modelView.kind === 'create') {
-      setFormValue(createEmptyProviderFormValue())
+      setFormValue(
+        createEmptyProviderFormValue(providerKindPatch(defaultProviderKindKey(agentFrameworkId)))
+      )
     } else if (modelView.kind === 'edit') {
       const provider = providers.find((entry) => entry.id === modelView.providerId)
       if (provider) setFormValue(toFormValue(provider))

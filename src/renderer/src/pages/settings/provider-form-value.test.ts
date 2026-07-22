@@ -3,11 +3,20 @@ import { describe, expect, it } from 'vitest'
 import {
   PROVIDER_KINDS,
   createEmptyProviderFormValue,
+  defaultProviderKindKey,
   getProviderFormErrors,
   hasProviderFormErrors,
   providerKindPatch,
   selectedKindKey
 } from './provider-form-value'
+
+describe('defaultProviderKindKey', () => {
+  it('matches the active agent framework to its official vendor', () => {
+    expect(defaultProviderKindKey('claude-code')).toBe('official:anthropic')
+    expect(defaultProviderKindKey('codex')).toBe('official:openai')
+    expect(defaultProviderKindKey('opencode')).toBe('official:deepseek')
+  })
+})
 
 describe('getProviderFormErrors', () => {
   it('flags every missing required field for a new custom provider', () => {
