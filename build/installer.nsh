@@ -30,13 +30,19 @@
     # matches on ExecutablePath (Win32_Process has no Path property) with a trailing-backslash
     # boundary so a sibling directory can never match, and receives the directory as an ARGUMENT —
     # never interpolated into the script source — so a custom install dir containing an apostrophe
-    # breaks nothing and injects nothing. The image-name taskkill covers machines where
-    # PowerShell is unavailable or policy-blocked. Both are best-effort; the retry is the verdict.
+    # breaks nothing and injects nothing. The image-name taskkill is ONLY a fallback for when the
+    # sweep could not run (PowerShell missing or policy-blocked): it matches the exe name in ANY
+    # directory, so a second install or the portable zip copy would be killed too — acceptable
+    # solely when no path-scoped option exists. Both are best-effort; the retry is the verdict.
     # $0 keeps the uninstaller arguments (/currentuser etc.) — neither nsExec call touches it.
     nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -C "$$root = $$args[0].TrimEnd('\') + '\'; Get-CimInstance -ClassName Win32_Process | ? { $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$root, 'CurrentCultureIgnoreCase') } | % { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }" "${DIR}"`
     Pop $R1
-    nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"`
-    Pop $R1
+    # nsExec pushes "error" when powershell.exe cannot even start, otherwise its exit code — any
+    # non-zero means the sweep did not run, so only then widen to the image-name kill.
+    ${if} $R1 != 0
+      nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"`
+      Pop $R1
+    ${endif}
     ClearErrors
     Sleep 1000
     ExecWait '"$PLUGINSDIR\old-uninstaller.exe" /S /KEEP_APP_DATA $0 _?=${DIR}' $R0

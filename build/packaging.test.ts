@@ -68,11 +68,32 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     expect(include).toContain('$$_.ExecutablePath')
     expect(include).not.toContain('$$_.Path.')
     expect(include).toContain('taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"')
+    expect(include).toContain('$(uninstallFailed): $R0')
+    expect(include).toContain('SetErrorLevel 2')
+  })
+
+  it('runs the image-name taskkill only as a fallback when the PowerShell sweep cannot run', () => {
+    // taskkill /IM matches the exe name in ANY directory — a second install or the portable zip
+    // copy would be killed too, discarding unsaved work. It must fire only when the path-scoped
+    // PowerShell sweep failed to run (nsExec pushes "error" or a non-zero exit code).
+    const code = include
+      .split('\n')
+      .filter((line) => !/^\s*#/.test(line))
+      .join('\n')
+    expect(code.match(/taskkill/g) ?? []).toHaveLength(1)
+    expect(code).toMatch(
+      /Pop \$R1[\s\S]*?\$\{if\} \$R1 != 0\s+nsExec::Exec `"\$SYSDIR\\cmd\.exe" \/C taskkill/
+    )
+  })
+
+  it('retries the old uninstaller exactly once', () => {
+    // A single follow-up attempt after the kill; the original ExecWait lives in
+    // electron-builder's uninstallOldVersion, so exactly one may appear here.
+    const attempts = include.match(/ExecWait '"\$PLUGINSDIR\\old-uninstaller\.exe/g) ?? []
+    expect(attempts).toHaveLength(1)
     expect(include).toContain(
       `ExecWait '"$PLUGINSDIR\\old-uninstaller.exe" /S /KEEP_APP_DATA $0 _?=\${DIR}' $R0`
     )
-    expect(include).toContain('$(uninstallFailed): $R0')
-    expect(include).toContain('SetErrorLevel 2')
   })
 
   it('passes the install dir to PowerShell as an argument, with a directory-boundary match', () => {
