@@ -114,16 +114,20 @@ const toMultilineString = (text: string): string[] => {
   return lines
 }
 
-// nbformat 4.5 requires a unique id per cell; tooling expects [A-Za-z0-9-_]. runIds/cellIds are
-// already close to that, so sanitize rather than generate — keeping the id traceable to the run.
+// nbformat 4.5 requires a unique id per cell: 1-64 chars of [A-Za-z0-9-_] (JEP 62). runIds/cellIds
+// are already close to that, so sanitize rather than generate — keeping the id traceable to the
+// run. Dedup suffixes reserve room from the 64-char budget so ids never exceed it.
+const MAX_CELL_ID_LENGTH = 64
+
 const toCellId = (run: NotebookRunRecord, index: number, seen: Set<string>): string => {
   const sanitized = run.cellId.replace(/[^A-Za-z0-9-_]/g, '-').replace(/^-+|-+$/g, '')
-  const base = sanitized.length > 0 ? sanitized : `cell-${index}`
+  const base = (sanitized.length > 0 ? sanitized : `cell-${index}`).slice(0, MAX_CELL_ID_LENGTH)
 
   let candidate = base
   let suffix = 2
   while (seen.has(candidate)) {
-    candidate = `${base}-${suffix}`
+    const suffixText = `-${suffix}`
+    candidate = `${base.slice(0, MAX_CELL_ID_LENGTH - suffixText.length)}${suffixText}`
     suffix += 1
   }
   seen.add(candidate)
@@ -237,9 +241,10 @@ const resolveDominantLanguage = (runs: NotebookRunRecord[]): 'python' | 'r' => {
   return rRuns > pythonRuns ? 'r' : 'python'
 }
 
-// Pure projection run.json -> .ipynb (nbformat 4.5). Deterministic: the same document always
-// produces byte-identical output, and no absolute paths or timestamps are embedded, so the exported
-// file is safe to share or publish.
+// Pure projection run.json -> .ipynb (nbformat 4.5). Deterministic: the same document and options
+// always produce byte-identical output (appVersion is an explicit option, not read from the
+// environment), and no absolute paths or wall-clock timestamps are embedded, so the exported file
+// is safe to share or publish.
 const projectRunDocumentToIpynb = (
   document: NotebookRunDocument,
   options: ProjectIpynbOptions = {}

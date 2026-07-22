@@ -197,8 +197,26 @@ describe('projectRunDocumentToIpynb', () => {
     expect(cells[2].id).toBe('cell-2')
     expect(new Set(cells.map((cell) => cell.id)).size).toBe(3)
     for (const cell of cells) {
-      expect(cell.id).toMatch(/^[A-Za-z0-9-_]+$/)
+      expect(cell.id).toMatch(/^[A-Za-z0-9-_]{1,64}$/)
     }
+  })
+
+  it('keeps oversized cell ids within nbformat’s 64-character limit, dedup suffix included', () => {
+    const oversized = `cell-${'x'.repeat(100)}`
+    const runs = [
+      makeRun({ runId: 'a', cellId: oversized }),
+      makeRun({ runId: 'b', cellId: oversized }),
+      makeRun({ runId: 'c', cellId: oversized })
+    ]
+    const cells = projectRunDocumentToIpynb(makeDocument(runs)).cells
+
+    expect(cells[0].id).toBe(oversized.slice(0, 64))
+    expect(cells[1].id).toBe(`${oversized.slice(0, 62)}-2`)
+    expect(cells[2].id).toBe(`${oversized.slice(0, 62)}-3`)
+    for (const cell of cells) {
+      expect(cell.id).toMatch(/^[A-Za-z0-9-_]{1,64}$/)
+    }
+    expect(new Set(cells.map((cell) => cell.id)).size).toBe(3)
   })
 
   it('is deterministic and embeds no absolute paths', () => {
