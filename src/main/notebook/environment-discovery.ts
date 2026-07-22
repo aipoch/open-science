@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { existsSync, readdirSync, realpathSync } from 'node:fs'
+import { access, readdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join, win32 } from 'node:path'
 import { promisify } from 'node:util'
@@ -254,24 +255,31 @@ export const defaultCandidatePaths =
       ]
       for (const installRoot of programFiles) {
         const rRoot = join(installRoot, 'R')
+        let entries: string[]
         try {
-          for (const ver of readdirSync(rRoot)) {
-            // Match R-x.y.z or R-x.y.z-suffix (e.g., R-4.2.0-ucrt for CRAN's UCRT builds)
-            if (!/^R-\d+\.\d+\.\d+(-\w+)?$/.test(ver)) continue
-            // Try 64-bit first (standard since R 4.2), then fallback to bin/R.exe.
-            const candidates = [
-              join(rRoot, ver, 'bin', 'x64', 'R.exe'),
-              join(rRoot, ver, 'bin', 'R.exe')
-            ]
-            for (const p of candidates) {
-              if (existsSync(p)) {
-                found.add(p)
-                break
-              }
+          entries = await readdir(rRoot)
+        } catch (err: unknown) {
+          // Skip if R root doesn't exist; rethrow permission or other unexpected errors
+          if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+          continue
+        }
+        for (const ver of entries) {
+          // Match R-x.y.z or R-x.y.z-suffix (e.g., R-4.2.0-ucrt for CRAN's UCRT builds)
+          if (!/^R-\d+\.\d+\.\d+(-\w+)?$/.test(ver)) continue
+          // Try 64-bit first (standard since R 4.2), then fallback to bin/R.exe.
+          const candidates = [
+            join(rRoot, ver, 'bin', 'x64', 'R.exe'),
+            join(rRoot, ver, 'bin', 'R.exe')
+          ]
+          for (const p of candidates) {
+            try {
+              await access(p)
+              found.add(p)
+              break
+            } catch {
+              // Candidate doesn't exist, try next
             }
           }
-        } catch {
-          // R root doesn't exist
         }
       }
     }
