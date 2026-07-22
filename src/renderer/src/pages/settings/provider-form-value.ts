@@ -46,15 +46,22 @@ export const createEmptyProviderFormValue = (
 
 // The provider kind pre-selected when the Add provider form opens, matched to the active agent
 // framework's most common official vendor: Claude Code → Anthropic, Codex → OpenAI,
-// OpenCode → DeepSeek.
-export const defaultProviderKindKey = (frameworkId: AgentFrameworkId): string => {
+// OpenCode → DeepSeek. Exhaustive over AgentFrameworkId so a new framework forces a deliberate
+// choice, and keyed off OfficialVendorId so a registry rename fails at compile time.
+export const defaultProviderKindKey = (
+  frameworkId: AgentFrameworkId
+): `official:${OfficialVendorId}` => {
   switch (frameworkId) {
+    case 'claude-code':
+      return 'official:anthropic'
     case 'codex':
       return 'official:openai'
     case 'opencode':
       return 'official:deepseek'
-    default:
-      return 'official:anthropic'
+    default: {
+      const exhaustive: never = frameworkId
+      throw new Error(`No default provider kind for framework ${String(exhaustive)}`)
+    }
   }
 }
 
