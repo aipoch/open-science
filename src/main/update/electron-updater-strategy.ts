@@ -142,7 +142,9 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       const info = p as { percent?: number; transferred?: number; total?: number }
       const percent = Math.round(info.percent ?? 0)
       const transferred = info.transferred ?? 0
-      const total = info.total ?? 0
+      // Preserve the manifest-hydrated size when the event lacks a usable total, so a progress
+      // event omitting it can't clobber the known installer size with 0.
+      const total = info.total || this.status.totalBytes || 0
       this.broadcast('update:progress', { percent, transferred, total })
       this.setStatus({
         ...this.status,
