@@ -99,6 +99,25 @@ describe('provisionAppClaudeConfigDir', () => {
     expect(settings.permissions.deny).not.toContain('WebFetch')
   })
 
+  it('prunes a persisted managed built-in deny (WebSearch) on upgrade, keeping unrelated rules', async () => {
+    root = await mkdtemp(join(tmpdir(), 'os-claude-config-'))
+    const configDir = join(root, 'claude')
+    await mkdir(configDir, { recursive: true })
+    // Simulate an install provisioned before this change: WebSearch already persisted alongside an
+    // unrelated user deny rule.
+    await writeFile(
+      join(configDir, 'settings.json'),
+      JSON.stringify({ permissions: { deny: ['WebSearch', 'Bash(rm:*)'] } }),
+      'utf8'
+    )
+
+    await provisionAppClaudeConfigDir(configDir)
+
+    const settings = JSON.parse(await readFile(join(configDir, 'settings.json'), 'utf8'))
+    expect(settings.permissions.deny).not.toContain('WebSearch')
+    expect(settings.permissions.deny).toContain('Bash(rm:*)')
+  })
+
   it('disables Claude Code bundled skills in the app user scope', async () => {
     root = await mkdtemp(join(tmpdir(), 'os-claude-config-'))
     const configDir = join(root, 'claude')
