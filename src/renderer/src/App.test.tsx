@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
     retry: vi.fn().mockResolvedValue(undefined)
   },
   loadProjects: vi.fn().mockResolvedValue(undefined),
+  deepLinkNavigation: vi.fn(),
   initUpdates: vi.fn(),
   sessionPersistenceReady: true,
   startupView: 'home' as 'home' | 'onboarding',
@@ -32,7 +33,7 @@ vi.mock('@/lib/session-persistence/session-persistence', () => ({
   useSessionPersistence: () => mocks.sessionPersistenceReady
 }))
 vi.mock('@/lib/deep-link', () => ({
-  useDeepLinkNavigation: vi.fn()
+  useDeepLinkNavigation: mocks.deepLinkNavigation
 }))
 vi.mock('@/hooks/useCloseActivePaneShortcut', () => ({
   useCloseActivePaneShortcut: vi.fn()
@@ -124,6 +125,7 @@ describe('App startup routing', () => {
     mocks.navigation.view = 'home'
     mocks.startupView = 'home'
     mocks.sessionPersistenceReady = true
+    mocks.deepLinkNavigation.mockClear()
     mocks.getInfo.mockResolvedValue({
       dataRoot: '/workspace/OpenScience',
       dataRootMissing: false,
@@ -150,6 +152,14 @@ describe('App startup routing', () => {
     await render()
 
     expect(container.innerHTML).toBe('')
+  })
+
+  it('passes session persistence readiness to deep-link navigation', async () => {
+    mocks.sessionPersistenceReady = false
+
+    await render()
+
+    expect(mocks.deepLinkNavigation).toHaveBeenCalledWith(false)
   })
 
   it('routes first-run users to onboarding after settings hydration', async () => {

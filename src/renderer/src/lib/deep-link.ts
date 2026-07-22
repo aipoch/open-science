@@ -68,8 +68,6 @@ const useDeepLinkNavigation = (isSessionPersistenceReady: boolean): void => {
 
     if (projectId && sessionId && sessionExists) {
       useNavigationStore.getState().openSession(projectId, sessionId)
-    } else if (projectId && !sessionId && projectExists) {
-      useNavigationStore.getState().openProject(projectId)
     } else {
       useNavigationStore.getState().goHome()
     }
@@ -91,7 +89,9 @@ const useDeepLinkNavigation = (isSessionPersistenceReady: boolean): void => {
 
     syncUrl()
     const unsubscribeNavigation = useNavigationStore.subscribe(syncUrl)
-    const unsubscribeSession = useSessionStore.subscribe(syncUrl)
+    const unsubscribeSession = useSessionStore.subscribe((state, previousState) => {
+      if (state.selectedSessionId !== previousState.selectedSessionId) syncUrl()
+    })
 
     return () => {
       unsubscribeNavigation()
