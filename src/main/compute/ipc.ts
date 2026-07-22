@@ -32,8 +32,6 @@ import { ComputeHostRepository } from './repository'
 import { ComputeJobRepository } from './job-repository'
 import { readSshConfigHostAliases } from './ssh-config'
 import { SystemSshRunner } from './ssh-runner'
-import { syncComputeSkillDoc } from './skill-doc'
-import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { EnabledComputeHostsRegistry, enabledComputeHostsRegistry } from './enabled-hosts-registry'
 import { getJobHarvestDir } from './harvest-engine'
 
@@ -171,17 +169,12 @@ type ComputeHandlers = {
   jobsMarkConsumed: (sessionId: string, jobIds: string[]) => Promise<void>
 }
 
-// Optional callback injected into createComputeHandlers so create/delete can re-sync the skill doc
-// without coupling the handler factory to fs or settings (keeps it unit-testable).
-type SkillDocSyncer = (hosts: ComputeHost[]) => Promise<void>
-
 // Adapts a repository into thin handlers.
 const createComputeHandlers = (
   repository: ComputeHostRepository,
   listSshAliases: () => Promise<string[]> = readSshConfigHostAliases,
   injectedService?: ComputeService,
   injectedBroker?: ComputeApprovalBroker,
-  onSkillDocSync?: SkillDocSyncer,
   settingsRepository?: SettingsRepository,
   jobRepository?: ComputeJobRepository,
   onJobUpdated?: (job: ComputeJob) => void,
@@ -227,26 +220,10 @@ const createComputeHandlers = (
       storageRoot
     )
 
-  // Re-syncs the skill doc after a create or delete. Runs fire-and-forget — a failure to write
-  // the skill doc never rolls back the host mutation (the doc is best-effort, like connector docs).
-  const syncSkillDocAfterMutation = (syncer: SkillDocSyncer | undefined): void => {
-    if (!syncer) return
-    void repository
-      .list()
-      .then((hosts) => syncer(hosts))
-      .catch((err) => {
-        console.error('Failed to sync compute skill doc:', err)
-      })
-  }
-
   return {
     list: () => repository.list(),
     get: (providerId) => repository.get(providerId),
-    create: async (request) => {
-      const host = await repository.create(request)
-      syncSkillDocAfterMutation(onSkillDocSync)
-      return host
-    },
+    create: async (request) => repository.create(request),
     delete: async (providerId) => {
       if (jobRepository) {
         const hasActive = await jobRepository.hasActiveJobsForProvider(providerId)
@@ -258,7 +235,6 @@ const createComputeHandlers = (
         }
       }
       await repository.delete(providerId)
-      syncSkillDocAfterMutation(onSkillDocSync)
     },
     sshConfigAliases: () => listSshAliases(),
     probe: (providerId) => service.probe(providerId),
@@ -354,10 +330,6 @@ const registerComputeIpcHandlers = (
   enabledComputeHostsRegistry: EnabledComputeHostsRegistry
 } => {
   const storageRoot = resolveStorageRoot()
-  const skillsDir = join(getAppClaudeConfigDir(storageRoot), 'skills')
-
-  // Skill doc syncer: writes remote-compute-ssh/SKILL.md with the current host list (issue 06).
-  const skillDocSyncer: SkillDocSyncer = (hosts) => syncComputeSkillDoc(skillsDir, hosts)
 
   // Share the settings repository with the broker so project grants are persisted (issue 05).
   const settingsRepo = new SettingsRepository(storageRoot)
@@ -370,21 +342,12 @@ const registerComputeIpcHandlers = (
     undefined,
     undefined,
     undefined,
-    skillDocSyncer,
     settingsRepo,
     jobRepository,
     onJobUpdated,
     artifactResolver,
     storageRoot
   )
-
-  // Write the initial skill doc at startup so agents see the host list from the first session.
-  void repository
-    .list()
-    .then((hosts) => syncComputeSkillDoc(skillsDir, hosts))
-    .catch((err) => {
-      console.error('Failed to write initial compute skill doc:', err)
-    })
 
   ipcMain.handle('compute:list', () => handlers.list())
   ipcMain.handle('compute:get', (_event, providerId: string) => handlers.get(providerId))
@@ -499,4 +462,4 @@ export {
   registerComputeIpcHandlers,
   enabledComputeHostsRegistry
 }
-export type { ComputeHandlers, SkillDocSyncer }
+export type { ComputeHandlers }

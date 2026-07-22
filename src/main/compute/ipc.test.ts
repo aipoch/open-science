@@ -211,7 +211,6 @@ describe('compute handlers — jobsList', () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       mockJobRepository({ findBySession }),
       undefined,
       undefined,
@@ -242,7 +241,6 @@ describe('compute handlers — jobsList', () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       mockJobRepository({ findBySession }),
       undefined,
       undefined,
@@ -269,7 +267,6 @@ describe('host delete guard', () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       mockJobRepo({ hasActiveJobsForProvider: hasActive })
     )
 
@@ -286,7 +283,6 @@ describe('host delete guard', () => {
     const hasActive = vi.fn(() => Promise.resolve(false))
     const handlers = createComputeHandlers(
       mockRepository({ delete: del, list }),
-      undefined,
       undefined,
       undefined,
       undefined,
@@ -395,58 +391,6 @@ describe('toJobSummary', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// Skill doc sync hooks — issue 06
-// ---------------------------------------------------------------------------
-
-describe('skill doc sync on create/delete', () => {
-  it('calls onSkillDocSync after create with the updated host list', async () => {
-    const created = sampleHost()
-    const hostList = [created]
-    const create = vi.fn(() => Promise.resolve(created))
-    const list = vi.fn(() => Promise.resolve(hostList))
-    const syncer = vi.fn(() => Promise.resolve())
-    const handlers = createComputeHandlers(
-      mockRepository({ create, list }),
-      undefined,
-      undefined,
-      undefined,
-      syncer
-    )
-
-    await handlers.create({ sshAlias: 'biowulf' })
-
-    // Give the fire-and-forget a tick to run.
-    await new Promise((r) => setTimeout(r, 0))
-    expect(syncer).toHaveBeenCalledWith(hostList)
-  })
-
-  it('calls onSkillDocSync after delete with the updated host list', async () => {
-    const del = vi.fn(() => Promise.resolve())
-    const list = vi.fn(() => Promise.resolve([]))
-    const syncer = vi.fn(() => Promise.resolve())
-    const handlers = createComputeHandlers(
-      mockRepository({ delete: del, list }),
-      undefined,
-      undefined,
-      undefined,
-      syncer
-    )
-
-    await handlers.delete('ssh:biowulf')
-
-    // Give the fire-and-forget a tick to run.
-    await new Promise((r) => setTimeout(r, 0))
-    expect(syncer).toHaveBeenCalledWith([])
-  })
-
-  it('does not throw when onSkillDocSync is undefined', async () => {
-    const create = vi.fn(() => Promise.resolve(sampleHost()))
-    const handlers = createComputeHandlers(mockRepository({ create }))
-    await expect(handlers.create({ sshAlias: 'biowulf' })).resolves.toBeDefined()
-  })
-})
-
 // Regression for sprint review finding #3: the production ComputeService (built when no service is
 // injected) must receive the jobRepository so agent submit_job works at runtime. Previously it was
 // constructed with only (runner, repository, broker), so submit_job threw "ComputeJobRepository is
@@ -459,7 +403,6 @@ describe('production ComputeService wiring (finding #3)', () => {
     const get = vi.fn(() => Promise.resolve(null))
     const handlers = createComputeHandlers(
       mockRepository({ get }),
-      undefined,
       undefined,
       undefined,
       undefined,
