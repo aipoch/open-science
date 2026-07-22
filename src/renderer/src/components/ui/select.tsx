@@ -49,7 +49,8 @@ function SelectContent({
 
   // The content mounts fresh on every open. Radix scrolls the selected item into view once the
   // floating position settles, which happens on the frames right after mount, so the reset covers
-  // that window rather than only the synchronous mount.
+  // that window rather than only the synchronous mount. This relies on radix's internal scroll
+  // timing (radix-ui ^1.6.1) — revisit when upgrading the dependency.
   React.useEffect(() => {
     if (!scrollToTopOnOpen) return
     const viewport = viewportRef.current

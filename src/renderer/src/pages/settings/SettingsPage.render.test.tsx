@@ -6,6 +6,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SettingsPage } from './SettingsPage'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 
+// The provider-type dropdown is a Radix Select, which calls pointer-capture and scroll APIs jsdom
+// does not implement.
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = (): boolean => false
+  Element.prototype.setPointerCapture = (): void => undefined
+  Element.prototype.releasePointerCapture = (): void => undefined
+}
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = (): void => undefined
+}
+
 let container: HTMLDivElement
 let root: Root
 
@@ -239,6 +250,62 @@ describe('SettingsPage layout', () => {
     const rootCrumb = document.body.querySelector<HTMLButtonElement>('[aria-label="Back to model"]')
     act(() => rootCrumb?.click())
     expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
+  })
+
+  it('re-seeds the draft and breadcrumb when re-picking a vendor after an in-form switch', async () => {
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+
+    const clickByText = async (text: string): Promise<void> => {
+      const button = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (candidate) => candidate.textContent?.trim() === text
+      )
+      await act(async () => button?.click())
+    }
+    const clickKindOption = async (label: string): Promise<void> => {
+      const option = Array.from(
+        document.body.querySelectorAll<HTMLButtonElement>('[data-slot="provider-kind-option"]')
+      ).find((candidate) => candidate.textContent?.includes(label))
+      await act(async () => option?.click())
+    }
+    // Opens a Radix Select trigger and clicks an option by visible text (options portal to body).
+    // Mirrors the proven OnboardingWizard.render.test.tsx pattern, since jsdom needs the events.
+    const selectOption = async (triggerLabel: string, optionText: string): Promise<void> => {
+      const trigger = document.body.querySelector<HTMLButtonElement>(
+        `[aria-label="${triggerLabel}"]`
+      )
+      await act(async () => {
+        trigger?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+        trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+      const option = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[role="option"]')
+      ).find((candidate) => candidate.textContent?.includes(optionText))
+      await act(async () => {
+        option?.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, button: 0 }))
+        option?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+    }
+    const typeTriggerText = (): string | null | undefined =>
+      document.body.querySelector('[aria-label="Provider type"]')?.textContent
+
+    await clickByText('Add provider')
+    await clickKindOption('OpenAI')
+    expect(typeTriggerText()).toContain('OpenAI')
+
+    // Switching the type inside the form is reflected in the breadcrumb leaf.
+    await selectOption('Provider type', 'Custom Gateway')
+    expect(typeTriggerText()).toContain('Custom Gateway')
+    expect(
+      document.body.querySelector('[aria-label="Back to model"]')?.parentElement?.textContent
+    ).toContain('Custom Gateway')
+
+    // Re-picking OpenAI re-seeds the draft even though the navigation kind key is unchanged.
+    const back = document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')
+    await act(async () => back?.click())
+    await clickKindOption('OpenAI')
+    expect(typeTriggerText()).toContain('OpenAI')
   })
 
   it('switches to the General panel and shows the diagnostic log file', async () => {

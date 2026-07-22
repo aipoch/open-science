@@ -49,6 +49,7 @@ import {
   getProviderFormErrors,
   hasProviderFormErrors,
   providerKindPatch,
+  selectedKindKey,
   type ProviderFormValue
 } from './provider-form-value'
 import { ProviderList } from './ProviderList'
@@ -366,11 +367,11 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
         modelView.kind === 'edit'
           ? (providers.find((provider) => provider.id === modelView.providerId)?.name ?? '')
           : ''
-      // The create leaf names the vendor picked in the previous step so the breadcrumb keeps
-      // context ("Model › OpenAI"); the picker itself is a plain "Add provider".
+      // The create leaf mirrors the kind currently selected in the form (the in-form select can
+      // switch it after the picker step); the picker itself is a plain "Add provider".
       const pickedLabel =
         modelView.kind === 'create'
-          ? PROVIDER_KINDS.find((kind) => kind.key === modelView.kindKey)?.label
+          ? PROVIDER_KINDS.find((kind) => kind.key === selectedKindKey(formValue))?.label
           : undefined
       return {
         rootLabel: 'Model',
@@ -466,8 +467,13 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const openCreate = (): void =>
     navigate({ panel: 'model', skills: currentLocation.skills, model: { kind: 'pick' } })
 
-  const openCreateWithKind = (kindKey: string): void =>
+  // Picking a vendor always re-seeds the draft here, not just via the modelViewKey guard: the guard
+  // keys on the kind, so re-picking the same vendor after switching the type in the form would
+  // otherwise keep the stale draft.
+  const openCreateWithKind = (kindKey: string): void => {
+    setFormValue({ ...createEmptyProviderFormValue(), ...providerKindPatch(kindKey) })
     navigate({ panel: 'model', skills: currentLocation.skills, model: { kind: 'create', kindKey } })
+  }
 
   const openEdit = (provider: ProviderView): void =>
     navigate({
