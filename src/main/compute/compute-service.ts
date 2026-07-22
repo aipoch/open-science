@@ -38,6 +38,7 @@ import { computeRemoteWorkdir, dispatchJob, hashCommand } from './job-dispatcher
 import type { StagedInputEntry } from './job-dispatcher'
 import { getJobHarvestDir } from './harvest-engine'
 import { getNotebookSessionRoot } from '../notebook/repository'
+import type { ConcurrencyManager } from './concurrency-manager'
 
 // Probe timeout for the full bundle — individual commands share one connection but each gets this
 // budget. Set generously so slow clusters don't abort, but short enough for a responsive UI (30s).
@@ -294,6 +295,7 @@ const JOB_DEFAULT_TIMEOUT_SECONDS = 24 * 3600
 // overrideDownloadsDir is optional: when supplied, used as the OS Downloads dir (for tests).
 // jobRepository is optional: when omitted, submitJob will throw (for tests that don't need it).
 // artifactResolver is optional: when omitted, artifact inputs in submitJob throw.
+// concurrencyManager is optional: when omitted, submitJob will not enforce concurrency limits.
 export class ComputeService {
   private readonly scpRunner: ScpRunner
 
@@ -306,7 +308,8 @@ export class ComputeService {
     private readonly jobRepository?: ComputeJobRepository,
     private readonly onJobUpdated?: (job: import('../../shared/compute').ComputeJob) => void,
     private readonly artifactResolver?: ArtifactResolver,
-    private readonly storageRoot?: string
+    private readonly storageRoot?: string,
+    private readonly concurrencyManager?: ConcurrencyManager
   ) {
     this.scpRunner = scpRunner ?? new SystemScpRunner()
   }
@@ -1093,9 +1096,10 @@ export class ComputeService {
   //   1. Validate host exists and timeout is within bounds.
   //   2. Resolve and validate inputs (workspace/artifact/remote_path).
   //   3. Pre-generate a job_id (not yet in DB).
-  //   4. Fire approval gate (before any DB write or SSH).
-  //   5. On approval: write ComputeJob row (status=submitted) + trigger background dispatch.
-  //   6. Return { job_id, provider_id, status:'submitted', remote_workdir } immediately.
+  //   4. Check concurrency limits (if ConcurrencyManager is present).
+  //   5. Fire approval gate (before any DB write or SSH).
+  //   6. On approval: write ComputeJob row (status=queued or submitted) + trigger background dispatch if submitted.
+  //   7. Return { job_id, provider_id, status, remote_workdir } immediately.
   //
   // The background dispatcher transitions the job to running (or error) without blocking this call.
   async submitJob(
@@ -1167,6 +1171,32 @@ export class ComputeService {
     const jobId = randomUUID()
     const remoteWorkdir = computeRemoteWorkdir(host.scratchRoot, jobId)
 
+    // ── CONCURRENCY CHECK (before approval gate) ──────────────────────────────────
+    let initialStatus: 'queued' | 'submitted' = 'submitted'
+    if (this.concurrencyManager) {
+      const enqueueResult = await this.concurrencyManager.enqueue({
+        jobId,
+        sessionId: context.sessionId,
+        providerId
+      })
+
+      if (enqueueResult === 'queue_full') {
+        const err = new Error(
+          `Job queue is full (100 queued jobs). Wait for queued jobs to start running before submitting more.`
+        ) as Error & { computeCallError: ComputeCallError }
+        err.computeCallError = {
+          error_code: 'queue_full',
+          message: 'Job queue is full (100 queued jobs). Wait for queued jobs to start running before submitting more.',
+          retry_after_user_action: false
+        }
+        throw err
+      }
+
+      if (enqueueResult === 'should_queue') {
+        initialStatus = 'queued'
+      }
+    }
+
     // ── APPROVAL GATE (must fire before any DB write or SSH) ──────────────────────
     if (!this.approvalBroker) {
       throw new Error('ComputeApprovalBroker is required to call submitJob.')
@@ -1226,23 +1256,27 @@ export class ComputeService {
       outputManifest: options.outputManifest,
       harvestConfig: options.harvestConfig,
       timeoutSeconds,
-      remoteWorkdir
+      remoteWorkdir,
+      initialStatus
     })
 
-    // ── BACKGROUND DISPATCH (non-blocking) ────────────────────────────────────────
+    // ── BACKGROUND DISPATCH (non-blocking, only for submitted jobs) ────────────────
     // Fire-and-forget. Errors are persisted to the job row by the dispatcher.
-    void dispatchJob(jobId, {
-      runner: this.runner,
-      scpRunner: this.scpRunner,
-      hostRepository: this.repository,
-      jobRepository: this.jobRepository,
-      onJobUpdated: this.onJobUpdated
-    })
+    // Queued jobs are NOT dispatched here — they wait for ConcurrencyManager.tryDispatchNext().
+    if (initialStatus === 'submitted') {
+      void dispatchJob(jobId, {
+        runner: this.runner,
+        scpRunner: this.scpRunner,
+        hostRepository: this.repository,
+        jobRepository: this.jobRepository,
+        onJobUpdated: this.onJobUpdated
+      })
+    }
 
     return {
       job_id: jobId,
       provider_id: host.providerId,
-      status: 'submitted',
+      status: initialStatus,
       remote_workdir: remoteWorkdir
     }
   }
@@ -1366,6 +1400,42 @@ export class ComputeService {
       remote_workdir: job.remote_workdir,
       stdout_tail: job.stdout_tail,
       stderr_tail: job.stderr_tail
+    }
+  }
+
+  // Sets the session-level concurrency limit. Delegates to ConcurrencyManager.
+  async setSessionConcurrencyLimit(sessionId: string, limit: number): Promise<void> {
+    if (!this.concurrencyManager) {
+      throw new Error('ConcurrencyManager is required to set session concurrency limit.')
+    }
+
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+      throw new Error(`Session concurrency limit must be an integer in the range 1..500 (got ${limit}).`)
+    }
+
+    this.concurrencyManager.setSessionLimit(sessionId, limit)
+  }
+
+  // Returns the session concurrency status (session limit, active/queued counts, provider ceilings).
+  async getSessionConcurrencyStatus(
+    sessionId: string
+  ): Promise<import('./concurrency-manager').SessionStatus> {
+    if (!this.concurrencyManager) {
+      throw new Error('ConcurrencyManager is required to get session concurrency status.')
+    }
+
+    return this.concurrencyManager.getStatus(sessionId)
+  }
+
+  // Internal callback wrapper: when a job transitions to a terminal state, notify ConcurrencyManager
+  // to trigger auto-dispatch of queued jobs. This is called by the JobPoller via onJobUpdated.
+  // Exposed as a method so the JobPoller (or IPC layer) can wire it in production.
+  notifyJobCompleted(job: import('../../shared/compute').ComputeJob): void {
+    const terminalStates = new Set(['success', 'failed', 'timeout', 'error'])
+    if (terminalStates.has(job.status) && this.concurrencyManager) {
+      // Fire-and-forget: ConcurrencyManager.onJobCompleted() is async but we don't await it here
+      // to keep the onJobUpdated callback synchronous (matches the existing pattern).
+      void this.concurrencyManager.onJobCompleted()
     }
   }
 }

@@ -70,6 +70,7 @@ export type CreateJobRequest = {
   harvestConfig?: string
   timeoutSeconds?: number
   remoteWorkdir?: string
+  initialStatus?: ComputeJobStatus
 }
 
 export type UpdateJobRequest = {
@@ -102,6 +103,7 @@ export class ComputeJobRepository {
 
   async create(request: CreateJobRequest): Promise<ComputeJob> {
     const client = await this.getClient()
+    const initialStatus = request.initialStatus ?? 'submitted'
     const row = await client.computeJob.create({
       data: {
         id: request.id,
@@ -109,7 +111,7 @@ export class ComputeJobRepository {
         shape: request.shape,
         sessionId: request.sessionId,
         projectId: request.projectId,
-        status: 'submitted',
+        status: initialStatus,
         intent: request.intent,
         command: request.command,
         commandHash: request.commandHash,
@@ -120,7 +122,7 @@ export class ComputeJobRepository {
         harvestConfig: request.harvestConfig,
         timeoutSeconds: request.timeoutSeconds,
         remoteWorkdir: request.remoteWorkdir,
-        submittedAt: new Date()
+        submittedAt: initialStatus === 'submitted' ? new Date() : undefined
       }
     })
     return toJob(row)
@@ -264,6 +266,30 @@ export class ComputeJobRepository {
       where: {
         sessionId,
         status: { in: ['queued', 'submitted', 'running'] }
+      }
+    })
+  }
+
+  // Counts active jobs (submitted, running) excluding queued, for a given session.
+  // Used by ConcurrencyManager to check if a new job should queue or dispatch immediately.
+  async countActiveBySession(sessionId: string): Promise<number> {
+    const client = await this.getClient()
+    return await client.computeJob.count({
+      where: {
+        sessionId,
+        status: { in: ['submitted', 'running'] }
+      }
+    })
+  }
+
+  // Counts active jobs (submitted, running) excluding queued, for a given provider.
+  // Used by ConcurrencyManager to check provider ceiling enforcement.
+  async countActiveByProvider(providerId: string): Promise<number> {
+    const client = await this.getClient()
+    return await client.computeJob.count({
+      where: {
+        providerId,
+        status: { in: ['submitted', 'running'] }
       }
     })
   }
