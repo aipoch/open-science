@@ -30,7 +30,7 @@ class FakeUpdater extends EventEmitter {
   // The download body each call runs. Default: emit progress + downloaded and resolve. Tests override
   // it to hang, to inspect the token, or to count real starts.
   runDownload: (token?: FakeToken) => Promise<void> = async () => {
-    this.emit('download-progress', { percent: 42 })
+    this.emit('download-progress', { percent: 42, transferred: 4200, total: 10000 })
     this.emit('update-downloaded', { version: '0.3.0' })
   }
   private downloadPromise: Promise<void> | null = null
@@ -96,7 +96,11 @@ describe('ElectronUpdaterStrategy', () => {
     })
     await strategy.check()
     const status = await strategy.download()
-    expect(broadcast).toHaveBeenCalledWith('update:progress', 42)
+    expect(broadcast).toHaveBeenCalledWith('update:progress', {
+      percent: 42,
+      transferred: 4200,
+      total: 10000
+    })
     expect(status.state).toBe('ready')
   })
 
@@ -183,7 +187,7 @@ describe('ElectronUpdaterStrategy', () => {
         await new Promise<void>((resolve) => (release = resolve))
         if (token?.cancelled) throw new Error('cancelled')
       } else {
-        updater.emit('download-progress', { percent: 55 })
+        updater.emit('download-progress', { percent: 55, transferred: 5500, total: 10000 })
         updater.emit('update-downloaded', { version: '0.3.0' })
       }
     }

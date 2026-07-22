@@ -132,9 +132,18 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       this.setStatus({ state: 'up-to-date', latest: i.version })
     })
     this.updater.on('download-progress', (p) => {
-      const percent = Math.round((p as { percent?: number }).percent ?? 0)
-      this.broadcast('update:progress', percent)
-      this.setStatus({ ...this.status, state: 'downloading', progress: percent })
+      const info = p as { percent?: number; transferred?: number; total?: number }
+      const percent = Math.round(info.percent ?? 0)
+      const transferred = info.transferred ?? 0
+      const total = info.total ?? 0
+      this.broadcast('update:progress', { percent, transferred, total })
+      this.setStatus({
+        ...this.status,
+        state: 'downloading',
+        progress: percent,
+        downloadedBytes: transferred,
+        totalBytes: total
+      })
     })
     this.updater.on('update-downloaded', () => {
       this.setStatus({ ...this.status, state: 'ready', progress: 100 })
