@@ -5,12 +5,10 @@ import type {
   PermissionAutoReviewStrategy,
   PermissionProfileId
 } from '../../shared/permission-profiles'
-import type { AgentFrameworkId } from '../../shared/settings'
 import { extractProviderToolName } from './runtime-events'
 
 type PermissionPolicyContext = {
   profile: PermissionProfileId
-  frameworkId?: AgentFrameworkId
   autoReviewStrategy?: PermissionAutoReviewStrategy
   cwd?: string
   // Agent-visible MCP server names, so MCP tools can be recognized across frameworks (see isMcpToolName).
