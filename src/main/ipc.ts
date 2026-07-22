@@ -324,6 +324,7 @@ const registerIpcHandlers = async ({
   // a banner would surface on the server machine, so Notification.isSupported() is the deliberate
   // gate (daemon-less Linux hosts degrade the same way), and click activation stays inert.
   const liveNotifications = new Set<Notification>()
+  const notificationsLog = createLogger('notifications')
   const taskNotifications = new TaskNotificationService({
     isEnabled: () => settingsService.getNotificationsEnabled(),
     isAppFocused: () => BrowserWindow.getAllWindows().some((window) => window.isFocused()),
@@ -333,6 +334,9 @@ const registerIpcHandlers = async ({
 
       const notification = new Notification({ title, body })
 
+      // Logged so a silently-swallowed banner (OS permission, Focus mode) is distinguishable from
+      // a gate that stopped delivery upstream.
+      notificationsLog.info('delivering task notification', { title, supported: true })
       // Retain the instance until the banner resolves; a GC before click would silently drop the
       // handler on some platforms.
       liveNotifications.add(notification)
@@ -344,7 +348,7 @@ const registerIpcHandlers = async ({
       notification.show()
     },
     onDeliveryError: (error) =>
-      createLogger('notifications').warn('task notification delivery failed', errorLogFields(error))
+      notificationsLog.warn('task notification delivery failed', errorLogFields(error))
   })
   // The renderer pulls the notification click target once its sessions are hydrated (a push sent
   // before the listener exists would be lost); consume-once semantics live in the service.
