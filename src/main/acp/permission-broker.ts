@@ -129,6 +129,7 @@ class AcpPermissionBroker {
     policyContext?: PermissionPolicyContext
   ): Promise<RequestPermissionResponse> {
     const requestId = randomUUID()
+    const categoryKey = resolveCategoryKey(params, policyContext?.mcpServerNames)
     const request: AcpPermissionRequest = {
       requestId,
       sessionId: params.sessionId,
@@ -136,6 +137,7 @@ class AcpPermissionBroker {
       title: params.toolCall.title ?? params.toolCall.toolCallId,
       status: params.toolCall.status ?? undefined,
       providerToolName: extractProviderToolName(params.toolCall),
+      isMcp: categoryKey.startsWith('mcp:'),
       toolKind: params.toolCall.kind ?? undefined,
       toolLocations: params.toolCall.locations ?? undefined,
       rawInput: params.toolCall.rawInput,
@@ -146,8 +148,6 @@ class AcpPermissionBroker {
       })),
       raw: params
     }
-
-    const categoryKey = resolveCategoryKey(params, policyContext?.mcpServerNames)
 
     // A model-independent fallback auto-reviews only structured, workspace-contained low-risk tools.
     const automaticOptionId = resolveAutomaticPermission(params, policyContext)

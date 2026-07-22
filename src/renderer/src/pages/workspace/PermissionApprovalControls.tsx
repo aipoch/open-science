@@ -34,8 +34,13 @@ const getPermissionActionKind = (option: PermissionOption): PermissionActionKind
 
 const getPermissionActionLabel = (
   option: PermissionOption,
-  actionKind: PermissionActionKind
+  actionKind: PermissionActionKind,
+  hasMultipleOptionsForAction: boolean
 ): string => {
+  // Providers may offer multiple scopes with the same ACP kind (for example, session-only and
+  // persistent allow_always). Preserve their display names only when the canonical label would make
+  // distinct decisions indistinguishable; the common one-option case stays compact.
+  if (hasMultipleOptionsForAction) return option.name
   if (actionKind === 'always') return 'Always'
   if (actionKind === 'allow-once') return 'Allow once'
   if (actionKind === 'reject') return 'Reject'
@@ -91,6 +96,7 @@ const PermissionCommandBlock = ({ command }: { command: string }): React.JSX.Ele
 
 const getPermissionRiskLabel = (request: AcpPermissionRequest): string => {
   if (request.providerToolName === 'notebook_execute') return 'Notebook execution'
+  if (request.isMcp) return 'MCP tool access'
 
   switch (request.toolKind) {
     case 'execute':
@@ -129,6 +135,14 @@ const PermissionApprovalControls = ({
   if (!request) return null
 
   const notebookCode = getNotebookCode(request)
+  const actionCounts = request.options.reduce<Map<PermissionActionKind, number>>(
+    (counts, option) => {
+      const actionKind = getPermissionActionKind(option)
+      counts.set(actionKind, (counts.get(actionKind) ?? 0) + 1)
+      return counts
+    },
+    new Map()
+  )
 
   return (
     <div className="mb-2 w-full max-w-full space-y-2 overflow-hidden rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-5 text-amber-900">
@@ -146,7 +160,11 @@ const PermissionApprovalControls = ({
         <span className="flex flex-wrap items-center justify-end gap-1 w-full overflow-hidden">
           {getOrderedPermissionOptions(request.options).map((option) => {
             const actionKind = getPermissionActionKind(option)
-            const actionLabel = getPermissionActionLabel(option, actionKind)
+            const actionLabel = getPermissionActionLabel(
+              option,
+              actionKind,
+              (actionCounts.get(actionKind) ?? 0) > 1
+            )
 
             return (
               <button

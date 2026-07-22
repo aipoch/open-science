@@ -199,6 +199,48 @@ type ClientContextSessionAttacher = {
   attachSession: (response: SessionAttachmentResponse) => ActiveSession
 }
 
+type CodexMcpToolIdentity = {
+  title: string
+  providerToolName: string
+  rawInput: unknown
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const isCodexMcpApproval = (params: RequestPermissionRequest): boolean => {
+  const meta = (params as RequestPermissionRequest & { _meta?: unknown })._meta
+
+  return isRecord(meta) && meta.is_mcp_tool_approval === true
+}
+
+// Codex emits the full MCP identity in tool_call immediately before a sparse permission request.
+// Trust it only when the reported server is one this session was actually configured to use.
+const codexMcpToolIdentity = (
+  event: AcpRuntimeEvent,
+  mcpServerNames: readonly string[]
+): CodexMcpToolIdentity | undefined => {
+  if (!isRecord(event.rawInput)) return undefined
+
+  const server = event.rawInput.server
+  const tool = event.rawInput.tool
+
+  if (
+    typeof server !== 'string' ||
+    !mcpServerNames.includes(server) ||
+    typeof tool !== 'string' ||
+    !tool.trim()
+  ) {
+    return undefined
+  }
+
+  return {
+    title: event.title ?? `mcp.${server}.${tool}`,
+    providerToolName: tool,
+    rawInput: event.rawInput.arguments
+  }
+}
+
 // Keeps runtime snapshots bounded so long conversations do not grow renderer payloads forever.
 const MAX_EVENTS = 500
 // Appends artifact tool guidance as system prompt metadata so user prompts stay untouched.
@@ -425,6 +467,9 @@ class AcpRuntime {
   // opencode's <server>_<tool>) and never conservatively auto-approved. Derived per session rather
   // than hardcoded so it can't drift from what createMcpServers wires up.
   private readonly sessionMcpServerNames = new Map<string, string[]>()
+  // Codex splits an MCP approval across two ACP messages: tool_call carries the identity/arguments,
+  // then request_permission carries only the call id. Retain only pending identities until consumed.
+  private readonly codexMcpToolIdentities = new Map<string, Map<string, CodexMcpToolIdentity>>()
   // Ephemeral background reviewer sessions (built via buildReviewerSession). They are deliberately kept
   // out of `this.sessions` — not tracked in the snapshot, not user-facing. Their permission requests are
   // handled by a strict allowlist: only the scope-bounded reviewer MCP is approved; every built-in tool is
@@ -1558,6 +1603,7 @@ class AcpRuntime {
     this.currentPromptTurnBySession.clear()
     this.latestSessionConfigOptions.clear()
     this.sessionMcpServerNames.clear()
+    this.codexMcpToolIdentities.clear()
     this.sessionProjectNames.clear()
     this.permissionProfiles.clear()
     this.artifactSessionIds.clear()
@@ -1991,6 +2037,7 @@ class AcpRuntime {
     this.currentPromptTurnBySession.delete(request.sessionId)
     this.latestSessionConfigOptions.delete(request.sessionId)
     this.sessionMcpServerNames.delete(request.sessionId)
+    this.codexMcpToolIdentities.delete(request.sessionId)
     this.sessionProjectNames.delete(request.sessionId)
     this.sessionFrameworks.delete(request.sessionId)
     this.sessionBackendIds.delete(request.sessionId)
@@ -2855,14 +2902,19 @@ class AcpRuntime {
     // full URL with query params, i.e. user data).
     const appSessionId = this.agentToAppSessionId.get(params.sessionId) ?? params.sessionId
     const mcpServerNames = this.sessionMcpServerNames.get(appSessionId) ?? []
-    const toolName = extractProviderToolName(params.toolCall)
+    const normalizedParams = this.restoreCodexMcpPermissionIdentity(
+      params,
+      appSessionId,
+      mcpServerNames
+    )
+    const toolName = extractProviderToolName(normalizedParams.toolCall)
     const isMcp =
-      isMcpToolName(params.toolCall?.title, mcpServerNames) ||
+      isMcpToolName(normalizedParams.toolCall?.title, mcpServerNames) ||
       isMcpToolName(toolName, mcpServerNames)
     log.info('permission request received', {
-      tool: toolName ?? params.toolCall?.kind,
+      tool: toolName ?? normalizedParams.toolCall?.kind,
       isMcp,
-      toolCallId: params.toolCall?.toolCallId,
+      toolCallId: normalizedParams.toolCall?.toolCallId,
       sessionId: params.sessionId,
       optionCount: params.options?.length
     })
@@ -2886,7 +2938,9 @@ class AcpRuntime {
       const profileState = this.permissionProfiles.get(appSessionId)
 
       return await this.permissionBroker.requestPermission(
-        appSessionId === params.sessionId ? params : { ...params, sessionId: appSessionId },
+        appSessionId === normalizedParams.sessionId
+          ? normalizedParams
+          : { ...normalizedParams, sessionId: appSessionId },
         {
           profile: profileState?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
           autoReviewStrategy: profileState?.autoReviewStrategy,
@@ -2902,6 +2956,36 @@ class AcpRuntime {
         sessionId: params.sessionId
       })
       throw error
+    }
+  }
+
+  private restoreCodexMcpPermissionIdentity(
+    params: RequestPermissionRequest,
+    appSessionId: string,
+    mcpServerNames: readonly string[]
+  ): RequestPermissionRequest {
+    if (this.sessionFrameworks.get(appSessionId) !== 'codex' || !isCodexMcpApproval(params)) {
+      return params
+    }
+
+    const identities = this.codexMcpToolIdentities.get(appSessionId)
+    const identity = identities?.get(params.toolCall.toolCallId)
+
+    if (!identity || !isMcpToolName(identity.title, mcpServerNames)) return params
+
+    identities?.delete(params.toolCall.toolCallId)
+    if (identities?.size === 0) this.codexMcpToolIdentities.delete(appSessionId)
+
+    const toolMeta = isRecord(params.toolCall._meta) ? params.toolCall._meta : {}
+
+    return {
+      ...params,
+      toolCall: {
+        ...params.toolCall,
+        title: params.toolCall.title ?? identity.title,
+        rawInput: params.toolCall.rawInput ?? identity.rawInput,
+        _meta: { ...toolMeta, toolName: identity.providerToolName }
+      }
     }
   }
 
@@ -2987,6 +3071,27 @@ class AcpRuntime {
     }
 
     const event = toAcpRuntimeEvent(routed, this.nextEventId())
+
+    if (
+      event.kind === 'tool' &&
+      event.sessionId &&
+      event.toolCallId &&
+      this.sessionFrameworks.get(event.sessionId) === 'codex'
+    ) {
+      const identities = this.codexMcpToolIdentities.get(event.sessionId) ?? new Map()
+      const identity = codexMcpToolIdentity(
+        event,
+        this.sessionMcpServerNames.get(event.sessionId) ?? []
+      )
+
+      if (identity && event.status !== 'completed' && event.status !== 'failed') {
+        identities.set(event.toolCallId, identity)
+        this.codexMcpToolIdentities.set(event.sessionId, identities)
+      } else if (event.status === 'completed' || event.status === 'failed') {
+        identities.delete(event.toolCallId)
+        if (identities.size === 0) this.codexMcpToolIdentities.delete(event.sessionId)
+      }
+    }
 
     // Tool results (e.g. WebFetch's claude.ai domain-safety preflight, a failed Bash command) stream as
     // tool_call_update content, which the session-update log omits — so a tool that runs and fails leaves
@@ -3113,6 +3218,7 @@ class AcpRuntime {
     this.currentPromptTurnBySession.clear()
     this.latestSessionConfigOptions.clear()
     this.sessionMcpServerNames.clear()
+    this.codexMcpToolIdentities.clear()
     this.sessionProjectNames.clear()
     this.artifactSessionIds.clear()
     this.notebookRoutingIds.clear()
@@ -3321,6 +3427,7 @@ class AcpRuntime {
   disposeReviewerSession(session: import('@agentclientprotocol/sdk').ActiveSession): void {
     this.reviewerSessionIds.delete(session.sessionId)
     this.sessionMcpServerNames.delete(session.sessionId)
+    this.codexMcpToolIdentities.delete(session.sessionId)
     this.sessionFrameworks.delete(session.sessionId)
     const reviewerCwd = this.reviewerSessionDirectories.get(session.sessionId)
     this.reviewerSessionDirectories.delete(session.sessionId)

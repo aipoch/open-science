@@ -2462,6 +2462,134 @@ describe('ACP runtime session management', () => {
     }
   })
 
+  it('restores Codex MCP identity before prompting and remembers a session grant across call ids', async () => {
+    const process = new FakeAgentProcess()
+    const permissionRequests: Array<{
+      title: string
+      providerToolName?: string
+      rawInput?: unknown
+      requestId: string
+      isMcp?: boolean
+    }> = []
+    const permissionResponses: unknown[] = []
+
+    acp
+      .agent({ name: 'codex-mcp-permission-agent' })
+      .onRequest(acp.methods.agent.initialize, () => ({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        agentCapabilities: {
+          loadSession: false,
+          sessionCapabilities: { close: {} }
+        },
+        authMethods: []
+      }))
+      .onRequest(acp.methods.agent.session.new, () => ({
+        sessionId: 'codex-mcp-session',
+        modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+      }))
+      .onRequest(acp.methods.agent.session.setMode, () => ({}))
+      .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
+        for (const toolCallId of ['call-notebook-1', 'call-notebook-2']) {
+          await ctx.client.notify(acp.methods.client.session.update, {
+            sessionId: ctx.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId,
+              kind: 'execute',
+              title: 'mcp.open-science-notebook.notebook_execute',
+              status: 'pending',
+              rawInput: {
+                server: 'open-science-notebook',
+                tool: 'notebook_execute',
+                arguments: { code: 'print(1)', language: 'python' }
+              },
+              _meta: { is_mcp_tool_call: true }
+            }
+          })
+
+          const response = await ctx.client.request(acp.methods.client.session.requestPermission, {
+            sessionId: ctx.params.sessionId,
+            toolCall: {
+              toolCallId,
+              kind: 'execute',
+              status: 'pending'
+            },
+            options: [
+              { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+              {
+                optionId: 'allow-session',
+                name: 'Allow for This Session',
+                kind: 'allow_always'
+              },
+              {
+                optionId: 'allow-always',
+                name: "Allow and Don't Ask Again",
+                kind: 'allow_always'
+              },
+              { optionId: 'decline', name: 'Decline', kind: 'reject_once' }
+            ],
+            _meta: { is_mcp_tool_approval: true }
+          })
+          permissionResponses.push(response)
+        }
+
+        return { stopReason: 'end_turn' }
+      })
+      .onRequest(acp.methods.agent.session.close, () => ({}))
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework,
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
+      },
+      callbacks: {
+        onPermissionRequest: (request) => {
+          permissionRequests.push(request)
+          runtime.respondToPermission({
+            requestId: request.requestId,
+            optionId: 'allow-session'
+          })
+        }
+      }
+    })
+    const session = await runtime.createSession({
+      cwd: '/workspace',
+      permissionProfile: 'auto'
+    })
+
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'run two notebook cells' })
+
+    expect(permissionRequests).toHaveLength(1)
+    expect(permissionRequests[0]).toMatchObject({
+      title: 'mcp.open-science-notebook.notebook_execute',
+      providerToolName: 'notebook_execute',
+      isMcp: true,
+      rawInput: { code: 'print(1)', language: 'python' }
+    })
+    expect(permissionResponses).toEqual([
+      { outcome: { outcome: 'selected', optionId: 'allow-session' } },
+      { outcome: { outcome: 'selected', optionId: 'allow-once' } }
+    ])
+    expect(runtime.getSnapshot().permissionGrants[session.sessionId]).toEqual([
+      {
+        categoryKey: 'mcp:mcp.open-science-notebook.notebook_execute',
+        kind: 'mcp',
+        label: 'mcp.open-science-notebook.notebook_execute'
+      }
+    ])
+  })
+
   it('records MCP server names on resume so a resumed session audits its MCP tool calls as MCP', async () => {
     infoLogSpy.mockClear()
     const process = new FakeAgentProcess()
