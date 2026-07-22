@@ -25,6 +25,7 @@ import {
   rLibraryDir,
   resolveEnvName,
   rReady,
+  readRReadyMarker,
   readReadyMarker,
   readyMarkerPath,
   rScriptBin,
@@ -102,7 +103,7 @@ describe('runtime-paths layout', () => {
     expect(windowsDefaultEnvPrefixReserve()).toBe('runtime\\envs\\.p'.length + 1)
   })
 
-  it('keeps a committed legacy Windows prefix but sends failed and fresh installs to the short path', () => {
+  it('uses marker provenance to distinguish committed legacy and short Windows prefixes', () => {
     const root = makeRoot()
     const short = join(root, 'envs', '.p')
     const legacy = legacyDefaultEnvPrefix(root, DEFAULT_PY_ENV)
@@ -116,7 +117,23 @@ describe('runtime-paths layout', () => {
     expect(envPrefix(root, DEFAULT_PY_ENV, 'win32')).toBe(legacy)
 
     mkdirSync(short, { recursive: true })
+    expect(envPrefix(root, DEFAULT_PY_ENV, 'win32')).toBe(legacy)
+
+    writeReadyMarker(root, DEFAULT_ENV_VERSION, 'short-ready', '.p')
     expect(envPrefix(root, DEFAULT_PY_ENV, 'win32')).toBe(short)
+  })
+
+  it('preserves a legacy R prefix beside a partial short directory until .r is committed', () => {
+    const root = makeRoot()
+    const short = join(root, 'envs', '.r')
+    const legacy = legacyDefaultEnvPrefix(root, DEFAULT_R_ENV)
+    touchBin(join(legacy, 'Lib', 'R', 'bin', 'R.exe'))
+    mkdirSync(short, { recursive: true })
+
+    expect(envPrefix(root, DEFAULT_R_ENV, 'win32')).toBe(legacy)
+
+    writeRReadyMarker(root, DEFAULT_ENV_VERSION, 'short-ready', '.r')
+    expect(envPrefix(root, DEFAULT_R_ENV, 'win32')).toBe(short)
   })
 
   it('builds the complete Windows conda DLL search path ahead of the inherited PATH', () => {
@@ -183,6 +200,23 @@ describe('.env-ready marker', () => {
     expect(body).toContain('"preparedAt"')
     const marker = readReadyMarker(root)
     expect(marker).toEqual({ defaultEnvVersion: 3, preparedAt: '1720000000000' })
+  })
+
+  it('roundtrips optional Windows prefix provenance', () => {
+    const root = makeRoot()
+    writeReadyMarker(root, 3, '1720000000000', '.p')
+    writeRReadyMarker(root, 3, '1720000000001', '.r')
+
+    expect(readReadyMarker(root)).toEqual({
+      defaultEnvVersion: 3,
+      preparedAt: '1720000000000',
+      prefixDirectory: '.p'
+    })
+    expect(readRReadyMarker(root)).toEqual({
+      defaultEnvVersion: 3,
+      preparedAt: '1720000000001',
+      prefixDirectory: '.r'
+    })
   })
 
   it('returns undefined when absent or corrupt', () => {

@@ -1,6 +1,6 @@
 import { type Dirent, existsSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import {
@@ -740,6 +740,13 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     }
   }
 
+  private markerPrefixDirectory(
+    name: typeof DEFAULT_PY_ENV | typeof DEFAULT_R_ENV
+  ): string | undefined {
+    const platform = this.deps.platform ?? process.platform
+    return platform === 'win32' ? basename(envPrefix(this.deps.root, name, platform)) : undefined
+  }
+
   // Wraps a language run so a QUEUED cancel is consumed (beginLanguageRun throws) BEFORE the run does
   // any work, and the provisioning flag + abort controller cover the whole run. repair uses this too, so
   // a cancel that arrived while the Reset was queued aborts BEFORE the destructive rm — never leaving a
@@ -767,7 +774,12 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     const onProgress = withLanguage(rawProgress, 'python')
     await this.materialize(DEFAULT_PYTHON_SPEC, onProgress)
     // Python is the app gate: stamp the ready marker only after create+verify succeed.
-    writeReadyMarker(this.deps.root, DEFAULT_ENV_VERSION, (this.deps.now ?? defaultNow)())
+    writeReadyMarker(
+      this.deps.root,
+      DEFAULT_ENV_VERSION,
+      (this.deps.now ?? defaultNow)(),
+      this.markerPrefixDirectory(DEFAULT_PY_ENV)
+    )
     this.cleanupLegacyDefaultPrefix(DEFAULT_PY_ENV)
     onProgress({ phase: 'done', message: 'Python environment ready', progress: 1 })
   }
@@ -787,7 +799,12 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     } else {
       await this.materialize(DEFAULT_R_SPEC, onProgress)
     }
-    writeRReadyMarker(this.deps.root, DEFAULT_ENV_VERSION, (this.deps.now ?? defaultNow)())
+    writeRReadyMarker(
+      this.deps.root,
+      DEFAULT_ENV_VERSION,
+      (this.deps.now ?? defaultNow)(),
+      this.markerPrefixDirectory(DEFAULT_R_ENV)
+    )
     this.cleanupLegacyDefaultPrefix(DEFAULT_R_ENV)
     onProgress({ phase: 'done', message: 'R environment ready', progress: 1 })
   }
@@ -816,9 +833,19 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       ) {
         onProgress({ phase: 'upgrade-r', message: 'Updating R packages…', progress: 0.6 })
         await this.withEnvPrefixLock(DEFAULT_R_ENV, () => this.upgradeOrRebuildR(onProgress))
-        writeRReadyMarker(this.deps.root, DEFAULT_ENV_VERSION, (this.deps.now ?? defaultNow)())
+        writeRReadyMarker(
+          this.deps.root,
+          DEFAULT_ENV_VERSION,
+          (this.deps.now ?? defaultNow)(),
+          this.markerPrefixDirectory(DEFAULT_R_ENV)
+        )
       }
-      writeReadyMarker(this.deps.root, DEFAULT_ENV_VERSION, (this.deps.now ?? defaultNow)())
+      writeReadyMarker(
+        this.deps.root,
+        DEFAULT_ENV_VERSION,
+        (this.deps.now ?? defaultNow)(),
+        this.markerPrefixDirectory(DEFAULT_PY_ENV)
+      )
       onProgress({ phase: 'done', message: 'Default environments updated', progress: 1 })
     } finally {
       this.provisioning = false
@@ -906,9 +933,20 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       // idempotently.
       const stampDefaultMarkerBeforeLock = (envName: string): void => {
         const now = (this.deps.now ?? defaultNow)()
-        if (envName === DEFAULT_PY_ENV) writeReadyMarker(this.deps.root, DEFAULT_ENV_VERSION, now)
+        if (envName === DEFAULT_PY_ENV)
+          writeReadyMarker(
+            this.deps.root,
+            DEFAULT_ENV_VERSION,
+            now,
+            this.markerPrefixDirectory(DEFAULT_PY_ENV)
+          )
         else if (envName === DEFAULT_R_ENV)
-          writeRReadyMarker(this.deps.root, DEFAULT_ENV_VERSION, now)
+          writeRReadyMarker(
+            this.deps.root,
+            DEFAULT_ENV_VERSION,
+            now,
+            this.markerPrefixDirectory(DEFAULT_R_ENV)
+          )
       }
       for (const file of files) {
         const name = file.slice(0, -'.lock'.length)

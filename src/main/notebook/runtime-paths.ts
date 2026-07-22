@@ -139,21 +139,36 @@ export const envPrefix = (
 ): string => {
   const physical = join(root, 'envs', envDirectoryName(name, platform))
   if (platform !== 'win32' || (name !== DEFAULT_PY_ENV && name !== DEFAULT_R_ENV)) return physical
-  // A short prefix, including a partial one, is authoritative so repair resumes in the new layout.
-  if (existsSync(physical)) return physical
 
   const legacy = join(root, 'envs', name)
+  const marker = name === DEFAULT_PY_ENV ? readReadyMarker(root) : readRReadyMarker(root)
+  const committedDirectory = marker?.prefixDirectory?.toLowerCase()
+  const shortDirectory = envDirectoryName(name, 'win32')
+  // Marker provenance distinguishes a committed short prefix from a partial short directory left
+  // beside a committed legacy environment. Markers written before provenance was introduced belong
+  // to the legacy layout, because no released build could have committed the reserved short names.
+  if (existsSync(physical) && committedDirectory === shortDirectory) return physical
+
   // Preserve a committed Python environment so an app update never drops pip/conda additions merely
-  // to shorten its path. A failed create has no marker and therefore retries at the short prefix.
+  // to shorten its path. A failed create has no marker and therefore retries at the short prefix. This
+  // function reads live filesystem state; callers must not cache its result across provisioning steps.
   if (
     name === DEFAULT_PY_ENV &&
-    existsSync(join(root, '.env-ready')) &&
+    marker !== undefined &&
+    (committedDirectory === undefined || committedDirectory === name) &&
     existsSync(join(legacy, 'python.exe'))
   )
     return legacy
   // Legacy R predates its dedicated marker. Keep any materialized prefix and let the existing
   // activated verify/upgrade-or-rebuild path decide whether it is healthy.
-  if (name === DEFAULT_R_ENV && existsSync(join(legacy, 'Lib', 'R', 'bin', 'R.exe'))) return legacy
+  if (
+    name === DEFAULT_R_ENV &&
+    (committedDirectory === undefined || committedDirectory === name) &&
+    existsSync(join(legacy, 'Lib', 'R', 'bin', 'R.exe'))
+  )
+    return legacy
+  // With no committed legacy environment, an existing partial short prefix remains authoritative so
+  // repair resumes in the new layout instead of creating a second prefix.
   return physical
 }
 
@@ -231,8 +246,13 @@ export const condaActivatedPath = (
 export const readyMarkerPath = (root: string): string => join(root, '.env-ready')
 export const rReadyMarkerPath = (root: string): string => join(root, '.r-env-ready')
 
-// Readiness marker persisted as camelCase JSON (contract §2).
-export type EnvReadyMarker = { defaultEnvVersion: number; preparedAt: string }
+// Readiness marker persisted as camelCase JSON (contract §2). prefixDirectory is optional for backward
+// compatibility; on Windows, an absent value denotes a marker from the legacy default directory.
+export type EnvReadyMarker = {
+  defaultEnvVersion: number
+  preparedAt: string
+  prefixDirectory?: string
+}
 
 // Reads .env-ready; returns undefined when missing or corrupt (never throws).
 export const readReadyMarker = (root: string): EnvReadyMarker | undefined => {
@@ -243,7 +263,13 @@ export const readReadyMarker = (root: string): EnvReadyMarker | undefined => {
     if (typeof parsed.defaultEnvVersion !== 'number' || typeof parsed.preparedAt !== 'string') {
       return undefined
     }
-    return { defaultEnvVersion: parsed.defaultEnvVersion, preparedAt: parsed.preparedAt }
+    return {
+      defaultEnvVersion: parsed.defaultEnvVersion,
+      preparedAt: parsed.preparedAt,
+      ...(typeof parsed.prefixDirectory === 'string'
+        ? { prefixDirectory: parsed.prefixDirectory }
+        : {})
+    }
   } catch {
     return undefined
   }
@@ -261,8 +287,17 @@ const writeMarkerAtomic = (path: string, marker: EnvReadyMarker): void => {
 }
 
 // Writes .env-ready as pretty camelCase JSON, creating the runtime root if needed.
-export const writeReadyMarker = (root: string, version: number, preparedAt: string): void => {
-  writeMarkerAtomic(readyMarkerPath(root), { defaultEnvVersion: version, preparedAt })
+export const writeReadyMarker = (
+  root: string,
+  version: number,
+  preparedAt: string,
+  prefixDirectory?: string
+): void => {
+  writeMarkerAtomic(readyMarkerPath(root), {
+    defaultEnvVersion: version,
+    preparedAt,
+    ...(prefixDirectory === undefined ? {} : { prefixDirectory })
+  })
 }
 
 export const readRReadyMarker = (root: string): EnvReadyMarker | undefined => {
@@ -273,14 +308,29 @@ export const readRReadyMarker = (root: string): EnvReadyMarker | undefined => {
     if (typeof parsed.defaultEnvVersion !== 'number' || typeof parsed.preparedAt !== 'string') {
       return undefined
     }
-    return { defaultEnvVersion: parsed.defaultEnvVersion, preparedAt: parsed.preparedAt }
+    return {
+      defaultEnvVersion: parsed.defaultEnvVersion,
+      preparedAt: parsed.preparedAt,
+      ...(typeof parsed.prefixDirectory === 'string'
+        ? { prefixDirectory: parsed.prefixDirectory }
+        : {})
+    }
   } catch {
     return undefined
   }
 }
 
-export const writeRReadyMarker = (root: string, version: number, preparedAt: string): void => {
-  writeMarkerAtomic(rReadyMarkerPath(root), { defaultEnvVersion: version, preparedAt })
+export const writeRReadyMarker = (
+  root: string,
+  version: number,
+  preparedAt: string,
+  prefixDirectory?: string
+): void => {
+  writeMarkerAtomic(rReadyMarkerPath(root), {
+    defaultEnvVersion: version,
+    preparedAt,
+    ...(prefixDirectory === undefined ? {} : { prefixDirectory })
+  })
 }
 
 // True when a regular file exists at the path (mirrors Rust is_file()).

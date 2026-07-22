@@ -16,6 +16,7 @@ import {
   readRReadyMarker,
   readReadyMarker,
   readyMarkerPath,
+  writeRReadyMarker,
   writeReadyMarker
 } from './runtime-paths'
 import {
@@ -702,7 +703,7 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
 })
 
 describe('DefaultRuntimeProvisioner Windows default-prefix compatibility', () => {
-  it('keeps a committed legacy default so an update does not drop user-installed packages', async () => {
+  it('keeps a committed legacy default beside a partial short prefix', async () => {
     const originalPlatform = process.platform
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
     const root = makeRoot()
@@ -710,6 +711,8 @@ describe('DefaultRuntimeProvisioner Windows default-prefix compatibility', () =>
       const legacy = legacyDefaultEnvPrefix(root, DEFAULT_PY_ENV)
       mkdirSync(dirname(pythonBin(legacy)), { recursive: true })
       writeFileSync(pythonBin(legacy), 'legacy')
+      const short = join(root, 'envs', '.p')
+      mkdirSync(short, { recursive: true })
       writeReadyMarker(root, DEFAULT_ENV_VERSION, 'legacy-ready')
       const runArgv = vi.fn(async () => undefined)
 
@@ -719,8 +722,69 @@ describe('DefaultRuntimeProvisioner Windows default-prefix compatibility', () =>
 
       expect(envPrefix(root, DEFAULT_PY_ENV, 'win32')).toBe(legacy)
       expect(existsSync(pythonBin(legacy))).toBe(true)
+      expect(existsSync(short)).toBe(true)
       expect(runArgv).not.toHaveBeenCalled()
-      expect(readReadyMarker(root)).toMatchObject({ defaultEnvVersion: DEFAULT_ENV_VERSION })
+      expect(readReadyMarker(root)).toMatchObject({
+        defaultEnvVersion: DEFAULT_ENV_VERSION,
+        prefixDirectory: DEFAULT_PY_ENV
+      })
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    }
+  })
+
+  it('keeps a materialized legacy R prefix beside a partial short prefix', async () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    const root = makeRoot()
+    try {
+      const legacy = legacyDefaultEnvPrefix(root, DEFAULT_R_ENV)
+      mkdirSync(dirname(rBin(legacy)), { recursive: true })
+      writeFileSync(rBin(legacy), 'legacy')
+      const short = join(root, 'envs', '.r')
+      mkdirSync(short, { recursive: true })
+      writeRReadyMarker(root, DEFAULT_ENV_VERSION, 'legacy-ready')
+      const runArgv = vi.fn(async () => undefined)
+
+      await new DefaultRuntimeProvisioner(
+        makeDeps(root, { platform: 'win32', runArgv })
+      ).provisionR(() => {})
+
+      expect(envPrefix(root, DEFAULT_R_ENV, 'win32')).toBe(legacy)
+      expect(existsSync(rBin(legacy))).toBe(true)
+      expect(existsSync(short)).toBe(true)
+      expect(runArgv).not.toHaveBeenCalled()
+      expect(readRReadyMarker(root)).toMatchObject({
+        defaultEnvVersion: DEFAULT_ENV_VERSION,
+        prefixDirectory: DEFAULT_R_ENV
+      })
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    }
+  })
+
+  it('removes legacy residue only when the ready marker commits the short prefix', async () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    const root = makeRoot()
+    try {
+      const short = join(root, 'envs', '.p')
+      mkdirSync(dirname(pythonBin(short)), { recursive: true })
+      writeFileSync(pythonBin(short), 'short')
+      const legacy = legacyDefaultEnvPrefix(root, DEFAULT_PY_ENV)
+      mkdirSync(dirname(pythonBin(legacy)), { recursive: true })
+      writeFileSync(pythonBin(legacy), 'legacy')
+      writeReadyMarker(root, DEFAULT_ENV_VERSION, 'short-ready', '.p')
+      const runArgv = vi.fn(async () => undefined)
+
+      await new DefaultRuntimeProvisioner(
+        makeDeps(root, { platform: 'win32', runArgv })
+      ).provisionPython(() => {})
+
+      expect(envPrefix(root, DEFAULT_PY_ENV, 'win32')).toBe(short)
+      expect(existsSync(pythonBin(short))).toBe(true)
+      expect(existsSync(legacy)).toBe(false)
+      expect(runArgv).not.toHaveBeenCalled()
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
     }
