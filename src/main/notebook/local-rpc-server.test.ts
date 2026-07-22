@@ -252,6 +252,7 @@ describe('notebook local RPC server', () => {
       download: async () => ({}),
       submitJob: async () => ({}),
       getJobStatus: async () => ({}),
+      getJobResult: async () => ({}),
       // Returns pre-configured enabled hosts for the session under test.
       getEnabledComputeHosts: (sessionId: string): string[] => {
         if (sessionId === 'my-session') return ['ssh:cluster-1']

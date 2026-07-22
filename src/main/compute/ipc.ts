@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { readdir } from 'node:fs/promises'
+import { join, relative } from 'node:path'
 
 import { BrowserWindow, ipcMain, shell } from 'electron'
 
@@ -32,18 +34,37 @@ import { readSshConfigHostAliases } from './ssh-config'
 import { SystemSshRunner } from './ssh-runner'
 import { syncComputeSkillDoc } from './skill-doc'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
-import { join } from 'node:path'
 import { EnabledComputeHostsRegistry, enabledComputeHostsRegistry } from './enabled-hosts-registry'
+import { getJobHarvestDir } from './harvest-engine'
 
 // IPC channel names for the renderer job feed (Phase 3d, issue 05).
 export const COMPUTE_JOBS_LIST_CHANNEL = 'compute:jobs:list'
 export const COMPUTE_JOB_UPDATED_CHANNEL = 'compute:job-updated'
 
+// Recursive readdir helper (returns absolute paths of all files).
+const readdirRecursive = async (dir: string): Promise<string[]> => {
+  const entries = await readdir(dir, { withFileTypes: true })
+  const results: string[] = []
+  for (const entry of entries) {
+    const full = join(dir, entry.name)
+    if (entry.isDirectory()) {
+      results.push(...(await readdirRecursive(full)))
+    } else {
+      results.push(full)
+    }
+  }
+  return results
+}
+
 // Converts a full ComputeJob to the lightweight JobSummary sent over IPC. The display_name is
 // denormalized from the host list at query time in listJobSummaries below.
 // Phase 3b: includes notification inbox timestamps so the renderer can decide whether to trigger
-// an analysis turn (issue 05/07).
-export const toJobSummary = (job: ComputeJob, displayName: string): JobSummary => {
+// an analysis turn (issue 05/07). The featured_files are computed by scanning the harvest directory.
+export const toJobSummary = async (
+  job: ComputeJob,
+  displayName: string,
+  storageRoot: string
+): Promise<JobSummary> => {
   // Parse left_on_remote JSON safely (stored as string in DB, but JobSummary expects array).
   let leftOnRemote: Array<{ uri: string; size_mb: number; reason: string }> = []
   if (job.left_on_remote) {
@@ -52,6 +73,19 @@ export const toJobSummary = (job: ComputeJob, displayName: string): JobSummary =
     } catch {
       // Malformed JSON — fall back to empty array.
     }
+  }
+
+  // Compute featured_files by scanning the harvest directory (same logic as buildComputeDonePayload).
+  const harvestDir = getJobHarvestDir(storageRoot, job.project_id, job.session_id, job.job_id)
+  const featuredDir = join(harvestDir, 'featured')
+  const workspaceCwd = join(harvestDir, '..', '..')
+
+  let featuredFiles: string[] = []
+  try {
+    const entries = await readdirRecursive(featuredDir)
+    featuredFiles = entries.map((abs) => relative(workspaceCwd, abs))
+  } catch {
+    // Directory does not exist or is unreadable — emit empty list (execution-error / harvest_failed).
   }
 
   return {
@@ -74,10 +108,11 @@ export const toJobSummary = (job: ComputeJob, displayName: string): JobSummary =
     notified_at: job.notified_at,
     notification_consumed_at: job.notification_consumed_at,
     // Phase 3b compute_done payload fields (spec §11.3).
-    featured_files: job.featured_files ?? [],
-    featured_file_count: job.featured_file_count ?? 0,
-    left_on_remote_count: job.left_on_remote_count ?? 0,
-    left_on_remote: leftOnRemote
+    featured_files: featuredFiles,
+    featured_file_count: featuredFiles.length,
+    left_on_remote_count: leftOnRemote.length,
+    left_on_remote: leftOnRemote,
+    harvest_error: job.harvest_error ?? undefined
   }
 }
 
@@ -232,18 +267,22 @@ const createComputeHandlers = (
     computeService: service,
     approvalRespond: (id, decision) => broker.respond(id, decision),
     jobsList: async (filter) => {
-      if (!jobRepository) return []
+      if (!jobRepository || !storageRoot) return []
       const hosts = await repository.list()
       const hostNameMap = new Map(hosts.map((h) => [h.providerId, h.displayName]))
       const jobs = await jobRepository.findBySession(filter.sessionId, filter.status)
-      return jobs.map((j) => toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id))
+      return Promise.all(
+        jobs.map((j) => toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot))
+      )
     },
     jobsPendingNotification: async (sessionId) => {
-      if (!jobRepository) return []
+      if (!jobRepository || !storageRoot) return []
       const hosts = await repository.list()
       const hostNameMap = new Map(hosts.map((h) => [h.providerId, h.displayName]))
       const jobs = await jobRepository.findPendingNotifications(sessionId)
-      return jobs.map((j) => toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id))
+      return Promise.all(
+        jobs.map((j) => toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot))
+      )
     },
     jobsMarkConsumed: async (_sessionId, jobIds) => {
       if (!jobRepository) return
@@ -272,15 +311,17 @@ export const broadcastJobUpdated = (summary: JobSummary): void => {
 // asynchronously, then broadcasts. Fire-and-forget: a transient failure to fetch the host falls
 // back to the provider_id string so the broadcast always happens.
 export const createJobUpdatedBroadcaster =
-  (hostRepository: ComputeHostRepository): ((job: ComputeJob) => void) =>
+  (hostRepository: ComputeHostRepository, storageRoot: string): ((job: ComputeJob) => void) =>
   (job) => {
     void hostRepository
       .get(job.provider_id)
-      .then((host) => {
-        broadcastJobUpdated(toJobSummary(job, host?.displayName ?? job.provider_id))
+      .then(async (host) => {
+        const summary = await toJobSummary(job, host?.displayName ?? job.provider_id, storageRoot)
+        broadcastJobUpdated(summary)
       })
-      .catch(() => {
-        broadcastJobUpdated(toJobSummary(job, job.provider_id))
+      .catch(async () => {
+        const summary = await toJobSummary(job, job.provider_id, storageRoot)
+        broadcastJobUpdated(summary)
       })
   }
 
@@ -307,7 +348,7 @@ const registerComputeIpcHandlers = (
   const settingsRepo = new SettingsRepository(storageRoot)
 
   // Broadcast dispatcher status transitions to the renderer, same hook shape as the JobPoller uses.
-  const onJobUpdated = createJobUpdatedBroadcaster(repository)
+  const onJobUpdated = createJobUpdatedBroadcaster(repository, storageRoot)
 
   const handlers = createComputeHandlers(
     repository,

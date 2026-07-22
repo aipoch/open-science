@@ -316,7 +316,7 @@ export const harvestJob = async (job: ComputeJob, deps: HarvestDeps): Promise<vo
         left_on_remote: payload.left_on_remote
       }
 
-      deps.broadcast(summary)
+      deps.broadcast?.(summary)
     } catch {
       // Notification build/broadcast failure is non-fatal: harvest result is already persisted.
     }

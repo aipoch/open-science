@@ -484,7 +484,7 @@ describe('harvestJob — compute_done notification (issue 06)', () => {
 
     // Repo maps notifiedAt → notified_at
     const jobRepo = {
-      update: vi.fn((jobId: string, data: Record<string, unknown>) => {
+      update: vi.fn((_jobId: string, data: Record<string, unknown>) => {
         const result: ComputeJob = {
           ...job,
           ...(data as Partial<ComputeJob>),

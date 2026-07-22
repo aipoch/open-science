@@ -255,7 +255,7 @@ const registerIpcHandlers = async ({
     runner: sshRunner,
     hostRepository,
     jobRepository,
-    onJobUpdated: createJobUpdatedBroadcaster(hostRepository),
+    onJobUpdated: createJobUpdatedBroadcaster(hostRepository, storageRoot),
     broadcast: broadcastJobUpdated,
     storageRoot,
     harvestFn: (job) =>

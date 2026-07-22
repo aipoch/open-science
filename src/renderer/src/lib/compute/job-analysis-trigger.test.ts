@@ -212,7 +212,7 @@ describe('createJobAnalysisTrigger — queuing', () => {
     let turnEndCallback: (() => void) | undefined
     const deps = createDeps({
       isSessionInFlight: vi.fn().mockReturnValue(true),
-      onTurnEnd: vi.fn((sessionId, cb) => {
+      onTurnEnd: vi.fn((_sessionId, cb) => {
         turnEndCallback = cb
       })
     })
@@ -237,7 +237,7 @@ describe('createJobAnalysisTrigger — queuing', () => {
     let turnEndCallback: (() => void) | undefined
     const deps = createDeps({
       isSessionInFlight: vi.fn().mockReturnValue(true),
-      onTurnEnd: vi.fn((sessionId, cb) => {
+      onTurnEnd: vi.fn((_sessionId, cb) => {
         turnEndCallback = cb
       })
     })

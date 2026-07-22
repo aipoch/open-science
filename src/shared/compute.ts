@@ -254,4 +254,5 @@ export type JobSummary = {
   featured_file_count?: number
   left_on_remote_count?: number
   left_on_remote?: Array<{ uri: string; size_mb: number; reason: string }>
+  harvest_error?: string
 }

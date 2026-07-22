@@ -212,7 +212,10 @@ describe('compute handlers — jobsList', () => {
       undefined,
       undefined,
       undefined,
-      mockJobRepository({ findBySession })
+      mockJobRepository({ findBySession }),
+      undefined,
+      undefined,
+      '/tmp/test-storage'
     )
 
     const result = await handlers.jobsList({ sessionId: 'sess-1' })
@@ -240,7 +243,10 @@ describe('compute handlers — jobsList', () => {
       undefined,
       undefined,
       undefined,
-      mockJobRepository({ findBySession })
+      mockJobRepository({ findBySession }),
+      undefined,
+      undefined,
+      '/tmp/test-storage'
     )
 
     const result = await handlers.jobsList({ sessionId: 'sess-1' })
@@ -308,7 +314,7 @@ describe('host delete guard', () => {
 // ---------------------------------------------------------------------------
 
 describe('toJobSummary', () => {
-  it('includes session_id from the source ComputeJob', () => {
+  it('includes session_id from the source ComputeJob', async () => {
     const job: ComputeJob = {
       job_id: 'j',
       provider_id: 'ssh:x',
@@ -337,12 +343,12 @@ describe('toJobSummary', () => {
       finished_at: undefined,
       harvested_at: undefined
     }
-    const summary = toJobSummary(job, 'My host')
+    const summary = await toJobSummary(job, 'My host', '/tmp/test-storage')
     expect(summary.session_id).toBe('sess-99')
     expect(summary.display_name).toBe('My host')
   })
 
-  it('forwards Phase 3b harvest fields from ComputeJob to JobSummary', () => {
+  it('forwards Phase 3b harvest fields from ComputeJob to JobSummary', async () => {
     const job: ComputeJob = {
       job_id: 'j-harvest',
       provider_id: 'ssh:x',
@@ -371,16 +377,13 @@ describe('toJobSummary', () => {
       ]),
       notified_at: 1000,
       notification_consumed_at: undefined,
-      featured_files: [],
-      featured_file_count: 0,
-      left_on_remote_count: 1,
       created_at: 0,
       submitted_at: 10,
       started_at: 20,
       finished_at: 100,
       harvested_at: 110
     }
-    const summary = toJobSummary(job, 'Test Host')
+    const summary = await toJobSummary(job, 'Test Host', '/tmp/test-storage')
 
     expect(summary.featured_files).toEqual([])
     expect(summary.featured_file_count).toBe(0)
@@ -388,6 +391,7 @@ describe('toJobSummary', () => {
     expect(summary.left_on_remote).toEqual([
       { uri: 'large.data', size_mb: 1024, reason: 'exceeds size limit' }
     ])
+    expect(summary.harvest_error).toBe('scp permission denied')
   })
 })
 
