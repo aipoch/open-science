@@ -803,6 +803,7 @@ const deleteWorkspaceSession = async (
 }
 
 const useWorkspaceAgentRuntime = (): {
+  actionError: string | null
   isConnecting: boolean
   pendingPermissions: AcpPermissionRequest[]
   permissionProfiles: Record<string, SessionPermissionProfileState>
@@ -938,6 +939,7 @@ const useWorkspaceAgentRuntime = (): {
   )
 
   return {
+    actionError: runtime.actionError,
     isConnecting: runtime.isConnecting,
     pendingPermissions: runtime.state.pendingPermissions,
     permissionProfiles: runtime.state.permissionProfiles,

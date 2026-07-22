@@ -158,7 +158,7 @@ describe('useAcpRuntime respondToPermission', () => {
 })
 
 describe('useAcpRuntime snapshot action failures', () => {
-  it('swallows a rejecting snapshot action, returns undefined, and clears the pending flag', async () => {
+  it('swallows a rejecting snapshot action, records the error, and clears the pending flag', async () => {
     acpApi.connect.mockRejectedValueOnce(new Error('connect failed'))
     const { result } = await mountRuntime()
 
@@ -169,10 +169,11 @@ describe('useAcpRuntime snapshot action failures', () => {
 
     // runSnapshotAction returns undefined on failure instead of rethrowing.
     expect(returned).toBeUndefined()
+    expect(result.current.actionError).toBe('connect failed')
     expect(result.current.isConnecting).toBe(false)
   })
 
-  it('swallows non-Error rejections and returns undefined', async () => {
+  it('normalizes non-Error rejections into UI-safe text', async () => {
     acpApi.cancel.mockRejectedValueOnce('raw failure string')
     const { result } = await mountRuntime()
 
@@ -180,12 +181,12 @@ describe('useAcpRuntime snapshot action failures', () => {
       await result.current.cancel('session-1')
     })
 
-    // runSnapshotAction swallows the error and returns undefined.
+    expect(result.current.actionError).toBe('raw failure string')
   })
 })
 
 describe('useAcpRuntime value action failures', () => {
-  it('rethrows a rejecting value action while clearing the pending flag', async () => {
+  it('rethrows a rejecting value action without recording it in actionError', async () => {
     const failure = new Error('createSession failed')
     acpApi.createSession.mockRejectedValueOnce(failure)
     const { result } = await mountRuntime()
@@ -198,6 +199,8 @@ describe('useAcpRuntime value action failures', () => {
     })
 
     expect(thrown).toBe(failure)
+    // runValueAction does NOT set actionError; the error is only rethrown.
+    expect(result.current.actionError).toBeNull()
     expect(result.current.isConnecting).toBe(false)
   })
 })
