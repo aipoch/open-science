@@ -328,7 +328,12 @@ describe('notebook local RPC server', () => {
       setSessionConcurrencyLimit: async (sessionId: string, limit: number) => {
         calls.push({ sessionId, limit })
       },
-      getSessionConcurrencyStatus: async () => ({})
+      getSessionConcurrencyStatus: async () => ({
+        session_limit: null,
+        active_count: 0,
+        queued_count: 0,
+        provider_ceilings: {}
+      })
     }
     const server = new NotebookLocalRpcServer(service, {
       token: 'secret-token',

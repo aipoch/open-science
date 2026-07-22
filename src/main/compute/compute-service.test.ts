@@ -2490,7 +2490,7 @@ describe('setSessionConcurrencyLimit', () => {
     const service = new ComputeService(runner, repo)
 
     await expect(service.setSessionConcurrencyLimit('session-123', 10)).rejects.toThrow(
-      /ConcurrencyManager not initialized/
+      /ConcurrencyManager is required/
     )
   })
 
@@ -2523,13 +2523,13 @@ describe('setSessionConcurrencyLimit', () => {
     )
 
     await expect(service.setSessionConcurrencyLimit('session-123', 0)).rejects.toThrow(
-      /positive integer/
+      /integer in the range 1\.\.500/
     )
     await expect(service.setSessionConcurrencyLimit('session-123', -5)).rejects.toThrow(
-      /positive integer/
+      /integer in the range 1\.\.500/
     )
     await expect(service.setSessionConcurrencyLimit('session-123', 3.5)).rejects.toThrow(
-      /positive integer/
+      /integer in the range 1\.\.500/
     )
   })
 })
@@ -2599,7 +2599,7 @@ describe('getSessionConcurrencyStatus', () => {
     const service = new ComputeService(runner, repo)
 
     await expect(service.getSessionConcurrencyStatus('session-123')).rejects.toThrow(
-      /ConcurrencyManager not initialized/
+      /ConcurrencyManager is required/
     )
   })
 })

@@ -21,6 +21,9 @@ export class ConcurrencyManager {
   // In-memory storage of session limits: sessionId -> limit
   private sessionLimits: Map<string, number> = new Map()
 
+  // Flag to prevent concurrent execution of tryDispatchNext
+  private dispatching: boolean = false
+
   constructor(
     private readonly jobRepository: ComputeJobRepository,
     private readonly hostRepository: ComputeHostRepository,
@@ -109,29 +112,48 @@ export class ConcurrencyManager {
   // Internal: attempt to dispatch the next eligible queued job(s).
   // Processes queued jobs in FIFO order (createdAt ASC) and dispatches any that satisfy both limits.
   private async tryDispatchNext(): Promise<void> {
-    const queuedJobs = await this.jobRepository.findQueuedJobs()
+    // Prevent concurrent execution - if already dispatching, return immediately
+    if (this.dispatching) {
+      return
+    }
 
-    for (const job of queuedJobs) {
-      // Re-check session limit for this job's session - only count active jobs
-      const sessionLimit = this.sessionLimits.get(job.session_id)
-      let sessionLimitOk = true
-      if (sessionLimit !== undefined) {
-        const activeInSession = await this.jobRepository.countActiveBySession(job.session_id)
-        sessionLimitOk = activeInSession < sessionLimit
+    this.dispatching = true
+    try {
+      const queuedJobs = await this.jobRepository.findQueuedJobs()
+
+      for (const job of queuedJobs) {
+        // Re-check session limit for this job's session - only count active jobs
+        const sessionLimit = this.sessionLimits.get(job.session_id)
+        let sessionLimitOk = true
+        if (sessionLimit !== undefined) {
+          const activeInSession = await this.jobRepository.countActiveBySession(job.session_id)
+          sessionLimitOk = activeInSession < sessionLimit
+        }
+
+        // Re-check provider ceiling for this job's provider - only count active jobs
+        const host = await this.hostRepository.get(job.provider_id)
+        const providerCeiling = host?.concurrencyLimit ?? DEFAULT_PROVIDER_CEILING
+        const activeOnProvider = await this.jobRepository.countActiveByProvider(job.provider_id)
+        const providerCeilingOk = activeOnProvider < providerCeiling
+
+        // Dispatch if both limits allow
+        if (sessionLimitOk && providerCeilingOk) {
+          try {
+            await this.jobRepository.update(job.job_id, { status: 'submitted' })
+            await this.dispatchJob(job.job_id)
+          } catch (err) {
+            // If dispatch fails, mark job as error and continue to next queued job
+            await this.jobRepository.update(job.job_id, {
+              status: 'error',
+              errorCode: 'dispatch_failed',
+              finishedAt: new Date()
+            })
+          }
+        }
+        // Otherwise skip this job and continue to next
       }
-
-      // Re-check provider ceiling for this job's provider - only count active jobs
-      const host = await this.hostRepository.get(job.provider_id)
-      const providerCeiling = host?.concurrencyLimit ?? DEFAULT_PROVIDER_CEILING
-      const activeOnProvider = await this.jobRepository.countActiveByProvider(job.provider_id)
-      const providerCeilingOk = activeOnProvider < providerCeiling
-
-      // Dispatch if both limits allow
-      if (sessionLimitOk && providerCeilingOk) {
-        await this.jobRepository.update(job.job_id, { status: 'submitted' })
-        await this.dispatchJob(job.job_id)
-      }
-      // Otherwise skip this job and continue to next
+    } finally {
+      this.dispatching = false
     }
   }
 }

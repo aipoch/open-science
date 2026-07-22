@@ -176,8 +176,8 @@ const hostCompute = {
       // that can run simultaneously across all providers in this session. Jobs exceeding the limit
       // enter 'queued' state and auto-dispatch when slots free up.
       async set_concurrency_limit(k) {
-        if (typeof k !== 'number' || k <= 0 || !Number.isInteger(k)) {
-          throw new Error('set_concurrency_limit: k must be a positive integer')
+        if (typeof k !== 'number' || k <= 0 || k > 500 || !Number.isInteger(k)) {
+          throw new Error('set_concurrency_limit: k must be a positive integer between 1 and 500')
         }
         return computeRpc({
           op: 'set_concurrency_limit',

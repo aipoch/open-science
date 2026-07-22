@@ -1132,6 +1132,17 @@ export class ComputeService {
     // Validate timeout bounds.
     const rawTimeout = options.timeoutSeconds
     if (rawTimeout !== undefined) {
+      if (!Number.isFinite(rawTimeout)) {
+        const err = new Error(
+          `timeout_seconds must be a finite number (got ${rawTimeout}).`
+        ) as Error & { computeCallError: ComputeCallError }
+        err.computeCallError = {
+          error_code: 'timeout',
+          message: `timeout_seconds must be a finite number.`,
+          retry_after_user_action: false
+        }
+        throw err
+      }
       if (!Number.isInteger(rawTimeout) || rawTimeout <= 0) {
         const err = new Error(
           `timeout_seconds must be a positive integer (got ${rawTimeout}).`
@@ -1426,7 +1437,7 @@ export class ComputeService {
       throw new Error('ConcurrencyManager is required to get session concurrency status.')
     }
 
-    const status = this.concurrencyManager.getStatus(sessionId)
+    const status = await this.concurrencyManager.getStatus(sessionId)
 
     // Enrich with ALL registered compute hosts (not just those with jobs in this session).
     const allHosts = await this.repository.list()

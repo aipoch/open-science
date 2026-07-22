@@ -491,4 +491,120 @@ describe('ConcurrencyManager', () => {
       expect(result2).toBe('can_dispatch')
     })
   })
+
+  describe('onJobCompleted - dispatch error handling', () => {
+    it('marks job as error when dispatchJob throws', async () => {
+      const queuedJobs: ComputeJob[] = [
+        {
+          job_id: 'job-1',
+          session_id: 'session-1',
+          provider_id: 'ssh:cluster-a',
+          created_at: 1000,
+          status: 'queued'
+        } as ComputeJob
+      ]
+
+      vi.mocked(jobRepo.findQueuedJobs).mockResolvedValue(queuedJobs)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(0)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
+      vi.mocked(hostRepo.get).mockResolvedValue({
+        concurrencyLimit: 10
+      } as ComputeHost)
+      vi.mocked(jobRepo.update).mockResolvedValue({} as ComputeJob)
+
+      // Simulate dispatchJob failure
+      vi.mocked(dispatchJob).mockRejectedValueOnce(new Error('SSH connection failed'))
+
+      await manager.onJobCompleted()
+
+      // Should mark job as submitted first
+      expect(jobRepo.update).toHaveBeenCalledWith('job-1', { status: 'submitted' })
+      // Then mark as error after dispatch fails
+      expect(jobRepo.update).toHaveBeenCalledWith('job-1', {
+        status: 'error',
+        errorCode: 'dispatch_failed',
+        finishedAt: expect.any(Date)
+      })
+    })
+
+    it('continues processing next queued job after dispatch failure', async () => {
+      const queuedJobs: ComputeJob[] = [
+        {
+          job_id: 'job-1',
+          session_id: 'session-1',
+          provider_id: 'ssh:cluster-a',
+          created_at: 1000,
+          status: 'queued'
+        } as ComputeJob,
+        {
+          job_id: 'job-2',
+          session_id: 'session-1',
+          provider_id: 'ssh:cluster-a',
+          created_at: 2000,
+          status: 'queued'
+        } as ComputeJob
+      ]
+
+      vi.mocked(jobRepo.findQueuedJobs).mockResolvedValue(queuedJobs)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(0)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
+      vi.mocked(hostRepo.get).mockResolvedValue({
+        concurrencyLimit: 10
+      } as ComputeHost)
+      vi.mocked(jobRepo.update).mockResolvedValue({} as ComputeJob)
+
+      // First job fails, second succeeds
+      vi.mocked(dispatchJob)
+        .mockRejectedValueOnce(new Error('SSH connection failed'))
+        .mockResolvedValueOnce(undefined)
+
+      await manager.onJobCompleted()
+
+      // First job should be marked as error
+      expect(jobRepo.update).toHaveBeenCalledWith('job-1', {
+        status: 'error',
+        errorCode: 'dispatch_failed',
+        finishedAt: expect.any(Date)
+      })
+
+      // Second job should still be dispatched
+      expect(jobRepo.update).toHaveBeenCalledWith('job-2', { status: 'submitted' })
+      expect(dispatchJob).toHaveBeenCalledWith('job-2')
+    })
+
+    it('prevents concurrent tryDispatchNext execution', async () => {
+      const queuedJobs: ComputeJob[] = [
+        {
+          job_id: 'job-1',
+          session_id: 'session-1',
+          provider_id: 'ssh:cluster-a',
+          created_at: 1000,
+          status: 'queued'
+        } as ComputeJob
+      ]
+
+      vi.mocked(jobRepo.findQueuedJobs).mockResolvedValue(queuedJobs)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(0)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
+      vi.mocked(hostRepo.get).mockResolvedValue({
+        concurrencyLimit: 10
+      } as ComputeHost)
+      vi.mocked(jobRepo.update).mockResolvedValue({} as ComputeJob)
+
+      // Make dispatchJob slow to simulate concurrent calls during dispatch
+      let dispatchStarted = 0
+      vi.mocked(dispatchJob).mockImplementation(async () => {
+        dispatchStarted++
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      })
+
+      // Fire two concurrent onJobCompleted calls
+      await Promise.all([manager.onJobCompleted(), manager.onJobCompleted()])
+
+      // findQueuedJobs should only be called once (second call returns early)
+      expect(jobRepo.findQueuedJobs).toHaveBeenCalledOnce()
+      // dispatchJob should only be called once
+      expect(dispatchStarted).toBe(1)
+    })
+  })
 })

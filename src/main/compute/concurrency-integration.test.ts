@@ -12,10 +12,9 @@ import { ComputeJobRepository } from './job-repository'
 import { ComputeService } from './compute-service'
 import { ConcurrencyManager } from './concurrency-manager'
 import { ComputeApprovalBroker } from './compute-approval-broker'
-import type { SshRunner, ResolvedSshTarget } from './ssh-runner'
+import type { SshRunner } from './ssh-runner'
 import type { ScpRunner } from './scp-runner'
 import { computeProviderId } from '../../shared/compute'
-import type { ComputeJob } from '../../shared/compute'
 
 // Mock the job-dispatcher module to prevent real SSH dispatches
 vi.mock('./job-dispatcher', async () => {
@@ -41,8 +40,7 @@ const makeFakeRunner = (): SshRunner => ({
 
 // Fake SCP runner that always succeeds.
 const makeFakeScp = (): ScpRunner => ({
-  upload: vi.fn(() => Promise.resolve()),
-  download: vi.fn(() => Promise.resolve())
+  copy: vi.fn(() => Promise.resolve({ exitCode: 0, stderr: '', timedOut: false }))
 })
 
 // Fake approval broker that auto-approves all requests.
@@ -72,7 +70,6 @@ describe('ConcurrencyManager integration with ComputeService', () => {
     jobRepo = new ComputeJobRepository(() => Promise.resolve(client))
 
     // Create test host
-    const providerId = computeProviderId('test-host')
     await hostRepo.create({
       sshAlias: 'test-host',
       displayName: 'Test Host'
@@ -96,7 +93,7 @@ describe('ConcurrencyManager integration with ComputeService', () => {
       makeFakeScp(),
       undefined,
       jobRepo,
-      onJobUpdatedSpy,
+      onJobUpdatedSpy as any,
       undefined,
       storageRoot,
       concurrencyManager
