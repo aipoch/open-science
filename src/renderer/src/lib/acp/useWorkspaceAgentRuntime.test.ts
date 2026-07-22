@@ -1682,6 +1682,56 @@ describe('resendEditedWorkspaceMessage', () => {
     ])
     expect(useSessionStore.getState().sessions[0]?.status).toBe('error')
   })
+
+  it('refuses the edit before truncating when the kept history needs image replay the model cannot take', async () => {
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'default-project',
+          title: 'Conversation',
+          cwd: '/workspace/project',
+          status: 'idle' as const,
+          messages: [
+            {
+              ...createMessage('user-1', 'user', 'first prompt', baseTime),
+              images: [{ id: 'img-1', mimeType: 'image/png', data: 'AQID', byteLength: 3 }]
+            },
+            createMessage('agent-1', 'agent', 'first answer', baseTime + 100),
+            createMessage('user-2', 'user', 'second prompt', baseTime + 200)
+          ],
+          createdAt: baseTime,
+          updatedAt: baseTime + 200
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    const resent = await resendEditedWorkspaceMessage(
+      runtime,
+      { sessionId: 'session-1', messageId: 'user-2', text: 'second prompt, edited' },
+      false
+    )
+
+    // The incompatible replay is rejected before the destructive cut: no reset, no prompt, and the
+    // transcript is untouched apart from the visible error.
+    expect(resent).toBe(false)
+    expect(runtime.resetSessionContext).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    const session = useSessionStore.getState().sessions[0]
+    expect(session?.messages.map((message) => message.id)).toEqual(['user-1', 'agent-1', 'user-2'])
+    expect(session?.status).toBe('error')
+    expect(session?.error).toContain('image replay')
+  })
 })
 
 describe('edit resend reply streaming', () => {

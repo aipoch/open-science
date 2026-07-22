@@ -345,6 +345,11 @@ const startPendingSessionPrompt = (
 }
 
 // Records the user's prompt before slow runtime work continues.
+// Shared by the send path and the edit-resend pre-check so both reject incompatible image replays
+// with the same wording.
+const IMAGE_REPLAY_UNSUPPORTED_MESSAGE =
+  'This conversation needs image replay, but the selected model does not support image input.'
+
 const sendWorkspaceMessage = async (
   runtime: WorkspaceMessageRuntime,
   {
@@ -491,12 +496,7 @@ const sendWorkspaceMessage = async (
       historyPreamble = buildHistoryPreamble(historyMessages)
       const media = buildHistoryReplayMedia(historyMessages)
       if (supportsImageInput === false && media.images.length > 0) {
-        useSessionStore
-          .getState()
-          .failRun(
-            targetSessionId,
-            'This conversation needs image replay, but the selected model does not support image input.'
-          )
+        useSessionStore.getState().failRun(targetSessionId, IMAGE_REPLAY_UNSUPPORTED_MESSAGE)
         return appended
       }
       historyAttachments = media.attachments
@@ -757,9 +757,20 @@ const resendEditedWorkspaceMessage = async (
 
   const resumeCwd = session.cwd || runtime.state.cwd
   const content = input.text.trim()
+  const cutIndex = session.messages.findIndex((message) => message.id === input.messageId)
 
-  if (!resumeCwd || !content) return false
-  if (!session.messages.some((message) => message.id === input.messageId)) return false
+  if (!resumeCwd || !content || cutIndex < 0) return false
+
+  // Validate replay compatibility before the destructive cut: a kept history with images cannot be
+  // replayed on a model without image input, and discovering that after the truncation would leave
+  // the later turns dropped with no prompt dispatched.
+  if (
+    supportsImageInput === false &&
+    buildHistoryReplayMedia(session.messages.slice(0, cutIndex)).images.length > 0
+  ) {
+    useSessionStore.getState().failRun(input.sessionId, IMAGE_REPLAY_UNSUPPORTED_MESSAGE)
+    return false
+  }
 
   // The optimistic cut + append: the edited message and every later turn drop out, and the adjusted
   // prompt takes their place as a live run with its bubble and waiting indicator already visible.
