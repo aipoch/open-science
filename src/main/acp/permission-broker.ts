@@ -27,6 +27,10 @@ const ALLOW_ONCE_OPTION_KIND = 'allow_once'
 // options whose IDs match this shape. If codex-acp renames them, projection silently stops — the
 // projection tests (permission-broker.test.ts) pin this contract and would fail on such a drift.
 const CODEX_POLICY_AMENDMENT_OPTION_ID_PATTERN = /^accept_.*policy_amendment$/
+// Codex sends two allow_always options for MCP tool requests. The persistent cross-session one uses
+// this option ID; the session-scoped one uses 'allow-session'. Keying on the persistent ID (not
+// position) is robust to option reordering — tests pin this contract.
+const CODEX_MCP_PERSISTENT_ALLOW_OPTION_ID = 'allow-always'
 
 const commandFromRawInput = (rawInput: unknown): string | undefined => {
   if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) return undefined
@@ -83,18 +87,13 @@ const projectPermissionOptions = (
     return params.options
   }
 
-  // Codex MCP tools send two allow_always variants: a session-scoped one and a persistent
-  // "don't ask again" one. Only the first (session-scoped) fits the app's grant model.
+  // Codex MCP tools send two allow_always variants: a session-scoped one ('allow-session') and
+  // a persistent cross-session one ('allow-always'). Strip the persistent one by its known
+  // option ID so the app's session-only, revocable grant model is never bypassed.
   if (isMcp) {
-    let allowAlwaysSeen = false
-    return params.options.filter((option) => {
-      if (option.kind.toLowerCase() !== ALLOW_ALWAYS_OPTION_KIND) return true
-      if (!allowAlwaysSeen) {
-        allowAlwaysSeen = true
-        return true
-      }
-      return false
-    })
+    return params.options.filter(
+      (option) => option.optionId !== CODEX_MCP_PERSISTENT_ALLOW_OPTION_ID
+    )
   }
 
   // For non-MCP Codex tools, strip native policy amendments that persist outside the app.

@@ -251,7 +251,55 @@ describe('ACP permission broker', () => {
       mcpServerNames: ['open-science-notebook']
     })
 
-    // Only the first allow_always (session-scoped) survives; the persistent one is hidden.
+    // The persistent allow-always option is stripped by ID; session-scoped allow-session survives.
+    expect(emitted[0].options).toEqual([
+      { optionId: 'allow-session', name: 'Allow for This Session', kind: 'allow_always' },
+      { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+      { optionId: 'decline', name: 'Decline', kind: 'reject_once' }
+    ])
+  })
+
+  it('retains session-scoped allow_always even when persistent option arrives first', () => {
+    const emitted: Array<Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]> = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const request = createCodexMcpPermissionRequest()
+    // Reverse the option order to verify the filter is ID-based, not position-based.
+    request.options = [
+      { optionId: 'allow-always', name: "Allow and Don't Ask Again", kind: 'allow_always' },
+      { optionId: 'allow-session', name: 'Allow for This Session', kind: 'allow_always' },
+      { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+      { optionId: 'decline', name: 'Decline', kind: 'reject_once' }
+    ]
+
+    void broker.requestPermission(request, {
+      profile: 'ask',
+      frameworkId: 'codex',
+      mcpServerNames: ['open-science-notebook']
+    })
+
+    expect(emitted[0].options).toEqual([
+      { optionId: 'allow-session', name: 'Allow for This Session', kind: 'allow_always' },
+      { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+      { optionId: 'decline', name: 'Decline', kind: 'reject_once' }
+    ])
+  })
+
+  it('passes through Codex MCP options unchanged when only one allow_always is present', () => {
+    const emitted: Array<Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]> = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const request = createCodexMcpPermissionRequest()
+    request.options = [
+      { optionId: 'allow-session', name: 'Allow for This Session', kind: 'allow_always' },
+      { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+      { optionId: 'decline', name: 'Decline', kind: 'reject_once' }
+    ]
+
+    void broker.requestPermission(request, {
+      profile: 'ask',
+      frameworkId: 'codex',
+      mcpServerNames: ['open-science-notebook']
+    })
+
     expect(emitted[0].options).toEqual([
       { optionId: 'allow-session', name: 'Allow for This Session', kind: 'allow_always' },
       { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
