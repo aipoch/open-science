@@ -2751,6 +2751,82 @@ describe('ACP runtime session management', () => {
     ])
   })
 
+  it('strips Codex policy amendments using the session framework after this.framework moves', async () => {
+    const process = new FakeAgentProcess()
+    const permissionRequests: Array<{ requestId: string; options: Array<{ optionId: string }> }> =
+      []
+
+    acp
+      .agent({ name: 'codex-amendment-reconnect-agent' })
+      .onRequest(acp.methods.agent.initialize, () => ({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        agentCapabilities: { loadSession: false, sessionCapabilities: { close: {} } },
+        authMethods: []
+      }))
+      .onRequest(acp.methods.agent.session.new, () => ({
+        sessionId: 'codex-amendment-session',
+        modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+      }))
+      .onRequest(acp.methods.agent.session.setMode, () => ({}))
+      .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
+        const response = await ctx.client.request(acp.methods.client.session.requestPermission, {
+          sessionId: ctx.params.sessionId,
+          toolCall: {
+            toolCallId: 'call-amendment-1',
+            kind: 'execute',
+            status: 'pending',
+            rawInput: { command: './deploy', cwd: '/workspace' }
+          },
+          options: [
+            { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+            { optionId: 'allow-session', name: 'Allow for This Session', kind: 'allow_always' },
+            {
+              optionId: 'accept_execpolicy_amendment',
+              name: 'Allow Commands Starting With `./deploy`',
+              kind: 'allow_always'
+            },
+            { optionId: 'decline', name: 'Decline', kind: 'reject_once' }
+          ]
+        })
+        return { stopReason: 'end_turn', response }
+      })
+      .onRequest(acp.methods.agent.session.close, () => ({}))
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework,
+      callbacks: {
+        onPermissionRequest: (request) => {
+          permissionRequests.push(request)
+          runtime.respondToPermission({ requestId: request.requestId, optionId: 'allow-once' })
+        }
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+
+    // Simulate an overlapping reconnect moving the process-global framework off codex while the
+    // Codex session persists. The projection must key off the per-session framework, not this one.
+    ;(runtime as unknown as { framework: typeof claudeCodeFramework }).framework =
+      claudeCodeFramework
+
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'deploy' })
+
+    expect(permissionRequests).toHaveLength(1)
+    expect(permissionRequests[0].options.map((option) => option.optionId)).toEqual([
+      'allow-once',
+      'allow-session',
+      'decline'
+    ])
+  })
+
   it('bounds pending Codex MCP identities and clears unmatched entries when the turn stops', async () => {
     const process = new FakeAgentProcess()
     const promptStarted = createDeferred()

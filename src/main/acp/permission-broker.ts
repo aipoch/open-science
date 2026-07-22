@@ -23,6 +23,9 @@ type EmitPermissionRequest = (request: AcpPermissionRequest) => void
 
 const ALLOW_ALWAYS_OPTION_KIND = 'allow_always'
 const ALLOW_ONCE_OPTION_KIND = 'allow_once'
+// Depends on the codex-acp option-ID contract: persistent exec/network policy amendments are the only
+// options whose IDs match this shape. If codex-acp renames them, projection silently stops — the
+// projection tests (permission-broker.test.ts) pin this contract and would fail on such a drift.
 const CODEX_POLICY_AMENDMENT_OPTION_ID_PATTERN = /^accept_.*policy_amendment$/
 
 const commandFromRawInput = (rawInput: unknown): string | undefined => {

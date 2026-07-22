@@ -42,7 +42,11 @@ import {
   type PermissionProfileId,
   type SessionPermissionProfileState
 } from '../../shared/permission-profiles'
-import { DEFAULT_REASONING_EFFORT, type ReasoningEffort } from '../../shared/settings'
+import {
+  DEFAULT_REASONING_EFFORT,
+  type AgentFrameworkId,
+  type ReasoningEffort
+} from '../../shared/settings'
 import {
   claudeCodeFramework,
   type AgentFramework,
@@ -2951,7 +2955,12 @@ class AcpRuntime {
           : { ...normalizedParams, sessionId: appSessionId },
         {
           profile: profileState?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
-          frameworkId: this.framework.id,
+          // Source the framework from the per-session map, not mutable this.framework — an overlapping
+          // reconnect can move this.framework off codex mid-request and leak the amendment options.
+          // Values are only ever written from this.framework.id (an AgentFrameworkId), hence the cast.
+          frameworkId:
+            (this.sessionFrameworks.get(appSessionId) as AgentFrameworkId | undefined) ??
+            this.framework.id,
           autoReviewStrategy: profileState?.autoReviewStrategy,
           cwd: this.sessionCwds.get(appSessionId),
           mcpServerNames
