@@ -123,8 +123,8 @@ const getErrorMessage = (error: unknown): string =>
 // failure time avoids the race where failRun would flip the session out of 'running' first.
 const failOrMarkDisconnected = async (sessionId: string, message: string): Promise<void> => {
   // A conversation being auto-compacted after a request-size overflow owns its own outcome (reset +
-  // retry). Don't overwrite the neutral compacting state with a dead-end error from the prompt rejection
-  // the runtime swallowed into undefined.
+  // retry). Don't overwrite the neutral compacting state with a dead-end error from the rejected
+  // sendPrompt call.
   if (useSessionStore.getState().sessions.find((session) => session.id === sessionId)?.compacting) {
     return
   }
