@@ -656,7 +656,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         ? [runtime]
         : ['claude-code', 'opencode', 'codex']
       const installStates = { ...state.installStates }
-      for (const id of runtimes) installStates[id] = createInitialRuntimeInstallState()
+      // Clear only the transient display fields; preserve isInstalling. Resetting the whole slice would
+      // flip isInstalling to false mid-install, dropping the single-install lock (selectAnyInstalling)
+      // and letting a second install start — the exact invariant this store guards.
+      for (const id of runtimes) {
+        installStates[id] = {
+          ...installStates[id],
+          installLogs: [],
+          installProgress: null,
+          installError: undefined
+        }
+      }
       return { installStates }
     }),
 

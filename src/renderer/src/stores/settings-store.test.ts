@@ -10,6 +10,7 @@ import type {
 import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../../shared/settings'
 import {
   createInitialSettingsState,
+  selectAnyInstalling,
   selectProviderModelOptions,
   useSettingsStore
 } from './settings-store'
@@ -1189,6 +1190,31 @@ describe('settings store: setAgentFramework', () => {
     resolveClaude({ installId: 'claude-1', ok: true })
     await firstPending
     expect(useSettingsStore.getState().installStates['claude-code'].isInstalling).toBe(false)
+  })
+
+  it('clearInstallLogs clears transient fields but preserves the install lock (isInstalling)', () => {
+    // Simulate a runtime mid-install with accumulated logs/progress/error.
+    useSettingsStore.setState((state) => ({
+      installStates: {
+        ...state.installStates,
+        codex: {
+          isInstalling: true,
+          installLogs: ['line 1', 'line 2'],
+          installProgress: { kind: 'progress', phase: 'download', message: 'x' } as never,
+          installError: 'stale error'
+        }
+      }
+    }))
+
+    useSettingsStore.getState().clearInstallLogs('codex')
+
+    const codex = useSettingsStore.getState().installStates.codex
+    expect(codex.installLogs).toEqual([])
+    expect(codex.installProgress).toBeNull()
+    expect(codex.installError).toBeUndefined()
+    // The lock must survive: dropping it mid-install would let a second install start.
+    expect(codex.isInstalling).toBe(true)
+    expect(selectAnyInstalling(useSettingsStore.getState())).toBe(true)
   })
 })
 
