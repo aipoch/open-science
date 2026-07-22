@@ -9,6 +9,7 @@ import type {
   ExportNotebookKernelRequest,
   ExportNotebookResult,
   FinishNotebookCodeCellRequest,
+  ImportNotebookResult,
   NotebookRunSummary,
   NotebookSessionReference,
   NotebookSessionRequest,
@@ -34,6 +35,7 @@ type NotebookHandlers = {
   execute: (request: ExecuteNotebookCodeRequest) => Promise<NotebookRunSummary>
   exportIpynb: (request: ExportNotebookKernelRequest) => Promise<ExportNotebookResult>
   exportIpynbAll: (request: ExportNotebookAllRequest) => Promise<ExportNotebookAllResult>
+  importIpynb: (request: NotebookSessionRequest) => Promise<ImportNotebookResult>
   restart: (request: NotebookSessionRequest) => Promise<NotebookSessionState>
   shutdown: (request: NotebookSessionRequest) => ReturnType<NotebookRuntimeService['shutdown']>
 }
@@ -61,6 +63,7 @@ const createNotebookHandlers = (service: NotebookRuntimeService): NotebookHandle
     withDataRootWrite(() => service.execute(withoutTrustedTurnContext(request))),
   exportIpynb: (request) => service.exportIpynb(request),
   exportIpynbAll: (request) => service.exportIpynbAll(request),
+  importIpynb: (request) => service.importIpynb(request),
   restart: (request) => withDataRootWrite(() => service.restart(request)),
   shutdown: (request) => withDataRootWrite(() => service.shutdown(request))
 })
@@ -95,6 +98,9 @@ const registerNotebookIpcHandlers = (service: NotebookRuntimeService): void => {
   )
   ipcMain.handle('notebook:export-ipynb-all', (_event, request: ExportNotebookAllRequest) =>
     handlers.exportIpynbAll(request)
+  )
+  ipcMain.handle('notebook:import-ipynb', (_event, request: NotebookSessionRequest) =>
+    handlers.importIpynb(request)
   )
   ipcMain.handle('notebook:restart', (_event, request: NotebookSessionRequest) =>
     handlers.restart(request)

@@ -28,6 +28,12 @@ type AppendNotebookRunRequest = {
   run: NotebookRunRecord
 }
 
+type AppendNotebookRunsRequest = {
+  projectName: string
+  sessionId: string
+  runs: NotebookRunRecord[]
+}
+
 type UpdateNotebookRunRequest = AppendNotebookRunRequest
 
 type UpdateKernelStatusRequest = {
@@ -220,6 +226,19 @@ class NotebookRunRepository {
     }))
   }
 
+  // Appends an imported notebook in one queued read-modify-write turn, avoiding one run.json rewrite
+  // per cell while preserving the same normalization and serialization guarantees as appendRun.
+  async appendRuns(request: AppendNotebookRunsRequest): Promise<NotebookRunDocument> {
+    return this.mutate(request.projectName, request.sessionId, (document) => ({
+      ...document,
+      runs: [
+        ...document.runs,
+        ...request.runs.map((run) => normalizeRun(document.notebookSessionRoot, run))
+      ],
+      updatedAt: Date.now()
+    }))
+  }
+
   // Replaces an existing execution record, used to turn the initial "running" entry final.
   async updateRun(request: UpdateNotebookRunRequest): Promise<NotebookRunDocument> {
     return this.mutate(request.projectName, request.sessionId, (document) => {
@@ -403,6 +422,7 @@ export {
 }
 export type {
   AppendNotebookRunRequest,
+  AppendNotebookRunsRequest,
   LoadNotebookRunDocumentRequest,
   UpdateKernelStatusRequest,
   UpdateNotebookRunRequest

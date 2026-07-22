@@ -28,7 +28,13 @@ const renderContent = (props: {
   error?: string
 }): string =>
   renderToStaticMarkup(
-    <SessionNotebookContent onClose={vi.fn()} onExport={vi.fn()} onExportAll={vi.fn()} {...props} />
+    <SessionNotebookContent
+      onClose={vi.fn()}
+      onExport={vi.fn()}
+      onExportAll={vi.fn()}
+      onImport={vi.fn()}
+      {...props}
+    />
   )
 
 describe('SessionNotebookContent', () => {
@@ -113,6 +119,8 @@ describe('SessionNotebookContent', () => {
     )?.[0]
     expect(populatedButton).not.toMatch(/\sdisabled(?:=|\s|>)/)
     expect(emptyButton).toMatch(/\sdisabled(?:=|\s|>)/)
+    const emptyImportButton = empty.match(/<button[^>]*aria-label="Import \.ipynb"[^>]*>/)?.[0]
+    expect(emptyImportButton).not.toMatch(/\sdisabled(?:=|\s|>)/)
   })
 
   it('hides the "Download all" button when the session has only one data kernel', () => {
