@@ -1,0 +1,33 @@
+{
+  "name": "@aipoch/open-science",
+  "version": "0.1.0",
+  "description": "Node.js SDK and CLI for the Open Science local daemon",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.mjs"
+    }
+  },
+  "bin": {
+    "open-science": "./cli.mjs"
+  },
+  "files": [
+    "*.mjs",
+    "*.d.ts",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aipoch/open-science.git",
+    "directory": "packages/open-science"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -19,6 +19,7 @@ files:
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
+  - '!packages/open-science{,/**/*}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   # Prisma is shipped via extraResources (see below), not inside the asar. Exclude it here so that at
   # runtime `require('@prisma/client')` resolves the real copy in Contents/Resources/node_modules
@@ -65,6 +66,13 @@ extraResources:
     to: cli
     filter:
       - '**/*.mjs'
+  - from: packages/open-science
+    to: packages/open-science
+    filter:
+      - '*.mjs'
+      - '*.d.ts'
+      - 'LICENSE'
+      - 'package.json'
 # Windows: an NSIS installer. The build is unsigned (no Authenticode certificate), so SmartScreen
 # shows a bypassable "unknown publisher" prompt — the same trade-off as the unsigned macOS build. The
 # afterPack ad-hoc-sign hook is a no-op off macOS (it returns early), so it is safe on this target.

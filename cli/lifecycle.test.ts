@@ -199,7 +199,7 @@ describe('statusCommand', () => {
     await statusCommand({ json: true }, deps)
     const payload = JSON.parse(deps.log.mock.calls[0][0])
     expect(payload).toMatchObject({ running: true, pid: 4242, port: 44100 })
-    expect(payload.url).toContain('token=token-abc')
+    expect(payload.url).toBeUndefined()
   })
 })
 
