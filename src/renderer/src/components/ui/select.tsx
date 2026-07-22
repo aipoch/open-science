@@ -64,9 +64,22 @@ function SelectContent({
       viewport.scrollTop = 0
     }, 150)
 
-    return () => {
+    // A deliberate user scroll wins over the pending resets. Listening for scroll events won't
+    // work here — radix's own programmatic scroll would cancel the resets it races against — so
+    // only direct input (wheel/touch/keyboard) cancels.
+    const cancel = (): void => {
       cancelAnimationFrame(frame)
       window.clearTimeout(settled)
+    }
+    viewport.addEventListener('wheel', cancel, { once: true })
+    viewport.addEventListener('touchmove', cancel, { once: true })
+    viewport.addEventListener('keydown', cancel, { once: true })
+
+    return () => {
+      cancel()
+      viewport.removeEventListener('wheel', cancel)
+      viewport.removeEventListener('touchmove', cancel)
+      viewport.removeEventListener('keydown', cancel)
     }
     // Runs once on mount: SelectContent mounts fresh on every open, so the flag never changes
     // during the content's lifetime.

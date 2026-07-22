@@ -59,8 +59,12 @@ export const defaultProviderKindKey = (
     case 'opencode':
       return 'official:deepseek'
     default: {
+      // The never assignment keeps the switch exhaustive at compile time. Persisted state could
+      // still hold a stale value outside the union; this runs during render, so degrade to the
+      // Claude Code vendor instead of throwing.
       const exhaustive: never = frameworkId
-      throw new Error(`No default provider kind for framework ${String(exhaustive)}`)
+      void exhaustive
+      return 'official:anthropic'
     }
   }
 }
