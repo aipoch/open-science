@@ -1,4 +1,5 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -13,6 +14,7 @@ vi.mock('electron', () => ({
 
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { startWebHttpServer, type RunningWebServer } from './http-server'
+import { TaskApiError } from './task-api'
 
 const roots: string[] = []
 const servers: RunningWebServer[] = []
@@ -223,6 +225,22 @@ describe('startWebHttpServer', () => {
 
     const status = await fetch(`${base}/api/v1/runs/run-1`, { headers })
     expect(await status.json()).toMatchObject({ data: { status: 'completed', output: 'Done' } })
+
+    tasks.startRun.mockRejectedValueOnce(
+      new TaskApiError('session_busy', 'Session already has an active run: session-1')
+    )
+    const conflict = await fetch(`${base}/api/v1/runs`, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ project: 'project-1', sessionId: 'session-1', prompt: 'Again' })
+    })
+    expect(conflict.status).toBe(409)
+    expect(await conflict.json()).toEqual({
+      error: {
+        code: 'session_busy',
+        message: 'Session already has an active run: session-1'
+      }
+    })
   })
 
   it('streams an acquired artifact and always releases its capability', async () => {
@@ -280,5 +298,80 @@ describe('startWebHttpServer', () => {
     expect(download.headers.get('content-disposition')).toContain('report.txt')
     expect(tasks.acquireArtifact).toHaveBeenCalledWith('artifact-1')
     expect(tasks.releaseArtifact).toHaveBeenCalledWith('resource-1')
+  })
+
+  it('cancels the artifact stream and releases its capability when the client disconnects', async () => {
+    const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
+    roots.push(staticRoot)
+    await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
+    const cancelStream = vi.fn()
+    vi.mocked(net.fetch).mockResolvedValueOnce(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array(2 * 1024 * 1024))
+          },
+          cancel: cancelStream
+        }),
+        { headers: { 'content-type': 'application/octet-stream' } }
+      )
+    )
+    const tasks = {
+      listProjects: vi.fn(),
+      createProject: vi.fn(),
+      listSessions: vi.fn(),
+      getSession: vi.fn(),
+      startRun: vi.fn(),
+      getRun: vi.fn(),
+      listArtifacts: vi.fn(),
+      acquireArtifact: vi.fn().mockResolvedValue({
+        resourceId: 'resource-disconnect',
+        url: 'open-science-preview://resource-disconnect/report.bin',
+        name: 'report.bin',
+        mimeType: 'application/octet-stream',
+        size: 2 * 1024 * 1024
+      }),
+      releaseArtifact: vi.fn().mockResolvedValue(undefined)
+    }
+    const server = await startWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot,
+      rpc: {
+        channels: () => [],
+        invoke: vi.fn(),
+        releaseClient: vi.fn(),
+        dispose: vi.fn()
+      },
+      tasks,
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+
+    await new Promise<void>((resolve, reject) => {
+      const request = httpRequest(
+        `http://127.0.0.1:${server.port}/api/v1/artifacts/artifact-disconnect/content`,
+        { headers: { authorization: 'Bearer test-token' } },
+        (response) => {
+          response.once('data', () => {
+            response.destroy()
+            resolve()
+          })
+        }
+      )
+      request.once('error', reject)
+      request.end()
+    })
+
+    await vi.waitFor(() => {
+      expect(cancelStream).toHaveBeenCalledOnce()
+      expect(tasks.releaseArtifact).toHaveBeenCalledWith('resource-disconnect')
+    })
   })
 })

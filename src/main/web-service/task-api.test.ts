@@ -101,6 +101,56 @@ describe('HeadlessTaskApi', () => {
     expect(invoke).not.toHaveBeenCalled()
   })
 
+  it('rejects overlapping runs for the same durable session', async () => {
+    let finishPrompt: (() => void) | undefined
+    const promptGate = new Promise<void>((resolve) => {
+      finishPrompt = resolve
+    })
+    const existing: PersistedChatSession = {
+      id: 'session-busy',
+      projectId: project.id,
+      title: 'Busy session',
+      cwd: '/workspace/session-busy',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'projects:list') return [project]
+      if (channel === 'sessions:load-all') {
+        return { sessions: [existing], manifest: { version: 1 } }
+      }
+      if (channel === 'acp:get-state') return { sessionIds: [existing.id] }
+      if (channel === 'sessions:save-session') return undefined
+      if (channel === 'acp:send-prompt') return promptGate
+      throw new Error(`Unexpected RPC channel: ${channel}`)
+    })
+    const api = new HeadlessTaskApi({ invoke })
+
+    const first = await api.startRun({
+      project: project.id,
+      sessionId: existing.id,
+      prompt: 'First prompt'
+    })
+
+    try {
+      await expect(
+        api.startRun({
+          project: project.id,
+          sessionId: existing.id,
+          prompt: 'Overlapping prompt'
+        })
+      ).rejects.toMatchObject({
+        code: 'session_busy',
+        message: `Session already has an active run: ${existing.id}`
+      })
+    } finally {
+      finishPrompt?.()
+      await api.waitForRun(first.id)
+    }
+  })
+
   it('runs a prompt in a new durable session and returns the assistant output', async () => {
     let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
     const savedSessions: PersistedChatSession[] = []
@@ -187,6 +237,59 @@ describe('HeadlessTaskApi', () => {
     expect(invoke).toHaveBeenCalledWith('acp:send-prompt', expect.any(String), [
       { sessionId: 'session-1', text: 'Review these papers.' }
     ])
+  })
+
+  it('settles a run as failed when final session persistence fails', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let saveCount = 0
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'projects:list') return [project]
+      if (channel === 'sessions:load-all') return { sessions: [], manifest: { version: 1 } }
+      if (channel === 'acp:create-session') {
+        return { sessionId: 'session-save-failure', cwd: '/workspace/session-save-failure' }
+      }
+      if (channel === 'sessions:save-session') {
+        saveCount += 1
+        if (saveCount === 2) throw new Error('Session storage is unavailable')
+        return undefined
+      }
+      if (channel === 'acp:send-prompt') {
+        emitEvent?.({
+          id: 'event-save-failure',
+          timestamp: 10,
+          kind: 'message',
+          level: 'info',
+          sessionId: 'session-save-failure',
+          role: 'assistant',
+          text: 'Unsaved answer'
+        })
+        return {}
+      }
+      throw new Error(`Unexpected RPC channel: ${channel}`)
+    })
+    const api = new HeadlessTaskApi(
+      { invoke },
+      {
+        createId: (() => {
+          const ids = ['user-save-failure', 'run-save-failure', 'agent-save-failure']
+          return () => ids.shift() ?? 'generated-id'
+        })(),
+        now: () => 100,
+        subscribeEvents: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      }
+    )
+
+    await api.startRun({ project: project.id, prompt: 'Produce an answer.' })
+    await expect(api.waitForRun('run-save-failure')).resolves.toMatchObject({
+      status: 'failed',
+      error: 'Session storage is unavailable',
+      output: 'Unsaved answer',
+      completedAt: 100
+    })
+    expect(saveCount).toBe(3)
   })
 
   it('resumes a durable session without duplicating the new prompt in history replay', async () => {
@@ -276,6 +379,76 @@ describe('HeadlessTaskApi', () => {
         text: 'Follow-up question',
         historyPreamble:
           'Previous conversation:\n\nUser: Initial question\n\nAssistant: Initial answer'
+      }
+    ])
+  })
+
+  it('provides transcript fallback for skill-triggered reconnects', async () => {
+    const existing: PersistedChatSession = {
+      id: 'session-skill-reload',
+      projectId: project.id,
+      title: 'Skill reload session',
+      cwd: '/workspace/session-skill-reload',
+      status: 'idle',
+      messages: [
+        {
+          id: 'prior-user',
+          role: 'user',
+          content: 'Prior question',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'prior-agent',
+          role: 'agent',
+          content: 'Prior answer',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    }
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'projects:list') return [project]
+      if (channel === 'sessions:load-all') {
+        return { sessions: [existing], manifest: { version: 1 } }
+      }
+      if (channel === 'acp:get-state') return { sessionIds: [existing.id] }
+      if (channel === 'sessions:save-session' || channel === 'acp:send-prompt') return {}
+      throw new Error(`Unexpected RPC channel: ${channel}`)
+    })
+    const api = new HeadlessTaskApi(
+      { invoke },
+      {
+        createId: (() => {
+          const ids = ['skill-user', 'skill-run', 'skill-agent']
+          return () => ids.shift() ?? 'generated-id'
+        })()
+      }
+    )
+
+    await api.startRun({
+      project: project.id,
+      sessionId: existing.id,
+      prompt: 'Use the selected skill.',
+      skillIds: ['literature-review']
+    })
+    await api.waitForRun('skill-run')
+
+    expect(invoke).toHaveBeenCalledWith('acp:send-prompt', expect.any(String), [
+      {
+        sessionId: existing.id,
+        text: 'Use the selected skill.',
+        forcedSkillIds: ['literature-review'],
+        resumeFallback: {
+          historyPreamble:
+            'Previous conversation:\n\nUser: Prior question\n\nAssistant: Prior answer'
+        }
       }
     ])
   })

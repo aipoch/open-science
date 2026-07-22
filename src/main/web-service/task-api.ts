@@ -4,6 +4,7 @@ import {
   getAcpRuntimeEventImage,
   getAcpRuntimeEventText,
   type AcpCreateSessionResponse,
+  type AcpPromptRequest,
   type AcpRuntimeEvent
 } from '../../shared/acp'
 import type { ArtifactFile } from '../../shared/artifacts'
@@ -115,6 +116,7 @@ const summarizeSession = (session: PersistedChatSession): TaskSessionSummary => 
 class HeadlessTaskApi {
   private readonly dependencies: TaskApiDependencies
   private readonly runs = new Map<string, MutableTaskRun>()
+  private readonly activeRunBySession = new Map<string, string>()
   private readonly unsubscribeEvents: () => void
 
   constructor(
@@ -200,9 +202,17 @@ class HeadlessTaskApi {
     }
 
     const userMessageId = this.dependencies.createId()
-    const prepared = await this.prepareSession(project, existing, request, prompt, userMessageId)
-    const session = prepared.session
     const runId = this.dependencies.createId()
+    if (existing) this.reserveSession(existing.id, runId)
+    let prepared: Awaited<ReturnType<HeadlessTaskApi['prepareSession']>>
+    try {
+      prepared = await this.prepareSession(project, existing, request, prompt, userMessageId)
+      this.reserveSession(prepared.session.id, runId)
+    } catch (error) {
+      if (existing) this.releaseSession(existing.id, runId)
+      throw error
+    }
+    const session = prepared.session
     const run = {
       id: runId,
       sessionId: session.id,
@@ -216,7 +226,14 @@ class HeadlessTaskApi {
 
     this.pruneRuns()
     this.runs.set(runId, run)
-    run.completion = this.executeRun(run, session, request, prompt, prepared.historyPreamble)
+    run.completion = this.executeRun(
+      run,
+      session,
+      request,
+      prompt,
+      prepared.historyPreamble,
+      prepared.resumeFallback
+    ).finally(() => this.releaseSession(session.id, runId))
     return cloneRun(run)
   }
 
@@ -263,13 +280,31 @@ class HeadlessTaskApi {
     await this.invoke('preview-resources:release', { resourceId })
   }
 
+  private reserveSession(sessionId: string, runId: string): void {
+    const activeRunId = this.activeRunBySession.get(sessionId)
+    if (activeRunId && activeRunId !== runId) {
+      throw new TaskApiError('session_busy', `Session already has an active run: ${sessionId}`)
+    }
+    this.activeRunBySession.set(sessionId, runId)
+  }
+
+  private releaseSession(sessionId: string, runId: string): void {
+    if (this.activeRunBySession.get(sessionId) === runId) {
+      this.activeRunBySession.delete(sessionId)
+    }
+  }
+
   private async prepareSession(
     project: Project,
     existing: PersistedChatSession | undefined,
     request: StartTaskRunRequest,
     prompt: string,
     userMessageId: string
-  ): Promise<{ session: PersistedChatSession; historyPreamble?: string }> {
+  ): Promise<{
+    session: PersistedChatSession
+    historyPreamble?: string
+    resumeFallback?: AcpPromptRequest['resumeFallback']
+  }> {
     const now = this.dependencies.now()
     const permissionProfile =
       request.permissionProfile ?? existing?.permissionProfile ?? DEFAULT_PERMISSION_PROFILE
@@ -337,10 +372,14 @@ class HeadlessTaskApi {
         }
 
     await this.invoke('sessions:save-session', session)
+    const previousHistoryPreamble = existing ? createHistoryPreamble(existing) : undefined
     return {
       session,
-      historyPreamble:
-        existing && sessionInfo.contextReset ? createHistoryPreamble(existing) : undefined
+      historyPreamble: sessionInfo.contextReset ? previousHistoryPreamble : undefined,
+      resumeFallback:
+        request.skillIds?.length && previousHistoryPreamble
+          ? { historyPreamble: previousHistoryPreamble }
+          : undefined
     }
   }
 
@@ -349,7 +388,8 @@ class HeadlessTaskApi {
     session: PersistedChatSession,
     request: StartTaskRunRequest,
     prompt: string,
-    historyPreamble?: string
+    historyPreamble?: string,
+    resumeFallback?: AcpPromptRequest['resumeFallback']
   ): Promise<void> {
     let promptError: unknown
     try {
@@ -357,7 +397,8 @@ class HeadlessTaskApi {
         sessionId: session.id,
         text: prompt,
         ...(request.skillIds?.length ? { forcedSkillIds: request.skillIds } : {}),
-        ...(historyPreamble ? { historyPreamble } : {})
+        ...(historyPreamble ? { historyPreamble } : {}),
+        ...(resumeFallback ? { resumeFallback } : {})
       })
     } catch (error) {
       promptError = error
@@ -373,32 +414,46 @@ class HeadlessTaskApi {
 
     const failure = completionError ?? promptError
     if (failure) {
-      const runtimeError = [...run.events]
-        .reverse()
-        .find((event) => event.kind === 'error' && event.text?.trim())
-      const message =
-        runtimeError?.text?.trim() || (failure instanceof Error ? failure.message : String(failure))
-      const failed: PersistedChatSession = {
-        ...(completed?.session ?? session),
-        status: 'error',
-        activeRun: undefined,
-        error: message,
-        updatedAt: this.dependencies.now()
-      }
-      await this.invoke('sessions:save-session', failed).catch(() => undefined)
-      run.status = 'failed'
-      run.error = message
-      run.output = completed?.output
-      run.artifacts = completed?.artifacts ?? []
-      run.completedAt = this.dependencies.now()
+      await this.failRun(run, session, completed, failure)
       return
     }
 
-    await this.invoke('sessions:save-session', completed!.session)
+    try {
+      await this.invoke('sessions:save-session', completed!.session)
+    } catch (error) {
+      await this.failRun(run, session, completed, error)
+      return
+    }
     run.status = 'completed'
     run.output = completed!.output
     run.artifacts = completed!.artifacts
     run.completedAt = this.dependencies.now()
+  }
+
+  private async failRun(
+    run: MutableTaskRun,
+    session: PersistedChatSession,
+    completed: Awaited<ReturnType<HeadlessTaskApi['completeSession']>> | undefined,
+    failure: unknown
+  ): Promise<void> {
+    const runtimeError = [...run.events]
+      .reverse()
+      .find((event) => event.kind === 'error' && event.text?.trim())
+    const message =
+      runtimeError?.text?.trim() || (failure instanceof Error ? failure.message : String(failure))
+    const failed: PersistedChatSession = {
+      ...(completed?.session ?? session),
+      status: 'error',
+      activeRun: undefined,
+      error: message,
+      updatedAt: this.dependencies.now()
+    }
+    run.status = 'failed'
+    run.error = message
+    run.output = completed?.output
+    run.artifacts = completed?.artifacts ?? []
+    run.completedAt = this.dependencies.now()
+    await this.invoke('sessions:save-session', failed).catch(() => undefined)
   }
 
   private async completeSession(

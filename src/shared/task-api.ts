@@ -52,5 +52,6 @@ export type TaskApiErrorCode =
   | 'project_not_found'
   | 'project_ambiguous'
   | 'session_not_found'
+  | 'session_busy'
   | 'run_not_found'
   | 'artifact_not_found'

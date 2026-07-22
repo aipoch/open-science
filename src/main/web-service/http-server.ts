@@ -1,6 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { readFile, stat } from 'node:fs/promises'
 import { extname, resolve, sep } from 'node:path'
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
+import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 
 import { net } from 'electron'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -113,7 +116,7 @@ const readJsonBody = async (request: IncomingMessage): Promise<unknown> => {
 
 const taskErrorStatus = (error: TaskApiError): number => {
   if (error.code === 'invalid_request') return 400
-  if (error.code === 'project_ambiguous') return 409
+  if (error.code === 'project_ambiguous' || error.code === 'session_busy') return 409
   return 404
 }
 
@@ -165,33 +168,41 @@ const streamPreviewResource = async (
   resourceUrl: string,
   responseOverrides: Record<string, string> = {}
 ): Promise<void> => {
+  const abortController = new AbortController()
+  const abortOnDisconnect = (): void => {
+    if (!response.writableFinished) abortController.abort()
+  }
+  response.once('close', abortOnDisconnect)
+  response.once('error', abortOnDisconnect)
   const headers = new Headers()
   if (request.headers.range) headers.set('range', request.headers.range)
-  const upstream = await net.fetch(resourceUrl, { method: request.method, headers })
-  const responseHeaders: Record<string, string> = {}
-  upstream.headers.forEach((value, key) => {
-    if (!['connection', 'transfer-encoding'].includes(key.toLowerCase()))
-      responseHeaders[key] = value
-  })
-  Object.assign(responseHeaders, responseOverrides)
-  response.writeHead(upstream.status, responseHeaders)
-  if (!upstream.body || request.method === 'HEAD') {
-    response.end()
-    return
-  }
-
-  const reader = upstream.body.getReader()
   try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      if (!response.write(Buffer.from(value))) {
-        await new Promise<void>((doneWaiting) => response.once('drain', doneWaiting))
-      }
+    const upstream = await net.fetch(resourceUrl, {
+      method: request.method,
+      headers,
+      signal: abortController.signal
+    })
+    if (abortController.signal.aborted) return
+    const responseHeaders: Record<string, string> = {}
+    upstream.headers.forEach((value, key) => {
+      if (!['connection', 'transfer-encoding'].includes(key.toLowerCase()))
+        responseHeaders[key] = value
+    })
+    Object.assign(responseHeaders, responseOverrides)
+    response.writeHead(upstream.status, responseHeaders)
+    if (!upstream.body || request.method === 'HEAD') {
+      response.end()
+      return
     }
-    response.end()
+    try {
+      const source = Readable.fromWeb(upstream.body as unknown as NodeReadableStream<Uint8Array>)
+      await pipeline(source, response, { signal: abortController.signal })
+    } catch (error) {
+      if (!abortController.signal.aborted) throw error
+    }
   } finally {
-    reader.releaseLock()
+    response.off('close', abortOnDisconnect)
+    response.off('error', abortOnDisconnect)
   }
 }
 
