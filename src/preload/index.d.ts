@@ -258,7 +258,8 @@ interface OpenScienceAPI {
     revealInFolder(): Promise<RevealLogFileResult>
   }
   notifications: {
-    onOpenSession(listener: AcpListener<OpenSessionFromNotificationRequest>): RemoveListener
+    onOpenSession(listener: () => void): RemoveListener
+    takePendingOpenSession(): Promise<OpenSessionFromNotificationRequest | null>
   }
   github: {
     getStars(): Promise<number | null>

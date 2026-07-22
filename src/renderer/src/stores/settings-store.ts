@@ -327,7 +327,9 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   onboardingCompletedAt: snapshot.onboardingCompletedAt,
   packageMirror: isMirrorConfigured(snapshot.packageMirror) ? snapshot.packageMirror : undefined,
   reasoningEffort: snapshot.reasoningEffort,
-  notificationsEnabled: snapshot.notificationsEnabled,
+  // Defensive: main always fills this, but an untyped snapshot (tests, older backends) must not
+  // write undefined into the boolean preference.
+  notificationsEnabled: snapshot.notificationsEnabled ?? DEFAULT_NOTIFICATIONS_ENABLED,
   agentFrameworkId: snapshot.agentFrameworkId,
   agentFrameworks: snapshot.agentFrameworks,
   opencode: snapshot.opencode,

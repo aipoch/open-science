@@ -19,14 +19,14 @@ const stopEvent = (stopReason: string, sessionId = 'session-1'): AcpRuntimeEvent
 
 const errorEvent = (
   text: string,
-  options: { sessionId?: string; recoverable?: 'context-overflow' } = {}
+  options: { sessionId?: string; recoverable?: 'context-overflow'; title?: string } = {}
 ): AcpRuntimeEvent => ({
   id: 'event-2',
   timestamp: 1,
   kind: 'error',
   level: 'error',
   sessionId: options.sessionId ?? 'session-1',
-  title: 'Prompt failed',
+  title: options.title ?? 'Prompt failed',
   text,
   ...(options.recoverable ? { recoverable: options.recoverable } : {})
 })
@@ -76,6 +76,13 @@ describe('describeTaskNotification', () => {
     ).toBeNull()
   })
 
+  it.each(['Artifact cleanup failed', 'Prompt cancellation timed out'])(
+    'stays silent for ancillary session-scoped errors (%s)',
+    (title) => {
+      expect(describeTaskNotification(errorEvent('boom', { title }), 'Plot the curve')).toBeNull()
+    }
+  )
+
   it('ignores non-terminal events', () => {
     const event: AcpRuntimeEvent = {
       id: 'event-3',
@@ -102,15 +109,23 @@ describe('describeTaskNotification', () => {
 const createService = (overrides: {
   isEnabled?: () => Promise<boolean>
   isAppFocused?: () => boolean
-}): { service: TaskNotificationService; shown: TaskNotificationRequest[] } => {
+  show?: (request: TaskNotificationRequest) => void
+  onDeliveryError?: (error: unknown) => void
+}): {
+  service: TaskNotificationService
+  shown: TaskNotificationRequest[]
+  deliveryErrors: unknown[]
+} => {
   const shown: TaskNotificationRequest[] = []
+  const deliveryErrors: unknown[] = []
   const service = new TaskNotificationService({
     isEnabled: overrides.isEnabled ?? (() => Promise.resolve(true)),
     isAppFocused: overrides.isAppFocused ?? (() => false),
-    show: (request) => shown.push(request)
+    show: overrides.show ?? ((request) => shown.push(request)),
+    onDeliveryError: overrides.onDeliveryError ?? ((error) => deliveryErrors.push(error))
   })
 
-  return { service, shown }
+  return { service, shown, deliveryErrors }
 }
 
 describe('TaskNotificationService', () => {
@@ -205,5 +220,44 @@ describe('TaskNotificationService', () => {
     shown[0]?.onClick()
 
     expect(onActivate).toHaveBeenCalledWith('session-1')
+  })
+
+  it('keeps the tracked prompt when an ancillary error precedes the turn failure', async () => {
+    const { service, shown } = createService({})
+
+    service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
+    // Cancel-timeout escalation is not the turn's terminal state.
+    await service.handleRuntimeEvent(
+      errorEvent('cancel timed out', { title: 'Prompt cancellation timed out' })
+    )
+    await service.handleRuntimeEvent(errorEvent('process killed'))
+
+    expect(shown).toHaveLength(1)
+    expect(shown[0]?.body).toBe('"Plot the curve" failed: process killed')
+  })
+
+  it('swallows delivery errors and reports them instead of rejecting', async () => {
+    const boom = new Error('Notification unavailable')
+    const { service, deliveryErrors } = createService({
+      show: () => {
+        throw boom
+      }
+    })
+
+    // Must not reject: the caller voids this promise on the broadcast path.
+    await service.handleRuntimeEvent(stopEvent('end_turn'))
+
+    expect(deliveryErrors).toEqual([boom])
+  })
+
+  it('holds the notification click target until the renderer takes it (consume-once)', () => {
+    const { service } = createService({})
+
+    expect(service.takePendingOpenSession()).toBeNull()
+
+    service.setPendingOpenSession('session-7')
+
+    expect(service.takePendingOpenSession()).toEqual({ sessionId: 'session-7' })
+    expect(service.takePendingOpenSession()).toBeNull()
   })
 })

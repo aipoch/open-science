@@ -52,6 +52,9 @@ type PreloadApi = {
     resumeSession: (request: unknown) => unknown
     resetSessionContext: (request: unknown) => unknown
   }
+  notifications: {
+    takePendingOpenSession: () => unknown
+  }
   cli: {
     getStatus: () => unknown
     install: () => unknown
@@ -223,6 +226,13 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.acp.resetSessionContext(sampleResumeRequest),
     channel: 'acp:reset-session-context',
     args: [sampleResumeRequest]
+  },
+  // Notification click target: the renderer pulls it once sessions are hydrated.
+  {
+    name: 'notifications.takePendingOpenSession → notifications:take-pending-open-session',
+    invoke: (a) => a.notifications.takePendingOpenSession(),
+    channel: 'notifications:take-pending-open-session',
+    args: []
   }
 ]
 

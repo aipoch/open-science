@@ -281,8 +281,11 @@ type OpenScienceAPI = {
     revealInFolder: () => Promise<RevealLogFileResult>
   }
   notifications: {
-    // Fires when the user clicks a desktop notification: open the conversation it belongs to.
-    onOpenSession: (listener: AcpListener<OpenSessionFromNotificationRequest>) => RemoveListener
+    // Fires when the user clicks a desktop notification. Payload-less nudge: the renderer then
+    // pulls the target via takePendingOpenSession (a push with payload could be lost mid-load).
+    onOpenSession: (listener: () => void) => RemoveListener
+    // Returns and clears the conversation a notification click should open, once sessions load.
+    takePendingOpenSession: () => Promise<OpenSessionFromNotificationRequest | null>
   }
   github: {
     getStars: () => Promise<number | null>
@@ -655,7 +658,11 @@ const api: OpenScienceAPI = {
   },
   notifications: {
     // Main-process task notifications route their click through this channel.
-    onOpenSession: (listener) => onIpcMessage('notifications:open-session', listener)
+    onOpenSession: (listener) => onIpcMessage('notifications:open-session', listener),
+    takePendingOpenSession: () =>
+      ipcRenderer.invoke(
+        'notifications:take-pending-open-session'
+      ) as Promise<OpenSessionFromNotificationRequest | null>
   },
   github: {
     getStars: () => ipcRenderer.invoke('github:get-stars') as Promise<number | null>

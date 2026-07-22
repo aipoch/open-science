@@ -1,4 +1,5 @@
 import type { AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
+import type { OpenSessionFromNotificationRequest } from '../../shared/notifications'
 
 // What the user sees when a task reaches a terminal state while the app is unfocused.
 export type TaskNotification = {
@@ -18,6 +19,9 @@ export type TaskNotificationServiceDeps = {
   isAppFocused: () => boolean
   // OS-specific delivery (Electron Notification in production, a spy in tests).
   show: (request: TaskNotificationRequest) => void
+  // Delivery failures are swallowed (the event stream must never be disturbed) but reported here
+  // so they still reach the log file in production.
+  onDeliveryError?: (error: unknown) => void
 }
 
 // Notification bodies are single-line and get truncated hard on some platforms (Windows toasts
@@ -48,8 +52,10 @@ const toPromptSnippet = (text: string): string | undefined => {
 const quoteSnippet = (snippet: string): string => `"${snippet}"`
 
 // Maps a terminal runtime event to the notification to show, or null when the event should stay
-// silent: user-cancelled turns (deliberate) and recoverable context overflows (the renderer
-// auto-compacts and retries, so a failure banner would be a false alarm).
+// silent: user-cancelled turns (deliberate), recoverable context overflows (the renderer
+// auto-compacts and retries, so a failure banner would be a false alarm), and session-scoped error
+// events that are not prompt failures (artifact cleanup, cancel timeout — only 'Prompt failed'
+// marks a genuinely failed task).
 export const describeTaskNotification = (
   event: AcpRuntimeEvent,
   promptSnippet?: string
@@ -87,6 +93,7 @@ export const describeTaskNotification = (
   }
 
   if (event.kind === 'error') {
+    if (event.title !== 'Prompt failed') return null
     if (event.recoverable === 'context-overflow') return null
 
     const reason = event.text?.trim() || 'Unknown error.'
@@ -106,6 +113,10 @@ export const describeTaskNotification = (
 export class TaskNotificationService {
   private readonly promptSnippets = new Map<string, string>()
   private activationHandler: ((sessionId: string) => void) | undefined
+  // Click target held for the renderer to pull: a push sent before the renderer's listener exists
+  // (window just recreated, React not mounted yet) is lost, so the payload lives here until the
+  // renderer — once its sessions are hydrated — takes it. Consume-once.
+  private pendingOpenSession: OpenSessionFromNotificationRequest | undefined
 
   constructor(private readonly deps: TaskNotificationServiceDeps) {}
 
@@ -113,6 +124,22 @@ export class TaskNotificationService {
   // notification surfaces the main window and opens the conversation.
   setActivationHandler(handler: (sessionId: string) => void): void {
     this.activationHandler = handler
+  }
+
+  // Records the conversation a notification click should open, so a renderer that misses the push
+  // nudge (still loading, sessions not yet hydrated) can pull it when ready.
+  setPendingOpenSession(sessionId: string): void {
+    this.pendingOpenSession = { sessionId }
+  }
+
+  // Returns and clears the pending click target; the renderer calls this once its session store is
+  // hydrated (and on every push nudge). Null when there is nothing to open.
+  takePendingOpenSession(): OpenSessionFromNotificationRequest | null {
+    const pending = this.pendingOpenSession
+
+    this.pendingOpenSession = undefined
+
+    return pending ?? null
   }
 
   // Remembers the prompt's first line so the terminal event can name the task. Called when a
@@ -144,8 +171,12 @@ export class TaskNotificationService {
 
     const notification = describeTaskNotification(event, this.promptSnippets.get(sessionId))
 
-    // The turn has settled regardless of whether it produced a notification.
-    this.promptSnippets.delete(sessionId)
+    // Only genuinely turn-terminal events settle the prompt tracking: a stop (any reason) or a
+    // prompt failure. Ancillary session-scoped errors (artifact cleanup, cancel timeout) leave the
+    // snippet in place for the turn's own terminal event.
+    if (event.kind === 'stop' || event.title === 'Prompt failed') {
+      this.promptSnippets.delete(sessionId)
+    }
 
     if (!notification) return
     if (this.deps.isAppFocused()) return
@@ -161,9 +192,15 @@ export class TaskNotificationService {
 
     if (!enabled) return
 
-    this.deps.show({
-      ...notification,
-      onClick: () => this.activationHandler?.(sessionId)
-    })
+    // Delivery is best-effort: a throwing Notification must never surface as an unhandled
+    // rejection on the broadcast path that callers void.
+    try {
+      this.deps.show({
+        ...notification,
+        onClick: () => this.activationHandler?.(sessionId)
+      })
+    } catch (error) {
+      this.deps.onDeliveryError?.(error)
+    }
   }
 }

@@ -359,8 +359,8 @@ describe('SettingsPage layout', () => {
       generalTab?.click()
     })
 
-    // AppVersion, Diagnostics, Command line tool, Community.
-    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(4)
+    // AppVersion, Notifications, Diagnostics, Command line tool, Community.
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(5)
     expect(document.body.querySelector('[data-slot="settings-row"]')).not.toBeNull()
 
     // The Diagnostics panel surfaces the log file path plus Open and Reveal controls.

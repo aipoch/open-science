@@ -23,6 +23,11 @@ const mocks = vi.hoisted(() => ({
   },
   loadProjects: vi.fn().mockResolvedValue(undefined),
   initUpdates: vi.fn(),
+  openSessionById: vi.fn(),
+  notifications: {
+    onOpenSession: vi.fn(() => vi.fn()),
+    takePendingOpenSession: vi.fn().mockResolvedValue(null)
+  },
   sessionPersistenceReady: true,
   startupView: 'home' as 'home' | 'onboarding',
   getInfo: vi.fn()
@@ -35,8 +40,11 @@ vi.mock('@/hooks/useCloseActivePaneShortcut', () => ({
   useCloseActivePaneShortcut: vi.fn()
 }))
 vi.mock('@/stores/navigation-store', () => ({
-  useNavigationStore: <T,>(selector: (state: typeof mocks.navigation) => T): T =>
-    selector(mocks.navigation)
+  useNavigationStore: Object.assign(
+    <T,>(selector: (state: typeof mocks.navigation) => T): T => selector(mocks.navigation),
+    // Notification navigation reaches the store imperatively (outside React) via getState().
+    { getState: () => ({ openSessionById: mocks.openSessionById }) }
+  )
 }))
 vi.mock('@/stores/notebook-env-store', () => ({
   useNotebookEnvStore: <T,>(selector: (state: typeof mocks.environment) => T): T =>
@@ -129,8 +137,12 @@ describe('App startup routing', () => {
     })
     window.api = {
       storage: { getInfo: mocks.getInfo },
-      settings: { onConnectorApprovalRequest: vi.fn(() => vi.fn()) }
+      settings: { onConnectorApprovalRequest: vi.fn(() => vi.fn()) },
+      notifications: mocks.notifications
     } as unknown as Window['api']
+    mocks.openSessionById.mockClear()
+    mocks.notifications.onOpenSession.mockClear()
+    mocks.notifications.takePendingOpenSession.mockReset().mockResolvedValue(null)
   })
 
   afterEach(async () => {
@@ -191,5 +203,42 @@ describe('App startup routing', () => {
     expect(container.querySelector('[data-testid="missing-root"]')?.textContent).toBe(
       '/Volumes/Science/OpenScience'
     )
+  })
+
+  it('opens the notification-target conversation once session persistence is ready', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistenceReady = false
+    mocks.notifications.takePendingOpenSession.mockResolvedValue({ sessionId: 's-9' })
+
+    await render()
+
+    // Sessions still hydrating: the pending click target must not be consumed or dropped.
+    expect(mocks.openSessionById).not.toHaveBeenCalled()
+
+    // Hydration completes: the target is pulled and the conversation opens.
+    mocks.sessionPersistenceReady = true
+    await act(async () => root.render(<App />))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(mocks.openSessionById).toHaveBeenCalledWith('s-9')
+  })
+
+  it('opens the conversation immediately when a notification nudge arrives hydrated', async () => {
+    mocks.settings.isLoaded = true
+    // The mount-time pull finds nothing; the nudge-triggered pull gets the click target.
+    mocks.notifications.takePendingOpenSession
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ sessionId: 's-3' })
+
+    await render()
+
+    const nudge = mocks.notifications.onOpenSession.mock.calls[0]?.[0] as () => void
+    await act(async () => {
+      nudge()
+    })
+
+    expect(mocks.openSessionById).toHaveBeenCalledWith('s-3')
   })
 })

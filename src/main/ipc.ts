@@ -21,7 +21,7 @@ import { BackendShutdownCoordinator, UPDATE_SHUTDOWN_BUDGET_MS } from './lifecyc
 import { registerLogsIpcHandlers } from './logs-ipc'
 import { registerWindowIpcHandlers } from './window-ipc'
 import { TaskNotificationService } from './notifications/task-notifications'
-import { createLogger } from './logger'
+import { createLogger, errorLogFields } from './logger'
 import {
   broadcastNotebookEnvProgress,
   registerNotebookEnvIpcHandlers,
@@ -330,8 +330,15 @@ const registerIpcHandlers = async ({
 
       notification.on('click', onClick)
       notification.show()
-    }
+    },
+    onDeliveryError: (error) =>
+      createLogger('notifications').warn('task notification delivery failed', errorLogFields(error))
   })
+  // The renderer pulls the notification click target once its sessions are hydrated (a push sent
+  // before the listener exists would be lost); consume-once semantics live in the service.
+  ipcMain.handle('notifications:take-pending-open-session', () =>
+    taskNotifications.takePendingOpenSession()
+  )
   const runtime = registerAcpIpcHandlers({
     mcpEntryPath: mainEntryPath,
     repository: artifactRepository,

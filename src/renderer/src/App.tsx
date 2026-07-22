@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { useSessionPersistence } from '@/lib/session-persistence/session-persistence'
 import { CloseConfirmModal } from '@/components/CloseConfirmModal'
@@ -80,13 +80,29 @@ const App = (): React.JSX.Element | null => {
   )
 
   // Clicking a desktop notification opens the conversation the finished/failed task belongs to.
+  // Main holds the target until it is pulled here, so a click that recreates the window (listener
+  // not yet registered, sessions not yet hydrated) cannot lose the navigation.
+  const openPendingNotificationSession = useCallback(async (): Promise<void> => {
+    const pending = await window.api.notifications.takePendingOpenSession()
+
+    if (pending) useNavigationStore.getState().openSessionById(pending.sessionId)
+  }, [])
+
+  // Fast path: a click while this renderer is alive arrives as a nudge; pull the target. A click
+  // mid-hydration is left pending and consumed by the effect below once sessions are ready.
   useEffect(
     () =>
-      window.api.notifications.onOpenSession(({ sessionId }) =>
-        useNavigationStore.getState().openSessionById(sessionId)
-      ),
-    []
+      window.api.notifications.onOpenSession(() => {
+        if (isSessionPersistenceReady) void openPendingNotificationSession()
+      }),
+    [isSessionPersistenceReady, openPendingNotificationSession]
   )
+
+  // Slow path: the click recreated the window before this listener existed. Consume the pending
+  // target as soon as session persistence has hydrated the store.
+  useEffect(() => {
+    if (isSessionPersistenceReady) void openPendingNotificationSession()
+  }, [isSessionPersistenceReady, openPendingNotificationSession])
 
   // Load the project list once on startup so Home can render immediately after hydration.
   useEffect(() => {

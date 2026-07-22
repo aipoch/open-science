@@ -219,25 +219,13 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         createConfirmClose: ctx.createConfirmClose
       })
 
-      // Clicking a task notification surfaces the app and tells the renderer which conversation
-      // to open. showMainWindow may have just recreated the window, in which case the renderer is
-      // still loading and its subscription doesn't exist yet — defer the message until it is ready.
+      // Clicking a task notification surfaces the app and records which conversation to open. The
+      // renderer pulls the target once its sessions are hydrated (take-pending-open-session), so a
+      // click that recreates the window cannot lose the navigation — the send below is only a
+      // nudge for an already-running renderer and may safely be lost otherwise.
       ctx.taskNotifications.setActivationHandler((sessionId) => {
-        showMainWindow()
-
-        const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
-
-        if (!window) return
-
-        const openSession = (): void => {
-          window.webContents.send('notifications:open-session', { sessionId })
-        }
-
-        if (window.webContents.isLoading()) {
-          window.webContents.once('did-finish-load', openSession)
-        } else {
-          openSession()
-        }
+        ctx.taskNotifications.setPendingOpenSession(sessionId)
+        showMainWindow().webContents.send('notifications:open-session')
       })
 
       // Route each second launch by its forwarded argv (see second-instance-router): a CLI
