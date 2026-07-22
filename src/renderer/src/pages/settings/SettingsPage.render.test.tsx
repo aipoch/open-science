@@ -186,7 +186,7 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[data-slot="settings-row"]')).not.toBeNull()
   })
 
-  it('opens Add provider as a history-driven sub-page and returns via the back arrow', () => {
+  it('opens Add provider as a vendor picker, then a seeded form, with history navigation', () => {
     act(() => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
@@ -197,30 +197,45 @@ describe('SettingsPage layout', () => {
       )
       act(() => button?.click())
     }
+    const clickKindOption = (label: string): void => {
+      const option = Array.from(
+        document.body.querySelectorAll<HTMLButtonElement>('[data-slot="provider-kind-option"]')
+      ).find((candidate) => candidate.textContent?.includes(label))
+      act(() => option?.click())
+    }
 
     clickByText('Add provider')
 
-    // The sub-page shows a "Model › Add provider" breadcrumb and the provider-type dropdown, hiding
-    // the Claude section. There is no standalone in-content back arrow.
-    const crumb = document.body.querySelector<HTMLButtonElement>('[aria-label="Back to model"]')
-    expect(crumb).not.toBeNull()
+    // Step one is the vendor picker: a "Model › Add provider" breadcrumb and the grouped,
+    // top-aligned list (official vendors first), hiding the Claude section. There is no standalone
+    // in-content back arrow.
+    expect(document.body.querySelector('[aria-label="Back to model"]')).not.toBeNull()
     expect(document.body.textContent).toContain('Add provider')
     expect(document.body.querySelector('[aria-label="Back to providers"]')).toBeNull()
-    expect(document.body.querySelector('[aria-label="Provider type"]')).not.toBeNull()
+    expect(document.body.querySelector('[data-slot="provider-kind-picker"]')).not.toBeNull()
+    expect(document.body.querySelector('[aria-label="Provider type"]')).toBeNull()
     expect(document.body.querySelector('section[aria-label="Claude"]')).toBeNull()
+    const options = Array.from(document.body.querySelectorAll('[data-slot="provider-kind-option"]'))
+    expect(options[0]?.textContent).toContain('OpenAI')
+    expect(document.body.textContent).toContain('Custom Gateway')
 
-    // The shared top back arrow exits the form back to the provider list.
+    // Picking a vendor opens the seeded form as the next history entry.
+    clickKindOption('OpenAI')
+    expect(document.body.querySelector('[data-slot="provider-kind-picker"]')).toBeNull()
+    const typeTrigger = document.body.querySelector('[aria-label="Provider type"]')
+    expect(typeTrigger).not.toBeNull()
+    expect(typeTrigger?.textContent).toContain('OpenAI')
+
+    // The shared top back arrow returns to the picker, and forward re-enters the seeded form.
     const back = document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')
     act(() => back?.click())
-    expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
+    expect(document.body.querySelector('[data-slot="provider-kind-picker"]')).not.toBeNull()
     expect(document.body.querySelector('[aria-label="Provider type"]')).toBeNull()
-
-    // Forward re-enters the form as a history location.
     const forward = document.body.querySelector<HTMLButtonElement>('[aria-label="Forward"]')
     act(() => forward?.click())
     expect(document.body.querySelector('[aria-label="Provider type"]')).not.toBeNull()
 
-    // The breadcrumb root crumb returns to the provider list too.
+    // The breadcrumb root crumb returns to the provider list.
     const rootCrumb = document.body.querySelector<HTMLButtonElement>('[aria-label="Back to model"]')
     act(() => rootCrumb?.click())
     expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
@@ -434,7 +449,16 @@ describe('SettingsPage layout', () => {
       addProvider?.click()
     })
 
-    // The Add provider sub-page explains that secret writes fail closed.
+    // The Add provider flow starts at the vendor picker; the warning lives on the form step.
+    expect(document.body.textContent).not.toContain('Secure key storage is unavailable')
+    const customOption = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('[data-slot="provider-kind-option"]')
+    ).find((button) => button.textContent?.includes('Custom Gateway'))
+    await act(async () => {
+      customOption?.click()
+    })
+
+    // The Add provider form explains that secret writes fail closed.
     expect(document.body.textContent).toContain('Secure key storage is unavailable')
     expect(document.body.textContent).toContain('API keys cannot be saved')
   })

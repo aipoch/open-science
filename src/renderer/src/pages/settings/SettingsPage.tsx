@@ -42,10 +42,13 @@ import { ConnectorsNavIcon } from './connector-icons'
 import { resolveVendorModelsUrl } from '../../../../shared/provider-registry'
 import { ActiveModelSelect } from './ActiveModelSelect'
 import { ProviderForm } from './ProviderForm'
+import { ProviderKindPicker } from './ProviderKindPicker'
 import {
+  PROVIDER_KINDS,
   createEmptyProviderFormValue,
   getProviderFormErrors,
   hasProviderFormErrors,
+  providerKindPatch,
   type ProviderFormValue
 } from './provider-form-value'
 import { ProviderList } from './ProviderList'
@@ -59,8 +62,14 @@ type SettingsPageProps = {
   onClose: () => void
 }
 
-// The model panel sub-view, driven by the settings navigation history so add/edit is a breadcrumb page.
-type ModelView = { kind: 'list' } | { kind: 'create' } | { kind: 'edit'; providerId: string }
+// The model panel sub-view, driven by the settings navigation history so add/edit is a breadcrumb
+// page. Add runs as two steps: 'pick' chooses the vendor from a top-aligned scrollable list, then
+// 'create' opens the form seeded with that kind (the form can still switch it).
+type ModelView =
+  | { kind: 'list' }
+  | { kind: 'pick' }
+  | { kind: 'create'; kindKey?: string }
+  | { kind: 'edit'; providerId: string }
 
 // Builds a form value from an existing provider (never carrying the plaintext key).
 const toFormValue = (provider: ProviderView): ProviderFormValue =>
@@ -128,7 +137,7 @@ const SETTINGS_PANELS: ReadonlyArray<SettingsPanel> = SETTINGS_GROUPS.flatMap(
 )
 
 // One entry in the settings back/forward history: the active panel plus each panel's current sub-view
-// (skills: list / detail / create / edit / import; model: list / create / edit; connectors: list /
+// (skills: list / detail / create / edit / import; model: list / pick / create / edit; connectors: list /
 // detail / add / edit). `connectors` is optional so panel switches that don't touch it stay terse.
 // Network panel sub-view: the package-mirror list vs. the configure form (a breadcrumb drill-in).
 type NetworkView = { kind: 'list' | 'configure' }
@@ -357,10 +366,16 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
         modelView.kind === 'edit'
           ? (providers.find((provider) => provider.id === modelView.providerId)?.name ?? '')
           : ''
+      // The create leaf names the vendor picked in the previous step so the breadcrumb keeps
+      // context ("Model › OpenAI"); the picker itself is a plain "Add provider".
+      const pickedLabel =
+        modelView.kind === 'create'
+          ? PROVIDER_KINDS.find((kind) => kind.key === modelView.kindKey)?.label
+          : undefined
       return {
         rootLabel: 'Model',
         rootTo: { panel: 'model', skills: currentLocation.skills, model: { kind: 'list' } },
-        leaf: modelView.kind === 'create' ? 'Add provider' : `Edit ${name}`.trim()
+        leaf: modelView.kind === 'edit' ? `Edit ${name}`.trim() : (pickedLabel ?? 'Add provider')
       }
     }
     if (activePanel === 'network' && networkView.kind !== 'list') {
@@ -406,8 +421,11 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
     setHistoryIndex((index) => index + 1)
   }
 
-  // A provider form (add/edit) is open when the model panel is on a non-list sub-view.
-  const isProviderFormOpen = activePanel === 'model' && modelView.kind !== 'list'
+  // A provider form (add/edit) is open when the model panel is on a form sub-view; the 'pick'
+  // sub-view shows the vendor picker instead.
+  const isProviderPickerOpen = activePanel === 'model' && modelView.kind === 'pick'
+  const isProviderFormOpen =
+    activePanel === 'model' && (modelView.kind === 'create' || modelView.kind === 'edit')
   // Resolve the edited provider from the live store so a model refresh (which updates the cache) is
   // reflected in the form; undefined until the provider is found (or when creating).
   const editingProvider =
@@ -420,13 +438,22 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
 
   // Seed the form value when entering a create/edit sub-view (adjust-state-during-render, keyed on the
   // sub-view so typing isn't clobbered by background store updates; edit guards until the provider
-  // loads). Also clears any stale status message on entry.
-  const modelViewKey = modelView.kind === 'edit' ? `edit:${modelView.providerId}` : modelView.kind
+  // loads). A create entered from the vendor picker seeds that kind's defaults. Also clears any stale
+  // status message on entry.
+  const modelViewKey =
+    modelView.kind === 'edit'
+      ? `edit:${modelView.providerId}`
+      : modelView.kind === 'create'
+        ? `create:${modelView.kindKey ?? ''}`
+        : modelView.kind
   const [seededModelView, setSeededModelView] = useState(modelViewKey)
   if (modelViewKey !== seededModelView) {
     setSeededModelView(modelViewKey)
     if (modelView.kind === 'create') {
-      setFormValue(createEmptyProviderFormValue())
+      setFormValue({
+        ...createEmptyProviderFormValue(),
+        ...(modelView.kindKey ? providerKindPatch(modelView.kindKey) : {})
+      })
     } else if (modelView.kind === 'edit') {
       const provider = providers.find((entry) => entry.id === modelView.providerId)
       if (provider) setFormValue(toFormValue(provider))
@@ -434,8 +461,13 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
     setStatusMessage(undefined)
   }
 
+  // Add provider starts at the vendor picker; choosing a vendor opens the seeded form as the next
+  // history entry (so the shared back arrow returns to the picker).
   const openCreate = (): void =>
-    navigate({ panel: 'model', skills: currentLocation.skills, model: { kind: 'create' } })
+    navigate({ panel: 'model', skills: currentLocation.skills, model: { kind: 'pick' } })
+
+  const openCreateWithKind = (kindKey: string): void =>
+    navigate({ panel: 'model', skills: currentLocation.skills, model: { kind: 'create', kindKey } })
 
   const openEdit = (provider: ProviderView): void =>
     navigate({
@@ -785,6 +817,14 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                   <NetworkPanel view={networkView} onNavigate={navigateNetwork} />
                 ) : activePanel === 'general' ? (
                   <GeneralPanel />
+                ) : isProviderPickerOpen ? (
+                  // Add provider step one: pick the vendor; the seeded form is the next history entry.
+                  <div className="p-5">
+                    <ProviderKindPicker
+                      showCodexSubscriptions={agentFrameworkId === 'codex'}
+                      onSelect={openCreateWithKind}
+                    />
+                  </div>
                 ) : isProviderFormOpen ? (
                   // Add/edit provider is a secondary page reached via the shared back/forward arrows.
                   <div className="p-5">

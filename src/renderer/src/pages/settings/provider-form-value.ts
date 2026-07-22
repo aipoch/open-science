@@ -80,6 +80,14 @@ export const hasProviderFormErrors = (errors: ProviderFormErrors): boolean =>
 // for once those endpoints are wired up.)
 export type ProviderKindGroup = 'coding' | 'api' | 'other'
 
+// Group headers shown in the provider-type picker and dropdown, in display order. ('coding' is
+// reserved for subscription coding-plan endpoints once those are wired up.)
+export const PROVIDER_KIND_GROUPS: { id: ProviderKindGroup; label: string }[] = [
+  { id: 'coding', label: 'Codex subscription' },
+  { id: 'api', label: 'Official API' },
+  { id: 'other', label: 'Other' }
+]
+
 // A selectable option in the provider-type dropdown. Official vendors are keyed `official:<vendorId>`.
 export type ProviderKind = {
   key: string

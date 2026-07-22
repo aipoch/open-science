@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { Select as SelectPrimitive } from 'radix-ui'
-import { Check, ChevronDown } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 
@@ -37,8 +37,38 @@ function SelectContent({
   className,
   children,
   position = 'popper',
+  scrollToTopOnOpen = false,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.Content>): React.JSX.Element {
+}: React.ComponentProps<typeof SelectPrimitive.Content> & {
+  // Start the list scrolled to the top instead of letting radix scroll the selected item into
+  // view. For long lists (e.g. provider types) the selected option would otherwise push the first
+  // choices above the viewport (issue #294).
+  scrollToTopOnOpen?: boolean
+}): React.JSX.Element {
+  const viewportRef = React.useRef<HTMLDivElement>(null)
+
+  // The content mounts fresh on every open. Radix scrolls the selected item into view once the
+  // floating position settles, which happens on the frames right after mount, so the reset covers
+  // that window rather than only the synchronous mount.
+  React.useEffect(() => {
+    if (!scrollToTopOnOpen) return
+    const viewport = viewportRef.current
+    if (!viewport) return
+
+    viewport.scrollTop = 0
+    const frame = requestAnimationFrame(() => {
+      viewport.scrollTop = 0
+    })
+    const settled = window.setTimeout(() => {
+      viewport.scrollTop = 0
+    }, 150)
+
+    return () => {
+      cancelAnimationFrame(frame)
+      window.clearTimeout(settled)
+    }
+  }, [scrollToTopOnOpen])
+
   return (
     <SelectPrimitive.Portal>
       <SelectPrimitive.Content
@@ -52,7 +82,9 @@ function SelectContent({
         )}
         {...props}
       >
+        <SelectScrollUpButton />
         <SelectPrimitive.Viewport
+          ref={viewportRef}
           className={cn(
             'p-1.5',
             position === 'popper' &&
@@ -61,8 +93,41 @@ function SelectContent({
         >
           {children}
         </SelectPrimitive.Viewport>
+        <SelectScrollDownButton />
       </SelectPrimitive.Content>
     </SelectPrimitive.Portal>
+  )
+}
+
+// Scroll affordances: radix renders each button only while scrolling is possible in that
+// direction, so an overflowing list always hints that more options exist.
+function SelectScrollUpButton({
+  className,
+  ...props
+}: React.ComponentProps<typeof SelectPrimitive.ScrollUpButton>): React.JSX.Element {
+  return (
+    <SelectPrimitive.ScrollUpButton
+      data-slot="select-scroll-up-button"
+      className={cn('flex cursor-default items-center justify-center py-1', className)}
+      {...props}
+    >
+      <ChevronUp className="size-4 opacity-60" aria-hidden="true" />
+    </SelectPrimitive.ScrollUpButton>
+  )
+}
+
+function SelectScrollDownButton({
+  className,
+  ...props
+}: React.ComponentProps<typeof SelectPrimitive.ScrollDownButton>): React.JSX.Element {
+  return (
+    <SelectPrimitive.ScrollDownButton
+      data-slot="select-scroll-down-button"
+      className={cn('flex cursor-default items-center justify-center py-1', className)}
+      {...props}
+    >
+      <ChevronDown className="size-4 opacity-60" aria-hidden="true" />
+    </SelectPrimitive.ScrollDownButton>
   )
 }
 

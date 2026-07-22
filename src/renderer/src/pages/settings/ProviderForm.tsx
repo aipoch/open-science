@@ -14,12 +14,12 @@ import { getOfficialVendor, resolveVendorApiKeyUrl } from '../../../../shared/pr
 import { getApiKeySecurityCopy } from './provider-key-security'
 import { ProviderKindIcon } from './provider-icons'
 import {
+  PROVIDER_KIND_GROUPS,
   PROVIDER_KINDS,
   providerKindPatch,
   selectedKindKey,
   type ProviderFormErrors,
-  type ProviderFormValue,
-  type ProviderKindGroup
+  type ProviderFormValue
 } from './provider-form-value'
 
 type ProviderFormProps = {
@@ -85,14 +85,6 @@ const SUPPORTED_MODELS_HELP_CONTENT = (
     model selector after adding.
   </>
 )
-
-// Group headers shown in the provider-type dropdown, in display order. ('coding' is reserved for
-// subscription coding-plan endpoints once those are wired up.)
-const KIND_GROUPS: { id: ProviderKindGroup; label: string }[] = [
-  { id: 'coding', label: 'Codex subscription' },
-  { id: 'api', label: 'Official API' },
-  { id: 'other', label: 'Other' }
-]
 
 // Marks a required field next to its label. Purely visual; the actual guard lives in the form errors.
 const RequiredMark = (): React.JSX.Element => (
@@ -188,8 +180,8 @@ const ProviderForm = ({
               <span>{selectedKind?.label}</span>
             </span>
           </SelectTrigger>
-          <SelectContent>
-            {KIND_GROUPS.map((group) => {
+          <SelectContent scrollToTopOnOpen>
+            {PROVIDER_KIND_GROUPS.map((group) => {
               const kinds = PROVIDER_KINDS.filter(
                 (kind) =>
                   kind.group === group.id && (group.id !== 'coding' || showCodexSubscriptions)
