@@ -9,6 +9,7 @@ import {
   ArrowUp,
   BookOpen,
   FileText,
+  Flag,
   Image as ImageIcon,
   Loader2,
   PanelRight,
@@ -39,6 +40,7 @@ import { docToSkillIds, type ComposerDoc } from './composer/composer-doc'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
+import { ReportErrorDialog } from './ReportErrorDialog'
 import { SessionInterruptedBanner } from './SessionInterruptedBanner'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
 
@@ -163,6 +165,8 @@ const ConversationPanel = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   // Local so the interrupted banner can show a spinner and block a double-resume until the request settles.
   const [isResuming, setIsResuming] = useState(false)
+  // Opens the reviewable, consent-gated error report dialog for a failed run.
+  const [isReportOpen, setIsReportOpen] = useState(false)
 
   // Unconditional hook: check if the active session has any jobs (running or finished).
   const allJobsForSession = useSessionJobStore((s) => s.allJobsForSession)
@@ -274,8 +278,23 @@ const ConversationPanel = ({
                     Compacting conversation to fit the context limit…
                   </div>
                 ) : actionError || activeSession?.error ? (
-                  <div className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700">
-                    {actionError ?? activeSession?.error}
+                  <div className="mb-2 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700">
+                    <span className="min-w-0 flex-1 break-words">
+                      {actionError ?? activeSession?.error}
+                    </span>
+                    {/* Failed runs get a report affordance; transient action errors do not, since there
+                        is no run diagnostic to attach. */}
+                    {activeSession?.error ? (
+                      <button
+                        type="button"
+                        onClick={() => setIsReportOpen(true)}
+                        className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100"
+                        aria-label="Report this error"
+                      >
+                        <Flag className="size-3" strokeWidth={2.2} aria-hidden="true" />
+                        Report error
+                      </button>
+                    ) : null}
                   </div>
                 ) : null}
 
@@ -481,6 +500,12 @@ const ConversationPanel = ({
             </div>
           </div>
         </div>
+
+        <ReportErrorDialog
+          open={isReportOpen}
+          error={activeSession?.error ?? ''}
+          onClose={() => setIsReportOpen(false)}
+        />
       </section>
     </ResizablePanel>
   )
