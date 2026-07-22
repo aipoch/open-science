@@ -2951,6 +2951,7 @@ class AcpRuntime {
           : { ...normalizedParams, sessionId: appSessionId },
         {
           profile: profileState?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
+          frameworkId: this.framework.id,
           autoReviewStrategy: profileState?.autoReviewStrategy,
           cwd: this.sessionCwds.get(appSessionId),
           mcpServerNames

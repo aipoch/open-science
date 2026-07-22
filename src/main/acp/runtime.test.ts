@@ -2642,6 +2642,115 @@ describe('ACP runtime session management', () => {
     ])
   })
 
+  it('shows sparse Codex commands and remembers Always for the same command only', async () => {
+    const process = new FakeAgentProcess()
+    const permissionRequests: Array<{
+      title: string
+      rawInput?: unknown
+      requestId: string
+    }> = []
+    const permissionResponses: unknown[] = []
+
+    acp
+      .agent({ name: 'codex-command-permission-agent' })
+      .onRequest(acp.methods.agent.initialize, () => ({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        agentCapabilities: {
+          loadSession: false,
+          sessionCapabilities: { close: {} }
+        },
+        authMethods: []
+      }))
+      .onRequest(acp.methods.agent.session.new, () => ({
+        sessionId: 'codex-command-session',
+        modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+      }))
+      .onRequest(acp.methods.agent.session.setMode, () => ({}))
+      .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
+        for (const [toolCallId, command] of [
+          ['call-command-1', 'npm run lint'],
+          ['call-command-2', 'npm run lint'],
+          ['call-command-3', 'npm test']
+        ]) {
+          await ctx.client.notify(acp.methods.client.session.update, {
+            sessionId: ctx.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId,
+              kind: 'execute',
+              title: command,
+              status: 'pending',
+              rawInput: { command }
+            }
+          })
+
+          const response = await ctx.client.request(acp.methods.client.session.requestPermission, {
+            sessionId: ctx.params.sessionId,
+            toolCall: {
+              toolCallId,
+              kind: 'execute',
+              status: 'pending',
+              rawInput: { command, cwd: '/workspace' }
+            },
+            options: [
+              { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+              { optionId: 'allow-session', name: 'Allow for This Session', kind: 'allow_always' },
+              { optionId: 'decline', name: 'Decline', kind: 'reject_once' }
+            ]
+          })
+          permissionResponses.push(response)
+        }
+
+        return { stopReason: 'end_turn' }
+      })
+      .onRequest(acp.methods.agent.session.close, () => ({}))
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework,
+      callbacks: {
+        onPermissionRequest: (request) => {
+          permissionRequests.push(request)
+          runtime.respondToPermission({
+            requestId: request.requestId,
+            optionId: permissionRequests.length === 1 ? 'allow-session' : 'allow-once'
+          })
+        }
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'run two npm commands' })
+
+    expect(permissionRequests).toHaveLength(2)
+    expect(permissionRequests).toMatchObject([
+      {
+        title: 'npm run lint',
+        rawInput: { command: 'npm run lint' }
+      },
+      {
+        title: 'npm test',
+        rawInput: { command: 'npm test' }
+      }
+    ])
+    expect(permissionResponses).toEqual([
+      { outcome: { outcome: 'selected', optionId: 'allow-session' } },
+      { outcome: { outcome: 'selected', optionId: 'allow-once' } },
+      { outcome: { outcome: 'selected', optionId: 'allow-once' } }
+    ])
+    expect(runtime.getSnapshot().permissionGrants[session.sessionId]).toEqual([
+      { categoryKey: 'bash:npm run lint', kind: 'shell', label: 'npm run lint' }
+    ])
+  })
+
   it('bounds pending Codex MCP identities and clears unmatched entries when the turn stops', async () => {
     const process = new FakeAgentProcess()
     const promptStarted = createDeferred()
