@@ -139,8 +139,9 @@ describe('UpdateDialog', () => {
     expect(document.body.textContent).toContain('42%')
   })
 
-  it('falls back to percent-only when byte counts are missing while downloading', () => {
-    // When transferred/total are unknown the label should show only the percent, not "0 B / 0 B".
+  it('hides the left label when byte counts are missing while downloading', () => {
+    // When transferred/total are unknown the left span should be empty — percent appears only on
+    // the right, avoiding a duplicate "35%   35%" display.
     useUpdateStore.setState({
       isDialogOpen: true,
       status: {
@@ -153,13 +154,16 @@ describe('UpdateDialog', () => {
       }
     })
     act(() => root.render(<UpdateDialog />))
-    // Should NOT show byte formatting — just the percent.
-    expect(document.body.textContent).not.toContain('0 B')
+    // The progress label row has two spans; the left one (context) should be empty.
+    const labelSpans = document.body.querySelectorAll('.tabular-nums span')
+    expect(labelSpans.length).toBeGreaterThanOrEqual(2)
+    expect(labelSpans[0].textContent).toBe('')
+    expect(labelSpans[1].textContent).toBe('35%')
   })
 
-  it('falls back to percent-only when downloadedBytes is 0 while downloading', () => {
+  it('hides the left label when downloadedBytes is 0 while downloading', () => {
     // A fresh download that hasn't received its first progress event yet: downloadedBytes is 0,
-    // so the label should show percent, not "0 B / 9.8 KB".
+    // so the left label should be empty — not "0 B / 9.8 KB".
     useUpdateStore.setState({
       isDialogOpen: true,
       status: {
@@ -172,6 +176,9 @@ describe('UpdateDialog', () => {
       }
     })
     act(() => root.render(<UpdateDialog />))
-    expect(document.body.textContent).not.toContain('0 B')
+    const labelSpans = document.body.querySelectorAll('.tabular-nums span')
+    expect(labelSpans.length).toBeGreaterThanOrEqual(2)
+    expect(labelSpans[0].textContent).toBe('')
+    expect(labelSpans[1].textContent).toBe('0%')
   })
 })

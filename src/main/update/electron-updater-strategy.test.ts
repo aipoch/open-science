@@ -350,13 +350,13 @@ describe('ElectronUpdaterStrategy', () => {
     expect(status.notes).toBe('')
   })
 
-  it('extracts totalBytes from the updater feed artifact files at check time', async () => {
+  it('extracts totalBytes from the updater feed artifact for the current platform', async () => {
     const updater = new FakeUpdater()
     updater.checkForUpdates = vi.fn(async () => {
       updater.emit('update-available', {
         version: '0.3.0',
         files: [
-          { url: 'https://cdn/app-0.3.0.zip', size: 99000 },
+          { url: 'https://cdn/app-0.3.0-arm64.zip', size: 99000 },
           { url: 'https://cdn/app-0.3.0.dmg', size: 12000 }
         ]
       })
@@ -364,12 +364,62 @@ describe('ElectronUpdaterStrategy', () => {
     const strategy = new ElectronUpdaterStrategy({
       updater,
       currentVersion: '0.2.0',
+      platform: 'darwin',
+      arch: 'arm64',
       broadcast: vi.fn(),
       fetchImpl: offlineFetch()
     })
     const status = await strategy.check()
-    // darwin (the test default via process.platform mock) should match the .zip, not the .dmg.
+    // darwin/arm64 → the arm64 ZIP (99000), not the DMG (12000).
     expect(status.totalBytes).toBe(99000)
+  })
+
+  it('matches the correct architecture in a multi-arch macOS feed', async () => {
+    // Real latest-mac.yml carries both arm64 and x64 ZIPs; x64 must not pick arm64's size.
+    const updater = new FakeUpdater()
+    updater.checkForUpdates = vi.fn(async () => {
+      updater.emit('update-available', {
+        version: '0.3.0',
+        files: [
+          { url: 'https://cdn/app-0.3.0-arm64.zip', size: 95000 },
+          { url: 'https://cdn/app-0.3.0-x64.zip', size: 105000 }
+        ]
+      })
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      platform: 'darwin',
+      arch: 'x64',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    const status = await strategy.check()
+    expect(status.totalBytes).toBe(105000)
+  })
+
+  it('omits totalBytes when multiple files match the platform and arch ambiguously', async () => {
+    // If two files somehow match the same platform+arch+extension, don't guess.
+    const updater = new FakeUpdater()
+    updater.checkForUpdates = vi.fn(async () => {
+      updater.emit('update-available', {
+        version: '0.3.0',
+        files: [
+          { url: 'https://cdn/app-0.3.0-arm64.zip', size: 95000 },
+          { url: 'https://cdn/app-0.3.0-arm64.zip', size: 105000 }
+        ]
+      })
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      platform: 'darwin',
+      arch: 'arm64',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    const status = await strategy.check()
+    expect(status.totalBytes).toBeUndefined()
   })
 
   it('preserves check-time totalBytes when download-progress omits total', async () => {
@@ -448,29 +498,5 @@ describe('ElectronUpdaterStrategy', () => {
     // The retry's progress event should report fresh transferred, not stale bytes.
     expect(retry.downloadedBytes).toBe(5500)
     await first
-  })
-
-  it('picks the platform-matching artifact over the first entry in a multi-file feed', async () => {
-    // A macOS feed lists both DMG (for manual download) and ZIP (for auto-update). The strategy
-    // must pick the ZIP size (what electron-updater downloads), not the DMG.
-    const updater = new FakeUpdater()
-    updater.checkForUpdates = vi.fn(async () => {
-      updater.emit('update-available', {
-        version: '0.3.0',
-        files: [
-          { url: 'https://cdn/app-0.3.0.dmg', size: 80000 },
-          { url: 'https://cdn/app-0.3.0.zip', size: 60000 }
-        ]
-      })
-    })
-    const strategy = new ElectronUpdaterStrategy({
-      updater,
-      currentVersion: '0.2.0',
-      broadcast: vi.fn(),
-      fetchImpl: offlineFetch()
-    })
-    const status = await strategy.check()
-    // darwin → .zip (60000), not .dmg (80000) which is listed first.
-    expect(status.totalBytes).toBe(60000)
   })
 })

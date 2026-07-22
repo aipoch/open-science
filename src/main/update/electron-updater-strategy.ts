@@ -32,6 +32,8 @@ export interface MinimalAutoUpdater {
 export type ElectronUpdaterDeps = {
   updater?: MinimalAutoUpdater
   currentVersion?: string
+  platform?: NodeJS.Platform
+  arch?: string
   broadcast?: (channel: string, payload: unknown) => void
   // Factory for the per-download cancellation token; defaults to electron-updater's CancellationToken.
   // Injectable so tests can drive cancel() without the real class.
@@ -76,18 +78,42 @@ const PLATFORM_ARTIFACT_EXT: Record<string, string> = {
   linux: '.AppImage'
 }
 
-// Extracts the auto-update artifact size from the updater feed's files list. Prefers the file whose URL
-// matches the current platform's expected extension (the one electron-updater will actually download);
-// falls back to the first file with a size. This avoids advertising a DMG size when the updater actually
-// downloads a ZIP on macOS, or a deb size when it downloads an AppImage on Linux.
-const extractArtifactSize = (files?: UpdateFeedFile[]): number | undefined => {
+// Architecture tokens that appear in electron-updater artifact filenames for each platform.
+const PLATFORM_ARCH_TOKENS: Record<string, string[]> = {
+  darwin: ['arm64', 'x64'],
+  win32: ['x64', 'arm64'],
+  linux: ['x64', 'arm64']
+}
+
+// Extracts the auto-update artifact size from the updater feed's files list. Matches both the platform's
+// expected extension AND the current architecture token (e.g. `-arm64` or `-x64` in the URL), because
+// production feeds carry per-arch entries (macOS latest-mac.yml lists both arm64 and x64 ZIPs). When
+// multiple files match (ambiguous), returns undefined rather than risking the wrong size.
+const extractArtifactSize = (
+  files: UpdateFeedFile[] | undefined,
+  platform: NodeJS.Platform,
+  arch: string
+): number | undefined => {
   if (!files || files.length === 0) return undefined
-  const targetExt = PLATFORM_ARTIFACT_EXT[process.platform]
-  if (targetExt) {
-    const match = files.find((f) => f.size != null && f.url?.endsWith(targetExt))
-    if (match?.size != null) return match.size
+  const targetExt = PLATFORM_ARTIFACT_EXT[platform]
+  if (!targetExt) return files.find((f) => f.size != null)?.size
+  const archToken = PLATFORM_ARCH_TOKENS[platform]?.find((token) => arch.includes(token))
+  if (archToken) {
+    // Match both extension and arch token — the exact artifact electron-updater will download.
+    const matches = files.filter(
+      (f) => f.size != null && f.url?.endsWith(targetExt) && f.url?.includes(archToken)
+    )
+    if (matches.length === 1) return matches[0].size
+    // Ambiguous (0 or 2+ matches) — don't risk showing the wrong size.
+    if (matches.length > 1) return undefined
   }
-  return files.find((f) => f.size != null)?.size
+  // No arch token to disambiguate (or no matching file): fall back to a single unambiguous extension match.
+  const extMatches = files.filter((f) => f.size != null && f.url?.endsWith(targetExt))
+  if (extMatches.length === 1) return extMatches[0].size
+  // Still ambiguous or no extension match: try any file with a size, but only if there's exactly one.
+  const sized = files.filter((f) => f.size != null)
+  if (sized.length === 1) return sized[0].size
+  return undefined
 }
 
 // In-place auto-update strategy: wraps electron-updater for true download + restart on win/linux and
@@ -97,6 +123,8 @@ const extractArtifactSize = (files?: UpdateFeedFile[]): number | undefined => {
 export class ElectronUpdaterStrategy implements UpdateStrategy {
   private readonly updater: MinimalAutoUpdater
   private readonly currentVersion: string
+  private readonly platform: NodeJS.Platform
+  private readonly arch: string
   private readonly broadcast: (channel: string, payload: unknown) => void
   private readonly fetchImpl?: typeof fetch
   private readonly manifestUrl: string
@@ -121,6 +149,8 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   constructor(deps: ElectronUpdaterDeps = {}) {
     this.updater = deps.updater ?? (autoUpdater as unknown as MinimalAutoUpdater)
     this.currentVersion = deps.currentVersion ?? app?.getVersion?.() ?? '0.0.0'
+    this.platform = deps.platform ?? process.platform
+    this.arch = deps.arch ?? process.arch
     this.broadcast = deps.broadcast ?? defaultBroadcast
     this.fetchImpl = deps.fetchImpl
     this.manifestUrl = deps.manifestUrl ?? APP.update.manifestUrl
@@ -142,7 +172,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.updater.on('checking-for-update', () => this.setStatus({ state: 'checking' }))
     this.updater.on('update-available', (info) => {
       const i = info as { version?: string; releaseNotes?: unknown; files?: UpdateFeedFile[] }
-      const totalBytes = extractArtifactSize(i.files)
+      const totalBytes = extractArtifactSize(i.files, this.platform, this.arch)
       this.setStatus({
         state: 'available',
         latest: i.version,
