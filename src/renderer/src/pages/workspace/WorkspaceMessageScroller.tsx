@@ -209,6 +209,37 @@ const WorkspaceMessageScroller = ({
     return sessionJobs.filter((j) => !boundJobIds.has(j.job_id) && terminalStatuses.has(j.status))
   }, [sessionJobs, boundJobIds])
 
+  // Assign each unbound completed job to exactly one slot in the conversation timeline so
+  // it is rendered at most once.  A job is placed immediately before the first conversation
+  // item whose createdAt is GREATER than the job's created_at; if no such item exists the
+  // job falls into the "trailing" slot rendered after all conversation items.
+  //
+  // Using an index-keyed Map (item index → jobs[]) instead of per-render filter on the full
+  // array is the key correctness fix: every job is consumed by a single pass and never
+  // re-matched against later items.
+  const { jobSlotsByItemIndex, trailingJobs } = useMemo(() => {
+    const sorted = [...unboundCompletedJobs].sort((a, b) => a.created_at - b.created_at)
+    const byIndex = new Map<number, JobSummary[]>()
+    const trailing: JobSummary[] = []
+
+    for (const job of sorted) {
+      // Find the first conversation item strictly after this job's timestamp.
+      const insertBeforeIndex = conversationItems.findIndex(
+        (item) => item.createdAt > job.created_at
+      )
+      if (insertBeforeIndex === -1) {
+        // No later item — job goes in the trailing slot.
+        trailing.push(job)
+      } else {
+        const existing = byIndex.get(insertBeforeIndex) ?? []
+        existing.push(job)
+        byIndex.set(insertBeforeIndex, existing)
+      }
+    }
+
+    return { jobSlotsByItemIndex: byIndex, trailingJobs: trailing }
+  }, [unboundCompletedJobs, conversationItems])
+
   // Transient "no longer available" pill shown when a mention target can't be opened.
   const [mentionNotice, setMentionNotice] = useState<string | null>(null)
   const mentionNoticeTimerRef = useRef<number | undefined>(undefined)
@@ -361,7 +392,7 @@ const WorkspaceMessageScroller = ({
             <MessageScrollerContent className="gap-0 px-4">
               <div className={conversationContentClassName}>
                 {/* Messages and tool activities share one sorted transcript timeline. */}
-                {conversationItems.map((item) => {
+                {conversationItems.map((item, itemIndex) => {
                   if (item.type === 'message') {
                     const artifacts =
                       activeSession && item.message.role !== 'user'
@@ -373,11 +404,8 @@ const WorkspaceMessageScroller = ({
                         ? getReviewForTurn(currentSessionId, item.message.id)
                         : undefined
 
-                    // Find unbound completed jobs whose createdAt falls before this message
-                    // and haven't been rendered yet — slot them in just before this message.
-                    const jobsBeforeMessage = unboundCompletedJobs.filter(
-                      (j) => j.created_at <= item.createdAt
-                    )
+                    // Jobs pre-assigned to this slot: each job appears in exactly one slot.
+                    const jobsBeforeMessage = jobSlotsByItemIndex.get(itemIndex) ?? []
 
                     return (
                       <div key={item.id}>
@@ -434,25 +462,19 @@ const WorkspaceMessageScroller = ({
                 })}
 
                 {/* Render any remaining unbound completed jobs after all conversation items */}
-                {unboundCompletedJobs
-                  .filter((j) => {
-                    // Only render jobs whose createdAt is after the last conversation item
-                    const lastItem = conversationItems[conversationItems.length - 1]
-                    return !lastItem || j.created_at > lastItem.createdAt
-                  })
-                  .map((job) => (
-                    <MessageScrollerItem
-                      key={`completed-job-${job.job_id}`}
-                      messageId={`completed-job-${job.job_id}`}
-                      className="min-w-0"
-                    >
-                      <div className="px-4 py-1 md:px-6">
-                        <div className="mx-auto w-full max-w-4xl">
-                          <CompletedJobCard job={job} onOpen={handleOpenJobDetail} />
-                        </div>
+                {trailingJobs.map((job) => (
+                  <MessageScrollerItem
+                    key={`completed-job-${job.job_id}`}
+                    messageId={`completed-job-${job.job_id}`}
+                    className="min-w-0"
+                  >
+                    <div className="px-4 py-1 md:px-6">
+                      <div className="mx-auto w-full max-w-4xl">
+                        <CompletedJobCard job={job} onOpen={handleOpenJobDetail} />
                       </div>
-                    </MessageScrollerItem>
-                  ))}
+                    </div>
+                  </MessageScrollerItem>
+                ))}
 
                 {showAgentLoadingMessage && activeSession ? (
                   <WorkspaceAgentLoadingRow sessionId={activeSession.id} />
