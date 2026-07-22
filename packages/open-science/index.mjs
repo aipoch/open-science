@@ -66,9 +66,16 @@ export class OpenScienceClient {
     return this.request(`/api/v1/runs/${encodeURIComponent(runId)}`)
   }
 
-  async waitForRun(runId, { pollIntervalMs = 250, signal } = {}) {
+  async waitForRun(runId, { pollIntervalMs = 250, signal, timeoutMs } = {}) {
+    if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
+      throw new TypeError('timeoutMs must be a positive number.')
+    }
+    const deadline = timeoutMs === undefined ? undefined : Date.now() + timeoutMs
     for (;;) {
       signal?.throwIfAborted()
+      if (deadline !== undefined && Date.now() >= deadline) {
+        throw new OpenScienceApiError(`Timed out waiting for run ${runId}.`, { code: 'timeout' })
+      }
       const run = await this.getRun(runId)
       if (run.status !== 'running') return run
       await this.sleep(pollIntervalMs)

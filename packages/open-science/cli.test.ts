@@ -37,6 +37,23 @@ describe('task CLI', () => {
       positionals: ['run-1'],
       options: { open: true, json: true, jsonl: false, wait: false }
     })
+    expect(
+      parseCliArgs([
+        'run',
+        '--project',
+        'project-1',
+        '--prompt',
+        'Research this.',
+        '--wait',
+        '--timeout-ms',
+        '60000'
+      ]).options.timeoutMs
+    ).toBe(60_000)
+    expect(() => parseCliArgs(['run', '--jsonl'])).toThrow('--jsonl requires run --wait.')
+    expect(() => parseCliArgs(['run', '--timeout-ms', '0', '--wait'])).toThrow('Invalid timeout: 0')
+    expect(() => parseCliArgs(['run', '--timeout-ms', '1000'])).toThrow(
+      '--timeout-ms requires run --wait.'
+    )
   })
 
   it('reads a prompt file, waits for completion, and emits one JSON result', async () => {
@@ -206,6 +223,56 @@ describe('task CLI', () => {
       expect.objectContaining({ id: 'run-1', status: 'failed' })
     ])
     expect(setExitCode).toHaveBeenCalledWith(1)
+  })
+
+  it('passes the wait timeout and warns when a run needs approval', async () => {
+    const events = async function* (): AsyncGenerator<{
+      type: string
+      data: { sessionId: string }
+    }> {
+      yield { type: 'permission.requested', data: { sessionId: 'session-1' } }
+    }
+    const client = {
+      events,
+      startRun: vi.fn().mockResolvedValue({
+        id: 'run-1',
+        sessionId: 'session-1',
+        status: 'running'
+      }),
+      waitForRun: vi.fn().mockResolvedValue({
+        id: 'run-1',
+        sessionId: 'session-1',
+        status: 'completed',
+        output: 'Done',
+        artifacts: []
+      })
+    }
+    const warn = vi.fn()
+
+    await runTaskCommand(
+      {
+        command: 'run',
+        options: {
+          project: 'project-1',
+          prompt: 'Research this.',
+          wait: true,
+          timeoutMs: 60_000,
+          json: false,
+          jsonl: false
+        }
+      },
+      {
+        connect: vi.fn().mockResolvedValue(client),
+        stdinIsTTY: true,
+        log: vi.fn(),
+        warn
+      }
+    )
+
+    expect(client.waitForRun).toHaveBeenCalledWith('run-1', { timeoutMs: 60_000 })
+    expect(warn).toHaveBeenCalledWith(
+      'Run is waiting for approval. Approve the request in Open Science Desktop or the Web UI.'
+    )
   })
 
   it('emits structured machine errors with stable exit codes', () => {

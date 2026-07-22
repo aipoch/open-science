@@ -73,7 +73,7 @@ export class OpenScienceClient {
   getRun(runId: string): Promise<Run>
   waitForRun(
     runId: string,
-    options?: { pollIntervalMs?: number; signal?: AbortSignal }
+    options?: { pollIntervalMs?: number; signal?: AbortSignal; timeoutMs?: number }
   ): Promise<Run>
   listArtifacts(sessionId: string): Promise<Artifact[]>
   downloadArtifact(artifactId: string, options?: { signal?: AbortSignal }): Promise<Response>

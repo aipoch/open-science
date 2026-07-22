@@ -82,6 +82,45 @@ describe('OpenScienceClient', () => {
     expect(fetch).toHaveBeenCalledTimes(3)
   })
 
+  it('stops waiting after the requested timeout without cancelling the run', async () => {
+    const fetch = vi.fn().mockImplementation(async () =>
+      response(200, {
+        data: {
+          id: 'run-1',
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          status: 'running',
+          startedAt: 1,
+          artifacts: []
+        }
+      })
+    )
+    const sleep = vi.fn(async (milliseconds: number) => {
+      vi.setSystemTime(Date.now() + milliseconds)
+    })
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    try {
+      const client = new OpenScienceClient({
+        baseUrl: 'http://127.0.0.1:44100',
+        token: 'secret-token',
+        fetch,
+        sleep
+      })
+
+      await expect(
+        client.waitForRun('run-1', { pollIntervalMs: 250, timeoutMs: 500 })
+      ).rejects.toMatchObject({
+        code: 'timeout',
+        message: 'Timed out waiting for run run-1.'
+      })
+      expect(fetch).toHaveBeenCalledTimes(2)
+      expect(sleep).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('surfaces stable API errors without including the authentication token', async () => {
     const fetch = vi.fn().mockResolvedValue(
       response(404, {

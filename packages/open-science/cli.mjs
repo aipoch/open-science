@@ -45,7 +45,8 @@ Options:
   --approval-profile <profile>  ask, auto, or full (default: ask)
   --skill <id>           Force-load a skill for this run (repeatable)
   --wait                 Wait for the run to finish
-  --jsonl                Stream machine-readable events, one per line
+  --timeout-ms <ms>      Stop waiting after this many milliseconds
+  --jsonl                With run --wait, stream one machine-readable event per line
   --output <path>        Artifact download destination
   --no-open              Do not open the browser after start
   --json                 Emit one machine-readable result
@@ -62,6 +63,7 @@ const VALUE_OPTIONS = {
   '--prompt': 'prompt',
   '--prompt-file': 'promptFile',
   '--approval-profile': 'approvalProfile',
+  '--timeout-ms': 'timeoutMs',
   '--description': 'description',
   '--output': 'output'
 }
@@ -123,8 +125,21 @@ export const parseCliArgs = (argv) => {
   if (options.approvalProfile && !['ask', 'auto', 'full'].includes(options.approvalProfile)) {
     throw new CliUsageError(`Invalid approval profile: ${options.approvalProfile}`)
   }
+  if (options.timeoutMs !== undefined) {
+    const timeoutMs = Number(options.timeoutMs)
+    if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+      throw new CliUsageError(`Invalid timeout: ${options.timeoutMs}`)
+    }
+    options.timeoutMs = timeoutMs
+  }
   if (options.json && options.jsonl) {
     throw new CliUsageError('Use only one of --json or --jsonl.')
+  }
+  if (options.jsonl && (command !== 'run' || subcommand || !options.wait)) {
+    throw new CliUsageError('--jsonl requires run --wait.')
+  }
+  if (options.timeoutMs !== undefined && (command !== 'run' || subcommand || !options.wait)) {
+    throw new CliUsageError('--timeout-ms requires run --wait.')
   }
   return {
     command,
@@ -420,6 +435,7 @@ const TASK_DEPS = {
   readStdin: () => readFile(0, 'utf8'),
   writeDownload,
   log: (...args) => console.log(...args),
+  warn: (...args) => console.warn(...args),
   stdinIsTTY: process.stdin.isTTY,
   setExitCode: (code) => {
     process.exitCode = code
@@ -457,6 +473,10 @@ const readPrompt = async (options, deps) => {
 const emitRunEvent = (event, options, deps) => {
   if (options.jsonl) {
     deps.log(JSON.stringify(event))
+  } else if (event.type === 'permission.requested') {
+    deps.warn(
+      'Run is waiting for approval. Approve the request in Open Science Desktop or the Web UI.'
+    )
   } else if (
     event.type === 'run.event' &&
     event.data?.kind !== 'message' &&
@@ -558,7 +578,11 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
           emitRunEvent(event, options, deps)
         }
       }
-      result = options.wait ? await client.waitForRun(started.id) : started
+      result = options.wait
+        ? options.timeoutMs === undefined
+          ? await client.waitForRun(started.id)
+          : await client.waitForRun(started.id, { timeoutMs: options.timeoutMs })
+        : started
     } finally {
       abortController.abort()
       await eventTask

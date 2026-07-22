@@ -85,6 +85,11 @@ open-science run status <run-id> --json
 open-science session status <session-id> --json
 ```
 
+Use `--timeout-ms <milliseconds>` with `--wait` to bound how long the client waits. A timeout stops the
+CLI wait and returns exit code `1`; it does not cancel the run, which can still be inspected with
+`open-science run status <run-id>`. When the `ask` approval profile needs permission, human-readable
+output directs the user to approve the request in Open Science Desktop or the Web UI.
+
 Pass an existing session ID to continue a conversation. Approval profiles are `ask`, `auto`, and
 `full`; `--skill` is repeatable:
 
@@ -105,7 +110,7 @@ The default approval profile is `ask`. Unattended workflows must explicitly use
 
 ## Machine-readable output
 
-Use `--json` to emit one result. Use `--jsonl` with a waited run to emit progress events followed by
+Use `--json` to emit one result. `--jsonl` requires `run --wait` and emits progress events followed by
 the final run object, one JSON value per line:
 
 ```bash
@@ -132,6 +137,9 @@ Exit codes form part of the automation contract:
 | `2`       | CLI usage was invalid.                                        |
 | `3`       | The local daemon was unavailable.                             |
 | `4`       | A requested project, run, session, or artifact was not found. |
+
+Timeouts and `session_busy` conflicts use exit code `1` and retain their distinct `timeout` and
+`session_busy` error codes in structured output.
 
 ## Artifacts
 
