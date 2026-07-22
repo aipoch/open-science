@@ -170,6 +170,74 @@ describe('discoverInterpreters', () => {
     expect(found.map((f) => f.interpreterPath)).toEqual(paths)
     expect(found.map((f) => f.version)).toEqual(paths.map((_, i) => `3.${i}.0`))
   })
+
+  it('classifies Windows CRAN R installations as user-own', async () => {
+    // Windows CRAN R paths discovered via Program Files should be classified as 'user-own',
+    // not 'app-managed' or 'agent-created', since they're user-installed global interpreters.
+    const deps = makeDeps(
+      [
+        'C:\\Program Files\\R\\R-4.4.3\\bin\\x64\\R.exe',
+        'C:\\Program Files (x86)\\R\\R-4.2.0\\bin\\R.exe',
+        '/rt/envs/default-r/bin/R'
+      ],
+      {
+        versions: {
+          'C:\\Program Files\\R\\R-4.4.3\\bin\\x64\\R.exe': '4.4.3',
+          'C:\\Program Files (x86)\\R\\R-4.2.0\\bin\\R.exe': '4.2.0',
+          '/rt/envs/default-r/bin/R': '4.3.1'
+        },
+        rRunnable: {
+          'C:\\Program Files\\R\\R-4.4.3\\bin\\x64\\R.exe': true,
+          'C:\\Program Files (x86)\\R\\R-4.2.0\\bin\\R.exe': true,
+          '/rt/envs/default-r/bin/R': true
+        }
+      }
+    )
+    const found = await discoverInterpreters('r', deps)
+    const byId = Object.fromEntries(found.map((f) => [f.envId, f]))
+
+    expect(byId['C:\\Program Files\\R\\R-4.4.3\\bin\\x64\\R.exe'].provenance).toBe('user-own')
+    expect(byId['C:\\Program Files (x86)\\R\\R-4.2.0\\bin\\R.exe'].provenance).toBe('user-own')
+    expect(byId['/rt/envs/default-r/bin/R'].provenance).toBe('app-managed')
+  })
+
+  it('deduplicates when PATH and CRAN paths resolve to the same R installation', async () => {
+    // If a user adds "C:\Program Files\R\R-4.4.3\bin\x64" to PATH, both the PATH scan
+    // and the CRAN Program Files scan will find the same R.exe. Realpath dedup should
+    // collapse them into a single entry.
+    const deps = makeDeps(
+      [
+        '/usr/bin/R', // from PATH (symlink to CRAN install)
+        'C:\\Program Files\\R\\R-4.4.3\\bin\\x64\\R.exe', // from CRAN scan
+        '/rt/envs/default-r/bin/R' // app-managed
+      ],
+      {
+        versions: {
+          '/usr/bin/R': '4.4.3',
+          'C:\\Program Files\\R\\R-4.4.3\\bin\\x64\\R.exe': '4.4.3',
+          '/rt/envs/default-r/bin/R': '4.3.1'
+        },
+        rRunnable: {
+          '/usr/bin/R': true,
+          'C:\\Program Files\\R\\R-4.4.3\\bin\\x64\\R.exe': true,
+          '/rt/envs/default-r/bin/R': true
+        },
+        // PATH entry is a symlink to the CRAN install
+        realpath: {
+          '/usr/bin/R': 'C:\\Program Files\\R\\R-4.4.3\\bin\\x64\\R.exe'
+        }
+      }
+    )
+    const found = await discoverInterpreters('r', deps)
+
+    // Should have exactly 2 entries: one for the deduplicated CRAN R, one for app-managed
+    expect(found).toHaveLength(2)
+    const byId = Object.fromEntries(found.map((f) => [f.envId, f]))
+    // The deduplicated entry should use the canonical path
+    expect(byId['C:\\Program Files\\R\\R-4.4.3\\bin\\x64\\R.exe']).toBeDefined()
+    expect(byId['C:\\Program Files\\R\\R-4.4.3\\bin\\x64\\R.exe'].provenance).toBe('user-own')
+    expect(byId['/rt/envs/default-r/bin/R'].provenance).toBe('app-managed')
+  })
 })
 
 describe('collapseRscript', () => {
