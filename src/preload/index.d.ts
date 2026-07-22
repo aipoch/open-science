@@ -36,6 +36,7 @@ import type {
   NotebookChangedEvent,
   ExecuteNotebookCodeRequest,
   FinishNotebookCodeCellRequest,
+  NotebookIpynbExport,
   NotebookLanguage,
   NotebookRunSummary,
   NotebookSessionReference,
@@ -315,6 +316,8 @@ interface OpenScienceAPI {
   notebook: {
     state(request: NotebookSessionRequest): Promise<NotebookSessionState>
     getReference(request: NotebookSessionRequest): Promise<NotebookSessionReference | null>
+    // Projects the persisted run history to a save-ready .ipynb, or null when no run.json exists.
+    exportIpynb(request: NotebookSessionRequest): Promise<NotebookIpynbExport | null>
     beginCodeCell(request: BeginNotebookCodeCellRequest): Promise<{
       sessionId: string
       cellId: string

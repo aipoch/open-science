@@ -224,6 +224,13 @@ export type NotebookSessionRequest = {
   workspaceCwd: string
 }
 
+// One session's run history projected to an .ipynb (nbformat 4.5) document, ready to save.
+export type NotebookIpynbExport = {
+  suggestedName: string
+  // The exact file contents (JSON text), serialized in main so the renderer never re-shapes it.
+  json: string
+}
+
 // Starts a streamed code write into a notebook cell.
 export type BeginNotebookCodeCellRequest = NotebookSessionRequest & {
   cellId?: string

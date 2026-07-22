@@ -38,6 +38,7 @@ import type {
   NotebookChangedEvent,
   ExecuteNotebookCodeRequest,
   FinishNotebookCodeCellRequest,
+  NotebookIpynbExport,
   NotebookLanguage,
   NotebookRunSummary,
   NotebookSessionReference,
@@ -348,6 +349,8 @@ type OpenScienceAPI = {
     state: (request: NotebookSessionRequest) => Promise<NotebookSessionState>
     // Resolves an existing notebook entry for a session without creating one, or null when absent.
     getReference: (request: NotebookSessionRequest) => Promise<NotebookSessionReference | null>
+    // Projects the persisted run history to a save-ready .ipynb, or null when no run.json exists.
+    exportIpynb: (request: NotebookSessionRequest) => Promise<NotebookIpynbExport | null>
     beginCodeCell: (request: BeginNotebookCodeCellRequest) => Promise<{
       sessionId: string
       cellId: string
@@ -729,6 +732,8 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('notebook:state', request) as Promise<NotebookSessionState>,
     getReference: (request) =>
       ipcRenderer.invoke('notebook:reference', request) as Promise<NotebookSessionReference | null>,
+    exportIpynb: (request) =>
+      ipcRenderer.invoke('notebook:export-ipynb', request) as Promise<NotebookIpynbExport | null>,
     beginCodeCell: (request) =>
       ipcRenderer.invoke('notebook:begin-code-cell', request) as Promise<{
         sessionId: string

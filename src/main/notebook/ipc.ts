@@ -5,6 +5,7 @@ import type {
   BeginNotebookCodeCellRequest,
   ExecuteNotebookCodeRequest,
   FinishNotebookCodeCellRequest,
+  NotebookIpynbExport,
   NotebookRunSummary,
   NotebookSessionReference,
   NotebookSessionRequest,
@@ -16,6 +17,7 @@ import type { NotebookRuntimeService } from './runtime-service'
 type NotebookHandlers = {
   state: (request: NotebookSessionRequest) => Promise<NotebookSessionState>
   reference: (request: NotebookSessionRequest) => Promise<NotebookSessionReference | null>
+  exportIpynb: (request: NotebookSessionRequest) => Promise<NotebookIpynbExport | null>
   beginCodeCell: (
     request: BeginNotebookCodeCellRequest
   ) => ReturnType<NotebookRuntimeService['beginCodeCell']>
@@ -35,6 +37,7 @@ type NotebookHandlers = {
 const createNotebookHandlers = (service: NotebookRuntimeService): NotebookHandlers => ({
   state: (request) => service.state(request),
   reference: (request) => service.getSessionReference(request),
+  exportIpynb: (request) => service.exportIpynb(request),
   beginCodeCell: (request) => service.beginCodeCell(request),
   appendCodeCell: (request) => service.appendCodeCell(request),
   finishCodeCell: (request) => service.finishCodeCell(request),
@@ -53,6 +56,9 @@ const registerNotebookIpcHandlers = (service: NotebookRuntimeService): void => {
   )
   ipcMain.handle('notebook:reference', (_event, request: NotebookSessionRequest) =>
     handlers.reference(request)
+  )
+  ipcMain.handle('notebook:export-ipynb', (_event, request: NotebookSessionRequest) =>
+    handlers.exportIpynb(request)
   )
   ipcMain.handle('notebook:begin-code-cell', (_event, request: BeginNotebookCodeCellRequest) =>
     handlers.beginCodeCell(request)

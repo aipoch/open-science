@@ -13,6 +13,7 @@ import type {
   ExecuteShellRequest,
   FinishNotebookCodeCellRequest,
   NotebookEnvironmentStatus,
+  NotebookIpynbExport,
   NotebookKernelMetadata,
   NotebookLanguage,
   NotebookOutput,
@@ -44,6 +45,7 @@ import {
   type InstallResult
 } from './package-manager'
 import { NotebookRunRepository, getNotebookRunJsonPath, getRuntimeRoot } from './repository'
+import { projectRunDocumentToIpynb, stringifyIpynb } from './ipynb-export'
 import {
   addRepairRequired,
   assertSafeEnvName,
@@ -301,6 +303,8 @@ type NotebookRuntimeServiceOptions = {
   // fake; the production instance (the DefaultRuntimeProvisioner) is wired after construction in
   // main/ipc.ts via setEnvironmentManager, mirroring the mcp/mirror resolvers.
   environmentManager?: NotebookEnvironmentManager
+  // App version stamped into exported .ipynb metadata.open_science; optional so tests stay minimal.
+  appVersion?: string
 }
 
 // The wire binding plus the interpreter override the executor needs. `resolvedInterpreter` is set only
@@ -1867,6 +1871,24 @@ class NotebookRuntimeService {
       dataRoot: document.dataRoot,
       runtimeRoot: document.kernel.runtimeRoot,
       runJsonPath: getNotebookRunJsonPath(this.options.dataRoot, projectName, request.sessionId)
+    }
+  }
+
+  // Projects the persisted run history to an .ipynb (nbformat 4.5) document. Read-only like
+  // getSessionReference: a session without run.json returns null — export never creates one.
+  async exportIpynb(request: NotebookSessionRequest): Promise<NotebookIpynbExport | null> {
+    const projectName = request.projectName ?? this.options.projectName
+    const document = await this.repository.findExisting(projectName, request.sessionId)
+
+    if (!document) {
+      return null
+    }
+
+    const notebook = projectRunDocumentToIpynb(document, { appVersion: this.options.appVersion })
+
+    return {
+      suggestedName: `notebook-${request.sessionId.slice(0, 8)}.ipynb`,
+      json: stringifyIpynb(notebook)
     }
   }
 

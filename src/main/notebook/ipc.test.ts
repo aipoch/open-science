@@ -24,6 +24,7 @@ describe('notebook IPC handlers', () => {
     const service = {
       state: vi.fn().mockResolvedValue({ sessionId: 'session-1', cells: [] }),
       getSessionReference: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
+      exportIpynb: vi.fn().mockResolvedValue({ suggestedName: 'notebook-s1.ipynb', json: '{}' }),
       execute: vi.fn().mockResolvedValue({
         runId: 'run-1',
         status: 'completed',
@@ -40,6 +41,7 @@ describe('notebook IPC handlers', () => {
 
     await handlers.state({ sessionId: 'session-1', workspaceCwd: '/workspace' })
     await handlers.reference({ sessionId: 'session-1', workspaceCwd: '/workspace' })
+    await handlers.exportIpynb({ sessionId: 'session-1', workspaceCwd: '/workspace' })
     await handlers.execute({
       sessionId: 'session-1',
       workspaceCwd: '/workspace',
@@ -89,12 +91,17 @@ describe('notebook IPC handlers', () => {
       sessionId: 'session-1',
       workspaceCwd: '/workspace'
     })
+    expect(service.exportIpynb).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    })
   })
 
   it('registers every notebook channel and forwards the renderer payload unchanged', async () => {
     const service = {
       state: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
       getSessionReference: vi.fn().mockResolvedValue(null),
+      exportIpynb: vi.fn().mockResolvedValue(null),
       beginCodeCell: vi.fn().mockResolvedValue({ cellId: 'cell-1', writeId: 'write-1' }),
       appendCodeCell: vi.fn().mockResolvedValue({ receivedBytes: 5 }),
       finishCodeCell: vi.fn().mockResolvedValue({ status: 'idle' }),
@@ -108,6 +115,7 @@ describe('notebook IPC handlers', () => {
     expect([...ipcHandlers.keys()]).toEqual([
       'notebook:state',
       'notebook:reference',
+      'notebook:export-ipynb',
       'notebook:begin-code-cell',
       'notebook:append-code-cell',
       'notebook:finish-code-cell',
@@ -126,6 +134,7 @@ describe('notebook IPC handlers', () => {
 
     await ipcHandlers.get('notebook:state')?.(undefined, session)
     await ipcHandlers.get('notebook:reference')?.(undefined, session)
+    await ipcHandlers.get('notebook:export-ipynb')?.(undefined, session)
     await ipcHandlers.get('notebook:begin-code-cell')?.(undefined, begin)
     await ipcHandlers.get('notebook:append-code-cell')?.(undefined, append)
     await ipcHandlers.get('notebook:finish-code-cell')?.(undefined, finish)
@@ -136,6 +145,7 @@ describe('notebook IPC handlers', () => {
 
     expect(service.state).toHaveBeenCalledWith(session)
     expect(service.getSessionReference).toHaveBeenCalledWith(session)
+    expect(service.exportIpynb).toHaveBeenCalledWith(session)
     expect(service.beginCodeCell).toHaveBeenCalledWith(begin)
     expect(service.appendCodeCell).toHaveBeenCalledWith(append)
     expect(service.finishCodeCell).toHaveBeenCalledWith(finish)

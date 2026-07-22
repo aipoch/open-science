@@ -25,6 +25,8 @@ const renderContent = (props: {
   runs: NotebookRunRecord[]
   status: 'loading' | 'error' | 'ready'
   error?: string
+  onExportIpynb?: () => void
+  ipynbExportStatus?: 'idle' | 'saving' | 'error'
 }): string => renderToStaticMarkup(<SessionNotebookContent onClose={vi.fn()} {...props} />)
 
 describe('SessionNotebookContent', () => {
@@ -54,12 +56,50 @@ describe('SessionNotebookContent', () => {
     expect(html).toContain('ModuleNotFoundError')
   })
 
-  it('renders the .ipynb footer button as disabled', () => {
-    const html = renderContent({ sessionId: 's1', runs: [], status: 'ready' })
+  it('enables the .ipynb export button when runs exist and an export handler is wired', () => {
+    const html = renderContent({
+      sessionId: 's1',
+      runs: [makeRun()],
+      status: 'ready',
+      onExportIpynb: vi.fn()
+    })
 
-    expect(html).toContain('.ipynb')
-    // The only disabled control in the content is the placeholder export button.
-    expect(html).toContain('disabled')
+    expect(html).toContain('aria-label="Download as .ipynb"')
+    // No control in the content is disabled once export is available.
+    expect(html).not.toContain('disabled=""')
+  })
+
+  it('keeps the .ipynb export button disabled when there are no runs to export', () => {
+    const html = renderContent({
+      sessionId: 's1',
+      runs: [],
+      status: 'ready',
+      onExportIpynb: vi.fn()
+    })
+
+    expect(html).toContain('aria-label="Download as .ipynb"')
+    expect(html).toContain('disabled=""')
+  })
+
+  it('shows export progress and failure feedback on the .ipynb footer', () => {
+    const saving = renderContent({
+      sessionId: 's1',
+      runs: [makeRun()],
+      status: 'ready',
+      onExportIpynb: vi.fn(),
+      ipynbExportStatus: 'saving'
+    })
+    expect(saving).toContain('Exporting…')
+    expect(saving).toContain('disabled=""')
+
+    const failed = renderContent({
+      sessionId: 's1',
+      runs: [makeRun()],
+      status: 'ready',
+      onExportIpynb: vi.fn(),
+      ipynbExportStatus: 'error'
+    })
+    expect(failed).toContain('Notebook export failed. Try again.')
   })
 })
 

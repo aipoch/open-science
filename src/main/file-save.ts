@@ -85,6 +85,8 @@ const extensionForMime = (mimeType: string): string | undefined => {
       return 'tsv'
     case 'text/markdown':
       return 'md'
+    case 'application/x-ipynb+json':
+      return 'ipynb'
     default:
       return undefined
   }

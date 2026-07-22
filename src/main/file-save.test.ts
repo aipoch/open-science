@@ -33,6 +33,35 @@ describe('file save IPC handlers', () => {
     expect(handlers.has('file:save-managed')).toBe(true)
   })
 
+  it('saves a blob with an .ipynb filter for the notebook mime type', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-blob-'))
+    const destinationPath = join(root, 'notebook-134d5d81.ipynb')
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerFileSaveHandlers()
+
+    try {
+      const result = await handlers.get('file:save-blob')!(
+        { sender: {} },
+        {
+          suggestedName: 'notebook-134d5d81.ipynb',
+          mimeType: 'application/x-ipynb+json',
+          data: new TextEncoder().encode('{"nbformat":4}').buffer
+        }
+      )
+
+      expect(showSaveDialog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          defaultPath: 'notebook-134d5d81.ipynb',
+          filters: [{ name: 'IPYNB', extensions: ['ipynb'] }]
+        })
+      )
+      expect(result).toEqual({ saved: true, filePath: destinationPath })
+      await expect(readFile(destinationPath, 'utf8')).resolves.toBe('{"nbformat":4}')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('opens a managed source once and copies that exact file to the selected destination', async () => {
     const resolveManagedFilePath = vi.fn().mockResolvedValue('/managed/canonical-report.csv')
     const copyTo = vi.fn().mockResolvedValue(undefined)

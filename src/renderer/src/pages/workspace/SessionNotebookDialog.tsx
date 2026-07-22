@@ -20,6 +20,9 @@ import { loadSessionNotebookRuns } from './session-notebook-data'
 
 type SessionNotebookStatus = 'loading' | 'error' | 'ready'
 
+// Export lifecycle for the .ipynb footer button; 'error' surfaces inline until the next attempt.
+type IpynbExportStatus = 'idle' | 'saving' | 'error'
+
 // Fixed section order for the per-kernel grouping, mirroring NotebookPreview's tab order.
 const KERNEL_KIND_ORDER: NotebookKernelKind[] = ['python', 'r', 'repl', 'bash']
 
@@ -79,17 +82,22 @@ type SessionNotebookContentProps = {
   status: SessionNotebookStatus
   error?: string
   onClose: () => void
+  // Wired by the container; the button stays disabled when no handler or no runs are available.
+  onExportIpynb?: () => void
+  ipynbExportStatus?: IpynbExportStatus
 }
 
 // Pure presentational body of the dialog: header summary, empty/loading/error/populated states,
-// and the disabled .ipynb footer. Kept free of data-loading hooks and Dialog context so it renders
-// standalone in tests; close is delegated through onClose.
+// and the .ipynb export footer. Kept free of data-loading hooks and Dialog context so it renders
+// standalone in tests; close and export are delegated through props.
 const SessionNotebookContent = ({
   sessionId,
   runs,
   status,
   error,
-  onClose
+  onClose,
+  onExportIpynb,
+  ipynbExportStatus = 'idle'
 }: SessionNotebookContentProps): React.JSX.Element => {
   const [activeKind, setActiveKind] = useState<NotebookKernelKind>('python')
   const shortId = sessionId.slice(0, 8)
@@ -191,24 +199,35 @@ const SessionNotebookContent = ({
         )}
       </div>
 
-      <div className="flex justify-end gap-3 border-t border-border-300/15 px-5 py-3.5">
+      <div className="flex items-center justify-end gap-3 border-t border-border-300/15 px-5 py-3.5">
+        {ipynbExportStatus === 'error' ? (
+          <span className="text-xs text-danger-000">Notebook export failed. Try again.</span>
+        ) : null}
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
-              {/* Wrapper span keeps the tooltip reachable even though the button is disabled. */}
+              {/* Wrapper span keeps the tooltip reachable while the button is disabled. */}
               <span>
                 <button
                   type="button"
-                  disabled
+                  disabled={
+                    status !== 'ready' ||
+                    runs.length === 0 ||
+                    onExportIpynb === undefined ||
+                    ipynbExportStatus === 'saving'
+                  }
+                  onClick={onExportIpynb}
                   className="flex items-center justify-center gap-1.5 rounded px-2 py-1 text-xs text-text-200 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50"
                   aria-label="Download as .ipynb"
                 >
                   <Download className="size-3.5" aria-hidden="true" />
-                  .ipynb
+                  {ipynbExportStatus === 'saving' ? 'Exporting…' : '.ipynb'}
                 </button>
               </span>
             </TooltipTrigger>
-            <TooltipContent>Notebook export is coming soon</TooltipContent>
+            <TooltipContent>
+              {runs.length === 0 ? 'No runs to export' : 'Download as .ipynb'}
+            </TooltipContent>
           </Tooltip>
         </TooltipProvider>
       </div>
@@ -229,10 +248,40 @@ const SessionNotebookDialog = ({
   const [runs, setRuns] = useState<NotebookRunRecord[]>([])
   const [status, setStatus] = useState<SessionNotebookStatus>('loading')
   const [error, setError] = useState<string | undefined>(undefined)
+  const [ipynbExportStatus, setIpynbExportStatus] = useState<IpynbExportStatus>('idle')
 
   const sessionId = session?.id
   const projectId = session?.projectId
   const cwd = session?.cwd
+
+  // Reads the freshly projected .ipynb from main (run.json stays the source of truth there) and
+  // hands the exact bytes to the shared Save As flow. A canceled dialog is neutral, not an error.
+  const handleExportIpynb = async (): Promise<void> => {
+    if (!sessionId || ipynbExportStatus === 'saving') return
+
+    setIpynbExportStatus('saving')
+
+    try {
+      const exported = await window.api.notebook.exportIpynb({
+        sessionId,
+        projectName: projectId,
+        workspaceCwd: cwd ?? ''
+      })
+
+      if (!exported) {
+        throw new Error('No notebook found for this session.')
+      }
+
+      await window.api.saveBlobFile({
+        suggestedName: exported.suggestedName,
+        mimeType: 'application/x-ipynb+json',
+        data: new TextEncoder().encode(exported.json).buffer
+      })
+      setIpynbExportStatus('idle')
+    } catch {
+      setIpynbExportStatus('error')
+    }
+  }
 
   useEffect(() => {
     if (!sessionId) return
@@ -291,6 +340,10 @@ const SessionNotebookDialog = ({
               status={status}
               error={error}
               onClose={onClose}
+              onExportIpynb={() => {
+                void handleExportIpynb()
+              }}
+              ipynbExportStatus={ipynbExportStatus}
             />
           ) : null}
         </Dialog.Content>

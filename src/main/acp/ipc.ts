@@ -207,6 +207,8 @@ const createDefaultNotebookRuntimeService = (): NotebookRuntimeService => {
     // Region default for manage_packages when no mirror is configured; the configured override is
     // wired in main/ipc.ts via setPackageMirrorResolver once the settings service is constructed.
     locale: app.getLocale(),
+    // Stamped into .ipynb exports so a shared notebook records which app version produced it.
+    appVersion: app.getVersion(),
     callbacks: {
       onNotebookAvailable: (event) => broadcast('notebook:available', event),
       onNotebookChanged: (event) => broadcast('notebook:changed', event)
