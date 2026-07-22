@@ -17,10 +17,10 @@ import { existsSync } from 'node:fs'
 
 // A small delegating surface so IPC behavior tests run without Electron wiring.
 export type NotebookEnvHandlers = {
-  status: () => ProvisionStatus
+  status: () => Promise<ProvisionStatus>
   provision: (lang: NotebookLanguage, onProgress: (p: ProvisionProgress) => void) => Promise<void>
   repair: (lang: NotebookLanguage, onProgress: (p: ProvisionProgress) => void) => Promise<void>
-  cancel: () => void
+  cancel: (language?: NotebookLanguage) => void
 }
 
 // The provisioner shares a single `provisioning` flag across python/R (A3 review carry-forward), so
@@ -28,8 +28,35 @@ export type NotebookEnvHandlers = {
 // every provisioning-affecting call is chained behind an in-flight promise: a call that arrives while
 // one is still running waits for it to settle (success or failure) before starting its own run,
 // instead of firing a conflicting run in parallel. `status` passes through unserialized (read-only).
+// Brands a serialized wrapper so serializeProvisioner is IDEMPOTENT. The provisioner is wrapped at
+// three sites (main/ipc.ts, registerNotebookEnvIpcHandlers, createNotebookEnvHandlers); without this,
+// each layer would own a SEPARATE queue + pending map, and a request queued at the OUTERMOST layer
+// would not yet exist in an inner layer's pending set — so cancel() routed inward would be dropped as
+// "idle" and never reach the provisioner. Collapsing to one wrapper gives one queue and one pending
+// map, so cancel(lang) sees the same in-flight state the provision was enqueued into.
+const SERIALIZED = Symbol('serializedProvisioner')
+
 export const serializeProvisioner = (provisioner: RuntimeProvisioner): RuntimeProvisioner => {
+  // Already serialized (wrapped by an outer call): return as-is so re-wrapping is a no-op and there is
+  // exactly one queue + one pending map for the whole chain.
+  if ((provisioner as { [SERIALIZED]?: true })[SERIALIZED]) return provisioner
+
   let inFlight: Promise<void> = Promise.resolve()
+  // Per-language COUNT of in-flight provisions (running OR queued behind the chain). A count, not a Set:
+  // two same-language requests must both be tracked, or the first to settle would delete the language
+  // while the second is still pending and a later cancel would be wrongly dropped as idle. This is the
+  // only layer that sees the queue, so it's where "No-op when idle" lives: cancel(lang) forwards only
+  // when count>0. Incremented synchronously when a language provision is requested (before it queues),
+  // decremented when that run settles.
+  const pending = new Map<NotebookLanguage, number>()
+  const retain = (language: NotebookLanguage): void => {
+    pending.set(language, (pending.get(language) ?? 0) + 1)
+  }
+  const release = (language: NotebookLanguage): void => {
+    const next = (pending.get(language) ?? 0) - 1
+    if (next <= 0) pending.delete(language)
+    else pending.set(language, next)
+  }
 
   const serialize = (run: () => Promise<void>): Promise<void> => {
     const next = inFlight.then(run, run)
@@ -39,17 +66,37 @@ export const serializeProvisioner = (provisioner: RuntimeProvisioner): RuntimePr
     return next
   }
 
-  return {
+  const serializeLanguage = (
+    language: NotebookLanguage,
+    run: () => Promise<void>
+  ): Promise<void> => {
+    retain(language)
+    return serialize(() => run().finally(() => release(language)))
+  }
+
+  const wrapped: RuntimeProvisioner = {
     status: () => provisioner.status(),
-    provisionPython: (onProgress) => serialize(() => provisioner.provisionPython(onProgress)),
-    provisionR: (onProgress) => serialize(() => provisioner.provisionR(onProgress)),
+    provisionPython: (onProgress) =>
+      serializeLanguage('python', () => provisioner.provisionPython(onProgress)),
+    provisionR: (onProgress) => serializeLanguage('r', () => provisioner.provisionR(onProgress)),
     upgradeIfNeeded: (onProgress) => serialize(() => provisioner.upgradeIfNeeded(onProgress)),
-    repair: (lang, onProgress) => serialize(() => provisioner.repair(lang, onProgress)),
+    // repair runs per-LANGUAGE (serializeLanguage, not plain serialize) so it bumps the pending count
+    // and cancel(lang) — the Cancel button shown during a Reset — actually forwards instead of being
+    // dropped as idle. A Reset that can't be cancelled would be a locked, un-abortable state.
+    repair: (lang, onProgress, opts) =>
+      serializeLanguage(lang, () => provisioner.repair(lang, onProgress, opts)),
     restoreRelocatedEnvs: (onProgress) =>
       serialize(() => provisioner.restoreRelocatedEnvs(onProgress)),
     // cancel is NOT serialized — it must interrupt the in-flight run immediately, not queue behind it.
-    cancel: () => provisioner.cancel()
+    // No-op when the language is idle (count 0); otherwise forward so the provisioner aborts a running
+    // run or arms a one-shot skip for a queued one. `undefined` (global cancel) always forwards.
+    cancel: (language) => {
+      if (language !== undefined && (pending.get(language) ?? 0) === 0) return
+      provisioner.cancel(language)
+    }
   }
+  ;(wrapped as { [SERIALIZED]?: true })[SERIALIZED] = true
+  return wrapped
 }
 
 export const createNotebookEnvHandlers = (
@@ -72,13 +119,27 @@ export const createNotebookEnvHandlers = (
     await run()
   }
   return {
-    status: () => serialized.status(),
+    // AWAIT recovery before reading status: recovery populates the blocked-prefix set (and hence
+    // status.*RecoveryBlocked) asynchronously. A renderer that reads status before recovery settles
+    // would see blocked=false and never surface Reset — the startup gate produces no progress event for
+    // an already-ready env, so there is no other signal that would later correct it.
+    status: async () => {
+      if (waitForRecovery) await waitForRecovery()
+      return serialized.status()
+    },
     provision: (lang, onProgress) =>
       afterRecovery(lang, () =>
         lang === 'r' ? serialized.provisionR(onProgress) : serialized.provisionPython(onProgress)
       ),
-    repair: (lang, onProgress) => afterRecovery(lang, () => serialized.repair(lang, onProgress)),
-    cancel: () => serialized.cancel()
+    // A UI-triggered repair is the EXPLICIT user recovery / Reset: it awaits recovery for ordering but
+    // does NOT assertProvisionAllowed (that would refuse a blocked runtime — the whole point of Reset is
+    // to clear the block), and it force-clears the quarantine before rebuilding. Auto/startup repair
+    // (runStartupGate) calls the provisioner directly without force and stays gated by the block.
+    repair: async (lang, onProgress) => {
+      if (waitForRecovery) await waitForRecovery()
+      await serialized.repair(lang, onProgress, { force: true })
+    },
+    cancel: (language) => serialized.cancel(language)
   }
 }
 
@@ -149,15 +210,16 @@ const RUNTIME_UNAVAILABLE_MESSAGE =
 // UI shows an actionable setup state, and provision/repair reject with a clear reason rather than the
 // channel being absent entirely (which would surface as a "No handler registered" crash in the renderer).
 const createUnavailableHandlers = (): NotebookEnvHandlers => ({
-  status: () => ({
-    pythonReady: false,
-    rReady: false,
-    version: DEFAULT_ENV_VERSION,
-    provisioning: false
-  }),
+  status: () =>
+    Promise.resolve({
+      pythonReady: false,
+      rReady: false,
+      version: DEFAULT_ENV_VERSION,
+      provisioning: false
+    }),
   provision: () => Promise.reject(new Error(RUNTIME_UNAVAILABLE_MESSAGE)),
   repair: () => Promise.reject(new Error(RUNTIME_UNAVAILABLE_MESSAGE)),
-  cancel: () => undefined
+  cancel: () => undefined // unavailable backend: no in-flight run to cancel (language ignored)
 })
 
 // Registers the notebook-env IPC surface and kicks off the startup readiness gate. Both the gate and
@@ -186,14 +248,18 @@ export const registerNotebookEnvIpcHandlers = (
     : createUnavailableHandlers()
   ipcMain.handle('notebook-env:status', () => handlers.status())
   ipcMain.handle('notebook-env:provision', (_event, lang: NotebookLanguage) =>
-    handlers.provision(lang, broadcastNotebookEnvProgress)
+    handlers.provision(lang, (progress) =>
+      broadcastNotebookEnvProgress({ ...progress, scope: lang })
+    )
   )
   ipcMain.handle('notebook-env:repair', (_event, lang: NotebookLanguage) =>
-    handlers.repair(lang, broadcastNotebookEnvProgress)
+    handlers.repair(lang, (progress) => broadcastNotebookEnvProgress({ ...progress, scope: lang }))
   )
   // Synchronous best-effort abort of an in-flight provision; returns immediately (the aborted run
   // settles on its own and broadcasts its terminal progress).
-  ipcMain.handle('notebook-env:cancel', () => handlers.cancel())
+  ipcMain.handle('notebook-env:cancel', (_event, language?: NotebookLanguage) =>
+    handlers.cancel(language)
+  )
   if (serialized)
     void runStartupGate(serialized, root, broadcastNotebookEnvProgress, waitForRecovery)
 }

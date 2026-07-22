@@ -234,37 +234,39 @@ class ReviewRepository {
     })
   }
 
-  // Updates the resolution for a single claim (by exact match) under a review.
-  // Used by the Phase 3 fix loop to set per-claim resolution from re-review results.
-  async updateFindingResolutionForClaim(
+  // Updates one original finding by its stable database id. Review model prose is deliberately not part
+  // of the identity: a re-review may paraphrase a claim without accidentally resolving a live issue.
+  async updateFindingResolution(
     reviewId: string,
-    claim: string,
+    findingId: string,
     resolution: FindingResolution
   ): Promise<void> {
     const client = await this.getClient()
     await client.$transaction(async (tx) => {
-      await tx.finding.updateMany({
-        where: { reviewId, claim, status: { in: ['warn', 'fail'] } },
+      const updated = await tx.finding.updateMany({
+        where: { id: findingId, reviewId, status: { in: ['warn', 'fail'] } },
         data: { resolution }
       })
+      if (updated.count !== 1) {
+        throw new Error(`Finding ${findingId} does not belong to review ${reviewId}.`)
+      }
       await touchReview(tx, reviewId)
     })
   }
 
-  // Increments reflagCount by 1 for all checks under a review whose claim matches the given string
-  // (exact match, case-sensitive). Used in the Phase 3 fix loop when a claim is re-flagged after an
-  // over-correction. Leaves checks with a different claim untouched.
-  async incrementReflagCount(reviewId: string, claim: string): Promise<void> {
+  // Increments reflagCount for exactly one stable finding id. The review id is included so a malformed
+  // re-review can never mutate a finding from another review.
+  async incrementReflagCount(reviewId: string, findingId: string): Promise<void> {
     const client = await this.getClient()
     await client.$transaction(async (tx) => {
-      // Use the $executeRaw tagged template because Prisma does not support a column += 1 increment
-      // in updateMany. The query is safe: reviewId and claim are bound as positional parameters by the
-      // tagged template (not string-interpolated), so this is not $executeRawUnsafe.
-      await tx.$executeRaw`
+      const updated = await tx.$executeRaw`
         UPDATE "Finding"
         SET "reflagCount" = "reflagCount" + 1
-        WHERE "reviewId" = ${reviewId} AND "claim" = ${claim}
+        WHERE "reviewId" = ${reviewId} AND "id" = ${findingId}
       `
+      if (updated !== 1) {
+        throw new Error(`Finding ${findingId} does not belong to review ${reviewId}.`)
+      }
       await touchReview(tx, reviewId)
     })
   }

@@ -63,7 +63,7 @@ Review the assets and verification information published on the release page. Se
 The first launch has two guided steps:
 
 1. **Prepare environment** checks compatibility, app storage, secure credential storage, network access, the Claude runtime, and optional Python Notebook support. If the runtime is missing, Open Science can install an app-managed copy without requiring Node.js, npm, or an administrator password.
-2. **Model provider** connects and tests the model you want to use. Choose a built-in provider, an Anthropic-compatible custom gateway, or `Local Claude` to reuse an existing Claude Code login without entering an API Key.
+2. **Model provider** connects and tests the model you want to use. Choose a built-in provider, an Anthropic-compatible custom gateway, or reuse an existing subscription login without entering an API Key — `Local Claude` for a Claude Code login, or a ChatGPT/Codex subscription login on the Codex backend.
 
 <table>
   <tr>
@@ -138,7 +138,7 @@ A: An API Key is a secret credential issued by a model provider. Create or copy 
 
 ### **Q: Do I need an API Key?**
 
-A: Not if you choose `Local Claude` and already have a working Claude Code login on this computer. Built-in cloud providers and custom gateways require their own keys.
+A: Not if you reuse an existing subscription login — `Local Claude` with a working Claude Code login on this computer, or a ChatGPT/Codex subscription login on the Codex backend. Built-in cloud providers and custom gateways require their own keys.
 
 ### **Q: Which model providers can I use?**
 

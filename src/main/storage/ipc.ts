@@ -16,6 +16,7 @@ import {
 import { resolveMicromamba } from '../notebook/micromamba'
 import { captureMicromamba } from '../notebook/provisioner-runtime'
 import { exportRuntimeLocks } from '../notebook/runtime-relocation'
+import { removeMicromambaCacheForRoot } from '../notebook/micromamba-cache'
 import { detectActiveSessions } from './detect-active'
 import { isDataRootMissing } from './path-presence'
 import { beginMigration, clearMigrationPending, endMigrationCopy } from './migration-state'
@@ -65,6 +66,7 @@ type StorageIpcDeps = {
   showOpenDialog?: () => Promise<string | null>
   relaunch?: () => void
   broadcastProgress?: (progress: MigrationProgress) => void
+  cleanupRuntimeCache?: (runtimeRoot: string) => void
 }
 
 // Pushes migration progress to every live window, mirroring the acp/update broadcast pattern.
@@ -81,6 +83,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
   // migration resolves). commit/discard require it so a stale renderer call can't act on a foreign copy.
   let activeStaged: { token: string; target: string } | undefined
   let resolutionInProgress = false
+  const cleanupRuntimeCache = deps.cleanupRuntimeCache ?? removeMicromambaCacheForRoot
 
   ipcMain.handle('storage:get-info', async () => {
     const dataRoot = resolveDataRoot()
@@ -307,6 +310,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
       }
       const staged = activeStaged
       resolutionInProgress = true
+      const previousDataRoot = resolveDataRoot()
       let outcome: MigrationOutcome
       try {
         outcome = await commitDataRootSwitch(
@@ -332,6 +336,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
         // On success the write-gate stays set through relaunch: the fresh process starts with
         // pending=false, so writes naturally resume against the now-live new root.
         activeStaged = undefined
+        cleanupRuntimeCache(join(previousDataRoot, 'runtime'))
         await cleanRelaunch()
       } else {
         // The commit did not switch over (switchoverFailed, or a no-op refusal: no verified copy /

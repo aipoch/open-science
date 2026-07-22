@@ -47,6 +47,16 @@ describe('provider registry', () => {
     expect(resolveVendorBaseUrl('minimax')).toBe('https://api.minimax.io/anthropic')
   })
 
+  it('serves MiniMax over Anthropic, OpenAI, and Responses per region', () => {
+    // MiniMax exposes the Anthropic route plus the OpenAI /v1/chat/completions and /v1/responses.
+    expect(resolveVendorApiEndpoints('minimax')).toEqual(['anthropic', 'openai', 'responses'])
+    expect(resolveVendorOpenAiBaseUrl('minimax', 'global')).toBe('https://api.minimax.io/v1')
+    expect(resolveVendorOpenAiBaseUrl('minimax', 'china')).toBe('https://api.minimaxi.com/v1')
+    // Unknown / missing region falls back to the first region's OpenAI base.
+    expect(resolveVendorOpenAiBaseUrl('minimax')).toBe('https://api.minimax.io/v1')
+    expect(resolveVendorOpenAiBaseUrl('minimax', 'nope')).toBe('https://api.minimax.io/v1')
+  })
+
   it('routes GLM to Z.AI overseas and BigModel in China, on both endpoints', () => {
     expect(vendorHasRegions('zhipu')).toBe(true)
     expect(resolveVendorBaseUrl('zhipu', 'global')).toBe('https://api.z.ai/api/anthropic')
@@ -115,6 +125,34 @@ describe('provider registry', () => {
     expect(resolveVendorOpenAiBaseUrl('xiaomimimo')).toBe('https://api.xiaomimimo.com/v1')
     expect(resolveVendorModelsUrl('xiaomimimo')).toBe('https://api.xiaomimimo.com/v1/models')
     expect(defaultVendorModel('xiaomimimo')).toBe('mimo-v2.5-pro')
+  })
+
+  it('routes SenseNova through both APIs with a curated chat catalog', () => {
+    expect(resolveVendorApiEndpoints('sensenova')).toEqual(['anthropic', 'openai'])
+    expect(resolveVendorBaseUrl('sensenova')).toBe('https://token.sensenova.cn')
+    expect(resolveVendorOpenAiBaseUrl('sensenova')).toBe('https://token.sensenova.cn/v1')
+    expect(resolveVendorApiKeyUrl('sensenova')).toBe('https://platform.sensenova.cn/token-plan')
+    // The live list also serves the image-generation-only sensenova-u1-fast, which the refresh
+    // cannot filter out — so refresh-from-vendor is hidden and the chat catalog stays curated.
+    expect(resolveVendorModelsUrl('sensenova')).toBeUndefined()
+    expect(defaultVendorModel('sensenova')).toBe('sensenova-6.7-flash-lite')
+  })
+
+  it('routes Volcengine Ark through all three APIs with a curated Doubao Seed catalog', () => {
+    expect(resolveVendorApiEndpoints('volcengine')).toEqual(['anthropic', 'openai', 'responses'])
+    expect(resolveVendorBaseUrl('volcengine')).toBe(
+      'https://ark.cn-beijing.volces.com/api/compatible'
+    )
+    expect(resolveVendorOpenAiBaseUrl('volcengine')).toBe(
+      'https://ark.cn-beijing.volces.com/api/v3'
+    )
+    expect(resolveVendorApiKeyUrl('volcengine')).toBe(
+      'https://console.volcengine.com/ark/region:ark+cn-beijing/apikey'
+    )
+    // Ark's catalog also serves embedding/image/video models the refresh cannot filter out —
+    // so refresh-from-vendor is hidden and the Doubao Seed chat catalog stays curated.
+    expect(resolveVendorModelsUrl('volcengine')).toBeUndefined()
+    expect(defaultVendorModel('volcengine')).toBe('doubao-seed-2-1-pro-260628')
   })
 
   it('routes Kimi through both APIs so Codex can bridge it', () => {
@@ -216,6 +254,21 @@ describe('provider registry', () => {
     it('returns false for Xiaomi MIMO models (no vision support)', () => {
       expect(isVendorModelMultimodal('xiaomimimo', 'mimo-v2.5-pro')).toBe(false)
       expect(isVendorModelMultimodal('xiaomimimo', 'mimo-v2.5')).toBe(false)
+    })
+
+    it('returns true only for the SenseNova vision model', () => {
+      expect(isVendorModelMultimodal('sensenova', 'sensenova-6.7-flash-lite')).toBe(true)
+      expect(isVendorModelMultimodal('sensenova', 'deepseek-v4-flash')).toBe(false)
+    })
+
+    it('returns true for Volcengine Ark Seed 2.x general models but not the coding model', () => {
+      expect(isVendorModelMultimodal('volcengine', 'doubao-seed-2-1-pro-260628')).toBe(true)
+      expect(isVendorModelMultimodal('volcengine', 'doubao-seed-2-0-pro-260215')).toBe(true)
+      expect(isVendorModelMultimodal('volcengine', 'doubao-seed-2-0-lite-260215')).toBe(true)
+      expect(isVendorModelMultimodal('volcengine', 'doubao-seed-2-0-mini-260215')).toBe(true)
+      expect(isVendorModelMultimodal('volcengine', 'doubao-seed-2-0-code-preview-260215')).toBe(
+        false
+      )
     })
 
     it('returns true only for the StepFun multimodal flash model', () => {

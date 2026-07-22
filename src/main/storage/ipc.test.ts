@@ -414,7 +414,8 @@ describe('storage IPC handlers', () => {
     initDataRoot(dataRoot)
     // No injected relaunch: exercise the real cleanRelaunch path (shutdownBackends -> app.relaunch ->
     // app.exit) instead of the test short-circuit.
-    const deps = fakeDeps({ relaunch: undefined })
+    const cleanupRuntimeCache = vi.fn()
+    const deps = fakeDeps({ relaunch: undefined, cleanupRuntimeCache })
     registerStorageIpcHandlers(deps)
 
     // Stage a verified copy first (two-phase flow) so the commit actually switches over and relaunches.
@@ -432,6 +433,7 @@ describe('storage IPC handlers', () => {
     expect(deps.notebook.shutdownAll).toHaveBeenCalledTimes(1)
     expect(appRelaunch).toHaveBeenCalledTimes(1)
     expect(appExit).toHaveBeenCalledWith(0)
+    expect(cleanupRuntimeCache).toHaveBeenCalledWith(join(dataRoot, 'runtime'))
     // Backends are torn down before the relaunch is triggered.
     expect(vi.mocked(deps.runtime.shutdownForQuit).mock.invocationCallOrder[0]).toBeLessThan(
       appRelaunch.mock.invocationCallOrder[0]
@@ -455,13 +457,15 @@ describe('storage IPC handlers', () => {
 
   it('commit-and-relaunch returns switchoverFailed and does NOT relaunch when setDataRoot throws', async () => {
     initDataRoot(dataRoot)
+    const cleanupRuntimeCache = vi.fn()
     const deps = fakeDeps({
       settingsService: {
         setDataRoot: vi.fn().mockRejectedValue(new Error('disk full')),
         markOnboardingComplete: vi.fn().mockResolvedValue(undefined),
         dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
         getStoredSettings: vi.fn().mockResolvedValue({})
-      }
+      },
+      cleanupRuntimeCache
     })
     registerStorageIpcHandlers(deps)
     await invoke('storage:migrate', { parent: targetParent })
@@ -474,6 +478,7 @@ describe('storage IPC handlers', () => {
     expect(outcome.ok).toBe(false)
     expect(outcome.switchoverFailed).toBe(true)
     expect(deps.relaunch).not.toHaveBeenCalled()
+    expect(cleanupRuntimeCache).not.toHaveBeenCalled()
   })
 
   it('commit-and-relaunch invokes settingsService.setDataRoot as a method, preserving its `this`', async () => {
@@ -535,12 +540,17 @@ describe('storage IPC handlers', () => {
     await writeFile(join(dataRoot, 'artifacts', 'keep.txt'), 'must survive')
 
     let releaseSetDataRoot: (() => void) | undefined
+    let signalSetDataRootStarted!: () => void
+    const setDataRootStarted = new Promise<void>((resolve) => {
+      signalSetDataRootStarted = resolve
+    })
     const deps = fakeDeps({
       settingsService: {
         setDataRoot: vi.fn(
           () =>
             new Promise<void>((resolve) => {
               releaseSetDataRoot = resolve
+              signalSetDataRootStarted()
             })
         ),
         markOnboardingComplete: vi.fn().mockResolvedValue(undefined),
@@ -552,7 +562,9 @@ describe('storage IPC handlers', () => {
     await invoke('storage:migrate', { parent: targetParent })
 
     const commitPromise = invoke('storage:commit-and-relaunch', { parent: targetParent })
-    await tick()
+    // Wait for the commit to own the resolution lock; a fixed delay flakes when coverage instrumentation
+    // slows filesystem work and can otherwise leave the mocked persistence promise unresolved.
+    await setDataRootStarted
     await invoke('storage:discard-migrated-copy', { parent: targetParent })
     releaseSetDataRoot?.()
     await commitPromise

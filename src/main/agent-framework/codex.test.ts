@@ -1,8 +1,14 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { CODEX_BRIDGE_MODEL, createCodexFramework, normalizeResponsesBaseUrl } from './codex'
+import {
+  CODEX_BRIDGE_MODEL,
+  buildCodexConfig,
+  createCodexFramework,
+  normalizeResponsesBaseUrl
+} from './codex'
 
 const fakeChild = {} as ChildProcessWithoutNullStreams
 
@@ -21,7 +27,7 @@ describe('codexFramework', () => {
     )
 
     expect(config.env).toMatchObject({
-      CODEX_HOME: '/data/codex',
+      CODEX_HOME: join('/data', 'codex'),
       MODEL_PROVIDER: 'open-science',
       NO_BROWSER: '1'
     })
@@ -32,7 +38,7 @@ describe('codexFramework', () => {
     })
     expect(config.configFiles).toEqual([
       {
-        path: '/data/codex/config.toml',
+        path: join('/data', 'codex', 'config.toml'),
         content: 'cli_auth_credentials_store = "ephemeral"\n',
         mode: 0o600
       }
@@ -92,6 +98,67 @@ describe('codexFramework', () => {
       headers: { authorization: 'Bearer local-token' }
     })
     expect(config.env?.CODEX_CONFIG).not.toContain('upstream-secret')
+  })
+
+  it('drives a native-Responses vendor directly on its OpenAI /v1 base, ignoring the bridge', () => {
+    const framework = createCodexFramework()
+    // A dual-endpoint vendor (e.g. MiniMax) advertises openai + responses and keeps its Anthropic
+    // route in baseUrl and its OpenAI/Responses /v1 root in openaiBaseUrl. Even if a bridge object
+    // is present, native Responses must post to the vendor's own /v1 base with the vendor key.
+    const config = framework.prepareModelConfig(
+      {
+        type: 'custom',
+        apiEndpoints: ['anthropic', 'openai', 'responses'],
+        baseUrl: 'https://api.minimaxi.com/anthropic',
+        openaiBaseUrl: 'https://api.minimaxi.com/v1',
+        model: 'MiniMax-M3',
+        key: 'mm-secret'
+      },
+      {
+        storageRoot: '/data',
+        executablePath: '/runtime/codex-acp',
+        responsesBridge: { baseUrl: 'http://127.0.0.1:43123/v1', token: 'local-token' }
+      }
+    )
+
+    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).toMatchObject({
+      model: 'MiniMax-M3',
+      model_providers: {
+        'open-science': {
+          base_url: 'https://api.minimaxi.com/v1',
+          requires_openai_auth: true,
+          wire_api: 'responses'
+        }
+      }
+    })
+    // Direct native path: vendor key auth, no bridge provider-configuration, no bridge model.
+    expect(config.authentication).toEqual({
+      methodId: 'api-key',
+      _meta: { 'api-key': { apiKey: 'mm-secret' } }
+    })
+    expect(config.providerConfiguration).toBeUndefined()
+    expect(config.sessionModel).toBeUndefined()
+    expect(config.env?.CODEX_CONFIG).not.toContain('127.0.0.1:43123')
+  })
+
+  it('reuses the normal Codex profile for a shared subscription without overriding it', () => {
+    const framework = createCodexFramework()
+    const config = framework.prepareModelConfig(
+      { type: 'codex-shared', apiEndpoints: ['responses'] },
+      { storageRoot: '/data', executablePath: '/runtime/codex-acp' }
+    )
+
+    expect(config).toEqual({ env: {} })
+  })
+
+  it('uses persistent app-owned storage for an isolated Codex subscription', () => {
+    const framework = createCodexFramework()
+    const config = framework.prepareModelConfig(
+      { type: 'codex-isolated', apiEndpoints: ['responses'] },
+      { storageRoot: '/data', executablePath: '/runtime/codex-acp' }
+    )
+
+    expect(config).toEqual({ env: { CODEX_HOME: join('/data', 'codex-subscription') } })
   })
 
   it.each([
@@ -255,5 +322,39 @@ describe('codexFramework', () => {
     })
     expect(env.OPENAI_API_KEY).toBeUndefined()
     expect(env.CODEX_PATH).toBeUndefined()
+  })
+})
+
+describe('buildCodexConfig reasoning effort', () => {
+  it.each([
+    ['low', 'low'],
+    ['medium', 'medium'],
+    ['high', 'high'],
+    // Codex config tops out at xhigh; the app's top level 'max' maps onto it.
+    ['max', 'xhigh']
+  ] as const)('maps the %s level to model_reasoning_effort %s', (effort, expected) => {
+    expect(buildCodexConfig({ reasoningEffort: effort }).model_reasoning_effort).toBe(expected)
+  })
+
+  it.each([undefined, 'default'] as const)('omits model_reasoning_effort for %s', (effort) => {
+    expect(buildCodexConfig({ reasoningEffort: effort })).not.toHaveProperty(
+      'model_reasoning_effort'
+    )
+  })
+
+  it('threads the ctx level into the serialized CODEX_CONFIG env', () => {
+    const framework = createCodexFramework()
+    const config = framework.prepareModelConfig(
+      {
+        type: 'custom',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://gateway.example/v1',
+        model: 'gpt-5',
+        key: 'sk-plaintext-secret'
+      },
+      { storageRoot: '/data', executablePath: '/runtime/codex-acp', reasoningEffort: 'max' }
+    )
+
+    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '').model_reasoning_effort).toBe('xhigh')
   })
 })

@@ -35,4 +35,23 @@ describe('describeValidation', () => {
       'Validation failed for an unknown reason. (HTTP 402)'
     )
   })
+
+  it('surfaces the specific route-mismatch reason for an incompatible pairing', () => {
+    expect(
+      describeValidation({
+        ok: false,
+        category: 'incompatible',
+        message:
+          'Not compatible with Claude Code: it needs /v1/messages, but this provider speaks /v1/chat/completions. Change the API format or switch the agent framework.'
+      })
+    ).toBe(
+      'Not compatible with Claude Code: it needs /v1/messages, but this provider speaks /v1/chat/completions. Change the API format or switch the agent framework.'
+    )
+  })
+
+  it('falls back to the generic incompatible copy when no reason is supplied', () => {
+    expect(describeValidation({ ok: false, category: 'incompatible' })).toBe(
+      "This provider isn't compatible with the active agent framework."
+    )
+  })
 })

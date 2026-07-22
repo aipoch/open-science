@@ -69,6 +69,39 @@ describe('session persistence repository (per-session files)', () => {
     })
   })
 
+  it('loads one session directly so callers can refresh durable state between turns', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    await repository.saveSession(createSession({ title: 'Before correction' }))
+
+    await expect(repository.loadSession('project-a', 'session-1')).resolves.toMatchObject({
+      id: 'session-1',
+      title: 'Before correction'
+    })
+
+    await repository.saveSession(
+      createSession({
+        title: 'After correction',
+        messages: [
+          ...createSession().messages,
+          {
+            id: 'message-2',
+            role: 'agent',
+            content: 'Correction complete',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1710000000200,
+            updatedAt: 1710000000200
+          }
+        ]
+      })
+    )
+
+    const refreshed = await repository.loadSession('project-a', 'session-1')
+    expect(refreshed?.title).toBe('After correction')
+    expect(refreshed?.messages.at(-1)?.id).toBe('message-2')
+    await expect(repository.loadSession('project-a', 'missing')).resolves.toBeUndefined()
+  })
+
   it('sanitizes embedded message images before writing session JSON', async () => {
     const repository = new SessionRepository(await createStorageRoot())
     const session = createSession({
@@ -193,6 +226,39 @@ describe('session persistence repository (per-session files)', () => {
 
     expect(scan.result.sessions).toEqual([])
     expect(scan.isComplete).toBe(true)
+  })
+
+  it('keeps the scan incomplete without quarantining a session file that cannot be read', async () => {
+    const root = await createStorageRoot()
+    const session = createSession()
+    await new SessionRepository(root).saveSession(session)
+    const readSessionFile = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error('permission denied'), { code: 'EACCES' }))
+    const repository = new SessionRepository(root, { readSessionFile })
+
+    const scan = await repository.loadAllWithDiagnostics()
+
+    expect(scan.result.sessions).toEqual([])
+    expect(scan.isComplete).toBe(false)
+    await expect(
+      readFile(join(root, 'sessions', session.projectId, `${session.id}.json`), 'utf8')
+    ).resolves.toContain(session.id)
+    expect(readSessionFile).toHaveBeenCalledOnce()
+  })
+
+  it('keeps default dependencies when optional overrides are explicitly undefined', async () => {
+    const root = await createStorageRoot()
+    const session = createSession()
+    await new SessionRepository(root).saveSession(session)
+    const repository = new SessionRepository(root, {
+      remove: undefined,
+      readSessionFile: undefined
+    })
+
+    await expect(repository.loadAll()).resolves.toMatchObject({
+      sessions: [{ id: session.id, projectId: session.projectId }]
+    })
   })
 
   it('normalizes interrupted runs and open activities on load', async () => {

@@ -12,8 +12,10 @@ import type {
   SessionNotification
 } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { rmSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 import { pathToFileURL } from 'node:url'
 
@@ -39,6 +41,7 @@ import {
   type PermissionProfileId,
   type SessionPermissionProfileState
 } from '../../shared/permission-profiles'
+import { DEFAULT_REASONING_EFFORT, type ReasoningEffort } from '../../shared/settings'
 import {
   claudeCodeFramework,
   type AgentFramework,
@@ -52,7 +55,11 @@ import {
   toAcpRuntimeEvent
 } from './runtime-events'
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
-import { matchSessionModelOption } from './session-config'
+import {
+  matchSessionModelOption,
+  resolveSessionEffortOption,
+  type SessionModelSelection
+} from './session-config'
 import { describePromptError } from './prompt-error'
 import {
   ATTACHMENT_PREVIEW_BYTES,
@@ -69,7 +76,8 @@ import { applyCurrentModeUpdate } from './permission-profile-controller'
 import {
   ARTIFACT_MCP_SERVER_NAME,
   createArtifactMcpServerConfig,
-  type ArtifactMcpEnvironment
+  type ArtifactMcpEnvironment,
+  type ArtifactRunContext
 } from '../artifacts/mcp-server'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { ArtifactRepository, getArtifactCurrentRunFilePath } from '../artifacts/repository'
@@ -81,8 +89,8 @@ import {
   type NotebookMcpEnvironment,
   type NotebookRpcConnection
 } from '../notebook/mcp-server'
-import { getNotebookSessionRoot } from '../notebook/repository'
-import { codexStorageDir } from '../agent-framework/codex'
+import { getNotebookDataRoot, getNotebookSessionRoot } from '../notebook/repository'
+import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { withDataRootWrite } from '../storage/migration-state'
 import { opencodeStorageDir } from '../agent-framework/opencode'
@@ -90,6 +98,7 @@ import type { UploadRepository } from '../uploads/repository'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, ArtifactReference } from '../../shared/artifacts'
 import { isMediaOverflowError } from '../../shared/media-overflow'
+import { REVIEWER_MCP_SERVER_NAME, REVIEWER_MCP_TOOLS } from '../../shared/reviewer'
 import {
   buildImageContentData,
   canInlineImageInSession,
@@ -241,6 +250,21 @@ const errorMessage = (error: unknown): string => {
   }
 }
 
+// The ACP agent tags a provider-relayed failure with the upstream error type in `data.errorKind`
+// (e.g. `request_too_large` for an HTTP 413). Read it so the overflow check can match the slug even
+// when the message text comes in a wording the pattern does not cover. Total: any shape but a string
+// kind collapses to undefined, and a hostile getter never escapes.
+const acpErrorKind = (error: unknown): string | undefined => {
+  try {
+    const data = (error as { data?: unknown } | null)?.data
+    const kind = (data as { errorKind?: unknown } | null | undefined)?.errorKind
+
+    return typeof kind === 'string' ? kind : undefined
+  } catch {
+    return undefined
+  }
+}
+
 // Internal wrapper thrown when framework.spawn() fails, carrying the framework the spawn targeted so
 // connectFresh can label the failure with the right backend. It never mutates the original throwable
 // (which may be a frozen/non-extensible Error, a write-rejecting Proxy, or a non-Error value) and holds
@@ -253,6 +277,16 @@ class SpawnFailure {
 }
 
 const log = createLogger('acp')
+
+const REVIEWER_MCP_OPENCODE_TOOL_NAMES = new Set(
+  Object.values(REVIEWER_MCP_TOOLS).map((toolName) => `${REVIEWER_MCP_SERVER_NAME}_${toolName}`)
+)
+const REVIEWER_MCP_PROVIDER_TOOL_NAMES = new Set([
+  ...REVIEWER_MCP_OPENCODE_TOOL_NAMES,
+  ...Object.values(REVIEWER_MCP_TOOLS).map(
+    (toolName) => `mcp__${REVIEWER_MCP_SERVER_NAME}__${toolName}`
+  )
+])
 
 // Logs an error without ever throwing back into the caller. Used on failure paths where a throwing
 // logger (or a hostile payload) must never mask the original error being handled/re-thrown.
@@ -324,10 +358,11 @@ class AcpRuntime {
   // than hardcoded so it can't drift from what createMcpServers wires up.
   private readonly sessionMcpServerNames = new Map<string, string[]>()
   // Ephemeral background reviewer sessions (built via buildReviewerSession). They are deliberately kept
-  // out of `this.sessions` — not tracked in the snapshot, not user-facing — but their tool calls still
-  // trigger permission requests over the shared agent connection. This set lets the permission handler
-  // recognise them and auto-approve without prompting (design §3: background review, no user interaction).
+  // out of `this.sessions` — not tracked in the snapshot, not user-facing. Their permission requests are
+  // handled by a strict allowlist: only the scope-bounded reviewer MCP is approved; every built-in tool is
+  // rejected. Each session also gets an empty temporary cwd so ungated read-only tools see no project data.
   private readonly reviewerSessionIds = new Set<string>()
+  private readonly reviewerSessionDirectories = new Map<string, string>()
   // A replaced agent's own session id -> the app-facing id it was adopted under (after a provider
   // switch), so agent-origin events/permissions relabel into the conversation the renderer tracks.
   private readonly agentToAppSessionId = new Map<string, string>()
@@ -337,6 +372,9 @@ class AcpRuntime {
   // switch (which disconnects) can still tell that an existing session belongs to the other framework
   // and skip a doomed resume. Cleaned per-session on delete.
   private readonly sessionFrameworks = new Map<string, string>()
+  // Like sessionFrameworks, retained across disconnects. A provider/profile switch can keep the same
+  // framework while moving to a different on-disk session store, where the old id is not resumable.
+  private readonly sessionBackendIds = new Map<string, string>()
   private readonly promptInFlightSessionIds = new Set<string>()
   // Monotonic per-turn token and the token of the turn that currently owns each app session id. When an
   // overflow-recovery replay reuses a session id, its start bumps the token; the abandoned turn's finally
@@ -354,6 +392,7 @@ class AcpRuntime {
   private readonly skillsHooks: AcpRuntimeSkillsOptions | undefined
   // Mutable: refreshed from resolveBackend on each connect so a framework switch applies on reconnect.
   private framework: AgentFramework
+  private backendId: string | undefined
   private readonly mcpHttpHost: AgentMcpHttpHost | undefined
   // A Chat Completions provider uses the local Responses bridge. The app-owned notebook MCP has an
   // explicit namespaced bridge mapping; other app MCP tools still require native Responses.
@@ -362,6 +401,17 @@ class AcpRuntime {
   // Model to apply per session via the ACP model configOption (opencode); undefined for env-driven
   // frameworks (Claude). Refreshed from the resolved backend on each connect.
   private pendingSessionModel: string | undefined
+  private pendingSessionModelRequired = false
+  // Reasoning-effort level to apply per session via the ACP thought_level configOption; undefined
+  // means "don't override" (the agent keeps its own default). Refreshed on each connect.
+  private pendingSessionEffort: ReasoningEffort | undefined
+  // The latest configOptions each session reported — seeded from session/new and refreshed after a
+  // model switch (effort rungs are model-dependent, so the original set goes stale). The live effort
+  // path resolves against this, never against the possibly-outdated session/new response.
+  private readonly latestSessionConfigOptions = new Map<
+    string,
+    SessionConfigOption[] | null | undefined
+  >()
   // One-shot ACP authentication material resolved alongside the spawn config. It is cleared after
   // initialize so the decrypted key is not retained by the runtime longer than necessary.
   private pendingAuthentication: ResolvedAgentBackend['authentication']
@@ -499,10 +549,14 @@ class AcpRuntime {
 
   // Applies the active model to a freshly built/resumed session via the ACP model configOption, for
   // frameworks that select the model over the protocol (opencode). No-op for env-driven frameworks
-  // (pendingSessionModel undefined) or when the agent advertises no matching model option — the agent
-  // then keeps its own default. Best-effort: a failure is logged, never fatal to the session.
-  private async applySessionModel(session: ActiveSession): Promise<void> {
-    if (!this.pendingSessionModel || !this.connection) return
+  // (pendingSessionModel undefined). Optional selections keep the agent default when no matching option
+  // exists or application fails; required selections fail visibly rather than silently running another
+  // model. Returns the agent's post-application configOptions when it reports them — effort levels are
+  // model-dependent, so callers resolving further options must use the set from AFTER the model switch.
+  private async applySessionModel(
+    session: ActiveSession
+  ): Promise<SessionConfigOption[] | null | undefined> {
+    if (!this.pendingSessionModel || !this.connection) return undefined
 
     const configOptions = (
       session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } }
@@ -511,21 +565,142 @@ class AcpRuntime {
 
     if (!selection) {
       log.info('no matching session model option', { desiredModel: this.pendingSessionModel })
-      return
+      if (this.pendingSessionModelRequired) {
+        session.dispose()
+        throw new Error(
+          `The selected model "${this.pendingSessionModel}" is not available for this Codex account.`
+        )
+      }
+      return undefined
     }
 
     try {
-      await this.connection.agent.request(acp.methods.agent.session.setConfigOption, {
+      const response = (await this.connection.agent.request(
+        acp.methods.agent.session.setConfigOption,
+        {
+          sessionId: session.sessionId,
+          configId: selection.configId,
+          value: selection.value
+        }
+      )) as { configOptions?: SessionConfigOption[] | null }
+      log.info('session model applied', { sessionId: session.sessionId, model: selection.value })
+      // The model switch rebuilds the agent's options (effort rungs are model-dependent). The
+      // caller commits the fresh set to latestSessionConfigOptions once the session is registered,
+      // so the map never holds an entry for a session that failed to attach.
+      return response?.configOptions ?? configOptions
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      log.warn('set session model failed', {
+        sessionId: session.sessionId,
+        error: message
+      })
+      if (this.pendingSessionModelRequired) {
+        session.dispose()
+        throw new Error(
+          `The selected model "${this.pendingSessionModel}" could not be applied: ${message}`
+        )
+      }
+      return undefined
+    }
+  }
+
+  // Applies the user's reasoning-effort preference to a freshly built/resumed session via the ACP
+  // thought_level configOption. No-op when no explicit level is set (pendingSessionEffort undefined —
+  // the agent then keeps its own default) or when the agent advertises no effort option. The desired
+  // level is resolved to the closest advertised one, so a level the model lacks still lands on its
+  // nearest rung. `configOptions` should be the agent's latest option set (e.g. returned by a model
+  // switch just before); falls back to the session's original response. Best-effort: a failure is
+  // logged, never fatal to the session.
+  private async applySessionEffort(
+    session: ActiveSession,
+    configOptions?: SessionConfigOption[] | null
+  ): Promise<void> {
+    if (!this.pendingSessionEffort || !this.connection) return
+
+    const effectiveOptions =
+      configOptions ??
+      (session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } })
+        .newSessionResponse?.configOptions
+    const selection = resolveSessionEffortOption(effectiveOptions, this.pendingSessionEffort)
+
+    if (!selection) {
+      log.info('no session effort option to apply', { desiredEffort: this.pendingSessionEffort })
+      return
+    }
+
+    await this.sendSessionEffort(session, selection)
+  }
+
+  // Live-applies a reasoning-effort change to every open session — the ACP equivalent of a model
+  // switch, no respawn. Returns false when the active framework only carries effort in its baked
+  // spawn config (opencode advertises no thought_level option), or when applying to a session
+  // genuinely failed — the caller then falls back to the provider-switch reconnect rather than
+  // leaving the UI showing a level the agent never received. All sessions are attempted even after
+  // a failure, so the set never straddles two levels longer than the reconnect takes. Sessions that
+  // simply advertise no effort option are skipped (a reconnect could not give their model one
+  // either). On success pendingSessionEffort tracks the new level, so sessions created later in
+  // this process inherit it; the persisted setting covers the next respawn.
+  async applyReasoningEffortChange(effort: ReasoningEffort): Promise<boolean> {
+    if (!this.framework.supportsLiveEffortChange) return false
+
+    this.pendingSessionEffort = effort === DEFAULT_REASONING_EFFORT ? undefined : effort
+    if (!this.connection) return true
+
+    let allApplied = true
+    let appliedToAny = false
+
+    for (const session of this.sessions.values()) {
+      const configOptions =
+        this.latestSessionConfigOptions.get(session.sessionId) ??
+        (session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } })
+          .newSessionResponse?.configOptions
+      const selection = resolveSessionEffortOption(configOptions, effort)
+
+      if (!selection) {
+        log.info('no session effort option to apply', {
+          desiredEffort: effort,
+          sessionId: session.sessionId
+        })
+        continue
+      }
+
+      if (!(await this.sendSessionEffort(session, selection))) {
+        allApplied = false
+      } else {
+        appliedToAny = true
+      }
+    }
+
+    // No open session could take the level over ACP. For Claude there is no other channel — the
+    // model simply doesn't support effort, and a respawn can't change that. Codex also bakes the
+    // level into its spawn config (model_reasoning_effort), so a reconnect DOES deliver it: report
+    // failure rather than leaving the UI showing a level the running session never received.
+    if (!appliedToAny && this.sessions.size > 0 && this.framework.id === 'codex') return false
+
+    return allApplied
+  }
+
+  // Sends one resolved effort selection to a session. Best-effort: a failure is logged (never
+  // thrown) and reported as false, so live callers can escalate while build-time callers stay
+  // non-fatal.
+  private async sendSessionEffort(
+    session: ActiveSession,
+    selection: SessionModelSelection
+  ): Promise<boolean> {
+    try {
+      await this.connection?.agent.request(acp.methods.agent.session.setConfigOption, {
         sessionId: session.sessionId,
         configId: selection.configId,
         value: selection.value
       })
-      log.info('session model applied', { sessionId: session.sessionId, model: selection.value })
+      log.info('session effort applied', { sessionId: session.sessionId, effort: selection.value })
+      return true
     } catch (error) {
-      log.warn('set session model failed', {
+      log.warn('set session effort failed', {
         sessionId: session.sessionId,
         error: error instanceof Error ? error.message : String(error)
       })
+      return false
     }
   }
 
@@ -805,13 +980,20 @@ class AcpRuntime {
       }
 
       log.info('createSession: applySessionModel', { sessionId: session.sessionId })
-      await this.applySessionModel(session)
+      const updatedConfigOptions = await this.applySessionModel(session)
+      await this.applySessionEffort(session, updatedConfigOptions)
 
       this.sessions.set(session.sessionId, session)
+      // Committed only now: the options map must never hold an entry for a session that failed to
+      // attach (a throw between apply and registration would orphan it).
+      if (updatedConfigOptions) {
+        this.latestSessionConfigOptions.set(session.sessionId, updatedConfigOptions)
+      }
       this.sessionCwds.set(session.sessionId, sessionCwd)
       this.sessionMcpServerNames.set(session.sessionId, this.mcpServerNamesOf(mcpServers))
       this.sessionProjectNames.set(session.sessionId, projectName)
       this.sessionFrameworks.set(session.sessionId, this.framework.id)
+      if (this.backendId) this.sessionBackendIds.set(session.sessionId, this.backendId)
       this.rememberArtifactSession(session.sessionId, artifactSessionId)
       this.rememberNotebookSession(session.sessionId, notebookSessionId)
       this.currentSessionId = session.sessionId
@@ -826,7 +1008,12 @@ class AcpRuntime {
       this.emitState()
 
       log.info('createSession: completed successfully', { sessionId: session.sessionId })
-      return { sessionId: session.sessionId, cwd: sessionCwd, frameworkId: this.framework.id }
+      return {
+        sessionId: session.sessionId,
+        cwd: sessionCwd,
+        frameworkId: this.framework.id,
+        ...(this.backendId ? { backendId: this.backendId } : {})
+      }
     } catch (error) {
       safeLogError('createSession: failed', errorLogFields(error))
       throw error
@@ -853,6 +1040,7 @@ class AcpRuntime {
     this.sessionMcpServerNames.set(appSessionId, mcpServerNames)
     this.sessionProjectNames.set(appSessionId, projectName)
     this.sessionFrameworks.set(appSessionId, this.framework.id)
+    if (this.backendId) this.sessionBackendIds.set(appSessionId, this.backendId)
     this.rememberArtifactSession(appSessionId, appSessionId)
     this.rememberNotebookSession(appSessionId, appSessionId)
     this.currentSessionId = appSessionId
@@ -883,7 +1071,12 @@ class AcpRuntime {
       this.sessionProjectNames.set(request.sessionId, projectName)
       this.emitState()
 
-      return { sessionId: request.sessionId, cwd: sessionCwd, frameworkId: this.framework.id }
+      return {
+        sessionId: request.sessionId,
+        cwd: sessionCwd,
+        frameworkId: this.framework.id,
+        ...(this.backendId ? { backendId: this.backendId } : {})
+      }
     }
 
     // The reconnect + session/resume handshake spawns a fresh agent and is network-bound, so it is
@@ -910,6 +1103,8 @@ class AcpRuntime {
       attached.dispose()
       this.agentToAppSessionId.delete(attached.sessionId)
       this.sessions.delete(request.sessionId)
+      this.latestSessionConfigOptions.delete(attached.sessionId)
+      this.latestSessionConfigOptions.delete(request.sessionId)
     }
 
     // The fresh agent session holds no history, so the accumulated media is gone; start its budget clean.
@@ -970,12 +1165,18 @@ class AcpRuntime {
     // resets, so the caller replays the transcript) when we know it last ran under another framework.
     const priorFramework =
       this.sessionFrameworks.get(request.sessionId) ?? request.previousFrameworkId
+    const priorBackend = this.sessionBackendIds.get(request.sessionId) ?? request.previousBackendId
 
-    if (priorFramework && priorFramework !== this.framework.id) {
-      log.info('skipping cross-framework resume; adopting a fresh session', {
+    if (
+      (priorFramework && priorFramework !== this.framework.id) ||
+      (priorBackend && this.backendId && priorBackend !== this.backendId)
+    ) {
+      log.info('skipping incompatible backend resume; adopting a fresh session', {
         sessionId: request.sessionId,
-        from: priorFramework,
-        to: this.framework.id
+        fromFramework: priorFramework,
+        toFramework: this.framework.id,
+        fromBackend: priorBackend,
+        toBackend: this.backendId
       })
 
       return this.adoptFreshSession(connection, request, sessionCwd, projectName)
@@ -1033,13 +1234,18 @@ class AcpRuntime {
       throw error
     }
 
-    await this.applySessionModel(session)
+    const updatedConfigOptions = await this.applySessionModel(session)
+    await this.applySessionEffort(session, updatedConfigOptions)
 
     this.sessions.set(request.sessionId, session)
+    if (updatedConfigOptions) {
+      this.latestSessionConfigOptions.set(request.sessionId, updatedConfigOptions)
+    }
     this.sessionCwds.set(request.sessionId, sessionCwd)
     this.sessionMcpServerNames.set(request.sessionId, this.mcpServerNamesOf(mcpServers))
     this.sessionProjectNames.set(request.sessionId, projectName)
     this.sessionFrameworks.set(request.sessionId, this.framework.id)
+    if (this.backendId) this.sessionBackendIds.set(request.sessionId, this.backendId)
     this.rememberArtifactSession(request.sessionId, request.sessionId)
     this.currentSessionId = request.sessionId
     this.cwd = sessionCwd
@@ -1052,7 +1258,12 @@ class AcpRuntime {
     })
     this.emitState()
 
-    return { sessionId: request.sessionId, cwd: sessionCwd, frameworkId: this.framework.id }
+    return {
+      sessionId: request.sessionId,
+      cwd: sessionCwd,
+      frameworkId: this.framework.id,
+      ...(this.backendId ? { backendId: this.backendId } : {})
+    }
   }
 
   // Builds a brand-new agent session under the SAME app id when a resume cannot reattach the original
@@ -1090,7 +1301,8 @@ class AcpRuntime {
       throw error
     }
 
-    await this.applySessionModel(adopted)
+    const updatedConfigOptions = await this.applySessionModel(adopted)
+    await this.applySessionEffort(adopted, updatedConfigOptions)
     this.adoptSession(
       request.sessionId,
       adopted,
@@ -1098,12 +1310,18 @@ class AcpRuntime {
       projectName,
       this.mcpServerNamesOf(mcpServers)
     )
+    // Keyed by the agent session id, matching the live-effort lookup over this.sessions values:
+    // an adopted session's agent id differs from the app id it is registered under.
+    if (updatedConfigOptions) {
+      this.latestSessionConfigOptions.set(adopted.sessionId, updatedConfigOptions)
+    }
     this.emitState()
 
     return {
       sessionId: request.sessionId,
       cwd: sessionCwd,
       frameworkId: this.framework.id,
+      ...(this.backendId ? { backendId: this.backendId } : {}),
       contextReset: true
     }
   }
@@ -1247,7 +1465,7 @@ class AcpRuntime {
     for (const timer of this.cancelTimers.values()) this.clearTimer(timer)
     this.cancelTimers.clear()
     this.permissionBroker.cancelAll()
-    this.reviewerSessionIds.clear()
+    this.clearReviewerSessionState()
     this.promptInFlightSessionIds.clear()
 
     for (const session of this.sessions.values()) {
@@ -1258,6 +1476,7 @@ class AcpRuntime {
     this.sessionCwds.clear()
     this.sessionInlineImageBytes.clear()
     this.currentPromptTurnBySession.clear()
+    this.latestSessionConfigOptions.clear()
     this.sessionMcpServerNames.clear()
     this.sessionProjectNames.clear()
     this.permissionProfiles.clear()
@@ -1342,11 +1561,14 @@ class AcpRuntime {
     // Adopt the framework this reconnect resolved so session meta, permission mapping, and the spawn
     // itself all agree with the current selection.
     this.framework = backend.framework
+    this.backendId = backend.backendId
     this.nativeMcpEnabled =
       backend.framework.id !== 'codex' || backend.providerConfiguration === undefined
     this.bridgeMcpAliasesEnabled =
       backend.framework.id === 'codex' && backend.providerConfiguration !== undefined
     this.pendingSessionModel = backend.sessionModel
+    this.pendingSessionModelRequired = backend.sessionModelRequired ?? false
+    this.pendingSessionEffort = backend.sessionEffort
     this.pendingAuthentication = backend.authentication
     this.pendingProviderConfiguration = backend.providerConfiguration
 
@@ -1354,7 +1576,9 @@ class AcpRuntime {
     // model (e.g. opencode with no app model to inject) is diagnosable in the log rather than silent.
     log.info('agent backend resolved', {
       framework: backend.framework.id,
+      backendId: backend.backendId ?? '(unspecified)',
       sessionModel: backend.sessionModel ?? '(framework default)',
+      sessionEffort: backend.sessionEffort ?? '(agent default)',
       args: backend.args ?? [],
       executablePath: backend.executablePath,
       // Log env keys but not values (may contain credentials)
@@ -1522,12 +1746,19 @@ class AcpRuntime {
         this.handleSessionUpdate(message.notification, request.sessionId)
       }
     } catch (error) {
-      log.error('prompt failed', { sessionId: request.sessionId, error })
+      // errorLogFields keeps the RequestError message/code/data visible in the file log — a raw Error
+      // nested in the payload serializes without its (non-enumerable) message, which once hid the
+      // provider's real rejection reason from the log.
+      log.error('prompt failed', { sessionId: request.sessionId, ...errorLogFields(error) })
       const text = describePromptError(error, { model: this.pendingSessionModel })
       // Tag a request-size overflow as recoverable so the renderer compacts-and-retries (reset context +
       // replay a text transcript) instead of dead-ending; the error still throws to drive that recovery.
+      // The structured errorKind slug is checked alongside the message text: providers relay the same
+      // overflow in different wordings, and a slug-only match needs no message at all.
       const recoverable =
-        isMediaOverflowError(text) || isMediaOverflowError(errorMessage(error))
+        isMediaOverflowError(text) ||
+        isMediaOverflowError(errorMessage(error)) ||
+        isMediaOverflowError(acpErrorKind(error))
           ? 'context-overflow'
           : undefined
       this.pushEvent({
@@ -1548,7 +1779,7 @@ class AcpRuntime {
         } catch (error) {
           log.error('artifact emit after prompt failure failed', {
             sessionId: request.sessionId,
-            error
+            ...errorLogFields(error)
           })
         }
       }
@@ -1660,6 +1891,8 @@ class AcpRuntime {
       // Drop the reverse (underlying agent id -> app id) mapping an adopted session registered, so a
       // reused agent id or a late agent event can no longer route to this deleted app session.
       this.agentToAppSessionId.delete(session.sessionId)
+      // The options cache is keyed by the agent session id (differs from the app id when adopted).
+      this.latestSessionConfigOptions.delete(session.sessionId)
     }
 
     // App-session-keyed cleanup runs whether or not a live session is attached. A framework switch
@@ -1676,9 +1909,11 @@ class AcpRuntime {
     this.sessionCwds.delete(request.sessionId)
     this.sessionInlineImageBytes.delete(request.sessionId)
     this.currentPromptTurnBySession.delete(request.sessionId)
+    this.latestSessionConfigOptions.delete(request.sessionId)
     this.sessionMcpServerNames.delete(request.sessionId)
     this.sessionProjectNames.delete(request.sessionId)
     this.sessionFrameworks.delete(request.sessionId)
+    this.sessionBackendIds.delete(request.sessionId)
     this.permissionProfiles.delete(request.sessionId)
     this.artifactSessionIds.delete(request.sessionId)
     this.notebookRoutingIds.delete(request.sessionId)
@@ -2071,7 +2306,12 @@ class AcpRuntime {
 
     const root = this.artifactOptions.configRoot
 
-    return [getAppClaudeConfigDir(root), opencodeStorageDir(root), codexStorageDir(root)]
+    return [
+      getAppClaudeConfigDir(root),
+      opencodeStorageDir(root),
+      codexStorageDir(root),
+      codexSubscriptionStorageDir(root)
+    ]
   }
 
   // Creates an app-owned artifact session id so new ACP sessions never decide their storage directory.
@@ -2093,41 +2333,31 @@ class AcpRuntime {
   // Builds the artifact MCP environment for one session, shared by the stdio config and the http host.
   private buildArtifactEnvironment(
     artifactSessionId: string,
-    notebookSessionId: string,
     sessionCwd: string,
     projectName: string
   ): ArtifactMcpEnvironment | undefined {
     if (!this.artifactOptions || !artifactSessionId) return undefined
 
-    const allowedImportRoots = [
-      sessionCwd,
-      ...(this.notebookOptions && notebookSessionId
-        ? [getNotebookSessionRoot(this.artifactOptions.dataRoot, projectName, notebookSessionId)]
-        : [])
-    ]
-
+    // Only the session workspace is a static import root. The notebook session root is intentionally
+    // NOT added here: at session creation we only hold the pre-start alias, and authorizing the alias
+    // dir would let stale-alias absolute paths pass the allow-root check. The authoritative notebook
+    // root (keyed by the final ACP session id) is supplied per turn via the current-run.json handoff.
     return {
       storageRoot: this.artifactOptions.dataRoot,
       projectName,
       sessionId: artifactSessionId,
       currentRunFile: this.getArtifactCurrentRunFile(artifactSessionId, projectName),
-      allowedImportRoots
+      allowedImportRoots: [sessionCwd]
     }
   }
 
   // Provides the agent with exactly one artifact MCP server scoped to this session's storage context.
   private createArtifactMcpServers(
     artifactSessionId: string,
-    notebookSessionId: string,
     sessionCwd: string,
     projectName: string
   ): McpServer[] {
-    const environment = this.buildArtifactEnvironment(
-      artifactSessionId,
-      notebookSessionId,
-      sessionCwd,
-      projectName
-    )
+    const environment = this.buildArtifactEnvironment(artifactSessionId, sessionCwd, projectName)
 
     if (!environment || !this.artifactOptions) return []
 
@@ -2239,12 +2469,7 @@ class AcpRuntime {
     const servers = this.framework.acceptsStdioMcp
       ? [
           ...(artifactEnabled
-            ? this.createArtifactMcpServers(
-                artifactSessionId,
-                notebookSessionId,
-                sessionCwd,
-                projectName
-              )
+            ? this.createArtifactMcpServers(artifactSessionId, sessionCwd, projectName)
             : []),
           ...(await this.createNotebookMcpServers(notebookSessionId, sessionCwd, projectName))
         ]
@@ -2310,7 +2535,6 @@ class AcpRuntime {
 
     const artifactEnvironment = this.buildArtifactEnvironment(
       artifactSessionId,
-      notebookSessionId,
       sessionCwd,
       projectName
     )
@@ -2424,18 +2648,37 @@ class AcpRuntime {
 
     this.artifactRunSequence += 1
     const artifactSessionId = this.artifactSessionIds.get(sessionId) ?? sessionId
-    const currentRunFile = this.getArtifactCurrentRunFile(
-      artifactSessionId,
-      this.resolveSessionProjectName(sessionId)
-    )
+    const projectName = this.resolveSessionProjectName(sessionId)
+    const currentRunFile = this.getArtifactCurrentRunFile(artifactSessionId, projectName)
     const artifactRun = {
       runId: `artifact-run-${Date.now()}-${this.artifactRunSequence}`,
       artifactSessionId,
       currentRunFile
     }
 
+    // Notebook kernels are keyed by the FINAL ACP session id (the notebook RPC layer rewrites the
+    // pre-start alias to it before touching disk). This handoff runs per turn with that final id, so
+    // it — not the session-creation env, which only had the alias — is the correct place to pin the
+    // kernel's data dir + session root for relative/bare artifact imports.
+    const runContext: ArtifactRunContext =
+      this.notebookOptions && this.artifactOptions
+        ? {
+            runId: artifactRun.runId,
+            notebookDataDir: getNotebookDataRoot(
+              this.artifactOptions.dataRoot,
+              projectName,
+              sessionId
+            ),
+            notebookSessionRoot: getNotebookSessionRoot(
+              this.artifactOptions.dataRoot,
+              projectName,
+              sessionId
+            )
+          }
+        : { runId: artifactRun.runId }
+
     await mkdir(dirname(currentRunFile), { recursive: true })
-    await writeFile(currentRunFile, `${JSON.stringify({ runId: artifactRun.runId })}\n`, 'utf8')
+    await writeFile(currentRunFile, `${JSON.stringify(runContext)}\n`, 'utf8')
 
     return artifactRun
   }
@@ -2545,11 +2788,15 @@ class AcpRuntime {
     })
 
     try {
-      // Background reviewer sessions run unattended with a restricted toolset: auto-approve their tool
-      // calls instead of routing to the renderer (which never sees these sessions) or throwing "Unknown
-      // ACP session" because they are intentionally not in `this.sessions`. See design §3.
+      // Background reviewer sessions run unattended and are intentionally absent from `this.sessions`.
+      // Approve only their dedicated, scope-bounded MCP. Bash, filesystem, network, other MCP servers,
+      // and unknown tools are rejected without involving the renderer.
       if (this.reviewerSessionIds.has(params.sessionId)) {
-        return this.autoApproveReviewerPermission(params)
+        return this.resolveReviewerPermission(
+          params,
+          mcpServerNames,
+          this.sessionFrameworks.get(params.sessionId)
+        )
       }
 
       if (!this.sessions.has(appSessionId)) {
@@ -2578,26 +2825,58 @@ class AcpRuntime {
     }
   }
 
-  // Selects an allow option for an unattended reviewer tool call. Prefers a one-shot allow (the reviewer
-  // session is ephemeral, so remembering an "always" grant is pointless) and falls back to allow_always,
-  // then the first option. A request with no allow option is cancelled rather than left hanging.
-  private autoApproveReviewerPermission(
-    params: RequestPermissionRequest
+  // Grants only the dedicated reviewer MCP. The old implementation selected the first available option
+  // for every reviewer request, which effectively approved Bash/network/filesystem tools. A denied call
+  // uses a one-shot reject when offered and otherwise cancels; it never falls through to an allow option.
+  private resolveReviewerPermission(
+    params: RequestPermissionRequest,
+    mcpServerNames: readonly string[],
+    frameworkId: string | undefined
   ): RequestPermissionResponse {
+    const toolName = extractProviderToolName(params.toolCall)
+    const reportedTitle = params.toolCall.title
+    const opencodeToolName =
+      toolName == null &&
+      frameworkId === 'opencode' &&
+      typeof reportedTitle === 'string' &&
+      REVIEWER_MCP_OPENCODE_TOOL_NAMES.has(reportedTitle)
+        ? reportedTitle
+        : undefined
+    const isReviewerMcp =
+      mcpServerNames.length === 1 &&
+      mcpServerNames[0] === REVIEWER_MCP_SERVER_NAME &&
+      ((toolName != null && REVIEWER_MCP_PROVIDER_TOOL_NAMES.has(toolName)) ||
+        opencodeToolName != null)
+
+    if (!isReviewerMcp) {
+      const rejectOption =
+        params.options.find((option) => option.kind === 'reject_once') ??
+        params.options.find((option) => option.kind === 'reject_always')
+
+      log.warn('rejecting non-reviewer tool requested by background reviewer', {
+        sessionId: params.sessionId,
+        tool: toolName ?? params.toolCall.kind,
+        toolCallId: params.toolCall?.toolCallId
+      })
+
+      return rejectOption
+        ? { outcome: { outcome: 'selected', optionId: rejectOption.optionId } }
+        : { outcome: { outcome: 'cancelled' } }
+    }
+
     const allowOption =
       params.options.find((option) => option.kind === 'allow_once') ??
-      params.options.find((option) => option.kind === 'allow_always') ??
-      params.options[0]
+      params.options.find((option) => option.kind === 'allow_always')
 
     if (!allowOption) {
-      log.warn('reviewer permission request had no allow option; cancelling', {
+      log.warn('reviewer MCP permission request had no allow option; cancelling', {
         sessionId: params.sessionId,
         toolCallId: params.toolCall?.toolCallId
       })
       return { outcome: { outcome: 'cancelled' } }
     }
 
-    log.debug('auto-approving reviewer tool call', {
+    log.debug('approving scope-bounded reviewer MCP tool call', {
       sessionId: params.sessionId,
       toolCallId: params.toolCall?.toolCallId,
       optionId: allowOption.optionId
@@ -2747,11 +3026,12 @@ class AcpRuntime {
     for (const timer of this.cancelTimers.values()) this.clearTimer(timer)
     this.cancelTimers.clear()
     this.permissionBroker.cancelAll()
-    this.reviewerSessionIds.clear()
+    this.clearReviewerSessionState()
     this.sessions.clear()
     this.sessionCwds.clear()
     this.sessionInlineImageBytes.clear()
     this.currentPromptTurnBySession.clear()
+    this.latestSessionConfigOptions.clear()
     this.sessionMcpServerNames.clear()
     this.sessionProjectNames.clear()
     this.artifactSessionIds.clear()
@@ -2835,11 +3115,33 @@ class AcpRuntime {
     this.callbacks.onStateChanged?.(this.getSnapshot())
   }
 
+  private clearReviewerSessionState(): void {
+    for (const [sessionId, reviewerCwd] of this.reviewerSessionDirectories) {
+      this.removeReviewerDirectory(reviewerCwd)
+      this.sessionFrameworks.delete(sessionId)
+    }
+    this.reviewerSessionDirectories.clear()
+    this.reviewerSessionIds.clear()
+  }
+
+  private removeReviewerDirectory(reviewerCwd: string): void {
+    try {
+      rmSync(reviewerCwd, { recursive: true, force: true })
+    } catch (error) {
+      log.warn('failed to remove temporary reviewer directory', {
+        reviewerCwd,
+        error: errorMessage(error)
+      })
+    }
+  }
+
   // Creates an ephemeral reviewer ACP session using the existing agent connection. The reviewer
   // session is isolated from main agent sessions: it is not tracked in this.sessions, does not
   // appear in the snapshot, and callers are responsible for disposing it. This allows background
   // review to run in parallel with the main session without affecting the main state machine.
   async buildReviewerSession(request: {
+    // Used only to establish/reuse the shared agent connection. The reviewer session itself runs in an
+    // app-created empty temporary directory so built-in read tools cannot see the audited workspace.
     cwd: string
     mcpServers: McpServer[]
     systemPromptAppend?: string
@@ -2849,28 +3151,89 @@ class AcpRuntime {
     // opencode has no preset so the rubric rides back as a prompt prefix the caller must prepend.
     promptPrefix?: string
   }> {
+    const mcpServerNames = this.mcpServerNamesOf(request.mcpServers)
+    const reviewerMcp = request.mcpServers[0]
+    const reviewerMcpHttp =
+      reviewerMcp && 'type' in reviewerMcp && reviewerMcp.type === 'http' ? reviewerMcp : undefined
+    let reviewerMcpUrl: URL | undefined
+    try {
+      reviewerMcpUrl = reviewerMcpHttp ? new URL(reviewerMcpHttp.url) : undefined
+    } catch {
+      reviewerMcpUrl = undefined
+    }
+    if (
+      request.mcpServers.length !== 1 ||
+      mcpServerNames.length !== 1 ||
+      mcpServerNames[0] !== REVIEWER_MCP_SERVER_NAME ||
+      !reviewerMcpHttp ||
+      reviewerMcpUrl?.protocol !== 'http:' ||
+      reviewerMcpUrl.hostname !== '127.0.0.1'
+    ) {
+      throw new Error(
+        `Reviewer sessions require exactly one loopback HTTP ${REVIEWER_MCP_SERVER_NAME} MCP server.`
+      )
+    }
+
     const connection = await this.ensureConnected(request.cwd)
+    const reviewerCwd = await mkdtemp(join(tmpdir(), 'open-science-reviewer-'))
 
     const setup = this.framework.buildSessionSetup({
       systemPromptAppends: request.systemPromptAppend ? [request.systemPromptAppend] : []
     })
+    const reviewerMeta: Record<string, unknown> = {
+      ...(setup.meta ?? {}),
+      // claude-agent-acp's framework-neutral legacy switch; harmless to agents that ignore it.
+      disableBuiltInTools: true
+    }
+    if (this.framework.id === 'claude-code') {
+      const claudeCode =
+        typeof reviewerMeta.claudeCode === 'object' && reviewerMeta.claudeCode !== null
+          ? (reviewerMeta.claudeCode as Record<string, unknown>)
+          : {}
+      const claudeOptions =
+        typeof claudeCode.options === 'object' && claudeCode.options !== null
+          ? (claudeCode.options as Record<string, unknown>)
+          : {}
+      reviewerMeta.claudeCode = {
+        ...claudeCode,
+        options: { ...claudeOptions, tools: [] }
+      }
+    }
 
-    const session = await connection.agent
-      .buildSession({
-        cwd: request.cwd,
-        mcpServers: request.mcpServers,
-        ...(setup.meta ? { _meta: setup.meta } : {})
-      })
-      .start()
+    try {
+      const session = await connection.agent
+        .buildSession({
+          cwd: reviewerCwd,
+          mcpServers: request.mcpServers,
+          _meta: reviewerMeta
+        })
+        .start()
 
-    // Register so the permission handler recognises this session and auto-approves its tool calls.
-    // The orchestrator must call disposeReviewerSession() to unregister and tear it down.
-    this.reviewerSessionIds.add(session.sessionId)
-    // Record the reviewer's MCP server names too, so its MCP tool calls are audited as MCP (they are
-    // still auto-approved via reviewerSessionIds, but the isMcp classification must stay accurate).
-    this.sessionMcpServerNames.set(session.sessionId, this.mcpServerNamesOf(request.mcpServers))
+      try {
+        // Apply the framework's Ask baseline before prompting. The dedicated reviewer MCP is
+        // then selectively approved by resolveReviewerPermission; all other permission requests fail.
+        const permission = this.framework.mapPermissionProfile('ask', session.modes)
+        if (permission.modeId && permission.modeId !== session.modes?.currentModeId) {
+          await connection.agent.request(acp.methods.agent.session.setMode, {
+            sessionId: session.sessionId,
+            modeId: permission.modeId
+          })
+        }
+      } catch (error) {
+        session.dispose()
+        throw error
+      }
 
-    return { session, promptPrefix: setup.promptPrefix }
+      this.reviewerSessionIds.add(session.sessionId)
+      this.reviewerSessionDirectories.set(session.sessionId, reviewerCwd)
+      this.sessionMcpServerNames.set(session.sessionId, mcpServerNames)
+      this.sessionFrameworks.set(session.sessionId, this.framework.id)
+
+      return { session, promptPrefix: setup.promptPrefix }
+    } catch (error) {
+      this.removeReviewerDirectory(reviewerCwd)
+      throw error
+    }
   }
 
   // Disposes an ephemeral reviewer session and unregisters it from the auto-approve set. Safe to call
@@ -2878,7 +3241,11 @@ class AcpRuntime {
   disposeReviewerSession(session: import('@agentclientprotocol/sdk').ActiveSession): void {
     this.reviewerSessionIds.delete(session.sessionId)
     this.sessionMcpServerNames.delete(session.sessionId)
+    this.sessionFrameworks.delete(session.sessionId)
+    const reviewerCwd = this.reviewerSessionDirectories.get(session.sessionId)
+    this.reviewerSessionDirectories.delete(session.sessionId)
     session.dispose()
+    if (reviewerCwd) this.removeReviewerDirectory(reviewerCwd)
   }
 }
 

@@ -80,6 +80,8 @@ win:
     # looks for it there via process.resourcesPath).
     - from: resources/bin/win/${arch}/micromamba.exe
       to: micromamba.exe
+    - from: build/windows-runtime-cache-uninstall.ps1
+      to: windows-runtime-cache-uninstall.ps1
 nsis:
   artifactName: ${name}-${version}-win-${arch}-setup.${ext}
   shortcutName: ${productName}
@@ -87,6 +89,7 @@ nsis:
   createDesktopShortcut: always
   oneClick: false
   allowToChangeInstallationDirectory: true
+  include: build/installer.nsh
 mac:
   artifactName: ${name}-${version}-mac-${arch}.${ext}
   # Minimum macOS to run the app (written to Info.plist LSMinimumSystemVersion). macOS 12 (Monterey)

@@ -33,6 +33,7 @@ import { planComposerAttachmentIntake } from './composer-attachment-intake'
 import {
   docIsEmpty,
   docToArtifactRefs,
+  docToSkillIds,
   docToText,
   emptyDoc,
   type ComposerDoc
@@ -155,6 +156,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     permissionProfiles,
     permissionGrants,
     sendMessage,
+    resendEditedMessage,
     cancelRun,
     resumeInterruptedSession,
     deleteRuntimeSession,
@@ -256,6 +258,14 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     !activeSession?.fixLoopActive &&
     // Auto-recovery drops the session to idle while it resets context and replays the transcript; block
     // sends in that window so a manual prompt can't race the recovery resend into the same session.
+    !activeSession?.compacting
+  // Re-editing a sent prompt is allowed under the same settled-run conditions as sending, so the
+  // resent prompt can never overlap an in-flight turn, permission wait, fix loop, or compaction.
+  const canEditMessage =
+    isSessionPersistenceReady &&
+    activeSession?.status !== 'running' &&
+    activeSession?.status !== 'waiting-permission' &&
+    !activeSession?.fixLoopActive &&
     !activeSession?.compacting
   const canChangePermissionProfile =
     isSessionPersistenceReady &&
@@ -571,6 +581,20 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     })
   }
 
+  // Resends an inline-edited prompt: the conversation is truncated at the edited message, the agent
+  // context resets, and the kept turns replay as a preamble on the resent prompt. The gate mirrors
+  // canEditMessage so a resend never overlaps an in-flight turn.
+  const sendEditedMessage = (messageId: string, doc: ComposerDoc): void => {
+    if (!canEditMessage || docIsEmpty(doc) || !activeSession) return
+
+    void resendEditedMessage(activeSession.id, messageId, {
+      text: docToText(doc),
+      parts: doc.nodes,
+      forcedSkillIds: docToSkillIds(doc),
+      referencedArtifacts: docToArtifactRefs(doc)
+    })
+  }
+
   // Sends the current draft only after hydration so restored selection cannot overwrite intent.
   // ConversationPanel owns preventDefault and passes the skills picked as inline chips.
   const sendCurrentMessage = (forcedSkillIds: string[]): void => {
@@ -831,6 +855,8 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
             onAutoReviewToggle={changeAutoReviewEnabled}
             onRequestReview={requestManualReview}
             isRequestReviewDisabled={isRequestReviewDisabled}
+            canEditMessage={canEditMessage}
+            onSendEditedMessage={sendEditedMessage}
           />
 
           <ResizableHandle

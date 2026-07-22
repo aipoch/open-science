@@ -112,6 +112,129 @@ describe('artifact repository', () => {
     await expect(readFile(sourcePath)).resolves.toEqual(Buffer.from([1, 2, 3]))
   })
 
+  it('resolves a relative local source path against the notebook data dir base', async () => {
+    // The agent saves with a relative name (plt.savefig("plot.png")) inside the kernel cwd; passing
+    // that bare name must resolve against the data dir, not the MCP process cwd.
+    const root = await createStorageRoot()
+    const dataDir = join(root, 'notebook-session', 'data')
+    await mkdir(dataDir, { recursive: true })
+    await writeFile(join(dataDir, 'plot.png'), Buffer.from([9, 8, 7]))
+
+    const repository = new ArtifactRepository(root)
+    const artifact = await repository.writePendingFile(
+      {
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        filename: 'plot.png',
+        source: { kind: 'localPath', path: 'plot.png' }
+      },
+      { allowedImportRoots: [dataDir], relativeBaseDirs: [dataDir] }
+    )
+
+    await expect(readFile(artifact.path)).resolves.toEqual(Buffer.from([9, 8, 7]))
+  })
+
+  it('still honors an absolute local source path when a relative base is set', async () => {
+    // path.resolve drops the base for an absolute path, so an explicit absolute path keeps working.
+    const root = await createStorageRoot()
+    const dataDir = join(root, 'notebook-session', 'data')
+    const sourcePath = join(dataDir, 'chart.png')
+    await mkdir(dataDir, { recursive: true })
+    await writeFile(sourcePath, Buffer.from([4, 5, 6]))
+
+    const repository = new ArtifactRepository(root)
+    const artifact = await repository.writePendingFile(
+      {
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        filename: 'chart.png',
+        source: { kind: 'localPath', path: sourcePath }
+      },
+      { allowedImportRoots: [dataDir], relativeBaseDirs: [dataDir] }
+    )
+
+    await expect(readFile(artifact.path)).resolves.toEqual(Buffer.from([4, 5, 6]))
+  })
+
+  it('falls back to the next relative base dir when the file is not under the first', async () => {
+    // A plain-chat turn inside a notebook-capable runtime: the base list leads with the notebook
+    // data dir (no kernel ran, so nothing is there) and the session workspace second; the file the
+    // agent saved with plain shell tools must still resolve.
+    const root = await createStorageRoot()
+    const dataDir = join(root, 'notebook-session', 'data')
+    const workspace = join(root, 'workspace')
+    await mkdir(dataDir, { recursive: true })
+    await mkdir(workspace, { recursive: true })
+    await writeFile(join(workspace, 'plot.png'), Buffer.from([1, 1, 1]))
+
+    const repository = new ArtifactRepository(root)
+    const artifact = await repository.writePendingFile(
+      {
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        filename: 'plot.png',
+        source: { kind: 'localPath', path: 'plot.png' }
+      },
+      { allowedImportRoots: [dataDir, workspace], relativeBaseDirs: [dataDir, workspace] }
+    )
+
+    await expect(readFile(artifact.path)).resolves.toEqual(Buffer.from([1, 1, 1]))
+  })
+
+  it('prefers the first relative base dir when the file exists under several', async () => {
+    // The notebook data dir leads the base list, so a same-named file the agent left in the session
+    // workspace must not shadow the kernel output of the current turn.
+    const root = await createStorageRoot()
+    const dataDir = join(root, 'notebook-session', 'data')
+    const workspace = join(root, 'workspace')
+    await mkdir(dataDir, { recursive: true })
+    await mkdir(workspace, { recursive: true })
+    await writeFile(join(dataDir, 'plot.png'), Buffer.from([9, 9, 9]))
+    await writeFile(join(workspace, 'plot.png'), Buffer.from([2, 2, 2]))
+
+    const repository = new ArtifactRepository(root)
+    const artifact = await repository.writePendingFile(
+      {
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        filename: 'plot.png',
+        source: { kind: 'localPath', path: 'plot.png' }
+      },
+      { allowedImportRoots: [dataDir, workspace], relativeBaseDirs: [dataDir, workspace] }
+    )
+
+    await expect(readFile(artifact.path)).resolves.toEqual(Buffer.from([9, 9, 9]))
+  })
+
+  it('rejects a relative local source path when no relative base dir is set', async () => {
+    // Without a notebook data dir there is no base to resolve against; falling back to the process
+    // cwd (the app process for the in-process HTTP MCP host) reports "does not exist" even when the
+    // file sits inside an allowed root. Reject up front and demand an absolute path instead.
+    const root = await createStorageRoot()
+    const allowedRoot = join(root, 'workspace')
+    await mkdir(allowedRoot, { recursive: true })
+    await writeFile(join(allowedRoot, 'plot.png'), Buffer.from([1, 2, 3]))
+
+    const repository = new ArtifactRepository(root)
+
+    const attempt = repository.writePendingFile(
+      {
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        filename: 'plot.png',
+        source: { kind: 'localPath', path: 'plot.png' }
+      },
+      { allowedImportRoots: [allowedRoot] }
+    )
+    await expect(attempt).rejects.toThrow(/does not exist/)
+    await expect(attempt).rejects.toThrow(/absolute path/i)
+  })
+
   it('rejects local source files outside allowed import roots', async () => {
     const root = await createStorageRoot()
     const allowedRoot = join(root, 'notebook-session')

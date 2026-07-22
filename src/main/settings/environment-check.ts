@@ -299,30 +299,90 @@ const runEnvironmentCheck = async ({
   // One runtime row per framework, shown together. Only the SELECTED framework's absence is a failure
   // (it blocks Continue); a non-selected framework that's missing is an informational warning, so the
   // user isn't forced to install both.
-  const runtimeChecks: EnvironmentCheckItem[] = frameworks.map(({ id, label, runtime }) => {
-    if (runtime.found) {
-      return {
+  const runtimeChecks: EnvironmentCheckItem[] = frameworks.flatMap(({ id, label, runtime }) => {
+    // For Codex with detailed component info, show separate rows for native CLI and adapter
+    if (id === 'codex' && runtime.codexComponents) {
+      const {
+        nativeCliFound,
+        nativeCliPath,
+        nativeCliVersion,
+        adapterFound,
+        adapterPath,
+        adapterVersion,
+        adapterFailureReason
+      } = runtime.codexComponents
+      const isSelected = id === agentFrameworkId
+
+      const nativeCheck: EnvironmentCheckItem = {
         id: 'agent',
-        label: `${label} runtime`,
-        status: 'passed',
-        summary: runtime.version ? `${label} ${runtime.version} is ready.` : `${label} is ready.`,
-        detail: runtime.path
+        label: 'Codex native CLI',
+        status: nativeCliFound ? 'passed' : isSelected ? 'failed' : 'warning',
+        summary: nativeCliFound
+          ? nativeCliVersion
+            ? `Codex CLI ${nativeCliVersion} is installed.`
+            : 'Codex CLI is installed.'
+          : isSelected
+            ? 'Native Codex CLI is not installed.'
+            : 'Native Codex CLI is not installed (optional — only needed if you switch to Codex).',
+        detail: nativeCliPath
       }
+
+      // Adapter with a failure reason is marked as found but non-functional - treat as failed
+      const adapterWorking = adapterFound && !adapterFailureReason
+
+      const adapterCheck: EnvironmentCheckItem = {
+        id: 'agent',
+        label: 'Codex ACP adapter',
+        status: adapterWorking ? 'passed' : isSelected ? 'failed' : 'warning',
+        summary: adapterWorking
+          ? `Codex ACP adapter ${adapterVersion} is ready.`
+          : adapterFound && adapterFailureReason
+            ? adapterFailureReason === 'smoke-test-failed'
+              ? `Codex ACP adapter ${adapterVersion} failed to initialize.`
+              : `Codex ACP adapter exists but version detection failed.`
+            : isSelected
+              ? 'Codex ACP adapter is not installed.'
+              : 'Codex ACP adapter is not installed (optional — only needed if you switch to Codex).',
+        detail: adapterPath
+      }
+
+      return [nativeCheck, adapterCheck]
+    }
+
+    // For other frameworks or when Codex doesn't have component info, show single runtime row
+    if (runtime.found) {
+      return [
+        {
+          id: 'agent',
+          label: `${label} runtime`,
+          status: 'passed',
+          summary: runtime.version ? `${label} ${runtime.version} is ready.` : `${label} is ready.`,
+          detail: runtime.path
+        }
+      ]
     }
 
     const isSelected = id === agentFrameworkId
 
-    return {
-      id: 'agent',
-      label: `${label} runtime`,
-      status: isSelected ? 'failed' : 'warning',
-      summary: isSelected
+    // Use diagnostic detail when available (e.g., "native Codex exists but adapter is missing")
+    const summary = runtime.diagnostic
+      ? runtime.diagnostic
+      : isSelected
         ? `${label} is not installed yet.`
-        : `${label} is not installed (optional — only needed if you switch to it).`,
-      detail: isSelected
-        ? 'Automatic setup installs a self-contained runtime without Node.js, npm, or admin access.'
-        : undefined
-    }
+        : `${label} is not installed (optional — only needed if you switch to it).`
+
+    return [
+      {
+        id: 'agent',
+        label: `${label} runtime`,
+        status: isSelected ? 'failed' : 'warning',
+        summary,
+        detail:
+          isSelected && !runtime.diagnostic
+            ? 'Automatic setup installs a self-contained runtime without Node.js, npm, or admin access.'
+            : undefined
+      }
+    ]
   })
 
   const checks = [

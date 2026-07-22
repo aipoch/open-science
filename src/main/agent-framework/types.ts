@@ -3,7 +3,7 @@ import type { SessionModeState } from '@agentclientprotocol/sdk'
 
 import type { PermissionProfileApplication } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
-import type { AgentFrameworkId, ChatApiEndpoint } from '../../shared/settings'
+import type { AgentFrameworkId, ChatApiEndpoint, ReasoningEffort } from '../../shared/settings'
 import type { ResolvedProvider } from '../settings/provider-env'
 import type { ResponsesBridgeConnection } from '../settings/responses-bridge'
 
@@ -59,6 +59,10 @@ export type ModelConfigContext = {
   // skill loading; the adapter writes it and wires it into the agent's instruction mechanism so the
   // agent learns host.mcp instead of reimplementing connector calls with raw HTTP. Empty ⇒ omitted.
   instructions?: string
+  // The user's reasoning-effort preference ('default'/undefined ⇒ don't override; the framework
+  // injects nothing and the agent keeps its own default). Each framework maps the level onto its
+  // native config channel — Codex's model_reasoning_effort, opencode's model options.
+  reasoningEffort?: ReasoningEffort
 }
 
 // System-prompt guidance the runtime wants appended for a session (artifact routing, notebook, skill
@@ -113,6 +117,12 @@ export interface AgentFramework {
   // (currently stdio) is gated off for such frameworks until it is exposed over http/sse.
   readonly acceptsStdioMcp: boolean
 
+  // Whether a reasoning-effort change can be applied LIVE to open sessions via the ACP thought_level
+  // configOption, without a respawn. True where the adapter advertises that option (verified live:
+  // Claude Code, codex-acp). False where effort only rides the baked spawn config (opencode ignores
+  // the protocol option), so a change must respawn to regenerate it.
+  readonly supportsLiveEffortChange: boolean
+
   // Chat endpoints this framework can drive. A provider is only selectable when it shares one:
   // Claude Code speaks Anthropic /v1/messages; opencode speaks both.
   readonly supportedApiTypes: readonly ChatApiEndpoint[]
@@ -123,6 +133,9 @@ export interface AgentFramework {
 // provider switch takes effect on reconnect.
 export type ResolvedAgentBackend = {
   framework: AgentFramework
+  // Stable identity of the framework/provider storage boundary. Two providers can use the same
+  // framework while keeping incompatible session stores (for example Codex shared vs isolated login).
+  backendId?: string
   executablePath: string
   env: Record<string, string>
   args?: string[]
@@ -130,6 +143,12 @@ export type ResolvedAgentBackend = {
   // over the protocol rather than via env (opencode). Undefined ⇒ the framework's env/config drives it
   // (Claude uses ANTHROPIC_MODEL). Applied best-effort: skipped when the agent advertises no match.
   sessionModel?: string
+  // Subscription backends must run the model selected in the UI. When true, a missing/rejected live
+  // model option fails session creation instead of silently using the agent's account default.
+  sessionModelRequired?: boolean
+  // Reasoning-effort level to apply per session via the ACP `thought_level` configOption, resolved
+  // to the closest level the agent advertises. Undefined ⇒ the agent keeps its own default.
+  sessionEffort?: ReasoningEffort
   authentication?: AgentAuthentication
   providerConfiguration?: AgentProviderConfiguration
 }

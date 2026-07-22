@@ -96,10 +96,11 @@ const callSubmitFindings = async (
   mcpBaseUrl: string,
   token: string,
   checks: Array<{
-    status: 'warn' | 'fail'
+    status: 'pass' | 'warn' | 'fail'
     claim: string
     evidence: string
-    locator: {
+    sourceFindingId?: string
+    locator?: {
       blockRef: { messageId?: string; activityId?: string; blockIndex: number }
       contentHash: string
     }
@@ -186,10 +187,11 @@ const startFakeAgent = (
     mainSessionId: string
     simulateFindingsViaHttp?: boolean
     checksToSubmit?: Array<{
-      status: 'warn' | 'fail'
+      status: 'pass' | 'warn' | 'fail'
       claim: string
       evidence: string
-      locator: {
+      sourceFindingId?: string
+      locator?: {
         blockRef: { messageId?: string; activityId?: string; blockIndex: number }
         contentHash: string
       }
@@ -355,6 +357,7 @@ describe('single-round auditor correction', () => {
       acpRuntime: runtime,
       artifactStorageRoot: temporaryRoot!,
       mainSessionId: 'main-session-1',
+      sessionRefreshTimeoutMs: 0,
       onCorrectionPrompt: (text) => correctionPrompts.push(text)
     })
 
@@ -387,10 +390,11 @@ describe('single-round auditor correction', () => {
 
   it('does not inject an [Auditor] message for a pass review', async () => {
     const process = new FakeAgentProcess()
-    // No simulateFindingsViaHttp → reviewer calls submit_findings with empty array (not called → treated as pass)
     startFakeAgent(process, {
       reviewerSessionId: 'reviewer-session-1',
-      mainSessionId: 'main-session-1'
+      mainSessionId: 'main-session-1',
+      simulateFindingsViaHttp: true,
+      checksToSubmit: []
     })
 
     const runtime = new AcpRuntime({
@@ -466,7 +470,8 @@ describe('single-round auditor correction', () => {
       reviewRepository: repository,
       acpRuntime: runtime,
       artifactStorageRoot: temporaryRoot!,
-      mainSessionId: 'main-session-1'
+      mainSessionId: 'main-session-1',
+      sessionRefreshTimeoutMs: 0
     })
 
     // v2: checks not findings
@@ -483,7 +488,7 @@ describe('single-round auditor correction', () => {
     await client.$disconnect()
   })
 
-  it('Phase 3 fix loop triggers internal re-review (not via external onRunReviewCalled)', async () => {
+  it('does not re-review a stale session snapshot when the correction was not persisted', async () => {
     const process = new FakeAgentProcess()
     const checksToSubmit = [
       {
@@ -526,6 +531,7 @@ describe('single-round auditor correction', () => {
       acpRuntime: runtime,
       artifactStorageRoot: temporaryRoot!,
       mainSessionId: 'main-session-1',
+      sessionRefreshTimeoutMs: 0,
       onCorrectionPrompt: (text) => correctionPrompts.push(text),
       onRunReviewCalled: () => {
         runReviewCallCount++
@@ -538,14 +544,14 @@ describe('single-round auditor correction', () => {
     // The fix loop attempted at least one correction round.
     expect(correctionPrompts.length).toBeGreaterThanOrEqual(1)
 
-    // Phase 3: the fix loop spawns more than 1 reviewer session (initial + re-review(s)).
-    // Note: the correction.test.ts fake agent reuses the same MCP server reference for all
-    // reviewer sessions (single-session design); the re-review may fail and terminate early.
-    // The key invariant: re-reviews are driven internally, not via external calls.
+    // No fresh correction message exists in the supplied session state, so re-reviewing would audit
+    // the old turn and could produce a false resolution. The loop stops before spawning one.
     const reviewerSessions = agentState.newSessions.filter(
       (s) => s.sessionId === 'reviewer-session-1'
     )
-    expect(reviewerSessions.length).toBeGreaterThanOrEqual(2)
+    expect(reviewerSessions).toHaveLength(1)
+    const stored = await repository.getReviewsForSession('session-1')
+    expect(stored[0]?.checks[0]?.resolution).toBe('unaddressed')
 
     await client.$disconnect()
   })

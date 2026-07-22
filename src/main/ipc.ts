@@ -342,6 +342,7 @@ const registerIpcHandlers = async ({
   registerSettingsIpcHandlers({
     service: settingsService,
     onActiveProviderChanged: () => void runtime.requestProviderReconnect(),
+    onReasoningEffortChanged: (effort) => runtime.applyReasoningEffortChange(effort),
     onSkillsChanged: () => void runtime.requestSkillsReload(),
     // Re-sync bundled + custom skill docs and refresh the in-memory snapshot the connector
     // service reads, then request a skills reload. The reload respawns the agent on next idle so a
@@ -404,7 +405,30 @@ const registerIpcHandlers = async ({
       root: provisioningRoot,
       channel: mirror.condaChannel ?? process.env.OPEN_SCIENCE_CONDA_CHANNEL ?? 'conda-forge',
       caBundle: mirror.caBundle,
-      micromamba: { resourcesPath: process.resourcesPath }
+      micromamba: { resourcesPath: process.resourcesPath },
+      // Self-guard the provisioner's prefix writes (startup restore/upgrade/repair, named create, lazy
+      // materialize) against a prefix crash-recovery could not confirm free of a live orphan — closes
+      // the startup-gate path the UI-only assertProvisionAllowed guard did not cover. Reads the live
+      // blocked set at call time (recovery is awaited before the gate touches any prefix).
+      isPrefixBlocked: (prefix) => notebookService.isPrefixRecoveryBlocked(prefix),
+      // An explicit user Reset (repair with force) clears the in-memory block; the provisioner also
+      // clears the retained journal record + sidecar so the quarantine doesn't re-arm next startup.
+      clearPrefixBlock: (prefix) => notebookService.clearRecoveryBlock(prefix),
+      // Reset also clears an interrupted install's runtime-ID block, or bound sessions would still be
+      // rejected after the env rebuilds until the next restart.
+      clearRuntimeBlock: (runtimeId) => notebookService.clearRuntimeRecoveryBlock(runtimeId),
+      // A force Reset that finds the journal itself corrupt moves it aside and releases just THAT prefix
+      // from the global corrupt-journal barrier — other envs stay blocked until their own Reset/restart.
+      clearCorruptBlock: (prefix) => notebookService.clearCorruptRecoveryBlock(prefix),
+      // On an unconfirmed-child prefix-write failure, block the prefix in-process immediately so an
+      // in-session retry can't begin() a second op that races the first's possibly-live orphan.
+      blockPrefix: (prefix) => notebookService.blockPrefixRecovery(prefix),
+      // Lets a force Reset refuse a prefix an interrupted install (or prefix write) this session left with
+      // a possibly-live orphan — the provisioner can't see install failures in its own set.
+      isPrefixLiveUnconfirmed: (prefix) => notebookService.isPrefixLiveUnconfirmed(prefix),
+      // Share the service's per-env install lock so a default-env create/repair/upgrade serializes with
+      // a package install into the same env prefix instead of racing it on a separate lock.
+      withPrefixLock: (envName, fn) => notebookService.withEnvLock(envName, fn)
     })
     // One serialized wrapper shared by the startup gate and the notebook service's on-demand default
     // provisioning, so a concurrent build of the same default env (UI R-tab + an agent R run) can't

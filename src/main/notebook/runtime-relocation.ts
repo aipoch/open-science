@@ -48,7 +48,15 @@ export const exportRuntimeLocks = async (
     // Skip mid-creation leftovers with no interpreter — nothing to reconstruct.
     if (!existsSync(pythonBin(prefix)) && !existsSync(rBin(prefix))) continue
     try {
-      const raw = await deps.capture([deps.mm, 'list', '--prefix', prefix, '--explicit', '--md5'])
+      const raw = await deps.capture([
+        deps.mm,
+        '--no-rc',
+        'list',
+        '--prefix',
+        prefix,
+        '--explicit',
+        '--md5'
+      ])
       const lock = normalizeExplicitLock(raw)
       // A lock with no package URLs can't recreate anything; skip it.
       if (!/^https?:\/\//m.test(lock)) continue

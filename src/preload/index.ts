@@ -101,6 +101,7 @@ import type {
   SetActiveProviderRequest,
   SetPackageMirrorRequest,
   SetAgentFrameworkRequest,
+  SetReasoningEffortRequest,
   SetSkillEnabledRequest,
   SettingsSnapshot,
   SkillDetailView,
@@ -234,7 +235,11 @@ type OpenScienceAPI = {
     deleteProvider: (request: DeleteProviderRequest) => Promise<SettingsSnapshot>
     setActiveProvider: (request: SetActiveProviderRequest) => Promise<SettingsSnapshot>
     setAgentFramework: (request: SetAgentFrameworkRequest) => Promise<SettingsSnapshot>
+    setReasoningEffort: (request: SetReasoningEffortRequest) => Promise<SettingsSnapshot>
     validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
+    cancelCodexLogin: () => Promise<void>
+    loginIsolatedCodex: () => Promise<ValidateProviderResult>
+    logoutIsolatedCodex: () => Promise<ValidateProviderResult>
     refreshProviderModels: (
       request: RefreshProviderModelsRequest
     ) => Promise<RefreshProviderModelsResult>
@@ -374,7 +379,7 @@ type OpenScienceAPI = {
     getStatus: () => Promise<ProvisionStatus>
     provision: (lang: NotebookLanguage) => Promise<void>
     repair: (lang: NotebookLanguage) => Promise<void>
-    cancel: () => Promise<void>
+    cancel: (lang?: NotebookLanguage) => Promise<void>
     onProgress: (listener: (progress: ProvisionProgress) => void) => RemoveListener
   }
   runtime: {
@@ -548,8 +553,15 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('settings:set-active-provider', request) as Promise<SettingsSnapshot>,
     setAgentFramework: (request) =>
       ipcRenderer.invoke('settings:set-agent-framework', request) as Promise<SettingsSnapshot>,
+    setReasoningEffort: (request) =>
+      ipcRenderer.invoke('settings:set-reasoning-effort', request) as Promise<SettingsSnapshot>,
     validateProvider: (request) =>
       ipcRenderer.invoke('settings:validate-provider', request) as Promise<ValidateProviderResult>,
+    cancelCodexLogin: () => ipcRenderer.invoke('settings:cancel-codex-login') as Promise<void>,
+    loginIsolatedCodex: () =>
+      ipcRenderer.invoke('settings:login-isolated-codex') as Promise<ValidateProviderResult>,
+    logoutIsolatedCodex: () =>
+      ipcRenderer.invoke('settings:logout-isolated-codex') as Promise<ValidateProviderResult>,
     refreshProviderModels: (request) =>
       ipcRenderer.invoke(
         'settings:refresh-provider-models',
@@ -756,7 +768,8 @@ const api: OpenScienceAPI = {
     getStatus: () => ipcRenderer.invoke('notebook-env:status') as Promise<ProvisionStatus>,
     provision: (lang) => ipcRenderer.invoke('notebook-env:provision', lang) as Promise<void>,
     repair: (lang) => ipcRenderer.invoke('notebook-env:repair', lang) as Promise<void>,
-    cancel: () => ipcRenderer.invoke('notebook-env:cancel') as Promise<void>,
+    cancel: (lang?: NotebookLanguage) =>
+      ipcRenderer.invoke('notebook-env:cancel', lang) as Promise<void>,
     onProgress: (listener) => onIpcMessage('notebook-env:progress', listener)
   },
   runtime: {

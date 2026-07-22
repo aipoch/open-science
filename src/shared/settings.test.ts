@@ -72,6 +72,23 @@ describe('provider endpoint compatibility', () => {
     // Undefined model ⇒ supported (nothing to reject yet).
     expect(isModelBridgeSupported({ vendorId: 'deepseek' }, undefined)).toBe(true)
   })
+
+  it('allows Codex subscription profiles only with the Codex framework', () => {
+    const codex = { id: 'codex' as const, supportedApiTypes: ['responses'] as const }
+    const claude = { id: 'claude-code' as const, supportedApiTypes: ['anthropic'] as const }
+    const opencode = {
+      id: 'opencode' as const,
+      supportedApiTypes: ['anthropic', 'openai'] as const
+    }
+
+    for (const type of ['codex-shared', 'codex-isolated'] as const) {
+      expect(isProviderUsableByFramework({ type, apiEndpoints: ['responses'] }, codex)).toBe(true)
+      expect(isProviderUsableByFramework({ type, apiEndpoints: ['responses'] }, claude)).toBe(false)
+      expect(isProviderUsableByFramework({ type, apiEndpoints: ['responses'] }, opencode)).toBe(
+        false
+      )
+    }
+  })
 })
 
 describe('getCodexInstallSources', () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
 import type { SettingsService } from './service'
 
 // Capture every ipcMain.handle registration so handlers can be invoked directly in the test.
@@ -33,10 +34,14 @@ type FakeSettingsService = Record<
   | 'uninstallOpencode'
   | 'uninstallCodex'
   | 'setAgentFramework'
+  | 'setReasoningEffort'
   | 'upsertProvider'
   | 'deleteProvider'
   | 'setActiveProvider'
   | 'validateProvider'
+  | 'cancelCodexLogin'
+  | 'loginIsolatedCodex'
+  | 'logoutIsolatedCodex'
   | 'markOnboardingComplete'
   | 'listSkills'
   | 'getSkillDetail'
@@ -75,10 +80,18 @@ const createFakeService = (): FakeSettingsService => ({
   setAgentFramework: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], agentFrameworkId: 'opencode' }),
+  setReasoningEffort: vi
+    .fn()
+    .mockResolvedValue({ claude: {}, providers: [], reasoningEffort: 'high' }),
   upsertProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   deleteProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   setActiveProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   validateProvider: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
+  cancelCodexLogin: vi.fn(),
+  loginIsolatedCodex: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
+  logoutIsolatedCodex: vi
+    .fn()
+    .mockResolvedValue({ claude: {}, providers: [], activeProviderId: undefined }),
   markOnboardingComplete: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   listSkills: vi.fn().mockResolvedValue([]),
   getSkillDetail: vi.fn().mockResolvedValue({
@@ -121,6 +134,9 @@ describe('settings IPC handlers', () => {
       'settings:delete-provider',
       'settings:set-active-provider',
       'settings:validate-provider',
+      'settings:cancel-codex-login',
+      'settings:login-isolated-codex',
+      'settings:logout-isolated-codex',
       'settings:mark-onboarding-complete'
     ]) {
       expect(handlers.has(channel)).toBe(true)
@@ -140,6 +156,84 @@ describe('settings IPC handlers', () => {
 
     await invoke('settings:validate-provider', { providerId: 'p1' })
     expect(service.validateProvider).toHaveBeenCalledWith({ providerId: 'p1' })
+
+    await invoke('settings:cancel-codex-login')
+    expect(service.cancelCodexLogin).toHaveBeenCalledOnce()
+
+    await invoke('settings:logout-isolated-codex')
+    expect(service.logoutIsolatedCodex).toHaveBeenCalledOnce()
+  })
+
+  it('reconnects the active Codex subscription after isolated logout', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    service.logoutIsolatedCodex.mockResolvedValue({ ok: true, category: 'ok' })
+    service.getSettingsView.mockResolvedValue({
+      claude: {},
+      providers: [],
+      activeProviderId: CODEX_SUBSCRIPTION_PROVIDER_ID
+    })
+    const onActiveProviderChanged = vi.fn()
+    registerSettingsIpcHandlers({
+      service: asService(service),
+      onActiveProviderChanged
+    })
+
+    await invoke('settings:logout-isolated-codex')
+
+    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+  })
+
+  it('does not reconnect when isolated logout times out', async () => {
+    // Reconnecting when the sign-out timed out would re-authenticate with the credential that is
+    // still in place — the opposite of what the user intended. Skip the reconnect so the live
+    // agent keeps its existing session until a retry clears the credential.
+    handlers.clear()
+    const service = createFakeService()
+    service.logoutIsolatedCodex.mockResolvedValue({
+      ok: false,
+      category: 'timeout',
+      message: 'Codex sign-out timed out.'
+    })
+    const onActiveProviderChanged = vi.fn()
+    registerSettingsIpcHandlers({
+      service: asService(service),
+      onActiveProviderChanged
+    })
+
+    await invoke('settings:logout-isolated-codex')
+
+    expect(onActiveProviderChanged).not.toHaveBeenCalled()
+  })
+
+  it('reconnects the active provider only when the isolated login was actually applied', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const onActiveProviderChanged = vi.fn()
+    registerSettingsIpcHandlers({
+      service: asService(service),
+      onActiveProviderChanged
+    })
+
+    // Login succeeded and the active provider is still the isolated subscription: reconnect.
+    service.getSettingsView.mockResolvedValue({
+      claude: {},
+      providers: [{ id: CODEX_SUBSCRIPTION_PROVIDER_ID, type: 'codex-isolated' }],
+      activeProviderId: CODEX_SUBSCRIPTION_PROVIDER_ID
+    })
+    await invoke('settings:login-isolated-codex')
+    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+
+    // Login succeeded but the provider was switched to shared mid-flow (outcome discarded): the
+    // shared runtime's credentials didn't change, so a reconnect would be redundant.
+    onActiveProviderChanged.mockClear()
+    service.getSettingsView.mockResolvedValue({
+      claude: {},
+      providers: [{ id: CODEX_SUBSCRIPTION_PROVIDER_ID, type: 'codex-shared' }],
+      activeProviderId: CODEX_SUBSCRIPTION_PROVIDER_ID
+    })
+    await invoke('settings:login-isolated-codex')
+    expect(onActiveProviderChanged).not.toHaveBeenCalled()
   })
 
   it('routes mark-onboarding-complete to the service', async () => {
@@ -416,6 +510,69 @@ describe('settings IPC handlers', () => {
     // Switching frameworks swaps the backend binary, so the live agent must be dropped like a provider switch.
     expect(onActiveProviderChanged).toHaveBeenCalledOnce()
     expect(result).toBe(snapshot)
+  })
+
+  it('applies the level live without respawning when the framework supports it', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const snapshot = { claude: {}, providers: [], reasoningEffort: 'high' }
+    service.setReasoningEffort.mockResolvedValue(snapshot)
+    const onActiveProviderChanged = vi.fn()
+    const onReasoningEffortChanged = vi.fn().mockResolvedValue(true)
+    registerSettingsIpcHandlers({
+      service: asService(service),
+      onActiveProviderChanged,
+      onReasoningEffortChanged
+    })
+
+    const result = await invoke('settings:set-reasoning-effort', { effort: 'high' })
+
+    // A live ACP application (Claude Code, Codex) makes the level stick without a respawn.
+    expect(service.setReasoningEffort).toHaveBeenCalledWith('high')
+    expect(onReasoningEffortChanged).toHaveBeenCalledWith('high')
+    expect(onActiveProviderChanged).not.toHaveBeenCalled()
+    expect(result).toBe(snapshot)
+  })
+
+  it('respawns the agent when the framework cannot apply the level live', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const snapshot = { claude: {}, providers: [], reasoningEffort: 'high' }
+    service.setReasoningEffort.mockResolvedValue(snapshot)
+    const onActiveProviderChanged = vi.fn()
+    const onReasoningEffortChanged = vi.fn().mockResolvedValue(false)
+    registerSettingsIpcHandlers({
+      service: asService(service),
+      onActiveProviderChanged,
+      onReasoningEffortChanged
+    })
+
+    const result = await invoke('settings:set-reasoning-effort', { effort: 'high' })
+
+    // opencode bakes effort into its spawn config, so the provider-switch reconnect delivers it.
+    expect(service.setReasoningEffort).toHaveBeenCalledWith('high')
+    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+    expect(result).toBe(snapshot)
+  })
+
+  it('rejects an unknown reasoning effort without touching the service or the agent', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const onActiveProviderChanged = vi.fn()
+    registerSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+
+    // Renderer payloads are untyped at runtime: garbage must fail at the boundary, not persist.
+    await expect(invoke('settings:set-reasoning-effort', { effort: 'ultra' })).rejects.toThrow(
+      'Unknown reasoning effort'
+    )
+    await expect(invoke('settings:set-reasoning-effort', { effort: 3 })).rejects.toThrow(
+      'Unknown reasoning effort'
+    )
+    await expect(invoke('settings:set-reasoning-effort', {})).rejects.toThrow(
+      'Unknown reasoning effort'
+    )
+    expect(service.setReasoningEffort).not.toHaveBeenCalled()
+    expect(onActiveProviderChanged).not.toHaveBeenCalled()
   })
 
   it('surfaces a service error thrown by install-opencode', async () => {

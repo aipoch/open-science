@@ -38,3 +38,149 @@ describe('packaging config', () => {
     expect(hook).toContain('micromamba')
   })
 })
+
+describe('NSIS installer include (build/installer.nsh)', () => {
+  const include = readFileSync(join(repoRoot, 'build/installer.nsh'), 'utf8')
+
+  it('overrides the failed-uninstall handling for both registry passes', () => {
+    // electron-builder's handleUninstallResult turns ANY non-zero old-uninstaller exit code into
+    // a fatal "Failed to uninstall old application files" dialog. The assisted installer
+    // (oneClick: false) gets no exit-code normalization (quitSuccess is ONE_CLICK-only), so the
+    // code is not trustworthy — the include must install the resilient handler for both the
+    // SHELL_CONTEXT and the HKEY_CURRENT_USER passes.
+    expect(include).toMatch(/!macro customUnInstallCheck\b/)
+    expect(include).toMatch(/!macro customUnInstallCheckCurrentUser\b/)
+  })
+
+  it('continues the install when the old version is already gone despite a non-zero exit code', () => {
+    // The spurious-exit-2 case: the uninstall completed but a benign trailing error leaked as the
+    // process exit code. Detect it by the old executable no longer existing and keep installing.
+    // The sentinel is parameterized on the pass's own install dir ($INSTDIR for SHELL_CONTEXT,
+    // the registry-read per-user dir for HKEY_CURRENT_USER).
+    expect(include).toContain('${FileExists} "${DIR}\\${APP_EXECUTABLE_FILENAME}"')
+  })
+
+  it('force-kills install-dir processes and retries the old uninstaller once before failing', () => {
+    // The real-lock case: a background child running from the install dir (micromamba
+    // provisioning, the CLI in Node mode, an agent child) still holds files. Sweep by executable
+    // path (Win32_Process has ExecutablePath, NOT Path) and by image name (taskkill fallback),
+    // then retry once; only a repeated failure keeps the original fatal dialog + exit code 2.
+    expect(include).toContain('$$_.ExecutablePath')
+    expect(include).not.toContain('$$_.Path.')
+    expect(include).toContain('taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"')
+    expect(include).toContain('$(uninstallFailed): $R0')
+    expect(include).toContain('SetErrorLevel 2')
+  })
+
+  it('runs the image-name taskkill only as a fallback when the PowerShell sweep cannot run', () => {
+    // taskkill /IM matches the exe name in ANY directory — a second install or the portable zip
+    // copy would be killed too, discarding unsaved work. It must fire only when the path-scoped
+    // PowerShell sweep failed to run (nsExec pushes "error" or a non-zero exit code). micromamba
+    // is included: its image name differs from the app exe, so the app-exe kill alone cannot
+    // cover an in-flight provisioning lock on PowerShell-blocked machines.
+    const code = include
+      .split('\n')
+      .filter((line) => !/^\s*#/.test(line))
+      .join('\n')
+    expect(code.match(/taskkill/g) ?? []).toHaveLength(2)
+    // Capture the whole guard block and assert BOTH kills live inside it — asserting only the
+    // first one's position would still pass with micromamba's taskkill moved outside the guard.
+    const guardBlock = code.match(/\$\{if\} \$R1 != 0([\s\S]*?)\$\{endif\}/)?.[1] ?? ''
+    expect(guardBlock).toContain('taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"')
+    expect(guardBlock).toContain('taskkill /F /IM micromamba.exe')
+    expect(guardBlock.match(/taskkill/g) ?? []).toHaveLength(2)
+  })
+
+  it('retries the old uninstaller exactly once', () => {
+    // A single follow-up attempt after the kill; the original ExecWait lives in
+    // electron-builder's uninstallOldVersion, so exactly one may appear here. Assert the
+    // invocation's semantic parts rather than the full literal line, so a benign reformat
+    // (flag reorder, whitespace) does not break the test without a behavior change.
+    const attempts = include.match(/ExecWait '"\$PLUGINSDIR\\old-uninstaller\.exe/g) ?? []
+    expect(attempts).toHaveLength(1)
+    expect(include).toContain('/S /KEEP_APP_DATA $0')
+    expect(include).toContain('_?=${DIR}')
+  })
+
+  it('passes the install dir to PowerShell as an argument, with a directory-boundary match', () => {
+    // Custom install dirs may contain apostrophes: interpolating the path into the script source
+    // would break the command (or worse, inject into it). The dir goes in as $args[0] and the
+    // prefix match is anchored with a trailing backslash so sibling directories never match.
+    expect(include).toContain('$$args[0].TrimEnd')
+    expect(include).toContain('$$_.ExecutablePath.StartsWith($$root')
+    expect(include).not.toContain(`StartsWith('$INSTDIR'`)
+  })
+
+  it('caches the per-user install location before the HKCU uninstall pass deletes it', () => {
+    // A successful per-user uninstall deletes HKCU InstallLocation, so reading it inside the hook
+    // — after the pass — always comes up empty in exactly the spurious-failure case the hook
+    // exists for. customInit runs before any uninstall pass; the hook must consume its cached
+    // value and fall back to the default fatal handling only when no per-user install was
+    // registered at install start.
+    expect(include).toMatch(/\$\{if\} \$perUserInstallDirCache == ""/)
+    expect(include).toContain('!insertmacro uninstallFailureRecoveryAt $perUserInstallDirCache')
+    expect(include).toContain('!insertmacro uninstallFailureRecoveryAt $INSTDIR')
+    // The cache is declared inside customInit itself: a file-scope Var would be declared-but-
+    // unused in the uninstaller build, which makensis fails as a warning.
+    const initHook = include.match(/!macro customInit([\s\S]*?)!macroend/)?.[1] ?? ''
+    expect(initHook).toMatch(
+      /Var \/GLOBAL perUserInstallDirCache[\s\S]*ReadRegStr \$perUserInstallDirCache HKEY_CURRENT_USER "\$\{INSTALL_REGISTRY_KEY\}" InstallLocation/
+    )
+    // The hook itself must not re-read the registry after the pass — that pins the broken order.
+    // (Comments may name the value while explaining; strip them before checking.)
+    const hkcuHook = (
+      include.match(/!macro customUnInstallCheckCurrentUser([\s\S]*?)!macroend/)?.[1] ?? ''
+    )
+      .split('\n')
+      .filter((line) => !/^\s*#/.test(line))
+      .join('\n')
+    expect(hkcuHook).not.toContain('readReg')
+    expect(hkcuHook).not.toContain('InstallLocation')
+  })
+
+  it('never references symbols declared only after handleUninstallResult is parsed', () => {
+    // makensis treats unknown variables as errors (electron-builder builds with warnings as
+    // errors): handleUninstallResult is parsed BEFORE uninstallOldVersion / CHECK_APP_RUNNING
+    // declare their globals, so the hook body must stay self-contained. Comment lines are
+    // stripped before checking — they may name the variables while explaining this.
+    const code = include
+      .split('\n')
+      .filter((line) => !/^\s*#/.test(line))
+      .join('\n')
+    expect(code).not.toContain('$installationDir')
+    expect(code).not.toContain('$uninstallerFileNameTemp')
+    expect(code).not.toContain('$PowerShellPath')
+    expect(code).not.toContain('$CmdPath')
+    expect(code).not.toContain('$IsPowerShellAvailable')
+    expect(code).not.toContain('IS_POWERSHELL_AVAILABLE')
+    expect(code).not.toContain('KILL_PROCESS')
+  })
+
+  it('the installed electron-builder still inserts the customUnInstallCheck hooks', () => {
+    // The recovery runs only if app-builder-lib's handleUninstallResult keeps inserting these two
+    // macro names. electron-builder is a caret-ranged dependency, so a routine bump could rename
+    // or drop the insertion points — the macros would compile into dead code while every
+    // assertion above stays green. Guard the integration contract itself so such an upgrade
+    // fails here instead of silently reverting to the fatal dialog.
+    const installUtil = readFileSync(
+      join(repoRoot, 'node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh'),
+      'utf8'
+    )
+    expect(installUtil).toContain('!ifmacrodef customUnInstallCheck')
+    expect(installUtil).toContain('!insertmacro customUnInstallCheck')
+    expect(installUtil).toContain('!ifmacrodef customUnInstallCheckCurrentUser')
+    expect(installUtil).toContain('!insertmacro customUnInstallCheckCurrentUser')
+  })
+
+  it('the installed electron-builder still inserts customInit before the uninstall passes', () => {
+    // The per-user install-dir cache only ever runs if installer.nsi keeps inserting customInit
+    // in .onInit. Losing that insertion point leaves the HKCU hook with an always-empty cache —
+    // the exact fatal-path regression the cache fixed — while every source-text test stays green.
+    const installerNsi = readFileSync(
+      join(repoRoot, 'node_modules/app-builder-lib/templates/nsis/installer.nsi'),
+      'utf8'
+    )
+    expect(installerNsi).toContain('!ifmacrodef customInit')
+    expect(installerNsi).toContain('!insertmacro customInit')
+  })
+})

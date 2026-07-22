@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { BASE_PYTHON_PACKAGES, BASE_R_PACKAGES } from '../src/main/notebook/provisioner'
 import {
   buildLockFromSolve,
+  derivePackPathBudget,
   floorPackages,
   packageFilesFromLock,
   packId,
@@ -186,5 +187,30 @@ describe('verifyBundleComplete', () => {
         md5: () => 'deadbeef'
       })
     ).toThrow(/md5 mismatch/)
+  })
+})
+
+describe('derivePackPathBudget', () => {
+  it('derives cache and env maxima from URL layout plus package contents', () => {
+    const lock = [
+      '@EXPLICIT',
+      'https://conda.anaconda.org/conda-forge/noarch/demo-1.0-0.conda#aaa',
+      'https://mirror.example.org/channel/win-64/short-1.0-0.tar.bz2#bbb',
+      ''
+    ].join('\n')
+    const budget = derivePackPathBudget(lock, {
+      'demo-1.0-0.conda': ['Library/bin/demo.exe', 'Library/include/a/deeper/header.hpp'],
+      'short-1.0-0.tar.bz2': ['bin/short.exe']
+    })
+
+    expect(budget.maxEnvRelativePath).toBe('Library/include/a/deeper/header.hpp'.length + 1)
+    expect(budget.maxCacheRelativePath).toBeGreaterThan(budget.maxEnvRelativePath)
+    expect(budget.maxCacheRelativePath).not.toBe(87 + 138)
+  })
+
+  it('fails closed when a lock package was not inspected', () => {
+    expect(() =>
+      derivePackPathBudget('https://conda.example/conda-forge/noarch/missing-1.0-0.conda#aaa\n', {})
+    ).toThrow(/missing package contents/i)
   })
 })

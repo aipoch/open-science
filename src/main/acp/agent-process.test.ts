@@ -1,6 +1,36 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { buildAgentSpawnEnv, toUnpackedAsarPath } from './agent-process'
+const mocks = vi.hoisted(() => ({
+  spawn: vi.fn(),
+  resolveExecutable: vi.fn((path: string) => path),
+  augmentedPathEnv: vi.fn((env: NodeJS.ProcessEnv) => ({ ...env, PATH: '/augmented/bin' })),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn()
+}))
+
+vi.mock('node:child_process', () => ({ spawn: mocks.spawn }))
+vi.mock('./claude-executable', () => ({
+  resolveClaudeExecutableForSpawn: mocks.resolveExecutable
+}))
+vi.mock('../settings/shell-path', () => ({ augmentedPathEnv: mocks.augmentedPathEnv }))
+vi.mock('../logger', () => ({
+  createLogger: () => ({ info: mocks.info, warn: mocks.warn, error: mocks.error })
+}))
+
+import { buildAgentSpawnEnv, spawnClaudeAgentAcp, toUnpackedAsarPath } from './agent-process'
+
+const originalDebugAgent = process.env.OPEN_SCIENCE_DEBUG_AGENT
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  delete process.env.OPEN_SCIENCE_DEBUG_AGENT
+})
+
+afterEach(() => {
+  if (originalDebugAgent === undefined) delete process.env.OPEN_SCIENCE_DEBUG_AGENT
+  else process.env.OPEN_SCIENCE_DEBUG_AGENT = originalDebugAgent
+})
 
 describe('ACP agent process packaging paths', () => {
   it('uses the real unpacked path for executables resolved inside app.asar', () => {
@@ -84,5 +114,58 @@ describe('buildAgentSpawnEnv', () => {
     // Native credential stores are keyed to Claude's implicit config context.
     expect(env.CLAUDE_CONFIG_DIR).toBeUndefined()
     expect(env.CLAUDE_CODE_EXECUTABLE).toBe('/bin/claude')
+  })
+})
+
+describe('spawnClaudeAgentAcp', () => {
+  it('rejects startup without a detected Claude executable', () => {
+    expect(() => spawnClaudeAgentAcp()).toThrow(
+      'Claude executable path is not configured. Complete Claude detection in settings first.'
+    )
+    expect(mocks.spawn).not.toHaveBeenCalled()
+  })
+
+  it('spawns the packaged ACP entry through Electron-as-Node with isolated provider env', () => {
+    const child = { on: vi.fn() }
+    mocks.spawn.mockReturnValue(child)
+    mocks.resolveExecutable.mockReturnValue('/resolved/claude')
+
+    expect(
+      spawnClaudeAgentAcp({
+        executablePath: '/bin/claude',
+        envOverrides: {
+          CLAUDE_CONFIG_DIR: '/provider/config',
+          ANTHROPIC_AUTH_TOKEN: 'secret'
+        }
+      })
+    ).toBe(child)
+
+    const [runtime, args, options] = mocks.spawn.mock.calls[0]!
+    expect(runtime).toBe(process.execPath)
+    expect(args).toEqual([expect.stringContaining('claude-agent-acp/dist/index.js')])
+    expect(options).toMatchObject({
+      stdio: 'pipe',
+      windowsHide: true,
+      env: expect.objectContaining({
+        PATH: '/augmented/bin',
+        CLAUDE_CODE_EXECUTABLE: '/resolved/claude',
+        CLAUDE_CONFIG_DIR: '/provider/config',
+        ANTHROPIC_AUTH_TOKEN: 'secret',
+        ELECTRON_RUN_AS_NODE: '1'
+      })
+    })
+    expect(child.on).toHaveBeenCalledWith('error', expect.any(Function))
+    expect(child.on).toHaveBeenCalledWith('exit', expect.any(Function))
+  })
+
+  it('enables SDK diagnostics only when explicitly requested', () => {
+    process.env.OPEN_SCIENCE_DEBUG_AGENT = '1'
+    mocks.spawn.mockReturnValue({ on: vi.fn() })
+
+    spawnClaudeAgentAcp({ executablePath: '/bin/claude' })
+
+    expect(mocks.spawn.mock.calls[0]?.[2]?.env).toEqual(
+      expect.objectContaining({ DEBUG_CLAUDE_AGENT_SDK: '1' })
+    )
   })
 })

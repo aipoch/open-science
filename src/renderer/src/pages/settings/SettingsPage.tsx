@@ -16,12 +16,13 @@ import {
 import { Dialog } from 'radix-ui'
 import { useEffect, useState } from 'react'
 
-import type {
-  AgentFrameworkId,
-  ClaudeInstallSource,
-  ClaudeInstallSourceInfo,
-  ProviderView,
-  UpsertProviderRequest
+import {
+  isCodexSubscriptionProvider,
+  type AgentFrameworkId,
+  type ClaudeInstallSource,
+  type ClaudeInstallSourceInfo,
+  type ProviderView,
+  type UpsertProviderRequest
 } from '../../../../shared/settings'
 import {
   getClaudeInstallSources,
@@ -38,7 +39,7 @@ import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import { useSettingsStore } from '@/stores/settings-store'
+import { selectAnyInstalling, useSettingsStore } from '@/stores/settings-store'
 import { ModelFrameworkCompatibilityAlert } from './ModelFrameworkCompatibilityAlert'
 import { AgentFrameworkCard } from './AgentFrameworkCard'
 import { GeneralPanel } from './GeneralPanel'
@@ -60,6 +61,7 @@ import {
   type ProviderFormValue
 } from './provider-form-value'
 import { ProviderList } from './ProviderList'
+import { ReasoningEffortSelect } from './ReasoningEffortSelect'
 import { SettingsSection } from './SettingsLayout'
 import { UninstallRuntimeDialog } from './UninstallRuntimeDialog'
 import { SwitchFrameworkDialog } from './SwitchFrameworkDialog'
@@ -184,10 +186,12 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const isDetectingCodex = useSettingsStore((state) => state.isDetectingCodex)
   const detectCodex = useSettingsStore((state) => state.detectCodex)
   const installCodex = useSettingsStore((state) => state.installCodex)
-  const isInstalling = useSettingsStore((state) => state.isInstalling)
-  const installLogs = useSettingsStore((state) => state.installLogs)
-  const installProgress = useSettingsStore((state) => state.installProgress)
-  const installError = useSettingsStore((state) => state.installError)
+  // Per-runtime install slices: each card renders only its own progress/logs/error (issue #278).
+  const claudeInstall = useSettingsStore((state) => state.installStates['claude-code'])
+  const opencodeInstall = useSettingsStore((state) => state.installStates.opencode)
+  const codexInstall = useSettingsStore((state) => state.installStates.codex)
+  // Any install running locks the framework selector and every card's uninstall button.
+  const anyInstalling = useSettingsStore(selectAnyInstalling)
   const npmAvailable = useSettingsStore((state) => state.npmAvailable)
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const claudeManaged = useSettingsStore((state) => state.claudeManaged)
@@ -202,6 +206,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const persistProvider = useSettingsStore((state) => state.persistProvider)
   const deleteProvider = useSettingsStore((state) => state.deleteProvider)
   const validateProvider = useSettingsStore((state) => state.validateProvider)
+  const cancelCodexLogin = useSettingsStore((state) => state.cancelCodexLogin)
+  const loginIsolatedCodex = useSettingsStore((state) => state.loginIsolatedCodex)
+  const logoutIsolatedCodex = useSettingsStore((state) => state.logoutIsolatedCodex)
   const refreshProviderModels = useSettingsStore((state) => state.refreshProviderModels)
   const pendingSkillId = useSettingsStore((state) => state.pendingSkillId)
   const consumePendingSkill = useSettingsStore((state) => state.consumePendingSkill)
@@ -228,10 +235,6 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const [isUninstalling, setIsUninstalling] = useState(false)
   // The framework the user picked (via a card) but hasn't confirmed switching to yet.
   const [pendingSwitch, setPendingSwitch] = useState<AgentFrameworkId | null>(null)
-  // The framework whose Install menu started the current/last install run. The store's install
-  // state is global (one install at a time), so this local tag routes the progress bar, logs, and
-  // errors to the card that initiated them.
-  const [installTarget, setInstallTarget] = useState<'claude' | 'opencode' | 'codex' | null>(null)
   const [statusMessage, setStatusMessage] = useState<string | undefined>(undefined)
   const [statusOk, setStatusOk] = useState(false)
   const [busyProviderId, setBusyProviderId] = useState<string | undefined>(undefined)
@@ -240,6 +243,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   // elsewhere (e.g. a skill mention) collapses it: that case arrives AFTER mount (this component
   // stays mounted while closed), so it is handled in the seeding block below, not the initializer.
   const [agentMenuExpanded, setAgentMenuExpanded] = useState(true)
+  // True while the explicit isolated Codex sign-in is open in the browser; drives the cancel action.
+  const [isCodexLoginPending, setIsCodexLoginPending] = useState(false)
+  const [providerTestError, setProviderTestError] = useState<string | undefined>(undefined)
 
   // Refresh settings whenever the dialog opens so external changes are reflected.
   useEffect(() => {
@@ -498,6 +504,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   }
 
   const activeFramework = agentFrameworks.find((framework) => framework.id === agentFrameworkId)
+  const visibleProviders = providers.filter(
+    (provider) => agentFrameworkId === 'codex' || !isCodexSubscriptionProvider(provider.type)
+  )
   const pendingSwitchName = agentFrameworks.find(
     (framework) => framework.id === pendingSwitch
   )?.displayName
@@ -530,6 +539,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
     uninstallCommand: string
     managed: boolean
     installSources: ClaudeInstallSourceInfo[]
+    // This runtime's own install slice from the store (per-runtime install state, issue #278) —
+    // each card renders only its own progress/logs/error.
+    install: typeof claudeInstall
     onInstall: (source: ClaudeInstallSource) => void
   }
 
@@ -549,6 +561,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
       uninstallCommand: 'npm uninstall -g @anthropic-ai/claude-code',
       managed: claudeManaged,
       installSources: getClaudeInstallSources(window.api?.platform),
+      install: claudeInstall,
       onInstall: (source) => void installClaude(source)
     },
     {
@@ -572,6 +585,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
       uninstallCommand: 'npm uninstall -g opencode-ai',
       managed: opencodeManaged,
       installSources: getOpencodeInstallSources(window.api?.platform),
+      install: opencodeInstall,
       onInstall: (source) => void installOpencode(source)
     },
     {
@@ -591,6 +605,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
       uninstallCommand: 'npm uninstall -g @agentclientprotocol/codex-acp',
       managed: codexManaged,
       installSources: getCodexInstallSources(),
+      install: codexInstall,
       // Codex has no official-script source; the guard keeps the shared install-source type happy.
       onInstall: (source) => {
         if (source !== 'official-script') void installCodex(source)
@@ -602,8 +617,8 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const availableFrameworks = frameworkCards.filter((card) => !card.ready)
 
   // Maps one framework descriptor to its card, wiring in the page-level concerns: radio selection
-  // (via the switch confirmation), the uninstall dialog, and routing the global install state to
-  // only the card that started the install (installTarget).
+  // (via the switch confirmation), the uninstall dialog, and the per-runtime install slice that
+  // drives the card's own progress UI (anyInstalling still locks selection and uninstall globally).
   const renderFrameworkCard = (card: FrameworkCardModel): React.JSX.Element => (
     <AgentFrameworkCard
       key={card.key}
@@ -618,24 +633,21 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
       notReadyHint={card.notReadyHint}
       active={agentFrameworkId === card.frameworkId}
       onSelect={() => requestSwitch(card.frameworkId)}
-      selectDisabled={isInstalling || isUninstalling}
+      selectDisabled={anyInstalling || isUninstalling}
       uninstallCommand={card.uninstallCommand}
       managed={card.managed}
       isUninstalling={isUninstalling && pendingUninstall === card.key}
       isDetecting={isDetectingAnyFramework}
       onUninstall={() => setPendingUninstall(card.key)}
       installSources={card.installSources}
-      installing={isInstalling && installTarget === card.key}
-      installRunning={isInstalling}
-      installDisabled={isInstalling || isUninstalling}
-      installLogs={installTarget === card.key ? installLogs : []}
-      installProgress={installTarget === card.key ? installProgress : null}
-      installError={installTarget === card.key ? installError : undefined}
+      installing={card.install.isInstalling}
+      installRunning={anyInstalling}
+      installDisabled={anyInstalling || isUninstalling}
+      installLogs={card.install.installLogs}
+      installProgress={card.install.installProgress}
+      installError={card.install.installError}
       npmAvailable={npmAvailable}
-      onInstall={(source) => {
-        setInstallTarget(card.key)
-        card.onInstall(source)
-      }}
+      onInstall={(source) => card.onInstall(source)}
     />
   )
 
@@ -685,15 +697,58 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
 
   const handleTest = async (provider: ProviderView): Promise<void> => {
     setBusyProviderId(provider.id)
+    setProviderTestError(undefined)
 
     try {
       // The pass/fail result is reflected on the provider's card (green check or warning), not as a
       // separate status line.
       await validateProvider({ providerId: provider.id })
+    } catch (error) {
+      setProviderTestError(
+        error instanceof Error ? error.message : 'Could not test the provider connection.'
+      )
     } finally {
       setBusyProviderId(undefined)
     }
   }
+
+  // The explicit isolated sign-in: opens the browser login and records the outcome on the provider,
+  // so the card flips to verified (or shows the failure reason) when the flow settles. Infrastructure
+  // failures (adapter spawn, IPC) surface through the same error line a failed test uses.
+  const handleCodexLogin = async (): Promise<void> => {
+    setIsCodexLoginPending(true)
+    setProviderTestError(undefined)
+
+    try {
+      await loginIsolatedCodex()
+    } catch (error) {
+      setProviderTestError(error instanceof Error ? error.message : 'Could not sign in to Codex.')
+    } finally {
+      setIsCodexLoginPending(false)
+    }
+  }
+
+  const handleCodexLogout = async (): Promise<void> => {
+    setProviderTestError(undefined)
+
+    try {
+      const result = await logoutIsolatedCodex()
+      // A timeout or other failure leaves the credential in place; surface the reason so the user
+      // knows to retry rather than assuming they are signed out.
+      if (!result.ok) {
+        setProviderTestError(result.message ?? 'Codex sign-out did not complete. Try again.')
+      }
+    } catch (error) {
+      setProviderTestError(error instanceof Error ? error.message : 'Could not sign out of Codex.')
+    }
+  }
+
+  // A pending sign-in lives in the main process for up to five minutes — outliving this dialog, which
+  // stays mounted (only its `open` flag flips). Closing Settings mid-flow would orphan the flow (no
+  // cancel affordance on reopen), so tear it down together with the dialog.
+  useEffect(() => {
+    if (!open && isCodexLoginPending) void cancelCodexLogin()
+  }, [open, isCodexLoginPending, cancelCodexLogin])
 
   return (
     <Dialog.Root open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
@@ -953,7 +1008,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                           variant="outline"
                           size="sm"
                           onClick={handleDetectAllFrameworks}
-                          disabled={isDetectingAnyFramework || isInstalling || isUninstalling}
+                          disabled={isDetectingAnyFramework || anyInstalling || isUninstalling}
                         >
                           <RefreshCw
                             className={isDetectingAnyFramework ? 'animate-spin' : ''}
@@ -1022,6 +1077,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                       isRefreshingModels={isRefreshingModels}
                       disabled={isSaving}
                       encryptionAvailable={encryptionAvailable}
+                      showCodexSubscriptions={
+                        agentFrameworkId === 'codex' && editingProvider === undefined
+                      }
                     />
                     {statusMessage ? (
                       <p
@@ -1044,7 +1102,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                   <div className="space-y-5 p-5">
                     {/* Active model is its own section so the current selection reads separately
                         from provider management. */}
-                    {providers.length > 0 ? (
+                    {visibleProviders.length > 0 ? (
                       <SettingsSection
                         title="Active model"
                         aria-label="Active model"
@@ -1056,21 +1114,39 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                       </SettingsSection>
                     ) : null}
 
-                    {/* The add action lives with the list: a dashed ghost row appended after the
-                        last provider, matching the Available-group placeholder treatment. */}
+                    {/* Model-level generation tuning; always visible, unlike the Active model
+                        section above which needs at least one provider. */}
                     <SettingsSection
-                      title="Providers"
-                      aria-label="Providers"
-                      separated={providers.length > 0}
+                      title="Reasoning effort"
+                      aria-label="Reasoning effort"
+                      description="Higher levels think longer, lower levels respond faster. Applies to subsequent requests."
+                      separated={visibleProviders.length > 0}
                     >
+                      <div className="max-w-md">
+                        <ReasoningEffortSelect />
+                      </div>
+                    </SettingsSection>
+
+                    <SettingsSection title="Providers" aria-label="Providers" separated>
                       <ProviderList
-                        providers={providers}
+                        providers={visibleProviders}
                         activeProviderId={activeProviderId}
                         busyProviderId={busyProviderId}
                         onEdit={openEdit}
                         onDelete={(provider) => void deleteProvider(provider.id)}
                         onTest={(provider) => void handleTest(provider)}
+                        isCodexLoginPending={isCodexLoginPending}
+                        onCancelCodexLogin={() => void cancelCodexLogin()}
+                        onLoginIsolatedCodex={() => void handleCodexLogin()}
+                        onLogoutIsolatedCodex={() => void handleCodexLogout()}
                       />
+                      {providerTestError ? (
+                        <p className="mt-2 text-sm text-destructive" role="alert">
+                          {providerTestError}
+                        </p>
+                      ) : null}
+                      {/* The add action lives with the list: a dashed ghost row appended after the
+                          last provider, matching the Available-group placeholder treatment. */}
                       <button
                         type="button"
                         onClick={openCreate}

@@ -1,9 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
   packId,
+  PACK_PATH_BUDGET_FILE,
   parseManifest,
+  pathBudgetForPack,
   resolvePack,
   SUPPORTED_SCHEMA,
   verifyPackChecksum
@@ -26,6 +28,7 @@ type FetchBundleFn = (
 export type BundleDirDeps = {
   resourcesPath?: string
   override?: string
+  subdir?: string
 }
 
 // Resolves the packaged default-env bundle directory (per-pack manifest + self-contained
@@ -54,7 +57,11 @@ export const resolveBundleDir = (deps: BundleDirDeps = {}): string | undefined =
 // pkgs cache. Returns undefined when the manifest/archive is missing or incomplete so the caller can
 // try the next source and ultimately fail closed.
 export const createLocalBundleAdapter =
-  (root: string, bundleDir: string | undefined): FetchBundleFn =>
+  (
+    root: string,
+    bundleDir: string | undefined,
+    deps: Pick<BundleDirDeps, 'subdir'> = {}
+  ): FetchBundleFn =>
   async (spec, version, onProgress) => {
     if (!bundleDir) return undefined
     const manifestPath = join(bundleDir, 'manifest.json')
@@ -67,7 +74,7 @@ export const createLocalBundleAdapter =
         if (
           manifest.schema !== SUPPORTED_SCHEMA ||
           manifest.envVersion !== version ||
-          manifest.subdir !== runtimeSubdir()
+          manifest.subdir !== (deps.subdir ?? runtimeSubdir())
         )
           return undefined
         const entry = resolvePack(manifest, spec.language, spec.version)
@@ -95,11 +102,19 @@ export const createLocalBundleAdapter =
           })
         })
         if (entries.length === 0) return undefined
-        return { lockPath }
+        const pathBudget = pathBudgetForPack(entry)
+        if (manifest.subdir === 'win-64' && !pathBudget) {
+          rmSync(packDir, { recursive: true, force: true })
+          return undefined
+        }
+        if (pathBudget) {
+          writeFileSync(join(packDir, PACK_PATH_BUDGET_FILE), `${JSON.stringify(pathBudget)}\n`)
+        }
+        return { lockPath, pathBudget }
       } catch {
         // A malformed or stale local bundle is not authoritative. Let the next adapter (CDN) try
         // the same pack instead of turning a local residue into the final provisioning error.
-        rmSync(runtimePackDir(root, version, runtimeSubdir(), packName), {
+        rmSync(runtimePackDir(root, version, deps.subdir ?? runtimeSubdir(), packName), {
           recursive: true,
           force: true
         })

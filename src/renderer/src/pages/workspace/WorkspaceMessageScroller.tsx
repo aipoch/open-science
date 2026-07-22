@@ -29,9 +29,14 @@ import { createConversationItems } from './workspace-conversation-items'
 import { groupConversationItems } from './workspace-tool-activity-groups'
 import type { ActivityExpansionOverrides } from './workspace-tool-activity-groups'
 import type { GoToTranscriptIntent, ReviewWithChecks } from '../../../../shared/reviewer'
+import type { ComposerDoc } from './composer/composer-doc'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
+  // Gates inline editing of sent user prompts; the handler truncates at the edited message and
+  // resends the adjusted doc as a fresh turn.
+  canEditMessage: boolean
+  onSendEditedMessage: (messageId: string, doc: ComposerDoc) => void
 }
 
 type SessionScopedActivityGroupState = {
@@ -94,7 +99,9 @@ const openSessionReviewer = (sessionId: string, intent: GoToTranscriptIntent): v
 
 // Owns transcript scrolling and session-scoped expansion state for activity groups.
 const WorkspaceMessageScroller = ({
-  activeSession
+  activeSession,
+  canEditMessage,
+  onSendEditedMessage
 }: WorkspaceMessageScrollerProps): React.JSX.Element => {
   const currentSessionId = activeSession?.id
   const getReviewForTurn = useReviewStore((state) => state.getReviewForTurn)
@@ -143,6 +150,18 @@ const WorkspaceMessageScroller = ({
       : {}
   const conversationItems = groupConversationItems(createConversationItems(activeSession))
   const showAgentLoadingMessage = shouldShowAgentLoadingMessage(activeSession)
+
+  // Counts the user turns after each message; the destructive-resend warning keys off turns, not
+  // raw message count, so a single follow-up turn stays warning-free.
+  const subsequentTurnCountByMessageId = new Map<string, number>()
+  if (activeSession) {
+    let subsequentTurns = 0
+    for (let index = activeSession.messages.length - 1; index >= 0; index -= 1) {
+      const message = activeSession.messages[index]
+      subsequentTurnCountByMessageId.set(message.id, subsequentTurns)
+      if (message.role === 'user') subsequentTurns += 1
+    }
+  }
 
   // Transient "no longer available" pill shown when a mention target can't be opened.
   const [mentionNotice, setMentionNotice] = useState<string | null>(null)
@@ -315,6 +334,9 @@ const WorkspaceMessageScroller = ({
                         onPreviewUploadAttachment={onPreviewUploadAttachment}
                         onOpenSkillMention={onOpenSkillMention}
                         onPreviewMentionArtifact={onPreviewMentionArtifact}
+                        canEditMessage={canEditMessage}
+                        onSendEditedMessage={onSendEditedMessage}
+                        subsequentTurns={subsequentTurnCountByMessageId.get(item.message.id) ?? 0}
                         artifacts={artifacts}
                       />
                       {review ? (

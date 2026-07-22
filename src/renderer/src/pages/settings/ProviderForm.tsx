@@ -42,6 +42,7 @@ type ProviderFormProps = {
   disabled?: boolean
   // Whether Electron can protect new keys with the operating system's secure storage.
   encryptionAvailable?: boolean
+  showCodexSubscriptions?: boolean
 }
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
@@ -88,6 +89,7 @@ const SUPPORTED_MODELS_HELP_CONTENT = (
 // Group headers shown in the provider-type dropdown, in display order. ('coding' is reserved for
 // subscription coding-plan endpoints once those are wired up.)
 const KIND_GROUPS: { id: ProviderKindGroup; label: string }[] = [
+  { id: 'coding', label: 'Codex subscription' },
   { id: 'api', label: 'Official API' },
   { id: 'other', label: 'Other' }
 ]
@@ -113,10 +115,12 @@ const ProviderForm = ({
   onRefreshModels,
   isRefreshingModels = false,
   disabled = false,
-  encryptionAvailable = true
+  encryptionAvailable = true,
+  showCodexSubscriptions = false
 }: ProviderFormProps): React.JSX.Element => {
   const isCustom = value.type === 'custom'
   const isOfficial = value.type === 'official'
+  const isCodexSubscription = value.type === 'codex-shared' || value.type === 'codex-isolated'
   const vendor = isOfficial && value.vendorId ? getOfficialVendor(value.vendorId) : undefined
 
   const selectedKey = selectedKindKey(value)
@@ -186,7 +190,10 @@ const ProviderForm = ({
           </SelectTrigger>
           <SelectContent>
             {KIND_GROUPS.map((group) => {
-              const kinds = PROVIDER_KINDS.filter((kind) => kind.group === group.id)
+              const kinds = PROVIDER_KINDS.filter(
+                (kind) =>
+                  kind.group === group.id && (group.id !== 'coding' || showCodexSubscriptions)
+              )
 
               if (kinds.length === 0) return null
 
@@ -209,21 +216,53 @@ const ProviderForm = ({
         </Select>
       </div>
 
-      <div className="space-y-1.5">
-        <label className={fieldLabelClassName} htmlFor="provider-name">
-          Name
-        </label>
-        <Input
-          id="provider-name"
-          aria-label="Provider name"
-          value={value.name}
-          disabled={disabled}
-          placeholder={vendor ? vendor.label : isCustom ? 'e.g. My gateway' : 'e.g. Local Claude'}
-          onChange={(event) => onChange({ name: event.target.value })}
-        />
-      </div>
+      {!isCodexSubscription ? (
+        <div className="space-y-1.5">
+          <label className={fieldLabelClassName} htmlFor="provider-name">
+            Name
+          </label>
+          <Input
+            id="provider-name"
+            aria-label="Provider name"
+            value={value.name}
+            disabled={disabled}
+            placeholder={vendor ? vendor.label : isCustom ? 'e.g. My gateway' : 'e.g. Local Claude'}
+            onChange={(event) => onChange({ name: event.target.value })}
+          />
+        </div>
+      ) : null}
 
-      {isCustom ? (
+      {isCodexSubscription ? (
+        <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
+          <div className="space-y-1.5">
+            <span className={fieldLabelClassName}>Codex authentication</span>
+            <Select
+              value={value.type}
+              disabled={disabled}
+              onValueChange={(type) =>
+                onChange({ type: type as 'codex-shared' | 'codex-isolated' })
+              }
+            >
+              <SelectTrigger aria-label="Codex authentication" disabled={disabled}>
+                <span>
+                  {value.type === 'codex-shared'
+                    ? 'Use existing Codex profile'
+                    : 'Sign in with Open Science'}
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="codex-shared">Use existing Codex profile</SelectItem>
+                <SelectItem value="codex-isolated">Sign in with Open Science</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {value.type === 'codex-shared'
+              ? 'Uses the Codex profile in your user home directory. Authentication remains managed by Codex CLI.'
+              : 'Stores a separate Codex login in Open Science app data without changing your Codex CLI profile.'}
+          </p>
+        </div>
+      ) : isCustom ? (
         <>
           <div className="space-y-1.5">
             <div className="flex items-center gap-1">

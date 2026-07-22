@@ -2,14 +2,76 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   collapseRscript,
   defaultCandidatePaths,
+  defaultDiscoveryDeps,
   discoverInterpreters,
   type DiscoveryDeps
 } from './environment-discovery'
+
+describe('defaultDiscoveryDeps Windows conda R probes', () => {
+  it('activates the interpreter own conda prefix for version and jsonlite probes', async () => {
+    const prefix = 'C:\\Users\\HM\\OpenScience\\runtime\\envs\\default-r'
+    const interpreter = `${prefix}\\Lib\\R\\bin\\R.exe`
+    const exec = vi.fn(
+      async (
+        _file: string,
+        args: readonly string[],
+        options: { env?: NodeJS.ProcessEnv }
+      ): Promise<{ stdout: string; stderr: string }> => {
+        const expectedStart = [
+          prefix,
+          `${prefix}\\Library\\mingw-w64\\bin`,
+          `${prefix}\\Library\\usr\\bin`,
+          `${prefix}\\Library\\bin`,
+          `${prefix}\\Scripts`,
+          `${prefix}\\bin`
+        ].join(';')
+        expect(options.env?.PATH?.split(';').slice(0, 6).join(';')).toBe(expectedStart)
+        return args.includes('--version')
+          ? { stdout: '', stderr: 'R version 4.4.3 (2025-02-28 ucrt)' }
+          : { stdout: 'TRUE', stderr: '' }
+      }
+    )
+    const deps = defaultDiscoveryDeps('C:\\Users\\HM\\OpenScience\\runtime', undefined, {
+      platform: 'win32',
+      exec
+    })
+
+    await expect(deps.probeVersion(interpreter, 'r')).resolves.toBe('4.4.3')
+    await expect(deps.rRunnable(interpreter)).resolves.toBe(true)
+    expect(exec.mock.calls.map(([file]) => file)).toEqual([
+      interpreter,
+      `${prefix}\\Lib\\R\\bin\\Rscript.exe`
+    ])
+  })
+
+  it('does not inject conda activation into an external Windows R installation', async () => {
+    const interpreter = 'C:\\Program Files\\R\\R-4.4.3\\bin\\R.exe'
+    const exec = vi.fn(
+      async (
+        _file: string,
+        args: readonly string[],
+        options: { env?: NodeJS.ProcessEnv }
+      ): Promise<{ stdout: string; stderr: string }> => {
+        expect(options.env).toBeUndefined()
+        return args.includes('--version')
+          ? { stdout: '', stderr: 'R version 4.4.3 (2025-02-28 ucrt)' }
+          : { stdout: 'TRUE', stderr: '' }
+      }
+    )
+    const deps = defaultDiscoveryDeps('C:\\Users\\HM\\OpenScience\\runtime', undefined, {
+      platform: 'win32',
+      exec
+    })
+
+    await expect(deps.probeVersion(interpreter, 'r')).resolves.toBe('4.4.3')
+    await expect(deps.rRunnable(interpreter)).resolves.toBe(true)
+  })
+})
 
 // Orchestration-only test (real enumerators are injected): dedup by realpath, provenance
 // classification, and python-vs-r runnability. Uses fake paths so no real machine is touched.
@@ -108,6 +170,74 @@ describe('discoverInterpreters', () => {
     expect(found.map((f) => f.interpreterPath)).toEqual(paths)
     expect(found.map((f) => f.version)).toEqual(paths.map((_, i) => `3.${i}.0`))
   })
+
+  it('classifies Windows CRAN R installations as user-own', async () => {
+    // Windows CRAN R paths discovered via Program Files should be classified as 'user-own',
+    // not 'app-managed' or 'agent-created', since they're user-installed global interpreters.
+    const deps = makeDeps(
+      [
+        'C:\\Program Files\\R\\R-4.4.3\\bin\\x64\\R.exe',
+        'C:\\Program Files (x86)\\R\\R-4.2.0\\bin\\R.exe',
+        '/rt/envs/default-r/bin/R'
+      ],
+      {
+        versions: {
+          'C:\\Program Files\\R\\R-4.4.3\\bin\\x64\\R.exe': '4.4.3',
+          'C:\\Program Files (x86)\\R\\R-4.2.0\\bin\\R.exe': '4.2.0',
+          '/rt/envs/default-r/bin/R': '4.3.1'
+        },
+        rRunnable: {
+          'C:\\Program Files\\R\\R-4.4.3\\bin\\x64\\R.exe': true,
+          'C:\\Program Files (x86)\\R\\R-4.2.0\\bin\\R.exe': true,
+          '/rt/envs/default-r/bin/R': true
+        }
+      }
+    )
+    const found = await discoverInterpreters('r', deps)
+    const byId = Object.fromEntries(found.map((f) => [f.envId, f]))
+
+    expect(byId['C:\\Program Files\\R\\R-4.4.3\\bin\\x64\\R.exe'].provenance).toBe('user-own')
+    expect(byId['C:\\Program Files (x86)\\R\\R-4.2.0\\bin\\R.exe'].provenance).toBe('user-own')
+    expect(byId['/rt/envs/default-r/bin/R'].provenance).toBe('app-managed')
+  })
+
+  it('deduplicates when PATH and CRAN paths resolve to the same R installation', async () => {
+    // If a user adds "C:\Program Files\R\R-4.4.3\bin\x64" to PATH, both the PATH scan
+    // and the CRAN Program Files scan will find the same R.exe. Realpath dedup should
+    // collapse them into a single entry.
+    const deps = makeDeps(
+      [
+        '/usr/bin/R', // from PATH (symlink to CRAN install)
+        'C:\\Program Files\\R\\R-4.4.3\\bin\\x64\\R.exe', // from CRAN scan
+        '/rt/envs/default-r/bin/R' // app-managed
+      ],
+      {
+        versions: {
+          '/usr/bin/R': '4.4.3',
+          'C:\\Program Files\\R\\R-4.4.3\\bin\\x64\\R.exe': '4.4.3',
+          '/rt/envs/default-r/bin/R': '4.3.1'
+        },
+        rRunnable: {
+          '/usr/bin/R': true,
+          'C:\\Program Files\\R\\R-4.4.3\\bin\\x64\\R.exe': true,
+          '/rt/envs/default-r/bin/R': true
+        },
+        // PATH entry is a symlink to the CRAN install
+        realpath: {
+          '/usr/bin/R': 'C:\\Program Files\\R\\R-4.4.3\\bin\\x64\\R.exe'
+        }
+      }
+    )
+    const found = await discoverInterpreters('r', deps)
+
+    // Should have exactly 2 entries: one for the deduplicated CRAN R, one for app-managed
+    expect(found).toHaveLength(2)
+    const byId = Object.fromEntries(found.map((f) => [f.envId, f]))
+    // The deduplicated entry should use the canonical path
+    expect(byId['C:\\Program Files\\R\\R-4.4.3\\bin\\x64\\R.exe']).toBeDefined()
+    expect(byId['C:\\Program Files\\R\\R-4.4.3\\bin\\x64\\R.exe'].provenance).toBe('user-own')
+    expect(byId['/rt/envs/default-r/bin/R'].provenance).toBe('app-managed')
+  })
 })
 
 describe('collapseRscript', () => {
@@ -151,5 +281,152 @@ describe('defaultCandidatePaths (targeted enumeration)', () => {
     // The app default's Rscript sibling is collapsed (only its R remains).
     expect(paths).not.toContain(join(rPrefix, 'Rscript'))
     rmSync(root, { recursive: true, force: true })
+  })
+})
+
+describe('defaultCandidatePaths Windows CRAN R detection', () => {
+  it('discovers standard CRAN R installations in Program Files', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'os-cran-'))
+    const programFiles = join(root, 'Program Files', 'R')
+    const r443Dir = join(programFiles, 'R-4.4.3', 'bin', 'x64')
+    mkdirSync(r443Dir, { recursive: true })
+    writeFileSync(join(r443Dir, 'R.exe'), 'x')
+    writeFileSync(join(r443Dir, 'Rscript.exe'), 'x')
+
+    // Override env to point to our fake Program Files and mock Windows platform
+    const originalEnv = process.env.ProgramFiles
+    const originalPlatform = process.platform
+    process.env.ProgramFiles = join(root, 'Program Files')
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    try {
+      const paths = await defaultCandidatePaths(root)('r')
+      expect(paths).toContain(join(r443Dir, 'R.exe'))
+      expect(paths).not.toContain(join(r443Dir, 'Rscript.exe'))
+    } finally {
+      process.env.ProgramFiles = originalEnv
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('discovers multiple R versions and prefers 64-bit over fallback layout', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'os-multi-r-'))
+    const programFiles = join(root, 'Program Files', 'R')
+
+    // R 4.4.3 with 64-bit layout
+    const r443x64 = join(programFiles, 'R-4.4.3', 'bin', 'x64')
+    mkdirSync(r443x64, { recursive: true })
+    writeFileSync(join(r443x64, 'R.exe'), 'x')
+
+    // R 4.3.0 with fallback layout only
+    const r430bin = join(programFiles, 'R-4.3.0', 'bin')
+    mkdirSync(r430bin, { recursive: true })
+    writeFileSync(join(r430bin, 'R.exe'), 'x')
+
+    const originalEnv = process.env.ProgramFiles
+    const originalPlatform = process.platform
+    process.env.ProgramFiles = join(root, 'Program Files')
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    try {
+      const paths = await defaultCandidatePaths(root)('r')
+      expect(paths).toContain(join(r443x64, 'R.exe'))
+      expect(paths).toContain(join(r430bin, 'R.exe'))
+      expect(paths.length).toBeGreaterThanOrEqual(2)
+    } finally {
+      process.env.ProgramFiles = originalEnv
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('checks Program Files (x86) and LOCALAPPDATA for R installations', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'os-r-paths-'))
+    const programFilesx86 = join(root, 'Program Files (x86)', 'R')
+    const localAppData = join(root, 'AppData', 'Local', 'Programs', 'R')
+
+    // 32-bit R in Program Files (x86)
+    const r32bit = join(programFilesx86, 'R-4.2.0', 'bin')
+    mkdirSync(r32bit, { recursive: true })
+    writeFileSync(join(r32bit, 'R.exe'), 'x')
+
+    // User-local R in LOCALAPPDATA
+    const rLocal = join(localAppData, 'R-4.4.0', 'bin', 'x64')
+    mkdirSync(rLocal, { recursive: true })
+    writeFileSync(join(rLocal, 'R.exe'), 'x')
+
+    const original86 = process.env['ProgramFiles(x86)']
+    const originalLocal = process.env.LOCALAPPDATA
+    const originalPlatform = process.platform
+    process.env['ProgramFiles(x86)'] = join(root, 'Program Files (x86)')
+    process.env.LOCALAPPDATA = join(root, 'AppData', 'Local')
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    try {
+      const paths = await defaultCandidatePaths(root)('r')
+      expect(paths).toContain(join(r32bit, 'R.exe'))
+      expect(paths).toContain(join(rLocal, 'R.exe'))
+    } finally {
+      if (original86 !== undefined) process.env['ProgramFiles(x86)'] = original86
+      else delete process.env['ProgramFiles(x86)']
+      if (originalLocal !== undefined) process.env.LOCALAPPDATA = originalLocal
+      else delete process.env.LOCALAPPDATA
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('ignores non-versioned directories in R root', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'os-r-invalid-'))
+    const programFiles = join(root, 'Program Files', 'R')
+
+    // Valid R version
+    const rValid = join(programFiles, 'R-4.4.1', 'bin', 'x64')
+    mkdirSync(rValid, { recursive: true })
+    writeFileSync(join(rValid, 'R.exe'), 'x')
+
+    // Invalid directory names (should be skipped)
+    mkdirSync(join(programFiles, 'docs'), { recursive: true })
+    mkdirSync(join(programFiles, 'R-alpha'), { recursive: true })
+    mkdirSync(join(programFiles, '4.4.1'), { recursive: true })
+
+    const originalEnv = process.env.ProgramFiles
+    const originalPlatform = process.platform
+    process.env.ProgramFiles = join(root, 'Program Files')
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    try {
+      const paths = await defaultCandidatePaths(root)('r')
+      expect(paths).toContain(join(rValid, 'R.exe'))
+      expect(paths.filter((p) => p.includes('docs')).length).toBe(0)
+      expect(paths.filter((p) => p.includes('R-alpha')).length).toBe(0)
+    } finally {
+      process.env.ProgramFiles = originalEnv
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not run CRAN R detection for Python or on non-Windows platforms', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'os-no-r-'))
+    const programFiles = join(root, 'Program Files', 'R')
+    mkdirSync(join(programFiles, 'R-4.4.3', 'bin', 'x64'), { recursive: true })
+    writeFileSync(join(programFiles, 'R-4.4.3', 'bin', 'x64', 'R.exe'), 'x')
+
+    const originalEnv = process.env.ProgramFiles
+    const originalPlatform = process.platform
+    process.env.ProgramFiles = join(root, 'Program Files')
+    try {
+      // On Windows: Python should not scan R paths
+      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+      const pythonPaths = await defaultCandidatePaths(root)('python')
+      expect(pythonPaths.filter((p) => p.includes('R-4.4.3')).length).toBe(0)
+
+      // On non-Windows: R should not enumerate CRAN Program Files roots
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+      const rPaths = await defaultCandidatePaths(root)('r')
+      expect(rPaths.filter((p) => p.includes('R-4.4.3')).length).toBe(0)
+    } finally {
+      process.env.ProgramFiles = originalEnv
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })

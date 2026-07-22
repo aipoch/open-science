@@ -1,0 +1,343 @@
+import { spawn } from 'node:child_process'
+import { mkdir } from 'node:fs/promises'
+import { Readable, Writable } from 'node:stream'
+
+import * as acp from '@agentclientprotocol/sdk'
+
+import { codexSubscriptionStorageDir } from '../agent-framework/codex'
+import { terminateProcessTree } from '../process-tree'
+import { augmentedPathEnv } from './shell-path'
+
+export type CodexAuthMode = 'shared' | 'isolated'
+
+export type CodexAuthStatus = {
+  mode: CodexAuthMode
+  supported: boolean
+  authenticated: boolean
+  message?: string
+}
+
+type CodexAuthenticationStatus = {
+  type?: 'unauthenticated' | 'api-key' | 'chat-gpt' | 'gateway'
+  email?: string
+  name?: string
+}
+
+export type CodexAuthSession = {
+  initialize: () => Promise<{ authMethods?: { id: string }[] }>
+  status: () => Promise<CodexAuthenticationStatus>
+  authenticateChatGpt: () => Promise<void>
+  logout: () => Promise<void>
+  close: () => Promise<void>
+}
+
+export type CodexAuthLaunch = {
+  adapterPath: string
+  nativePath?: string
+  mode: CodexAuthMode
+  storageRoot: string
+}
+
+type CodexAuthControllerOptions = {
+  openSession: (mode: CodexAuthMode) => Promise<CodexAuthSession>
+  loginTimeoutMs?: number
+  // Bounds the read-only status check (open + initialize + status). Unlike the browser login this
+  // never waits on a human, so a much shorter deadline keeps a stalled adapter from hanging save/test
+  // indefinitely.
+  statusTimeoutMs?: number
+}
+
+const CODEX_ENV_KEYS = [
+  'CODEX_API_KEY',
+  'OPENAI_API_KEY',
+  'CODEX_CONFIG',
+  'CODEX_HOME',
+  'CODEX_PATH',
+  'MODEL_PROVIDER',
+  'DEFAULT_AUTH_REQUEST',
+  'NO_BROWSER'
+] as const
+
+export const createCodexAuthEnvironment = (
+  mode: CodexAuthMode,
+  storageRoot: string,
+  sourceEnv: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv => {
+  const env = augmentedPathEnv(sourceEnv)
+  for (const key of CODEX_ENV_KEYS) delete env[key]
+
+  if (mode === 'isolated') env.CODEX_HOME = codexSubscriptionStorageDir(storageRoot)
+  return env
+}
+
+const abortError = (message: string): Error => {
+  const error = new Error(message)
+  error.name = 'AbortError'
+  return error
+}
+
+const waitForAbort = (signal: AbortSignal): Promise<never> =>
+  new Promise((_, reject) => {
+    if (signal.aborted) {
+      reject(abortError(String(signal.reason ?? 'cancelled')))
+      return
+    }
+    signal.addEventListener(
+      'abort',
+      () => reject(abortError(String(signal.reason ?? 'cancelled'))),
+      { once: true }
+    )
+  })
+
+const waitForOperation = <Value>(operation: Promise<Value>, signal: AbortSignal): Promise<Value> =>
+  Promise.race([operation, waitForAbort(signal)])
+
+const capabilityFailure = (mode: CodexAuthMode): CodexAuthStatus => ({
+  mode,
+  supported: false,
+  authenticated: false,
+  message: 'The installed codex-acp does not advertise ChatGPT authentication.'
+})
+
+// Any stored credential counts as authenticated, not just a ChatGPT login: a profile holding an
+// API key (or gateway auth) runs fine at runtime, so reporting it as signed out would be a false
+// negative that blocks an otherwise working provider.
+const isAuthenticated = (status: CodexAuthenticationStatus): boolean =>
+  status.type === 'chat-gpt' || status.type === 'api-key' || status.type === 'gateway'
+
+const toPublicStatus = (
+  mode: CodexAuthMode,
+  supported: boolean,
+  status: CodexAuthenticationStatus
+): CodexAuthStatus =>
+  supported
+    ? {
+        mode,
+        supported: true,
+        authenticated: isAuthenticated(status)
+      }
+    : capabilityFailure(mode)
+
+export class CodexAuthController {
+  private readonly openSession: (mode: CodexAuthMode) => Promise<CodexAuthSession>
+  private readonly loginTimeoutMs: number
+  private readonly statusTimeoutMs: number
+  private activeLogin: AbortController | undefined
+
+  constructor(options: CodexAuthControllerOptions) {
+    this.openSession = options.openSession
+    this.loginTimeoutMs = options.loginTimeoutMs ?? 5 * 60_000
+    this.statusTimeoutMs = options.statusTimeoutMs ?? 30_000
+  }
+
+  // Runs an adapter interaction against a freshly opened session under a hard deadline, so every
+  // status/login/logout round-trip fails closed rather than hanging on a stalled codex-acp. Owns the
+  // full lifecycle: open (racing the deadline), late-close of a session that only arrives after the
+  // abort, timeout, and teardown. The caller supplies the AbortController so it can register it
+  // synchronously before any await (loginIsolated stores it in activeLogin, before this async helper
+  // is even entered, so its re-entrancy guard cannot race); `onAborted` maps a timeout/cancel into a
+  // result, and `onSettled` runs in the finally for caller-side teardown (clearing activeLogin).
+  private async withBoundedSession(
+    mode: CodexAuthMode,
+    timeoutMs: number,
+    run: (session: CodexAuthSession, signal: AbortSignal) => Promise<CodexAuthStatus>,
+    onAborted: (reason: unknown) => CodexAuthStatus,
+    abort: AbortController = new AbortController(),
+    onSettled?: () => void
+  ): Promise<CodexAuthStatus> {
+    const timeout = setTimeout(() => abort.abort('timeout'), timeoutMs)
+    let authSession: CodexAuthSession | undefined
+
+    try {
+      const sessionPromise = this.openSession(mode)
+      void sessionPromise
+        .then(async (session) => {
+          if (abort.signal.aborted && authSession !== session) await session.close()
+        })
+        .catch(() => undefined)
+      authSession = await waitForOperation(sessionPromise, abort.signal)
+      return await run(authSession, abort.signal)
+    } catch (error) {
+      if (abort.signal.aborted) return onAborted(abort.signal.reason)
+      throw error
+    } finally {
+      clearTimeout(timeout)
+      onSettled?.()
+      await authSession?.close()
+    }
+  }
+
+  async getStatus(mode: CodexAuthMode): Promise<CodexAuthStatus> {
+    return this.withBoundedSession(
+      mode,
+      this.statusTimeoutMs,
+      async (session, signal) => {
+        const initialized = await waitForOperation(session.initialize(), signal)
+        const supported = initialized.authMethods?.some((method) => method.id === 'chat-gpt') ?? false
+
+        // Read the live status regardless of the advertised methods: an adapter can hold a usable
+        // api-key/gateway credential without offering ChatGPT login, and that profile is
+        // authenticated. Only when the profile is signed out AND ChatGPT login is unavailable is there
+        // nothing to do — that is the genuine capability failure.
+        const status = await waitForOperation(session.status(), signal)
+        if (isAuthenticated(status)) return toPublicStatus(mode, true, status)
+        if (!supported) return capabilityFailure(mode)
+
+        return toPublicStatus(mode, true, status)
+      },
+      () => ({ mode, supported: true, authenticated: false, message: 'Codex status check timed out.' })
+    )
+  }
+
+  async loginIsolated(): Promise<CodexAuthStatus> {
+    if (this.activeLogin) {
+      return {
+        mode: 'isolated',
+        supported: true,
+        authenticated: false,
+        message: 'A Codex sign-in is already in progress.'
+      }
+    }
+
+    // Claim the in-progress slot synchronously, in the same tick as the guard above and before the
+    // async helper is entered, so two rapid calls cannot both pass the guard and open two browser
+    // sign-ins. cancelLogin aborts this same controller; onSettled clears the slot on teardown.
+    const abort = new AbortController()
+    this.activeLogin = abort
+
+    return this.withBoundedSession(
+      'isolated',
+      this.loginTimeoutMs,
+      async (session, signal) => {
+        const initialized = await waitForOperation(session.initialize(), signal)
+        const supported = initialized.authMethods?.some((method) => method.id === 'chat-gpt') ?? false
+
+        // Read credential status before the capability gate, mirroring getStatus. An api-key/gateway
+        // credential already in the app-managed isolated home is exactly what the runtime would use,
+        // so any usable credential short-circuits the browser flow — even on a build that never
+        // advertises chat-gpt. Only a signed-out profile on such a build has nothing to do.
+        const current = await waitForOperation(session.status(), signal)
+        if (!isAuthenticated(current)) {
+          if (!supported) return capabilityFailure('isolated')
+          await waitForOperation(session.authenticateChatGpt(), signal)
+        }
+
+        return toPublicStatus('isolated', true, await waitForOperation(session.status(), signal))
+      },
+      (reason) => ({
+        mode: 'isolated',
+        supported: true,
+        authenticated: false,
+        message:
+          reason === 'timeout'
+            ? 'Codex sign-in timed out after five minutes.'
+            : 'Codex sign-in was cancelled.'
+      }),
+      abort,
+      () => {
+        this.activeLogin = undefined
+      }
+    )
+  }
+
+  cancelLogin(): void {
+    this.activeLogin?.abort('cancelled')
+  }
+
+  async logoutIsolated(): Promise<CodexAuthStatus> {
+    // Bounded like the reads: logout is user-triggered from Settings and now issues its own status
+    // round-trip, so a stalled adapter must fail closed here too rather than freeze sign-out.
+    return this.withBoundedSession(
+      'isolated',
+      this.statusTimeoutMs,
+      async (session, signal) => {
+        const initialized = await waitForOperation(session.initialize(), signal)
+        const supported = initialized.authMethods?.some((method) => method.id === 'chat-gpt') ?? false
+
+        // Clear whatever credential the isolated home holds, mirroring getStatus/loginIsolated: an
+        // api-key/gateway login must be sign-out-able even on a build that never advertises chat-gpt.
+        // Only a signed-out profile on such a build has nothing to clear — the capability failure.
+        const current = await waitForOperation(session.status(), signal)
+        if (!isAuthenticated(current) && !supported) return capabilityFailure('isolated')
+
+        await waitForOperation(session.logout(), signal)
+        return { mode: 'isolated', supported: true, authenticated: false }
+      },
+      () => ({
+        mode: 'isolated',
+        supported: true,
+        authenticated: false,
+        message: 'Codex sign-out timed out.'
+      })
+    )
+  }
+}
+
+export type CodexAuthControllerPort = Pick<
+  CodexAuthController,
+  'getStatus' | 'loginIsolated' | 'cancelLogin' | 'logoutIsolated'
+>
+
+// An auth session spawns Codex with CODEX_HOME pointed at the isolated home — which may not exist
+// yet before the first sign-in, and Codex exits hard when CODEX_HOME is missing (a fatal error on
+// Windows in particular). Runtime chat spawns get the same guarantee from the skill materializer;
+// auth sessions create it here. Shared mode touches nothing: it uses the user's real ~/.codex.
+export const ensureCodexAuthHome = async (
+  mode: CodexAuthMode,
+  storageRoot: string
+): Promise<void> => {
+  if (mode === 'isolated')
+    await mkdir(codexSubscriptionStorageDir(storageRoot), { recursive: true })
+}
+
+export const openCodexAuthSession = async ({
+  adapterPath,
+  nativePath,
+  mode,
+  storageRoot
+}: CodexAuthLaunch): Promise<CodexAuthSession> => {
+  await ensureCodexAuthHome(mode, storageRoot)
+
+  const isJavaScript = /\.[cm]?js$/i.test(adapterPath)
+  const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(adapterPath)
+  const command = isJavaScript ? process.execPath : needsShell ? `"${adapterPath}"` : adapterPath
+  const args = isJavaScript ? [adapterPath] : []
+  const env = createCodexAuthEnvironment(mode, storageRoot)
+  if (isJavaScript) env.ELECTRON_RUN_AS_NODE = '1'
+  if (nativePath) env.CODEX_PATH = nativePath
+
+  const child = spawn(command, args, {
+    env,
+    shell: needsShell,
+    stdio: 'pipe',
+    windowsHide: true
+  })
+  const stream = acp.ndJsonStream(
+    Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
+    Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>
+  )
+  const connection = acp.client({ name: 'open-science-auth' }).connect(stream)
+
+  return {
+    initialize: () =>
+      connection.agent.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientInfo: { name: 'open-science-auth', version: '0.0.0' },
+        clientCapabilities: {}
+      }),
+    status: () => connection.agent.request<CodexAuthenticationStatus>('authentication/status', {}),
+    authenticateChatGpt: () =>
+      connection.agent
+        .request(acp.methods.agent.authenticate, { methodId: 'chat-gpt' })
+        .then(() => undefined),
+    logout: () =>
+      connection.agent
+        .request<Record<string, never>>('authentication/logout', {})
+        .then(() => undefined),
+    close: async () => {
+      connection.close()
+      child.stdin.end()
+      await terminateProcessTree(child)
+    }
+  }
+}

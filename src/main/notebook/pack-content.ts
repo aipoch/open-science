@@ -3,6 +3,8 @@ import { join } from 'node:path'
 
 import { pkgsCache } from './runtime-paths'
 import { md5File } from './provisioner-runtime'
+import { micromambaCacheLockKey } from './micromamba-cache'
+import { withExclusiveCacheLock } from './pkgs-cache-lock'
 
 export type LockPackage = { file: string; md5: string }
 
@@ -39,28 +41,33 @@ export const validateAndSeedPack = async (
   const cache = pkgsCache(root)
   await mkdir(cache, { recursive: true })
 
-  for (const [index, entry] of entries.entries()) {
-    if (!present.has(entry.file)) {
-      throw new Error(`runtime pack is missing lock tarball ${entry.file}`)
-    }
-    const source = join(packDir, entry.file)
-    const sourceStat = await stat(source)
-    if (!sourceStat.isFile() || (await md5File(source)).toLowerCase() !== entry.md5.toLowerCase()) {
-      throw new Error(`runtime pack tarball failed md5 verification: ${entry.file}`)
-    }
+  await withExclusiveCacheLock(micromambaCacheLockKey(cache), async () => {
+    for (const [index, entry] of entries.entries()) {
+      if (!present.has(entry.file)) {
+        throw new Error(`runtime pack is missing lock tarball ${entry.file}`)
+      }
+      const source = join(packDir, entry.file)
+      const sourceStat = await stat(source)
+      if (
+        !sourceStat.isFile() ||
+        (await md5File(source)).toLowerCase() !== entry.md5.toLowerCase()
+      ) {
+        throw new Error(`runtime pack tarball failed md5 verification: ${entry.file}`)
+      }
 
-    const destination = join(cache, entry.file)
-    let destinationValid = false
-    try {
-      const destinationStat = await stat(destination)
-      destinationValid =
-        destinationStat.isFile() &&
-        (await md5File(destination)).toLowerCase() === entry.md5.toLowerCase()
-    } catch {
-      destinationValid = false
+      const destination = join(cache, entry.file)
+      let destinationValid = false
+      try {
+        const destinationStat = await stat(destination)
+        destinationValid =
+          destinationStat.isFile() &&
+          (await md5File(destination)).toLowerCase() === entry.md5.toLowerCase()
+      } catch {
+        destinationValid = false
+      }
+      if (!destinationValid) await copyFile(source, destination)
+      onProgress?.(index + 1, entries.length)
     }
-    if (!destinationValid) await copyFile(source, destination)
-    onProgress?.(index + 1, entries.length)
-  }
+  })
   return entries
 }

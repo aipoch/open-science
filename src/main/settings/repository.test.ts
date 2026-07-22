@@ -32,6 +32,25 @@ afterEach(async () => {
 })
 
 describe('settings repository', () => {
+  it('migrates two legacy Codex subscription cards into one active-mode provider', () => {
+    const settings = sanitizeSettings({
+      activeProviderId: 'builtin-codex-isolated',
+      providers: [
+        { id: 'builtin-codex-shared', type: 'codex-shared', name: 'Existing Codex profile' },
+        { id: 'builtin-codex-isolated', type: 'codex-isolated', name: 'Open Science Codex login' }
+      ]
+    })
+
+    expect(settings.providers).toEqual([
+      expect.objectContaining({
+        id: 'builtin-codex-subscription',
+        type: 'codex-isolated',
+        name: 'Codex subscription'
+      })
+    ])
+    expect(settings.activeProviderId).toBe('builtin-codex-subscription')
+  })
+
   it('returns empty settings when nothing is stored yet', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 
@@ -67,6 +86,33 @@ describe('settings repository', () => {
     expect(settings.agentFrameworkId).toBe('opencode')
     expect(settings.opencodePath).toBe('/usr/local/bin/opencode')
     expect(settings.opencodeVersion).toBe('1.18.3')
+  })
+
+  it('persists the reasoning effort across a sanitized read and a reload', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.setReasoningEffort('high')
+
+    // sanitizeSettings must not strip the level on read-back, or the selector can never switch.
+    expect((await repository.getSettings()).reasoningEffort).toBe('high')
+
+    // A fresh repository on the same storage dir models an app restart: the level is read back.
+    const reloaded = await new SettingsRepository(root).getSettings()
+    expect(reloaded.reasoningEffort).toBe('high')
+  })
+
+  it.each(['default', 'low', 'medium', 'high', 'max'] as const)(
+    'keeps the %s reasoning effort on load',
+    (effort) => {
+      expect(sanitizeSettings({ reasoningEffort: effort }).reasoningEffort).toBe(effort)
+    }
+  )
+
+  it('drops an unknown reasoning effort on load', () => {
+    expect(sanitizeSettings({ reasoningEffort: 'ultra' }).reasoningEffort).toBeUndefined()
+    expect(sanitizeSettings({ reasoningEffort: 42 }).reasoningEffort).toBeUndefined()
+    expect(sanitizeSettings({}).reasoningEffort).toBeUndefined()
   })
 
   it('persists the Codex adapter and paired native runtime across a sanitized read', async () => {
@@ -185,6 +231,28 @@ describe('settings repository', () => {
       category: 'auth',
       status: 401,
       message: 'nope'
+    })
+  })
+
+  it('round-trips an incompatible validation failure across a reload', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.upsertProvider(
+      provider({
+        lastValidationFailure: {
+          at: 1717000000000,
+          category: 'incompatible',
+          message: 'Not compatible with Claude Code: it needs /v1/messages.'
+        }
+      })
+    )
+
+    const reloaded = await new SettingsRepository(root).getSettings()
+    expect(reloaded.providers[0].lastValidationFailure).toEqual({
+      at: 1717000000000,
+      category: 'incompatible',
+      message: 'Not compatible with Claude Code: it needs /v1/messages.'
     })
   })
 

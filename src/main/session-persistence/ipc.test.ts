@@ -1,8 +1,28 @@
-import { describe, expect, expectTypeOf, it, vi } from 'vitest'
+import { beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { ReviewRepository } from '../reviewer/repository'
-import { createSessionPersistenceHandlers, type SessionPersistenceBackend } from './ipc'
+
+const { ipcHandlers } = vi.hoisted(() => ({
+  ipcHandlers: new Map<string, (...args: unknown[]) => unknown>()
+}))
+
+vi.mock('electron', () => ({
+  ipcMain: {
+    handle: (channel: string, handler: (...args: unknown[]) => unknown) =>
+      ipcHandlers.set(channel, handler)
+  }
+}))
+
+import {
+  createSessionPersistenceHandlers,
+  registerSessionPersistenceIpcHandlers,
+  type SessionPersistenceBackend
+} from './ipc'
+
+beforeEach(() => {
+  ipcHandlers.clear()
+})
 
 const createSession = (): PersistedChatSession => ({
   id: 'session-1',
@@ -103,5 +123,38 @@ describe('session persistence IPC handlers', () => {
     await handlers.deleteSession({ projectId: 'project-a', sessionId: 'session-1' })
 
     expect(order).toEqual(['session', 'reviews'])
+  })
+
+  it('registers each persistence channel and forwards renderer requests', async () => {
+    const session = createSession()
+    const loadResult = { sessions: [session], manifest: { version: 1 as const } }
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn().mockResolvedValue(loadResult),
+      saveSession: vi.fn().mockResolvedValue(undefined),
+      deleteSession: vi.fn().mockResolvedValue(undefined),
+      deleteProjectSessions: vi.fn().mockResolvedValue(undefined),
+      saveManifest: vi.fn().mockResolvedValue(undefined)
+    }
+    const reviewRepository = createMockReviewRepository()
+    registerSessionPersistenceIpcHandlers(repository, reviewRepository)
+
+    expect([...ipcHandlers.keys()]).toEqual([
+      'sessions:load-all',
+      'sessions:save-session',
+      'sessions:delete-session',
+      'sessions:save-manifest'
+    ])
+
+    const deleteRequest = { projectId: 'project-a', sessionId: 'session-1' }
+    const manifestRequest = { lastProjectId: 'project-a', lastSessionId: 'session-1' }
+    await expect(ipcHandlers.get('sessions:load-all')?.()).resolves.toBe(loadResult)
+    await ipcHandlers.get('sessions:save-session')?.(undefined, session)
+    await ipcHandlers.get('sessions:delete-session')?.(undefined, deleteRequest)
+    await ipcHandlers.get('sessions:save-manifest')?.(undefined, manifestRequest)
+
+    expect(repository.saveSession).toHaveBeenCalledWith(session)
+    expect(repository.deleteSession).toHaveBeenCalledWith('project-a', 'session-1')
+    expect(reviewRepository.deleteReviewsForSession).toHaveBeenCalledWith('session-1')
+    expect(repository.saveManifest).toHaveBeenCalledWith(manifestRequest)
   })
 })

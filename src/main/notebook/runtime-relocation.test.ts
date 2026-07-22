@@ -53,6 +53,7 @@ describe('exportRuntimeLocks', () => {
     // Each env is exported against its own prefix.
     expect(capture).toHaveBeenCalledWith([
       '/mm',
+      '--no-rc',
       'list',
       '--prefix',
       envPrefix(runtimeRoot(from), 'default-python'),

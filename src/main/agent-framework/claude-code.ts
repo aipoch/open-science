@@ -25,6 +25,9 @@ export const claudeCodeFramework: AgentFramework = {
   supportsSkills: true,
   // Claude launches stdio MCP servers directly — the app's artifact/notebook tooling relies on this.
   acceptsStdioMcp: true,
+  // The adapter advertises an `effort` select (category thought_level) and applies changes to live
+  // sessions via applyFlagSettings — no respawn needed.
+  supportsLiveEffortChange: true,
   // Claude Code speaks only Anthropic /v1/messages.
   supportedApiTypes: ['anthropic'],
 

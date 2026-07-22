@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { delimiter, dirname, join, win32 } from 'node:path'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 
@@ -140,6 +141,30 @@ export const rScriptBin = (prefix: string): string =>
 export const rLibraryDir = (prefix: string): string =>
   isWindows() ? join(prefix, 'Lib', 'R', 'library') : join(prefix, 'lib', 'R', 'library')
 
+// Conda activation prepends more than <prefix>\bin on Windows. Native R links BLAS/LAPACK and other
+// runtime DLLs from Library\bin, so starting R.exe with the host PATH alone fails with 0xC0000135.
+// Keep the order aligned with conda's Windows activator; POSIX retains the existing <prefix>/bin
+// behavior. Platform is injectable so the exact Windows contract is testable on non-Windows hosts.
+export const condaActivatedPath = (
+  prefix: string,
+  inheritedPath = '',
+  platform: NodeJS.Platform = process.platform
+): string => {
+  const entries =
+    platform === 'win32'
+      ? [
+          win32.normalize(prefix),
+          win32.join(prefix, 'Library', 'mingw-w64', 'bin'),
+          win32.join(prefix, 'Library', 'usr', 'bin'),
+          win32.join(prefix, 'Library', 'bin'),
+          win32.join(prefix, 'Scripts'),
+          win32.join(prefix, 'bin')
+        ]
+      : [join(prefix, 'bin')]
+  if (inheritedPath) entries.push(inheritedPath)
+  return entries.join(platform === 'win32' ? ';' : delimiter)
+}
+
 // <root>/.env-ready — the JSON readiness marker written after a successful provision.
 export const readyMarkerPath = (root: string): string => join(root, '.env-ready')
 export const rReadyMarkerPath = (root: string): string => join(root, '.r-env-ready')
@@ -162,12 +187,20 @@ export const readReadyMarker = (root: string): EnvReadyMarker | undefined => {
   }
 }
 
+// Atomically writes a ready marker (temp file + rename) so a crash mid-write can never leave a torn
+// marker that reads as neither present-and-valid nor absent — the restore path treats a marker write as
+// a commit point, so it must be all-or-nothing. Throws on failure (the caller decides whether that means
+// "keep the existing env" rather than rebuilding).
+const writeMarkerAtomic = (path: string, marker: EnvReadyMarker): void => {
+  mkdirSync(dirname(path), { recursive: true })
+  const temp = `${path}.${process.pid}-${randomUUID()}.tmp`
+  writeFileSync(temp, `${JSON.stringify(marker, null, 2)}\n`, 'utf8')
+  renameSync(temp, path)
+}
+
 // Writes .env-ready as pretty camelCase JSON, creating the runtime root if needed.
 export const writeReadyMarker = (root: string, version: number, preparedAt: string): void => {
-  const path = readyMarkerPath(root)
-  mkdirSync(dirname(path), { recursive: true })
-  const marker: EnvReadyMarker = { defaultEnvVersion: version, preparedAt }
-  writeFileSync(path, `${JSON.stringify(marker, null, 2)}\n`, 'utf8')
+  writeMarkerAtomic(readyMarkerPath(root), { defaultEnvVersion: version, preparedAt })
 }
 
 export const readRReadyMarker = (root: string): EnvReadyMarker | undefined => {
@@ -185,10 +218,7 @@ export const readRReadyMarker = (root: string): EnvReadyMarker | undefined => {
 }
 
 export const writeRReadyMarker = (root: string, version: number, preparedAt: string): void => {
-  const path = rReadyMarkerPath(root)
-  mkdirSync(dirname(path), { recursive: true })
-  const marker: EnvReadyMarker = { defaultEnvVersion: version, preparedAt }
-  writeFileSync(path, `${JSON.stringify(marker, null, 2)}\n`, 'utf8')
+  writeMarkerAtomic(rReadyMarkerPath(root), { defaultEnvVersion: version, preparedAt })
 }
 
 // True when a regular file exists at the path (mirrors Rust is_file()).

@@ -23,6 +23,11 @@ export type ResponsesBridgeTarget = {
   model?: string
   namespacedTools?: ResponsesBridgeNamespacedTool[]
   connectorInstructions?: ResponsesBridgeConnectorInstruction[]
+  // Forward reasoning.effort upstream as reasoning_effort ONLY when the user explicitly picked a
+  // level. Codex emits its own default effort even when the app never configured one, so
+  // unconditional forwarding would change what existing bridged users send to their gateway —
+  // and gateways fronting non-OpenAI models often reject unknown parameters.
+  forwardReasoningEffort?: boolean
 }
 
 export type ResponsesBridgeNamespacedTool = {
@@ -572,7 +577,8 @@ export const responsesToChatRequest = (
   body: JsonObject,
   upstreamModel?: string,
   reasoningByCallId?: Map<string, string>,
-  namespacedTools: readonly ResponsesBridgeNamespacedTool[] = []
+  namespacedTools: readonly ResponsesBridgeNamespacedTool[] = [],
+  options?: { forwardReasoningEffort?: boolean }
 ): JsonObject => {
   for (const field of UNSUPPORTED_FIELDS) {
     if (body[field] !== undefined && body[field] !== null) {
@@ -615,7 +621,8 @@ export const responsesToChatRequest = (
     ) {
       throw new Error(`Unsupported Responses reasoning summary: ${String(summary)}`)
     }
-    // These known Codex preferences have no portable Chat Completions equivalent and are omitted.
+    // The summary preference has no portable Chat Completions equivalent and is omitted; the
+    // effort is translated below.
   }
   if (body.store !== undefined && body.store !== false && body.store !== null) {
     throw new Error('Stored Responses are not supported by this gateway')
@@ -642,6 +649,28 @@ export const responsesToChatRequest = (
   const toolChoice = hasTools ? requestedToolChoice : undefined
   const stream = body.stream !== false
 
+  // Translate the Responses reasoning effort into the Chat Completions equivalent (validated above),
+  // but only when the app's user explicitly picked a level: Codex also emits its own default effort,
+  // and forwarding that would change what existing bridged users send upstream. OpenAI-shaped
+  // gateways take `reasoning_effort`; the Codex-only 'xhigh' clamps to 'high', and 'none' is
+  // omitted — Chat Completions has no "reasoning off" switch, so the upstream default stands.
+  const requestedEffort =
+    options?.forwardReasoningEffort &&
+    body.reasoning &&
+    typeof body.reasoning === 'object' &&
+    !Array.isArray(body.reasoning)
+      ? (body.reasoning as JsonObject).effort
+      : undefined
+  const chatReasoningEffort =
+    requestedEffort === 'xhigh'
+      ? 'high'
+      : requestedEffort === 'minimal' ||
+          requestedEffort === 'low' ||
+          requestedEffort === 'medium' ||
+          requestedEffort === 'high'
+        ? requestedEffort
+        : undefined
+
   return {
     model: upstreamModel ?? body.model,
     messages: inputToMessages(body, reasoningByCallId, namespacedTools),
@@ -655,6 +684,7 @@ export const responsesToChatRequest = (
     ...(body.max_output_tokens === undefined || body.max_output_tokens === null
       ? {}
       : { max_tokens: body.max_output_tokens }),
+    ...(chatReasoningEffort ? { reasoning_effort: chatReasoningEffort } : {}),
     stream,
     ...(stream ? { stream_options: body.stream_options ?? { include_usage: true } } : {})
   }
@@ -1031,6 +1061,13 @@ export class ResponsesBridge {
     if (changed) this.reasoningByCallId.clear()
   }
 
+  // Updates only the effort-forwarding policy on the live target, for when the user's reasoning-effort
+  // setting changes without a reconnect (Codex applies level changes live over ACP). Deliberately not
+  // a setTarget: the upstream provider is unchanged, so the reasoning cache must be preserved.
+  setForwardReasoningEffort(forward: boolean): void {
+    this.target = { ...this.target, forwardReasoningEffort: forward }
+  }
+
   async start(): Promise<ResponsesBridgeConnection> {
     if (this.connection) return this.connection
     const token = randomBytes(24).toString('hex')
@@ -1115,7 +1152,8 @@ export class ResponsesBridge {
         connectorSelection.body,
         this.target.model,
         this.reasoningByCallId,
-        namespacedTools
+        namespacedTools,
+        { forwardReasoningEffort: this.target.forwardReasoningEffort }
       )
 
       // Reveals which real model actually serves the turn (Codex only ever sees the internal catalog

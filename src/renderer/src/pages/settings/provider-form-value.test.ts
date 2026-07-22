@@ -55,6 +55,9 @@ describe('getProviderFormErrors', () => {
 
 describe('provider-kind helpers', () => {
   it('lists official vendors under the API group and custom/local under Other', () => {
+    const codingKeys = PROVIDER_KINDS.filter((kind) => kind.group === 'coding').map(
+      (kind) => kind.key
+    )
     const apiKeys = PROVIDER_KINDS.filter((kind) => kind.group === 'api').map((kind) => kind.key)
     const otherKeys = PROVIDER_KINDS.filter((kind) => kind.group === 'other').map(
       (kind) => kind.key
@@ -62,7 +65,22 @@ describe('provider-kind helpers', () => {
 
     expect(apiKeys).toContain('official:deepseek')
     expect(apiKeys).toContain('official:openai')
+    expect(codingKeys).toEqual(['codex-subscription'])
     expect(otherKeys).toEqual(['custom', 'claude-default'])
+  })
+
+  it('uses one provider kind while keeping the auth mode in the form value', () => {
+    expect(providerKindPatch('codex-subscription')).toMatchObject({
+      type: 'codex-shared',
+      name: 'Codex subscription',
+      apiEndpoint: 'responses'
+    })
+    expect(selectedKindKey(createEmptyProviderFormValue({ type: 'codex-shared' }))).toBe(
+      'codex-subscription'
+    )
+    expect(selectedKindKey(createEmptyProviderFormValue({ type: 'codex-isolated' }))).toBe(
+      'codex-subscription'
+    )
   })
 
   it('seeds region (no per-provider model) when picking an official vendor', () => {

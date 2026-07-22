@@ -1,5 +1,5 @@
 import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { existsSync, type Dirent } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, type Dirent } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
 
@@ -20,6 +20,7 @@ import {
   type MigrationMarker
 } from './migration-marker'
 import { waitForDataRootWriters } from './migration-state'
+import { DEFAULT_MAX_ENV_RELATIVE_PATH, PACK_PATH_BUDGET_FILE } from '../notebook/bundle-manifest'
 import { RELOCATABLE_DATA_DIRS } from './data-directories'
 
 export { DATA_ROOT_DIRS } from './data-directories'
@@ -40,9 +41,45 @@ export type ClassifyResult = { kind: DataRootKind; error?: string }
 
 // Windows' historical MAX_PATH. Long-path opt-outs exist but aren't something we can rely on across
 // every tool a user's Python/R environment might shell out to, so the app guards against it directly.
-const WINDOWS_MAX_PATH = 260
+const WINDOWS_MAX_USABLE_PATH = 259
 // Headroom reserved for the app's deepest nested paths (artifacts/notebooks/runtime) under the root.
-const WINDOWS_NESTED_RESERVE = 110
+// Keep the migration guard aligned with the current managed env's conservative pack metadata:
+// runtime\\envs\\default-r plus the longest linked package path. This is deliberately a budget, not a
+// universal package-path constant; newer manifests can tighten the release gate further.
+const WINDOWS_ENV_PREFIX_RESERVE = 'runtime\\envs\\default-r'.length + 1
+
+export const maxManagedEnvRelativePath = (dataRoot: string): number => {
+  let maximum = DEFAULT_MAX_ENV_RELATIVE_PATH
+  const walk = (dir: string): void => {
+    let entries: Dirent[]
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      const child = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        walk(child)
+      } else if (entry.isFile() && entry.name === PACK_PATH_BUDGET_FILE) {
+        try {
+          const value = JSON.parse(readFileSync(child, 'utf8')) as { maxEnvRelativePath?: unknown }
+          if (
+            typeof value.maxEnvRelativePath === 'number' &&
+            Number.isSafeInteger(value.maxEnvRelativePath) &&
+            value.maxEnvRelativePath > 0
+          ) {
+            maximum = Math.max(maximum, value.maxEnvRelativePath)
+          }
+        } catch {
+          // Ignore malformed residue and retain the conservative supported-pack fallback.
+        }
+      }
+    }
+  }
+  walk(join(dataRoot, 'runtime', 'packs'))
+  return maximum
+}
 
 // Optional injectable deps for classifyDataRoot, so its write probe can be exercised in tests without
 // depending on platform-specific filesystem permission semantics (chmod is a POSIX-only no-op on
@@ -112,11 +149,15 @@ export const classifyDataRoot = async (
   // the root itself — a root that already eats most of the budget leaves no room for anything nested
   // under artifacts/notebooks/runtime. Reject early, before any fs access, so the failure is a clear
   // upfront message instead of a cryptic ENAMETOOLONG mid-migration or mid-notebook-run.
-  if (process.platform === 'win32' && target.length + WINDOWS_NESTED_RESERVE > WINDOWS_MAX_PATH) {
-    return {
-      kind: 'invalid',
-      error:
-        "This location's path is too long for Windows. Choose a folder closer to the drive root so your files stay within Windows' 260-character path limit."
+  if (process.platform === 'win32') {
+    const windowsNestedReserve =
+      WINDOWS_ENV_PREFIX_RESERVE + maxManagedEnvRelativePath(currentDataRoot)
+    if (target.length + windowsNestedReserve > WINDOWS_MAX_USABLE_PATH) {
+      return {
+        kind: 'invalid',
+        error:
+          "This location's path is too long for Windows. Choose a folder closer to the drive root so your files stay within Windows' 260-character path limit."
+      }
     }
   }
 

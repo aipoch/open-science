@@ -1,4 +1,8 @@
-import type { ChatApiEndpoint, ProviderType } from '../../../../shared/settings'
+import {
+  codexSubscriptionProviderIdentity,
+  type ChatApiEndpoint,
+  type ProviderType
+} from '../../../../shared/settings'
 import {
   OFFICIAL_VENDORS,
   getOfficialVendor,
@@ -85,6 +89,12 @@ export type ProviderKind = {
 }
 
 export const PROVIDER_KINDS: ProviderKind[] = [
+  {
+    key: 'codex-subscription',
+    label: codexSubscriptionProviderIdentity().name,
+    description: 'Use an existing Codex profile or sign in with a separate Open Science profile.',
+    group: 'coding'
+  },
   ...OFFICIAL_VENDORS.map((vendor): ProviderKind => ({
     key: `official:${vendor.id}`,
     label: vendor.label,
@@ -108,6 +118,20 @@ export const PROVIDER_KINDS: ProviderKind[] = [
 // The patch applied to the form value when a provider-kind is picked. Switching to an official vendor
 // seeds its default region + model; switching away clears vendor-only fields.
 export const providerKindPatch = (key: string): Partial<ProviderFormValue> => {
+  if (key === 'codex-subscription') {
+    const identity = codexSubscriptionProviderIdentity()
+    return {
+      type: 'codex-shared',
+      name: identity.name,
+      apiEndpoint: 'responses',
+      baseUrl: '',
+      model: '',
+      key: '',
+      vendorId: undefined,
+      region: undefined
+    }
+  }
+
   if (key === 'claude-default') {
     return { type: 'claude-default', vendorId: undefined, region: undefined, model: '' }
   }
@@ -135,10 +159,17 @@ export const selectedKindKey = (value: ProviderFormValue): string => {
     return 'custom'
   }
   if (value.type === 'claude-default') return 'claude-default'
+  if (value.type === 'codex-shared' || value.type === 'codex-isolated') {
+    return 'codex-subscription'
+  }
 
   return value.vendorId ? `official:${value.vendorId}` : 'custom'
 }
 
 // Maps a provider's type + vendor to its icon key ('custom' | 'claude-default' | 'official:<id>').
 export const providerKindKey = (type: ProviderType, vendorId?: OfficialVendorId): string =>
-  type === 'official' && vendorId ? `official:${vendorId}` : type
+  type === 'official' && vendorId
+    ? `official:${vendorId}`
+    : type === 'codex-shared' || type === 'codex-isolated'
+      ? 'codex-subscription'
+      : type

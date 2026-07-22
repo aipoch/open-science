@@ -115,6 +115,26 @@ describe('validate: request construction', () => {
     expect(request.url).toBe('https://gateway.example.com/v1/chat/completions')
   })
 
+  it('targets the route the active framework drives when frameworkEndpoints is given', () => {
+    const provider = {
+      type: 'custom' as const,
+      baseUrl: 'https://gateway.example.com/v1',
+      model: 'm',
+      key: 'k',
+      apiEndpoints: ['anthropic', 'openai'] as const
+    }
+
+    // A framework that only speaks Anthropic must probe /v1/messages, even though the provider also
+    // offers OpenAI (which the framework-agnostic preference would otherwise pick).
+    expect(buildValidationRequest(provider, false, ['anthropic']).url).toBe(
+      'https://gateway.example.com/v1/messages'
+    )
+    // A framework that speaks OpenAI probes chat/completions for the same provider.
+    expect(buildValidationRequest(provider, false, ['anthropic', 'openai']).url).toBe(
+      'https://gateway.example.com/v1/chat/completions'
+    )
+  })
+
   it('builds a minimal /v1/responses probe without treating it as chat completions', () => {
     const request = buildValidationRequest({
       type: 'custom',
@@ -132,6 +152,21 @@ describe('validate: request construction', () => {
       input: 'ping',
       max_output_tokens: 16
     })
+  })
+
+  it('appends /responses to a versioned OpenAI base instead of forcing /v1', () => {
+    // Volcengine Ark versions its OpenAI-compatible root as /api/v3, so its Responses endpoint is
+    // /api/v3/responses — not the /v1/responses a /v1-only normalization would produce.
+    const request = buildValidationRequest({
+      type: 'custom',
+      baseUrl: 'https://ark.cn-beijing.volces.com/api/compatible',
+      openaiBaseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+      model: 'doubao-seed-2-1-pro-260628',
+      key: 'test-token',
+      apiEndpoints: ['anthropic', 'openai', 'responses']
+    })
+
+    expect(request.url).toBe('https://ark.cn-beijing.volces.com/api/v3/responses')
   })
 })
 

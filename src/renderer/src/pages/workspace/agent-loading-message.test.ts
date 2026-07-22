@@ -194,7 +194,7 @@ describe('agent loading message state', () => {
     ).toBe(false)
   })
 
-  it('does not show loading for permission waits or sessions without an active run', async () => {
+  it('keeps loading during permission waits and hides it only without an active run', async () => {
     const { shouldShowAgentLoadingMessage } = await loadAgentLoadingMessageModule()
     const runningSession = createSession({
       activeRun: {
@@ -204,12 +204,13 @@ describe('agent loading message state', () => {
       messages: [createMessage({ id: 'prompt-1' })]
     })
 
+    // A permission wait is still mid-run: the row stays so the transcript keeps a working indicator.
     expect(
       shouldShowAgentLoadingMessage({
         ...runningSession,
         status: 'waiting-permission'
       })
-    ).toBe(false)
+    ).toBe(true)
     expect(
       shouldShowAgentLoadingMessage({
         ...runningSession,
@@ -217,5 +218,34 @@ describe('agent loading message state', () => {
         activeRun: undefined
       })
     ).toBe(false)
+  })
+
+  it('keeps loading during a permission wait even after visible agent content arrives', async () => {
+    const { shouldShowAgentLoadingMessage } = await loadAgentLoadingMessageModule()
+
+    // The agent streamed text, then paused on a tool permission: the wait is on the user's
+    // decision, not on agent output, so the indicator stays.
+    expect(
+      shouldShowAgentLoadingMessage(
+        createSession({
+          status: 'waiting-permission',
+          activeRun: {
+            promptMessageId: 'prompt-1',
+            startedAt: 1710000000100
+          },
+          messages: [
+            createMessage({ id: 'prompt-1' }),
+            createMessage({
+              id: 'reply-1',
+              role: 'agent',
+              content: "I'll inspect the files",
+              status: 'streaming',
+              streamId: 'stream-1',
+              responseToMessageId: 'prompt-1'
+            })
+          ]
+        })
+      )
+    ).toBe(true)
   })
 })

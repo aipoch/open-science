@@ -101,6 +101,8 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
         onAutoReviewToggle={vi.fn()}
         onRequestReview={vi.fn()}
         isRequestReviewDisabled={false}
+        canEditMessage={true}
+        onSendEditedMessage={vi.fn()}
         {...props}
       />
     )

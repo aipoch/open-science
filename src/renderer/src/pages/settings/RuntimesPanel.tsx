@@ -57,11 +57,6 @@ const RuntimesPanel = (): React.JSX.Element => {
   const [enablement, setEnablement] = useState<Enablements>({})
   const [loaded, setLoaded] = useState(false)
   const [busy, setBusy] = useState(false)
-  // The language whose app-managed setup THIS panel kicked off — set immediately on click so the
-  // Download button disables and Cancel appears without waiting for the first progress event. The
-  // store's own `preparing` state (below) covers the case where the panel was remounted (tab switch)
-  // while a setup started elsewhere is still running.
-  const [provisioningLang, setProvisioningLang] = useState<NotebookLanguage | null>(null)
   const [error, setError] = useState<string | null>(null)
   // Set while confirming a disable that would affect live sessions (WS11): the runtime being disabled
   // plus its current usage, so the dialog can warn before revoking.
@@ -73,8 +68,10 @@ const RuntimesPanel = (): React.JSX.Element => {
   const initEnv = useNotebookEnvStore((state) => state.init)
   const provisionEnv = useNotebookEnvStore((state) => state.provision)
   const cancelEnv = useNotebookEnvStore((state) => state.cancel)
-  const provisionUi = useNotebookEnvStore((state) => state.ui)
-  const provisionError = useNotebookEnvStore((state) => state.error)
+  const resetEnv = useNotebookEnvStore((state) => state.reset)
+  // Per-language provisioning state: python and R each track their own progress/preparing/error, so
+  // requesting one never makes the other's card look cancelled (the provisioner serializes the runs).
+  const byLang = useNotebookEnvStore((state) => state.byLang)
 
   useEffect(() => {
     void initEnv()
@@ -230,14 +227,25 @@ const RuntimesPanel = (): React.JSX.Element => {
     // the entire setup. `provisioningLang` (+ the store's preparing state) drives the button instead,
     // leaving Cancel clickable throughout.
     setError(null)
-    setProvisioningLang(language)
+    // The store tracks preparing per-language (byLang), so no local per-language flag is needed and
+    // Cancel stays clickable throughout without holding the shared `busy` flag.
     try {
       await provisionEnv(language)
       applyAll(await fetchAll())
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not refresh runtime readiness.')
-    } finally {
-      setProvisioningLang(null)
+    }
+  }
+
+  // Explicit recovery for a recovery-BLOCKED runtime (a prior setup's worker couldn't be confirmed
+  // stopped, so plain provision keeps refusing). Reset force-clears the quarantine and rebuilds.
+  const resetManaged = async (language: NotebookLanguage): Promise<void> => {
+    setError(null)
+    try {
+      await resetEnv(language)
+      applyAll(await fetchAll())
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not reset the runtime.')
     }
   }
 
@@ -249,8 +257,6 @@ const RuntimesPanel = (): React.JSX.Element => {
       applyAll(await fetchAll())
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not cancel the setup.')
-    } finally {
-      setProvisioningLang(null)
     }
   }
 
@@ -348,22 +354,17 @@ const RuntimesPanel = (): React.JSX.Element => {
           {error}
         </p>
       )}
-      {error === null && provisionError !== undefined ? (
-        <p role="alert" className="text-sm text-destructive" data-testid="runtimes-provision-error">
-          {provisionError}
-        </p>
-      ) : null}
-
       {loading ? (
         <p className="text-sm text-muted-foreground">Detecting runtimes…</p>
       ) : (
         LANGUAGES.map(({ id, label, icon }) => {
           const list = envs[id]
-          // Preparing = this panel just kicked it off (immediate) OR the store reports a setup for this
-          // language in flight (covers a tab-switch remount where local state was lost).
-          const preparing =
-            provisioningLang === id ||
-            (provisionUi.kind === 'preparing' && provisionUi.scope === id)
+          // Per-language provisioning state — set immediately on click and cleared when THIS language's
+          // run settles, independent of the other language (fixes the concurrent python/R phantom-cancel).
+          const langState = byLang[id]
+          const preparing = langState?.preparing ?? false
+          const langProgress = langState?.progress
+          const langError = langState?.error
           const managedRunnable = managedRunnableFor(id)
 
           // App-managed goes FIRST; the user's own detected interpreters follow. A provisioned
@@ -406,7 +407,37 @@ const RuntimesPanel = (): React.JSX.Element => {
               <div className="space-y-2" data-testid={`runtimes-cards-${id}`}>
                 {/* App-managed FIRST: a real card once provisioned, else a setup card in the same frame. */}
                 {managedEnv ? (
-                  renderEnvCard(id, managedEnv)
+                  <>
+                    {renderEnvCard(id, managedEnv)}
+                    {/* An interrupted upgrade/install usually leaves the interpreter present (so the
+                        card above still renders), but recovery may have quarantined its prefix. Surface
+                        the block + Reset here too, or the recovery entry would be unreachable whenever a
+                        runnable managed env exists. */}
+                    {!preparing && langError?.includes('RUNTIME_RECOVERY_BLOCKED') ? (
+                      <div
+                        data-testid={`runtimes-recovery-blocked-${id}`}
+                        className="flex items-start justify-between gap-4 rounded-lg border border-destructive/40 bg-card p-3"
+                      >
+                        <p
+                          role="alert"
+                          className="text-[13px] text-destructive"
+                          data-testid={`runtimes-provision-error-${id}`}
+                        >
+                          {langError}
+                        </p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="shrink-0"
+                          disabled={busy}
+                          onClick={() => void resetManaged(id)}
+                        >
+                          Reset runtime
+                        </Button>
+                      </div>
+                    ) : null}
+                  </>
                 ) : (
                   <div
                     data-testid="runtime-card"
@@ -421,30 +452,33 @@ const RuntimesPanel = (): React.JSX.Element => {
                           <Badge variant="secondary">App-managed</Badge>
                         </div>
                         <div className="mt-0.5 text-[13px] text-muted-foreground">
-                          {managedLine(
-                            managedRunnable,
-                            preparing,
-                            preparing && provisionUi.kind === 'preparing'
-                              ? provisionUi.message
-                              : undefined
-                          )}
+                          {managedLine(managedRunnable, preparing, langProgress?.message)}
                         </div>
-                        {preparing && provisionUi.kind === 'preparing' ? (
+                        {preparing ? (
                           <div
                             className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted"
                             role="progressbar"
                             aria-label={`Setting up ${label} runtime`}
-                            aria-valuenow={Math.round(provisionUi.progress * 100)}
+                            aria-valuenow={Math.round((langProgress?.progress ?? 0) * 100)}
                             aria-valuemin={0}
                             aria-valuemax={100}
                           >
                             <div
                               className="h-full rounded-full bg-primary transition-[width] duration-300"
                               style={{
-                                width: `${Math.max(2, Math.min(100, Math.round(provisionUi.progress * 100)))}%`
+                                width: `${Math.max(2, Math.min(100, Math.round((langProgress?.progress ?? 0) * 100)))}%`
                               }}
                             />
                           </div>
+                        ) : null}
+                        {!preparing && langError ? (
+                          <p
+                            role="alert"
+                            className="mt-1 text-[13px] text-destructive"
+                            data-testid={`runtimes-provision-error-${id}`}
+                          >
+                            {langError}
+                          </p>
                         ) : null}
                       </div>
                       {preparing ? (
@@ -466,9 +500,17 @@ const RuntimesPanel = (): React.JSX.Element => {
                           size="sm"
                           className="shrink-0"
                           disabled={busy}
-                          onClick={() => void provisionManaged(id)}
+                          onClick={() =>
+                            langError?.includes('RUNTIME_RECOVERY_BLOCKED')
+                              ? void resetManaged(id)
+                              : void provisionManaged(id)
+                          }
                         >
-                          {provisionError ? 'Retry setup' : 'Download and set up'}
+                          {langError?.includes('RUNTIME_RECOVERY_BLOCKED')
+                            ? 'Reset runtime'
+                            : langError
+                              ? 'Retry setup'
+                              : 'Download and set up'}
                         </Button>
                       )}
                     </div>

@@ -187,12 +187,13 @@ describe('SettingsPage layout', () => {
       'button'
     )
 
-    // The Model panel splits Active model (its own section) from provider management; the agent
-    // framework moved to the Agent sub-panel.
+    // The Model panel splits Active model and Reasoning effort (their own sections) from provider
+    // management; the agent framework moved to the Agent sub-panel.
     expect(document.body.textContent).toContain('Active model')
+    expect(document.body.textContent).toContain('Reasoning effort')
     expect(document.body.textContent).toContain('Providers')
     expect(document.body.textContent).not.toContain('Agent framework')
-    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(2)
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(3)
     // The add action lives with the list as a dashed ghost row, not a section-header button.
     const addRow = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.trim() === 'Add provider'
@@ -888,5 +889,228 @@ describe('SettingsPage Codex framework', () => {
     expect(detectClaude).toHaveBeenCalledTimes(1)
     expect(detectOpencode).toHaveBeenCalled()
     expect(detectCodex).toHaveBeenCalled()
+  })
+
+  it('routes isolated subscription sign-out from the provider list', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    const provider = {
+      id: 'builtin-codex-subscription',
+      type: 'codex-isolated',
+      name: 'Codex subscription',
+      apiEndpoints: ['responses'],
+      models: ['gpt-5.6-sol'],
+      supportsImageInput: true,
+      hasKey: false,
+      needsKey: false,
+      lastValidatedAt: 1
+    }
+    const snapshot = {
+      claude: {},
+      opencode: {},
+      codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
+      providers: [provider],
+      activeProviderId: provider.id,
+      activeModel: 'gpt-5.6-sol',
+      agentFrameworkId: 'codex',
+      agentFrameworks: frameworks,
+      claudeManaged: false,
+      opencodeManaged: false,
+      codexManaged: true
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue(snapshot)
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      codexReady: true,
+      agentFrameworkId: 'codex',
+      agentReady: true,
+      activeProviderReady: true
+    })
+    const logoutIsolatedCodex = vi.fn().mockResolvedValue({ ok: true, category: 'ok' })
+    api.settings.logoutIsolatedCodex = logoutIsolatedCodex
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    const signOut = document.body.querySelector<HTMLButtonElement>('[aria-label="Sign out"]')
+    await act(async () => signOut?.click())
+
+    expect(logoutIsolatedCodex).toHaveBeenCalledOnce()
+    const errorAlert = document.body.querySelector('[role="alert"]')
+    expect(errorAlert).toBeNull()
+  })
+
+  it('surfaces a Codex sign-out timeout through the provider error alert', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    const provider = {
+      id: 'builtin-codex-subscription',
+      type: 'codex-isolated',
+      name: 'Codex subscription',
+      apiEndpoints: ['responses'],
+      models: ['gpt-5.6-sol'],
+      supportsImageInput: true,
+      hasKey: false,
+      needsKey: false,
+      verified: true,
+      lastValidatedAt: Date.now()
+    }
+    const snapshot = {
+      claude: {},
+      opencode: {},
+      codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
+      providers: [provider],
+      activeProviderId: provider.id,
+      activeModel: 'gpt-5.6-sol',
+      agentFrameworkId: 'codex',
+      agentFrameworks: frameworks,
+      claudeManaged: false,
+      opencodeManaged: false,
+      codexManaged: true
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue(snapshot)
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      codexReady: true,
+      agentFrameworkId: 'codex',
+      agentReady: true,
+      activeProviderReady: true
+    })
+    const logoutIsolatedCodex = vi
+      .fn()
+      .mockResolvedValue({ ok: false, category: 'timeout', message: 'Codex sign-out timed out.' })
+    api.settings.logoutIsolatedCodex = logoutIsolatedCodex
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    const signOut = document.body.querySelector<HTMLButtonElement>('[aria-label="Sign out"]')
+    await act(async () => signOut?.click())
+
+    expect(logoutIsolatedCodex).toHaveBeenCalledOnce()
+    const errorAlert = document.body.querySelector('[role="alert"]')
+    expect(errorAlert?.textContent).toBe('Codex sign-out timed out.')
+  })
+
+  it('shows Codex login-check IPC failures instead of leaving an unhandled rejection', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    const provider = {
+      id: 'builtin-codex-subscription',
+      type: 'codex-shared',
+      name: 'Codex subscription',
+      apiEndpoints: ['responses'],
+      models: ['gpt-5.6-sol'],
+      supportsImageInput: true,
+      hasKey: false,
+      needsKey: false
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue({
+      claude: {},
+      opencode: {},
+      codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
+      providers: [provider],
+      activeProviderId: provider.id,
+      agentFrameworkId: 'codex',
+      agentFrameworks: frameworks,
+      claudeManaged: false,
+      opencodeManaged: false,
+      codexManaged: true
+    })
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      codexReady: true,
+      agentFrameworkId: 'codex',
+      agentReady: true,
+      activeProviderReady: false
+    })
+    api.settings.validateProvider = vi
+      .fn()
+      .mockRejectedValue(new Error('The Codex adapter does not support authentication status.'))
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    const testLogin = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Check Codex login"]'
+    )
+    await act(async () => testLogin?.click())
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'The Codex adapter does not support authentication status.'
+    )
+  })
+
+  it('cancels a pending isolated sign-in when the dialog closes mid-flow', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    const provider = {
+      id: 'builtin-codex-subscription',
+      type: 'codex-isolated',
+      name: 'Codex subscription',
+      apiEndpoints: ['responses'],
+      models: [],
+      supportsImageInput: true,
+      hasKey: false,
+      needsKey: false
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue({
+      claude: {},
+      opencode: {},
+      codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
+      providers: [provider],
+      agentFrameworkId: 'codex',
+      agentFrameworks: frameworks,
+      claudeManaged: false,
+      opencodeManaged: false,
+      codexManaged: true
+    })
+    // The browser flow never settles on its own; closing the dialog is what cancels it.
+    api.settings.loginIsolatedCodex = vi.fn(() => new Promise(() => undefined))
+    api.settings.cancelCodexLogin = vi.fn().mockResolvedValue(undefined)
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    const signIn = document.body.querySelector<HTMLButtonElement>('[aria-label="Sign in"]')
+    await act(async () => signIn?.click())
+    expect(document.body.querySelector('[aria-label="Cancel sign-in"]')).not.toBeNull()
+
+    await act(async () => {
+      root.render(<SettingsPage open={false} onClose={vi.fn()} />)
+    })
+
+    expect(api.settings.cancelCodexLogin).toHaveBeenCalledOnce()
+  })
+
+  it('surfaces isolated sign-in failures instead of leaving an unhandled rejection', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    const provider = {
+      id: 'builtin-codex-subscription',
+      type: 'codex-isolated',
+      name: 'Codex subscription',
+      apiEndpoints: ['responses'],
+      models: [],
+      supportsImageInput: true,
+      hasKey: false,
+      needsKey: false
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue({
+      claude: {},
+      opencode: {},
+      codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
+      providers: [provider],
+      agentFrameworkId: 'codex',
+      agentFrameworks: frameworks,
+      claudeManaged: false,
+      opencodeManaged: false,
+      codexManaged: true
+    })
+    api.settings.loginIsolatedCodex = vi
+      .fn()
+      .mockRejectedValue(new Error('The Codex adapter failed to spawn.'))
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    const signIn = document.body.querySelector<HTMLButtonElement>('[aria-label="Sign in"]')
+    await act(async () => signIn?.click())
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'The Codex adapter failed to spawn.'
+    )
   })
 })

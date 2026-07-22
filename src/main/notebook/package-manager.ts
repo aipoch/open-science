@@ -5,8 +5,22 @@ import { join } from 'node:path'
 
 import { PROD_SESSION_DIR_NAME } from '../session-persistence/repository'
 import type { NotebookLanguage } from '../../shared/notebook'
-import { caBundleEnv, installArgv, resolveMicromamba } from './micromamba'
-import { withSharedCacheLock } from './pkgs-cache-lock'
+import {
+  caBundleEnv,
+  installArgv,
+  micromambaSpawnEnv,
+  resolveMicromamba,
+  type MicromambaSpawnEnvDeps
+} from './micromamba'
+import {
+  DEFAULT_MAX_CACHE_RELATIVE_PATH,
+  micromambaCacheLockKey,
+  selectMicromambaCache,
+  type MicromambaCache
+} from './micromamba-cache'
+import { recoverWindowsMaxPathPackage } from './micromamba-cache-recovery'
+import { withExclusiveCacheLocks, withSharedCacheLocks } from './pkgs-cache-lock'
+import { CHILD_UNCONFIRMED, killAndConfirmExit } from './provisioner-runtime'
 import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
@@ -61,7 +75,11 @@ export type InstallSpawn = (
   env?: NodeJS.ProcessEnv,
   // Invoked with the spawned installer's PID so the caller can journal it for crash-recovery
   // supervision (a killed installer survivor is reaped before reconciling). Test spawns ignore it.
-  onChild?: (pid: number) => void
+  onChild?: (pid: number) => void,
+  // Invoked synchronously right before EACH spawn so the caller can (re)record the per-spawn intent. An
+  // R install spawns twice (conda then CRAN on fallback), so each must re-arm rather than trust the
+  // first spawn's PID. Throwing fails closed (nothing is spawned).
+  onBeforeSpawn?: () => void
 ) => Promise<SpawnResult>
 
 // condaChannel/pypiIndex/cranMirror are resolved PackageMirror values (see shared/mirror.ts);
@@ -76,6 +94,7 @@ export type InstallDeps = {
   // PEM CA bundle path (enterprise TLS proxy); exported into every install subprocess's env so
   // conda/pip/R HTTPS verification trusts it.
   caBundle?: string
+  micromambaEnv?: MicromambaSpawnEnvDeps
   // Injected for tests to check a named env's interpreter without touching real disk.
   pathExists?: (path: string) => boolean
   // Set for an EXTERNAL (BYO) runtime: install with THIS interpreter's own pip (`<command> [args] -m
@@ -85,6 +104,8 @@ export type InstallDeps = {
   // Invoked with each spawned installer's PID so the caller (managePackages) can journal it for
   // crash-recovery supervision of a surviving installer after a hard quit.
   onChild?: (pid: number) => void
+  // Invoked synchronously right before EACH spawn so the caller can (re)record the per-spawn intent.
+  onBeforeSpawn?: () => void
 }
 
 const DEFAULT_CONDA_CHANNEL = 'conda-forge'
@@ -129,10 +150,49 @@ const rCondaNames = (packages: string[]): string[] =>
 const condaReportsNotManaged = (log: string): boolean => /not (found|installed)/i.test(log)
 
 // Real spawn wrapper collecting stdout/stderr and the exit code; replaced by an injected spawn in tests.
-const defaultSpawn: InstallSpawn = (command, args, env, onChild) =>
-  new Promise((resolve) => {
+// Exported so its fail-closed spawn-intent / kill-on-record-failure branches are directly testable.
+export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBeforeSpawn) =>
+  new Promise((resolve, reject) => {
+    try {
+      onBeforeSpawn?.() // re-arm the per-spawn intent; fail closed if it can't be recorded
+    } catch (error) {
+      resolve({
+        code: 1,
+        stdout: '',
+        stderr: `Failed to record the spawn intent; not spawning: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      })
+      return
+    }
     const child = nodeSpawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], env })
-    if (child.pid !== undefined) onChild?.(child.pid)
+    if (child.pid !== undefined) {
+      try {
+        onChild?.(child.pid)
+      } catch (error) {
+        // Recording the PID failed. FAIL CLOSED: kill it and only settle once it is CONFIRMED gone.
+        // If it can't be confirmed, REJECT with the CHILD_UNCONFIRMED marker so the caller retains the
+        // recovery evidence (a worker may still be writing) instead of clearing it.
+        void killAndConfirmExit(child).then((confirmed) => {
+          if (confirmed) {
+            resolve({
+              code: 1,
+              stdout: '',
+              stderr: `Failed to record the installer worker; aborted: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            })
+          } else {
+            reject(
+              new Error(
+                `${CHILD_UNCONFIRMED}: recording failed and the installer could not be confirmed stopped.`
+              )
+            )
+          }
+        })
+        return
+      }
+    }
     let stdout = ''
     let stderr = ''
     child.stdout?.on('data', (chunk) => {
@@ -148,6 +208,12 @@ const defaultSpawn: InstallSpawn = (command, args, env, onChild) =>
 // Flattens one command's output into a single log string for the agent to read as install facts.
 const mergeLog = (result: SpawnResult): string =>
   [result.stdout, result.stderr].filter((part) => part.length > 0).join('\n')
+
+const condaFailureMessage = (action: 'install' | 'remove', result: SpawnResult): string =>
+  /Retry failure after MAX_PATH recovery/i.test(mergeLog(result))
+    ? `conda ${action} failed after short Windows package cache recovery. Retry Repair; ` +
+      'if it fails again, choose a shorter data location.'
+    : `conda ${action} failed.`
 
 // The default (managed) envs are ADDITIVE-ONLY (foundation "default-environment restrictions"): a spec may be a bare
 // package name or a bare name pinned to an exact `==version`, and nothing else. This regex rejects
@@ -173,7 +239,8 @@ export async function installPackages(
   // custom corporate CA is trusted by conda/pip/R. Wrapping here keeps every run() call site 2-arg.
   const baseSpawn = deps.spawn ?? defaultSpawn
   const spawnEnv: NodeJS.ProcessEnv = { ...process.env, ...caBundleEnv(deps.caBundle) }
-  const run: InstallSpawn = (command, args) => baseSpawn(command, args, spawnEnv, deps.onChild)
+  const run: InstallSpawn = (command, args) =>
+    baseSpawn(command, args, spawnEnv, deps.onChild, deps.onBeforeSpawn)
 
   if (req.packages.length === 0) {
     return { ok: false, needsRestart: false, log: '', error: 'No packages requested.' }
@@ -216,8 +283,80 @@ export async function installPackages(
   // cache EXCLUSIVE and removes incomplete extractions) could delete a package dir mid-install. pip and
   // CRAN write only into the env prefix, so they use `run` directly, unlocked. Keyed by `root` — the
   // same key materialize/create/upgrade use — so every cache writer serializes against repair.
-  const runConda: InstallSpawn = (command, args) =>
-    withSharedCacheLock(root, () => run(command, args))
+  let condaContext: { cache: MicromambaCache; env: NodeJS.ProcessEnv } | undefined
+  const resolveCondaContext = (): { cache: MicromambaCache; env: NodeJS.ProcessEnv } => {
+    if (condaContext) return condaContext
+    const cache = deps.micromambaEnv?.selectCache
+      ? deps.micromambaEnv.selectCache(root, DEFAULT_MAX_CACHE_RELATIVE_PATH)
+      : selectMicromambaCache(root, DEFAULT_MAX_CACHE_RELATIVE_PATH, deps.micromambaEnv)
+    const env = micromambaSpawnEnv(
+      root,
+      deps.caBundle,
+      { ...deps.micromambaEnv, selectCache: () => cache },
+      DEFAULT_MAX_CACHE_RELATIVE_PATH
+    )
+    condaContext = { cache, env }
+    return condaContext
+  }
+  const runConda: InstallSpawn = async (command, args) => {
+    const context = resolveCondaContext()
+    const cacheKeys = [
+      context.cache.lockKey,
+      micromambaCacheLockKey(join(root, 'pkgs'), {
+        platform: deps.micromambaEnv?.platform,
+        canonicalize: deps.micromambaEnv?.canonicalize
+      })
+    ]
+    const result = await withSharedCacheLocks(cacheKeys, () =>
+      // Thread onBeforeSpawn so the {spawning} intent sidecar is written BEFORE conda spawns, exactly as
+      // the pip path does. Without it, a crash in the spawn→onChild window leaves no sidecar, and recovery
+      // would misread that as "never spawned" and reconcile/retry under a possibly-live installer.
+      baseSpawn(command, args, context.env, deps.onChild, deps.onBeforeSpawn)
+    )
+    if (result.code === 0) return result
+    const evidence = `${result.stdout}\n${result.stderr}`
+    let recovered = false
+    let cleanupError: unknown
+    try {
+      recovered = await withExclusiveCacheLocks(cacheKeys, () =>
+        Promise.resolve(
+          recoverWindowsMaxPathPackage(
+            new Error(evidence),
+            [join(root, 'pkgs'), context.cache.path],
+            {
+              platform: deps.micromambaEnv?.platform
+            }
+          )
+        )
+      )
+    } catch (error) {
+      cleanupError = error
+    }
+    if (cleanupError) {
+      return {
+        ...result,
+        stderr:
+          `${result.stderr}\nCache cleanup failure:\n` +
+          `${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`
+      }
+    }
+    if (!recovered) return result
+    const retry = await withSharedCacheLocks(cacheKeys, () =>
+      // The MAX_PATH retry is a fresh spawn — re-arm the intent sidecar for it too, or the same
+      // spawn→onChild crash window on the retry would be unrecoverable (no sidecar → misread as no child).
+      baseSpawn(command, args, context.env, deps.onChild, deps.onBeforeSpawn)
+    )
+    if (retry.code === 0) return retry
+    return {
+      ...retry,
+      stdout:
+        `Original failure before MAX_PATH recovery (stdout):\n${result.stdout}\n` +
+        `Retry failure after MAX_PATH recovery (stdout):\n${retry.stdout}`,
+      stderr:
+        `Original failure before MAX_PATH recovery (stderr):\n${result.stderr}\n` +
+        `Retry failure after MAX_PATH recovery (stderr):\n${retry.stderr}`
+    }
+  }
 
   // External (BYO) runtime: install with the selected interpreter's OWN pip — never the bundled
   // micromamba against a foreign env, and never the app-managed prefix. Handled FIRST (above the
@@ -334,7 +473,7 @@ export async function installPackages(
       log: mergeLog(result),
       method: 'conda',
       prefix,
-      error: result.code === 0 ? undefined : 'conda install failed.'
+      error: result.code === 0 ? undefined : condaFailureMessage('install', result)
     }
   }
 
@@ -367,7 +506,13 @@ export async function installPackages(
     log: `${mergeLog(conda)}\n${mergeLog(fallback)}`,
     method: 'cran',
     prefix: rLib,
-    error: ok ? undefined : 'conda and CRAN install both failed.'
+    error:
+      ok || !/Retry failure after MAX_PATH recovery/i.test(mergeLog(conda))
+        ? ok
+          ? undefined
+          : 'conda and CRAN install both failed.'
+        : 'conda failed after short Windows package cache recovery, and CRAN install also failed. ' +
+          'Retry Repair; if it fails again, choose a shorter data location.'
   }
 }
 
@@ -375,6 +520,7 @@ export async function installPackages(
 // installArgv's shape (micromamba.ts is out of scope, so the argv is built inline here).
 const removeArgv = (mm: string, root: string, prefix: string, pkgs: string[]): string[] => [
   mm,
+  '--no-rc',
   'remove',
   '--root-prefix',
   root,
@@ -423,7 +569,7 @@ async function uninstallPackages(
       log: mergeLog(result),
       method: 'conda',
       prefix,
-      error: result.code === 0 ? undefined : 'conda remove failed.'
+      error: result.code === 0 ? undefined : condaFailureMessage('remove', result)
     }
   }
 
@@ -452,7 +598,7 @@ async function uninstallPackages(
       log: condaLog,
       method: 'conda',
       prefix,
-      error: 'conda remove failed.'
+      error: condaFailureMessage('remove', conda)
     }
   }
 

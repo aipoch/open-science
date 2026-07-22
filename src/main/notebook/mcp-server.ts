@@ -28,8 +28,8 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'The working directory already IS the session data dir: `os.getcwd()` / R `getwd()` equals `$OPEN_SCIENCE_NOTEBOOK_DATA_DIR`. So a relative save like `png("plot.png"); ...; dev.off()` already writes the file INTO that dir and it is captured — save it once and stop. Do NOT then copy or move it to `$OPEN_SCIENCE_NOTEBOOK_DATA_DIR` (or to an absolute rebuild of the same name): the source and destination are the identical path, and R `file.copy(src, dst, overwrite=TRUE)` (or a shell `cp`) will TRUNCATE the file to 0 bytes.',
   'You may read user-provided existing data files in place, but do not move, overwrite, or delete original files; write derived files into the working directory.',
   'Treat notebook MCP results as execution facts only. The notebook runtime does not classify files for you; you decide whether each generated file is an intermediate working file or a final user-facing artifact.',
-  'If a notebook run creates a final user-facing output such as a chart, image, report, PDF, HTML page, document, CSV export, or archive, save that final output through the `write_artifact_file` tool from `open-science-artifacts` before telling the user it is available.',
-  'Pass the file to `write_artifact_file` as `source: { "kind": "localPath", "path": "<absolute path>" }` — use an ABSOLUTE path (e.g. `os.path.abspath("plot.png")` for a file you just saved to the working directory), because the artifact tool runs in a separate process and will not resolve a bare relative name.',
+  'If a notebook run creates a final user-facing output such as a chart, image, report, PDF, HTML page, document, CSV export, or archive, save that final output through the `write_artifact_file` tool from `open-science-artifacts` before telling the user it is available. Do NOT copy a generated notebook output into the workspace with a shell command; the artifact tool performs the cross-platform copy.',
+  'Pass the file to `write_artifact_file` as `source: { "kind": "localPath", "path": "plot.png" }` — use the SAME relative filename you saved with. The artifact tool resolves a relative path (or a bare filename) against the notebook session data dir, so no absolute path is needed; do NOT rebuild an absolute path from `OPEN_SCIENCE_NOTEBOOK_DATA_DIR` or a home dir.',
   'Use inline `content` only for small generated text that is already in memory.',
   'Artifact file paths are returned in `artifacts[]`; notebook working file paths are returned in `workingFiles[]`.',
   'The user does not need to click a button to send results back; use MCP return values and notebook state as the execution facts.',
@@ -149,14 +149,37 @@ const REPL_EXECUTE_DOC = [
 ].join('\n')
 
 // Stateless shell contract, embedded as the bash_execute description so the agent always sees it.
-const BASH_EXECUTE_DOC = [
-  'Run one shell command with `sh -c` in the shared session workspace. Stateless: every call spawns a fresh process, so shell state (cwd changes, exported variables, background jobs, shell functions) does NOT persist between calls — write files if you need results to carry over.',
-  'Runs in the same workspace directory the python/r data kernels start in, and can read/write ./handoff/ (also at $OPEN_SCIENCE_HANDOFF_DIR), the same shared channel repl_execute uses to hand data to the data kernels.',
-  'Returns { stdout, stderr, exitCode } and does not throw on a non-zero exit; inspect exitCode instead of assuming success.',
-  'Distinct from notebook_execute and repl_execute: those run on persistent python/r/control-plane kernels with state that survives across calls; this tool is for one-off shell commands (ls, file moves, quick greps, package CLI probes), not for anything relying on shell state persisting.',
-  'Do NOT use this to run analysis code: never write a python/R script to disk and execute it with `python`/`Rscript`/`node`, and never pipe code via `-e`/`-c`/a heredoc. Run python via notebook_execute (language:"python"), R via notebook_execute (language:"r"), and JavaScript via repl_execute — those kernels persist state, capture figures and outputs into the notebook, and install packages via manage_packages. A shell escape hatch bypasses all of that and its results are lost to the notebook.',
-  'To install packages use manage_packages, not `pip install` / `Rscript -e install.packages(...)` here.'
-].join('\n')
+// The tool name is retained for backward compatibility, but Windows deliberately runs PowerShell.
+const buildShellExecuteDoc = (platform: NodeJS.Platform = process.platform): string => {
+  const shellDescription =
+    platform === 'win32'
+      ? 'Run one Windows PowerShell command in the shared session workspace. This is not Bash: use PowerShell syntax and do not assume a POSIX shell exists.'
+      : 'Run one shell command with `sh -c` in the shared session workspace.'
+  const handoffVariable =
+    platform === 'win32' ? '$env:OPEN_SCIENCE_HANDOFF_DIR' : '$OPEN_SCIENCE_HANDOFF_DIR'
+  const platformContract =
+    platform === 'win32'
+      ? 'Target Windows PowerShell 5.1 syntax. PowerShell aliases such as cp/ls/mv/rm are not POSIX utilities: do not pass POSIX-only flags. `&&` is unavailable in Windows PowerShell 5.1; use `if ($?) { ... }` when the next command depends on success.'
+      : undefined
+  const exitCodeContract =
+    platform === 'win32'
+      ? 'Returns { stdout, stderr, exitCode }. PowerShell host/cmdlet text is normalized to UTF-8; native programs must emit UTF-8 themselves or their output may be garbled. A failed native program preserves its exit code, while an unhandled cmdlet failure returns exitCode 1; inspect exitCode instead of assuming success.'
+      : 'Returns { stdout, stderr, exitCode } and does not throw on a non-zero exit; inspect exitCode instead of assuming success.'
+
+  return [
+    shellDescription,
+    ...(platformContract ? [platformContract] : []),
+    'Stateless: every call spawns a fresh process, so shell state (cwd changes, exported variables, background jobs, shell functions) does NOT persist between calls — write files if you need results to carry over.',
+    `Runs in the same workspace directory the python/r data kernels start in, and can read/write ./handoff/ (also at ${handoffVariable}), the same shared channel repl_execute uses to hand data to the data kernels.`,
+    exitCodeContract,
+    'Distinct from notebook_execute and repl_execute: those run on persistent python/r/control-plane kernels with state that survives across calls; this tool is for one-off command-line inspection and package CLI probes, not for anything relying on shell state persisting.',
+    'Do NOT copy a generated notebook output into the workspace with this tool. For a final chart, image, report, CSV, or other user-facing file, call `write_artifact_file` with the same relative filename you saved with (it resolves against the notebook session data dir); it copies the file safely on every platform.',
+    'Do NOT use this to run analysis code: never write a python/R script to disk and execute it with `python`/`Rscript`/`node`, and never pipe code via `-e`/`-c`/a heredoc. Run python via notebook_execute (language:"python"), R via notebook_execute (language:"r"), and JavaScript via repl_execute — those kernels persist state, capture figures and outputs into the notebook, and install packages via manage_packages. A shell escape hatch bypasses all of that and its results are lost to the notebook.',
+    'To install packages use manage_packages, not `pip install` / `Rscript -e install.packages(...)` here.'
+  ].join('\n')
+}
+
+const BASH_EXECUTE_DOC = buildShellExecuteDoc()
 
 type RpcRequest = {
   method: string
@@ -557,6 +580,7 @@ export {
   MANAGE_PACKAGES_DOC,
   REPL_EXECUTE_DOC,
   BASH_EXECUTE_DOC,
+  buildShellExecuteDoc,
   NOTEBOOK_MCP_OUTPUT_FIELD_LIMIT,
   NOTEBOOK_MCP_SERVER_ARG,
   NOTEBOOK_MCP_SERVER_NAME,

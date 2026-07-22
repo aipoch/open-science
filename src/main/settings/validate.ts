@@ -1,4 +1,8 @@
-import type { ValidateProviderResult, ValidationCategory } from '../../shared/settings'
+import type {
+  ChatApiEndpoint,
+  ValidateProviderResult,
+  ValidationCategory
+} from '../../shared/settings'
 import { preferredEndpoint } from '../../shared/settings'
 import {
   normalizeAnthropicBaseUrl,
@@ -53,19 +57,24 @@ const bridgeProbeResponsesBody = (model: string): Record<string, unknown> => ({
 // OpenAI-compatible gateway gets a `/v1/chat/completions` request, an Anthropic one `/v1/messages`.
 // The endpoint is chosen from the provider's apiType (OpenAI wins when it offers both), matching how
 // the model is driven. Throws on an unusable base URL so the caller can classify it as bad-url.
+// The endpoint preference to intersect the provider against when no active framework is supplied. A
+// direct caller (or unit test) that doesn't care about a specific framework probes the provider's own
+// best route: Responses > Chat Completions > Messages.
+const ALL_ENDPOINTS: readonly ChatApiEndpoint[] = ['anthropic', 'openai', 'responses']
+
 const buildValidationRequest = (
   provider: ResolvedProvider,
-  requireBridgeToolCall = false
+  requireBridgeToolCall = false,
+  // The routes the active agent framework can drive. The probe targets the endpoint shared by the
+  // provider and the framework, so a passing test proves the exact route the agent will run — not just
+  // some route the provider happens to speak. Defaults to every route (framework-agnostic probe).
+  frameworkEndpoints: readonly ChatApiEndpoint[] = ALL_ENDPOINTS
 ): ValidationHttpRequest => {
   if (!provider.baseUrl) {
     throw new Error('Missing base URL.')
   }
 
-  const endpoint = preferredEndpoint(provider.apiEndpoints ?? ['anthropic'], [
-    'anthropic',
-    'openai',
-    'responses'
-  ])
+  const endpoint = preferredEndpoint(provider.apiEndpoints ?? ['anthropic'], frameworkEndpoints)
 
   if (endpoint === 'responses') return buildResponsesValidationRequest(provider)
   if (endpoint === 'openai') return buildOpenAiValidationRequest(provider, requireBridgeToolCall)
@@ -149,7 +158,9 @@ const buildOpenAiValidationRequest = (
 }
 
 // A minimal OpenAI Responses request. Responses is a separate wire protocol from Chat Completions;
-// normalize either a root, `/v1`, or full `/v1/responses` value to exactly one endpoint suffix.
+// normalize the base to exactly one endpoint suffix: a versioned OpenAI base (an official vendor's
+// `/v1`, or Volcengine Ark's `/api/v3`) takes `/responses` directly, while a bare root (the official
+// OpenAI entry, custom gateways) gains the `/v1` segment first.
 const buildResponsesValidationRequest = (provider: ResolvedProvider): ValidationHttpRequest => {
   let url: string
 
@@ -157,8 +168,9 @@ const buildResponsesValidationRequest = (provider: ResolvedProvider): Validation
     const base = (provider.openaiBaseUrl ?? provider.baseUrl ?? '')
       .trim()
       .replace(/\/+$/, '')
-      .replace(/\/v1(\/responses)?$/i, '')
-    url = new URL(`${base}/v1/responses`).toString()
+      .replace(/\/responses$/i, '')
+    const root = /\/v\d+[\w.]*$/i.test(base) ? base : `${base}/v1`
+    url = new URL(`${root}/responses`).toString()
   } catch {
     throw new Error('Invalid base URL.')
   }
@@ -376,6 +388,9 @@ export type ValidateProviderDeps = {
   fetchImpl?: typeof fetch
   timeoutMs?: number
   requireBridgeToolCall?: boolean
+  // The routes the active agent framework can drive; the probe targets the endpoint shared with the
+  // provider so the test exercises the route the agent will actually use. Omitted → framework-agnostic.
+  frameworkEndpoints?: readonly ChatApiEndpoint[]
   // Runs a one-shot `claude -p "ok"` probe for claude-default providers.
   runClaudeProbe?: () => Promise<ClaudeProbeResult>
 }
@@ -443,7 +458,8 @@ const validateCustomProvider = async (
   {
     fetchImpl = fetch,
     timeoutMs = DEFAULT_VALIDATE_TIMEOUT_MS,
-    requireBridgeToolCall = false
+    requireBridgeToolCall = false,
+    frameworkEndpoints
   }: ValidateProviderDeps
 ): Promise<ValidateProviderResult> => {
   if (requireBridgeToolCall) {
@@ -457,7 +473,7 @@ const validateCustomProvider = async (
   let request: ValidationHttpRequest
 
   try {
-    request = buildValidationRequest(provider, requireBridgeToolCall)
+    request = buildValidationRequest(provider, requireBridgeToolCall, frameworkEndpoints)
   } catch (error) {
     return toResult(classifyFetchError(error), {
       message: error instanceof Error ? error.message : String(error)

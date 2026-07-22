@@ -103,7 +103,7 @@ describe('project prisma client (integration)', () => {
     expect(stored.checks[0]!.reflagCount).toBe(0)
 
     // Increment and verify the Prisma client can read the updated value.
-    await reviewRepo.incrementReflagCount(review.id, 'test claim')
+    await reviewRepo.incrementReflagCount(review.id, stored.checks[0]!.id)
     const [updated] = await reviewRepo.getReviewsForSession('s1')
     expect(updated.checks[0]!.reflagCount).toBe(1)
 

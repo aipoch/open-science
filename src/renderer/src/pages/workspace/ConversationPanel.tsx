@@ -109,6 +109,10 @@ type ConversationPanelProps = {
   onRequestReview: () => void
   // True when "Request review" should be disabled: no completed turn, already reviewed, or currently reviewing.
   isRequestReviewDisabled: boolean
+  // Inline editing of a sent prompt is only allowed once the run settles; confirming truncates the
+  // conversation at that message and resends the adjusted doc.
+  canEditMessage: boolean
+  onSendEditedMessage: (messageId: string, doc: ComposerDoc) => void
 }
 
 // Middle chat surface owns the visible conversation and local message composer UI.
@@ -142,7 +146,9 @@ const ConversationPanel = ({
   onClearPermissionGrants,
   onAutoReviewToggle,
   onRequestReview,
-  isRequestReviewDisabled
+  isRequestReviewDisabled,
+  canEditMessage,
+  onSendEditedMessage
 }: ConversationPanelProps): React.JSX.Element => {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   // Local so the interrupted banner can show a spinner and block a double-resume until the request settles.
@@ -222,7 +228,11 @@ const ConversationPanel = ({
           </button>
         </header>
 
-        <WorkspaceMessageScroller activeSession={activeSession} />
+        <WorkspaceMessageScroller
+          activeSession={activeSession}
+          canEditMessage={canEditMessage}
+          onSendEditedMessage={onSendEditedMessage}
+        />
 
         <div className="relative shrink-0">
           <div

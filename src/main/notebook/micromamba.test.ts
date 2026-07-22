@@ -10,6 +10,7 @@ import {
   createFromPackagesArgv,
   installFromLockArgv,
   installArgv,
+  micromambaSpawnEnv,
   normalizeExplicitLock,
   resolveMicromamba
 } from './micromamba'
@@ -24,6 +25,7 @@ describe('micromamba argv builders', () => {
     )
     expect(argv).toEqual([
       '/mm',
+      '--no-rc',
       'create',
       '-p',
       '/root/envs/default-python',
@@ -47,6 +49,7 @@ describe('micromamba argv builders', () => {
     )
     expect(argv).toEqual([
       '/mm',
+      '--no-rc',
       'create',
       '--root-prefix',
       '/root',
@@ -83,6 +86,7 @@ describe('micromamba argv builders', () => {
     )
     expect(argv).toEqual([
       '/mm',
+      '--no-rc',
       'install',
       '--root-prefix',
       '/root',
@@ -104,6 +108,7 @@ describe('micromamba argv builders', () => {
     )
     expect(argv).toEqual([
       '/mm',
+      '--no-rc',
       'install',
       '-p',
       '/root/envs/default-python',
@@ -217,5 +222,44 @@ describe('caBundleEnv', () => {
   it('is empty when no bundle is set', () => {
     expect(caBundleEnv(undefined)).toEqual({})
     expect(caBundleEnv('')).toEqual({})
+  })
+})
+
+describe('micromambaSpawnEnv', () => {
+  it('cleans inherited conda/mamba values before injecting the Windows app cache and CA vars', () => {
+    const env = micromambaSpawnEnv('D:\\OpenScience\\runtime', '/ca.pem', {
+      platform: 'win32',
+      env: {
+        PATH: 'C:\\Windows',
+        CONDA_PKGS_DIRS: 'Z:\\hostile-cache',
+        conda_prefix: 'Z:\\foreign-env',
+        MAMBA_ROOT_PREFIX: 'Z:\\foreign-root',
+        SSL_CERT_FILE: 'Z:\\old-ca'
+      },
+      selectCache: () => ({ path: 'D:\\osp1234567890', lockKey: 'd:\\osp1234567890' })
+    })
+
+    expect(env).toMatchObject({
+      PATH: 'C:\\Windows',
+      CONDA_PKGS_DIRS: 'D:\\osp1234567890',
+      CONDA_SSL_VERIFY: '/ca.pem',
+      SSL_CERT_FILE: '/ca.pem',
+      REQUESTS_CA_BUNDLE: '/ca.pem',
+      PIP_CERT: '/ca.pem',
+      CURL_CA_BUNDLE: '/ca.pem'
+    })
+    expect(env.conda_prefix).toBeUndefined()
+    expect(env.MAMBA_ROOT_PREFIX).toBeUndefined()
+  })
+
+  it('leaves inherited non-Windows environment behavior unchanged apart from CA injection', () => {
+    const env = micromambaSpawnEnv('/runtime', '/ca.pem', {
+      platform: 'darwin',
+      env: { CONDA_PKGS_DIRS: '/existing', MAMBA_ROOT_PREFIX: '/existing-root' }
+    })
+
+    expect(env.CONDA_PKGS_DIRS).toBe('/existing')
+    expect(env.MAMBA_ROOT_PREFIX).toBe('/existing-root')
+    expect(env.CONDA_SSL_VERIFY).toBe('/ca.pem')
   })
 })

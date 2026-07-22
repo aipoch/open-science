@@ -37,7 +37,17 @@ const provider = (overrides: Partial<ProviderView> = {}): ProviderView => ({
 
 const noop = vi.fn()
 
-const renderList = (providers: ProviderView[], activeId?: string, busyId?: string): void => {
+const renderList = (
+  providers: ProviderView[],
+  activeId?: string,
+  busyId?: string,
+  callbacks: {
+    onCancel?: () => void
+    onLogin?: () => void
+    onLogout?: () => void
+    isCodexLoginPending?: boolean
+  } = {}
+): void => {
   act(() => {
     root.render(
       <ProviderList
@@ -47,6 +57,10 @@ const renderList = (providers: ProviderView[], activeId?: string, busyId?: strin
         onEdit={noop}
         onDelete={noop}
         onTest={noop}
+        isCodexLoginPending={callbacks.isCodexLoginPending}
+        onCancelCodexLogin={callbacks.onCancel}
+        onLoginIsolatedCodex={callbacks.onLogin}
+        onLogoutIsolatedCodex={callbacks.onLogout}
       />
     )
   })
@@ -212,6 +226,81 @@ describe('ProviderList', () => {
 
     expect(container.textContent).toContain('Model: default')
     expect(container.textContent).not.toContain('Key:')
+  })
+
+  it('keeps shared Codex account management under Codex CLI', () => {
+    renderList([
+      provider({
+        id: 'builtin-codex-shared',
+        type: 'codex-shared',
+        name: 'Existing Codex profile',
+        models: [],
+        model: undefined,
+        maskedKey: undefined,
+        hasKey: false
+      })
+    ])
+
+    expect(container.textContent).toContain('Managed by Codex CLI')
+    expect(buttonByLabel('Check Codex login')).toBeDefined()
+    expect(buttonByLabel('Edit')).toBeDefined()
+    expect(buttonByLabel('Delete')).toBeDefined()
+    expect(buttonByLabel('Sign out')).toBeUndefined()
+  })
+
+  it('renders shared and isolated Codex modes as one subscription card', () => {
+    renderList([
+      provider({
+        id: 'builtin-codex-shared',
+        type: 'codex-shared',
+        name: 'Existing Codex profile'
+      }),
+      provider({
+        id: 'builtin-codex-isolated',
+        type: 'codex-isolated',
+        name: 'Open Science Codex login'
+      })
+    ])
+
+    expect(container.querySelectorAll('[data-slot="settings-list-row"]')).toHaveLength(1)
+    expect(container.textContent).toContain('Codex subscription')
+  })
+
+  it('offers sign in for an unverified isolated provider, cancel while pending, sign out after', () => {
+    const onCancel = vi.fn()
+    const onLogin = vi.fn()
+    const onLogout = vi.fn()
+    const isolated = provider({
+      id: 'builtin-codex-isolated',
+      type: 'codex-isolated',
+      name: 'Open Science Codex login',
+      models: [],
+      model: undefined,
+      maskedKey: undefined,
+      hasKey: false,
+      lastValidatedAt: undefined
+    })
+
+    // Not signed in yet: the explicit sign-in action is offered alongside the read-only check.
+    renderList([isolated], undefined, undefined, { onLogin })
+    act(() => buttonByLabel('Sign in')?.click())
+    expect(onLogin).toHaveBeenCalledOnce()
+    expect(buttonByLabel('Check Codex login')).toBeDefined()
+
+    // While the browser login is open: cancel replaces the check and no second sign-in is offered.
+    renderList([isolated], undefined, undefined, { onCancel, isCodexLoginPending: true })
+    act(() => buttonByLabel('Cancel sign-in')?.click())
+    expect(onCancel).toHaveBeenCalledOnce()
+    expect(buttonByLabel('Sign in')).toBeUndefined()
+    expect(buttonByLabel('Check Codex login')).toBeUndefined()
+
+    // Signed in (verified): sign-in goes away, sign out is offered.
+    renderList([{ ...isolated, lastValidatedAt: 1 }], undefined, undefined, { onLogout })
+    act(() => buttonByLabel('Sign out')?.click())
+    expect(onLogout).toHaveBeenCalledOnce()
+    expect(buttonByLabel('Sign in')).toBeUndefined()
+    expect(buttonByLabel('Edit')).toBeDefined()
+    expect(buttonByLabel('Delete')).toBeDefined()
   })
 
   it('renders an empty state with no providers', () => {

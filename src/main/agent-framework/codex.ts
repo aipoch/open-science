@@ -12,6 +12,7 @@ import {
 } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { augmentedPathEnv } from '../settings/shell-path'
+import type { ReasoningEffort } from '../../shared/settings'
 import type {
   AgentFramework,
   AgentAuthentication,
@@ -22,6 +23,7 @@ import type {
   SessionSetup,
   SessionSetupContext
 } from './types'
+import { isCodexSubscriptionProvider } from '../../shared/settings'
 
 const CODEX_PROVIDER_ID = 'open-science'
 // Catalog model used only for Codex's local metadata; the Responses bridge rewrites it to the selected
@@ -64,6 +66,8 @@ type CodexFrameworkDeps = {
 }
 
 export const codexStorageDir = (storageRoot: string): string => join(storageRoot, 'codex')
+export const codexSubscriptionStorageDir = (storageRoot: string): string =>
+  join(storageRoot, 'codex-subscription')
 
 const normalizeResponsesBaseUrl = (value: string | undefined): string | undefined => {
   const normalized = value
@@ -90,11 +94,23 @@ const buildCodexConfig = (provider: {
   baseUrl?: string
   model?: string
   key?: string
+  reasoningEffort?: ReasoningEffort
 }): Record<string, unknown> => {
   const baseUrl = normalizeResponsesBaseUrl(provider.baseUrl)
+  // Codex config takes low|medium|high|xhigh; the app's top level 'max' maps onto 'xhigh'.
+  // 'default' is filtered upstream (never reaches here), but stay defensive and omit it too.
+  const codexEffort =
+    provider.reasoningEffort === 'max'
+      ? 'xhigh'
+      : provider.reasoningEffort === 'low' ||
+          provider.reasoningEffort === 'medium' ||
+          provider.reasoningEffort === 'high'
+        ? provider.reasoningEffort
+        : undefined
 
   return {
     ...(provider.model ? { model: provider.model } : {}),
+    ...(codexEffort ? { model_reasoning_effort: codexEffort } : {}),
     model_provider: CODEX_PROVIDER_ID,
     model_providers: {
       [CODEX_PROVIDER_ID]: {
@@ -176,6 +192,11 @@ export const createCodexFramework = ({
   displayName: 'Codex',
   supportsSkills: true,
   acceptsStdioMcp: true,
+  // codex-acp advertises a thought_level effort option and honors set_config_option on live sessions
+  // (verified live: a session accepted effort 'high' over ACP). If a future adapter stops
+  // advertising it, the runtime's no-applied-session guard falls back to a reconnect so the baked
+  // model_reasoning_effort config takes over.
+  supportsLiveEffortChange: true,
   supportedApiTypes: ['responses'],
 
   spawn(input: AgentSpawnInput): ChildProcessWithoutNullStreams {
@@ -197,10 +218,26 @@ export const createCodexFramework = ({
   },
 
   prepareModelConfig(provider, ctx: ModelConfigContext): AgentModelConfig {
+    if (isCodexSubscriptionProvider(provider.type)) {
+      return {
+        env:
+          provider.type === 'codex-isolated'
+            ? { CODEX_HOME: codexSubscriptionStorageDir(ctx.storageRoot) }
+            : {}
+      }
+    }
+
     const bridge = ctx.responsesBridge
     const useBridge =
       bridge !== undefined && !(provider.apiEndpoints?.includes('responses') ?? false)
     const codexModel = useBridge ? CODEX_BRIDGE_MODEL : provider.model
+    // Native Responses is driven directly. A dual-endpoint vendor keeps its Anthropic route in
+    // `baseUrl` and its OpenAI/Responses `/v1` root in `openaiBaseUrl`, so post to the latter; a
+    // Responses-only provider (e.g. OpenAI) carries its base in `baseUrl`. When bridging, the local
+    // bridge URL wins.
+    const responsesBaseUrl = useBridge
+      ? bridge.baseUrl
+      : (provider.openaiBaseUrl ?? provider.baseUrl)
     const authentication: AgentAuthentication | undefined =
       provider.key && !useBridge
         ? {
@@ -216,8 +253,9 @@ export const createCodexFramework = ({
           buildCodexConfig({
             ...provider,
             model: codexModel,
-            baseUrl: bridge?.baseUrl ?? provider.baseUrl,
-            key: useBridge ? undefined : provider.key
+            baseUrl: responsesBaseUrl,
+            key: useBridge ? undefined : provider.key,
+            reasoningEffort: ctx.reasoningEffort
           })
         ),
         MODEL_PROVIDER: CODEX_PROVIDER_ID,

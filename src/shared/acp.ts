@@ -202,6 +202,7 @@ export type AcpCreateSessionResponse = {
   sessionId: string
   cwd?: string
   frameworkId?: AgentFrameworkId
+  backendId?: string
   // True when a resume could not reattach the agent's own session and a fresh one was adopted under the
   // same app id (framework switch, or a restart the agent could not resume). Agent-side context is gone,
   // so the caller may replay a transcript preamble into the next prompt to restore continuity.
@@ -214,6 +215,7 @@ export type AcpResumeSessionRequest = {
   projectName?: string
   permissionProfile?: PermissionProfileId
   previousFrameworkId?: AgentFrameworkId
+  previousBackendId?: string
 }
 
 export type AcpSetPermissionProfileRequest = {

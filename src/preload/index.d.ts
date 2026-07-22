@@ -99,6 +99,7 @@ import type {
   SetActiveProviderRequest,
   SetPackageMirrorRequest,
   SetAgentFrameworkRequest,
+  SetReasoningEffortRequest,
   SetSkillEnabledRequest,
   SettingsSnapshot,
   SkillDetailView,
@@ -211,7 +212,11 @@ interface OpenScienceAPI {
     deleteProvider(request: DeleteProviderRequest): Promise<SettingsSnapshot>
     setActiveProvider(request: SetActiveProviderRequest): Promise<SettingsSnapshot>
     setAgentFramework(request: SetAgentFrameworkRequest): Promise<SettingsSnapshot>
+    setReasoningEffort(request: SetReasoningEffortRequest): Promise<SettingsSnapshot>
     validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult>
+    cancelCodexLogin(): Promise<void>
+    loginIsolatedCodex(): Promise<ValidateProviderResult>
+    logoutIsolatedCodex(): Promise<ValidateProviderResult>
     refreshProviderModels(
       request: RefreshProviderModelsRequest
     ): Promise<RefreshProviderModelsResult>
@@ -339,7 +344,7 @@ interface OpenScienceAPI {
     getStatus(): Promise<ProvisionStatus>
     provision(lang: NotebookLanguage): Promise<void>
     repair(lang: NotebookLanguage): Promise<void>
-    cancel(): Promise<void>
+    cancel(lang?: NotebookLanguage): Promise<void>
     onProgress(listener: (progress: ProvisionProgress) => void): RemoveListener
   }
   runtime: {

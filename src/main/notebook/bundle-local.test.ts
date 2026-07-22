@@ -167,7 +167,11 @@ describe('createLocalBundleAdapter', () => {
     const bundle = (await adapter(PY_SPEC, 1, () => {})) as FetchedBundle
 
     expect(bundle.lockPath).toBe(join(stalePackDir, `${packName}.lock`))
-    expect(await readdir(stalePackDir)).toEqual(['numpy-2.conda', 'python-3.12.lock'])
+    expect(await readdir(stalePackDir)).toEqual([
+      'numpy-2.conda',
+      'path-budget.json',
+      'python-3.12.lock'
+    ])
   })
 
   it('rejects the legacy flat-lock/shared-pkgs bundle shape', async () => {
@@ -191,6 +195,58 @@ describe('createLocalBundleAdapter', () => {
     await expect(adapter(PY_SPEC, 1, () => {})).resolves.toBeUndefined()
     expect(lockPath).toContain('python-3.12.lock')
   })
+
+  it.each(['missing', 'partial'] as const)(
+    'rejects a win-64 pack with %s path-budget metadata',
+    async (metadata) => {
+      const root = await makeRoot()
+      const bundleDir = join(root, 'bundle')
+      const packSource = join(root, 'pack-source')
+      const packName = 'python-3.11'
+      const archiveName = packArchiveFile('python', '3.11')
+      const archivePath = join(bundleDir, archiveName)
+      await mkdir(bundleDir, { recursive: true })
+      await mkdir(packSource, { recursive: true })
+      await writeFile(
+        join(packSource, `${packName}.lock`),
+        '@EXPLICIT\nhttps://conda.anaconda.org/conda-forge/win-64/numpy-1.conda#0cc175b9c0f1b6a831c399e269772661\n'
+      )
+      await writeFile(join(packSource, 'numpy-1.conda'), 'a')
+      await createPackArchive(packSource, archivePath)
+      const bytes = readFileSync(archivePath)
+      await writeFile(
+        join(bundleDir, 'manifest.json'),
+        JSON.stringify({
+          schema: 1,
+          envVersion: 1,
+          subdir: 'win-64',
+          packs: {
+            [packName]: {
+              language: 'python',
+              version: '3.11',
+              file: archiveName,
+              sha256: createHash('sha256').update(bytes).digest('hex'),
+              size: bytes.length,
+              ...(metadata === 'partial' ? { maxCacheRelativePath: 211 } : {})
+            }
+          }
+        })
+      )
+
+      const adapter = createLocalBundleAdapter(join(root, 'data'), bundleDir, { subdir: 'win-64' })
+
+      await expect(
+        adapter(
+          { name: 'default-python', language: 'python', version: '3.11', packages: [] },
+          1,
+          () => {}
+        )
+      ).resolves.toBeUndefined()
+      if (metadata === 'missing') {
+        expect(await readdir(pkgsCache(join(root, 'data')))).toContain('numpy-1.conda')
+      }
+    }
+  )
 })
 
 describe('chainFetchBundle', () => {

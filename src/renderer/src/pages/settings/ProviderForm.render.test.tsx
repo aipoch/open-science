@@ -29,10 +29,25 @@ afterEach(() => {
 
 const render = (
   value: ProviderFormValue,
-  { onChange = vi.fn(), errors }: { onChange?: () => void; errors?: ProviderFormErrors } = {}
+  {
+    onChange = vi.fn(),
+    errors,
+    showCodexSubscriptions = false
+  }: {
+    onChange?: () => void
+    errors?: ProviderFormErrors
+    showCodexSubscriptions?: boolean
+  } = {}
 ): void => {
   act(() => {
-    root.render(<ProviderForm value={value} onChange={onChange} errors={errors} />)
+    root.render(
+      <ProviderForm
+        value={value}
+        onChange={onChange}
+        errors={errors}
+        showCodexSubscriptions={showCodexSubscriptions}
+      />
+    )
   })
 }
 
@@ -95,6 +110,32 @@ describe('ProviderForm field switching', () => {
     expect(container.querySelector('[aria-label="API key"]')).toBeNull()
     // Only the optional model override remains.
     expect(container.querySelector('[aria-label="Model"]')).not.toBeNull()
+  })
+
+  it('shows a fixed shared Codex subscription without editable credentials or identity', () => {
+    render(
+      createEmptyProviderFormValue({
+        type: 'codex-shared',
+        name: 'Existing Codex profile',
+        apiEndpoint: 'responses'
+      }),
+      { showCodexSubscriptions: true }
+    )
+
+    expect(container.querySelector('[aria-label="Provider name"]')).toBeNull()
+    expect(container.querySelector('[aria-label="API key"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Model"]')).toBeNull()
+    expect(container.textContent).toContain('managed by Codex CLI')
+  })
+
+  it('chooses the Codex authentication mode inside the single provider form', () => {
+    render(createEmptyProviderFormValue({ type: 'codex-shared', name: 'Codex subscription' }), {
+      showCodexSubscriptions: true
+    })
+
+    const trigger = container.querySelector('[aria-label="Codex authentication"]')
+    expect(trigger).not.toBeNull()
+    expect(trigger?.textContent).toContain('Use existing Codex profile')
   })
 
   it('surfaces the provider-type picker with the current selection', () => {

@@ -32,6 +32,7 @@ import {
   writeReadyMarker,
   addRepairRequired,
   clearRepairRequired,
+  condaActivatedPath,
   isRepairRequired,
   readRepairRequired
 } from './runtime-paths'
@@ -83,6 +84,26 @@ describe('runtime-paths layout', () => {
     expect(readyMarkerPath('/r')).toBe(join('/r', '.env-ready'))
     expect(DEFAULT_ENV_VERSION).toBe(1)
     expect(DEFAULT_R_ENV).toBe('default-r')
+  })
+
+  it('builds the complete Windows conda DLL search path ahead of the inherited PATH', () => {
+    expect(condaActivatedPath('C:\\runtime\\envs\\default-r', 'C:\\Windows', 'win32')).toBe(
+      [
+        'C:\\runtime\\envs\\default-r',
+        'C:\\runtime\\envs\\default-r\\Library\\mingw-w64\\bin',
+        'C:\\runtime\\envs\\default-r\\Library\\usr\\bin',
+        'C:\\runtime\\envs\\default-r\\Library\\bin',
+        'C:\\runtime\\envs\\default-r\\Scripts',
+        'C:\\runtime\\envs\\default-r\\bin',
+        'C:\\Windows'
+      ].join(';')
+    )
+  })
+
+  it('keeps the existing POSIX env bin prefix behavior', () => {
+    expect(condaActivatedPath('/runtime/envs/default-r', '/usr/bin', 'darwin')).toBe(
+      '/runtime/envs/default-r/bin:/usr/bin'
+    )
   })
 })
 

@@ -112,6 +112,7 @@ type BindPendingSessionInput = {
   sessionId: string
   cwd?: string
   agentFrameworkId?: PersistedChatSession['agentFrameworkId']
+  agentBackendId?: PersistedChatSession['agentBackendId']
 }
 
 type AppendAgentMessageChunkInput = {
@@ -186,10 +187,12 @@ type SessionStore = SessionStoreData & {
   beginCompaction: (sessionId: string) => void
   markResumed: (
     sessionId: string,
-    agentFrameworkId?: PersistedChatSession['agentFrameworkId']
+    agentFrameworkId?: PersistedChatSession['agentFrameworkId'],
+    agentBackendId?: PersistedChatSession['agentBackendId']
   ) => void
-  markDisconnected: (sessionId: string) => void
+  markDisconnected: (sessionId: string, reason?: string) => void
   removeMessage: (sessionId: string, messageId: string) => void
+  truncateSessionFromMessage: (sessionId: string, messageId: string) => void
   upsertToolActivity: (input: UpsertToolActivityInput) => void
   setPermissionPending: (sessionId: string) => void
   clearPermissionPending: (sessionId: string) => void
@@ -652,7 +655,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   // Replaces the temporary renderer id once ACP returns the real protocol session id.
-  bindPendingSession: ({ pendingSessionId, sessionId, cwd, agentFrameworkId }) => {
+  bindPendingSession: ({ pendingSessionId, sessionId, cwd, agentFrameworkId, agentBackendId }) => {
     if (!pendingSessionId || !sessionId) return undefined
 
     const state = get()
@@ -675,6 +678,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               isPending: false,
               cwd: cwd ?? session.cwd,
               agentFrameworkId: agentFrameworkId ?? session.agentFrameworkId,
+              agentBackendId: agentBackendId ?? session.agentBackendId,
               updatedAt: now
             }
           : session
@@ -1188,7 +1192,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   // Clears the interrupted/error state after a successful resume so the composer is usable again.
-  markResumed: (sessionId, agentFrameworkId) => {
+  markResumed: (sessionId, agentFrameworkId, agentBackendId) => {
     set((state) => ({
       sessions: state.sessions.map((session) =>
         session.id === sessionId
@@ -1198,6 +1202,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               error: undefined,
               interrupted: undefined,
               agentFrameworkId: agentFrameworkId ?? session.agentFrameworkId,
+              agentBackendId: agentBackendId ?? session.agentBackendId,
               compacting: undefined,
               updatedAt: Date.now()
             }
@@ -1208,7 +1213,13 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
 
   // Flags a session dropped by a live connection loss so the Resume banner appears; like failRun it
   // settles any half-streamed message/open tool so nothing hangs in a perpetually-running state.
-  markDisconnected: (sessionId) => {
+  markDisconnected: (sessionId, reason) => {
+    // Preserve the specific failure cause (e.g. "Connection timeout") when the caller has one,
+    // while keeping the Resume affordance. Fall back to a generic message otherwise.
+    const trimmedReason = reason?.trim()
+    const error = trimmedReason
+      ? `${trimmedReason} — Resume to reconnect and continue.`
+      : 'Connection lost — Resume to reconnect and continue.'
     set((state) => ({
       sessions: state.sessions.map((session) =>
         session.id === sessionId
@@ -1218,7 +1229,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               activeRun: undefined,
               interrupted: true,
               compacting: undefined,
-              error: 'Connection lost — Resume to reconnect and continue.',
+              error,
               messages: failStreamingMessages(session.messages),
               activities: failOpenActivities(session.activities),
               updatedAt: Date.now()
@@ -1244,6 +1255,42 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         return {
           ...session,
           messages: session.messages.filter((message) => message.id !== messageId),
+          filesRevision: hasFiles ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
+          updatedAt: Date.now()
+        }
+      })
+    }))
+  },
+
+  // Drops a message and every turn after it for an edited resend. Activities are cut by timestamp
+  // because message sortIndex is transient (stripped on persist) while createdAt is durable on both
+  // sides of hydration. The kept turns are what the resend replays into the fresh agent context.
+  truncateSessionFromMessage: (sessionId, messageId) => {
+    if (!sessionId || !messageId) return
+
+    set((state) => ({
+      sessions: state.sessions.map((session) => {
+        if (session.id !== sessionId) return session
+        const cutIndex = session.messages.findIndex((message) => message.id === messageId)
+        if (cutIndex < 0) return session
+
+        const cutMessage = session.messages[cutIndex]
+        const removed = session.messages.slice(cutIndex)
+        const hasFiles = removed.some(
+          (message) => (message.uploads?.length ?? 0) > 0 || (message.artifactIds?.length ?? 0) > 0
+        )
+
+        return {
+          ...session,
+          status: 'idle',
+          messages: session.messages.slice(0, cutIndex),
+          activities: session.activities?.filter(
+            (activity) => activity.createdAt < cutMessage.createdAt
+          ),
+          activeRun: undefined,
+          agentStatus: undefined,
+          error: undefined,
+          interrupted: undefined,
           filesRevision: hasFiles ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
           updatedAt: Date.now()
         }

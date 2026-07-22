@@ -171,6 +171,42 @@ describe('classifyDataRoot', () => {
     }
   })
 
+  it('rejects an exact 260-character deepest managed-env path', async () => {
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+
+    try {
+      // Derived target length is 99; the default env reserve is 161, totaling exactly 260.
+      const result = await classifyDataRoot(`/${'b'.repeat(86)}`, currentDataRoot)
+
+      expect(result.kind).toBe('invalid')
+      expect(result.error).toMatch(/too long|260/i)
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original, configurable: true })
+    }
+  })
+
+  it('uses persisted pack metadata at the Windows migration path boundary', async () => {
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    const budgetDir = join(currentDataRoot, 'runtime', 'packs', '1', 'win-64', 'r-4.4')
+    await mkdir(budgetDir, { recursive: true })
+    await writeFile(
+      join(budgetDir, 'path-budget.json'),
+      JSON.stringify({ maxCacheRelativePath: 200, maxEnvRelativePath: 160 })
+    )
+
+    try {
+      // This target fit the old hard-coded 110 reserve, but not the installed pack's 160 budget.
+      const result = await classifyDataRoot(`/${'a'.repeat(100)}`, currentDataRoot)
+
+      expect(result.kind).toBe('invalid')
+      expect(result.error).toMatch(/too long|260/i)
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original, configurable: true })
+    }
+  })
+
   it('does not reject a normal short target on Windows for length', async () => {
     const original = process.platform
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
