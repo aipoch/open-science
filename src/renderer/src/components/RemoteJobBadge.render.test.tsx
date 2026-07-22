@@ -67,13 +67,22 @@ describe('RemoteJobBadge — 0 running', () => {
     expect(container.firstChild).toBeNull()
   })
 
-  it('hides when the only job is in a terminal state', () => {
-    useSessionJobStore.getState().applyUpdate(makeJob({ status: 'success' }))
+  it('renders gray badge with "N jobs" when all jobs are finished', () => {
+    useSessionJobStore.getState().applyUpdate(makeJob({ job_id: 'j1', status: 'success' }))
+    useSessionJobStore.getState().applyUpdate(makeJob({ job_id: 'j2', status: 'failed' }))
 
     act(() => {
       root.render(<RemoteJobBadge sessionId="sess-test" />)
     })
-    expect(container.firstChild).toBeNull()
+
+    expect(container.textContent).toContain('2 jobs')
+    expect(container.textContent).not.toContain('running')
+
+    const btn = container.querySelector('button')
+    expect(btn).not.toBeNull()
+    // Gray style check: should not have the amber --session-waiting color
+    const style = btn?.getAttribute('style')
+    expect(style).not.toContain('--session-waiting')
   })
 })
 
@@ -87,6 +96,19 @@ describe('RemoteJobBadge — N running', () => {
       root.render(<RemoteJobBadge sessionId="sess-test" />)
     })
 
+    expect(container.textContent).toContain('2 running')
+  })
+
+  it('counts submitted jobs as running', () => {
+    useSessionJobStore.getState().applyUpdate(makeJob({ job_id: 'j1', status: 'running' }))
+    useSessionJobStore.getState().applyUpdate(makeJob({ job_id: 'j2', status: 'submitted' }))
+    useSessionJobStore.getState().applyUpdate(makeJob({ job_id: 'j3', status: 'success' }))
+
+    act(() => {
+      root.render(<RemoteJobBadge sessionId="sess-test" />)
+    })
+
+    // Should count both running and submitted as "running"
     expect(container.textContent).toContain('2 running')
   })
 
@@ -111,5 +133,25 @@ describe('RemoteJobBadge — N running', () => {
 
     const btn = container.querySelector('button')
     expect(btn?.getAttribute('aria-label')).toContain('running remote job')
+  })
+})
+
+describe('RemoteJobBadge — click interaction', () => {
+  it('triggers onOpenJobList when clicked', () => {
+    const handleOpen = vi.fn()
+    useSessionJobStore.getState().applyUpdate(makeJob({ status: 'running' }))
+
+    act(() => {
+      root.render(<RemoteJobBadge sessionId="sess-test" onOpenJobList={handleOpen} />)
+    })
+
+    const btn = container.querySelector('button')
+    expect(btn).not.toBeNull()
+
+    act(() => {
+      btn?.click()
+    })
+
+    expect(handleOpen).toHaveBeenCalledTimes(1)
   })
 })

@@ -109,3 +109,28 @@ describe('session job store — runningJobsForSession', () => {
     expect(useSessionJobStore.getState().runningJobsForSession('sess-UNKNOWN')).toHaveLength(0)
   })
 })
+
+describe('session job store — allJobsForSession', () => {
+  it('returns all jobs for the session regardless of status, sorted by created_at descending', () => {
+    const job1 = makeJob({ job_id: 'j1', session_id: 'sess-A', status: 'success', created_at: 1000 })
+    const job2 = makeJob({ job_id: 'j2', session_id: 'sess-A', status: 'running', created_at: 3000 })
+    const job3 = makeJob({ job_id: 'j3', session_id: 'sess-A', status: 'failed', created_at: 2000 })
+    const otherSession = makeJob({ job_id: 'o', session_id: 'sess-B', status: 'success', created_at: 4000 })
+
+    useSessionJobStore.getState().applyUpdate(job1)
+    useSessionJobStore.getState().applyUpdate(job2)
+    useSessionJobStore.getState().applyUpdate(job3)
+    useSessionJobStore.getState().applyUpdate(otherSession)
+
+    const result = useSessionJobStore.getState().allJobsForSession('sess-A')
+    expect(result).toHaveLength(3)
+    expect(result[0]!.job_id).toBe('j2') // created_at: 3000
+    expect(result[1]!.job_id).toBe('j3') // created_at: 2000
+    expect(result[2]!.job_id).toBe('j1') // created_at: 1000
+  })
+
+  it('returns an empty array when session has no jobs', () => {
+    useSessionJobStore.getState().applyUpdate(makeJob({ session_id: 'sess-A' }))
+    expect(useSessionJobStore.getState().allJobsForSession('sess-B')).toHaveLength(0)
+  })
+})

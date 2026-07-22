@@ -42,6 +42,7 @@ import { DeleteSessionDialog } from './DeleteSessionDialog'
 import { PreviewPanel } from './PreviewPanel'
 import { RenameSessionDialog } from './RenameSessionDialog'
 import { SessionNotebookDialog } from './SessionNotebookDialog'
+import { JobDetailModal } from '@/components/JobDetailModal'
 import { getVisiblePermissionRequests } from './session-permissions'
 import { WorkspaceSidebar } from './WorkspaceSidebar'
 import { useJobAnalysisEffect } from '@/lib/compute/useJobAnalysisEffect'
@@ -197,6 +198,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const [sessionToViewNotebook, setSessionToViewNotebook] = useState<ChatSession | undefined>(
     undefined
   )
+  const [jobListModalSessionId, setJobListModalSessionId] = useState<string | undefined>(undefined)
   // The selected session is the only conversation rendered in the center panel.
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === selectedSessionId),
@@ -894,6 +896,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
             onComputeHostToggle={handleComputeHostToggle}
             onRequestReview={requestManualReview}
             isRequestReviewDisabled={isRequestReviewDisabled}
+            onOpenJobList={setJobListModalSessionId}
           />
 
           <ResizableHandle
@@ -935,6 +938,11 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
       <SessionNotebookDialog
         session={sessionToViewNotebook}
         onClose={() => setSessionToViewNotebook(undefined)}
+      />
+
+      <JobDetailModal
+        sessionId={jobListModalSessionId}
+        onClose={() => setJobListModalSessionId(undefined)}
       />
     </main>
   )

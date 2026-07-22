@@ -116,6 +116,8 @@ type ConversationPanelProps = {
   onRequestReview: () => void
   // True when "Request review" should be disabled: no completed turn, already reviewed, or currently reviewing.
   isRequestReviewDisabled: boolean
+  // Open job list modal for a specific session.
+  onOpenJobList?: (sessionId: string) => void
 }
 
 // Middle chat surface owns the visible conversation and local message composer UI.
@@ -151,16 +153,16 @@ const ConversationPanel = ({
   enabledComputeHosts,
   onComputeHostToggle,
   onRequestReview,
-  isRequestReviewDisabled
+  isRequestReviewDisabled,
+  onOpenJobList
 }: ConversationPanelProps): React.JSX.Element => {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   // Local so the interrupted banner can show a spinner and block a double-resume until the request settles.
   const [isResuming, setIsResuming] = useState(false)
 
-  // Unconditional hook: check if the active session has running remote jobs.
-  const runningJobsForSession = useSessionJobStore((s) => s.runningJobsForSession)
-  const hasRunningJobs =
-    activeSession !== undefined && runningJobsForSession(activeSession.id).length > 0
+  // Unconditional hook: check if the active session has any jobs (running or finished).
+  const allJobsForSession = useSessionJobStore((s) => s.allJobsForSession)
+  const hasAnyJobs = activeSession !== undefined && allJobsForSession(activeSession.id).length > 0
 
   // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
   const handleResume = async (): Promise<void> => {
@@ -275,7 +277,7 @@ const ConversationPanel = ({
                   onRespond={onRespondToPermission}
                 />
 
-                {notebookReference || hasRunningJobs ? (
+                {notebookReference || hasAnyJobs ? (
                   <div className="mb-2 flex min-h-9 items-center rounded-lg border border-border-200 bg-bg-000 px-2 shadow-card">
                     {notebookReference ? (
                       <button
@@ -290,8 +292,11 @@ const ConversationPanel = ({
                       </button>
                     ) : null}
                     <div className="flex-1" />
-                    {hasRunningJobs && activeSession ? (
-                      <RemoteJobBadge sessionId={activeSession.id} />
+                    {hasAnyJobs && activeSession ? (
+                      <RemoteJobBadge
+                        sessionId={activeSession.id}
+                        onOpenJobList={onOpenJobList ? () => onOpenJobList(activeSession.id) : undefined}
+                      />
                     ) : null}
                   </div>
                 ) : null}

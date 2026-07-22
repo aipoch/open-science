@@ -58,23 +58,38 @@ vi.mock('./ComputeHostSelector', () => ({
   ComputeHostSelector: (): null => null
 }))
 
-// session-job-store mock: controls whether the active session has running jobs.
-// Default: no running jobs. Override mockHasRunningJobs per test.
+// session-job-store mock: controls whether the active session has running/finished jobs.
+// Default: no jobs. Override mockHasRunningJobs / mockAllJobs per test.
 let mockHasRunningJobs = false
+let mockAllJobs: unknown[] = []
 
 vi.mock('@/stores/session-job-store', () => ({
   useSessionJobStore: (
-    selector: (s: { runningJobsForSession: (id: string) => unknown[] }) => unknown
+    selector: (s: {
+      runningJobsForSession: (id: string) => unknown[]
+      allJobsForSession: (id: string) => unknown[]
+    }) => unknown
   ) =>
     selector({
-      runningJobsForSession: () => (mockHasRunningJobs ? [{ job_id: 'job-1' }] : [])
+      runningJobsForSession: () => (mockHasRunningJobs ? [{ job_id: 'job-1' }] : []),
+      allJobsForSession: () => mockAllJobs
     })
 }))
 
 // RemoteJobBadge renders a sentinel element when a sessionId is provided so tests can assert presence.
 vi.mock('@/components/RemoteJobBadge', () => ({
-  RemoteJobBadge: ({ sessionId }: { sessionId: string }): React.JSX.Element | null =>
-    sessionId ? <span data-testid="remote-job-badge">{sessionId}</span> : null
+  RemoteJobBadge: ({
+    sessionId,
+    onOpenJobList
+  }: {
+    sessionId: string
+    onOpenJobList?: () => void
+  }): React.JSX.Element | null =>
+    sessionId ? (
+      <span data-testid="remote-job-badge" onClick={onOpenJobList}>
+        {sessionId}
+      </span>
+    ) : null
 }))
 
 vi.mock('./WorkspaceMessageScroller', () => ({
@@ -174,6 +189,7 @@ beforeEach(() => {
   root = createRoot(container)
   onStageAttachmentFiles.mockClear()
   mockHasRunningJobs = false
+  mockAllJobs = []
 })
 
 afterEach(() => {
@@ -521,6 +537,7 @@ describe('ConversationPanel notebook bar', () => {
 
   it('shows only the job badge when there is no notebookReference but there are running jobs', () => {
     mockHasRunningJobs = true
+    mockAllJobs = [{ job_id: 'job-1', status: 'running', created_at: Date.now() }]
     renderPanel({ activeSession: session, notebookReference: undefined })
 
     expect(container.querySelector('[aria-label="Open notebook"]')).toBeNull()
@@ -529,6 +546,7 @@ describe('ConversationPanel notebook bar', () => {
 
   it('shows both the Notebook button and the job badge when both are present', () => {
     mockHasRunningJobs = true
+    mockAllJobs = [{ job_id: 'job-1', status: 'running', created_at: Date.now() }]
     const ref = {
       notebookId: 'nb-1',
       sessionId: 'session-bar',
@@ -543,5 +561,34 @@ describe('ConversationPanel notebook bar', () => {
 
     expect(container.querySelector('[aria-label="Open notebook"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="remote-job-badge"]')).not.toBeNull()
+  })
+
+  it('keeps the notebook bar visible when there are finished jobs but no running jobs', () => {
+    mockHasRunningJobs = false
+    mockAllJobs = [{ job_id: 'job-1', status: 'done', created_at: Date.now() }]
+    renderPanel({ activeSession: session, notebookReference: undefined })
+
+    // Bar should be visible (the container that wraps badge/notebook button)
+    const notebookBar = container.querySelector('.mb-2.flex.min-h-9')
+    expect(notebookBar).not.toBeNull()
+    // Badge should be visible even though no jobs are running
+    expect(container.querySelector('[data-testid="remote-job-badge"]')).not.toBeNull()
+  })
+
+  it('calls onOpenJobList when the badge is clicked', () => {
+    mockHasRunningJobs = true
+    mockAllJobs = [{ job_id: 'job-1', status: 'running', created_at: Date.now() }]
+    const handleOpenJobList = vi.fn()
+    renderPanel({ activeSession: session, notebookReference: undefined, onOpenJobList: handleOpenJobList })
+
+    const badge = container.querySelector('[data-testid="remote-job-badge"]')
+    expect(badge).not.toBeNull()
+
+    act(() => {
+      ;(badge as HTMLElement).click()
+    })
+
+    expect(handleOpenJobList).toHaveBeenCalledTimes(1)
+    expect(handleOpenJobList).toHaveBeenCalledWith('session-bar')
   })
 })

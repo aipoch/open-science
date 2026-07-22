@@ -21,6 +21,8 @@ type SessionJobStore = SessionJobStoreData & {
   applyUpdate: (job: JobSummary) => void
   // Pure utility — returns running jobs for a given session id (does not trigger a store write).
   runningJobsForSession: (sessionId: string) => JobSummary[]
+  // Pure utility — returns all jobs for a given session id, sorted by created_at descending.
+  allJobsForSession: (sessionId: string) => JobSummary[]
 }
 
 export const createInitialSessionJobState = (): SessionJobStoreData => ({
@@ -54,5 +56,11 @@ export const useSessionJobStore = create<SessionJobStore>((set, get) => ({
   runningJobsForSession: (sessionId) =>
     Array.from(get().jobsById.values()).filter(
       (j) => j.session_id === sessionId && j.status === 'running'
-    )
+    ),
+
+  // Returns all jobs for the given session, sorted by created_at descending.
+  allJobsForSession: (sessionId) =>
+    Array.from(get().jobsById.values())
+      .filter((j) => j.session_id === sessionId)
+      .sort((a, b) => b.created_at - a.created_at)
 }))
