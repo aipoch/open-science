@@ -96,6 +96,8 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
   const pendingBySession = new Map<string, PendingBatch>()
   // job_ids currently in flight (sendPrompt sent, markConsumed not yet called).
   const inFlight: InFlightSet = new Set()
+  // Track jobs waiting for turn completion (dispatch sent, not yet consumed).
+  const awaitingTurnEnd = new Map<string, string[]>() // sessionId -> jobIds[]
 
   const isDoneState = (job: JobSummary): boolean =>
     job.notified_at !== undefined && job.notified_at !== null
@@ -140,12 +142,38 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
 
     deps.log('analysis-turn:sent', `session=${sessionId} jobs=[${jobIds.join(',')}]`)
 
+    // Register these jobs as awaiting turn completion. Mark consumed only when turn ends idle.
+    awaitingTurnEnd.set(sessionId, jobIds)
+
+    // Register onTurnEnd callback to mark consumed when turn truly completes (fix issue #3).
+    if (!batch.waitRegistered) {
+      batch.waitRegistered = true
+      deps.onTurnEnd(sessionId, () => onTurnEndCallback(sessionId))
+    }
+  }
+
+  // Called when a turn ends. Marks jobs consumed if the session is now idle.
+  const onTurnEndCallback = async (sessionId: string): Promise<void> => {
+    const jobIds = awaitingTurnEnd.get(sessionId)
+    if (!jobIds || jobIds.length === 0) return
+
+    // If session is still in-flight, another turn started — wait for the next onTurnEnd.
+    if (deps.isSessionInFlight(sessionId)) {
+      deps.log('analysis-turn:requeued-consumed', `session=${sessionId} still-in-flight`)
+      deps.onTurnEnd(sessionId, () => onTurnEndCallback(sessionId))
+      return
+    }
+
+    // Session is now idle — mark these jobs as consumed.
+    awaitingTurnEnd.delete(sessionId)
+
     try {
       await deps.markConsumed(sessionId, jobIds)
       deps.log('analysis-turn:consumed', `session=${sessionId} jobs=[${jobIds.join(',')}]`)
     } catch (err) {
       deps.log('analysis-turn:mark-consumed-failed', `session=${sessionId} error=${String(err)}`)
     } finally {
+      // Clear in-flight markers now that we've attempted to mark consumed.
       for (const id of jobIds) inFlight.delete(id)
     }
   }

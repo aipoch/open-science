@@ -516,7 +516,7 @@ describe('harvestJob — compute_done notification (issue 06)', () => {
     expect(summary.notified_at).toBeDefined()
     // Error path: featured_files are empty (no files were downloaded)
     expect(summary.featured_files).toEqual([])
-    expect(summary.output_file_count).toBe(0)
+    expect(summary.featured_file_count).toBe(0)
   })
 
   it('does NOT call broadcast when broadcast is not wired', async () => {

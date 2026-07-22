@@ -32,7 +32,7 @@ const makeJob = (overrides: Partial<JobSummary> = {}): JobSummary => ({
   notified_at: 2000,
   notification_consumed_at: undefined,
   featured_files: ['hpc/job-1/featured/result.txt'],
-  output_file_count: 1,
+  featured_file_count: 1,
   left_on_remote_count: 0,
   ...overrides
 })
@@ -96,7 +96,7 @@ describe('createJobAnalysisTrigger — immediate send', () => {
     expect(text).toContain('job-1')
   })
 
-  it('calls markConsumed after sendPrompt resolves', async () => {
+  it('calls markConsumed after sendPrompt resolves and turn ends', async () => {
     const deps = createDeps()
     const trigger = createJobAnalysisTrigger(deps)
 
@@ -104,6 +104,18 @@ describe('createJobAnalysisTrigger — immediate send', () => {
     await flushMicrotasks()
     await flushMicrotasks()
 
+    // onTurnEnd should have been called to register a callback
+    expect(deps.onTurnEnd).toHaveBeenCalledTimes(1)
+    const [sessionId, callback] = (deps.onTurnEnd as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      () => void
+    ]
+    expect(sessionId).toBe('sess-1')
+
+    // Simulate turn completion by invoking the callback
+    await callback()
+
+    // Now markConsumed should be called
     expect(deps.markConsumed).toHaveBeenCalledWith('sess-1', ['job-1'])
   })
 

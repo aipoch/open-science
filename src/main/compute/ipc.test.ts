@@ -341,6 +341,54 @@ describe('toJobSummary', () => {
     expect(summary.session_id).toBe('sess-99')
     expect(summary.display_name).toBe('My host')
   })
+
+  it('forwards Phase 3b harvest fields from ComputeJob to JobSummary', () => {
+    const job: ComputeJob = {
+      job_id: 'j-harvest',
+      provider_id: 'ssh:x',
+      shape: 'direct_ssh',
+      session_id: 'sess-99',
+      project_id: 'proj',
+      status: 'success',
+      intent: 'test harvest',
+      command: 'echo',
+      command_hash: 'abc',
+      environment: undefined,
+      resource_request: undefined,
+      input_manifest: undefined,
+      output_manifest: undefined,
+      harvest_config: undefined,
+      timeout_seconds: undefined,
+      remote_workdir: '/scratch/work',
+      remote_handle: undefined,
+      exit_code: 0,
+      stdout_tail: 'output',
+      stderr_tail: '',
+      error_code: undefined,
+      harvest_error: 'scp permission denied',
+      left_on_remote: JSON.stringify([
+        { uri: 'large.data', size_mb: 1024, reason: 'exceeds size limit' }
+      ]),
+      notified_at: 1000,
+      notification_consumed_at: undefined,
+      featured_files: [],
+      featured_file_count: 0,
+      left_on_remote_count: 1,
+      created_at: 0,
+      submitted_at: 10,
+      started_at: 20,
+      finished_at: 100,
+      harvested_at: 110
+    }
+    const summary = toJobSummary(job, 'Test Host')
+
+    expect(summary.featured_files).toEqual([])
+    expect(summary.featured_file_count).toBe(0)
+    expect(summary.left_on_remote_count).toBe(1)
+    expect(summary.left_on_remote).toEqual([
+      { uri: 'large.data', size_mb: 1024, reason: 'exceeds size limit' }
+    ])
+  })
 })
 
 // ---------------------------------------------------------------------------

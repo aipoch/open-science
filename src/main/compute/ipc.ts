@@ -43,26 +43,43 @@ export const COMPUTE_JOB_UPDATED_CHANNEL = 'compute:job-updated'
 // denormalized from the host list at query time in listJobSummaries below.
 // Phase 3b: includes notification inbox timestamps so the renderer can decide whether to trigger
 // an analysis turn (issue 05/07).
-export const toJobSummary = (job: ComputeJob, displayName: string): JobSummary => ({
-  job_id: job.job_id,
-  provider_id: job.provider_id,
-  display_name: displayName,
-  shape: job.shape,
-  session_id: job.session_id,
-  status: job.status,
-  intent: job.intent,
-  created_at: job.created_at,
-  started_at: job.started_at,
-  finished_at: job.finished_at,
-  exit_code: job.exit_code,
-  error_code: job.error_code,
-  remote_workdir: job.remote_workdir,
-  stdout_tail: job.stdout_tail,
-  stderr_tail: job.stderr_tail,
-  // Phase 3b notification inbox timestamps (issue 06).
-  notified_at: job.notified_at,
-  notification_consumed_at: job.notification_consumed_at
-})
+export const toJobSummary = (job: ComputeJob, displayName: string): JobSummary => {
+  // Parse left_on_remote JSON safely (stored as string in DB, but JobSummary expects array).
+  let leftOnRemote: Array<{ uri: string; size_mb: number; reason: string }> = []
+  if (job.left_on_remote) {
+    try {
+      leftOnRemote = JSON.parse(job.left_on_remote)
+    } catch {
+      // Malformed JSON — fall back to empty array.
+    }
+  }
+
+  return {
+    job_id: job.job_id,
+    provider_id: job.provider_id,
+    display_name: displayName,
+    shape: job.shape,
+    session_id: job.session_id,
+    status: job.status,
+    intent: job.intent,
+    created_at: job.created_at,
+    started_at: job.started_at,
+    finished_at: job.finished_at,
+    exit_code: job.exit_code,
+    error_code: job.error_code,
+    remote_workdir: job.remote_workdir,
+    stdout_tail: job.stdout_tail,
+    stderr_tail: job.stderr_tail,
+    // Phase 3b notification inbox timestamps (issue 06).
+    notified_at: job.notified_at,
+    notification_consumed_at: job.notification_consumed_at,
+    // Phase 3b compute_done payload fields (spec §11.3).
+    featured_files: job.featured_files ?? [],
+    featured_file_count: job.featured_file_count ?? 0,
+    left_on_remote_count: job.left_on_remote_count ?? 0,
+    left_on_remote: leftOnRemote
+  }
+}
 
 // The renderer-callable compute commands. Kept as a thin adapter over the repository + the pure
 // ssh-config parser so the IPC surface stays easy to unit test (aligns with projects/ipc.ts). Issue 01:

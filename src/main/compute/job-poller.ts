@@ -232,6 +232,7 @@ export class JobPoller {
       if (this.deps.broadcast && this.deps.storageRoot) {
         void emitJobNotification(updated, {
           jobRepository: this.deps.jobRepository,
+          hostRepository: this.deps.hostRepository,
           storageRoot: this.deps.storageRoot,
           broadcast: this.deps.broadcast
         }).catch(() => {

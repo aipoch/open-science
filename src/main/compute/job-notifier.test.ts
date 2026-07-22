@@ -20,6 +20,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { ComputeJob } from '../../shared/compute'
 import type { ComputeJobRepository } from './job-repository'
+import type { ComputeHostRepository } from './repository'
 import { emitJobNotification } from './job-notifier'
 
 // ---------------------------------------------------------------------------
@@ -64,6 +65,10 @@ const makeJob = (overrides: Partial<ComputeJob> = {}): ComputeJob => ({
   ...overrides
 })
 
+const makeMockHostRepository = (): Pick<ComputeHostRepository, 'get'> => ({
+  get: vi.fn().mockResolvedValue({ providerId: 'ssh:biowulf', displayName: 'Biowulf HPC' })
+})
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -94,9 +99,15 @@ describe('emitJobNotification', () => {
     const updatedJob = { ...job, notified_at: Date.now() }
     const mockUpdate = vi.fn().mockResolvedValue(updatedJob)
     const jobRepo: Pick<ComputeJobRepository, 'update'> = { update: mockUpdate }
+    const hostRepo = makeMockHostRepository()
     const broadcast = vi.fn()
 
-    await emitJobNotification(job, { jobRepository: jobRepo, storageRoot, broadcast })
+    await emitJobNotification(job, {
+      jobRepository: jobRepo,
+      hostRepository: hostRepo,
+      storageRoot,
+      broadcast
+    })
 
     // notifiedAt should be written
     expect(mockUpdate).toHaveBeenCalledOnce()
@@ -108,12 +119,13 @@ describe('emitJobNotification', () => {
     const summary = broadcast.mock.calls[0][0]
     expect(summary.job_id).toBe('job-1')
     expect(summary.status).toBe('success')
+    expect(summary.display_name).toBe('Biowulf HPC') // should use host displayName, not raw provider_id
     expect(summary.notified_at).toBeDefined()
     // payload fields embedded in broadcast
     expect(summary.featured_files).toEqual(
       expect.arrayContaining(['hpc/job-1/featured/result.csv', 'hpc/job-1/featured/fig1.png'])
     )
-    expect(summary.output_file_count).toBe(2)
+    expect(summary.featured_file_count).toBe(2)
     expect(summary.left_on_remote_count).toBe(1)
     expect(summary.left_on_remote).toHaveLength(1)
     expect(summary.notification_consumed_at).toBeUndefined()
@@ -138,19 +150,25 @@ describe('emitJobNotification', () => {
     const updatedJob = { ...job, notified_at: Date.now() }
     const mockUpdate = vi.fn().mockResolvedValue(updatedJob)
     const jobRepo: Pick<ComputeJobRepository, 'update'> = { update: mockUpdate }
+    const hostRepo = makeMockHostRepository()
     const broadcast = vi.fn()
 
-    await emitJobNotification(job, { jobRepository: jobRepo, storageRoot, broadcast })
+    await emitJobNotification(job, {
+      jobRepository: jobRepo,
+      hostRepository: hostRepo,
+      storageRoot,
+      broadcast
+    })
 
     expect(mockUpdate).toHaveBeenCalledOnce()
     const summary = broadcast.mock.calls[0][0]
     expect(summary.status).toBe('failed')
     expect(summary.featured_files).toEqual(['hpc/job-1/featured/partial.csv'])
-    expect(summary.output_file_count).toBe(1)
+    expect(summary.featured_file_count).toBe(1)
     expect(summary.notified_at).toBeDefined()
   })
 
-  it('execution error: sets notifiedAt, featured_files empty, output_file_count 0', async () => {
+  it('execution error: sets notifiedAt, featured_files empty, featured_file_count 0', async () => {
     const storageRoot = await mkTmp()
 
     // No harvest dir — error jobs skip harvest entirely
@@ -165,15 +183,21 @@ describe('emitJobNotification', () => {
     const updatedJob = { ...job, notified_at: Date.now() }
     const mockUpdate = vi.fn().mockResolvedValue(updatedJob)
     const jobRepo: Pick<ComputeJobRepository, 'update'> = { update: mockUpdate }
+    const hostRepo = makeMockHostRepository()
     const broadcast = vi.fn()
 
-    await emitJobNotification(job, { jobRepository: jobRepo, storageRoot, broadcast })
+    await emitJobNotification(job, {
+      jobRepository: jobRepo,
+      hostRepository: hostRepo,
+      storageRoot,
+      broadcast
+    })
 
     expect(mockUpdate).toHaveBeenCalledOnce()
     const summary = broadcast.mock.calls[0][0]
     expect(summary.status).toBe('error')
     expect(summary.featured_files).toEqual([])
-    expect(summary.output_file_count).toBe(0)
+    expect(summary.featured_file_count).toBe(0)
     expect(summary.left_on_remote_count).toBe(0)
     expect(summary.left_on_remote).toEqual([])
     expect(summary.notified_at).toBeDefined()
@@ -210,9 +234,15 @@ describe('emitJobNotification', () => {
     const updatedJob = { ...job, notified_at: Date.now() }
     const mockUpdate = vi.fn().mockResolvedValue(updatedJob)
     const jobRepo: Pick<ComputeJobRepository, 'update'> = { update: mockUpdate }
+    const hostRepo = makeMockHostRepository()
     const broadcast = vi.fn()
 
-    await emitJobNotification(job, { jobRepository: jobRepo, storageRoot, broadcast })
+    await emitJobNotification(job, {
+      jobRepository: jobRepo,
+      hostRepository: hostRepo,
+      storageRoot,
+      broadcast
+    })
 
     const summary = broadcast.mock.calls[0][0]
     // All paths should be relative (no absolute path prefix)

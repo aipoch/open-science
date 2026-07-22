@@ -1294,9 +1294,14 @@ export class ComputeService {
     const isTerminal = terminalStates.has(job.status)
 
     // Parse left_on_remote JSON from the job row (may be undefined before harvest).
-    const leftOnRemote: Array<{ uri: string; size_mb: number; reason: string }> = job.left_on_remote
-      ? (JSON.parse(job.left_on_remote) as typeof leftOnRemote)
-      : []
+    let leftOnRemote: Array<{ uri: string; size_mb: number; reason: string }> = []
+    if (job.left_on_remote) {
+      try {
+        leftOnRemote = JSON.parse(job.left_on_remote) as typeof leftOnRemote
+      } catch {
+        // Malformed JSON — treat as empty (same guard as harvest-engine and job-notifier).
+      }
+    }
 
     // Return empty file lists for non-terminal or pre-harvest states (design §9 rules 1 & 2).
     if (!isTerminal || !job.harvested_at) {

@@ -251,7 +251,7 @@ export type JobSummary = {
   notification_consumed_at: number | undefined
   // Phase 3b: compute_done payload fields (spec §11.3). Present when notified_at is set.
   featured_files?: string[]
-  output_file_count?: number
+  featured_file_count?: number
   left_on_remote_count?: number
   left_on_remote?: Array<{ uri: string; size_mb: number; reason: string }>
 }

@@ -1199,7 +1199,7 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
     expect(summary.status).toBe('error')
     expect(summary.notified_at).toBeDefined()
     expect(summary.featured_files).toEqual([])
-    expect(summary.output_file_count).toBe(0)
+    expect(summary.featured_file_count).toBe(0)
   })
 
   it('does NOT emit notification if broadcast is not wired', async () => {

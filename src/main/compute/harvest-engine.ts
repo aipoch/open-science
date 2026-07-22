@@ -35,7 +35,7 @@ import {
   type HarvestConfig
 } from './harvest-classifier'
 import { getNotebookSessionRoot } from '../notebook/repository'
-import { emitJobNotification } from './job-notifier'
+import { buildComputeDonePayload } from './job-notifier'
 
 // ---------------------------------------------------------------------------
 // Public path helper
@@ -99,6 +99,15 @@ export const enumerateRemoteFiles = async (
     )
   }
 
+  // Check if output was truncated (exceeds 4MB cap). A huge directory listing would lose trailing
+  // files silently — they'd neither be downloaded nor appear in left_on_remote.
+  if (result.truncated) {
+    throw new Error(
+      'Remote file listing exceeded 4MB size cap and was truncated. ' +
+        'The workdir may contain millions of files. Consider cleaning up the remote directory.'
+    )
+  }
+
   if (!result.stdout.trim()) return []
 
   const entries: FileEntry[] = []
@@ -149,6 +158,12 @@ const downloadFile = async (
   }
 
   const absRemotePath = `${remoteWorkdir}/${relativePath}`
+
+  // Also validate the full absolute path for shell safety (workdir is system-generated but
+  // consistency with enumeration path handling — see line 83 shellSingleQuote usage).
+  if (SHELL_UNSAFE_CHARS.test(absRemotePath)) {
+    throw new Error(`Rejected absolute remote path "${absRemotePath}": shell-unsafe characters`)
+  }
 
   // Ensure parent directory exists.
   await mkdir(dirname(localDestPath), { recursive: true })
@@ -237,24 +252,73 @@ export const harvestJob = async (job: ComputeJob, deps: HarvestDeps): Promise<vo
   await mkdir(featuredDir, { recursive: true })
   await mkdir(hiddenDir, { recursive: true })
 
-  // finalize writes harvestedAt + harvestError + leftOnRemote, then emits the compute_done
-  // notification (design §8: harvestedAt arrival = final resting state for harvested outcomes).
-  const finalize = async (harvestError: string | null, leftOnRemoteJson: string): Promise<void> => {
-    const updatedJob = await jobRepository.update(job.job_id, {
+  // finalize writes harvestedAt + harvestError + leftOnRemote + notifiedAt in a single atomic
+  // update (fix: was two separate writes causing notification loss on restart between them).
+  // Returns the updated job so the caller can broadcast if needed.
+  const finalize = async (
+    harvestError: string | null,
+    leftOnRemoteJson: string
+  ): Promise<ComputeJob> => {
+    return await jobRepository.update(job.job_id, {
       harvestedAt: new Date(),
       harvestError,
-      leftOnRemote: leftOnRemoteJson
+      leftOnRemote: leftOnRemoteJson,
+      notifiedAt: new Date() // Atomic with harvest result — notification inbox write (design §2/§11)
     })
-    // Emit compute_done notification (issue 06). Fire-and-forget inside finalize;
-    // notification errors must not fail the harvest write.
+  }
+
+  // Helper: finalize + broadcast + return (DRY for all early-exit paths).
+  const finalizeAndReturn = async (harvestError: string | null, leftOnRemoteJson: string): Promise<void> => {
+    const updatedJob = await finalize(harvestError, leftOnRemoteJson)
+    // Broadcast the compute_done notification. We already have host lookup result here for
+    // displayName, but early-exit paths don't — so we delegate displayName lookup to the
+    // notification builder (emitJobNotification now does host.get internally).
     if (deps.broadcast) {
-      await emitJobNotification(updatedJob, {
-        jobRepository,
-        storageRoot,
-        broadcast: deps.broadcast
-      }).catch(() => {
-        // Notification failure is non-fatal: the harvest result is already persisted.
-      })
+      await buildAndBroadcastNotification(updatedJob)
+    }
+  }
+
+  // Builds the notification payload and broadcasts it (idempotent guard inside buildComputeDonePayload).
+  const buildAndBroadcastNotification = async (updatedJob: ComputeJob): Promise<void> => {
+    try {
+      const payload = await buildComputeDonePayload(updatedJob, storageRoot)
+      // Look up displayName (same logic as emitJobNotification — we inline it here to avoid
+      // calling emitJobNotification which has its own idempotency guard and notifiedAt write).
+      let displayName = updatedJob.provider_id
+      try {
+        const host = await hostRepository.get(updatedJob.provider_id)
+        if (host) displayName = host.displayName
+      } catch {
+        // Fall back to provider_id.
+      }
+
+      const summary: JobSummary = {
+        job_id: updatedJob.job_id,
+        provider_id: updatedJob.provider_id,
+        display_name: displayName,
+        shape: updatedJob.shape,
+        session_id: updatedJob.session_id,
+        status: updatedJob.status,
+        intent: updatedJob.intent,
+        created_at: updatedJob.created_at,
+        started_at: updatedJob.started_at,
+        finished_at: updatedJob.finished_at,
+        exit_code: updatedJob.exit_code,
+        error_code: updatedJob.error_code,
+        remote_workdir: updatedJob.remote_workdir,
+        stdout_tail: updatedJob.stdout_tail,
+        stderr_tail: updatedJob.stderr_tail,
+        notified_at: updatedJob.notified_at,
+        notification_consumed_at: updatedJob.notification_consumed_at,
+        featured_files: payload.featured_files,
+        featured_file_count: payload.featured_file_count,
+        left_on_remote_count: payload.left_on_remote_count,
+        left_on_remote: payload.left_on_remote
+      }
+
+      deps.broadcast(summary)
+    } catch {
+      // Notification build/broadcast failure is non-fatal: harvest result is already persisted.
     }
   }
 
@@ -264,12 +328,12 @@ export const harvestJob = async (job: ComputeJob, deps: HarvestDeps): Promise<vo
     host = await hostRepository.get(job.provider_id)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    await finalize(`host lookup failed: ${msg}`, '[]')
+    await finalizeAndReturn(`host lookup failed: ${msg}`, '[]')
     return
   }
 
   if (!host) {
-    await finalize(`host not found: ${job.provider_id}`, '[]')
+    await finalizeAndReturn(`host not found: ${job.provider_id}`, '[]')
     return
   }
 
@@ -279,7 +343,7 @@ export const harvestJob = async (job: ComputeJob, deps: HarvestDeps): Promise<vo
     target = await resolveFn(host.sshAlias, host.sshOverrides)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    await finalize(`ssh resolve failed: ${msg}`, '[]')
+    await finalizeAndReturn(`ssh resolve failed: ${msg}`, '[]')
     return
   }
 
@@ -291,7 +355,7 @@ export const harvestJob = async (job: ComputeJob, deps: HarvestDeps): Promise<vo
     remoteFiles = await enumerateRemoteFiles(sshRunner, target, remoteWorkdir)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    await finalize(`enumerate failed: ${msg}`, '[]')
+    await finalizeAndReturn(`enumerate failed: ${msg}`, '[]')
     return
   }
 
@@ -380,5 +444,9 @@ export const harvestJob = async (job: ComputeJob, deps: HarvestDeps): Promise<vo
       ? `harvest_failed: ${errors.slice(0, 3).join('; ')}${errors.length > 3 ? ` (and ${errors.length - 3} more)` : ''}`
       : null
 
-  await finalize(harvestError, JSON.stringify(leftOnRemote))
+  const updatedJob = await finalize(harvestError, JSON.stringify(leftOnRemote))
+  // Broadcast notification for the successful harvest path (early-exit paths use finalizeAndReturn).
+  if (deps.broadcast) {
+    await buildAndBroadcastNotification(updatedJob)
+  }
 }

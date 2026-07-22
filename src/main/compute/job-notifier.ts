@@ -16,7 +16,7 @@
  *
  * Payload shape aligns with spec §11.3:
  *  { job_id, provider_id, status, exit_code,
- *    featured_files, output_file_count,
+ *    featured_files, featured_file_count,
  *    left_on_remote_count, left_on_remote }
  *
  * Paths are workspace-relative (hpc/<jobId>/featured/...) per design §4.
@@ -27,6 +27,7 @@ import { join, relative } from 'node:path'
 
 import type { ComputeJob, JobSummary } from '../../shared/compute'
 import type { ComputeJobRepository } from './job-repository'
+import type { ComputeHostRepository } from './repository'
 import { getJobHarvestDir } from './harvest-engine'
 
 // ---------------------------------------------------------------------------
@@ -35,6 +36,7 @@ import { getJobHarvestDir } from './harvest-engine'
 
 export type JobNotifierDeps = {
   jobRepository: Pick<ComputeJobRepository, 'update'>
+  hostRepository: Pick<ComputeHostRepository, 'get'>
   storageRoot: string
   // Injectable broadcast function; defaults to the production broadcastJobUpdated.
   // Injected in tests to capture the emitted summary without touching Electron IPC.
@@ -44,7 +46,7 @@ export type JobNotifierDeps = {
 // The compute_done payload fields embedded into the JobSummary broadcast (spec §11.3).
 export type ComputeDonePayload = {
   featured_files: string[]
-  output_file_count: number
+  featured_file_count: number
   left_on_remote_count: number
   left_on_remote: Array<{ uri: string; size_mb: number; reason: string }>
 }
@@ -58,7 +60,7 @@ export type ComputeDonePayload = {
  * Returns empty arrays if the directory does not exist (e.g. execution-error jobs).
  *
  * featured_files: relative paths under hpc/<jobId>/featured/ (workspace-relative).
- * output_file_count: total featured file count (scandir).
+ * featured_file_count: total featured file count (scandir).
  * left_on_remote_count / left_on_remote: from job.left_on_remote JSON column.
  */
 export const buildComputeDonePayload = async (
@@ -94,7 +96,7 @@ export const buildComputeDonePayload = async (
 
   return {
     featured_files: featuredFiles,
-    output_file_count: featuredFiles.length,
+    featured_file_count: featuredFiles.length,
     left_on_remote_count: leftOnRemote.length,
     left_on_remote: leftOnRemote
   }
@@ -138,10 +140,19 @@ export const emitJobNotification = async (
   job: ComputeJob,
   deps: JobNotifierDeps
 ): Promise<void> => {
-  const { jobRepository, storageRoot, broadcast } = deps
+  const { jobRepository, hostRepository, storageRoot, broadcast } = deps
 
   // Idempotency: do not re-emit if already notified.
   if (job.notified_at != null) return
+
+  // Look up the host to get its displayName (fix: was using raw provider_id causing card flip).
+  let displayName = job.provider_id
+  try {
+    const host = await hostRepository.get(job.provider_id)
+    if (host) displayName = host.displayName
+  } catch {
+    // Transient lookup failure — fall back to provider_id so the broadcast always happens.
+  }
 
   // Build the payload (scan harvest dir + parse leftOnRemote column).
   const payload = await buildComputeDonePayload(job, storageRoot)
@@ -155,7 +166,7 @@ export const emitJobNotification = async (
   const summary: JobSummary = {
     job_id: updatedJob.job_id,
     provider_id: updatedJob.provider_id,
-    display_name: updatedJob.provider_id, // denormalized by ipc.ts in production; placeholder here
+    display_name: displayName,
     shape: updatedJob.shape,
     session_id: updatedJob.session_id,
     status: updatedJob.status,
@@ -172,7 +183,7 @@ export const emitJobNotification = async (
     notification_consumed_at: updatedJob.notification_consumed_at,
     // Payload fields (spec §11.3).
     featured_files: payload.featured_files,
-    output_file_count: payload.output_file_count,
+    featured_file_count: payload.featured_file_count,
     left_on_remote_count: payload.left_on_remote_count,
     left_on_remote: payload.left_on_remote
   }
