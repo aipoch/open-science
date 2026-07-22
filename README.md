@@ -133,7 +133,7 @@ Research work is usually split across chat windows, notebooks, local scripts, sc
 Open Science brings those pieces into one inspectable desktop workspace:
 
 - **Work that persists.** Projects, sessions, drafts, files, previews, and run history survive application restarts.
-- **Execution, not just suggestions.**  The agent can run commands, Python, and R, edit files, search, call connectors, and generate artifacts with the user's approval.
+- **Execution, not just suggestions.** The agent can run commands, Python, and R, edit files, search, call connectors, and generate artifacts with the user's approval.
 - **Multiple model choices.** Use a built-in cloud provider, a compatible custom gateway, or a local Claude login.
 - **Local-first ownership.** The application and project state run on your computer; external calls happen through services you explicitly configure or approve.
 - **Inspectability.** The source code, skills, connector definitions, tool activity, and generated files are available for review.
@@ -167,12 +167,12 @@ This section describes durable product capabilities rather than a version-specif
 | Area                         | Core capability                                                                                                                                                                                                                                                             |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Projects and sessions**    | Create, rename, and delete projects; maintain multiple sessions; restore recent work, drafts, conversation history, and preview state.                                                                                                                                      |
-| **Agent workflow**           | Natural-language tasks, streamed responses, typed tool-activity cards, stop controls, approval pauses, a confirmation step before closing or quitting during a running task, and recovery of sessions interrupted by an application restart.                                                                                                  |
-| **Models**                   |Built-in cloud providers, custom compatible gateways, Local Claude, connection validation, per-model multimodal image input, and model selection per session.                                                                                                                                     |
+| **Agent workflow**           | Natural-language tasks, streamed responses, typed tool-activity cards, stop controls, approval pauses, a confirmation step before closing or quitting during a running task, and recovery of sessions interrupted by an application restart.                                |
+| **Models**                   | Built-in cloud providers, custom compatible gateways, Local Claude, connection validation, per-model multimodal image input, and model selection per session.                                                                                                               |
 | **Agent backend**            | A selectable agent-framework backend so the same workspace can run on more than one underlying agent implementation, with provider and model choices validated against the selected backend, and app-managed backends installable, switchable, and removable from Settings. |
 | **Execution**                | Persistent notebook kernels (Python, R, and a REPL control plane) with durable code/output history, app-managed environments with offline provisioning and bring-your-own interpreters, and a user terminal shared with the agent.                                          |
-| **Inputs and artifacts**     | File attachments, a project-level file library with indexed pagination and session grouping for large projects, generated artifact cards, \`@\` references to existing uploads/outputs, read-only multi-tab previews, and file download/export from the library.                                                                                                                       |
-| **Preview formats**          | Common scientific data, documents, images, source code, molecular structures and reactions, and Notebook history, viewable inline or full-screen.                                                                                                                                                         |
+| **Inputs and artifacts**     | File attachments, a project-level file library with indexed pagination and session grouping for large projects, generated artifact cards, \`@\` references to existing uploads/outputs, read-only multi-tab previews, and file download/export from the library.            |
+| **Preview formats**          | Common scientific data, documents, images, source code, molecular structures and reactions, and Notebook history, viewable inline or full-screen.                                                                                                                           |
 | **Local data management**    | Local project and application data, configurable storage location, and guided migration.                                                                                                                                                                                    |
 | **Skills**                   | Featured and personal skills, package upload, GitHub preview/import, enable/disable controls, and explicit `/` selection in a session.                                                                                                                                      |
 | **Connectors**               | Built-in life-science connectors, custom local/remote MCP connectors, contact metadata, and connector/tool-level permissions.                                                                                                                                               |
@@ -187,7 +187,7 @@ This section describes durable product capabilities rather than a version-specif
 | **Built-in cloud providers** | Choose from the provider list shown by the installed app and authenticate with the requested key. |
 | **Custom Gateway**           | Supply a compatible Base URL, API Key, and exact model ID.                                        |
 | **Local Claude**             | Reuse the computer's Claude Code login without entering an API Key in Open Science.               |
-| **Codex Subscription**      | Select the Codex agent framework first, then you can select Codex subscription in provider type               |
+| **Codex Subscription**       | Select the Codex agent framework first, then you can select Codex subscription in provider type   |
 
 Built-in cloud vendors currently include OpenAI, Anthropic, DeepSeek, Zhipu AI (GLM) with a dedicated GLM Coding Plan endpoint, Kimi (Moonshot), MiniMax, StepFun, Xiaomi MIMO, SenseNova, and the OpenRouter aggregation gateway, among others; some are region-specific.
 
@@ -274,41 +274,15 @@ backend, tray, agent runtime, and localhost web service without opening an Elect
 Set `OPEN_SCIENCE_WEB_PORT` to choose a port (default `44100`). Explicitly quitting the
 application still shuts down agent and Notebook processes normally.
 
-### CLI daemon management
+### Headless CLI and SDK
 
-The CLI manages the Electron headless process as a background service, so the browser is the only
-UI and closing the terminal does not stop active sessions:
+The headless CLI and zero-dependency Node.js SDK use the same local daemon, projects, sessions,
+credentials, and permissions as the desktop and web interfaces. Detailed usage lives with the
+publishable package so there is one command reference to maintain:
 
-```bash
-npm run build
-npm run cli -- start       # starts the daemon and opens the authenticated URL
-npm run cli -- status
-npm run cli -- url
-npm run cli -- stop        # graceful agent and Notebook shutdown
-```
-
-Use `--no-open` to start without opening a browser, `--port <port>` to choose a port, and `--json`
-with `status` for machine-readable output. Development builds are discovered from the repository.
-For an installed build, the CLI checks standard installation locations; override discovery with
-`--app-path <executable>` or `OPEN_SCIENCE_APP_PATH`. Use `--config-root <directory>` when an
-explicit configuration location is required.
-
-#### Installing the command from an installed app
-
-After installing the packaged app, open **Settings → General → Command line tool** and choose
-**Install command**. This adds an `open-science` launcher to your PATH (`~/.local/bin` on macOS and
-Linux; a per-user directory added to your PATH on Windows) that runs the bundled CLI using the app's
-own runtime — no separate Node.js install is needed. Then, from any terminal:
-
-```bash
-open-science start       # start the backend and open the authenticated URL
-open-science status
-open-science url
-open-science stop        # graceful agent and Notebook shutdown
-```
-
-If the launcher's directory is not yet on your PATH, the Settings panel shows the one line to add
-(open a new terminal afterwards). Use **Uninstall command** to remove the launcher.
+- [CLI guide](packages/open-science/CLI.md) - installation, service lifecycle, task automation,
+  artifacts, output formats, and exit codes
+- [SDK package overview](packages/open-science/README.md) - Node.js quick start and package entry point
 
 ## Building From Source
 

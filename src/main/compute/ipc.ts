@@ -28,10 +28,13 @@ import { SettingsRepository } from '../settings/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { ComputeApprovalBroker } from './compute-approval-broker'
 import { ComputeService, type ArtifactResolver } from './compute-service'
+import { ConcurrencyManager } from './concurrency-manager'
 import { ComputeHostRepository } from './repository'
 import { ComputeJobRepository } from './job-repository'
 import { readSshConfigHostAliases } from './ssh-config'
 import { SystemSshRunner } from './ssh-runner'
+import { SystemScpRunner } from './scp-runner'
+import { dispatchJob } from './job-dispatcher'
 import { EnabledComputeHostsRegistry, enabledComputeHostsRegistry } from './enabled-hosts-registry'
 import { getJobHarvestDir } from './harvest-engine'
 
@@ -205,20 +208,61 @@ const createComputeHandlers = (
   // Construct the production service with the full job dependency set so agent submit_job works and
   // dispatcher status transitions (submitted→running/error) broadcast to the renderer. Positional
   // args match the ComputeService constructor: (runner, repository, broker, scpRunner,
-  // overrideDownloadsDir, jobRepository, onJobUpdated, artifactResolver, storageRoot).
-  const service =
-    injectedService ??
-    new ComputeService(
-      new SystemSshRunner(),
+  // overrideDownloadsDir, jobRepository, onJobUpdated, artifactResolver, storageRoot,
+  // concurrencyManager).
+  //
+  // The ConcurrencyManager enforces session limits + provider ceilings and auto-dispatches queued
+  // jobs when a slot frees up. It is wired here (not in ComputeService) because it needs a
+  // dispatchJob closure carrying the same runner/scp/repository deps the dispatcher uses. Only built
+  // for the production path — tests inject their own service and drive the manager directly.
+  let service: ComputeService
+  if (injectedService) {
+    service = injectedService
+  } else {
+    const sshRunner = new SystemSshRunner()
+    const scpRunner = new SystemScpRunner()
+
+    // Terminal transitions must both broadcast to the renderer AND wake the ConcurrencyManager so
+    // the next queued job dispatches. The dispatcher (submitted→running/error) flows through this
+    // hook, so an error during dispatch drains the queue too.
+    //
+    // DRAIN CONTRACT (two sites, keep in sync): this hook covers dispatcher-observed transitions.
+    // Poller-observed terminal transitions (success/failed/timeout of a running job) are drained
+    // separately in src/main/ipc.ts, which composes the broadcaster with
+    // computeService.notifyJobCompleted(). The two paths cover disjoint transitions — do not remove
+    // either without moving its responsibility to the other, or queued jobs stop dispatching.
+    let concurrencyManager: ConcurrencyManager | undefined
+    const TERMINAL = new Set(['success', 'failed', 'timeout', 'error'])
+    const onJobUpdatedWithDrain = (job: ComputeJob): void => {
+      onJobUpdated?.(job)
+      if (TERMINAL.has(job.status)) void concurrencyManager?.onJobCompleted()
+    }
+
+    if (jobRepository) {
+      concurrencyManager = new ConcurrencyManager(jobRepository, repository, (queuedJobId) =>
+        dispatchJob(queuedJobId, {
+          runner: sshRunner,
+          scpRunner,
+          hostRepository: repository,
+          jobRepository,
+          onJobUpdated: onJobUpdatedWithDrain
+        })
+      )
+    }
+
+    service = new ComputeService(
+      sshRunner,
       repository,
       broker,
-      undefined,
+      scpRunner,
       undefined,
       jobRepository,
-      onJobUpdated,
+      onJobUpdatedWithDrain,
       artifactResolver,
-      storageRoot
+      storageRoot,
+      concurrencyManager
     )
+  }
 
   return {
     list: () => repository.list(),

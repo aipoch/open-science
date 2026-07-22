@@ -24,6 +24,13 @@ export class ConcurrencyManager {
   // Flag to prevent concurrent execution of tryDispatchNext
   private dispatching: boolean = false
 
+  // In-process serialization lock for admit(). The decision (read counts → pick status) and the
+  // job-row commit must be atomic: without this, two concurrent submitJob calls could both read the
+  // same active count, both decide 'submitted', and overrun a provider ceiling or session limit.
+  // JS is single-threaded, so chaining commit work onto this promise fully serializes the critical
+  // section — the row written by one admit is visible to the DB counts read by the next.
+  private admitLock: Promise<unknown> = Promise.resolve()
+
   constructor(
     private readonly jobRepository: ComputeJobRepository,
     private readonly hostRepository: ComputeHostRepository,
@@ -35,11 +42,70 @@ export class ConcurrencyManager {
     this.sessionLimits.set(sessionId, limit)
   }
 
+  // Runs `fn` while holding the admit lock, serializing it against every other runExclusive call.
+  // The lock is advanced regardless of whether `fn` resolves or rejects so one failure can't wedge
+  // the chain.
+  private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.admitLock.then(fn, fn)
+    this.admitLock = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
+  }
+
+  // Returns true when a new active job for this (session, provider) would exceed the session limit
+  // or the provider ceiling — i.e. the job should be queued rather than dispatched immediately.
+  // Only active jobs (submitted + running) count; queued jobs do not occupy a slot.
+  private async overActiveLimits(sessionId: string, providerId: string): Promise<boolean> {
+    const sessionLimit = this.sessionLimits.get(sessionId)
+    if (sessionLimit !== undefined) {
+      const activeInSession = await this.jobRepository.countActiveBySession(sessionId)
+      if (activeInSession >= sessionLimit) return true
+    }
+
+    const host = await this.hostRepository.get(providerId)
+    const providerCeiling = host?.concurrencyLimit ?? DEFAULT_PROVIDER_CEILING
+    const activeOnProvider = await this.jobRepository.countActiveByProvider(providerId)
+    return activeOnProvider >= providerCeiling
+  }
+
+  // Atomically decides the initial status and commits the job row inside one critical section.
+  // `commit` MUST perform the DB row create with the passed status; its write becomes visible to
+  // the counts read by the next admit before the lock releases, so concurrent callers cannot both
+  // pass the same slot. Returns the committed status, or 'queue_full' WITHOUT committing when the
+  // global queue is at capacity (the caller must not create a row in that case).
+  async admit(
+    params: { sessionId: string; providerId: string },
+    commit: (status: 'submitted' | 'queued') => Promise<void>
+  ): Promise<'submitted' | 'queued' | 'queue_full'> {
+    return this.runExclusive(async () => {
+      const globalQueuedCount = await this.jobRepository.countQueuedJobs()
+      if (globalQueuedCount >= GLOBAL_QUEUE_LIMIT) return 'queue_full'
+
+      const status: 'submitted' | 'queued' = (await this.overActiveLimits(
+        params.sessionId,
+        params.providerId
+      ))
+        ? 'queued'
+        : 'submitted'
+
+      await commit(status)
+      return status
+    })
+  }
+
   // Check limits and decide: dispatch now, queue, or reject (queue full).
   // Returns:
   // - 'queue_full': global queue at capacity (100 jobs)
   // - 'should_queue': either session limit or provider ceiling reached
   // - 'can_dispatch': both limits allow, job can be dispatched immediately
+  //
+  // ADVISORY ONLY for the submit path. submitJob() calls this before the approval gate purely to
+  // reject early on a full global queue; its 'should_queue'/'can_dispatch' returns are NOT the
+  // authoritative admission decision, because reading the count here and committing the row later is
+  // not atomic (the race admit() closes). The binding decision + row commit is admit(). Do NOT route
+  // a real submit decision through enqueue() — use admit() so the read→decide→commit stays atomic.
   async enqueue(params: {
     jobId: string
     sessionId: string
@@ -53,24 +119,8 @@ export class ConcurrencyManager {
       return 'queue_full'
     }
 
-    // 2. Check session limit (if set) - only count active jobs (submitted + running), not queued
-    const sessionLimit = this.sessionLimits.get(sessionId)
-    let sessionLimitViolated = false
-    if (sessionLimit !== undefined) {
-      const activeInSession = await this.jobRepository.countActiveBySession(sessionId)
-      if (activeInSession >= sessionLimit) {
-        sessionLimitViolated = true
-      }
-    }
-
-    // 3. Check provider ceiling - only count active jobs (submitted + running), not queued
-    const host = await this.hostRepository.get(providerId)
-    const providerCeiling = host?.concurrencyLimit ?? DEFAULT_PROVIDER_CEILING
-    const activeOnProvider = await this.jobRepository.countActiveByProvider(providerId)
-    const providerCeilingViolated = activeOnProvider >= providerCeiling
-
-    // 4. Determine result
-    if (sessionLimitViolated || providerCeilingViolated) {
+    // 2. Check session limit + provider ceiling (only active jobs count, not queued).
+    if (await this.overActiveLimits(sessionId, providerId)) {
       return 'should_queue'
     }
 
@@ -122,35 +172,32 @@ export class ConcurrencyManager {
       const queuedJobs = await this.jobRepository.findQueuedJobs()
 
       for (const job of queuedJobs) {
-        // Re-check session limit for this job's session - only count active jobs
-        const sessionLimit = this.sessionLimits.get(job.session_id)
-        let sessionLimitOk = true
-        if (sessionLimit !== undefined) {
-          const activeInSession = await this.jobRepository.countActiveBySession(job.session_id)
-          sessionLimitOk = activeInSession < sessionLimit
-        }
+        // Reserve the slot atomically against admit() and other promotions: the re-check of both
+        // limits and the status flip to 'submitted' run inside the SAME admitLock as admit(), so a
+        // concurrent new submission cannot also claim this slot and overrun a provider ceiling /
+        // session limit. Without this shared lock the promotion and an admission each read the same
+        // active count and both become 'submitted' (the race admit() was added to close).
+        //
+        // The slow dispatchJob (SSH staging/launch) runs OUTSIDE the lock: once the row is
+        // 'submitted' it counts as active, so any later admit()/promotion sees it. Holding the lock
+        // across SSH work would serialize every submission behind network latency.
+        const reserved = await this.runExclusive(async () => {
+          if (await this.overActiveLimits(job.session_id, job.provider_id)) return false
+          await this.jobRepository.update(job.job_id, { status: 'submitted' })
+          return true
+        })
+        if (!reserved) continue // limits hit — leave queued for a future completion
 
-        // Re-check provider ceiling for this job's provider - only count active jobs
-        const host = await this.hostRepository.get(job.provider_id)
-        const providerCeiling = host?.concurrencyLimit ?? DEFAULT_PROVIDER_CEILING
-        const activeOnProvider = await this.jobRepository.countActiveByProvider(job.provider_id)
-        const providerCeilingOk = activeOnProvider < providerCeiling
-
-        // Dispatch if both limits allow
-        if (sessionLimitOk && providerCeilingOk) {
-          try {
-            await this.jobRepository.update(job.job_id, { status: 'submitted' })
-            await this.dispatchJob(job.job_id)
-          } catch {
-            // If dispatch fails, mark job as error and continue to next queued job
-            await this.jobRepository.update(job.job_id, {
-              status: 'error',
-              errorCode: 'dispatch_failed',
-              finishedAt: new Date()
-            })
-          }
+        try {
+          await this.dispatchJob(job.job_id)
+        } catch {
+          // If dispatch fails, mark job as error and continue to next queued job.
+          await this.jobRepository.update(job.job_id, {
+            status: 'error',
+            errorCode: 'dispatch_failed',
+            finishedAt: new Date()
+          })
         }
-        // Otherwise skip this job and continue to next
       }
     } finally {
       this.dispatching = false

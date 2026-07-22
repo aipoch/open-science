@@ -76,12 +76,12 @@ const makeFakeReviewerSession = (
   dispose: () => {}
 })
 
-// A stub runtime that returns the given promptPrefix from buildReviewerSession. Only the two methods
+// A stub runtime that returns the given promptPrefix from buildReviewerSession. Only the methods
 // runReview calls on the runtime are implemented.
 const makeStubRuntime = (session: unknown, promptPrefix: string | undefined): AcpRuntime =>
   ({
     buildReviewerSession: async () => ({ session, promptPrefix }),
-    disposeReviewerSession: () => {}
+    disposeReviewerSession: () => 0
   }) as unknown as AcpRuntime
 
 // --- Reviewer MCP submit helper (mirrors orchestrator.test.ts) ---
@@ -303,7 +303,7 @@ describe('runScopedReview — framework-neutral rubric delivery (fix-loop re-rev
         }
         return { session: makeFakeReviewerSession(scopedPromptSink), promptPrefix: scopedPrefix }
       },
-      disposeReviewerSession: () => {},
+      disposeReviewerSession: () => 0,
       // The [Auditor] correction turn: append the auditor user turn + the agent's correction turn so
       // the fix loop resolves a new correctionTurnMessageId (msg-4-correction) for the scoped review.
       sendPrompt: async () => {

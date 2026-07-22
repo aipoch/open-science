@@ -3,10 +3,12 @@ import { join } from 'node:path'
 import { app } from 'electron'
 
 import { createLogger } from '../logger'
+import { addRendererBroadcastSink } from '../renderer-broadcast'
 import { resolveConfigRoot } from '../storage-root'
 import { loadOrCreateWebToken } from './auth'
 import { startWebHttpServer, type RunningWebServer } from './http-server'
 import type { RpcCapture } from './rpc-capture'
+import { HeadlessTaskApi } from './task-api'
 import { removeWebServiceState, writeWebServiceState, type WebServiceState } from './state-file'
 
 // A single-instance web service that can be started at launch (--serve) or later, on demand, when a
@@ -74,6 +76,12 @@ const createWebServiceController = (
       },
       pid: process.pid
     }))
+  const tasks = new HeadlessTaskApi(rpc, {
+    subscribeEvents: (listener) =>
+      addRendererBroadcastSink((channel, payload) => {
+        if (channel === 'acp:event') listener(payload as Parameters<typeof listener>[0])
+      })
+  })
 
   let running: { close: () => Promise<void>; port: number; configRoot: string } | undefined
   let starting: Promise<{ port: number; url: string }> | undefined
@@ -95,6 +103,7 @@ const createWebServiceController = (
       token,
       staticRoot: join(info.appPath, 'out', 'web'),
       rpc,
+      tasks,
       // Attached: a graceful shutdown request stops only the web service (the app keeps running). A
       // dedicated daemon quits the process, which is what stops it serving.
       onShutdownRequest: attached ? () => void close() : requestQuit,

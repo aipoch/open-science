@@ -1,6 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { readFile, stat } from 'node:fs/promises'
 import { extname, resolve, sep } from 'node:path'
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
+import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 
 import { net } from 'electron'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -8,6 +11,8 @@ import { WebSocket, WebSocketServer } from 'ws'
 import { addRendererBroadcastSink } from '../renderer-broadcast'
 import { authenticateRequest, persistAuthCookie } from './auth'
 import type { RpcCapture } from './rpc-capture'
+import type { StartTaskRunRequest } from '../../shared/task-api'
+import { TaskApiError, type HeadlessTaskApi } from './task-api'
 
 const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
 
@@ -40,6 +45,18 @@ type WebServerOptions = {
   token: string
   staticRoot: string
   rpc: RpcCapture
+  tasks?: Pick<
+    HeadlessTaskApi,
+    | 'listProjects'
+    | 'createProject'
+    | 'listSessions'
+    | 'getSession'
+    | 'startRun'
+    | 'getRun'
+    | 'listArtifacts'
+    | 'acquireArtifact'
+    | 'releaseArtifact'
+  >
   onShutdownRequest?: () => void
   bootstrap: {
     appName: string
@@ -97,6 +114,33 @@ const readJsonBody = async (request: IncomingMessage): Promise<unknown> => {
   })
 }
 
+const taskErrorStatus = (error: TaskApiError): number => {
+  if (error.code === 'invalid_request') return 400
+  if (error.code === 'project_ambiguous' || error.code === 'session_busy') return 409
+  return 404
+}
+
+const taskError = (response: ServerResponse, error: unknown): void => {
+  if (error instanceof SyntaxError) {
+    json(response, 400, {
+      error: { code: 'invalid_request', message: 'Request body must be valid JSON.' }
+    })
+    return
+  }
+  if (error instanceof TaskApiError) {
+    json(response, taskErrorStatus(error), {
+      error: { code: error.code, message: error.message }
+    })
+    return
+  }
+  json(response, 500, {
+    error: {
+      code: 'internal_error',
+      message: error instanceof Error ? error.message : 'Internal server error'
+    }
+  })
+}
+
 const streamPreview = async (
   request: IncomingMessage,
   response: ServerResponse,
@@ -111,36 +155,121 @@ const streamPreview = async (
     return
   }
 
+  await streamPreviewResource(
+    request,
+    response,
+    `open-science-preview://${encodeURIComponent(resourceId)}${suffix}`
+  )
+}
+
+const streamPreviewResource = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  resourceUrl: string,
+  responseOverrides: Record<string, string> = {}
+): Promise<void> => {
+  const abortController = new AbortController()
+  const abortOnDisconnect = (): void => {
+    if (!response.writableFinished) abortController.abort()
+  }
+  response.once('close', abortOnDisconnect)
+  response.once('error', abortOnDisconnect)
   const headers = new Headers()
   if (request.headers.range) headers.set('range', request.headers.range)
-  const upstream = await net.fetch(
-    `open-science-preview://${encodeURIComponent(resourceId)}${suffix}`,
-    { method: request.method, headers }
-  )
-  const responseHeaders: Record<string, string> = {}
-  upstream.headers.forEach((value, key) => {
-    if (!['connection', 'transfer-encoding'].includes(key.toLowerCase()))
-      responseHeaders[key] = value
-  })
-  response.writeHead(upstream.status, responseHeaders)
-  if (!upstream.body || request.method === 'HEAD') {
-    response.end()
-    return
-  }
-
-  const reader = upstream.body.getReader()
   try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      if (!response.write(Buffer.from(value))) {
-        await new Promise<void>((doneWaiting) => response.once('drain', doneWaiting))
-      }
+    const upstream = await net.fetch(resourceUrl, {
+      method: request.method,
+      headers,
+      signal: abortController.signal
+    })
+    if (abortController.signal.aborted) return
+    const responseHeaders: Record<string, string> = {}
+    upstream.headers.forEach((value, key) => {
+      if (!['connection', 'transfer-encoding'].includes(key.toLowerCase()))
+        responseHeaders[key] = value
+    })
+    Object.assign(responseHeaders, responseOverrides)
+    response.writeHead(upstream.status, responseHeaders)
+    if (!upstream.body || request.method === 'HEAD') {
+      response.end()
+      return
     }
-    response.end()
+    try {
+      const source = Readable.fromWeb(upstream.body as unknown as NodeReadableStream<Uint8Array>)
+      await pipeline(source, response, { signal: abortController.signal })
+    } catch (error) {
+      if (!abortController.signal.aborted) throw error
+    }
   } finally {
-    reader.releaseLock()
+    response.off('close', abortOnDisconnect)
+    response.off('error', abortOnDisconnect)
   }
+}
+
+const handleTaskApiRequest = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  tasks: NonNullable<WebServerOptions['tasks']>
+): Promise<boolean> => {
+  try {
+    if (url.pathname === '/api/v1/projects' && request.method === 'GET') {
+      json(response, 200, { data: await tasks.listProjects() })
+      return true
+    }
+    if (url.pathname === '/api/v1/projects' && request.method === 'POST') {
+      const body = (await readJsonBody(request)) as { name?: string; description?: string }
+      json(response, 201, {
+        data: await tasks.createProject({ name: body.name ?? '', description: body.description })
+      })
+      return true
+    }
+    if (url.pathname === '/api/v1/sessions' && request.method === 'GET') {
+      json(response, 200, {
+        data: await tasks.listSessions(url.searchParams.get('project') ?? undefined)
+      })
+      return true
+    }
+    if (url.pathname === '/api/v1/runs' && request.method === 'POST') {
+      const body = (await readJsonBody(request)) as StartTaskRunRequest
+      json(response, 202, { data: await tasks.startRun(body) })
+      return true
+    }
+
+    const runMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)$/)
+    if (runMatch && request.method === 'GET') {
+      json(response, 200, { data: tasks.getRun(decodeURIComponent(runMatch[1])) })
+      return true
+    }
+    const sessionArtifactsMatch = url.pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/artifacts$/)
+    if (sessionArtifactsMatch && request.method === 'GET') {
+      json(response, 200, {
+        data: await tasks.listArtifacts(decodeURIComponent(sessionArtifactsMatch[1]))
+      })
+      return true
+    }
+    const sessionMatch = url.pathname.match(/^\/api\/v1\/sessions\/([^/]+)$/)
+    if (sessionMatch && request.method === 'GET') {
+      json(response, 200, { data: await tasks.getSession(decodeURIComponent(sessionMatch[1])) })
+      return true
+    }
+    const artifactMatch = url.pathname.match(/^\/api\/v1\/artifacts\/([^/]+)\/content$/)
+    if (artifactMatch && (request.method === 'GET' || request.method === 'HEAD')) {
+      const artifact = await tasks.acquireArtifact(decodeURIComponent(artifactMatch[1]))
+      try {
+        await streamPreviewResource(request, response, artifact.url, {
+          'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(artifact.name)}`
+        })
+      } finally {
+        await tasks.releaseArtifact(artifact.resourceId)
+      }
+      return true
+    }
+  } catch (error) {
+    taskError(response, error)
+    return true
+  }
+  return false
 }
 
 const serveStatic = async (
@@ -178,6 +307,7 @@ const serveStatic = async (
 
 const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWebServer> => {
   const sockets = new Set<WebSocket>()
+  const publicEventSockets = new Set<WebSocket>()
   const clientConnections = new Map<string, number>()
   const wsServer = new WebSocketServer({ noServer: true })
 
@@ -193,7 +323,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
 
       if (auth.queryToken && request.method === 'GET' && url.pathname === '/') {
         persistAuthCookie(response, options.token)
-        response.writeHead(302, { location: '/' })
+        url.searchParams.delete('token')
+        response.writeHead(302, { location: `${url.pathname}${url.search}${url.hash}` })
         response.end()
         return
       }
@@ -210,6 +341,20 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         }
         json(response, 202, { ok: true })
         setImmediate(options.onShutdownRequest)
+        return
+      }
+
+      if (
+        url.pathname.startsWith('/api/v1/') &&
+        options.tasks &&
+        (await handleTaskApiRequest(request, response, url, options.tasks))
+      ) {
+        return
+      }
+      if (url.pathname.startsWith('/api/v1/')) {
+        json(response, 404, {
+          error: { code: 'not_found', message: 'Task API endpoint not found.' }
+        })
         return
       }
 
@@ -257,7 +402,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   server.on('upgrade', (request, socket, head) => {
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
     const auth = authenticateRequest(request, url, options.token)
-    if (!auth.ok || url.pathname !== '/events') {
+    if (!auth.ok || !['/events', '/api/v1/events'].includes(url.pathname)) {
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
       socket.destroy()
       return
@@ -271,9 +416,11 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
     const clientId = url.searchParams.get('client') ?? 'web'
     sockets.add(socket)
+    if (url.pathname === '/api/v1/events') publicEventSockets.add(socket)
     clientConnections.set(clientId, (clientConnections.get(clientId) ?? 0) + 1)
     socket.on('close', () => {
       sockets.delete(socket)
+      publicEventSockets.delete(socket)
       const remaining = (clientConnections.get(clientId) ?? 1) - 1
       if (remaining <= 0) {
         clientConnections.delete(clientId)
@@ -285,9 +432,20 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   })
 
   const removeBroadcastSink = addRendererBroadcastSink((channel, payload) => {
-    const message = JSON.stringify({ channel, payload })
+    const internalMessage = JSON.stringify({ channel, payload })
+    const publicMessage =
+      channel === 'acp:event'
+        ? JSON.stringify({ type: 'run.event', data: payload })
+        : channel === 'acp:permission-request'
+          ? JSON.stringify({ type: 'permission.requested', data: payload })
+          : undefined
     for (const socket of sockets) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(message)
+      if (socket.readyState !== WebSocket.OPEN) continue
+      if (publicEventSockets.has(socket)) {
+        if (publicMessage) socket.send(publicMessage)
+      } else {
+        socket.send(internalMessage)
+      }
     }
   })
 

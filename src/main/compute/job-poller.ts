@@ -21,8 +21,17 @@ const PROCESS_VANISHED_TICKS = 2
 // Timeout for the per-host poll SSH command.
 const POLL_TIMEOUT_MS = 30_000
 
-// Maximum output per poll (pid lines + exit codes + tails; bounded by TAIL_MAX_BYTES × 2 + overhead).
-const POLL_MAX_OUTPUT_BYTES = TAIL_MAX_BYTES * 2 + 4 * 1024
+// Per-job output budget for a poll: two tails (stdout+stderr) plus marker/pid/exit-code lines.
+// The 1 KiB pad covers the seven nonce-prefixed marker lines and the exit-code/alive output.
+const PER_JOB_POLL_BYTES = TAIL_MAX_BYTES * 2 + 1024
+
+// Maximum jobs polled in a single SSH round-trip. All non-terminal jobs for one provider used to be
+// batched into ONE ssh call sized for a single job, so a provider with N running jobs overflowed the
+// output cap and the trailing jobs' sections were silently dropped (truncation keeps the head). We
+// now poll in sub-batches of at most this many jobs, sizing the output cap to the sub-batch, which
+// bounds peak memory per call (~POLL_BATCH_MAX_JOBS × PER_JOB_POLL_BYTES ≈ 1 MiB) while guaranteeing
+// every job's section fits.
+const POLL_BATCH_MAX_JOBS = 8
 
 // Grace period added to timeout_seconds before the poller forcibly kills a still-running job
 // (design.md §10). This gives the remote `timeout` command time to deliver SIGTERM+SIGKILL
@@ -98,6 +107,9 @@ export class JobPoller {
   private readonly inFlightHarvests = new Set<string>()
   private harvestSemaphore = HARVEST_CONCURRENCY_LIMIT
   private readonly harvestQueue: ComputeJob[] = []
+  //   inFlightErrorNotifs: jobIds whose error-notification emit is in progress — prevents a second
+  //   overlapping tick from re-emitting before notified_at is persisted (ticks are not serialized)
+  private readonly inFlightErrorNotifs = new Set<string>()
 
   constructor(private readonly deps: JobPollerDeps) {
     this.setIntervalFn = deps.setInterval ?? ((fn, ms) => setInterval(fn, ms))
@@ -132,6 +144,36 @@ export class JobPoller {
       const unharvested = await this.deps.jobRepository.findTerminalUnharvested()
       for (const job of unharvested) {
         this._dispatchHarvest(job)
+      }
+    }
+
+    // Error-notification recovery scan: the dispatcher writes status='error' (dispatch_failed /
+    // host_unreachable) but never emits a compute_done notification, and 'error' is excluded from
+    // both the harvest scan and findNonTerminal. Without this, a dispatch failure would never reach
+    // notify→analyze. emitJobNotification is idempotent (guards on notified_at), so a job already
+    // notified via another path (e.g. the noHandle branch below) is skipped.
+    if (this.deps.broadcast && this.deps.storageRoot) {
+      const { broadcast, storageRoot } = this.deps
+      const errorUnnotified = await this.deps.jobRepository.findErrorUnnotified()
+      for (const job of errorUnnotified) {
+        // emitJobNotification guards on notified_at (idempotent), but that is a check-then-act
+        // with a real window: ticks are not serialized, so a second tick could re-select this row
+        // before the notified_at write commits and emit a duplicate user-visible notification. The
+        // in-flight set closes that window (mirrors inFlightHarvests for the harvest scan).
+        if (this.inFlightErrorNotifs.has(job.job_id)) continue
+        this.inFlightErrorNotifs.add(job.job_id)
+        void emitJobNotification(job, {
+          jobRepository: this.deps.jobRepository,
+          hostRepository: this.deps.hostRepository,
+          storageRoot,
+          broadcast
+        })
+          .catch(() => {
+            // Non-fatal: job status is already persisted; retry on the next tick.
+          })
+          .finally(() => {
+            this.inFlightErrorNotifs.delete(job.job_id)
+          })
       }
     }
 
@@ -254,6 +296,21 @@ export class JobPoller {
       return
     }
 
+    // Poll in sub-batches so the SSH output cap always fits every job's section. Each sub-batch is
+    // one SSH round-trip; batches for the same provider run sequentially to reuse one connection and
+    // avoid a fan-out of concurrent ssh processes per provider.
+    for (let i = 0; i < withHandle.length; i += POLL_BATCH_MAX_JOBS) {
+      const batch = withHandle.slice(i, i + POLL_BATCH_MAX_JOBS)
+      await this._pollBatch(batch, target)
+    }
+  }
+
+  // Polls one sub-batch of jobs (all with handles) in a single SSH round-trip, sizing the output cap
+  // to the batch so no job's section is truncated away.
+  private async _pollBatch(
+    jobs: ComputeJob[],
+    target: import('./ssh-runner').ResolvedSshTarget
+  ): Promise<void> {
     // Per-tick random nonce prefixed onto every structural marker. Job stdout/stderr tails are
     // interleaved into the same stream, so bare markers (JOB_START:/alive:/STDOUT_END:/...) printed
     // by the job could otherwise hijack section splitting or field parsing. An unpredictable nonce
@@ -270,9 +327,11 @@ export class JobPoller {
     //   tail -c 65536 <stderr_path> 2>/dev/null || true
     //   echo "<nonce>STDERR_END:<jobId>"
     const parts: string[] = []
-    for (const job of withHandle) {
+    const batched: ComputeJob[] = []
+    for (const job of jobs) {
       const handle = this._parseHandle(job.remote_handle)
       if (!handle) continue
+      batched.push(job)
 
       parts.push(
         `echo "${nonce}JOB_START:${job.job_id}"`,
@@ -287,18 +346,20 @@ export class JobPoller {
 
     if (parts.length === 0) return
 
+    // Size the output cap to this batch: one PER_JOB_POLL_BYTES budget per job that emits a section.
+    const maxOutputBytes = batched.length * PER_JOB_POLL_BYTES
     const pollCmd = parts.join('\n')
     let runResult
     try {
       runResult = await this.deps.runner.run(target, pollCmd, {
         timeoutMs: POLL_TIMEOUT_MS,
         loginShell: false,
-        maxOutputBytes: POLL_MAX_OUTPUT_BYTES
+        maxOutputBytes
       })
     } catch (err) {
       // SSH threw — record lastPollError for each job but do NOT flip status (design.md §8 boundary 2).
       const msg = err instanceof Error ? err.message : String(err)
-      await this._recordPollError(withHandle, msg)
+      await this._recordPollError(batched, msg)
       return
     }
 
@@ -306,13 +367,15 @@ export class JobPoller {
       // Host unreachable — record error per job but do NOT flip status (design.md §8 boundary 2).
       const msg =
         runResult.stderr || (runResult.timedOut ? 'SSH connection timed out' : 'SSH exit 255')
-      await this._recordPollError(withHandle, msg)
+      await this._recordPollError(batched, msg)
       return
     }
 
     // Parse the batched output using nonce-prefixed markers. Pass target for poller fallback kill.
-    const output = runResult.stdout
-    await this._parsePollOutput(output, withHandle, nonce, target)
+    // A truncated result should be impossible now that the cap is sized to the batch, but if it ever
+    // happens the head is kept, so leading jobs still parse; any job whose section was dropped simply
+    // stays non-terminal and is re-polled next tick (its remote exit_code file persists).
+    await this._parsePollOutput(runResult.stdout, batched, nonce, target)
   }
 
   private _parseHandle(raw: string | undefined): RemoteHandle | null {

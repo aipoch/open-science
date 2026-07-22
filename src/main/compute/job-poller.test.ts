@@ -1151,6 +1151,7 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([job])),
       findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
+      findErrorUnnotified: vi.fn(() => Promise.resolve([])),
       update
     } as unknown as ComputeJobRepository
 
@@ -1235,5 +1236,199 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
     // Only one update call (the status=error write), no notifiedAt write
     expect(update).toHaveBeenCalledOnce()
     expect(update).toHaveBeenCalledWith('job-1', expect.objectContaining({ status: 'error' }))
+  })
+
+  it('emits notification for dispatcher-written error jobs via the recovery scan', async () => {
+    // The dispatcher writes status='error' directly (dispatch_failed / host_unreachable) without
+    // notifying. 'error' is excluded from findNonTerminal and findTerminalUnharvested, so only the
+    // findErrorUnnotified recovery scan surfaces it to notify→analyze.
+    const errorJob = makeJob({
+      status: 'error',
+      error_code: 'host_unreachable',
+      remote_handle: undefined,
+      finished_at: Date.now(),
+      notified_at: undefined
+    })
+    const notifiedJob = { ...errorJob, notified_at: Date.now() }
+    const update = vi.fn().mockResolvedValue(notifiedJob)
+
+    const jobRepo = {
+      // No non-terminal jobs and nothing to harvest — only the error job awaits notification.
+      findNonTerminal: vi.fn(() => Promise.resolve([])),
+      findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
+      findErrorUnnotified: vi.fn(() => Promise.resolve([errorJob])),
+      update
+    } as unknown as ComputeJobRepository
+    const hostRepo = {
+      get: vi.fn(() => Promise.resolve(sampleHost()))
+    } as unknown as ComputeHostRepository
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const broadcast = vi.fn()
+
+    const poller = new JobPoller({
+      runner,
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      broadcast,
+      storageRoot: '/tmp/test-storage'
+    })
+
+    await poller.tick()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    // notifiedAt written and broadcast fired for the error job
+    expect(update).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({ notifiedAt: expect.any(Date) })
+    )
+    expect(broadcast).toHaveBeenCalledOnce()
+    expect(broadcast.mock.calls[0][0].status).toBe('error')
+  })
+
+  it('does not double-emit when two ticks overlap before notified_at commits', async () => {
+    // Ticks are not serialized (setInterval). The in-flight guard must stop a second overlapping
+    // tick from re-selecting the same error row and emitting a duplicate notification while the
+    // first tick's notified_at write is still pending.
+    const errorJob = makeJob({
+      status: 'error',
+      error_code: 'dispatch_failed',
+      remote_handle: undefined,
+      finished_at: Date.now(),
+      notified_at: undefined
+    })
+
+    // Gate the notified_at write so both ticks run while the first emit is still in flight.
+    let releaseUpdate: () => void = () => {}
+    const updateGate = new Promise<void>((resolve) => {
+      releaseUpdate = resolve
+    })
+    const update = vi.fn(async (id: string, u: unknown) => {
+      await updateGate
+      return { ...errorJob, job_id: id, ...(u as object) }
+    })
+
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([])),
+      findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
+      // Both ticks see the row as still unnotified (write is gated).
+      findErrorUnnotified: vi.fn(() => Promise.resolve([errorJob])),
+      update
+    } as unknown as ComputeJobRepository
+    const hostRepo = {
+      get: vi.fn(() => Promise.resolve(sampleHost()))
+    } as unknown as ComputeHostRepository
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const broadcast = vi.fn()
+
+    const poller = new JobPoller({
+      runner,
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      broadcast,
+      storageRoot: '/tmp/test-storage'
+    })
+
+    // Fire two overlapping ticks, then release the gated write.
+    const t1 = poller.tick()
+    const t2 = poller.tick()
+    releaseUpdate()
+    await Promise.all([t1, t2])
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    // Only ONE emit despite two overlapping ticks selecting the same unnotified row.
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(broadcast).toHaveBeenCalledOnce()
+  })
+})
+
+describe('JobPoller sub-batching (per-job output budget)', () => {
+  it('polls >8 jobs for one provider in size-bounded sub-batches, updating every job', async () => {
+    // 10 running jobs on one provider. Previously all 10 batched into ONE ssh call sized for a
+    // single job, so the trailing jobs' sections overflowed the cap and were silently dropped.
+    // Now they poll in sub-batches of ≤8, each with a cap sized to its batch.
+    const jobs = Array.from({ length: 10 }, (_, i) =>
+      makeJob({
+        job_id: `job-${i}`,
+        remote_handle: JSON.stringify({
+          pid: 1000 + i,
+          exit_code_path: `~/.openscience/jobs/job-${i}/exit_code`,
+          stdout_path: `~/.openscience/jobs/job-${i}/stdout`,
+          stderr_path: `~/.openscience/jobs/job-${i}/stderr`,
+          workdir: `~/.openscience/jobs/job-${i}`
+        })
+      })
+    )
+
+    const update = vi.fn((id: string, u: unknown) =>
+      Promise.resolve({ ...makeJob({ job_id: id }), ...(u as object) })
+    )
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve(jobs)),
+      findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
+      get: vi.fn((id: string) => Promise.resolve(makeJob({ job_id: id }))),
+      update
+    } as unknown as ComputeJobRepository
+    const hostRepo = {
+      get: vi.fn(() => Promise.resolve(sampleHost()))
+    } as unknown as ComputeHostRepository
+
+    // Runner synthesizes output for exactly the job IDs named in each poll command, so each
+    // sub-batch's reply covers only its own jobs. It also records the maxOutputBytes cap used.
+    const capsSeen: number[] = []
+    const runner: SshRunner = {
+      run: vi.fn((_target, cmd: string, opts?: { maxOutputBytes?: number }) => {
+        capsSeen.push(opts?.maxOutputBytes ?? 0)
+        const ids = [...cmd.matchAll(/JOB_START:(job-\d+)/g)].map((m) => m[1])
+        const lines: string[] = []
+        for (const id of ids) {
+          lines.push(
+            `JOB_START:${id}`,
+            'alive:1',
+            '', // no exit code — still running
+            'out',
+            `STDOUT_END:${id}`,
+            '',
+            `STDERR_END:${id}`
+          )
+        }
+        return Promise.resolve({
+          exitCode: 0,
+          stdout: withNonce(lines),
+          stderr: '',
+          truncated: false,
+          timedOut: false
+        })
+      })
+    }
+
+    const poller = new JobPoller({
+      runner,
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      makeNonce: () => NONCE
+    })
+
+    await poller.tick()
+
+    // Two sub-batches (8 + 2) → two ssh round-trips, each capped to its batch size.
+    expect(runner.run).toHaveBeenCalledTimes(2)
+    expect(capsSeen).toEqual([8 * (65536 * 2 + 1024), 2 * (65536 * 2 + 1024)])
+
+    // Every one of the 10 jobs got a status update (none silently dropped by truncation).
+    const updatedIds = new Set(update.mock.calls.map((c) => c[0]))
+    expect(updatedIds.size).toBe(10)
+    for (let i = 0; i < 10; i++) expect(updatedIds.has(`job-${i}`)).toBe(true)
   })
 })

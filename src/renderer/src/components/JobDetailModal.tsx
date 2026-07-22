@@ -373,6 +373,7 @@ export function JobDetailModal({
           open={fileBrowserOpen}
           onClose={() => setFileBrowserOpen(false)}
           initialProviderId={fileBrowserState.providerId}
+          initialPath={fileBrowserState.path}
         />
       )}
     </>

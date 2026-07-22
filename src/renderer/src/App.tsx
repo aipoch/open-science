@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 
+import { useDeepLinkNavigation } from '@/lib/deep-link'
 import { useSessionPersistence } from '@/lib/session-persistence/session-persistence'
 import { CloseConfirmModal } from '@/components/CloseConfirmModal'
 import { DataRootMissingDialog } from '@/components/DataRootMissingDialog'
@@ -28,6 +29,7 @@ const App = (): React.JSX.Element | null => {
   // Persistence is started once at the top so sessions stay loaded for both Home and Workspace.
   const isSessionPersistenceReady = useSessionPersistence()
   const lifecycleSync = useLifecycleSync({ isSessionPersistenceReady })
+  useDeepLinkNavigation(isSessionPersistenceReady)
   const view = useNavigationStore((state) => state.view)
   // Cmd+W / Ctrl+W closes the open preview panel before it closes the window.
   useCloseActivePaneShortcut()

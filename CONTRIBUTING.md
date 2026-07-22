@@ -167,6 +167,11 @@ When filing a bug report, please include:
 - Your operating system and app version.
 - Relevant logs or screenshots, if available.
 
+## Publishing the npm Package
+
+Maintainers should follow the [npm package release guide](docs/npm-release.md). npm package versions
+use `npm-v*` tags and are published through the protected `Publish npm package` workflow.
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under the

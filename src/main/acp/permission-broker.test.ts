@@ -63,6 +63,28 @@ const createToolPermissionRequest = (
   }
 }
 
+const createCodexCommandPermissionRequest = (
+  sessionId = 'session-1'
+): RequestPermissionRequest => ({
+  sessionId,
+  toolCall: {
+    toolCallId: `tool-${Math.random()}`,
+    title: 'git worktree add -b fix/example ../example main',
+    status: 'pending',
+    kind: 'execute'
+  },
+  options: [
+    { optionId: 'allow_once', name: 'Allow Once', kind: 'allow_once' },
+    { optionId: 'allow_always', name: 'Allow for Session', kind: 'allow_always' },
+    {
+      optionId: 'accept_execpolicy_amendment',
+      name: 'Allow Commands Starting With `git worktree add`',
+      kind: 'allow_always'
+    },
+    { optionId: 'reject_once', name: 'Reject', kind: 'reject_once' }
+  ]
+})
+
 describe('ACP permission broker', () => {
   it('preserves structured tool metadata for risk-aware approval UI', () => {
     const emitted: Array<Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]> = []
@@ -83,6 +105,26 @@ describe('ACP permission broker', () => {
       toolLocations: [{ path: '/workspace/results.csv' }],
       rawInput: { file_path: '/workspace/results.csv', value: 'updated' }
     })
+  })
+
+  it('preserves an explicit shell title when raw input also contains a command', async () => {
+    const emitted: Array<Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]> = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const request = createToolPermissionRequest({
+      title: 'Build project',
+      providerToolName: 'Bash',
+      kind: 'execute'
+    })
+    request.toolCall.rawInput = { command: './build.sh --verbose' }
+
+    const response = broker.requestPermission(request)
+
+    expect(emitted[0].title).toBe('Build project')
+    broker.respond({ requestId: emitted[0].requestId, optionId: 'allow-always' })
+    await response
+    expect(broker.listGrants('session-1')).toEqual([
+      { categoryKey: 'bash:Build project', kind: 'shell', label: 'Build project' }
+    ])
   })
 
   it('auto-approves only conservative Auto operations accepted by policy', async () => {
@@ -116,6 +158,105 @@ describe('ACP permission broker', () => {
         optionId: 'allow-once'
       }
     })
+  })
+
+  it('projects Codex commands to one session-scoped Always action', async () => {
+    const emitted: Array<Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]> = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const context = { profile: 'ask' as const, frameworkId: 'codex' as const }
+
+    const firstResponse = broker.requestPermission(createCodexCommandPermissionRequest(), context)
+
+    expect(emitted[0].options).toEqual([
+      { optionId: 'allow_once', name: 'Allow Once', kind: 'allow_once' },
+      { optionId: 'allow_always', name: 'Allow for Session', kind: 'allow_always' },
+      { optionId: 'reject_once', name: 'Reject', kind: 'reject_once' }
+    ])
+
+    broker.respond({ requestId: emitted[0].requestId, optionId: 'allow_always' })
+    await expect(firstResponse).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow_always' }
+    })
+
+    await expect(
+      broker.requestPermission(createCodexCommandPermissionRequest(), context)
+    ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'allow_once' } })
+
+    const otherSessionResponse = broker.requestPermission(
+      createCodexCommandPermissionRequest('session-2'),
+      context
+    )
+    expect(emitted).toHaveLength(2)
+    broker.cancelForSession('session-2')
+    await expect(otherSessionResponse).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+  })
+
+  it('removes Codex policy amendments when execute metadata is absent', () => {
+    const emitted: Array<Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]> = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const request = createCodexCommandPermissionRequest()
+    request.toolCall.kind = undefined
+
+    void broker.requestPermission(request, { profile: 'ask', frameworkId: 'codex' })
+
+    expect(emitted[0].options.map((option) => option.optionId)).toEqual([
+      'allow_once',
+      'allow_always',
+      'reject_once'
+    ])
+  })
+
+  it('removes policy amendments when a Codex command omits canonical session actions', () => {
+    const emitted: Array<Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]> = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const request = createCodexCommandPermissionRequest()
+    request.options = request.options.filter((option) => option.optionId !== 'allow_always')
+    request.options.splice(2, 0, {
+      optionId: 'accept_networkpolicy_amendment',
+      name: 'Allow network access persistently',
+      kind: 'allow_always'
+    })
+
+    void broker.requestPermission(request, { profile: 'ask', frameworkId: 'codex' })
+
+    expect(emitted[0].options.map((option) => option.optionId)).toEqual([
+      'allow_once',
+      'reject_once'
+    ])
+  })
+
+  it('does not auto-select a Codex amendment under Full Access when it is the only allow option', () => {
+    const emitted: Array<Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]> = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const request = createCodexCommandPermissionRequest()
+    // Only the persistent policy amendment remains as an allow-kind option.
+    request.options = request.options.filter(
+      (option) => option.optionId !== 'allow_once' && option.optionId !== 'allow_always'
+    )
+
+    void broker.requestPermission(request, { profile: 'full', frameworkId: 'codex' })
+
+    // The amendment is projected away, so Full Access finds no allow option and must prompt instead
+    // of auto-approving a grant that persists outside the app's revocable model.
+    expect(emitted).toHaveLength(1)
+    expect(emitted[0].options.map((option) => option.optionId)).toEqual(['reject_once'])
+  })
+
+  it('cancels a Codex policy amendment response that was not exposed', async () => {
+    const emittedRequests: string[] = []
+    const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))
+    const response = broker.requestPermission(createCodexCommandPermissionRequest(), {
+      profile: 'ask',
+      frameworkId: 'codex'
+    })
+
+    broker.respond({
+      requestId: emittedRequests[0],
+      optionId: 'accept_execpolicy_amendment'
+    })
+
+    await expect(response).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+    expect(broker.listGrants('session-1')).toEqual([])
   })
 
   it('resolves pending requests as cancelled when all permissions are cancelled', async () => {
@@ -368,6 +509,36 @@ describe('ACP permission broker', () => {
       { profile: 'ask', mcpServerNames }
     )
     expect(emittedRequests).toHaveLength(1)
+  })
+
+  it('keeps MCP identity when raw input contains a command field', async () => {
+    const emittedRequests: Array<
+      Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]
+    > = []
+    const broker = new AcpPermissionBroker((request) => emittedRequests.push(request))
+    const firstRequest = createToolPermissionRequest({
+      title: 'mcp__runner__execute',
+      kind: 'execute'
+    })
+    firstRequest.toolCall.rawInput = { command: 'npm publish' }
+
+    const firstResponse = broker.requestPermission(firstRequest)
+
+    expect(emittedRequests[0]).toMatchObject({
+      title: 'mcp__runner__execute',
+      isMcp: true
+    })
+    broker.respond({ requestId: emittedRequests[0].requestId, optionId: 'allow-always' })
+    await firstResponse
+
+    const secondRequest = createToolPermissionRequest({
+      title: 'mcp__other__execute',
+      kind: 'execute'
+    })
+    secondRequest.toolCall.rawInput = { command: 'npm publish' }
+    void broker.requestPermission(secondRequest)
+
+    expect(emittedRequests).toHaveLength(2)
   })
 
   it('does not remember Always across sessions for built-in tools', async () => {

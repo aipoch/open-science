@@ -2642,6 +2642,191 @@ describe('ACP runtime session management', () => {
     ])
   })
 
+  it('shows sparse Codex commands and remembers Always for the same command only', async () => {
+    const process = new FakeAgentProcess()
+    const permissionRequests: Array<{
+      title: string
+      rawInput?: unknown
+      requestId: string
+    }> = []
+    const permissionResponses: unknown[] = []
+
+    acp
+      .agent({ name: 'codex-command-permission-agent' })
+      .onRequest(acp.methods.agent.initialize, () => ({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        agentCapabilities: {
+          loadSession: false,
+          sessionCapabilities: { close: {} }
+        },
+        authMethods: []
+      }))
+      .onRequest(acp.methods.agent.session.new, () => ({
+        sessionId: 'codex-command-session',
+        modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+      }))
+      .onRequest(acp.methods.agent.session.setMode, () => ({}))
+      .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
+        for (const [toolCallId, command] of [
+          ['call-command-1', 'npm run lint'],
+          ['call-command-2', 'npm run lint'],
+          ['call-command-3', 'npm test']
+        ]) {
+          await ctx.client.notify(acp.methods.client.session.update, {
+            sessionId: ctx.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId,
+              kind: 'execute',
+              title: command,
+              status: 'pending',
+              rawInput: { command }
+            }
+          })
+
+          const response = await ctx.client.request(acp.methods.client.session.requestPermission, {
+            sessionId: ctx.params.sessionId,
+            toolCall: {
+              toolCallId,
+              kind: 'execute',
+              status: 'pending',
+              rawInput: { command, cwd: '/workspace' }
+            },
+            options: [
+              { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+              { optionId: 'allow-session', name: 'Allow for This Session', kind: 'allow_always' },
+              { optionId: 'decline', name: 'Decline', kind: 'reject_once' }
+            ]
+          })
+          permissionResponses.push(response)
+        }
+
+        return { stopReason: 'end_turn' }
+      })
+      .onRequest(acp.methods.agent.session.close, () => ({}))
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework,
+      callbacks: {
+        onPermissionRequest: (request) => {
+          permissionRequests.push(request)
+          runtime.respondToPermission({
+            requestId: request.requestId,
+            optionId: permissionRequests.length === 1 ? 'allow-session' : 'allow-once'
+          })
+        }
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'run two npm commands' })
+
+    expect(permissionRequests).toHaveLength(2)
+    expect(permissionRequests).toMatchObject([
+      {
+        title: 'npm run lint',
+        rawInput: { command: 'npm run lint' }
+      },
+      {
+        title: 'npm test',
+        rawInput: { command: 'npm test' }
+      }
+    ])
+    expect(permissionResponses).toEqual([
+      { outcome: { outcome: 'selected', optionId: 'allow-session' } },
+      { outcome: { outcome: 'selected', optionId: 'allow-once' } },
+      { outcome: { outcome: 'selected', optionId: 'allow-once' } }
+    ])
+    expect(runtime.getSnapshot().permissionGrants[session.sessionId]).toEqual([
+      { categoryKey: 'bash:npm run lint', kind: 'shell', label: 'npm run lint' }
+    ])
+  })
+
+  it('strips Codex policy amendments using the session framework after this.framework moves', async () => {
+    const process = new FakeAgentProcess()
+    const permissionRequests: Array<{ requestId: string; options: Array<{ optionId: string }> }> =
+      []
+
+    acp
+      .agent({ name: 'codex-amendment-reconnect-agent' })
+      .onRequest(acp.methods.agent.initialize, () => ({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        agentCapabilities: { loadSession: false, sessionCapabilities: { close: {} } },
+        authMethods: []
+      }))
+      .onRequest(acp.methods.agent.session.new, () => ({
+        sessionId: 'codex-amendment-session',
+        modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+      }))
+      .onRequest(acp.methods.agent.session.setMode, () => ({}))
+      .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
+        const response = await ctx.client.request(acp.methods.client.session.requestPermission, {
+          sessionId: ctx.params.sessionId,
+          toolCall: {
+            toolCallId: 'call-amendment-1',
+            kind: 'execute',
+            status: 'pending',
+            rawInput: { command: './deploy', cwd: '/workspace' }
+          },
+          options: [
+            { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+            { optionId: 'allow-session', name: 'Allow for This Session', kind: 'allow_always' },
+            {
+              optionId: 'accept_execpolicy_amendment',
+              name: 'Allow Commands Starting With `./deploy`',
+              kind: 'allow_always'
+            },
+            { optionId: 'decline', name: 'Decline', kind: 'reject_once' }
+          ]
+        })
+        return { stopReason: 'end_turn', response }
+      })
+      .onRequest(acp.methods.agent.session.close, () => ({}))
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework,
+      callbacks: {
+        onPermissionRequest: (request) => {
+          permissionRequests.push(request)
+          runtime.respondToPermission({ requestId: request.requestId, optionId: 'allow-once' })
+        }
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+
+    // Simulate an overlapping reconnect moving the process-global framework off codex while the
+    // Codex session persists. The projection must key off the per-session framework, not this one.
+    ;(runtime as unknown as { framework: typeof claudeCodeFramework }).framework =
+      claudeCodeFramework
+
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'deploy' })
+
+    expect(permissionRequests).toHaveLength(1)
+    expect(permissionRequests[0].options.map((option) => option.optionId)).toEqual([
+      'allow-once',
+      'allow-session',
+      'decline'
+    ])
+  })
+
   it('bounds pending Codex MCP identities and clears unmatched entries when the turn stops', async () => {
     const process = new FakeAgentProcess()
     const promptStarted = createDeferred()
@@ -2959,6 +3144,119 @@ describe('ACP runtime session management', () => {
       outcome: { outcome: 'selected', optionId: 'allow-once' }
     })
     runtime.disposeReviewerSession(session)
+  })
+
+  // Regression: claude-code (and OpenAI-compatible providers routed through it) emit reviewer MCP calls
+  // with the sanitized mcp__<server>__<tool> identity in the title and no provider _meta tool name. The
+  // gate must recognize that title form or every reviewer tool call is rejected (issue #329).
+  it('auto-approves a claude-code reviewer MCP tool identified by its sanitized title', async () => {
+    const process = new FakeAgentProcess()
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'reviewer-session-1',
+      toolCallId: 'mcp__open_science_reviewer__read_turn_0',
+      toolTitle: 'mcp__open_science_reviewer__read_turn',
+      permissionOptions: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+      ],
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework
+    })
+
+    const { session } = await runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        { type: 'http', name: 'open-science-reviewer', url: 'http://127.0.0.1:1/mcp', headers: [] }
+      ]
+    })
+    await session.prompt([{ type: 'text', text: 'read the audited turn' }])
+
+    expect(permissionResponse).toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(runtime.reviewerRejectedToolCallCount(session.sessionId)).toBe(0)
+    runtime.disposeReviewerSession(session)
+  })
+
+  // Security: the toolCallId is agent-controlled, so a reviewer-shaped id must NOT authorize a call
+  // whose title/kind are a genuinely disallowed tool. Only the title carries the trusted MCP identity.
+  it('rejects a Bash call that carries a reviewer-shaped toolCallId', async () => {
+    const process = new FakeAgentProcess()
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'reviewer-session-1',
+      toolCallId: 'mcp__open_science_reviewer__read_turn_0',
+      toolTitle: 'Bash',
+      toolKind: 'execute',
+      permissionOptions: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+      ],
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework
+    })
+
+    const { session } = await runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        { type: 'http', name: 'open-science-reviewer', url: 'http://127.0.0.1:1/mcp', headers: [] }
+      ]
+    })
+    await session.prompt([{ type: 'text', text: 'run a shell command with a spoofed id' }])
+
+    expect(permissionResponse).toEqual({
+      outcome: { outcome: 'selected', optionId: 'reject-once' }
+    })
+    expect(runtime.reviewerRejectedToolCallCount(session.sessionId)).toBe(1)
+    runtime.disposeReviewerSession(session)
+  })
+
+  it('counts reviewer tool calls rejected by the strict gate', async () => {
+    const process = new FakeAgentProcess()
+    startPermissionProbeAgent(process, {
+      newSessionId: 'reviewer-session-1',
+      toolCallId: 'reviewer-blocked-bash',
+      toolTitle: 'Bash',
+      toolKind: 'execute',
+      permissionOptions: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+      ]
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework
+    })
+
+    const { session } = await runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        { type: 'http', name: 'open-science-reviewer', url: 'http://127.0.0.1:1/mcp', headers: [] }
+      ]
+    })
+    await session.prompt([{ type: 'text', text: 'run a shell command' }])
+
+    expect(runtime.reviewerRejectedToolCallCount(session.sessionId)).toBe(1)
+    // dispose returns the final count and clears it atomically — the orchestrator relies on this.
+    expect(runtime.disposeReviewerSession(session)).toBe(1)
+    expect(runtime.reviewerRejectedToolCallCount('reviewer-session-1')).toBe(0)
   })
 
   it('refuses a non-loopback reviewer MCP before starting an agent connection', async () => {

@@ -607,4 +607,121 @@ describe('ConcurrencyManager', () => {
       expect(dispatchStarted).toBe(1)
     })
   })
+
+  describe('admit - atomic status decision + row commit', () => {
+    it('calls commit with submitted when limits are clear', async () => {
+      vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(0)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
+      vi.mocked(hostRepo.get).mockResolvedValue({ concurrencyLimit: 10 } as ComputeHost)
+      const commit = vi.fn().mockResolvedValue(undefined)
+
+      const result = await manager.admit({ sessionId: 's1', providerId: 'p1' }, commit)
+
+      expect(result).toBe('submitted')
+      expect(commit).toHaveBeenCalledWith('submitted')
+    })
+
+    it('calls commit with queued when session limit is reached', async () => {
+      manager.setSessionLimit('s1', 2)
+      vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(2)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
+      vi.mocked(hostRepo.get).mockResolvedValue({ concurrencyLimit: 10 } as ComputeHost)
+      const commit = vi.fn().mockResolvedValue(undefined)
+
+      const result = await manager.admit({ sessionId: 's1', providerId: 'p1' }, commit)
+
+      expect(result).toBe('queued')
+      expect(commit).toHaveBeenCalledWith('queued')
+    })
+
+    it('returns queue_full and does NOT call commit when global queue is at capacity', async () => {
+      vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(100)
+      const commit = vi.fn().mockResolvedValue(undefined)
+
+      const result = await manager.admit({ sessionId: 's1', providerId: 'p1' }, commit)
+
+      expect(result).toBe('queue_full')
+      expect(commit).not.toHaveBeenCalled()
+    })
+
+    it('serializes concurrent admits so both cannot pass the same slot', async () => {
+      // Two concurrent calls see activeByProvider=0 individually, but admit serializes them so
+      // the second sees activeByProvider=1 (as committed by the first).
+      manager.setSessionLimit('s1', 10)
+      vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
+      vi.mocked(hostRepo.get).mockResolvedValue({ concurrencyLimit: 1 } as ComputeHost)
+
+      // Simulate DB counts that reflect committed rows from the first admit
+      let committedCount = 0
+      vi.mocked(jobRepo.countActiveBySession).mockImplementation(async () => committedCount)
+      vi.mocked(jobRepo.countActiveByProvider).mockImplementation(async () => committedCount)
+
+      const commit = vi.fn().mockImplementation(async () => {
+        committedCount++
+      })
+
+      const [r1, r2] = await Promise.all([
+        manager.admit({ sessionId: 's1', providerId: 'p1' }, commit),
+        manager.admit({ sessionId: 's1', providerId: 'p1' }, commit)
+      ])
+
+      // First wins the slot, second sees the committed count and queues
+      expect([r1, r2].sort()).toEqual(['queued', 'submitted'])
+      expect(commit).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not overrun a provider ceiling when admit() races queue promotion', async () => {
+      // Regression for the P1 race: a new submission (admit) and a queued-job promotion
+      // (onJobCompleted → tryDispatchNext) must not both claim the same free slot. With the reserve
+      // step of tryDispatchNext sharing admit()'s lock, only one row flips to 'submitted'.
+      const providerCeiling = 1
+      vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
+      vi.mocked(hostRepo.get).mockResolvedValue({
+        concurrencyLimit: providerCeiling
+      } as ComputeHost)
+
+      // Both paths read active from the same committed counter; each commit (admit's commit callback
+      // or the promotion's status update to 'submitted') increments it.
+      let active = 0
+      vi.mocked(jobRepo.countActiveBySession).mockImplementation(async () => active)
+      vi.mocked(jobRepo.countActiveByProvider).mockImplementation(async () => active)
+
+      // One queued job available for promotion.
+      vi.mocked(jobRepo.findQueuedJobs).mockResolvedValue([
+        {
+          job_id: 'queued-1',
+          session_id: 's1',
+          provider_id: 'p1',
+          created_at: 1000,
+          status: 'queued'
+        } as ComputeJob
+      ])
+      // The promotion's reserve commit (status → 'submitted') bumps the active counter.
+      vi.mocked(jobRepo.update).mockImplementation(async (_id, u) => {
+        if ((u as { status?: string }).status === 'submitted') active++
+        return {} as ComputeJob
+      })
+      vi.mocked(dispatchJob).mockResolvedValue(undefined)
+
+      // admit's commit callback also bumps the active counter when it writes a 'submitted' row.
+      const commit = vi.fn().mockImplementation(async (status: string) => {
+        if (status === 'submitted') active++
+      })
+
+      const [admitResult] = await Promise.all([
+        manager.admit({ sessionId: 's1', providerId: 'p1' }, commit),
+        manager.onJobCompleted()
+      ])
+
+      // Exactly one of the two paths won the single slot; active never exceeded the ceiling.
+      expect(active).toBe(providerCeiling)
+      const promotionSubmits = vi
+        .mocked(jobRepo.update)
+        .mock.calls.filter(([, u]) => (u as { status?: string }).status === 'submitted').length
+      const admitSubmits = admitResult === 'submitted' ? 1 : 0
+      expect(promotionSubmits + admitSubmits).toBe(1)
+    })
+  })
 })
