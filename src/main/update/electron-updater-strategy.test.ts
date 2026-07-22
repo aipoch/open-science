@@ -422,6 +422,59 @@ describe('ElectronUpdaterStrategy', () => {
     expect(status.totalBytes).toBeUndefined()
   })
 
+  it('resolves x64 under Rosetta to arm64 for artifact size selection', async () => {
+    // An x64 app running under Rosetta 2 on Apple Silicon downloads the arm64 ZIP (electron-updater's
+    // MacUpdater.filterFilesForArch does the same via sysctl.proc_translated). The pre-download size
+    // must match the arm64 entry, not the x64 one.
+    const updater = new FakeUpdater()
+    updater.checkForUpdates = vi.fn(async () => {
+      updater.emit('update-available', {
+        version: '0.3.0',
+        files: [
+          { url: 'https://cdn/app-0.3.0-arm64.zip', size: 95000 },
+          { url: 'https://cdn/app-0.3.0-x64.zip', size: 105000 }
+        ]
+      })
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      platform: 'darwin',
+      arch: 'x64',
+      isRosetta: () => true,
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    const status = await strategy.check()
+    // x64 + Rosetta → effective arm64 → picks 95000, not 105000.
+    expect(status.totalBytes).toBe(95000)
+  })
+
+  it('keeps x64 arch when not under Rosetta', async () => {
+    const updater = new FakeUpdater()
+    updater.checkForUpdates = vi.fn(async () => {
+      updater.emit('update-available', {
+        version: '0.3.0',
+        files: [
+          { url: 'https://cdn/app-0.3.0-arm64.zip', size: 95000 },
+          { url: 'https://cdn/app-0.3.0-x64.zip', size: 105000 }
+        ]
+      })
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      platform: 'darwin',
+      arch: 'x64',
+      isRosetta: () => false,
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    const status = await strategy.check()
+    // Native Intel x64 → picks 105000.
+    expect(status.totalBytes).toBe(105000)
+  })
+
   it('preserves check-time totalBytes when download-progress omits total', async () => {
     // Artifacts published with a size in the feed should keep that size even if a progress event
     // arrives without a total field.

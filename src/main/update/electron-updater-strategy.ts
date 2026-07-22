@@ -1,4 +1,5 @@
 import { app } from 'electron'
+import { spawnSync } from 'node:child_process'
 import { autoUpdater, CancellationToken } from 'electron-updater'
 
 import { APP } from '../../shared/app-config'
@@ -44,8 +45,30 @@ export type ElectronUpdaterDeps = {
   manifestUrl?: string
   // Pre-install backend-shutdown gate; usually injected later via setInstallGate once the runtime exists.
   installGate?: InstallGate
-  // Diagnostics sink for the apply path; defaults to a no-op so unit tests stay quiet.
-  log?: UpdaterLogger
+  // True when an x64 process is running under Rosetta 2 on Apple Silicon. Electron-updater detects
+  // this via sysctl.proc_translated and selects the arm64 artifact, so we must match that to show the
+  // correct pre-download size. Injectable for tests; defaults to app.runningUnderARM64Translation.
+  isRosetta?: () => boolean
+}
+
+// Detects whether an x64 process is running under Rosetta 2 on Apple Silicon. Electron-updater's
+// MacUpdater.filterFilesForArch uses the same sysctl key to pick the arm64 entry, so we must match
+// it to show the correct pre-download size. Prefers Electron's app.runningUnderARM64Translation
+// when available (the renderer-facing API), falls back to the raw sysctl probe.
+const defaultIsRosetta = (): boolean => {
+  try {
+    if (app?.runningUnderARM64Translation) return true
+  } catch {
+    // app not available (test without Electron)
+  }
+  try {
+    return (
+      spawnSync('sysctl', ['-n', 'sysctl.proc_translated'], { encoding: 'utf8' }).stdout?.trim() ===
+      '1'
+    )
+  } catch {
+    return false
+  }
 }
 
 // Default broadcast pushes to every live window (mirrors service.ts). Never runs in unit tests, which
@@ -150,7 +173,11 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.updater = deps.updater ?? (autoUpdater as unknown as MinimalAutoUpdater)
     this.currentVersion = deps.currentVersion ?? app?.getVersion?.() ?? '0.0.0'
     this.platform = deps.platform ?? process.platform
-    this.arch = deps.arch ?? process.arch
+    // Resolve the effective arch: an x64 app under Rosetta on Apple Silicon downloads the arm64
+    // artifact (electron-updater does the same), so promote x64 → arm64 to match the correct size.
+    const rawArch = deps.arch ?? process.arch
+    const isRosetta = deps.isRosetta ?? defaultIsRosetta
+    this.arch = this.platform === 'darwin' && rawArch === 'x64' && isRosetta() ? 'arm64' : rawArch
     this.broadcast = deps.broadcast ?? defaultBroadcast
     this.fetchImpl = deps.fetchImpl
     this.manifestUrl = deps.manifestUrl ?? APP.update.manifestUrl
