@@ -48,14 +48,14 @@ describe('describePermissionNotification', () => {
       describePermissionNotification(permissionRequest('Run command'), 'Plot the curve')
     ).toEqual({
       title: 'Approval needed',
-      body: '"Plot the curve" is waiting for approval: Run command'
+      body: '"Plot the curve" needs your approval: Run command'
     })
   })
 
   it('falls back to a generic body when no prompt was tracked', () => {
     expect(describePermissionNotification(permissionRequest('Edit results.csv'))).toEqual({
       title: 'Approval needed',
-      body: 'The agent is waiting for approval: Edit results.csv'
+      body: 'The agent needs your approval: Edit results.csv'
     })
   })
 
@@ -89,15 +89,29 @@ describe('describeTaskNotification', () => {
     expect(describeTaskNotification(stopEvent('cancelled'), 'Plot the curve')).toBeNull()
   })
 
-  it.each(['max_tokens', 'max_turn_requests', 'refusal'])(
-    'flags %s stops as needing attention',
-    (stopReason) => {
-      expect(describeTaskNotification(stopEvent(stopReason), 'Plot the curve')).toEqual({
-        title: 'Task needs attention',
-        body: `"Plot the curve" stopped early: ${stopReason.replaceAll('_', ' ')}.`
-      })
-    }
-  )
+  it('explains a max_tokens stop in plain language', () => {
+    expect(describeTaskNotification(stopEvent('max_tokens'), 'Plot the curve')).toEqual({
+      title: 'Task needs attention',
+      body: '"Plot the curve" stopped early — the answer hit the model\'s length limit.'
+    })
+  })
+
+  it('explains a max_turn_requests stop as waiting for the user', () => {
+    expect(describeTaskNotification(stopEvent('max_turn_requests'), 'Plot the curve')).toEqual({
+      title: 'Task needs attention',
+      body: '"Plot the curve" paused — send a message to keep it going.'
+    })
+  })
+
+  it('explains a refusal without jargon', () => {
+    expect(describeTaskNotification(stopEvent('refusal'), 'Plot the curve')).toEqual({
+      title: 'Task needs attention',
+      body: '"Plot the curve" was declined by the agent.'
+    })
+    expect(describeTaskNotification(stopEvent('refusal'))?.body).toBe(
+      'The agent declined the request.'
+    )
+  })
 
   it('includes the error text when a turn fails', () => {
     expect(describeTaskNotification(errorEvent('Rate limit reached'), 'Plot the curve')).toEqual({
@@ -327,7 +341,7 @@ describe('TaskNotificationService', () => {
     expect(shown).toHaveLength(1)
     expect(shown[0]).toMatchObject({
       title: 'Approval needed',
-      body: '"Plot the curve" is waiting for approval: Run command'
+      body: '"Plot the curve" needs your approval: Run command'
     })
 
     // Clicking surfaces the same conversation as a terminal notification.

@@ -52,6 +52,17 @@ const toPromptSnippet = (text: string): string | undefined => {
 // Quotes the task name so a body like '"Plot the curve" finished.' stays readable.
 const quoteSnippet = (snippet: string): string => `"${snippet}"`
 
+// Plain-language phrasing for the stop reasons that mean "ended, but not cleanly": the raw ACP
+// reasons (max_tokens, max_turn_requests, refusal) are developer jargon users shouldn't see.
+const EARLY_STOP_BODY: Record<string, (taskName?: string) => string> = {
+  max_tokens: (taskName) =>
+    `${taskName ?? 'The agent'} stopped early — the answer hit the model's length limit.`,
+  max_turn_requests: (taskName) =>
+    `${taskName ?? 'The agent'} paused — send a message to keep it going.`,
+  refusal: (taskName) =>
+    taskName ? `${taskName} was declined by the agent.` : 'The agent declined the request.'
+}
+
 // Maps a terminal runtime event to the notification to show, or null when the event should stay
 // silent: user-cancelled turns (deliberate), recoverable context overflows (the renderer
 // auto-compacts and retries, so a failure banner would be a false alarm), and session-scoped error
@@ -75,12 +86,7 @@ export const describeTaskNotification = (
       case 'refusal':
         return {
           title: 'Task needs attention',
-          body: truncate(
-            taskName
-              ? `${taskName} stopped early: ${stopReason.replaceAll('_', ' ')}.`
-              : `The agent stopped early: ${stopReason.replaceAll('_', ' ')}.`,
-            MAX_BODY_LENGTH
-          )
+          body: truncate(EARLY_STOP_BODY[stopReason](taskName), MAX_BODY_LENGTH)
         }
       default:
         return {
@@ -121,8 +127,8 @@ export const describePermissionNotification = (
     title: 'Approval needed',
     body: truncate(
       taskName
-        ? `${taskName} is waiting for approval: ${request.title}`
-        : `The agent is waiting for approval: ${request.title}`,
+        ? `${taskName} needs your approval: ${request.title}`
+        : `The agent needs your approval: ${request.title}`,
       MAX_BODY_LENGTH
     )
   }
