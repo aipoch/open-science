@@ -47,30 +47,33 @@ export type ElectronUpdaterDeps = {
   installGate?: InstallGate
   // Diagnostics sink for the apply path; defaults to a no-op so unit tests stay quiet.
   log?: UpdaterLogger
-  // True when an x64 process is running under Rosetta 2 on Apple Silicon. Electron-updater detects
-  // this via sysctl.proc_translated and selects the arm64 artifact, so we must match that to show the
-  // correct pre-download size. Injectable for tests; defaults to app.runningUnderARM64Translation.
-  isRosetta?: () => boolean
+  // True when an x64 process is running under Rosetta 2 on Apple Silicon; false when definitively not;
+  // undefined when the probe could not determine it. Electron-updater detects this via
+  // sysctl.proc_translated and selects the arm64 artifact, so we must match that to show the correct
+  // pre-download size. When undefined, the strategy omits size rather than risking the wrong arch.
+  isRosetta?: () => boolean | undefined
 }
 
 // Detects whether an x64 process is running under Rosetta 2 on Apple Silicon. Electron-updater's
 // MacUpdater.filterFilesForArch uses the same sysctl key to pick the arm64 entry, so we must match
-// it to show the correct pre-download size. Prefers Electron's app.runningUnderARM64Translation
-// when available (the renderer-facing API), falls back to the raw sysctl probe.
-const defaultIsRosetta = (): boolean => {
+// it to show the correct pre-download size. Returns undefined when neither Electron's
+// runningUnderARM64Translation nor the sysctl probe could give a definitive answer — the caller then
+// omits size to avoid advertising the wrong arch's ZIP.
+const defaultIsRosetta = (): boolean | undefined => {
   try {
     if (app?.runningUnderARM64Translation) return true
   } catch {
     // app not available (test without Electron)
   }
   try {
-    return (
-      spawnSync('sysctl', ['-n', 'sysctl.proc_translated'], { encoding: 'utf8' }).stdout?.trim() ===
-      '1'
-    )
+    const result = spawnSync('sysctl', ['-n', 'sysctl.proc_translated'], { encoding: 'utf8' })
+    const value = result.stdout?.trim()
+    if (value === '1') return true
+    if (value === '0') return false
   } catch {
-    return false
+    // sysctl failed — can't determine
   }
+  return undefined
 }
 
 // Default broadcast pushes to every live window (mirrors service.ts). Never runs in unit tests, which
@@ -179,7 +182,16 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     // artifact (electron-updater does the same), so promote x64 → arm64 to match the correct size.
     const rawArch = deps.arch ?? process.arch
     const isRosetta = deps.isRosetta ?? defaultIsRosetta
-    this.arch = this.platform === 'darwin' && rawArch === 'x64' && isRosetta() ? 'arm64' : rawArch
+    let arch = rawArch
+    if (this.platform === 'darwin' && rawArch === 'x64') {
+      if (isRosetta() === true) arch = 'arm64'
+      else if (isRosetta() === undefined) {
+        // Can't determine Rosetta status — electron-updater might still pick arm64. Blank the arch
+        // token so extractArtifactSize sees a multi-arch feed as ambiguous and omits the size.
+        arch = ''
+      }
+    }
+    this.arch = arch
     this.broadcast = deps.broadcast ?? defaultBroadcast
     this.fetchImpl = deps.fetchImpl
     this.manifestUrl = deps.manifestUrl ?? APP.update.manifestUrl

@@ -475,6 +475,32 @@ describe('ElectronUpdaterStrategy', () => {
     expect(status.totalBytes).toBe(105000)
   })
 
+  it('omits totalBytes when Rosetta status is uncertain and feed has both arches', async () => {
+    // When the Rosetta probe returns undefined (e.g. sysctl failed), electron-updater might still
+    // pick arm64. Don't guess — omit the size so the user sees no pre-download size label.
+    const updater = new FakeUpdater()
+    updater.checkForUpdates = vi.fn(async () => {
+      updater.emit('update-available', {
+        version: '0.3.0',
+        files: [
+          { url: 'https://cdn/app-0.3.0-arm64.zip', size: 95000 },
+          { url: 'https://cdn/app-0.3.0-x64.zip', size: 105000 }
+        ]
+      })
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      platform: 'darwin',
+      arch: 'x64',
+      isRosetta: () => undefined,
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    const status = await strategy.check()
+    expect(status.totalBytes).toBeUndefined()
+  })
+
   it('preserves check-time totalBytes when download-progress omits total', async () => {
     // Artifacts published with a size in the feed should keep that size even if a progress event
     // arrives without a total field.
