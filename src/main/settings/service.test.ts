@@ -1308,6 +1308,52 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(pubmedSkill).toContain('host.mcp')
   })
 
+  it('drives a native-Responses official vendor directly, without starting the bridge', async () => {
+    // MiniMax advertises anthropic + openai + responses. Codex must drive native Responses on the
+    // vendor's own OpenAI /v1 base with the vendor key — NOT spin up the Chat Completions bridge and
+    // post to its local URL (which would authenticate with the vendor key instead of the bridge token).
+    const adapterPath = join(storageRoot, 'bin', 'codex-acp')
+    await mkdir(dirname(adapterPath), { recursive: true })
+    await writeFile(adapterPath, '', 'utf8')
+    const service = createService(undefined, {
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' }
+    })
+    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.1.4' })
+    await repository.setAgentFramework('codex')
+    const provider = (
+      await service.upsertProvider({
+        type: 'official',
+        name: 'MiniMax',
+        vendorId: 'minimax',
+        region: 'global',
+        key: 'mm-secret'
+      })
+    ).providers[0]
+    const storedProvider = (await repository.getSettings()).providers[0]
+    await repository.upsertProvider({ ...storedProvider, lastValidatedAt: Date.now() })
+    await service.setActiveProvider(provider.id)
+
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
+    const backend = await service.resolveActiveAgentBackend()
+
+    // No bridge: no local provider-configuration, no bridge session model.
+    expect(backend.providerConfiguration).toBeUndefined()
+    expect(backend.sessionModel).toBe('MiniMax-M3')
+    // Codex posts native Responses to the vendor's own /v1 base with the vendor key.
+    const codexConfig = JSON.parse(backend.env.CODEX_CONFIG ?? '{}')
+    expect(codexConfig.model_providers['open-science']).toMatchObject({
+      base_url: 'https://api.minimax.io/v1',
+      wire_api: 'responses',
+      requires_openai_auth: true
+    })
+    expect(backend.authentication).toEqual({
+      methodId: 'api-key',
+      _meta: { 'api-key': { apiKey: 'mm-secret' } }
+    })
+    expect(backend.env.CODEX_CONFIG).not.toContain('127.0.0.1')
+    expect(backend.env.CODEX_CONFIG).not.toContain('mm-secret')
+  })
+
   it('builds spawn env from the active provider with the decrypted key', async () => {
     const service = createService()
 

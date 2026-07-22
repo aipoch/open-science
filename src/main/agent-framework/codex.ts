@@ -231,6 +231,13 @@ export const createCodexFramework = ({
     const useBridge =
       bridge !== undefined && !(provider.apiEndpoints?.includes('responses') ?? false)
     const codexModel = useBridge ? CODEX_BRIDGE_MODEL : provider.model
+    // Native Responses is driven directly. A dual-endpoint vendor keeps its Anthropic route in
+    // `baseUrl` and its OpenAI/Responses `/v1` root in `openaiBaseUrl`, so post to the latter; a
+    // Responses-only provider (e.g. OpenAI) carries its base in `baseUrl`. When bridging, the local
+    // bridge URL wins.
+    const responsesBaseUrl = useBridge
+      ? bridge.baseUrl
+      : (provider.openaiBaseUrl ?? provider.baseUrl)
     const authentication: AgentAuthentication | undefined =
       provider.key && !useBridge
         ? {
@@ -246,7 +253,7 @@ export const createCodexFramework = ({
           buildCodexConfig({
             ...provider,
             model: codexModel,
-            baseUrl: bridge?.baseUrl ?? provider.baseUrl,
+            baseUrl: responsesBaseUrl,
             key: useBridge ? undefined : provider.key,
             reasoningEffort: ctx.reasoningEffort
           })

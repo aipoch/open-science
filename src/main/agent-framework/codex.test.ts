@@ -100,6 +100,47 @@ describe('codexFramework', () => {
     expect(config.env?.CODEX_CONFIG).not.toContain('upstream-secret')
   })
 
+  it('drives a native-Responses vendor directly on its OpenAI /v1 base, ignoring the bridge', () => {
+    const framework = createCodexFramework()
+    // A dual-endpoint vendor (e.g. MiniMax) advertises openai + responses and keeps its Anthropic
+    // route in baseUrl and its OpenAI/Responses /v1 root in openaiBaseUrl. Even if a bridge object
+    // is present, native Responses must post to the vendor's own /v1 base with the vendor key.
+    const config = framework.prepareModelConfig(
+      {
+        type: 'custom',
+        apiEndpoints: ['anthropic', 'openai', 'responses'],
+        baseUrl: 'https://api.minimaxi.com/anthropic',
+        openaiBaseUrl: 'https://api.minimaxi.com/v1',
+        model: 'MiniMax-M3',
+        key: 'mm-secret'
+      },
+      {
+        storageRoot: '/data',
+        executablePath: '/runtime/codex-acp',
+        responsesBridge: { baseUrl: 'http://127.0.0.1:43123/v1', token: 'local-token' }
+      }
+    )
+
+    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).toMatchObject({
+      model: 'MiniMax-M3',
+      model_providers: {
+        'open-science': {
+          base_url: 'https://api.minimaxi.com/v1',
+          requires_openai_auth: true,
+          wire_api: 'responses'
+        }
+      }
+    })
+    // Direct native path: vendor key auth, no bridge provider-configuration, no bridge model.
+    expect(config.authentication).toEqual({
+      methodId: 'api-key',
+      _meta: { 'api-key': { apiKey: 'mm-secret' } }
+    })
+    expect(config.providerConfiguration).toBeUndefined()
+    expect(config.sessionModel).toBeUndefined()
+    expect(config.env?.CODEX_CONFIG).not.toContain('127.0.0.1:43123')
+  })
+
   it('reuses the normal Codex profile for a shared subscription without overriding it', () => {
     const framework = createCodexFramework()
     const config = framework.prepareModelConfig(

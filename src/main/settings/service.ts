@@ -2169,8 +2169,14 @@ class SettingsService {
     if (!(framework.id === 'codex' && provider.type === 'codex-shared')) {
       await this.materializeAgentSkills(settings, skillsRoot)
     }
+    // The Chat Completions bridge only exists to let Codex (a Responses-only client) drive an
+    // OpenAI Chat provider. A provider that also speaks native Responses is driven directly, so
+    // starting the bridge for it would be dead weight — and worse, Codex would post to the bridge's
+    // local URL with the provider key instead of the bridge token. Bridge openai-only providers.
     const needsResponsesBridge =
-      framework.id === 'codex' && (provider.apiEndpoints?.includes('openai') ?? false)
+      framework.id === 'codex' &&
+      (provider.apiEndpoints?.includes('openai') ?? false) &&
+      !(provider.apiEndpoints?.includes('responses') ?? false)
     const enabledConnectorIds = this.enabledConnectorIds(settings.connectors)
     const responsesBridge = needsResponsesBridge
       ? await this.ensureResponsesBridge(provider, enabledConnectorIds, sessionEffort !== undefined)
