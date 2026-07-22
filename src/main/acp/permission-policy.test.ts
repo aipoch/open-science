@@ -97,6 +97,10 @@ describe('permission policy', () => {
     // opencode joins them <server>_<tool> — matched only against the session's known server names.
     expect(isMcpToolName('open-science-artifacts_write_artifact_file', servers)).toBe(true)
     expect(isMcpToolName('open-science-notebook', servers)).toBe(true)
+    // Codex uses mcp.<server>.<tool> — the generic mcp. prefix is not trusted without a known server.
+    expect(isMcpToolName('mcp.open-science-notebook.notebook_execute', servers)).toBe(true)
+    expect(isMcpToolName('mcp.unconfigured-server.execute', servers)).toBe(false)
+    expect(isMcpToolName('mcp.unconfigured-server.execute', [])).toBe(false)
     // Built-in framework tools never collide with a server name.
     expect(isMcpToolName('edit', servers)).toBe(false)
     expect(isMcpToolName('write_artifact_file', servers)).toBe(false)

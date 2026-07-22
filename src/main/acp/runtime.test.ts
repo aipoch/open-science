@@ -1,5 +1,10 @@
 import * as acp from '@agentclientprotocol/sdk'
-import type { ContentBlock, SessionConfigOption, SessionModeState } from '@agentclientprotocol/sdk'
+import type {
+  ContentBlock,
+  SessionConfigOption,
+  SessionModeState,
+  SessionNotification
+} from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
@@ -351,6 +356,13 @@ const startPermissionProbeAgent = (
     toolTitle: string
     toolKind?: 'other' | 'execute' | 'read' | null
     providerToolName?: string
+    codexMcpIdentity?: {
+      server: string
+      tool: string
+      arguments?: Record<string, unknown>
+    }
+    sparseCodexMcpApproval?: boolean
+    modes?: SessionModeState
     permissionOptions?: Array<{
       optionId: string
       name: string
@@ -370,7 +382,11 @@ const startPermissionProbeAgent = (
       },
       authMethods: []
     }))
-    .onRequest(acp.methods.agent.session.new, () => ({ sessionId: options.newSessionId }))
+    .onRequest(acp.methods.agent.session.new, () => ({
+      sessionId: options.newSessionId,
+      modes: options.modes
+    }))
+    .onRequest(acp.methods.agent.session.setMode, () => ({}))
     .onRequest(acp.methods.agent.session.resume, (ctx) => {
       if (options.resume === 'notFound') {
         throw acp.RequestError.resourceNotFound(ctx.params.sessionId)
@@ -379,22 +395,44 @@ const startPermissionProbeAgent = (
       return {}
     })
     .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
+      if (options.codexMcpIdentity) {
+        await ctx.client.notify(acp.methods.client.session.update, {
+          sessionId: ctx.params.sessionId,
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: options.toolCallId,
+            kind: 'execute',
+            title: `mcp.${options.codexMcpIdentity.server}.${options.codexMcpIdentity.tool}`,
+            status: 'pending',
+            rawInput: {
+              server: options.codexMcpIdentity.server,
+              tool: options.codexMcpIdentity.tool,
+              arguments: options.codexMcpIdentity.arguments ?? {}
+            },
+            _meta: { is_mcp_tool_call: true }
+          }
+        })
+      }
+
       // opencode renames MCP tools <server>_<tool>; classification must come from the session's
       // recorded MCP server names, so this exercises the sessionMcpServerNames map end to end.
       const response = await ctx.client.request(acp.methods.client.session.requestPermission, {
         sessionId: ctx.params.sessionId,
         toolCall: {
           toolCallId: options.toolCallId,
-          title: options.toolTitle,
+          ...(options.sparseCodexMcpApproval ? {} : { title: options.toolTitle }),
           status: 'pending',
-          ...(options.toolKind === null ? {} : { kind: options.toolKind ?? 'other' }),
-          ...(options.providerToolName
+          ...(options.toolKind === null
+            ? {}
+            : { kind: options.toolKind ?? (options.sparseCodexMcpApproval ? 'execute' : 'other') }),
+          ...(!options.sparseCodexMcpApproval && options.providerToolName
             ? { _meta: { claudeCode: { toolName: options.providerToolName } } }
             : {})
         },
         options: options.permissionOptions ?? [
           { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }
-        ]
+        ],
+        ...(options.sparseCodexMcpApproval ? { _meta: { is_mcp_tool_approval: true } } : {})
       })
       options.onPermissionResponse?.(response)
 
@@ -423,6 +461,20 @@ const sessionFrameworksMap = (runtime: AcpRuntime): Map<string, string> =>
 
 const reviewerSessionIds = (runtime: AcpRuntime): Set<string> =>
   (runtime as unknown as { reviewerSessionIds: Set<string> }).reviewerSessionIds
+
+const codexMcpToolIdentitiesMap = (runtime: AcpRuntime): Map<string, Map<string, unknown>> =>
+  (runtime as unknown as { codexMcpToolIdentities: Map<string, Map<string, unknown>> })
+    .codexMcpToolIdentities
+
+const observeCodexMcpToolIdentity = (
+  runtime: AcpRuntime,
+  notification: SessionNotification
+): void =>
+  (
+    runtime as unknown as {
+      observeCodexMcpToolIdentity: (value: SessionNotification) => void
+    }
+  ).observeCodexMcpToolIdentity(notification)
 
 // Finds the isMcp flag the runtime logged for a given permission request (identified by toolCallId).
 const auditedIsMcp = (toolCallId: string): boolean | undefined => {
@@ -2462,6 +2514,188 @@ describe('ACP runtime session management', () => {
     }
   })
 
+  it('restores Codex MCP identity before prompting and remembers a session grant across call ids', async () => {
+    const process = new FakeAgentProcess()
+    const permissionRequests: Array<{
+      title: string
+      providerToolName?: string
+      rawInput?: unknown
+      requestId: string
+      isMcp?: boolean
+    }> = []
+    const permissionResponses: unknown[] = []
+
+    acp
+      .agent({ name: 'codex-mcp-permission-agent' })
+      .onRequest(acp.methods.agent.initialize, () => ({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        agentCapabilities: {
+          loadSession: false,
+          sessionCapabilities: { close: {} }
+        },
+        authMethods: []
+      }))
+      .onRequest(acp.methods.agent.session.new, () => ({
+        sessionId: 'codex-mcp-session',
+        modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+      }))
+      .onRequest(acp.methods.agent.session.setMode, () => ({}))
+      .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
+        for (const toolCallId of ['call-notebook-1', 'call-notebook-2']) {
+          await ctx.client.notify(acp.methods.client.session.update, {
+            sessionId: ctx.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId,
+              kind: 'execute',
+              title: 'mcp.open-science-notebook.notebook_execute',
+              status: 'pending',
+              rawInput: {
+                server: 'open-science-notebook',
+                tool: 'notebook_execute',
+                arguments: { code: 'print(1)', language: 'python' }
+              },
+              _meta: { is_mcp_tool_call: true }
+            }
+          })
+
+          const response = await ctx.client.request(acp.methods.client.session.requestPermission, {
+            sessionId: ctx.params.sessionId,
+            toolCall: {
+              toolCallId,
+              kind: 'execute',
+              status: 'pending'
+            },
+            options: [
+              { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+              {
+                optionId: 'allow-session',
+                name: 'Allow for This Session',
+                kind: 'allow_always'
+              },
+              {
+                optionId: 'allow-always',
+                name: "Allow and Don't Ask Again",
+                kind: 'allow_always'
+              },
+              { optionId: 'decline', name: 'Decline', kind: 'reject_once' }
+            ],
+            _meta: { is_mcp_tool_approval: true }
+          })
+          permissionResponses.push(response)
+        }
+
+        return { stopReason: 'end_turn' }
+      })
+      .onRequest(acp.methods.agent.session.close, () => ({}))
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework,
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
+      },
+      callbacks: {
+        onPermissionRequest: (request) => {
+          permissionRequests.push(request)
+          runtime.respondToPermission({
+            requestId: request.requestId,
+            optionId: 'allow-session'
+          })
+        }
+      }
+    })
+    const session = await runtime.createSession({
+      cwd: '/workspace',
+      permissionProfile: 'auto'
+    })
+
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'run two notebook cells' })
+
+    expect(permissionRequests).toHaveLength(1)
+    expect(permissionRequests[0]).toMatchObject({
+      title: 'mcp.open-science-notebook.notebook_execute',
+      providerToolName: 'notebook_execute',
+      isMcp: true,
+      rawInput: { code: 'print(1)', language: 'python' }
+    })
+    expect(permissionResponses).toEqual([
+      { outcome: { outcome: 'selected', optionId: 'allow-session' } },
+      { outcome: { outcome: 'selected', optionId: 'allow-once' } }
+    ])
+    expect(runtime.getSnapshot().permissionGrants[session.sessionId]).toEqual([
+      {
+        categoryKey: 'mcp:mcp.open-science-notebook.notebook_execute',
+        kind: 'mcp',
+        label: 'mcp.open-science-notebook.notebook_execute'
+      }
+    ])
+  })
+
+  it('bounds pending Codex MCP identities and clears unmatched entries when the turn stops', async () => {
+    const process = new FakeAgentProcess()
+    const promptStarted = createDeferred()
+    const promptCanStop = createDeferred()
+    startFakeAgent(process, ['codex-bounded-session'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      onPrompt: async () => {
+        promptStarted.resolve()
+        await promptCanStop.promise
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework,
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'auto' })
+    const prompt = runtime.sendPrompt({ sessionId: session.sessionId, text: 'start a turn' })
+    await promptStarted.promise
+
+    for (let index = 0; index < 40; index += 1) {
+      observeCodexMcpToolIdentity(runtime, {
+        sessionId: session.sessionId,
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: `pending-mcp-${index}`,
+          kind: 'execute',
+          title: 'mcp.open-science-notebook.notebook_execute',
+          status: 'pending',
+          rawInput: {
+            server: 'open-science-notebook',
+            tool: 'notebook_execute',
+            arguments: { code: `print(${index})` }
+          }
+        }
+      })
+    }
+
+    const pendingIdentities = codexMcpToolIdentitiesMap(runtime).get(session.sessionId)
+    expect(pendingIdentities?.size).toBe(32)
+    expect(pendingIdentities?.has('pending-mcp-0')).toBe(false)
+    expect(pendingIdentities?.has('pending-mcp-39')).toBe(true)
+
+    promptCanStop.resolve()
+    await prompt
+    expect(codexMcpToolIdentitiesMap(runtime).has(session.sessionId)).toBe(false)
+  })
+
   it('records MCP server names on resume so a resumed session audits its MCP tool calls as MCP', async () => {
     infoLogSpy.mockClear()
     const process = new FakeAgentProcess()
@@ -2585,6 +2819,61 @@ describe('ACP runtime session management', () => {
     expect(mcpServerNamesMap(runtime).has('reviewer-session-1')).toBe(false)
     expect(sessionFrameworksMap(runtime).has('reviewer-session-1')).toBe(false)
   })
+
+  it.each([
+    { tool: 'submit_findings', expectedOptionId: 'allow-once' },
+    { tool: 'run_shell', expectedOptionId: 'reject-once' }
+  ])(
+    'handles sparse Codex reviewer MCP tool $tool through the strict allowlist',
+    async ({ tool, expectedOptionId }) => {
+      const process = new FakeAgentProcess()
+      let permissionResponse: unknown
+      startPermissionProbeAgent(process, {
+        newSessionId: 'codex-reviewer-session',
+        toolCallId: `codex-reviewer-${tool}`,
+        toolTitle: 'unused by sparse approval',
+        codexMcpIdentity: {
+          server: 'open-science-reviewer',
+          tool,
+          arguments: { checks: [] }
+        },
+        sparseCodexMcpApproval: true,
+        modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+        permissionOptions: [
+          { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+          { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+        ],
+        onPermissionResponse: (response) => {
+          permissionResponse = response
+        }
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        framework: codexFramework
+      })
+
+      const { session } = await runtime.buildReviewerSession({
+        cwd: '/workspace',
+        mcpServers: [
+          {
+            type: 'http',
+            name: 'open-science-reviewer',
+            url: 'http://127.0.0.1:1/mcp',
+            headers: []
+          }
+        ]
+      })
+      await session.prompt([{ type: 'text', text: 'submit the reviewer findings' }])
+
+      expect(auditedIsMcp(`codex-reviewer-${tool}`)).toBe(true)
+      expect(permissionResponse).toEqual({
+        outcome: { outcome: 'selected', optionId: expectedOptionId }
+      })
+      runtime.disposeReviewerSession(session)
+    }
+  )
 
   it.each([null, 'read'] as const)(
     'auto-approves an exact reviewer provider tool identity with kind %s',

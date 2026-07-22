@@ -157,6 +157,9 @@ export type AcpPermissionRequest = {
   title: string
   status?: string
   providerToolName?: string
+  // Set by the permission broker after framework-aware classification so the renderer never has to
+  // infer MCP origin from provider-specific titles or tool kinds.
+  isMcp?: boolean
   toolKind?: ToolKind
   toolLocations?: ToolCallLocation[]
   rawInput?: unknown
