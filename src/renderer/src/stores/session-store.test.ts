@@ -897,6 +897,25 @@ describe('session store', () => {
     expect(useSessionStore.getState().selectedSessionId).toBe('transport-session-1')
   })
 
+  it('toggles the pinned flag without disturbing updatedAt, and persists it', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'pin-session',
+      content: 'Pin me'
+    })
+    const originalUpdatedAt = useSessionStore.getState().sessions[0].updatedAt
+
+    useSessionStore.getState().togglePinned('pin-session')
+    const pinned = useSessionStore.getState().sessions[0]
+    expect(pinned.pinned).toBe(true)
+    // Pinning is an organizational action, so it must not bump the "last active" timestamp.
+    expect(pinned.updatedAt).toBe(originalUpdatedAt)
+    expect(toPersistedSession(pinned).pinned).toBe(true)
+
+    useSessionStore.getState().togglePinned('pin-session')
+    expect(useSessionStore.getState().sessions[0].pinned).toBe(false)
+    expect(toPersistedSession(useSessionStore.getState().sessions[0]).pinned).toBe(false)
+  })
+
   it("keeps selection within the deleted session's project", () => {
     useSessionStore
       .getState()

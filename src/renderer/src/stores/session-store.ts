@@ -208,6 +208,8 @@ type SessionStore = SessionStoreData & {
   setAutoReviewEnabled: (sessionId: string, enabled: boolean) => void
   // Sets the per-session enabled compute hosts (single-select, stored as array for extensibility).
   setEnabledComputeHosts: (sessionId: string, providerIds: string[]) => void
+  // Toggles whether a conversation is pinned to the top section of the sidebar.
+  togglePinned: (sessionId: string) => void
   // Sets or clears the per-session fix loop active flag. When true, the composer send button is
   // disabled for this session; when false (loop ended or cancelled), send is re-enabled.
   setFixLoopActive: (sessionId: string, active: boolean) => void
@@ -1417,6 +1419,17 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               updatedAt: Date.now()
             }
           : session
+      )
+    }))
+  },
+
+  // Flips the pinned flag so the sidebar can float the conversation into its pinned section. The flag
+  // is persisted via the durable projection, but updatedAt is deliberately left untouched so pinning
+  // never disturbs the "last active" ordering within a section.
+  togglePinned: (sessionId) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId ? { ...session, pinned: !session.pinned } : session
       )
     }))
   },

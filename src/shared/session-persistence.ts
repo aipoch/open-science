@@ -136,6 +136,9 @@ export type PersistedChatSession = {
   // compatibility; semantically a set (single-select for now, multi-select-ready internally).
   // Absent on older sessions — treated as empty (no host enabled).
   enabledComputeHosts?: string[]
+  // Pins the conversation to a dedicated section at the top of the sidebar. Absent (older files) or
+  // non-true restores as unpinned; only an explicit true keeps it pinned across restarts.
+  pinned?: boolean
   messages: PersistedChatMessage[]
   activities?: PersistedToolActivity[]
   activeRun?: PersistedActiveRun
@@ -686,6 +689,8 @@ const sanitizeSession = (session: unknown): PersistedChatSession | undefined => 
   }
   if (agentBackendId) sanitized.agentBackendId = agentBackendId
   if (agentModel) sanitized.agentModel = agentModel
+  // Restore the pin only from an explicit true so malformed or legacy files stay unpinned.
+  if (session.pinned === true) sanitized.pinned = true
   if (artifacts.length > 0) sanitized.artifacts = artifacts
   const filesRevision = asNumber(session.filesRevision)
   if (filesRevision !== undefined && Number.isInteger(filesRevision) && filesRevision >= 0) {

@@ -35,6 +35,7 @@ const renderSidebar = async (sessions: ChatSession[]): Promise<string> => {
       onOpenSession={vi.fn()}
       onRenameSession={vi.fn()}
       onViewNotebook={vi.fn()}
+      onTogglePin={vi.fn()}
       onDeleteSession={vi.fn()}
       onOpenSettings={vi.fn()}
     />
@@ -115,6 +116,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenSession,
       onRenameSession,
       onViewNotebook: vi.fn(),
+      onTogglePin: vi.fn(),
       onDeleteSession,
       onOpenSettings: vi.fn()
     })
@@ -156,6 +158,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
       onViewNotebook: vi.fn(),
+      onTogglePin: vi.fn(),
       onDeleteSession: vi.fn(),
       onOpenSettings: vi.fn()
     })
@@ -191,6 +194,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenFiles: vi.fn(),
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
+      onTogglePin: vi.fn(),
       onDeleteSession: vi.fn(),
       onViewNotebook,
       onOpenSettings: vi.fn()
@@ -202,5 +206,57 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(viewNotebookItems[1]?.props.onSelect).toBeTypeOf('function')
     ;(viewNotebookItems[1]?.props.onSelect as () => void)()
     expect(onViewNotebook).toHaveBeenCalledWith(sessions[1])
+  })
+
+  it('renders a Pinned section above Active only when a session is pinned', async () => {
+    const withoutPins = await renderSidebar([createSession({ id: 'session-a' })])
+    expect(withoutPins).not.toContain('>Pinned<')
+    expect(withoutPins).toContain('>Active<')
+
+    const withPin = await renderSidebar([
+      createSession({ id: 'pinned-session', title: 'Kept handy', pinned: true }),
+      createSession({ id: 'plain-session', title: 'Everyday work' })
+    ])
+    // The pinned header must precede the active header so pinned conversations sit at the top.
+    expect(withPin).toContain('>Pinned<')
+    expect(withPin.indexOf('>Pinned<')).toBeLessThan(withPin.indexOf('>Active<'))
+  })
+
+  it('shows Pin for an unpinned session and Unpin for a pinned one, wired to the session', async () => {
+    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+    const sessions = [
+      createSession({ id: 'session-a', title: 'Unpinned one' }),
+      createSession({ id: 'session-b', title: 'Pinned one', pinned: true })
+    ]
+    const onTogglePin = vi.fn()
+    const tree = WorkspaceSidebar({
+      projectName: 'Example project',
+      sessions,
+      activeSessionId: sessions[0].id,
+      canCreateConversation: true,
+      onGoHome: vi.fn(),
+      onNewConversation: vi.fn(),
+      isFilesOpen: false,
+      onOpenFiles: vi.fn(),
+      onOpenSession: vi.fn(),
+      onRenameSession: vi.fn(),
+      onViewNotebook: vi.fn(),
+      onTogglePin,
+      onDeleteSession: vi.fn(),
+      onOpenSettings: vi.fn()
+    })
+    const elements = collectElements(tree)
+    const pinItem = elements.find((element) => getTextContent(element).trim() === 'Pin')
+    const unpinItem = elements.find((element) => getTextContent(element).trim() === 'Unpin')
+
+    // The unpinned session-a shows "Pin"; the pinned session-b shows "Unpin".
+    expect(pinItem?.props.onSelect).toBeTypeOf('function')
+    ;(pinItem?.props.onSelect as () => void)()
+    expect(onTogglePin).toHaveBeenCalledWith(sessions[0])
+
+    onTogglePin.mockClear()
+    expect(unpinItem?.props.onSelect).toBeTypeOf('function')
+    ;(unpinItem?.props.onSelect as () => void)()
+    expect(onTogglePin).toHaveBeenCalledWith(sessions[1])
   })
 })

@@ -4,6 +4,8 @@ import {
   Files,
   MoreVertical,
   Pencil,
+  Pin,
+  PinOff,
   Plus,
   Settings,
   Trash2
@@ -27,6 +29,7 @@ type WorkspaceSidebarProps = {
   onOpenSession: (sessionId: string) => void
   onRenameSession: (session: ChatSession) => void
   onViewNotebook: (session: ChatSession) => void
+  onTogglePin: (session: ChatSession) => void
   onDeleteSession: (session: ChatSession) => void
   onOpenSettings: () => void
 }
@@ -80,191 +83,229 @@ const WorkspaceSidebar = ({
   onOpenSession,
   onRenameSession,
   onViewNotebook,
+  onTogglePin,
   onDeleteSession,
   onOpenSettings
-}: WorkspaceSidebarProps): React.JSX.Element => (
-  <aside className="z-10 flex h-full w-[220px] min-w-0 shrink-0 flex-col">
-    <div className="m-2 mr-0 flex min-h-0 flex-1 flex-col rounded-lg bg-rail-card-bg shadow-card">
-      <div className="px-3 pt-3">
-        <button
-          type="button"
-          onClick={onGoHome}
-          className={cn(
-            'flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-text-100 hover:bg-bg-300 hover:text-text-000',
-            sidebarInteractiveTransitionClassName
-          )}
-        >
-          <ChevronLeft className="size-3.5" strokeWidth={2} aria-hidden="true" />
-          <span>All projects</span>
-        </button>
-        <div
-          className="mt-1.5 truncate px-1.5 font-serif text-[16px] font-bold tracking-[-0.02em] text-text-000"
-          title={projectName}
-        >
-          {projectName}
-        </div>
-      </div>
+}: WorkspaceSidebarProps): React.JSX.Element => {
+  // Partition sessions into pinned and unpinned groups; each group preserves the incoming order.
+  const pinnedSessions = sessions.filter((s) => s.pinned)
+  const activeSessions = sessions.filter((s) => !s.pinned)
 
-      <nav aria-label="Sessions" className="flex min-h-0 flex-1 flex-col">
-        {/* New stays disabled until persistence hydration has reconciled restored sessions. */}
-        <div className="flex h-9 items-center gap-1 px-2">
+  // Build section descriptors so the list renders with a labelled header per group.
+  const sections: Array<{ label: string; items: typeof sessions }> = []
+
+  if (pinnedSessions.length > 0) sections.push({ label: 'Pinned', items: pinnedSessions })
+  sections.push({ label: 'Active', items: activeSessions })
+
+  return (
+    <aside className="z-10 flex h-full w-[220px] min-w-0 shrink-0 flex-col">
+      <div className="m-2 mr-0 flex min-h-0 flex-1 flex-col rounded-lg bg-rail-card-bg shadow-card">
+        <div className="px-3 pt-3">
           <button
             type="button"
+            onClick={onGoHome}
             className={cn(
-              'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm text-text-000 hover:bg-bg-300 disabled:cursor-not-allowed disabled:opacity-50',
+              'flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-text-100 hover:bg-bg-300 hover:text-text-000',
               sidebarInteractiveTransitionClassName
             )}
-            disabled={!canCreateConversation}
-            onClick={onNewConversation}
           >
-            <span className="flex size-3.5 shrink-0 items-center justify-center" aria-hidden="true">
-              <Plus className="size-3.5" strokeWidth={2} />
-            </span>
-            <span>New</span>
+            <ChevronLeft className="size-3.5" strokeWidth={2} aria-hidden="true" />
+            <span>All projects</span>
           </button>
-        </div>
-        <div className="flex h-9 items-center gap-1 px-2">
-          <button
-            type="button"
-            className={cn(
-              'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm text-text-000 hover:bg-bg-300 disabled:cursor-not-allowed disabled:opacity-50',
-              isFilesOpen && 'bg-bg-300',
-              sidebarInteractiveTransitionClassName
-            )}
-            disabled={!canCreateConversation}
-            aria-controls="right-panel"
-            aria-pressed={isFilesOpen}
-            onClick={onOpenFiles}
+          <div
+            className="mt-1.5 truncate px-1.5 font-serif text-[16px] font-bold tracking-[-0.02em] text-text-000"
+            title={projectName}
           >
-            <span className="flex size-3.5 shrink-0 items-center justify-center" aria-hidden="true">
-              <Files className="size-3.5" strokeWidth={2} />
-            </span>
-            <span>Files</span>
-          </button>
-        </div>
-
-        <div className="mx-2 my-1 h-px bg-border-300/15" />
-
-        <div className="min-h-0 flex-1 overflow-y-auto py-1">
-          <div>
-            <div className="px-2 pb-[5px] pt-3.5 text-[11px] font-medium text-text-100">Active</div>
-            {sessions.map((session) => {
-              const isActive = session.id === activeSessionId
-
-              return (
-                <div
-                  key={session.id}
-                  className={cn(sessionRowClassName, isActive && 'bg-bg-300 text-text-000')}
-                  title={session.title}
-                >
-                  <div className="flex w-full min-w-0 items-center gap-1.5">
-                    <button
-                      type="button"
-                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"
-                      aria-current={isActive ? 'page' : undefined}
-                      onClick={() => onOpenSession(session.id)}
-                    >
-                      <span
-                        className="inline-flex size-3 shrink-0 items-center justify-center"
-                        aria-hidden="true"
-                      >
-                        <span
-                          className={cn(
-                            'size-[7px] shrink-0 rounded-full',
-                            sessionStatusDotClassName[session.status]
-                          )}
-                        />
-                      </span>
-                      <span className="sr-only">
-                        Session status: {sessionStatusLabel[session.status]}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate">{session.title}</span>
-                    </button>
-
-                    <DropdownMenu.Root>
-                      <DropdownMenu.Trigger asChild>
-                        <button
-                          type="button"
-                          className={cn(sessionRowActionClassName, isActive && 'opacity-100')}
-                          aria-label={`Open actions for ${session.title}`}
-                        >
-                          <span
-                            className="flex size-3.5 items-center justify-center"
-                            aria-hidden="true"
-                          >
-                            <MoreVertical className="size-3.5" strokeWidth={2} />
-                          </span>
-                        </button>
-                      </DropdownMenu.Trigger>
-                      <DropdownMenu.Portal>
-                        <DropdownMenu.Content
-                          aria-label="Session actions"
-                          className={sessionMenuContentClassName}
-                          side="right"
-                          align="start"
-                          sideOffset={6}
-                        >
-                          <DropdownMenu.Item
-                            className={sessionMenuItemClassName}
-                            onSelect={() => onRenameSession(session)}
-                          >
-                            <span className={sessionMenuIconClassName}>
-                              <Pencil className="size-4" strokeWidth={2} aria-hidden="true" />
-                            </span>
-                            Rename…
-                          </DropdownMenu.Item>
-                          <DropdownMenu.Separator className="mx-1 my-1 h-px bg-border-300" />
-                          <DropdownMenu.Item
-                            className={sessionMenuItemClassName}
-                            onSelect={() => onViewNotebook(session)}
-                          >
-                            <span className={sessionMenuIconClassName}>
-                              <BookOpen className="size-4" strokeWidth={2} aria-hidden="true" />
-                            </span>
-                            View notebook
-                          </DropdownMenu.Item>
-                          <DropdownMenu.Separator className="mx-1 my-1 h-px bg-border-300" />
-                          <DropdownMenu.Item
-                            className={sessionMenuDangerItemClassName}
-                            onSelect={() => onDeleteSession(session)}
-                          >
-                            <span className={sessionMenuIconClassName}>
-                              <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
-                            </span>
-                            Delete
-                          </DropdownMenu.Item>
-                        </DropdownMenu.Content>
-                      </DropdownMenu.Portal>
-                    </DropdownMenu.Root>
-                  </div>
-                </div>
-              )
-            })}
+            {projectName}
           </div>
         </div>
 
-        <div className="relative flex shrink-0 items-center gap-1 p-2">
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-x-0 -top-6 h-6 bg-gradient-to-t from-rail-card-bg to-rail-card-bg/0"
-          />
-          <button
-            type="button"
-            onClick={onOpenSettings}
-            className={cn(
-              'inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000',
-              sidebarInteractiveTransitionClassName
-            )}
-            aria-label="Settings"
-          >
-            <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
-          </button>
-          <UpdateCapsule />
-          <GitHubStarBadge />
-        </div>
-      </nav>
-    </div>
-  </aside>
-)
+        <nav aria-label="Sessions" className="flex min-h-0 flex-1 flex-col">
+          {/* New stays disabled until persistence hydration has reconciled restored sessions. */}
+          <div className="flex h-9 items-center gap-1 px-2">
+            <button
+              type="button"
+              className={cn(
+                'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm text-text-000 hover:bg-bg-300 disabled:cursor-not-allowed disabled:opacity-50',
+                sidebarInteractiveTransitionClassName
+              )}
+              disabled={!canCreateConversation}
+              onClick={onNewConversation}
+            >
+              <span
+                className="flex size-3.5 shrink-0 items-center justify-center"
+                aria-hidden="true"
+              >
+                <Plus className="size-3.5" strokeWidth={2} />
+              </span>
+              <span>New</span>
+            </button>
+          </div>
+          <div className="flex h-9 items-center gap-1 px-2">
+            <button
+              type="button"
+              className={cn(
+                'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm text-text-000 hover:bg-bg-300 disabled:cursor-not-allowed disabled:opacity-50',
+                isFilesOpen && 'bg-bg-300',
+                sidebarInteractiveTransitionClassName
+              )}
+              disabled={!canCreateConversation}
+              aria-controls="right-panel"
+              aria-pressed={isFilesOpen}
+              onClick={onOpenFiles}
+            >
+              <span
+                className="flex size-3.5 shrink-0 items-center justify-center"
+                aria-hidden="true"
+              >
+                <Files className="size-3.5" strokeWidth={2} />
+              </span>
+              <span>Files</span>
+            </button>
+          </div>
+
+          <div className="mx-2 my-1 h-px bg-border-300/15" />
+
+          <div className="min-h-0 flex-1 overflow-y-auto py-1">
+            {sections.map((section) => (
+              <div key={section.label}>
+                <div className="px-2 pb-[5px] pt-3.5 text-[11px] font-medium text-text-100">
+                  {section.label}
+                </div>
+                {section.items.map((session) => {
+                  const isActive = session.id === activeSessionId
+
+                  return (
+                    <div
+                      key={session.id}
+                      className={cn(sessionRowClassName, isActive && 'bg-bg-300 text-text-000')}
+                      title={session.title}
+                    >
+                      <div className="flex w-full min-w-0 items-center gap-1.5">
+                        <button
+                          type="button"
+                          className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"
+                          aria-current={isActive ? 'page' : undefined}
+                          onClick={() => onOpenSession(session.id)}
+                        >
+                          <span
+                            className="inline-flex size-3 shrink-0 items-center justify-center"
+                            aria-hidden="true"
+                          >
+                            <span
+                              className={cn(
+                                'size-[7px] shrink-0 rounded-full',
+                                sessionStatusDotClassName[session.status]
+                              )}
+                            />
+                          </span>
+                          <span className="sr-only">
+                            Session status: {sessionStatusLabel[session.status]}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate">{session.title}</span>
+                        </button>
+
+                        <DropdownMenu.Root>
+                          <DropdownMenu.Trigger asChild>
+                            <button
+                              type="button"
+                              className={cn(sessionRowActionClassName, isActive && 'opacity-100')}
+                              aria-label={`Open actions for ${session.title}`}
+                            >
+                              <span
+                                className="flex size-3.5 items-center justify-center"
+                                aria-hidden="true"
+                              >
+                                <MoreVertical className="size-3.5" strokeWidth={2} />
+                              </span>
+                            </button>
+                          </DropdownMenu.Trigger>
+                          <DropdownMenu.Portal>
+                            <DropdownMenu.Content
+                              aria-label="Session actions"
+                              className={sessionMenuContentClassName}
+                              side="right"
+                              align="start"
+                              sideOffset={6}
+                            >
+                              {/* Pin / Unpin toggles the conversation into or out of the pinned section. */}
+                              <DropdownMenu.Item
+                                className={sessionMenuItemClassName}
+                                onSelect={() => onTogglePin(session)}
+                              >
+                                <span className={sessionMenuIconClassName}>
+                                  {session.pinned ? (
+                                    <PinOff className="size-4" strokeWidth={2} aria-hidden="true" />
+                                  ) : (
+                                    <Pin className="size-4" strokeWidth={2} aria-hidden="true" />
+                                  )}
+                                </span>
+                                {session.pinned ? 'Unpin' : 'Pin'}
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Separator className="mx-1 my-1 h-px bg-border-300" />
+                              <DropdownMenu.Item
+                                className={sessionMenuItemClassName}
+                                onSelect={() => onRenameSession(session)}
+                              >
+                                <span className={sessionMenuIconClassName}>
+                                  <Pencil className="size-4" strokeWidth={2} aria-hidden="true" />
+                                </span>
+                                Rename…
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Separator className="mx-1 my-1 h-px bg-border-300" />
+                              <DropdownMenu.Item
+                                className={sessionMenuItemClassName}
+                                onSelect={() => onViewNotebook(session)}
+                              >
+                                <span className={sessionMenuIconClassName}>
+                                  <BookOpen className="size-4" strokeWidth={2} aria-hidden="true" />
+                                </span>
+                                View notebook
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Separator className="mx-1 my-1 h-px bg-border-300" />
+                              <DropdownMenu.Item
+                                className={sessionMenuDangerItemClassName}
+                                onSelect={() => onDeleteSession(session)}
+                              >
+                                <span className={sessionMenuIconClassName}>
+                                  <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
+                                </span>
+                                Delete
+                              </DropdownMenu.Item>
+                            </DropdownMenu.Content>
+                          </DropdownMenu.Portal>
+                        </DropdownMenu.Root>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+
+          <div className="relative flex shrink-0 items-center gap-1 p-2">
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-x-0 -top-6 h-6 bg-gradient-to-t from-rail-card-bg to-rail-card-bg/0"
+            />
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              className={cn(
+                'inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000',
+                sidebarInteractiveTransitionClassName
+              )}
+              aria-label="Settings"
+            >
+              <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
+            </button>
+            <UpdateCapsule />
+            <GitHubStarBadge />
+          </div>
+        </nav>
+      </div>
+    </aside>
+  )
+}
 
 export { WorkspaceSidebar }

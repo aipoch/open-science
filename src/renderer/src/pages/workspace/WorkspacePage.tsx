@@ -131,6 +131,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
   const selectSession = useSessionStore((state) => state.selectSession)
   const clearSelection = useSessionStore((state) => state.clearSelection)
   const renameSession = useSessionStore((state) => state.renameSession)
+  const togglePinned = useSessionStore((state) => state.togglePinned)
   const setAutoReviewEnabled = useSessionStore((state) => state.setAutoReviewEnabled)
   const setEnabledComputeHosts = useSessionStore((state) => state.setEnabledComputeHosts)
   const setFixLoopActive = useSessionStore((state) => state.setFixLoopActive)
@@ -879,6 +880,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
           onOpenSession={openSession}
           onRenameSession={openRenameDialog}
           onViewNotebook={setSessionToViewNotebook}
+          onTogglePin={(session) => togglePinned(session.id)}
           onDeleteSession={setSessionToDelete}
           onOpenSettings={openSettings}
         />
