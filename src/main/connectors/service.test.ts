@@ -117,6 +117,36 @@ describe('ConnectorService', () => {
     })
   })
 
+  // Pins the ConnectorCallContext → ensureApproved → requestApproval seam. The connector service
+  // already received the triggering session; a prior regression dropped it here, which made
+  // ApprovalBroker → notification routing click on the wrong conversation (or none at all for
+  // notebook calls without an in-flight turn).
+  it('threads context.sessionId through to requestApproval for bundled tools', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(jsonRes({ PropertyTable: { Properties: [{ CID: 1 }] } }))
+    const requestApproval = vi.fn().mockResolvedValue('allow')
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => ({
+        enabledIds: [],
+        autoAllowIds: [],
+        askToolIds: ['chemistry/pubchem_get_compounds']
+      }),
+      resolveApiKey: () => undefined,
+      requestApproval
+    })
+
+    await svc.call('chemistry', 'pubchem_get_compounds', { cids: [1] }, { sessionId: 'session-42' })
+
+    expect(requestApproval).toHaveBeenCalledWith({
+      connector: 'chemistry',
+      method: 'pubchem_get_compounds',
+      args: { cids: [1] },
+      sessionId: 'session-42'
+    })
+  })
+
   it('rejects an ask-flagged tool when the user denies approval', async () => {
     const fetchImpl = vi.fn()
     const requestApproval = vi.fn().mockResolvedValue('deny')

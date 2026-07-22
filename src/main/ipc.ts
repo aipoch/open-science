@@ -21,6 +21,10 @@ import { BackendShutdownCoordinator, UPDATE_SHUTDOWN_BUDGET_MS } from './lifecyc
 import { registerLogsIpcHandlers } from './logs-ipc'
 import { registerWindowIpcHandlers } from './window-ipc'
 import { TaskNotificationService } from './notifications/task-notifications'
+import {
+  buildConnectorApprovalBroadcast,
+  buildTaskNotificationShow
+} from './notifications/electron-wiring'
 import { createLogger, errorLogFields } from './logger'
 import {
   broadcastNotebookEnvProgress,
@@ -250,34 +254,20 @@ const registerIpcHandlers = async ({
   // handler is bound later, in index.ts, where showMainWindow exists. Constructed before the
   // connector approval broker, which nudges through it.
   //
-  // Headless/web-serve launches never notify by contract: with no local desktop user a banner
-  // would surface on the server machine, so delivery is disabled outright (daemon-less Linux
-  // hosts degrade the same way via Notification.isSupported()), and click activation stays inert.
-  const liveNotifications = new Set<Notification>()
+  // The wiring is extracted into electron-wiring helpers so the headless gate and the broker→service
+  // sessionId pass-through have a unit-level home — inline closures were untestable, and a
+  // regression on either of those contracts would not be caught by TaskNotificationService tests.
   const notificationsLog = createLogger('notifications')
+  const liveNotifications = new Set<Notification>()
   const taskNotifications = new TaskNotificationService({
     isEnabled: () => settingsService.getNotificationsEnabled(),
     isAppFocused: () => BrowserWindow.getAllWindows().some((window) => window.isFocused()),
-    show: ({ title, body, onClick }) => {
-      if (headless) return
-      // Some Linux desktops lack a notification daemon; Electron reports support per platform.
-      if (!Notification.isSupported()) return
-
-      const notification = new Notification({ title, body })
-
-      // Logged so a silently-swallowed banner (OS permission, Focus mode) is distinguishable from
-      // a gate that stopped delivery upstream.
-      notificationsLog.info('delivering task notification', { title, supported: true })
-      // Retain the instance until the banner resolves; a GC before click would silently drop the
-      // handler on some platforms.
-      liveNotifications.add(notification)
-      notification.once('click', () => {
-        liveNotifications.delete(notification)
-        onClick()
-      })
-      notification.once('close', () => liveNotifications.delete(notification))
-      notification.show()
-    },
+    show: buildTaskNotificationShow({
+      notificationCtor: Notification,
+      liveNotifications,
+      log: notificationsLog,
+      headless
+    }),
     onDeliveryError: (error) =>
       notificationsLog.warn('task notification delivery failed', errorLogFields(error))
   })
@@ -294,13 +284,10 @@ const registerIpcHandlers = async ({
   // pre-allowed or skip-approved is held here until the user decides (or it auto-denies on timeout).
   const approvalBroker = new ApprovalBroker({
     generateId: () => randomUUID(),
-    broadcast: (request) => {
-      broadcastToRenderers('connectors:approval-request', request)
-      // A connector approval parks the tool call for up to five minutes; an unfocused user gets a
-      // desktop nudge. The triggering session is passed through the request so click-to-open lands
-      // on the right conversation; absent one (no in-flight turn), only the window is surfaced.
-      void taskNotifications.handleConnectorApproval(request, request.sessionId)
-    }
+    broadcast: buildConnectorApprovalBroadcast({
+      broadcastToRenderers,
+      taskNotifications
+    })
   })
   // Late-bound app runtime for connector tools that attach a generated file to the current turn. The
   // runtime is created below (it depends on the connector service), so the handler resolves it lazily.
