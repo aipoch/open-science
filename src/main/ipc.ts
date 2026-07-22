@@ -349,6 +349,11 @@ const registerIpcHandlers = async ({
   // both broadcast to the renderer AND wake the ConcurrencyManager so the next queued job dispatches
   // when a slot frees. Compose the broadcaster with computeService.notifyJobCompleted (a no-op for
   // non-terminal states and when no ConcurrencyManager is wired).
+  //
+  // DRAIN CONTRACT (two sites, keep in sync): this covers poller-observed completions. Dispatcher-
+  // observed transitions (submitted→running/error) are drained inside registerComputeIpcHandlers via
+  // onJobUpdatedWithDrain (src/main/compute/ipc.ts). Dropping the notifyJobCompleted call below would
+  // silently stop queued jobs from dispatching on completion — with no test failure at this seam.
   const broadcastJobUpdatedHook = createJobUpdatedBroadcaster(hostRepository, storageRoot)
   const jobPoller = new JobPoller({
     runner: sshRunner,

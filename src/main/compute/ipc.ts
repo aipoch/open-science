@@ -223,9 +223,14 @@ const createComputeHandlers = (
     const scpRunner = new SystemScpRunner()
 
     // Terminal transitions must both broadcast to the renderer AND wake the ConcurrencyManager so
-    // the next queued job dispatches. The dispatcher (submitted→running/error) and the JobPoller
-    // both flow through this hook, so an error during dispatch drains the queue too — not only
-    // poller-observed completions.
+    // the next queued job dispatches. The dispatcher (submitted→running/error) flows through this
+    // hook, so an error during dispatch drains the queue too.
+    //
+    // DRAIN CONTRACT (two sites, keep in sync): this hook covers dispatcher-observed transitions.
+    // Poller-observed terminal transitions (success/failed/timeout of a running job) are drained
+    // separately in src/main/ipc.ts, which composes the broadcaster with
+    // computeService.notifyJobCompleted(). The two paths cover disjoint transitions — do not remove
+    // either without moving its responsibility to the other, or queued jobs stop dispatching.
     let concurrencyManager: ConcurrencyManager | undefined
     const TERMINAL = new Set(['success', 'failed', 'timeout', 'error'])
     const onJobUpdatedWithDrain = (job: ComputeJob): void => {

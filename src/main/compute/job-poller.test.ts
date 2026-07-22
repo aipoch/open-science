@@ -1290,6 +1290,67 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
     expect(broadcast).toHaveBeenCalledOnce()
     expect(broadcast.mock.calls[0][0].status).toBe('error')
   })
+
+  it('does not double-emit when two ticks overlap before notified_at commits', async () => {
+    // Ticks are not serialized (setInterval). The in-flight guard must stop a second overlapping
+    // tick from re-selecting the same error row and emitting a duplicate notification while the
+    // first tick's notified_at write is still pending.
+    const errorJob = makeJob({
+      status: 'error',
+      error_code: 'dispatch_failed',
+      remote_handle: undefined,
+      finished_at: Date.now(),
+      notified_at: undefined
+    })
+
+    // Gate the notified_at write so both ticks run while the first emit is still in flight.
+    let releaseUpdate: () => void = () => {}
+    const updateGate = new Promise<void>((resolve) => {
+      releaseUpdate = resolve
+    })
+    const update = vi.fn(async (id: string, u: unknown) => {
+      await updateGate
+      return { ...errorJob, job_id: id, ...(u as object) }
+    })
+
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([])),
+      findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
+      // Both ticks see the row as still unnotified (write is gated).
+      findErrorUnnotified: vi.fn(() => Promise.resolve([errorJob])),
+      update
+    } as unknown as ComputeJobRepository
+    const hostRepo = {
+      get: vi.fn(() => Promise.resolve(sampleHost()))
+    } as unknown as ComputeHostRepository
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const broadcast = vi.fn()
+
+    const poller = new JobPoller({
+      runner,
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      broadcast,
+      storageRoot: '/tmp/test-storage'
+    })
+
+    // Fire two overlapping ticks, then release the gated write.
+    const t1 = poller.tick()
+    const t2 = poller.tick()
+    releaseUpdate()
+    await Promise.all([t1, t2])
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    // Only ONE emit despite two overlapping ticks selecting the same unnotified row.
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(broadcast).toHaveBeenCalledOnce()
+  })
 })
 
 describe('JobPoller sub-batching (per-job output budget)', () => {

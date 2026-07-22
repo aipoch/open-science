@@ -100,6 +100,12 @@ export class ConcurrencyManager {
   // - 'queue_full': global queue at capacity (100 jobs)
   // - 'should_queue': either session limit or provider ceiling reached
   // - 'can_dispatch': both limits allow, job can be dispatched immediately
+  //
+  // ADVISORY ONLY for the submit path. submitJob() calls this before the approval gate purely to
+  // reject early on a full global queue; its 'should_queue'/'can_dispatch' returns are NOT the
+  // authoritative admission decision, because reading the count here and committing the row later is
+  // not atomic (the race admit() closes). The binding decision + row commit is admit(). Do NOT route
+  // a real submit decision through enqueue() — use admit() so the read→decide→commit stays atomic.
   async enqueue(params: {
     jobId: string
     sessionId: string
@@ -166,35 +172,32 @@ export class ConcurrencyManager {
       const queuedJobs = await this.jobRepository.findQueuedJobs()
 
       for (const job of queuedJobs) {
-        // Re-check session limit for this job's session - only count active jobs
-        const sessionLimit = this.sessionLimits.get(job.session_id)
-        let sessionLimitOk = true
-        if (sessionLimit !== undefined) {
-          const activeInSession = await this.jobRepository.countActiveBySession(job.session_id)
-          sessionLimitOk = activeInSession < sessionLimit
-        }
+        // Reserve the slot atomically against admit() and other promotions: the re-check of both
+        // limits and the status flip to 'submitted' run inside the SAME admitLock as admit(), so a
+        // concurrent new submission cannot also claim this slot and overrun a provider ceiling /
+        // session limit. Without this shared lock the promotion and an admission each read the same
+        // active count and both become 'submitted' (the race admit() was added to close).
+        //
+        // The slow dispatchJob (SSH staging/launch) runs OUTSIDE the lock: once the row is
+        // 'submitted' it counts as active, so any later admit()/promotion sees it. Holding the lock
+        // across SSH work would serialize every submission behind network latency.
+        const reserved = await this.runExclusive(async () => {
+          if (await this.overActiveLimits(job.session_id, job.provider_id)) return false
+          await this.jobRepository.update(job.job_id, { status: 'submitted' })
+          return true
+        })
+        if (!reserved) continue // limits hit — leave queued for a future completion
 
-        // Re-check provider ceiling for this job's provider - only count active jobs
-        const host = await this.hostRepository.get(job.provider_id)
-        const providerCeiling = host?.concurrencyLimit ?? DEFAULT_PROVIDER_CEILING
-        const activeOnProvider = await this.jobRepository.countActiveByProvider(job.provider_id)
-        const providerCeilingOk = activeOnProvider < providerCeiling
-
-        // Dispatch if both limits allow
-        if (sessionLimitOk && providerCeilingOk) {
-          try {
-            await this.jobRepository.update(job.job_id, { status: 'submitted' })
-            await this.dispatchJob(job.job_id)
-          } catch {
-            // If dispatch fails, mark job as error and continue to next queued job
-            await this.jobRepository.update(job.job_id, {
-              status: 'error',
-              errorCode: 'dispatch_failed',
-              finishedAt: new Date()
-            })
-          }
+        try {
+          await this.dispatchJob(job.job_id)
+        } catch {
+          // If dispatch fails, mark job as error and continue to next queued job.
+          await this.jobRepository.update(job.job_id, {
+            status: 'error',
+            errorCode: 'dispatch_failed',
+            finishedAt: new Date()
+          })
         }
-        // Otherwise skip this job and continue to next
       }
     } finally {
       this.dispatching = false

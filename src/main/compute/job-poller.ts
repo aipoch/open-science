@@ -107,6 +107,9 @@ export class JobPoller {
   private readonly inFlightHarvests = new Set<string>()
   private harvestSemaphore = HARVEST_CONCURRENCY_LIMIT
   private readonly harvestQueue: ComputeJob[] = []
+  //   inFlightErrorNotifs: jobIds whose error-notification emit is in progress — prevents a second
+  //   overlapping tick from re-emitting before notified_at is persisted (ticks are not serialized)
+  private readonly inFlightErrorNotifs = new Set<string>()
 
   constructor(private readonly deps: JobPollerDeps) {
     this.setIntervalFn = deps.setInterval ?? ((fn, ms) => setInterval(fn, ms))
@@ -150,16 +153,27 @@ export class JobPoller {
     // notify→analyze. emitJobNotification is idempotent (guards on notified_at), so a job already
     // notified via another path (e.g. the noHandle branch below) is skipped.
     if (this.deps.broadcast && this.deps.storageRoot) {
+      const { broadcast, storageRoot } = this.deps
       const errorUnnotified = await this.deps.jobRepository.findErrorUnnotified()
       for (const job of errorUnnotified) {
+        // emitJobNotification guards on notified_at (idempotent), but that is a check-then-act
+        // with a real window: ticks are not serialized, so a second tick could re-select this row
+        // before the notified_at write commits and emit a duplicate user-visible notification. The
+        // in-flight set closes that window (mirrors inFlightHarvests for the harvest scan).
+        if (this.inFlightErrorNotifs.has(job.job_id)) continue
+        this.inFlightErrorNotifs.add(job.job_id)
         void emitJobNotification(job, {
           jobRepository: this.deps.jobRepository,
           hostRepository: this.deps.hostRepository,
-          storageRoot: this.deps.storageRoot,
-          broadcast: this.deps.broadcast
-        }).catch(() => {
-          // Non-fatal: job status is already persisted; retry on the next tick.
+          storageRoot,
+          broadcast
         })
+          .catch(() => {
+            // Non-fatal: job status is already persisted; retry on the next tick.
+          })
+          .finally(() => {
+            this.inFlightErrorNotifs.delete(job.job_id)
+          })
       }
     }
 

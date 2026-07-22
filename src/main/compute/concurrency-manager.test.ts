@@ -671,5 +671,57 @@ describe('ConcurrencyManager', () => {
       expect([r1, r2].sort()).toEqual(['queued', 'submitted'])
       expect(commit).toHaveBeenCalledTimes(2)
     })
+
+    it('does not overrun a provider ceiling when admit() races queue promotion', async () => {
+      // Regression for the P1 race: a new submission (admit) and a queued-job promotion
+      // (onJobCompleted → tryDispatchNext) must not both claim the same free slot. With the reserve
+      // step of tryDispatchNext sharing admit()'s lock, only one row flips to 'submitted'.
+      const providerCeiling = 1
+      vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
+      vi.mocked(hostRepo.get).mockResolvedValue({
+        concurrencyLimit: providerCeiling
+      } as ComputeHost)
+
+      // Both paths read active from the same committed counter; each commit (admit's commit callback
+      // or the promotion's status update to 'submitted') increments it.
+      let active = 0
+      vi.mocked(jobRepo.countActiveBySession).mockImplementation(async () => active)
+      vi.mocked(jobRepo.countActiveByProvider).mockImplementation(async () => active)
+
+      // One queued job available for promotion.
+      vi.mocked(jobRepo.findQueuedJobs).mockResolvedValue([
+        {
+          job_id: 'queued-1',
+          session_id: 's1',
+          provider_id: 'p1',
+          created_at: 1000,
+          status: 'queued'
+        } as ComputeJob
+      ])
+      // The promotion's reserve commit (status → 'submitted') bumps the active counter.
+      vi.mocked(jobRepo.update).mockImplementation(async (_id, u) => {
+        if ((u as { status?: string }).status === 'submitted') active++
+        return {} as ComputeJob
+      })
+      vi.mocked(dispatchJob).mockResolvedValue(undefined)
+
+      // admit's commit callback also bumps the active counter when it writes a 'submitted' row.
+      const commit = vi.fn().mockImplementation(async (status: string) => {
+        if (status === 'submitted') active++
+      })
+
+      const [admitResult] = await Promise.all([
+        manager.admit({ sessionId: 's1', providerId: 'p1' }, commit),
+        manager.onJobCompleted()
+      ])
+
+      // Exactly one of the two paths won the single slot; active never exceeded the ceiling.
+      expect(active).toBe(providerCeiling)
+      const promotionSubmits = vi
+        .mocked(jobRepo.update)
+        .mock.calls.filter(([, u]) => (u as { status?: string }).status === 'submitted').length
+      const admitSubmits = admitResult === 'submitted' ? 1 : 0
+      expect(promotionSubmits + admitSubmits).toBe(1)
+    })
   })
 })
