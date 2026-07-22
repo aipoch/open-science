@@ -45,6 +45,8 @@ export type ElectronUpdaterDeps = {
   manifestUrl?: string
   // Pre-install backend-shutdown gate; usually injected later via setInstallGate once the runtime exists.
   installGate?: InstallGate
+  // Diagnostics sink for the apply path; defaults to a no-op so unit tests stay quiet.
+  log?: UpdaterLogger
   // True when an x64 process is running under Rosetta 2 on Apple Silicon. Electron-updater detects
   // this via sysctl.proc_translated and selects the arm64 artifact, so we must match that to show the
   // correct pre-download size. Injectable for tests; defaults to app.runningUnderARM64Translation.
