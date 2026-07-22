@@ -139,8 +139,15 @@ export const resolveSshTarget = async (
 ): Promise<ResolvedSshTarget> => {
   const sshBinary = resolveSshBinary()
 
-  // Read the effective connection config from ~/.ssh/config for this alias.
-  const sshGConfig = await readConfig(alias, sshBinary)
+  // Read the effective connection config from ~/.ssh/config for this alias. Wrapped in try/catch so
+  // a failing readConfig (e.g. ssh -G process error) never breaks connection resolution — the
+  // caller falls back to the bare alias + defaults.
+  let sshGConfig: Record<string, string> = {}
+  try {
+    sshGConfig = await readConfig(alias, sshBinary)
+  } catch {
+    // readConfig failed — proceed with overrides and defaults only.
+  }
 
   const extraArgs: string[] = []
 

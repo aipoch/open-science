@@ -210,8 +210,30 @@ describe('resolveSshTarget', () => {
     expect(target.extraArgs).toContain('User=ewen')
   })
 
-  it('falls back to the bare alias when ssh -G fails (no ~/.ssh/config)', async () => {
+  it('passes non-default port from ssh -G', async () => {
+    const target = await resolveSshTarget('aliyun-xt-test', undefined, async () => ({
+      ...fakeSshG(),
+      port: '2222'
+    }))
+    expect(target.extraArgs).toContain('-p')
+    expect(target.extraArgs).toContain('2222')
+  })
+
+  it('does not pass -p when port is the default 22', async () => {
+    const target = await resolveSshTarget('aliyun-xt-test', undefined, async () => fakeSshG())
+    expect(target.extraArgs).not.toContain('-p')
+  })
+
+  it('falls back to the bare alias when ssh -G returns empty config', async () => {
     const target = await resolveSshTarget('bare-host', undefined, async () => ({}))
+    expect(target.host).toBe('bare-host')
+    expect(target.extraArgs).toContain('BatchMode=yes')
+  })
+
+  it('falls back to the bare alias when ssh -G process rejects', async () => {
+    const target = await resolveSshTarget('bare-host', undefined, async () => {
+      throw new Error('Command failed: ssh -G bare-host')
+    })
     expect(target.host).toBe('bare-host')
     expect(target.extraArgs).toContain('BatchMode=yes')
   })
