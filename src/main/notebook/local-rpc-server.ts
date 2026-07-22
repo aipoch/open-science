@@ -63,6 +63,14 @@ type NotebookLocalRpcServerOptions = {
     getJobResult(jobId: string): Promise<unknown>
     // Returns the provider ids of compute hosts enabled for the given session (issue 06).
     getEnabledComputeHosts(sessionId: string): string[]
+    // Session-level concurrency control (Phase 3c, issue 05).
+    setSessionConcurrencyLimit(sessionId: string, limit: number): Promise<void>
+    getSessionConcurrencyStatus(sessionId: string): Promise<{
+      session_limit: number | null
+      active_count: number
+      queued_count: number
+      provider_ceilings: Record<string, number>
+    }>
   }
 }
 
@@ -353,6 +361,23 @@ class NotebookLocalRpcServer {
       if (op === 'list_compute') {
         const sessionId = typeof params.session_id === 'string' ? params.session_id : ''
         return this.computeService.getEnabledComputeHosts(sessionId)
+      }
+
+      // op='set_concurrency_limit' — set session-level concurrency limit (Phase 3c, issue 05).
+      // Limits the number of non-terminal jobs across all providers in this session. Jobs exceeding
+      // the limit enter 'queued' state and auto-dispatch when slots free up.
+      if (op === 'set_concurrency_limit') {
+        const sessionId = typeof params.session_id === 'string' ? params.session_id : ''
+        const limit = typeof params.limit === 'number' ? params.limit : 0
+        return this.computeService.setSessionConcurrencyLimit(sessionId, limit)
+      }
+
+      // op='concurrency_status' — query session concurrency status (Phase 3c, issue 05).
+      // Returns session_limit (user-set or null), active_count (non-terminal jobs in session),
+      // queued_count (queued jobs in session), and provider_ceilings (per-provider hard limits).
+      if (op === 'concurrency_status') {
+        const sessionId = typeof params.session_id === 'string' ? params.session_id : ''
+        return this.computeService.getSessionConcurrencyStatus(sessionId)
       }
 
       throw new Error(`Unknown computeCall op: ${op}`)

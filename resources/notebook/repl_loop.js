@@ -170,6 +170,30 @@ const hostCompute = {
             return computeRpc({ op: 'job_result', job_id: jobId })
           }
         }
+      },
+
+      // Set session-level concurrency limit (Phase 3c). Limits the number of non-terminal jobs
+      // that can run simultaneously across all providers in this session. Jobs exceeding the limit
+      // enter 'queued' state and auto-dispatch when slots free up.
+      async set_concurrency_limit(k) {
+        if (typeof k !== 'number' || k <= 0 || !Number.isInteger(k)) {
+          throw new Error('set_concurrency_limit: k must be a positive integer')
+        }
+        return computeRpc({
+          op: 'set_concurrency_limit',
+          session_id: COMPUTE_SESSION_ID,
+          limit: k
+        })
+      },
+
+      // Query session concurrency status (Phase 3c). Returns session_limit (user-set or null),
+      // active_count (non-terminal jobs in session), queued_count (queued jobs in session),
+      // and provider_ceilings (per-provider hard limits).
+      async status() {
+        return computeRpc({
+          op: 'concurrency_status',
+          session_id: COMPUTE_SESSION_ID
+        })
       }
     }
   },
