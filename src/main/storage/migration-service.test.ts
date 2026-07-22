@@ -176,9 +176,9 @@ describe('classifyDataRoot', () => {
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
 
     try {
-      // Derived target length is 94; the default env reserve is 166 (runtime\envs\default-python +
-      // the 138 conservative pack budget), totaling exactly 260 — one over the 259 usable limit.
-      const result = await classifyDataRoot(`/${'b'.repeat(81)}`, currentDataRoot)
+      // Derived target length is 106; the short default env reserve is 154
+      // (runtime\envs\.p + separator + the 138 conservative pack budget), totaling exactly 260.
+      const result = await classifyDataRoot(`/${'b'.repeat(93)}`, currentDataRoot)
 
       expect(result.kind).toBe('invalid')
       expect(result.error).toMatch(/too long|260/i)
@@ -187,18 +187,18 @@ describe('classifyDataRoot', () => {
     }
   })
 
-  it('reserves for default-python, the longest managed env, not the shorter default-r', async () => {
+  it('uses the short physical default prefix rather than either logical default name', async () => {
     const original = process.platform
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
 
     try {
-      // Derived target length is 96. Under the old default-r reserve (23 + 138 = 161) this totaled
-      // 257 and was accepted, yet default-python (28 + 138 = 166) pushes it to 262 — the exact case
-      // where the picker used to accept a root that then overflowed MAX_PATH provisioning python.
+      // Derived target length is 96. The logical default-python reserve would total 262 and reject
+      // this target, while the physical .p reserve totals 250 and fits. The synthetic directory does
+      // not exist, but it must get past the path-budget check.
       const result = await classifyDataRoot(`/${'b'.repeat(83)}`, currentDataRoot)
 
       expect(result.kind).toBe('invalid')
-      expect(result.error).toMatch(/too long|260/i)
+      expect(result.error).not.toMatch(/too long|260/i)
     } finally {
       Object.defineProperty(process, 'platform', { value: original, configurable: true })
     }

@@ -57,6 +57,8 @@ import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
   envPrefix,
+  legacyDefaultEnvPrefix,
+  logicalEnvNameFromDirectory,
   needsRepair,
   pkgsCache,
   pythonBin,
@@ -724,6 +726,20 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     return this.deps.withPrefixLock ? this.deps.withPrefixLock(envName, fn) : fn()
   }
 
+  private cleanupLegacyDefaultPrefix(name: string): void {
+    if ((this.deps.platform ?? process.platform) !== 'win32') return
+    if (name !== DEFAULT_PY_ENV && name !== DEFAULT_R_ENV) return
+    const legacy = legacyDefaultEnvPrefix(this.deps.root, name)
+    if (envPrefix(this.deps.root, name, 'win32') === legacy) return
+    if (this.deps.isPrefixBlocked?.(legacy)) return
+    try {
+      rmSync(legacy, { recursive: true, force: true })
+    } catch {
+      // The short prefix is already verified and authoritative. A locked legacy directory is inert
+      // residue and can be retried by a later startup or removed by storage cleanup.
+    }
+  }
+
   // Wraps a language run so a QUEUED cancel is consumed (beginLanguageRun throws) BEFORE the run does
   // any work, and the provisioning flag + abort controller cover the whole run. repair uses this too, so
   // a cancel that arrived while the Reset was queued aborts BEFORE the destructive rm — never leaving a
@@ -752,6 +768,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     await this.materialize(DEFAULT_PYTHON_SPEC, onProgress)
     // Python is the app gate: stamp the ready marker only after create+verify succeed.
     writeReadyMarker(this.deps.root, DEFAULT_ENV_VERSION, (this.deps.now ?? defaultNow)())
+    this.cleanupLegacyDefaultPrefix(DEFAULT_PY_ENV)
     onProgress({ phase: 'done', message: 'Python environment ready', progress: 1 })
   }
 
@@ -771,6 +788,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       await this.materialize(DEFAULT_R_SPEC, onProgress)
     }
     writeRReadyMarker(this.deps.root, DEFAULT_ENV_VERSION, (this.deps.now ?? defaultNow)())
+    this.cleanupLegacyDefaultPrefix(DEFAULT_R_ENV)
     onProgress({ phase: 'done', message: 'R environment ready', progress: 1 })
   }
 
@@ -926,6 +944,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
               try {
                 stampDefaultMarkerBeforeLock(name) // marker BEFORE lock delete (no data-loss window)
                 rmSync(join(dir, file), { force: true })
+                this.cleanupLegacyDefaultPrefix(name)
               } catch {
                 // Marker/lock write failed — leave the working env and its lock intact for a later launch.
               }
@@ -971,6 +990,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
             await this.deps.verify(bin, prefix)
             stampDefaultMarkerBeforeLock(name) // marker BEFORE lock delete (no data-loss window)
             rmSync(join(dir, file), { force: true })
+            this.cleanupLegacyDefaultPrefix(name)
           } catch {
             // Leave the lock in place: retried next launch; the readiness gate re-provisions defaults
             // in the meantime so the app stays usable.
@@ -1056,9 +1076,8 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     }
   }
 
-  // Scans <root>/envs/ and classifies each subdirectory by interpreter-bin presence. Dirs with
-  // neither a python nor an R bin (e.g. a mid-creation leftover) are skipped — language can't be
-  // determined for them. Tolerant of a missing envs dir (fresh root, no env ever created) -> [].
+  // Scans the physical env directory and maps reserved Windows default directories back to their
+  // logical names. Dirs with neither interpreter are skipped. Tolerant of a missing envs dir.
   listEnvironments(): EnvironmentInfo[] {
     const envsDir = join(this.deps.root, 'envs')
     let entries: Dirent[]
@@ -1070,15 +1089,18 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     const infos: EnvironmentInfo[] = []
     for (const entry of entries) {
       if (!entry.isDirectory()) continue
-      const prefix = envPrefix(this.deps.root, entry.name)
+      const platform = this.deps.platform ?? process.platform
+      const name = logicalEnvNameFromDirectory(entry.name)
+      const prefix = join(envsDir, entry.name)
+      if (prefix !== envPrefix(this.deps.root, name, platform)) continue
       const isPython = existsSync(pythonBin(prefix))
       const isR = !isPython && existsSync(rBin(prefix))
       if (!isPython && !isR) continue
       infos.push({
-        name: entry.name,
+        name,
         language: isPython ? 'python' : 'r',
         ready: true,
-        isDefault: entry.name === DEFAULT_PY_ENV || entry.name === DEFAULT_R_ENV,
+        isDefault: name === DEFAULT_PY_ENV || name === DEFAULT_R_ENV,
         sizeBytes: dirSizeBytes(prefix)
       })
     }

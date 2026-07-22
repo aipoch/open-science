@@ -9,6 +9,7 @@ import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
   envPrefix,
+  legacyDefaultEnvPrefix,
   pkgsCache,
   pythonBin,
   rBin,
@@ -57,7 +58,8 @@ const makeDeps = (root: string, overrides: Partial<ProvisionerDeps> = {}): Provi
       // argv[3] is --prefix / -p value depending on form; find the prefix and drop a bin file.
       const pIdx = argv.findIndex((a) => a === '--prefix' || a === '-p')
       const prefix = argv[pIdx + 1]
-      const isPython = prefix.endsWith(DEFAULT_PY_ENV)
+      const isPython =
+        prefix === envPrefix(root, DEFAULT_PY_ENV, overrides.platform ?? process.platform)
       const bin = isPython ? pythonBin(prefix) : rBin(prefix)
       mkdirSync(join(bin, '..'), { recursive: true })
       writeFileSync(bin, 'x')
@@ -699,6 +701,57 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
   })
 })
 
+describe('DefaultRuntimeProvisioner Windows default-prefix compatibility', () => {
+  it('keeps a committed legacy default so an update does not drop user-installed packages', async () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    const root = makeRoot()
+    try {
+      const legacy = legacyDefaultEnvPrefix(root, DEFAULT_PY_ENV)
+      mkdirSync(dirname(pythonBin(legacy)), { recursive: true })
+      writeFileSync(pythonBin(legacy), 'legacy')
+      writeReadyMarker(root, DEFAULT_ENV_VERSION, 'legacy-ready')
+      const runArgv = vi.fn(async () => undefined)
+
+      await new DefaultRuntimeProvisioner(
+        makeDeps(root, { platform: 'win32', runArgv })
+      ).provisionPython(() => {})
+
+      expect(envPrefix(root, DEFAULT_PY_ENV, 'win32')).toBe(legacy)
+      expect(existsSync(pythonBin(legacy))).toBe(true)
+      expect(runArgv).not.toHaveBeenCalled()
+      expect(readReadyMarker(root)).toMatchObject({ defaultEnvVersion: DEFAULT_ENV_VERSION })
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    }
+  })
+
+  it('rebuilds an uncommitted legacy failure at the short prefix before removing the residue', async () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    const root = makeRoot()
+    try {
+      const legacy = legacyDefaultEnvPrefix(root, DEFAULT_PY_ENV)
+      mkdirSync(dirname(pythonBin(legacy)), { recursive: true })
+      writeFileSync(pythonBin(legacy), 'legacy')
+      const short = envPrefix(root, DEFAULT_PY_ENV, 'win32')
+
+      await new DefaultRuntimeProvisioner(
+        makeDeps(root, {
+          platform: 'win32',
+          cache: { path: 'C:\\osp-cache', lockKey: 'c:\\osp-cache' }
+        })
+      ).provisionPython(() => {})
+
+      expect(existsSync(pythonBin(short))).toBe(true)
+      expect(existsSync(legacy)).toBe(false)
+      expect(readReadyMarker(root)).toMatchObject({ defaultEnvVersion: DEFAULT_ENV_VERSION })
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    }
+  })
+})
+
 // The real production pairing: serializeProvisioner (owns the queue) + DefaultRuntimeProvisioner (owns
 // running/skip). These drive an ACTUAL queue — python running while R waits behind it — so they verify
 // the queued-vs-idle cancel contract end-to-end rather than poking the primitive directly.
@@ -1210,6 +1263,27 @@ describe('DefaultRuntimeProvisioner.listEnvironments', () => {
       isDefault: false
     })
     expect(byName['r-stats']).toMatchObject({ language: 'r', ready: true, isDefault: false })
+  })
+
+  it('maps short Windows default directories to logical names and ignores legacy duplicates', () => {
+    const root = makeRoot()
+    const shortPrefix = join(root, 'envs', '.p')
+    mkdirSync(join(pythonBin(shortPrefix), '..'), { recursive: true })
+    writeFileSync(pythonBin(shortPrefix), 'short')
+    const legacyPrefix = join(root, 'envs', DEFAULT_PY_ENV)
+    mkdirSync(join(pythonBin(legacyPrefix), '..'), { recursive: true })
+    writeFileSync(pythonBin(legacyPrefix), 'legacy')
+
+    const infos = new DefaultRuntimeProvisioner(
+      makeDeps(root, { platform: 'win32' })
+    ).listEnvironments()
+
+    expect(infos).toHaveLength(1)
+    expect(infos[0]).toMatchObject({
+      name: DEFAULT_PY_ENV,
+      language: 'python',
+      isDefault: true
+    })
   })
 })
 
@@ -2032,7 +2106,11 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
     // detection is process.platform, so we can't mock it in the test, but we can verify the error message
     // contains appropriate guidance: on the real test platform (likely darwin/win32), it should mention
     // manual cleanup; on Linux CI, it should mention reboot.
-    const deps = makeDeps(root, { runArgv, isPrefixBlocked: () => true, readBootToken: () => BOOT_A })
+    const deps = makeDeps(root, {
+      runArgv,
+      isPrefixBlocked: () => true,
+      readBootToken: () => BOOT_A
+    })
     const error = await new DefaultRuntimeProvisioner(deps)
       .repair('python', () => {}, { force: true })
       .catch((e) => e)

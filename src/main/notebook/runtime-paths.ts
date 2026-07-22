@@ -44,6 +44,27 @@ export const resolveRuntimeCdnBase = (override?: string): string => {
 export const DEFAULT_PY_ENV = 'default-python'
 export const DEFAULT_R_ENV = 'default-r'
 
+const WINDOWS_DEFAULT_ENV_DIRECTORIES: Readonly<Record<string, string>> = {
+  [DEFAULT_PY_ENV]: '.p',
+  [DEFAULT_R_ENV]: '.r'
+}
+
+const windowsDefaultEnvNamesByDirectory = new Map(
+  Object.entries(WINDOWS_DEFAULT_ENV_DIRECTORIES).map(([name, directory]) => [directory, name])
+)
+
+// Logical environment names are part of notebook state and the tool interface. On Windows the two
+// app-managed defaults use short, reserved physical directory names so their descriptive logical
+// names do not consume the environment's MAX_PATH budget. User-created names cannot start with a
+// dot, so these directories cannot collide with a named environment.
+export const envDirectoryName = (
+  name: string,
+  platform: NodeJS.Platform = process.platform
+): string => (platform === 'win32' ? (WINDOWS_DEFAULT_ENV_DIRECTORIES[name] ?? name) : name)
+
+export const logicalEnvNameFromDirectory = (directory: string): string =>
+  windowsDefaultEnvNamesByDirectory.get(directory.toLowerCase()) ?? directory
+
 export const runtimePackDir = (
   root: string,
   envVersion: number,
@@ -108,8 +129,49 @@ export const assertSafeEnvName = (name: string | undefined): string => {
 // <storageRoot>/runtime — the shared runtime root holding envs, the pkgs cache and the ready marker.
 export const runtimeRoot = (storageRoot: string): string => join(storageRoot, 'runtime')
 
-// <root>/envs/<name> — a single conda env prefix under the runtime root.
-export const envPrefix = (root: string, name: string): string => join(root, 'envs', name)
+// A conda environment prefix under the runtime root. Callers use logical names; this is the sole seam
+// that maps them to physical directories. The platform argument keeps the Windows mapping directly
+// testable on non-Windows hosts.
+export const envPrefix = (
+  root: string,
+  name: string,
+  platform: NodeJS.Platform = process.platform
+): string => {
+  const physical = join(root, 'envs', envDirectoryName(name, platform))
+  if (platform !== 'win32' || (name !== DEFAULT_PY_ENV && name !== DEFAULT_R_ENV)) return physical
+  // A short prefix, including a partial one, is authoritative so repair resumes in the new layout.
+  if (existsSync(physical)) return physical
+
+  const legacy = join(root, 'envs', name)
+  // Preserve a committed Python environment so an app update never drops pip/conda additions merely
+  // to shorten its path. A failed create has no marker and therefore retries at the short prefix.
+  if (
+    name === DEFAULT_PY_ENV &&
+    existsSync(join(root, '.env-ready')) &&
+    existsSync(join(legacy, 'python.exe'))
+  )
+    return legacy
+  // Legacy R predates its dedicated marker. Keep any materialized prefix and let the existing
+  // activated verify/upgrade-or-rebuild path decide whether it is healthy.
+  if (name === DEFAULT_R_ENV && existsSync(join(legacy, 'Lib', 'R', 'bin', 'R.exe'))) return legacy
+  return physical
+}
+
+// The pre-shortening prefix is used only for best-effort migration cleanup/export. Never provision a
+// new default into this location.
+export const legacyDefaultEnvPrefix = (
+  root: string,
+  name: typeof DEFAULT_PY_ENV | typeof DEFAULT_R_ENV
+): string => join(root, 'envs', name)
+
+// Relative reserve from the data root through the deepest default prefix, including the separator
+// before a package-relative path. The picker and provisioner share envPrefix(), so this helper keeps
+// preflight arithmetic aligned with the physical Windows layout.
+export const windowsDefaultEnvPrefixReserve = (): number =>
+  Math.max(
+    win32.join('runtime', 'envs', envDirectoryName(DEFAULT_PY_ENV, 'win32')).length,
+    win32.join('runtime', 'envs', envDirectoryName(DEFAULT_R_ENV, 'win32')).length
+  ) + 1
 
 // <root>/pkgs — the shared micromamba package cache (offline seed target; $MAMBA_ROOT_PREFIX/pkgs).
 export const pkgsCache = (root: string): string => join(root, 'pkgs')

@@ -2,7 +2,13 @@ import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { normalizeExplicitLock } from './micromamba'
-import { envPrefix, pythonBin, rBin, runtimeRoot } from './runtime-paths'
+import {
+  envPrefix,
+  logicalEnvNameFromDirectory,
+  pythonBin,
+  rBin,
+  runtimeRoot
+} from './runtime-paths'
 
 // <root>/envs.lock — per-env @EXPLICIT locks captured for offline reconstruction after a data-root
 // relocation. The provisioner's startup restore consumes and then removes this directory.
@@ -13,6 +19,7 @@ export type ExportRuntimeLocksDeps = {
   mm: string | undefined
   // Runs a micromamba argv and returns stdout (for `list --explicit --md5`).
   capture: (argv: string[]) => Promise<string>
+  platform?: NodeJS.Platform
 }
 
 // Exports every conda env under <fromDataRoot>/runtime/envs to an @EXPLICIT lock at
@@ -31,20 +38,34 @@ export const exportRuntimeLocks = async (
 
   const fromRuntime = runtimeRoot(fromDataRoot)
   const envsDir = join(fromRuntime, 'envs')
-  let names: string[]
+  let entries: Array<{ name: string; prefix: string; canonical: boolean }>
   try {
-    names = readdirSync(envsDir, { withFileTypes: true })
+    entries = readdirSync(envsDir, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
+      .map((entry) => {
+        const name = logicalEnvNameFromDirectory(entry.name)
+        return {
+          name,
+          prefix: join(envsDir, entry.name),
+          canonical: join(envsDir, entry.name) === envPrefix(fromRuntime, name, deps.platform)
+        }
+      })
   } catch {
     return []
   }
-  if (names.length === 0) return []
+  if (entries.length === 0) return []
+
+  // If a short Windows default and its legacy directory both exist, export only the active short
+  // prefix. A legacy-only install is still exported so the new layout can rebuild it without losing
+  // user-added conda packages.
+  entries.sort((a, b) => Number(b.canonical) - Number(a.canonical))
+  const seen = new Set<string>()
 
   const outDir = envsLockDir(runtimeRoot(toDataRoot))
   const exported: string[] = []
-  for (const name of names) {
-    const prefix = envPrefix(fromRuntime, name)
+  for (const { name, prefix } of entries) {
+    if (seen.has(name)) continue
+    seen.add(name)
     // Skip mid-creation leftovers with no interpreter — nothing to reconstruct.
     if (!existsSync(pythonBin(prefix)) && !existsSync(rBin(prefix))) continue
     try {

@@ -9,7 +9,15 @@ import type { NotebookLanguage } from '../../shared/notebook'
 import type { DiscoveredInterpreter, EnvProvenance } from '../../shared/notebook-runtime'
 import { probeInterpreterVersion } from './python-command'
 import { parseRVersion, rHasJsonlite } from './r-command'
-import { condaActivatedPath, DEFAULT_PY_ENV, DEFAULT_R_ENV, pythonBin, rBin } from './runtime-paths'
+import {
+  condaActivatedPath,
+  DEFAULT_PY_ENV,
+  DEFAULT_R_ENV,
+  envPrefix,
+  logicalEnvNameFromDirectory,
+  pythonBin,
+  rBin
+} from './runtime-paths'
 
 export type { DiscoveredInterpreter, EnvProvenance }
 
@@ -296,8 +304,10 @@ export const defaultCandidatePaths =
     // agent-created.
     const appEnvsDir = join(runtimeRoot, 'envs')
     try {
-      for (const name of readdirSync(appEnvsDir)) {
-        const prefix = join(appEnvsDir, name)
+      for (const directory of readdirSync(appEnvsDir)) {
+        const name = logicalEnvNameFromDirectory(directory)
+        const prefix = join(appEnvsDir, directory)
+        if (prefix !== envPrefix(runtimeRoot, name)) continue
         const p = language === 'python' ? pythonBin(prefix) : rBin(prefix)
         if (existsSync(p)) found.add(p)
       }
@@ -333,7 +343,7 @@ const classify = (interpreterPath: string, runtimeRoot: string): EnvProvenance =
   const real = safeRealpath(interpreterPath)
   if (!real.startsWith(envsRoot + '/') && !real.startsWith(envsRoot + '\\')) return 'user-own'
   const rest = real.slice(envsRoot.length + 1)
-  const envName = rest.split(/[/\\]/)[0]
+  const envName = logicalEnvNameFromDirectory(rest.split(/[/\\]/)[0])
   return envName === DEFAULT_PY_ENV ||
     envName === DEFAULT_R_ENV ||
     envName.startsWith(`${DEFAULT_PY_ENV}-`) ||
@@ -345,7 +355,9 @@ const classify = (interpreterPath: string, runtimeRoot: string): EnvProvenance =
 const condaEnvName = (interpreterPath: string): string | undefined => {
   const parts = safeRealpath(interpreterPath).split(/[/\\]/)
   const idx = parts.lastIndexOf('envs')
-  return idx >= 0 && idx + 1 < parts.length ? parts[idx + 1] : undefined
+  return idx >= 0 && idx + 1 < parts.length
+    ? logicalEnvNameFromDirectory(parts[idx + 1])
+    : undefined
 }
 
 // Discovers every interpreter for a language, deduped by real path, each probed for version +

@@ -11,6 +11,10 @@ import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
   envPrefix,
+  envDirectoryName,
+  legacyDefaultEnvPrefix,
+  logicalEnvNameFromDirectory,
+  windowsDefaultEnvPrefixReserve,
   needsRepair,
   pkgsCache,
   pipBin,
@@ -84,6 +88,35 @@ describe('runtime-paths layout', () => {
     expect(readyMarkerPath('/r')).toBe(join('/r', '.env-ready'))
     expect(DEFAULT_ENV_VERSION).toBe(1)
     expect(DEFAULT_R_ENV).toBe('default-r')
+  })
+
+  it('uses short reserved physical directories for Windows defaults', () => {
+    expect(envDirectoryName(DEFAULT_PY_ENV, 'win32')).toBe('.p')
+    expect(envDirectoryName(DEFAULT_R_ENV, 'win32')).toBe('.r')
+    expect(envDirectoryName('my-analysis', 'win32')).toBe('my-analysis')
+    expect(logicalEnvNameFromDirectory('.p')).toBe(DEFAULT_PY_ENV)
+    expect(logicalEnvNameFromDirectory('.R')).toBe(DEFAULT_R_ENV)
+    expect(logicalEnvNameFromDirectory('my-analysis')).toBe('my-analysis')
+    expect(envPrefix('/runtime', DEFAULT_PY_ENV, 'win32')).toBe(join('/runtime', 'envs', '.p'))
+    expect(envPrefix('/runtime', DEFAULT_R_ENV, 'win32')).toBe(join('/runtime', 'envs', '.r'))
+    expect(windowsDefaultEnvPrefixReserve()).toBe('runtime\\envs\\.p'.length + 1)
+  })
+
+  it('keeps a committed legacy Windows prefix but sends failed and fresh installs to the short path', () => {
+    const root = makeRoot()
+    const short = join(root, 'envs', '.p')
+    const legacy = legacyDefaultEnvPrefix(root, DEFAULT_PY_ENV)
+
+    expect(envPrefix(root, DEFAULT_PY_ENV, 'win32')).toBe(short)
+    mkdirSync(legacy, { recursive: true })
+    writeFileSync(join(legacy, 'python.exe'), 'partial')
+    expect(envPrefix(root, DEFAULT_PY_ENV, 'win32')).toBe(short)
+
+    writeReadyMarker(root, DEFAULT_ENV_VERSION, 'ready')
+    expect(envPrefix(root, DEFAULT_PY_ENV, 'win32')).toBe(legacy)
+
+    mkdirSync(short, { recursive: true })
+    expect(envPrefix(root, DEFAULT_PY_ENV, 'win32')).toBe(short)
   })
 
   it('builds the complete Windows conda DLL search path ahead of the inherited PATH', () => {

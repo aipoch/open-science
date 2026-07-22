@@ -117,6 +117,18 @@ describe('discoverInterpreters', () => {
     expect(notPy3[0].detail).toMatch(/Python 3/)
   })
 
+  it('keeps the logical default name when discovery sees a short physical directory', async () => {
+    const path = '/rt/envs/.p/bin/python'
+    const [found] = await discoverInterpreters(
+      'python',
+      makeDeps([path], { versions: { [path]: '3.12.4' } })
+    )
+
+    expect(found.provenance).toBe('app-managed')
+    expect(found.condaEnv).toBe('default-python')
+    expect(found.label).toBe('conda: default-python')
+  })
+
   it('flags an agent-created named env and marks a conda R needing jsonlite', async () => {
     const deps = makeDeps(['/rt/envs/my-analysis/bin/R', '/opt/miniconda3/envs/bio/bin/R'], {
       versions: {
