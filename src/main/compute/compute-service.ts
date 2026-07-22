@@ -38,6 +38,7 @@ import { computeRemoteWorkdir, dispatchJob, hashCommand } from './job-dispatcher
 import type { StagedInputEntry } from './job-dispatcher'
 import { getJobHarvestDir } from './harvest-engine'
 import { getNotebookSessionRoot } from '../notebook/repository'
+import type { ConcurrencyManager, SessionStatus } from './concurrency-manager'
 
 // Probe timeout for the full bundle — individual commands share one connection but each gets this
 // budget. Set generously so slow clusters don't abort, but short enough for a responsive UI (30s).
@@ -306,7 +307,8 @@ export class ComputeService {
     private readonly jobRepository?: ComputeJobRepository,
     private readonly onJobUpdated?: (job: import('../../shared/compute').ComputeJob) => void,
     private readonly artifactResolver?: ArtifactResolver,
-    private readonly storageRoot?: string
+    private readonly storageRoot?: string,
+    private readonly concurrencyManager?: ConcurrencyManager
   ) {
     this.scpRunner = scpRunner ?? new SystemScpRunner()
   }
@@ -560,8 +562,11 @@ export class ComputeService {
     // Exception: bare `~` and `~/…` are user-facing navigation shortcuts. Single-quoting suppresses
     // tilde expansion, so `realpath '~'` resolves to a literal file named "~" and `cd '~'` fails.
     // Expand these to `$HOME` / `$HOME/…` instead — $HOME is safe (set by sshd, not user input).
-    const expandedPath = path === '~' ? '$HOME' : path.startsWith('~/') ? `$HOME/${path.slice(2)}` : path
-    const quotedPath = expandedPath.startsWith('$HOME') ? expandedPath : shellSingleQuote(expandedPath)
+    const expandedPath =
+      path === '~' ? '$HOME' : path.startsWith('~/') ? `$HOME/${path.slice(2)}` : path
+    const quotedPath = expandedPath.startsWith('$HOME')
+      ? expandedPath
+      : shellSingleQuote(expandedPath)
     const remoteCmd = [
       `realpath ${quotedPath} 2>/dev/null || echo ${quotedPath}`,
       `cd ${quotedPath} || exit 1`,
@@ -1367,6 +1372,41 @@ export class ComputeService {
       stdout_tail: job.stdout_tail,
       stderr_tail: job.stderr_tail
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Session concurrency control (Phase 3c, issue 04)
+  // ---------------------------------------------------------------------------
+
+  // Set session-level concurrency limit. Delegates to ConcurrencyManager.
+  async setSessionConcurrencyLimit(sessionId: string, limit: number): Promise<void> {
+    if (!this.concurrencyManager) {
+      throw new Error('ConcurrencyManager not initialized')
+    }
+    if (limit <= 0 || !Number.isInteger(limit)) {
+      throw new Error('Concurrency limit must be a positive integer')
+    }
+    this.concurrencyManager.setSessionLimit(sessionId, limit)
+  }
+
+  // Get session concurrency status. Delegates to ConcurrencyManager and enriches with provider ceilings.
+  async getSessionConcurrencyStatus(sessionId: string): Promise<SessionStatus> {
+    if (!this.concurrencyManager) {
+      throw new Error('ConcurrencyManager not initialized')
+    }
+    // Get status from manager (includes provider ceilings from jobs in this session)
+    const status = await this.concurrencyManager.getStatus(sessionId)
+
+    // Enrich with ALL registered compute hosts (not just those with jobs in this session)
+    const allHosts = await this.repository.list()
+    for (const host of allHosts) {
+      // Only set if not already present from jobs
+      if (!(host.providerId in status.provider_ceilings)) {
+        status.provider_ceilings[host.providerId] = host.concurrencyLimit ?? 10
+      }
+    }
+
+    return status
   }
 }
 

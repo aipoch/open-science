@@ -31,7 +31,8 @@ const createMockHostRepo = (): ComputeHostRepository =>
     delete: vi.fn()
   }) as unknown as ComputeHostRepository
 
-const createMockDispatchJob = (): ReturnType<typeof vi.fn> => vi.fn()
+const createMockDispatchJob = (): ((jobId: string) => Promise<void>) =>
+  vi.fn(() => Promise.resolve())
 
 describe('ConcurrencyManager', () => {
   let jobRepo: ComputeJobRepository
