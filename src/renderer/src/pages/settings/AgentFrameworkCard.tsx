@@ -53,6 +53,9 @@ type AgentFrameworkCardProps = {
   installSources: ClaudeInstallSourceInfo[]
   // True while THIS card's install is running: the button reads "Installing…" and the bar shows.
   installing: boolean
+  // Global install-in-flight flag (any framework). RuntimeUninstallControl's contract locks every
+  // card's Uninstall while ANY install runs — do not narrow this to this card's `installing`.
+  installRunning: boolean
   // A global operation (another framework's install, or any uninstall) locks this card's Install.
   installDisabled: boolean
   installLogs: string[]
@@ -149,6 +152,7 @@ const AgentFrameworkCard = ({
   onUninstall,
   installSources,
   installing,
+  installRunning,
   installDisabled,
   installLogs,
   installProgress,
@@ -277,7 +281,8 @@ const AgentFrameworkCard = ({
                 active={active}
                 isUninstalling={isUninstalling}
                 isDetecting={isDetecting}
-                isInstalling={installing}
+                // Global by contract: an install of ANY framework locks every card's Uninstall.
+                isInstalling={installRunning}
                 onUninstall={onUninstall}
               />
             ) : null}

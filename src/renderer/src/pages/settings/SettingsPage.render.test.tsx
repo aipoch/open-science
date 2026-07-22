@@ -234,9 +234,9 @@ describe('SettingsPage layout', () => {
     expect(navButton('Agent')?.tabIndex).toBe(0)
   })
 
-  it('stays collapsed when settings opens outside the Model branch, until Model is clicked', async () => {
-    // A pending skill mention deep-links settings to the Skills panel (see the seeding effect).
-    useSettingsStore.setState({ pendingSkillId: 'alpha' })
+  it('collapses the Agent sub-item when a skill mention deep-links in, until Model is clicked', async () => {
+    // Render the default (Model) landing first: the component stays mounted across opens, so a
+    // deep link arrives as a store update AFTER mount — the exact path the regression hit.
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
@@ -247,7 +247,12 @@ describe('SettingsPage layout', () => {
       ).find((candidate) => candidate.textContent?.trim() === label)
     const agentItem = (): HTMLElement | null => navButton('Agent')?.closest('li') ?? null
 
-    // Landing on Skills: the sub-item starts collapsed and out of the tab order.
+    expect(agentItem()?.className).toContain('grid-rows-[1fr]')
+
+    // A skill mention deep-links settings to the Skills panel (the seeding effect re-seeds history).
+    await act(async () => {
+      useSettingsStore.setState({ pendingSkillId: 'alpha' })
+    })
     expect(agentItem()?.className).toContain('grid-rows-[0fr]')
     expect(navButton('Agent')?.tabIndex).toBe(-1)
 

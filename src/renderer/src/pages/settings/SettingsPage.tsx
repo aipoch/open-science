@@ -235,10 +235,11 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const [statusMessage, setStatusMessage] = useState<string | undefined>(undefined)
   const [statusOk, setStatusOk] = useState(false)
   const [busyProviderId, setBusyProviderId] = useState<string | undefined>(undefined)
-  // The Model branch's sub-item (Agent) starts expanded when settings lands on the Model panel
-  // (the default) and collapsed when it deep-links elsewhere (e.g. a skill mention). Clicking
-  // Model/Agent expands it, and the expansion is sticky — other panels never collapse it.
-  const [agentMenuExpanded, setAgentMenuExpanded] = useState(pendingSkillId === undefined)
+  // The Model branch's sub-item (Agent) starts expanded (settings lands on Model by default) and
+  // stays expanded once the user opens the branch — other panels never collapse it. Deep-linking
+  // elsewhere (e.g. a skill mention) collapses it: that case arrives AFTER mount (this component
+  // stays mounted while closed), so it is handled in the seeding block below, not the initializer.
+  const [agentMenuExpanded, setAgentMenuExpanded] = useState(true)
 
   // Refresh settings whenever the dialog opens so external changes are reflected.
   useEffect(() => {
@@ -252,6 +253,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const [seededSkillId, setSeededSkillId] = useState<string | undefined>(undefined)
   if (open && pendingSkillId !== undefined && pendingSkillId !== seededSkillId) {
     setSeededSkillId(pendingSkillId)
+    // Landing outside the Model branch starts the Agent sub-item collapsed; clicking Model
+    // re-expands it (sticky from then on).
+    setAgentMenuExpanded(false)
     setHistory([
       {
         panel: 'skills',
@@ -622,6 +626,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
       onUninstall={() => setPendingUninstall(card.key)}
       installSources={card.installSources}
       installing={isInstalling && installTarget === card.key}
+      installRunning={isInstalling}
       installDisabled={isInstalling || isUninstalling}
       installLogs={installTarget === card.key ? installLogs : []}
       installProgress={installTarget === card.key ? installProgress : null}

@@ -43,6 +43,7 @@ const baseProps: CardProps = {
   onUninstall: vi.fn(),
   installSources: getClaudeInstallSources('darwin'),
   installing: false,
+  installRunning: false,
   installDisabled: false,
   installLogs: [] as string[],
   installProgress: null,
@@ -185,6 +186,17 @@ describe('AgentFrameworkCard', () => {
 
     expect(container.querySelector('[role="alert"]')?.textContent).toBe('boom')
     expect(container.querySelector('[aria-label="Install log"]')?.textContent).toContain('line one')
+  })
+
+  it('locks Uninstall on every card while ANY framework install runs', () => {
+    // Another framework is installing (installRunning) but not this card (installing=false):
+    // RuntimeUninstallControl's contract disables Uninstall globally, not just on the busy card.
+    renderCard({ ready: true, path: '/bin/claude', installRunning: true })
+
+    const uninstall = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Uninstall')
+    )
+    expect(uninstall?.disabled).toBe(true)
   })
 
   it('keeps the Install button available while only the uninstall is actionable for a broken install', () => {
