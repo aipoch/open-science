@@ -3069,8 +3069,8 @@ describe('ACP runtime session management', () => {
     await session.prompt([{ type: 'text', text: 'run a shell command' }])
 
     expect(runtime.reviewerRejectedToolCallCount(session.sessionId)).toBe(1)
-    runtime.disposeReviewerSession(session)
-    // Dispose clears the counter so a later session under the same id starts fresh.
+    // dispose returns the final count and clears it atomically — the orchestrator relies on this.
+    expect(runtime.disposeReviewerSession(session)).toBe(1)
     expect(runtime.reviewerRejectedToolCallCount('reviewer-session-1')).toBe(0)
   })
 

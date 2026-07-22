@@ -3494,8 +3494,11 @@ class AcpRuntime {
   }
 
   // Disposes an ephemeral reviewer session and unregisters it from the auto-approve set. Safe to call
-  // even if the session was never registered (e.g. it failed before start).
-  disposeReviewerSession(session: import('@agentclientprotocol/sdk').ActiveSession): void {
+  // even if the session was never registered (e.g. it failed before start). Returns the number of tool
+  // calls the gate rejected during the session: the read and the clear are atomic here so callers need
+  // no capture-before-dispose ordering — dispose deletes the counter, and this is its last observer.
+  disposeReviewerSession(session: import('@agentclientprotocol/sdk').ActiveSession): number {
+    const rejectedToolCalls = this.reviewerRejectedToolCalls.get(session.sessionId) ?? 0
     this.reviewerSessionIds.delete(session.sessionId)
     this.sessionMcpServerNames.delete(session.sessionId)
     this.codexMcpToolIdentities.delete(session.sessionId)
@@ -3505,6 +3508,7 @@ class AcpRuntime {
     this.reviewerSessionDirectories.delete(session.sessionId)
     session.dispose()
     if (reviewerCwd) this.removeReviewerDirectory(reviewerCwd)
+    return rejectedToolCalls
   }
 
   // Returns how many permission requests the strict reviewer gate rejected for a given reviewer

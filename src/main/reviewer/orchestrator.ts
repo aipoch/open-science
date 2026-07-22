@@ -799,10 +799,8 @@ const runScopedReview = async (options: {
     onReviewUpdate?.(errorWithChecks)
     return { review: errorWithChecks, submittedChecks: [] }
   } finally {
-    if (reviewerSession) {
-      rejectedToolCalls = acpRuntime.reviewerRejectedToolCallCount(reviewerSession.sessionId)
-      acpRuntime.disposeReviewerSession(reviewerSession)
-    }
+    // dispose returns the gate's rejection count and clears it atomically — no ordering hazard.
+    if (reviewerSession) rejectedToolCalls = acpRuntime.disposeReviewerSession(reviewerSession)
     await mcpServer?.stop().catch(() => undefined)
   }
 
@@ -1016,12 +1014,10 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
 
     return errorWithFindings
   } finally {
-    // Always dispose the reviewer session and shut down the servers. Capture the gate's rejection
-    // count first: dispose clears it, and an incomplete review needs it to report the real cause.
-    if (reviewerSession) {
-      rejectedToolCalls = acpRuntime.reviewerRejectedToolCallCount(reviewerSession.sessionId)
-      acpRuntime.disposeReviewerSession(reviewerSession)
-    }
+    // Always dispose the reviewer session and shut down the servers. dispose returns the gate's
+    // rejection count and clears it atomically, so an incomplete review reports the real cause with
+    // no capture-before-dispose ordering to get wrong.
+    if (reviewerSession) rejectedToolCalls = acpRuntime.disposeReviewerSession(reviewerSession)
     await mcpServer?.stop().catch(() => undefined)
   }
 
