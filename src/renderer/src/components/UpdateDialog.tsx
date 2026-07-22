@@ -5,6 +5,7 @@ import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { useUpdateStore } from '@/stores/update-store'
 import { APP } from '../../../shared/app-config'
+import { formatBytes } from '../../../shared/update'
 
 // Update confirmation dialog: shows the target version and release notes so the user can decide
 // before a large download. Opened from the external capsule and the settings About section. When the
@@ -67,11 +68,21 @@ const UpdateDialog = (): React.JSX.Element | null => {
           )}
 
           {isDownloading ? (
-            <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-bg-300">
-              <div
-                className="h-full rounded-full bg-primary transition-all duration-150 ease-out"
-                style={{ width: `${status.progress ?? 0}%` }}
-              />
+            <div className="mt-4">
+              <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground tabular-nums">
+                <span>
+                  {status.downloadedBytes != null && status.totalBytes && status.downloadedBytes > 0
+                    ? `${formatBytes(status.downloadedBytes)} / ${formatBytes(status.totalBytes)}`
+                    : ''}
+                </span>
+                <span>{status.progress ?? 0}%</span>
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-bg-300">
+                <div
+                  className="h-full rounded-full bg-primary transition-all duration-150 ease-out"
+                  style={{ width: `${status.progress ?? 0}%` }}
+                />
+              </div>
             </div>
           ) : null}
 
@@ -120,7 +131,11 @@ const UpdateDialog = (): React.JSX.Element | null => {
                 className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
               >
                 <Download className="size-4" aria-hidden="true" />
-                {isDownloading ? `Downloading ${status.progress ?? 0}%` : 'Download update'}
+                {isDownloading
+                  ? `Downloading ${status.progress ?? 0}%`
+                  : status.totalBytes
+                    ? `Download update (${formatBytes(status.totalBytes)})`
+                    : 'Download update'}
               </button>
             )}
           </div>

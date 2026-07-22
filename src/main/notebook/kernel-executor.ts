@@ -544,6 +544,15 @@ class NotebookKernelExecutor implements NotebookExecutor {
       ...(kind === 'repl' && request.mcpRpcToken
         ? { OPEN_SCIENCE_MCP_RPC_TOKEN: request.mcpRpcToken }
         : {}),
+      // Session/project identity reaches ONLY the repl kernel, alongside the RPC creds: host.compute
+      // carries it on call_command payloads for grant-scope approval memory (This conversation / This
+      // project). The data kernels have no host.compute, so they never need — and never receive — it.
+      ...(kind === 'repl' && request.sessionId
+        ? { OPEN_SCIENCE_NOTEBOOK_SESSION_ID: request.sessionId }
+        : {}),
+      ...(kind === 'repl' && request.projectName
+        ? { OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME: request.projectName }
+        : {}),
       ...(kind === 'repl' ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
       ...(rEnvPrefix ? { OPEN_SCIENCE_R_ENV_PREFIX: rEnvPrefix } : {})
     }

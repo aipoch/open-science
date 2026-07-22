@@ -1,11 +1,21 @@
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-import { app, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, Notification } from 'electron'
 
 import { createDefaultNotebookRuntimeService, registerAcpIpcHandlers } from './acp/ipc'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
+import {
+  registerComputeIpcHandlers,
+  createJobUpdatedBroadcaster,
+  broadcastJobUpdated
+} from './compute/ipc'
+import { attachEnabledComputeHosts } from './compute/enabled-hosts-registry'
+import { JobPoller } from './compute/job-poller'
+import { SystemSshRunner } from './compute/ssh-runner'
+import { SystemScpRunner } from './compute/scp-runner'
+import { harvestJob } from './compute/harvest-engine'
 import { wireConnectorReload } from './connector-reload'
 import { ApprovalBroker } from './connectors/approval-broker'
 import { toCustomMcpConfig, selectEnabledCustomServers } from './connectors/custom-mcp-bootstrap'
@@ -20,7 +30,12 @@ import { registerGithubIpcHandlers } from './github-ipc'
 import { BackendShutdownCoordinator, UPDATE_SHUTDOWN_BUDGET_MS } from './lifecycle-shutdown'
 import { registerLogsIpcHandlers } from './logs-ipc'
 import { registerWindowIpcHandlers } from './window-ipc'
-import { createLogger } from './logger'
+import { TaskNotificationService } from './notifications/task-notifications'
+import {
+  buildConnectorApprovalBroadcast,
+  buildTaskNotificationShow
+} from './notifications/electron-wiring'
+import { createLogger, errorLogFields } from './logger'
 import {
   broadcastNotebookEnvProgress,
   registerNotebookEnvIpcHandlers,
@@ -77,6 +92,9 @@ import { broadcastToRenderers } from './renderer-broadcast'
 
 type IpcRegistrationOptions = {
   mainEntryPath: string
+  // Headless web-serve launches (--serve) have no local desktop user; task notifications are
+  // disabled there by contract, not just incidentally via Notification.isSupported().
+  headless?: boolean
 }
 
 // Builds a short, human-readable preview of a connector call's arguments for the approval card.
@@ -126,11 +144,13 @@ const refreshConnectorSkillDocs = async (
 // needs the configured package mirror, read from disk; callers await this before creating the main
 // window so every IPC channel (incl. notebook-env) is registered before the renderer can call it.
 const registerIpcHandlers = async ({
-  mainEntryPath
+  mainEntryPath,
+  headless = false
 }: IpcRegistrationOptions): Promise<{
   runtime: ReturnType<typeof registerAcpIpcHandlers>
   notebook: ReturnType<typeof createDefaultNotebookRuntimeService>
   shutdownCoordinator: BackendShutdownCoordinator
+  taskNotifications: TaskNotificationService
 }> => {
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const settingsService = createDefaultSettingsService()
@@ -241,6 +261,34 @@ const registerIpcHandlers = async ({
   // Read fresh on every call so a future connectors-settings mutation (Plan 2 UI) only needs to call
   // refreshConnectorSkillDocs again to take effect, without reconstructing the connector service.
   let connectorsSnapshot: StoredConnectors | undefined
+  // Desktop notifications for finished/failed agent tasks and approval waits. Delivery is
+  // Electron's Notification (Notification Center on macOS, toasts on Windows, libnotify on Linux);
+  // the service itself stays Electron-free so its filtering rules are unit-testable. The click
+  // handler is bound later, in index.ts, where showMainWindow exists. Constructed before the
+  // connector approval broker, which nudges through it.
+  //
+  // The wiring is extracted into electron-wiring helpers so the headless gate and the broker→service
+  // sessionId pass-through have a unit-level home — inline closures were untestable, and a
+  // regression on either of those contracts would not be caught by TaskNotificationService tests.
+  const notificationsLog = createLogger('notifications')
+  const liveNotifications = new Set<Notification>()
+  const taskNotifications = new TaskNotificationService({
+    isEnabled: () => settingsService.getNotificationsEnabled(),
+    isAppFocused: () => BrowserWindow.getAllWindows().some((window) => window.isFocused()),
+    show: buildTaskNotificationShow({
+      notificationCtor: Notification,
+      liveNotifications,
+      log: notificationsLog,
+      headless
+    }),
+    onDeliveryError: (error) =>
+      notificationsLog.warn('task notification delivery failed', errorLogFields(error))
+  })
+  // The renderer pulls the notification click target once its sessions are hydrated (a push sent
+  // before the listener exists would be lost); consume-once semantics live in the service.
+  ipcMain.handle('notifications:take-pending-open-session', () =>
+    taskNotifications.takePendingOpenSession()
+  )
   // One MCP client manager backs both dispatch (ConnectorService.call → custom server) and skill-doc
   // generation (listTools) for user-added custom MCP servers (stdio + remote). It lazily connects per
   // server, so constructing it here does not spawn anything until a custom server is actually used.
@@ -249,9 +297,10 @@ const registerIpcHandlers = async ({
   // pre-allowed or skip-approved is held here until the user decides (or it auto-denies on timeout).
   const approvalBroker = new ApprovalBroker({
     generateId: () => randomUUID(),
-    broadcast: (request) => {
-      broadcastToRenderers('connectors:approval-request', request)
-    }
+    broadcast: buildConnectorApprovalBroadcast({
+      broadcastToRenderers,
+      taskNotifications
+    })
   })
   // Late-bound app runtime for connector tools that attach a generated file to the current turn. The
   // runtime is created below (it depends on the connector service), so the handler resolves it lazily.
@@ -268,11 +317,62 @@ const registerIpcHandlers = async ({
     getConnectors: () => connectorsSnapshot,
     resolveApiKey: (ref) => tryDecryptKey(ref),
     mcpClientManager,
-    requestApproval: ({ connector, method, args }) =>
-      approvalBroker.request({ connector, method, argsPreview: previewArgs(args) }),
+    requestApproval: ({ connector, method, args, sessionId }) =>
+      approvalBroker.request({
+        connector,
+        method,
+        argsPreview: previewArgs(args),
+        ...(sessionId ? { sessionId } : {})
+      }),
     localToolHandlers: { 'molecule/preview_molecule': moleculePreviewHandler }
   })
-  const notebookRpcServer = new NotebookLocalRpcServer(notebookService, { connectorService })
+  // Register compute IPC handlers early so computeService can be wired into the notebook RPC server.
+  // The approval broker in compute/ipc.ts broadcasts via BrowserWindow.getAllWindows(), which requires
+  // Electron to be ready — this is always the case here since we're inside registerIpcHandlers.
+  // Adapt the artifact repository to the ArtifactResolver shape so job input staging can upload
+  // absolute artifact-store paths (validated to stay inside the store by resolveManagedFilePath).
+  const computeArtifactResolver = {
+    resolveArtifactPath: (path: string) => artifactRepository.resolveManagedFilePath({ path })
+  }
+  const {
+    computeService,
+    jobRepository,
+    hostRepository,
+    enabledComputeHostsRegistry: hostsRegistry
+  } = registerComputeIpcHandlers(undefined, undefined, computeArtifactResolver)
+  const storageRoot = resolveStorageRoot()
+  // Start the JobPoller wired to the shared broadcaster so every state/tail change is pushed to all
+  // renderer windows via 'compute:job-updated' (Phase 3d, design.md §9 + §15.3). The dispatcher
+  // (inside ComputeService) uses the same hook, so submitted→running/error transitions broadcast too.
+  // Phase 3b: harvestFn drives automatic harvest on terminal transitions; broadcast + storageRoot
+  // wire the compute_done notification emitter for all three terminal outcomes (issue 06).
+  const sshRunner = new SystemSshRunner()
+  const scpRunner = new SystemScpRunner()
+  const jobPoller = new JobPoller({
+    runner: sshRunner,
+    hostRepository,
+    jobRepository,
+    onJobUpdated: createJobUpdatedBroadcaster(hostRepository, storageRoot),
+    broadcast: broadcastJobUpdated,
+    storageRoot,
+    harvestFn: (job) =>
+      harvestJob(job, {
+        sshRunner,
+        scpRunner,
+        hostRepository,
+        jobRepository,
+        storageRoot,
+        broadcast: broadcastJobUpdated
+      })
+  })
+  jobPoller.start()
+  // Augment computeService with getEnabledComputeHosts so the RPC server can serve list_compute.
+  // Must preserve ComputeService's prototype methods (list/getDetails/submitJob/...) — see the helper.
+  const computeServiceWithRegistry = attachEnabledComputeHosts(computeService, hostsRegistry)
+  const notebookRpcServer = new NotebookLocalRpcServer(notebookService, {
+    connectorService,
+    computeService: computeServiceWithRegistry
+  })
   // The RPC server needs the runtime service to dispatch to, and the runtime service needs the RPC
   // server's (lazily-started) connection for host.mcp() env injection — wire the second half here to
   // avoid a construction cycle.
@@ -322,7 +422,8 @@ const registerIpcHandlers = async ({
     runRegistry: artifactRunRegistry,
     uploadRepository,
     notebookRpcServer,
-    settingsService
+    settingsService,
+    taskNotifications
   })
   runtimeRef.current = runtime
   // Single shared teardown owner for both the before-quit handler (index.ts) and the pre-update-install
@@ -501,6 +602,8 @@ const registerIpcHandlers = async ({
     projectDeletionCoordinator
   )
   registerProjectIpcHandlers(projectRepository, previewStateRepository, projectDeletionCoordinator)
+  // Compute IPC handlers are registered earlier (before the notebook RPC server) so computeService
+  // can be injected into the RPC server for the computeCall route. See above.
   // Wire the reviewer backend into the app lifecycle: installs ipcMain.handle('reviewer:run', ...)
   // and 'reviewer:get-for-session' so the renderer's fire-and-forget reviewer calls resolve to
   // real handlers instead of no-ops. Passing the already-constructed AcpRuntime so the reviewer
@@ -509,7 +612,7 @@ const registerIpcHandlers = async ({
 
   // Return the long-lived backend handles so the app lifecycle (before-quit) can shut them down
   // cleanly on quit — the agent process tree and every notebook kernel.
-  return { runtime, notebook: notebookService, shutdownCoordinator }
+  return { runtime, notebook: notebookService, shutdownCoordinator, taskNotifications }
 }
 
 export { registerIpcHandlers }

@@ -137,9 +137,11 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // can reach them. It only wraps ipcMain.handle — no server, no cost until something serves.
       const rpcCapture = installRpcCapture(ipcMain)
       // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
-      const { runtime, notebook, shutdownCoordinator } = await registerIpcHandlers({
-        mainEntryPath
-      })
+      const { runtime, notebook, shutdownCoordinator, taskNotifications } =
+        await registerIpcHandlers({
+          mainEntryPath,
+          headless: webMode.headless
+        })
       const webController = createWebServiceController({
         rpc: rpcCapture,
         requestQuit: () => app.quit()
@@ -156,6 +158,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         buildAuthenticatedWebUrl,
         routeSecondInstance,
         shutdownCoordinator,
+        taskNotifications,
         // Running-work snapshot + confirm coordinator, bound here where runtime/notebook are in scope.
         detectActiveSessions: () => computeActiveSessions({ runtime, notebook }),
         createConfirmClose: createElectronCloseConfirm,
@@ -215,6 +218,19 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         createInitialWindow: !ctx.webMode.headless,
         detectActiveSessions: ctx.detectActiveSessions,
         createConfirmClose: ctx.createConfirmClose
+      })
+
+      // Clicking a task notification surfaces the app and records which conversation to open. The
+      // renderer pulls the target once its sessions are hydrated (take-pending-open-session), so a
+      // click that recreates the window cannot lose the navigation — the send below is only a
+      // nudge for an already-running renderer and may safely be lost otherwise.
+      ctx.taskNotifications.setActivationHandler((sessionId) => {
+        const window = showMainWindow()
+        if (!sessionId) return
+
+        // The renderer pulls the click target once its sessions are hydrated.
+        ctx.taskNotifications.setPendingOpenSession(sessionId)
+        window.webContents.send('notifications:open-session')
       })
 
       // Route each second launch by its forwarded argv (see second-instance-router): a CLI

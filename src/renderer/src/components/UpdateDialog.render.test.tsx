@@ -106,4 +106,79 @@ describe('UpdateDialog', () => {
     expect(link).not.toBeNull()
     expect(link?.textContent).toContain('Download manually')
   })
+
+  it('shows download size on the download button when totalBytes is present', () => {
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: {
+        state: 'available',
+        current: '0.1.0',
+        latest: '0.2.0',
+        totalBytes: 12.5 * 1024 * 1024
+      }
+    })
+    act(() => root.render(<UpdateDialog />))
+    expect(document.body.textContent).toContain('Download update (12.5 MB)')
+  })
+
+  it('shows downloaded and total bytes alongside the progress bar while downloading', () => {
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: {
+        state: 'downloading',
+        current: '0.1.0',
+        latest: '0.2.0',
+        progress: 42,
+        downloadedBytes: 4200,
+        totalBytes: 10000
+      }
+    })
+    act(() => root.render(<UpdateDialog />))
+    expect(document.body.textContent).toContain('4.1 KB')
+    expect(document.body.textContent).toContain('9.8 KB')
+    expect(document.body.textContent).toContain('42%')
+  })
+
+  it('hides the left label when byte counts are missing while downloading', () => {
+    // When transferred/total are unknown the left span should be empty — percent appears only on
+    // the right, avoiding a duplicate "35%   35%" display.
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: {
+        state: 'downloading',
+        current: '0.1.0',
+        latest: '0.2.0',
+        progress: 35,
+        downloadedBytes: undefined,
+        totalBytes: undefined
+      }
+    })
+    act(() => root.render(<UpdateDialog />))
+    // The progress label row has two spans; the left one (context) should be empty.
+    const labelSpans = document.body.querySelectorAll('.tabular-nums span')
+    expect(labelSpans.length).toBeGreaterThanOrEqual(2)
+    expect(labelSpans[0].textContent).toBe('')
+    expect(labelSpans[1].textContent).toBe('35%')
+  })
+
+  it('hides the left label when downloadedBytes is 0 while downloading', () => {
+    // A fresh download that hasn't received its first progress event yet: downloadedBytes is 0,
+    // so the left label should be empty — not "0 B / 9.8 KB".
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: {
+        state: 'downloading',
+        current: '0.1.0',
+        latest: '0.2.0',
+        progress: 0,
+        downloadedBytes: 0,
+        totalBytes: 10000
+      }
+    })
+    act(() => root.render(<UpdateDialog />))
+    const labelSpans = document.body.querySelectorAll('.tabular-nums span')
+    expect(labelSpans.length).toBeGreaterThanOrEqual(2)
+    expect(labelSpans[0].textContent).toBe('')
+    expect(labelSpans[1].textContent).toBe('0%')
+  })
 })

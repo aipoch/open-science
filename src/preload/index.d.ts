@@ -28,7 +28,19 @@ import type {
   SaveManagedFileRequest,
   SaveManagedFileResult
 } from '../shared/file-save'
+import type {
+  ComputeApprovalDecision,
+  ComputeApprovalRequest,
+  ComputeHost,
+  CreateComputeHostRequest,
+  DeleteComputeHostRequest,
+  DetailsAuthor,
+  JobSummary,
+  ProbeResult
+} from '../shared/compute'
+import type { DirListing, DownloadDest, LocalFile } from '../shared/remote-fs'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
+import type { OpenSessionFromNotificationRequest } from '../shared/notifications'
 import type {
   ProjectDeletedEvent,
   SessionDeletedEvent,
@@ -105,6 +117,7 @@ import type {
   SetActiveProviderRequest,
   SetPackageMirrorRequest,
   SetAgentFrameworkRequest,
+  SetNotificationsEnabledRequest,
   SetReasoningEffortRequest,
   SetSkillEnabledRequest,
   SettingsSnapshot,
@@ -148,7 +161,7 @@ import type {
   StorageInfo
 } from '../shared/storage'
 import type { CliLauncherStatus } from '../shared/cli'
-import type { AppInfo, UpdateStatus } from '../shared/update'
+import type { AppInfo, DownloadProgress, UpdateStatus } from '../shared/update'
 import type {
   DeleteUploadRequest,
   FinalizeUploadSessionRequest,
@@ -221,6 +234,7 @@ interface OpenScienceAPI {
     setActiveProvider(request: SetActiveProviderRequest): Promise<SettingsSnapshot>
     setAgentFramework(request: SetAgentFrameworkRequest): Promise<SettingsSnapshot>
     setReasoningEffort(request: SetReasoningEffortRequest): Promise<SettingsSnapshot>
+    setNotificationsEnabled(request: SetNotificationsEnabledRequest): Promise<SettingsSnapshot>
     validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult>
     cancelCodexLogin(): Promise<void>
     loginIsolatedCodex(): Promise<ValidateProviderResult>
@@ -261,6 +275,10 @@ interface OpenScienceAPI {
     openFile(): Promise<OpenLogFileResult>
     revealInFolder(): Promise<RevealLogFileResult>
   }
+  notifications: {
+    onOpenSession(listener: () => void): RemoveListener
+    takePendingOpenSession(): Promise<OpenSessionFromNotificationRequest | null>
+  }
   github: {
     getStars(): Promise<number | null>
   }
@@ -277,7 +295,7 @@ interface OpenScienceAPI {
     cancel(): Promise<UpdateStatus>
     apply(): Promise<UpdateStatus>
     onStatus(listener: (status: UpdateStatus) => void): RemoveListener
-    onProgress(listener: (percent: number) => void): RemoveListener
+    onProgress(listener: (progress: DownloadProgress) => void): RemoveListener
   }
   projects: {
     list(): Promise<Project[]>
@@ -295,6 +313,54 @@ interface OpenScienceAPI {
     listArtifactGroups(request: ListArtifactGroupsRequest): Promise<ArtifactGroupPage>
     repairIndex(request: { projectId: string }): Promise<void>
     onChanged(listener: AcpListener<ProjectFilesChangedEvent>): RemoveListener
+  }
+  compute: {
+    // SSH compute host record CRUD (Compute settings tab). No credentials cross this boundary.
+    list(): Promise<ComputeHost[]>
+    get(providerId: string): Promise<ComputeHost | null>
+    create(request: CreateComputeHostRequest): Promise<ComputeHost>
+    delete(request: DeleteComputeHostRequest): Promise<void>
+    // Selectable Host aliases parsed from ~/.ssh/config (patterns / Match blocks excluded).
+    sshConfigAliases(): Promise<string[]>
+    // Runs the probe bundle against the host; persists probeResult + shape. SSH stays in main.
+    probe(providerId: string): Promise<ProbeResult>
+    // Details document: get (with skeleton synthesis when empty) and save (old_text guard).
+    detailsGet(providerId: string): Promise<{ doc: string; isSkeleton: boolean }>
+    detailsSave(
+      providerId: string,
+      text: string,
+      oldText: string,
+      author: DetailsAuthor
+    ): Promise<void>
+    // Scratch root: set path and mark pinned.
+    scratchSet(providerId: string, path: string): Promise<void>
+    // Concurrent job limit: store 1..500 (not enforced in Phase 1).
+    concurrencySet(providerId: string, limit: number): Promise<void>
+    // Fires when a compute call needs user approval (runs before any SSH is made).
+    onApprovalRequest(listener: (request: ComputeApprovalRequest) => void): () => void
+    // Renderer sends back the user's decision (once / conversation / project / deny).
+    respondApproval(request: { id: string; decision: ComputeApprovalDecision }): Promise<void>
+    // Lists a remote directory (browse experience).
+    listDir(providerId: string, path: string): Promise<DirListing>
+    // Downloads a remote file to OS Downloads or project artifact. No approval gate for UI actions.
+    download(providerId: string, remotePath: string, dest: DownloadDest): Promise<LocalFile>
+    // Reveals a local file path in the OS file manager (Finder / Explorer).
+    revealInFolder(filePath: string): Promise<void>
+    // Bookmark folders for the file browser Go-to/Pin feature, persisted in settings JSON.
+    bookmarksGet(providerId: string): Promise<string[]>
+    bookmarksSet(providerId: string, folders: string[]): Promise<void>
+    // Returns all jobs for a session as JobSummary[], optionally filtered by status (Phase 3d).
+    jobsList(filter: { sessionId: string; status?: string[] }): Promise<JobSummary[]>
+    // Returns jobs with notifiedAt set and notificationConsumedAt null (issue 05 restart recovery).
+    jobsPendingNotification(sessionId: string): Promise<JobSummary[]>
+    // Marks job ids as notification-consumed after a successful analysis turn (issue 05).
+    jobsMarkConsumed(sessionId: string, jobIds: string[]): Promise<void>
+    // Fires when a job's status or tail changes (broadcast from the main-process poller).
+    onJobUpdated(listener: (job: JobSummary) => void): () => void
+    // Per-session enabled compute hosts (issue 06). The renderer owns the durable state (session JSON);
+    // the main-process registry is the runtime cache for list_compute RPC ops.
+    enabledHostsGet(sessionId: string): Promise<string[]>
+    enabledHostsSet(sessionId: string, providerIds: string[]): Promise<void>
   }
   preview: {
     load(request: LoadPreviewStateRequest): Promise<PersistedPreviewState | null>

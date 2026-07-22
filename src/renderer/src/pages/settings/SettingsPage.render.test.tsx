@@ -167,8 +167,8 @@ describe('SettingsPage layout', () => {
     expect(dialog?.getAttribute('data-slot')).toBe('settings-surface')
     expect(dialog?.className).toContain('overscroll-contain')
 
-    // Left navigation grouped as Capabilities (Skills, Connectors, Network) and Workspace (Model
-    // with its Agent sub-item, Runtimes, Storage, General).
+    // Left navigation grouped as Capabilities (Skills, Connectors, Compute, Network) and Workspace
+    // (Model with its Agent sub-item, Runtimes, Storage, General).
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
     expect(nav?.className).toContain('bg-background')
@@ -176,15 +176,16 @@ describe('SettingsPage layout', () => {
     expect(nav?.textContent).toContain('Capabilities')
     expect(nav?.textContent).toContain('Workspace')
     const navItems = nav?.querySelectorAll('li') ?? []
-    expect(navItems).toHaveLength(8)
+    expect(navItems).toHaveLength(9)
     expect(navItems[0]?.textContent).toContain('Skills')
     expect(navItems[1]?.textContent).toContain('Connectors')
-    expect(navItems[2]?.textContent).toContain('Network')
-    expect(navItems[3]?.textContent).toContain('Model')
-    expect(navItems[4]?.textContent).toContain('Agent')
-    expect(navItems[5]?.textContent).toContain('Runtimes')
-    expect(navItems[6]?.textContent).toContain('Storage')
-    expect(navItems[7]?.textContent).toContain('General')
+    expect(navItems[2]?.textContent).toContain('Compute')
+    expect(navItems[3]?.textContent).toContain('Network')
+    expect(navItems[4]?.textContent).toContain('Model')
+    expect(navItems[5]?.textContent).toContain('Agent')
+    expect(navItems[6]?.textContent).toContain('Runtimes')
+    expect(navItems[7]?.textContent).toContain('Storage')
+    expect(navItems[8]?.textContent).toContain('General')
     // Model is the default active panel.
     expect(nav?.querySelector('[aria-current="page"]')?.textContent).toContain('Model')
 
@@ -359,8 +360,8 @@ describe('SettingsPage layout', () => {
       generalTab?.click()
     })
 
-    // AppVersion, Diagnostics, Command line tool, Community.
-    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(4)
+    // AppVersion, Notifications, Diagnostics, Command line tool, Community.
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(5)
     expect(document.body.querySelector('[data-slot="settings-row"]')).not.toBeNull()
 
     // The Diagnostics panel surfaces the log file path plus Open and Reveal controls.

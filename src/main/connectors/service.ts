@@ -26,6 +26,9 @@ type ConnectorServiceDeps = {
     connector: string
     method: string
     args: Record<string, unknown>
+    // The session that triggered the call, when one is known, so the resulting notification can
+    // open the right conversation.
+    sessionId?: string
   }) => Promise<ApprovalDecision>
   // Handlers for bundled tools that run privileged local code (e.g. write an artifact, open a preview)
   // instead of the read-only HTTP ParserEngine. Keyed by `${connector}/${method}`; invoked after the
@@ -72,7 +75,7 @@ export class ConnectorService {
       (s) => s.name === connector
     )
     if (!custom) throw new Error(`connector not enabled: ${connector}`)
-    return this.callCustom(custom, method, args)
+    return this.callCustom(custom, method, args, context)
   }
 
   private async callBundled(
@@ -88,7 +91,7 @@ export class ConnectorService {
     if (this.isBlocked(connector, method)) {
       throw new Error(`tool blocked by policy: ${connector}/${method}`)
     }
-    await this.ensureApproved(connector, method, args)
+    await this.ensureApproved(connector, method, args, context.sessionId)
 
     // Bundled tools that need privileged local behavior run here, after the same gate, instead of the
     // read-only HTTP engine.
@@ -101,14 +104,15 @@ export class ConnectorService {
   private async callCustom(
     custom: NonNullable<StoredConnectors['customMcpServers']>[number],
     method: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    context: ConnectorCallContext
   ): Promise<unknown> {
     if (!custom.enabled) throw new Error(`connector not enabled: ${custom.name}`)
     if (this.isBlocked(custom.name, method)) {
       throw new Error(`tool blocked by policy: ${custom.name}/${method}`)
     }
     if (!this.deps.mcpClientManager) throw new Error('connector runtime not configured')
-    await this.ensureApproved(custom.name, method, args)
+    await this.ensureApproved(custom.name, method, args, context.sessionId)
 
     return this.deps.mcpClientManager.call(toCustomMcpConfig(custom), method, args)
   }
@@ -123,7 +127,8 @@ export class ConnectorService {
   private async ensureApproved(
     connector: string,
     method: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    sessionId: string | undefined
   ): Promise<void> {
     const c = this.deps.getConnectors()
     const requiresAsk = (c?.askToolIds ?? []).includes(`${connector}/${method}`)
@@ -131,7 +136,8 @@ export class ConnectorService {
     if (!requiresAsk || skipApprovals) return
     if (!this.deps.requestApproval) return // no approver wired (tests) — do not block
 
-    const decision = await this.deps.requestApproval({ connector, method, args })
+    const decision = await this.deps.requestApproval({ connector, method, args, sessionId })
+
     if (decision !== 'allow') {
       throw new Error(`tool call denied by user: ${connector}/${method}`)
     }

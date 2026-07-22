@@ -1,6 +1,13 @@
 import type { ApprovalDecision, ConnectorApprovalRequest } from '../../shared/settings'
 
-export type ApprovalInfo = { connector: string; method: string; argsPreview: string }
+export type ApprovalInfo = {
+  connector: string
+  method: string
+  argsPreview: string
+  // The session that triggered the connector call, when one is known, so the desktop notification
+  // can open that conversation.
+  sessionId?: string
+}
 
 type ApprovalBrokerDeps = {
   // Pushes a pending request to the renderer(s) that show the approval card.

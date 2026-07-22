@@ -32,6 +32,7 @@ type SettingsApi = {
   onInstallLog: ReturnType<typeof vi.fn>
   setAgentFramework: ReturnType<typeof vi.fn>
   setReasoningEffort: ReturnType<typeof vi.fn>
+  setNotificationsEnabled: ReturnType<typeof vi.fn>
   upsertProvider: ReturnType<typeof vi.fn>
   validateProvider: ReturnType<typeof vi.fn>
   cancelCodexLogin: ReturnType<typeof vi.fn>
@@ -76,7 +77,8 @@ const snapshot = (providers: SettingsSnapshot['providers']): SettingsSnapshot =>
   claudeManaged: false,
   opencodeManaged: false,
   codexManaged: false,
-  reasoningEffort: 'default'
+  reasoningEffort: 'default',
+  notificationsEnabled: true
 })
 
 const providerView = (id: string): SettingsSnapshot['providers'][number] => ({
@@ -138,6 +140,11 @@ beforeEach(() => {
       .fn()
       .mockImplementation((request: { effort: string }) =>
         Promise.resolve({ ...snapshot([]), reasoningEffort: request.effort })
+      ),
+    setNotificationsEnabled: vi
+      .fn()
+      .mockImplementation((request: { enabled: boolean }) =>
+        Promise.resolve({ ...snapshot([]), notificationsEnabled: request.enabled })
       ),
     upsertProvider: vi.fn(),
     validateProvider: vi.fn(),
@@ -1261,5 +1268,35 @@ describe('settings store: setReasoningEffort', () => {
     await useSettingsStore.getState().load()
 
     expect(useSettingsStore.getState().reasoningEffort).toBe('max')
+  })
+})
+
+describe('settings store: setNotificationsEnabled', () => {
+  it('forwards the flag to main and caches the returned snapshot', async () => {
+    await useSettingsStore.getState().setNotificationsEnabled(false)
+
+    expect(api.setNotificationsEnabled).toHaveBeenCalledWith({ enabled: false })
+    expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
+  })
+
+  it('reverts to the previous flag and logs when main rejects', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    api.setNotificationsEnabled.mockRejectedValue(new Error('ipc down'))
+
+    await useSettingsStore.getState().setNotificationsEnabled(false)
+
+    expect(useSettingsStore.getState().notificationsEnabled).toBe(true)
+    expect(consoleError).toHaveBeenCalledWith(
+      'Failed to set notifications enabled',
+      expect.any(Error)
+    )
+  })
+
+  it('load() picks up a disabled preference from the settings snapshot', async () => {
+    api.getSettings.mockResolvedValue({ ...snapshot([]), notificationsEnabled: false })
+
+    await useSettingsStore.getState().load()
+
+    expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
   })
 })

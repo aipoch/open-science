@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useUpdateStore } from '@/stores/update-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import { GeneralPanel } from './GeneralPanel'
 
 vi.mock('@/assets/logo.png', () => ({ default: 'logo.png' }))
@@ -14,6 +15,9 @@ let cliApi: {
   getStatus: ReturnType<typeof vi.fn>
   install: ReturnType<typeof vi.fn>
   uninstall: ReturnType<typeof vi.fn>
+}
+let settingsApi: {
+  setNotificationsEnabled: ReturnType<typeof vi.fn>
 }
 
 const findButton = (pattern: RegExp): HTMLButtonElement | undefined =>
@@ -54,6 +58,14 @@ beforeEach(() => {
       onPath: true
     })
   }
+  settingsApi = {
+    setNotificationsEnabled: vi
+      .fn()
+      .mockImplementation((request: { enabled: boolean }) =>
+        Promise.resolve({ notificationsEnabled: request.enabled })
+      )
+  }
+  useSettingsStore.setState({ notificationsEnabled: true })
   ;(window as unknown as { api: unknown }).api = {
     logs: {
       getPath: vi.fn().mockResolvedValue('/logs/main.log'),
@@ -61,7 +73,8 @@ beforeEach(() => {
       revealInFolder: vi.fn().mockResolvedValue({ revealed: true })
     },
     cli: cliApi,
-    github: { getStars: vi.fn().mockResolvedValue(1) }
+    github: { getStars: vi.fn().mockResolvedValue(1) },
+    settings: settingsApi
   }
 })
 
@@ -116,5 +129,29 @@ describe('GeneralPanel command line tool', () => {
 
     expect(cliApi.uninstall).toHaveBeenCalledTimes(1)
     expect(findButton(/install command/i)).toBeDefined()
+  })
+})
+
+describe('GeneralPanel notifications', () => {
+  it('toggles task notifications off via the settings API', async () => {
+    await act(async () => {
+      root.render(<GeneralPanel />)
+    })
+    await flush()
+
+    const toggle = container.querySelector(
+      '[aria-label="Toggle task notifications"]'
+    ) as HTMLButtonElement | null
+    expect(toggle).not.toBeNull()
+    // The store default (and the mocked preference) starts enabled.
+    expect(toggle?.getAttribute('data-state')).toBe('checked')
+
+    await act(async () => {
+      toggle?.click()
+    })
+    await flush()
+
+    expect(settingsApi.setNotificationsEnabled).toHaveBeenCalledWith({ enabled: false })
+    expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
   })
 })

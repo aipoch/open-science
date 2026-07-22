@@ -35,6 +35,7 @@ import type {
   AcpStateSnapshot
 } from '../../shared/acp'
 import { getAcpRuntimeEventImage, MAX_ACP_SESSION_IMAGE_BYTES } from '../../shared/acp'
+import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
 import {
   DEFAULT_PERMISSION_PROFILE,
   normalizePermissionProfile,
@@ -1895,7 +1896,7 @@ class AcpRuntime {
         level: 'error',
         recoverable,
         sessionId: request.sessionId,
-        title: 'Prompt failed',
+        title: ACP_PROMPT_FAILED_EVENT_TITLE,
         text
       })
       throw error

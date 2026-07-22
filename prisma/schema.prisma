@@ -125,3 +125,79 @@ model ManagedFileSessionSync {
   @@id([projectId, sessionId])
   @@index([projectId, deletedAt, groupSortAtMs, sessionId])
 }
+
+// A remote compute job submitted via host.compute.create(id).submit_job(). Phase 3a (issue 01 of
+// compute-jobs) adds this table as a pure-additive migration — it references nothing, and nothing
+// references it, so adding it is safe against any pre-existing DB. The table tracks the full
+// lifecycle: submitted → running → success/failed/timeout/error.
+// Columns for harvest (harvestedAt, outputManifest) and concurrency (queued) are included now per
+// design.md §1 to avoid a schema change in 3b/3c — they are null until those phases fill them.
+// Security: no credentials are stored; command is stored for audit; commandHash for dedup.
+model ComputeJob {
+  id              String    @id @default(cuid())
+  providerId      String
+  shape           String
+  sessionId       String
+  projectId       String
+  status          String    @default("submitted")
+  intent          String
+  command         String
+  commandHash     String
+  environment     String?
+  resourceRequest String?
+  inputManifest   String?
+  outputManifest  String?
+  harvestConfig   String?
+  timeoutSeconds  Int?
+  remoteWorkdir   String?
+  remoteHandle    String?
+  exitCode        Int?
+  stdoutTail      String?
+  stderrTail      String?
+  errorCode       String?
+  // lastPollError: set when SSH connectivity fails during a poll tick (design.md §8 boundary 2).
+  // The job status is NOT changed — this field surfaces the transient error to the UI.
+  // Cleared on the next successful poll. retry_after_user_action is always true for this field.
+  lastPollError           String?
+  // 3b harvest columns (compute-harvest issue 01): pure-additive, null until Phase 3b fills them.
+  // harvestError: summary of a harvest_failed outcome; non-null means harvest completed with errors.
+  harvestError            String?
+  // leftOnRemote: JSON [{uri, size_mb, reason}] — files left on the remote side after harvest.
+  leftOnRemote            String?
+  // notifiedAt: set when the compute_done notification has been enqueued to the inbox.
+  notifiedAt              DateTime?
+  // notificationConsumedAt: set by wait_for_notification when the notification is consumed.
+  notificationConsumedAt  DateTime?
+  createdAt               DateTime  @default(now())
+  submittedAt             DateTime?
+  startedAt               DateTime?
+  finishedAt              DateTime?
+  harvestedAt             DateTime?
+
+  @@index([providerId])
+  @@index([sessionId])
+  @@index([status])
+}
+
+// A registered remote SSH compute host (Compute settings tab). Phase 1 (issue 01) manages the record
+// only — no SSH connection is made. Pure-additive table: it references nothing and nothing references
+// it, so adding it is byte-compatible with any pre-existing DB (see prisma-client.ts runtime DDL and
+// its compatibility tests). Security: only an ssh alias + optional non-secret overrides are stored;
+// no credentials or private keys ever land here (design.md §1/§3).
+model ComputeHost {
+  id               String    @id @default(cuid())
+  providerId       String    @unique // "ssh:<alias>"
+  displayName      String
+  shape            String    @default("direct_ssh") // direct_ssh | scheduler_cluster | bridge_runner
+  sshAlias         String
+  sshOverrides     String? // JSON: { user?, port?, identityFile? } — never credentials
+  scratchRoot      String?
+  scratchPinned    Boolean   @default(false)
+  concurrencyLimit Int? // stored but not enforced in Phase 1
+  probeResult      String? // JSON probe snapshot, written by a later issue
+  detailsDoc       String    @default("") // markdown notes, <= 32768 chars
+  detailsUpdatedAt DateTime?
+  detailsUpdatedBy String? // user | agent
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}

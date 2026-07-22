@@ -61,6 +61,7 @@ import {
   CODEX_ISOLATED_PROVIDER_ID,
   CODEX_SHARED_PROVIDER_ID,
   codexSubscriptionProviderIdentity,
+  DEFAULT_NOTIFICATIONS_ENABLED,
   DEFAULT_REASONING_EFFORT,
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
@@ -426,6 +427,7 @@ class SettingsService {
       onboardingCompletedAt: settings.onboardingCompletedAt,
       packageMirror: settings.packageMirror,
       reasoningEffort: settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
+      notificationsEnabled: settings.notificationsEnabled ?? DEFAULT_NOTIFICATIONS_ENABLED,
       agentFrameworkId: settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
       agentFrameworks: listAgentFrameworks().map((framework) => ({
         id: framework.id,
@@ -575,6 +577,21 @@ class SettingsService {
     // forwarding policy must be updated in place: an explicit level forwards, 'default' restores
     // stripping so Codex's own default effort never leaks upstream.
     this.responsesBridge?.setForwardReasoningEffort(effort !== DEFAULT_REASONING_EFFORT)
+
+    return this.getSettingsView()
+  }
+
+  // Whether desktop notifications for finished/failed agent tasks are on, read fresh so the
+  // notification path sees a toggle change immediately (no restart, no cached copy to go stale).
+  async getNotificationsEnabled(): Promise<boolean> {
+    return (
+      (await this.repository.getSettings()).notificationsEnabled ?? DEFAULT_NOTIFICATIONS_ENABLED
+    )
+  }
+
+  // Sets the desktop-notification preference and returns the refreshed snapshot for the renderer.
+  async setNotificationsEnabled(enabled: boolean): Promise<SettingsSnapshot> {
+    await this.repository.setNotificationsEnabled(enabled)
 
     return this.getSettingsView()
   }
@@ -2028,6 +2045,19 @@ class SettingsService {
     const { available } = await detectNpmAvailable()
 
     return available
+  }
+
+  // Returns the bookmark folders for a provider. Used by the remote file browser Go-to dropdown.
+  async getComputeBookmarks(providerId: string): Promise<string[]> {
+    const settings = await this.repository.getSettings()
+    const store = settings.computeBookmarks ?? {}
+    const folders = store[providerId]
+    return Array.isArray(folders) ? folders.filter((f): f is string => typeof f === 'string') : []
+  }
+
+  // Sets the bookmark folders for a provider. Replaces the full array for that provider.
+  async setComputeBookmarks(providerId: string, folders: string[]): Promise<void> {
+    await this.repository.setComputeBookmarks(providerId, folders)
   }
 
   // Builds the spawn env for the active provider, read fresh so switching takes effect on reconnect.

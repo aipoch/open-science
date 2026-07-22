@@ -85,6 +85,12 @@ export type AcpRuntimeEventKind =
 
 export type AcpRuntimeEventLevel = 'info' | 'warning' | 'error'
 
+// Title of the error event marking a genuinely failed prompt turn. Shared between the runtime
+// producer and consumers (e.g. desktop notifications) that must distinguish turn failures from
+// ancillary session-scoped errors (artifact cleanup, cancel timeout) — a copy edit here updates
+// both sides at once.
+export const ACP_PROMPT_FAILED_EVENT_TITLE = 'Prompt failed'
+
 // Marks a prompt failure the app can auto-recover from without user action. 'context-overflow' means
 // the conversation outgrew the provider's request-size limit (accumulated media); the renderer resets
 // the agent context and replays a text-only transcript. Absent on ordinary events.

@@ -47,8 +47,12 @@ export type AppLifecycleDeps = {
 
 // Installs the tray, the first window, and the quit/activate/window-all-closed handlers. Returns
 // showMainWindow so the single-instance second-instance hook can surface the window (creating one when
-// none exists — e.g. macOS after the last window was closed but the app stayed resident).
-export const installAppLifecycle = (deps: AppLifecycleDeps): { showMainWindow: () => void } => {
+// none exists — e.g. macOS after the last window was closed but the app stayed resident). The returned
+// window reference lets callers (e.g. notification activation) target it without re-deriving it by
+// focus or window order.
+export const installAppLifecycle = (
+  deps: AppLifecycleDeps
+): { showMainWindow: () => BrowserWindow } => {
   const platform = deps.platform ?? process.platform
 
   let mainWindow: BrowserWindow | undefined
@@ -101,14 +105,16 @@ export const installAppLifecycle = (deps: AppLifecycleDeps): { showMainWindow: (
 
   // Surfaces the main window, creating a fresh one when none exists or the last was closed (macOS keeps
   // the app alive with no window; the tray Show item and a second launch must be able to bring it back).
-  const showMainWindow = (): void => {
+  // Returns the window so callers can target it directly instead of guessing by focus or window order.
+  const showMainWindow = (): BrowserWindow => {
     if (!mainWindow || mainWindow.isDestroyed()) {
       mainWindow = openWindow()
-      return
+      return mainWindow
     }
     if (mainWindow.isMinimized()) mainWindow.restore()
     if (!mainWindow.isVisible()) mainWindow.show()
     mainWindow.focus()
+    return mainWindow
   }
 
   const hideMainWindow = (): void => {

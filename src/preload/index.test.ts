@@ -40,6 +40,7 @@ type PreloadApi = {
     installOpencode: (request: unknown) => unknown
     installCodex: (request: unknown) => unknown
     setAgentFramework: (request: unknown) => unknown
+    setNotificationsEnabled: (request: unknown) => unknown
     uninstallClaude: () => unknown
     uninstallOpencode: () => unknown
     uninstallCodex: () => unknown
@@ -50,6 +51,9 @@ type PreloadApi = {
   acp: {
     resumeSession: (request: unknown) => unknown
     resetSessionContext: (request: unknown) => unknown
+  }
+  notifications: {
+    takePendingOpenSession: () => unknown
   }
   cli: {
     getStatus: () => unknown
@@ -150,6 +154,12 @@ const cases: ForwardingCase[] = [
     args: [sampleFramework]
   },
   {
+    name: 'settings.setNotificationsEnabled → settings:set-notifications-enabled',
+    invoke: (a) => a.settings.setNotificationsEnabled({ enabled: false }),
+    channel: 'settings:set-notifications-enabled',
+    args: [{ enabled: false }]
+  },
+  {
     name: 'settings.uninstallClaude → settings:uninstall-claude (no args)',
     invoke: (a) => a.settings.uninstallClaude(),
     channel: 'settings:uninstall-claude',
@@ -216,6 +226,13 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.acp.resetSessionContext(sampleResumeRequest),
     channel: 'acp:reset-session-context',
     args: [sampleResumeRequest]
+  },
+  // Notification click target: the renderer pulls it once sessions are hydrated.
+  {
+    name: 'notifications.takePendingOpenSession → notifications:take-pending-open-session',
+    invoke: (a) => a.notifications.takePendingOpenSession(),
+    channel: 'notifications:take-pending-open-session',
+    args: []
   }
 ]
 

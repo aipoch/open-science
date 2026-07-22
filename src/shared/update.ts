@@ -20,11 +20,20 @@ export type UpdateStatus = {
   notes?: string
   download?: PlatformDownload
   progress?: number // 0-100 while downloading
+  downloadedBytes?: number // bytes received so far while downloading
+  totalBytes?: number // total installer size in bytes
   localPath?: string // set when state === 'ready'
   error?: string
   // How the renderer applies a ready update: open the downloaded installer (mac manual reinstall) or
   // restart into an in-place electron-updater install (win/linux). Set by the active strategy.
   applyKind?: 'installer' | 'restart'
+}
+
+// Broadcast on every download chunk so the renderer can show live byte counts alongside the percent.
+export type DownloadProgress = {
+  percent: number
+  transferred: number
+  total: number
 }
 
 export type AppInfo = { name: string; version: string; copyright: string }
@@ -67,4 +76,18 @@ export const selectDownload = (
     return manifest.downloads['linux-x64-appimage']
   }
   return null
+}
+
+// Formats a byte count into a human-readable string (e.g. 1234567 → "1.2 MB"). Uses 1024-based
+// binary units, matching the convention most desktop OSes show for file/download sizes.
+const BYTE_UNITS = ['B', 'KB', 'MB', 'GB'] as const
+export const formatBytes = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes} B`
+  let value = bytes
+  let unitIndex = 0
+  while (value >= 1024 && unitIndex < BYTE_UNITS.length - 1) {
+    value /= 1024
+    unitIndex += 1
+  }
+  return `${value.toFixed(1)} ${BYTE_UNITS[unitIndex]}`
 }

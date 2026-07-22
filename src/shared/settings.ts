@@ -205,6 +205,10 @@ export type ReasoningEffort = 'default' | 'low' | 'medium' | 'high' | 'max'
 
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'default'
 
+// Desktop notifications for finished/failed agent tasks are opt-out: they only fire while the app
+// is unfocused, so the default surprises no one staring at the window.
+export const DEFAULT_NOTIFICATIONS_ENABLED = true
+
 const REASONING_EFFORTS: readonly ReasoningEffort[] = ['default', 'low', 'medium', 'high', 'max']
 
 // Runtime guard for untrusted values (IPC payloads, settings.json): only the known levels pass.
@@ -250,6 +254,8 @@ export type SettingsSnapshot = {
   // The user's reasoning-effort preference for agent requests. 'default' leaves the agent's own
   // default untouched; concrete levels apply to subsequent requests when the agent supports them.
   reasoningEffort: ReasoningEffort
+  // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
+  notificationsEnabled: boolean
 }
 
 // Request to set (or clear, via omitted fields) the package-mirror configuration.
@@ -261,6 +267,10 @@ export type SetAgentFrameworkRequest = {
 
 export type SetReasoningEffortRequest = {
   effort: ReasoningEffort
+}
+
+export type SetNotificationsEnabledRequest = {
+  enabled: boolean
 }
 
 // The hard startup gates. Kept as plain booleans so the wizard can target the first unmet step.
@@ -845,6 +855,14 @@ export type ConnectorApprovalRequest = {
   connector: string // bundled connector id or custom server name
   method: string
   argsPreview: string // truncated JSON preview of the call arguments
+  // The session that triggered the connector call, so a desktop notification can surface and open
+  // that conversation. Absent for call paths that don't carry one.
+  sessionId?: string
 }
 export type ApprovalDecision = 'allow' | 'deny'
 export type RespondApprovalRequest = { id: string; decision: ApprovalDecision }
+
+// Minimal settings slice the remote-file-browser bookmark helpers depend on. Declared here in
+// src/shared (not src/main) so src/shared/remote-fs.ts stays within the shared layer — the full
+// StoredSettings in src/main structurally satisfies this shape.
+export type ComputeBookmarkStore = { computeBookmarks?: Record<string, string[]> }
