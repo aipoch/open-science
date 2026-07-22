@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AgentFrameworkCard } from './AgentFrameworkCard'
 import { getClaudeInstallSources } from '../../../../shared/settings'
+import { clickRadixMenuItem, openRadixMenu } from './test-utils'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -54,15 +55,8 @@ const renderCard = (overrides: Partial<CardProps> = {}): void => {
   })
 }
 
-// Radix menus open on pointerdown (not click), so the trigger needs the full event sequence —
-// same pattern as the other dropdown tests in this codebase.
 const openInstallMenu = (): void => {
-  const trigger = container.querySelector<HTMLButtonElement>('[aria-label^="Install"]')
-  act(() => {
-    trigger?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
-    trigger?.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, button: 0 }))
-    trigger?.click()
-  })
+  openRadixMenu(container.querySelector<HTMLButtonElement>('[aria-label^="Install"]'))
 }
 
 describe('AgentFrameworkCard', () => {
@@ -134,10 +128,7 @@ describe('AgentFrameworkCard', () => {
       document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
     ).find((item) => item.textContent?.includes('npm (global install)'))
     expect(npmItem).toBeDefined()
-    act(() => {
-      npmItem?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
-      npmItem?.click()
-    })
+    clickRadixMenuItem(npmItem)
 
     expect(onInstall).toHaveBeenCalledWith('npm')
   })
@@ -203,15 +194,18 @@ describe('AgentFrameworkCard', () => {
     expect(uninstall?.disabled).toBe(true)
   })
 
-  it('keeps the Install button available while only the uninstall is actionable for a broken install', () => {
-    // Path resolved but not ready (e.g. Codex whose preflight failed): both repair paths stay reachable.
+  it('shows a single Repair action (amber badge, no Uninstall) for a detected-but-broken runtime', () => {
+    // Path resolved but preflight failed (e.g. Codex whose adapter needs reinstall): the card
+    // offers Repair only — one action, and the badge stops claiming "Not installed".
     renderCard({ ready: false, path: '/data/codex/adapter/index.js' })
 
+    expect(container.textContent).toContain('Needs repair')
+    expect(container.querySelector('[aria-label^="Repair"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label^="Install"]')).toBeNull()
     expect(
-      Array.from(container.querySelectorAll('button')).some((b) =>
-        b.textContent?.includes('Uninstall')
+      Array.from(container.querySelectorAll('button')).some((button) =>
+        button.textContent?.includes('Uninstall')
       )
-    ).toBe(true)
-    expect(container.querySelector('[aria-label^="Install"]')).not.toBeNull()
+    ).toBe(false)
   })
 })

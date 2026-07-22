@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronDown, Download, Loader2 } from 'lucide-react'
+import { ChevronDown, Download, Loader2, Wrench } from 'lucide-react'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Badge } from '@/components/ui/badge'
@@ -66,10 +66,13 @@ type AgentFrameworkCardProps = {
   onInstall: (source: ClaudeInstallSource) => void
 }
 
-// Install-source picker behind the card's single Install button. Choosing a source starts the
+// Install-source picker behind the card's single action button. Choosing a source starts the
 // install immediately; the trigger then flips to a disabled "Installing…" until the run ends.
+// The label adapts to the card state: "Install" when nothing was detected, "Repair" when a
+// detected-but-broken runtime is being reinstalled.
 const InstallSourceMenu = ({
   name,
+  label,
   sources,
   installing,
   disabled,
@@ -77,62 +80,69 @@ const InstallSourceMenu = ({
   onInstall
 }: {
   name: string
+  label: 'Install' | 'Repair'
   sources: ClaudeInstallSourceInfo[]
   installing: boolean
   disabled: boolean
   npmAvailable: boolean
   onInstall: (source: ClaudeInstallSource) => void
-}): React.JSX.Element => (
-  <DropdownMenu>
-    <DropdownMenuTrigger asChild>
-      <Button
-        type="button"
-        size="sm"
-        disabled={installing || disabled}
-        aria-label={`Install ${name}`}
-      >
-        {installing ? (
-          <Loader2 className="animate-spin" aria-hidden="true" />
-        ) : (
-          <Download aria-hidden="true" />
-        )}
-        {installing ? 'Installing…' : 'Install'}
-        {!installing ? <ChevronDown aria-hidden="true" /> : null}
-      </Button>
-    </DropdownMenuTrigger>
-    <DropdownMenuContent align="end" className="w-80">
-      <DropdownMenuLabel>Install source</DropdownMenuLabel>
-      {sources.map((item) => {
-        // Sources needing npm are disabled (not hidden) when npm is missing, so the option stays
-        // discoverable with its unavailability spelled out.
-        const npmMissing = item.requiresNpm && !npmAvailable
-        return (
-          <DropdownMenuItem
-            key={item.id}
-            disabled={npmMissing}
-            onSelect={() => onInstall(item.id)}
-            className="flex flex-col items-start gap-0.5"
-          >
-            <span>
-              {item.label}
-              {npmMissing ? ' (npm not found)' : ''}
-            </span>
-            {item.description ? (
-              <span className="text-xs text-muted-foreground">{item.description}</span>
-            ) : item.displayCommand ? (
-              <span className="font-mono text-xs text-muted-foreground">{item.displayCommand}</span>
-            ) : null}
-          </DropdownMenuItem>
-        )
-      })}
-    </DropdownMenuContent>
-  </DropdownMenu>
-)
+}): React.JSX.Element => {
+  const Icon = label === 'Repair' ? Wrench : Download
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          size="sm"
+          disabled={installing || disabled}
+          aria-label={`${label} ${name}`}
+        >
+          {installing ? (
+            <Loader2 className="animate-spin" aria-hidden="true" />
+          ) : (
+            <Icon aria-hidden />
+          )}
+          {installing ? 'Installing…' : label}
+          {!installing ? <ChevronDown aria-hidden="true" /> : null}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-80">
+        <DropdownMenuLabel>Install source</DropdownMenuLabel>
+        {sources.map((item) => {
+          // Sources needing npm are disabled (not hidden) when npm is missing, so the option stays
+          // discoverable with its unavailability spelled out.
+          const npmMissing = item.requiresNpm && !npmAvailable
+          return (
+            <DropdownMenuItem
+              key={item.id}
+              disabled={npmMissing}
+              onSelect={() => onInstall(item.id)}
+              className="flex flex-col items-start gap-0.5"
+            >
+              <span>
+                {item.label}
+                {npmMissing ? ' (npm not found)' : ''}
+              </span>
+              {item.description ? (
+                <span className="text-xs text-muted-foreground">{item.description}</span>
+              ) : item.displayCommand ? (
+                <span className="font-mono text-xs text-muted-foreground">
+                  {item.displayCommand}
+                </span>
+              ) : null}
+            </DropdownMenuItem>
+          )
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
 
 // Unified agent-framework card for the settings Model panel. The whole card is the radio option
 // that switches the active framework (only ready runtimes are selectable); the action column on
-// the right carries the single relevant action — Uninstall for detected runtimes, an Install
-// source menu otherwise — and stops the click from bubbling into a selection.
+// the right carries exactly one action — Uninstall when ready, Repair when a detected runtime
+// fails preflight, Install when nothing was detected — and stops clicks bubbling into a selection.
 const AgentFrameworkCard = ({
   icon,
   name,
@@ -247,6 +257,11 @@ const AgentFrameworkCard = ({
                 ) : (
                   <Badge variant="secondary">Installed</Badge>
                 )
+              ) : found ? (
+                // A detected-but-broken runtime (preflight failed) is not "not installed".
+                <Badge variant="outline" className="border-amber-500/40 text-amber-600">
+                  Needs repair
+                </Badge>
               ) : (
                 <Badge variant="outline" className="text-muted-foreground">
                   Not installed
@@ -271,12 +286,14 @@ const AgentFrameworkCard = ({
               </div>
             ) : null}
           </div>
-          {/* Actions live outside the selection gesture: clicks here must not switch frameworks. */}
+          {/* Actions live outside the selection gesture: clicks here must not switch frameworks.
+              Exactly one action per card: Uninstall when ready, Repair when detected-but-broken,
+              Install when nothing was detected. */}
           <div
             className="flex shrink-0 items-center gap-2"
             onClick={(event) => event.stopPropagation()}
           >
-            {found ? (
+            {ready ? (
               <RuntimeUninstallControl
                 label={name}
                 uninstallCommand={uninstallCommand}
@@ -288,17 +305,17 @@ const AgentFrameworkCard = ({
                 isInstalling={installRunning}
                 onUninstall={onUninstall}
               />
-            ) : null}
-            {!ready ? (
+            ) : (
               <InstallSourceMenu
                 name={name}
+                label={found ? 'Repair' : 'Install'}
                 sources={installSources}
                 installing={installing}
                 disabled={installLocked}
                 npmAvailable={npmAvailable}
                 onInstall={onInstall}
               />
-            ) : null}
+            )}
           </div>
         </div>
 

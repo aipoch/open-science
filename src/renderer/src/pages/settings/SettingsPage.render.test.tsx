@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SettingsPage } from './SettingsPage'
+import { clickRadixMenuItem, openRadixMenu } from './test-utils'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 
 let container: HTMLDivElement
@@ -817,21 +818,14 @@ describe('SettingsPage Codex framework', () => {
       '[aria-label="Install Codex"]'
     )
     expect(installTrigger).not.toBeNull()
-    await act(async () => {
-      installTrigger?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
-      installTrigger?.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, button: 0 }))
-      installTrigger?.click()
-    })
+    openRadixMenu(installTrigger)
 
     // The Install button opens a source menu; the app-managed source is the recommended default.
     const managedItem = Array.from(
       document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
     ).find((item) => item.textContent?.includes('App-managed download (recommended)'))
     expect(managedItem).toBeDefined()
-    await act(async () => {
-      managedItem?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
-      managedItem?.click()
-    })
+    clickRadixMenuItem(managedItem)
 
     expect(installCodex).toHaveBeenCalledWith({ source: 'managed' })
   })
@@ -884,8 +878,8 @@ describe('SettingsPage Codex framework', () => {
     await act(async () => redetect?.click())
 
     expect(detectClaude).toHaveBeenCalledTimes(1)
-    expect(detectOpencode).toHaveBeenCalled()
-    expect(detectCodex).toHaveBeenCalled()
+    expect(detectOpencode).toHaveBeenCalledTimes(1)
+    expect(detectCodex).toHaveBeenCalledTimes(1)
   })
 
   it('routes isolated subscription sign-out from the provider list', async () => {
