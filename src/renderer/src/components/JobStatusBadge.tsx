@@ -8,7 +8,7 @@ const STATUS_STYLE: Record<ComputeJobStatus, { label: string; className: string 
     className: 'bg-slate-100 text-slate-600 border-slate-200'
   },
   submitted: {
-    label: 'Submitted',
+    label: 'Queued',
     className: 'bg-slate-100 text-slate-600 border-slate-200'
   },
   running: {
