@@ -12,51 +12,63 @@
 # (electron-userland/electron-builder#9593). And when the code IS real, it is usually a background
 # child still running from the install dir (micromamba provisioning, the CLI in Node mode, an
 # agent child) locking files — worth one more attempt after a force-kill instead of failing.
-# Recovery order:
+# Recovery order (${DIR} = the installation this pass was uninstalling):
 #   1. Exit code non-zero but the old executable is already gone -> the uninstall did its job
 #      despite the reported code; log and continue installing.
 #   2. Files remain -> force-kill processes running from the install dir, wait, and run the old
 #      uninstaller once more. Only if it still fails show the original dialog and quit.
 # Symbol constraints: handleUninstallResult is parsed BEFORE uninstallOldVersion and
 # CHECK_APP_RUNNING declare their globals ($installationDir, $PowerShellPath, ...), and makensis
-# treats unknown variables as errors — so this stays self-contained: only $appExe (set in the
-# install section before the uninstall pass), registers, built-in constants, and the literal
-# temp-uninstaller path uninstallOldVersion uses. For the SHELL_CONTEXT pass $INSTDIR is the old
-# install location (an update installs over it). The rare installMode==all HKEY_CURRENT_USER pass
-# targets a stray per-user install elsewhere; re-running its uninstaller against $INSTDIR is a
-# harmless no-op that lets the machine-wide install continue.
-!macro uninstallFailureRecovery
-  ${if} $R0 != 0
-    ${ifNot} ${FileExists} "$appExe"
-      DetailPrint `Old uninstaller exited with $R0 but the previous installation is already removed; continuing.`
-    ${else}
-      DetailPrint `Old uninstaller exited with $R0; closing leftover app processes and retrying once.`
-      # Force-kill anything still running from the install dir: path-prefix sweep via PowerShell
-      # (covers micromamba.exe and any other helper), then an image-name taskkill for machines
-      # where PowerShell is unavailable or policy-blocked. Both are best-effort; the retry below
-      # is the real verdict. $0 keeps the uninstaller arguments (/currentuser etc.) — neither
-      # nsExec call touches it.
-      nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -C "Get-CimInstance -ClassName Win32_Process | ? {$$_.Path -and $$_.Path.StartsWith('$INSTDIR', 'CurrentCultureIgnoreCase')} | % { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }"`
-      Pop $R1
-      nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"`
-      Pop $R1
-      ClearErrors
-      Sleep 1000
-      ExecWait '"$PLUGINSDIR\old-uninstaller.exe" /S /KEEP_APP_DATA $0 _?=$INSTDIR' $R0
-      ${if} $R0 != 0
-        MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0"
-        DetailPrint `Uninstall was not successful. Uninstaller error code: $R0.`
-        SetErrorLevel 2
-        Quit
-      ${endif}
+# treats unknown variables as errors — so this stays self-contained: registers, built-in
+# constants, and the literal temp-uninstaller path uninstallOldVersion uses.
+!macro uninstallFailureRecoveryAt DIR
+  ${ifNot} ${FileExists} "${DIR}\${APP_EXECUTABLE_FILENAME}"
+    DetailPrint `Old uninstaller exited with $R0 but the previous installation is already removed; continuing.`
+  ${else}
+    DetailPrint `Old uninstaller exited with $R0; closing leftover app processes and retrying once.`
+    # Force-kill anything still running from the install dir, then retry. The PowerShell sweep
+    # matches on ExecutablePath (Win32_Process has no Path property) with a trailing-backslash
+    # boundary so a sibling directory can never match, and receives the directory as an ARGUMENT —
+    # never interpolated into the script source — so a custom install dir containing an apostrophe
+    # breaks nothing and injects nothing. The image-name taskkill covers machines where
+    # PowerShell is unavailable or policy-blocked. Both are best-effort; the retry is the verdict.
+    # $0 keeps the uninstaller arguments (/currentuser etc.) — neither nsExec call touches it.
+    nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -C "$$root = $$args[0].TrimEnd('\') + '\'; Get-CimInstance -ClassName Win32_Process | ? { $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$root, 'CurrentCultureIgnoreCase') } | % { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }" "${DIR}"`
+    Pop $R1
+    nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"`
+    Pop $R1
+    ClearErrors
+    Sleep 1000
+    ExecWait '"$PLUGINSDIR\old-uninstaller.exe" /S /KEEP_APP_DATA $0 _?=${DIR}' $R0
+    ${if} $R0 != 0
+      MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0"
+      DetailPrint `Uninstall was not successful. Uninstaller error code: $R0.`
+      SetErrorLevel 2
+      Quit
     ${endif}
   ${endif}
 !macroend
 
 !macro customUnInstallCheck
-  !insertmacro uninstallFailureRecovery
+  ${if} $R0 != 0
+    # SHELL_CONTEXT pass: the old installation sits at $INSTDIR (an update installs over it).
+    !insertmacro uninstallFailureRecoveryAt $INSTDIR
+  ${endif}
 !macroend
 
 !macro customUnInstallCheckCurrentUser
-  !insertmacro uninstallFailureRecovery
+  ${if} $R0 != 0
+    # installMode==all pass: it removes a stray PER-USER install, which may live anywhere —
+    # $INSTDIR/$appExe describe the new (machine-wide) target, not it. Recover the real location
+    # from the registry; when it is unreadable, keep electron-builder's default fatal handling
+    # rather than retry against the wrong directory.
+    !insertmacro readReg $R9 "HKEY_CURRENT_USER" "${INSTALL_REGISTRY_KEY}" InstallLocation
+    ${if} $R9 == ""
+      MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0"
+      DetailPrint `Uninstall was not successful. Uninstaller error code: $R0.`
+      SetErrorLevel 2
+      Quit
+    ${endif}
+    !insertmacro uninstallFailureRecoveryAt $R9
+  ${endif}
 !macroend

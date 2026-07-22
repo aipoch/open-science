@@ -55,21 +55,46 @@ describe('NSIS installer include (build/installer.nsh)', () => {
   it('continues the install when the old version is already gone despite a non-zero exit code', () => {
     // The spurious-exit-2 case: the uninstall completed but a benign trailing error leaked as the
     // process exit code. Detect it by the old executable no longer existing and keep installing.
-    expect(include).toContain('${FileExists} "$appExe"')
+    // The sentinel is parameterized on the pass's own install dir ($INSTDIR for SHELL_CONTEXT,
+    // the registry-read per-user dir for HKEY_CURRENT_USER).
+    expect(include).toContain('${FileExists} "${DIR}\\${APP_EXECUTABLE_FILENAME}"')
   })
 
   it('force-kills install-dir processes and retries the old uninstaller once before failing', () => {
     // The real-lock case: a background child running from the install dir (micromamba
-    // provisioning, the CLI in Node mode, an agent child) still holds files. Sweep by install-dir
-    // path prefix (PowerShell) and by image name (taskkill fallback), then retry once; only a
-    // repeated failure keeps the original fatal dialog + exit code 2.
-    expect(include).toContain(`$$_.Path.StartsWith('$INSTDIR', 'CurrentCultureIgnoreCase')`)
+    // provisioning, the CLI in Node mode, an agent child) still holds files. Sweep by executable
+    // path (Win32_Process has ExecutablePath, NOT Path) and by image name (taskkill fallback),
+    // then retry once; only a repeated failure keeps the original fatal dialog + exit code 2.
+    expect(include).toContain('$$_.ExecutablePath')
+    expect(include).not.toContain('$$_.Path.')
     expect(include).toContain('taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"')
     expect(include).toContain(
-      `ExecWait '"$PLUGINSDIR\\old-uninstaller.exe" /S /KEEP_APP_DATA $0 _?=$INSTDIR' $R0`
+      `ExecWait '"$PLUGINSDIR\\old-uninstaller.exe" /S /KEEP_APP_DATA $0 _?=\${DIR}' $R0`
     )
     expect(include).toContain('$(uninstallFailed): $R0')
     expect(include).toContain('SetErrorLevel 2')
+  })
+
+  it('passes the install dir to PowerShell as an argument, with a directory-boundary match', () => {
+    // Custom install dirs may contain apostrophes: interpolating the path into the script source
+    // would break the command (or worse, inject into it). The dir goes in as $args[0] and the
+    // prefix match is anchored with a trailing backslash so sibling directories never match.
+    expect(include).toContain('$$args[0].TrimEnd')
+    expect(include).toContain('$$_.ExecutablePath.StartsWith($$root')
+    expect(include).not.toContain(`StartsWith('$INSTDIR'`)
+  })
+
+  it('targets the real per-user install location in the current-user hook', () => {
+    // The installMode==all HKCU pass removes a stray per-user install, which may live anywhere —
+    // $INSTDIR/$appExe describe the new machine-wide target. The hook must read InstallLocation
+    // from HKCU and fall back to the default fatal handling when it is unreadable, rather than
+    // retry against the wrong directory.
+    expect(include).toContain(
+      '!insertmacro readReg $R9 "HKEY_CURRENT_USER" "${INSTALL_REGISTRY_KEY}" InstallLocation'
+    )
+    expect(include).toMatch(/\$\{if\} \$R9 == ""/)
+    expect(include).toContain('!insertmacro uninstallFailureRecoveryAt $R9')
+    expect(include).toContain('!insertmacro uninstallFailureRecoveryAt $INSTDIR')
   })
 
   it('never references symbols declared only after handleUninstallResult is parsed', () => {
