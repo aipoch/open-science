@@ -17,6 +17,29 @@ import type {
   SessionSetupContext
 } from './types'
 
+// Claude exposes ACP-provided MCP tools as mcp__<server>__<tool>; shared prompts stay framework-neutral.
+const CLAUDE_MCP_TOOL_NAMES = [
+  ['write_artifact_file', 'mcp__open-science-artifacts__write_artifact_file'],
+  ['notebook_execute', 'mcp__open-science-notebook__notebook_execute'],
+  ['repl_execute', 'mcp__open-science-notebook__repl_execute'],
+  ['bash_execute', 'mcp__open-science-notebook__bash_execute'],
+  ['notebook_state', 'mcp__open-science-notebook__notebook_state'],
+  ['list_notebook_runtimes', 'mcp__open-science-notebook__list_notebook_runtimes'],
+  ['notebook_bind_runtime', 'mcp__open-science-notebook__notebook_bind_runtime'],
+  ['notebook_switch_runtime', 'mcp__open-science-notebook__notebook_switch_runtime'],
+  ['notebook_restart', 'mcp__open-science-notebook__notebook_restart'],
+  ['notebook_shutdown', 'mcp__open-science-notebook__notebook_shutdown'],
+  ['manage_packages', 'mcp__open-science-notebook__manage_packages'],
+  ['manage_environments', 'mcp__open-science-notebook__manage_environments']
+] as const
+
+const renderClaudeMcpToolNames = (append: string): string =>
+  CLAUDE_MCP_TOOL_NAMES.reduce(
+    (rendered, [toolName, callableName]) =>
+      rendered.replace(new RegExp(`\\b${toolName}\\b`, 'g'), callableName),
+    append
+  )
+
 // Claude Code adapter. A faithful extraction of behavior currently inline in AcpRuntime /
 // agent-process / provider-env — moving the runtime onto AgentFramework must not change it.
 export const claudeCodeFramework: AgentFramework = {
@@ -60,7 +83,7 @@ export const claudeCodeFramework: AgentFramework = {
       meta.systemPrompt = {
         type: 'preset',
         preset: 'claude_code',
-        append: ctx.systemPromptAppends.join('\n\n')
+        append: ctx.systemPromptAppends.map(renderClaudeMcpToolNames).join('\n\n')
       }
     }
 
