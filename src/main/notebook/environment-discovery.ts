@@ -252,11 +252,12 @@ export const defaultCandidatePaths =
         process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)',
         join(process.env.LOCALAPPDATA ?? join(home, 'AppData', 'Local'), 'Programs')
       ]
-      for (const root of programFiles) {
-        const rRoot = join(root, 'R')
+      for (const installRoot of programFiles) {
+        const rRoot = join(installRoot, 'R')
         try {
           for (const ver of readdirSync(rRoot)) {
-            if (!/^R-\d+\.\d+\.\d+$/.test(ver)) continue
+            // Match R-x.y.z or R-x.y.z-suffix (e.g., R-4.2.0-ucrt for CRAN's UCRT builds)
+            if (!/^R-\d+\.\d+\.\d+(-\w+)?$/.test(ver)) continue
             // Try 64-bit first (standard since R 4.2), then fallback to bin/R.exe.
             const candidates = [
               join(rRoot, ver, 'bin', 'x64', 'R.exe'),
