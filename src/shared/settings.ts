@@ -855,6 +855,9 @@ export type ConnectorApprovalRequest = {
   connector: string // bundled connector id or custom server name
   method: string
   argsPreview: string // truncated JSON preview of the call arguments
+  // The session that triggered the connector call, so a desktop notification can surface and open
+  // that conversation. Absent for call paths that don't carry one.
+  sessionId?: string
 }
 export type ApprovalDecision = 'allow' | 'deny'
 export type RespondApprovalRequest = { id: string; decision: ApprovalDecision }

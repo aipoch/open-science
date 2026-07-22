@@ -138,10 +138,45 @@ describe('describeTaskNotification', () => {
   it('does not misreport an unknown stop reason as success', () => {
     expect(describeTaskNotification(stopEvent('budget_exceeded'), 'Plot the curve')).toEqual({
       title: 'Task needs attention',
-      body: '"Plot the curve" stopped: budget exceeded.'
+      body: '"Plot the curve" finished without a clean completion status (budget exceeded).'
     })
     expect(describeTaskNotification(stopEvent('budget_exceeded'))?.body).toBe(
-      'The agent stopped: budget exceeded.'
+      'The agent finished without a clean completion status (budget exceeded).'
+    )
+  })
+
+  it('does not treat an absent stop reason as a clean completion', () => {
+    // Defensive: the runtime always emits a stop reason in practice, but missing text must not
+    // silently claim success either.
+    const event: AcpRuntimeEvent = {
+      id: 'event-5',
+      timestamp: 1,
+      kind: 'stop',
+      level: 'info',
+      sessionId: 'session-1',
+      title: 'Prompt stopped'
+    }
+
+    expect(describeTaskNotification(event, 'Plot the curve')).toEqual({
+      title: 'Task needs attention',
+      body: '"Plot the curve" finished without a clean completion status.'
+    })
+  })
+
+  it('sanitizes control characters and whitespace from unknown reasons', () => {
+    const event: AcpRuntimeEvent = {
+      id: 'event-6',
+      timestamp: 1,
+      kind: 'stop',
+      level: 'info',
+      sessionId: 'session-1',
+      title: 'Prompt stopped',
+      text: 'budget\n\rexceeded\u0007 extra'
+    }
+
+    // Newlines, the \r, and the bell get stripped; whitespace folds to a single space.
+    expect(describeTaskNotification(event, 'Plot the curve')?.body).toBe(
+      '"Plot the curve" finished without a clean completion status (budget exceeded extra).'
     )
   })
 
@@ -453,9 +488,25 @@ describe('TaskNotificationService', () => {
     const trackedA = service.trackPrompt({ sessionId: 'session-1', text: 'Prompt A' })
     const trackedB = service.trackPrompt({ sessionId: 'session-1', text: 'Prompt B' })
 
-    expect(trackedA).toEqual({ snippet: 'Prompt A', previous: undefined })
-    expect(trackedB).toEqual({ snippet: 'Prompt B', previous: 'Prompt A' })
+    expect(trackedA).toEqual({ token: 1, previousToken: undefined })
+    expect(trackedB).toEqual({ token: 2, previousToken: 1 })
 
+    service.untrackPrompt('session-1', trackedB as NonNullable<typeof trackedB>)
+    await service.handleRuntimeEvent(stopEvent('end_turn'))
+
+    expect(shown[0]?.body).toBe('"Prompt A" finished.')
+  })
+
+  it('does not corrupt a still-running turn when rejections arrive in sequence', async () => {
+    const { service, shown } = createService({})
+
+    // A running, then B tracked (pending), then C tracked (pending). B rejected (no-op, current
+    // is C), then C rejected (pops both B and C from the chain; A's snippet survives).
+    const trackedA = service.trackPrompt({ sessionId: 'session-1', text: 'Prompt A' })
+    const trackedB = service.trackPrompt({ sessionId: 'session-1', text: 'Prompt B' })
+    service.trackPrompt({ sessionId: 'session-1', text: 'Prompt C' })
+
+    void trackedA
     service.untrackPrompt('session-1', trackedB as NonNullable<typeof trackedB>)
     await service.handleRuntimeEvent(stopEvent('end_turn'))
 

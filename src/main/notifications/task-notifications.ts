@@ -64,6 +64,19 @@ const EARLY_STOP_BODY: Record<string, (taskName?: string) => string> = {
     taskName ? `${taskName} was declined by the agent.` : 'The agent declined the request.'
 }
 
+// Strips control characters and folds whitespace so an arbitrary stop-reason text (or one from a
+// future ACP extension) can't smuggle newlines or terminal escapes into a single-line OS-notification
+// body, where some platforms would either truncate hard or render them as control glyphs.
+const sanitizeReason = (text: string): string => {
+  let stripped = ''
+  for (const ch of text) {
+    const code = ch.charCodeAt(0)
+    // 0x00–0x1F (C0 control) and 0x7F (DEL) are non-printable; everything else keeps its shape.
+    if (code >= 0x20 && code !== 0x7f) stripped += ch
+  }
+  return stripped.replace(/\s+/g, ' ').trim()
+}
+
 // Maps a terminal runtime event to the notification to show, or null when the event should stay
 // silent: user-cancelled turns (deliberate), recoverable context overflows (the renderer
 // auto-compacts and retries, so a failure banner would be a false alarm), and session-scoped error
@@ -76,39 +89,36 @@ export const describeTaskNotification = (
   const taskName = promptSnippet ? quoteSnippet(promptSnippet) : undefined
 
   if (event.kind === 'stop') {
-    // 'stop' events carry the ACP stop reason in `text`; absent means an ordinary end of turn.
-    const stopReason = event.text ?? 'end_turn'
+    const reason = event.text
 
-    switch (stopReason) {
-      case 'cancelled':
-        return null
-      case 'max_tokens':
-      case 'max_turn_requests':
-      case 'refusal':
-        return {
-          title: 'Task needs attention',
-          body: truncate(EARLY_STOP_BODY[stopReason](taskName), MAX_BODY_LENGTH)
-        }
-      case 'end_turn':
-        return {
-          title: 'Task completed',
-          body: truncate(
-            taskName ? `${taskName} finished.` : 'The agent finished your request.',
-            MAX_BODY_LENGTH
-          )
-        }
-      default:
-        // Unknown or future stop reasons must not be misreported as success; surface them as
-        // needing attention instead.
-        return {
-          title: 'Task needs attention',
-          body: truncate(
-            taskName
-              ? `${taskName} stopped: ${stopReason.replaceAll('_', ' ')}.`
-              : `The agent stopped: ${stopReason.replaceAll('_', ' ')}.`,
-            MAX_BODY_LENGTH
-          )
-        }
+    if (reason === 'cancelled') return null
+
+    if (reason === 'max_tokens' || reason === 'max_turn_requests' || reason === 'refusal') {
+      return {
+        title: 'Task needs attention',
+        body: truncate(EARLY_STOP_BODY[reason](taskName), MAX_BODY_LENGTH)
+      }
+    }
+
+    // Only an explicit end_turn counts as a clean completion. Any other reason — including an
+    // absent text (defensive: the runtime always emits a stop reason in practice) and any future
+    // ACP stop reason we don't yet know — is surfaced as needing attention.
+    if (reason && reason !== 'end_turn') {
+      const cleaned = sanitizeReason(reason)
+      const suffix = cleaned ? ` (${cleaned})` : ''
+      const body = taskName
+        ? `${taskName} finished without a clean completion status${suffix}.`
+        : `The agent finished without a clean completion status${suffix}.`
+
+      return { title: 'Task needs attention', body: truncate(body, MAX_BODY_LENGTH) }
+    }
+
+    return {
+      title: 'Task completed',
+      body: truncate(
+        taskName ? `${taskName} finished.` : 'The agent finished your request.',
+        MAX_BODY_LENGTH
+      )
     }
   }
 
@@ -168,23 +178,40 @@ export const describeConnectorApprovalNotification = (
   }
 }
 
-// What trackPrompt returns so a rejected send can restore the session's previous tracking: the
-// snippet just stored, plus the one it replaced (a still-running turn's prompt name).
+// What trackPrompt returns so a rejected send can revert the session's tracking: a monotonic
+// token that uniquely identifies THIS track call, and the previous token (the one it superseded,
+// if any). Reverting is keyed on the token, not the snippet string, so concurrent pre-turn
+// rejections cannot corrupt the still-running turn's name.
 export type TrackedPrompt = {
-  snippet: string
-  previous?: string
+  token: number
+  previousToken?: number
 }
+
+// One chain entry per live prompt track on a session; the head is the active track. Track tokens
+// are monotonic per service instance.
+type ChainEntry = { token: number; snippet: string }
 
 // Watches agent-turn lifecycle events and posts an OS notification when a turn ends while the app
 // is unfocused. Kept free of Electron imports (delivery is injected) so the filtering rules are
 // unit-testable; wiring lives in main/ipc.ts.
 export class TaskNotificationService {
-  private readonly promptSnippets = new Map<string, string>()
+  private readonly tracks = new Map<string, ChainEntry[]>()
+  // Tracks that have been reverted via untrackPrompt; consult these when popping the chain so a
+  // superseded predecessor never resurrects as the active head.
+  private readonly deadTokens = new Set<number>()
+  private trackCounter = 0
   private activationHandler: ((sessionId: string) => void) | undefined
   // Click target held for the renderer to pull: a push sent before the renderer's listener exists
   // (window just recreated, React not mounted yet) is lost, so the payload lives here until the
   // renderer — once its sessions are hydrated — takes it. Consume-once.
   private pendingOpenSession: OpenSessionFromNotificationRequest | undefined
+
+  // Active snippet for a session, or undefined when there is none.
+  private snippetFor(sessionId: string): string | undefined {
+    const chain = this.tracks.get(sessionId)
+
+    return chain && chain.length > 0 ? chain[chain.length - 1].snippet : undefined
+  }
 
   constructor(private readonly deps: TaskNotificationServiceDeps) {}
 
@@ -211,38 +238,59 @@ export class TaskNotificationService {
   }
 
   // Remembers the prompt's first line so the terminal event can name the task. Called when a
-  // prompt is sent; the entry is dropped when the turn terminates. Returns the tracking record so
-  // a prompt the runtime rejects before the turn starts can be reverted via untrackPrompt.
+  // prompt is sent; the entry is dropped when the turn terminates. Returns the token the caller
+  // can later pass to untrackPrompt when the runtime rejects before the turn starts.
   trackPrompt(request: Pick<AcpPromptRequest, 'sessionId' | 'text'>): TrackedPrompt | undefined {
     const snippet = toPromptSnippet(request.text)
 
     if (!snippet) return undefined
 
-    const previous = this.promptSnippets.get(request.sessionId)
+    const token = ++this.trackCounter
+    const previousChain = this.tracks.get(request.sessionId) ?? []
+    const previousToken =
+      previousChain.length > 0 ? previousChain[previousChain.length - 1].token : undefined
 
-    // Map preserves insertion order: re-insert to refresh, evict the oldest beyond the cap.
-    this.promptSnippets.delete(request.sessionId)
-    this.promptSnippets.set(request.sessionId, snippet)
+    this.tracks.set(request.sessionId, [...previousChain, { token, snippet }])
 
-    if (this.promptSnippets.size > MAX_TRACKED_PROMPTS) {
-      const oldest = this.promptSnippets.keys().next().value
+    // Cap tracked sessions: an unbounded map could leak if turns never report a terminal event.
+    if (this.tracks.size > MAX_TRACKED_PROMPTS) {
+      const oldest = this.tracks.keys().next().value
 
-      if (oldest !== undefined) this.promptSnippets.delete(oldest)
+      if (oldest !== undefined) this.tracks.delete(oldest)
     }
 
-    return { snippet, previous }
+    return { token, previousToken }
   }
 
   // Reverts a trackPrompt whose send never became a turn (the runtime rejected it before the turn
-  // started). No-op when the snippet was already consumed by a terminal event or replaced by a
-  // newer track, so a still-running turn never loses its own prompt's name.
+  // started). Marks the token dead, then pops any dead entries from the head of the chain until it
+  // finds a live one. Only proceeds with the revert when the caller's token is the live head — so
+  // concurrent rejections on the same session (B then C, both dead) cannot resurrect a stale entry
+  // and overwrite a still-running turn's name.
   untrackPrompt(sessionId: string, tracked: TrackedPrompt): void {
-    if (this.promptSnippets.get(sessionId) !== tracked.snippet) return
+    this.deadTokens.add(tracked.token)
 
-    if (tracked.previous) {
-      this.promptSnippets.set(sessionId, tracked.previous)
+    let chain = this.tracks.get(sessionId)
+
+    if (!chain || chain.length === 0) return
+
+    while (chain.length > 0 && this.deadTokens.has(chain[chain.length - 1].token)) {
+      chain = chain.slice(0, -1)
+    }
+
+    if (chain.length === 0 || chain[chain.length - 1].token !== tracked.token) {
+      // A newer track superseded this one; the chain is already correct.
+      this.tracks.set(sessionId, chain)
+      return
+    }
+
+    // Our token was the live head; pop it (the chain may still hold an older live track).
+    chain = chain.slice(0, -1)
+
+    if (chain.length === 0) {
+      this.tracks.delete(sessionId)
     } else {
-      this.promptSnippets.delete(sessionId)
+      this.tracks.set(sessionId, chain)
     }
   }
 
@@ -255,13 +303,13 @@ export class TaskNotificationService {
 
     if (!sessionId) return
 
-    const snippet = this.promptSnippets.get(sessionId)
+    const snippet = this.snippetFor(sessionId)
 
     // Only genuinely turn-terminal events settle the prompt tracking: a stop (any reason) or a
     // prompt failure. Ancillary session-scoped errors (artifact cleanup, cancel timeout) leave the
     // snippet in place for the turn's own terminal event.
     if (event.kind === 'stop' || event.title === ACP_PROMPT_FAILED_EVENT_TITLE) {
-      this.promptSnippets.delete(sessionId)
+      this.tracks.delete(sessionId)
     }
 
     // Eligibility = a user-initiated turn. Internal turns (e.g. the reviewer's auditor-correction,
@@ -280,7 +328,7 @@ export class TaskNotificationService {
   // approval parks the turn until the user answers, so an unfocused user needs a nudge. Same
   // eligibility rule as terminal events — internal turns never notify.
   handlePermissionRequest = async (request: AcpPermissionRequest): Promise<void> => {
-    const snippet = this.promptSnippets.get(request.sessionId)
+    const snippet = this.snippetFor(request.sessionId)
 
     if (!snippet) return
 
@@ -290,13 +338,13 @@ export class TaskNotificationService {
   // Observes connector approvals (wired next to the 'connectors:approval-request' broadcast): the
   // tool call blocks for up to five minutes waiting on the user. Unlike turn notifications there
   // is no tracked-prompt eligibility gate — the approval blocks work regardless of which turn
-  // triggered it, and the modal needs an answer either way. The triggering turn's session (when
-  // one is in flight) names the task and targets the click.
+  // triggered it, and the modal needs an answer either way. The triggering turn's session, when
+  // the connector call carried one through, names the task and targets the click.
   handleConnectorApproval = async (
     request: Pick<ConnectorApprovalRequest, 'connector' | 'method'>,
     sessionId?: string
   ): Promise<void> => {
-    const snippet = sessionId ? this.promptSnippets.get(sessionId) : undefined
+    const snippet = sessionId ? this.snippetFor(sessionId) : undefined
 
     await this.deliver(describeConnectorApprovalNotification(request, snippet), sessionId)
   }

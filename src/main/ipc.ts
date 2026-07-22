@@ -297,9 +297,9 @@ const registerIpcHandlers = async ({
     broadcast: (request) => {
       broadcastToRenderers('connectors:approval-request', request)
       // A connector approval parks the tool call for up to five minutes; an unfocused user gets a
-      // desktop nudge, targeted at the in-flight turn that triggered it when there is one.
-      const sessionId = runtimeRef.current?.getActivePromptSessions()[0]?.sessionId
-      void taskNotifications.handleConnectorApproval(request, sessionId)
+      // desktop nudge. The triggering session is passed through the request so click-to-open lands
+      // on the right conversation; absent one (no in-flight turn), only the window is surfaced.
+      void taskNotifications.handleConnectorApproval(request, request.sessionId)
     }
   })
   // Late-bound app runtime for connector tools that attach a generated file to the current turn. The
@@ -317,8 +317,13 @@ const registerIpcHandlers = async ({
     getConnectors: () => connectorsSnapshot,
     resolveApiKey: (ref) => tryDecryptKey(ref),
     mcpClientManager,
-    requestApproval: ({ connector, method, args }) =>
-      approvalBroker.request({ connector, method, argsPreview: previewArgs(args) }),
+    requestApproval: ({ connector, method, args, sessionId }) =>
+      approvalBroker.request({
+        connector,
+        method,
+        argsPreview: previewArgs(args),
+        ...(sessionId ? { sessionId } : {})
+      }),
     localToolHandlers: { 'molecule/preview_molecule': moleculePreviewHandler }
   })
   const notebookRpcServer = new NotebookLocalRpcServer(notebookService, { connectorService })
