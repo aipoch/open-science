@@ -246,10 +246,10 @@ describe('WorkspaceMessageItem user message actions', () => {
 
     // The resend waits for explicit confirmation, and the dialog names the deletion cost.
     expect(onSendEditedMessage).not.toHaveBeenCalled()
-    expect(getDialog()?.textContent).toContain('Resend and delete later turns?')
+    expect(getDialog()?.textContent).toContain('Resend and overwrite later turns?')
     expect(getDialog()?.textContent).toContain('3 turns')
 
-    await click(getDialogButton('Delete and resend'))
+    await click(getDialogButton('Overwrite and resend'))
 
     expect(onSendEditedMessage).toHaveBeenCalledWith('message-1', {
       nodes: [{ type: 'text', text: 'Prompt text' }]

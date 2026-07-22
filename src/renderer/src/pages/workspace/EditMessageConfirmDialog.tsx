@@ -32,10 +32,10 @@ const EditMessageConfirmDialog = ({
       <AlertDialog.Overlay className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px]" />
       <AlertDialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(420px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-bg-000 p-6 text-text-000 shadow-dialog">
         <AlertDialog.Title className="text-base font-semibold text-text-000">
-          Resend and delete later turns?
+          Resend and overwrite later turns?
         </AlertDialog.Title>
         <AlertDialog.Description className="mt-2 text-sm leading-relaxed text-text-100">
-          Sending this edited prompt will permanently delete the {subsequentTurns}{' '}
+          Sending this edited prompt will overwrite the {subsequentTurns}{' '}
           {subsequentTurns === 1 ? 'turn' : 'turns'} that follow it in this conversation. This
           action cannot be undone.
         </AlertDialog.Description>
@@ -47,7 +47,7 @@ const EditMessageConfirmDialog = ({
           </AlertDialog.Cancel>
           <AlertDialog.Action asChild>
             <Button type="button" className={confirmButtonClassName} onClick={onConfirm}>
-              Delete and resend
+              Overwrite and resend
             </Button>
           </AlertDialog.Action>
         </div>
