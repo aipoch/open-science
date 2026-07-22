@@ -32,27 +32,29 @@ const commandFromRawInput = (rawInput: unknown): string | undefined => {
   return typeof command === 'string' && command.trim() ? command : undefined
 }
 
+const reportedPermissionTitle = (params: RequestPermissionRequest): string =>
+  params.toolCall.title ?? params.toolCall.toolCallId
+
 // codex-acp command approvals omit title but retain the exact command in rawInput. Prefer that
-// security-relevant value over opaque call ids and generic provider titles.
-const resolvePermissionTitle = (params: RequestPermissionRequest): string =>
-  commandFromRawInput(params.toolCall.rawInput) ??
-  params.toolCall.title ??
-  params.toolCall.toolCallId
+// security-relevant value only for confirmed non-MCP shell requests; MCP inputs are arbitrary and
+// may contain an unrelated `command` field.
+const resolvePermissionTitle = (params: RequestPermissionRequest, isMcp: boolean): string => {
+  const isShell =
+    extractProviderToolName(params.toolCall) === 'Bash' || params.toolCall.kind === 'execute'
+
+  return (
+    (!isMcp && isShell ? commandFromRawInput(params.toolCall.rawInput) : undefined) ??
+    reportedPermissionTitle(params)
+  )
+}
 
 // Trivial `KEY=VALUE` env assignment prefixing a shell command (e.g. `FOO=bar python a.py`). Values
 // containing whitespace/quotes are not covered (already split away) and fall back to the raw token.
 const ENV_ASSIGNMENT_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=[^\s]*$/
 
-// Strips a single matching pair of surrounding quotes from a shell token.
-const stripSurroundingQuotes = (token: string): string => {
-  const match = token.match(/^(["'])(.*)\1$/)
-
-  return match ? match[2] : token
-}
-
-// Derives the executable category used to group shell/execute permissions. Leading trivial env
-// assignments are skipped so `FOO=bar python a.py` still groups under `python`.
-const leadingExecutable = (command: string): string => {
+// Derives the normalized full-command signature used to group shell/execute permissions. Leading
+// trivial env assignments are skipped, but arguments remain part of the authorization boundary.
+const commandSignature = (command: string): string => {
   const tokens = command.trim().split(/\s+/)
   let index = 0
 
@@ -60,13 +62,15 @@ const leadingExecutable = (command: string): string => {
     index += 1
   }
 
-  return stripSurroundingQuotes(tokens[index] ?? command.trim())
+  const rest = tokens.slice(index)
+
+  return rest.length > 0 ? rest.join(' ') : command.trim()
 }
 
 // Derives a session-scoped "Always" category key from a permission request (first match wins):
 // 1. MCP tool (recognized across frameworks — Claude's mcp__ prefix or an opencode <server>_ name):
 //    keyed by the tool name, no args.
-// 2. Shell/execute tool (provider tool name Bash, or execute kind): keyed by leading executable.
+// 2. Shell/execute tool (provider tool name Bash, or execute kind): keyed by full command signature.
 // 3. Other built-ins (Write/Edit/WebFetch/…): keyed by provider tool name (falls back to title).
 // The MCP check runs before the execute branch so an opencode MCP tool reporting kind:execute (e.g. a
 // notebook execute-cell) is grouped as its own MCP tool, not misrouted to the shared Bash category.
@@ -75,18 +79,20 @@ const resolveCategoryKey = (
   mcpServerNames: readonly string[] = []
 ): string => {
   const { toolCall } = params
-  const title = resolvePermissionTitle(params)
+  const reportedTitle = reportedPermissionTitle(params)
   const providerToolName = extractProviderToolName(toolCall)
 
   if (
     isMcpToolName(toolCall.title, mcpServerNames) ||
     isMcpToolName(providerToolName, mcpServerNames)
   ) {
-    return `mcp:${title}`
+    return `mcp:${reportedTitle}`
   }
 
+  const title = resolvePermissionTitle(params, false)
+
   if (providerToolName === 'Bash' || toolCall.kind === 'execute') {
-    return `bash:${leadingExecutable(title)}`
+    return `bash:${commandSignature(title)}`
   }
 
   return `tool:${providerToolName ?? title}`
@@ -148,14 +154,15 @@ class AcpPermissionBroker {
   ): Promise<RequestPermissionResponse> {
     const requestId = randomUUID()
     const categoryKey = resolveCategoryKey(params, policyContext?.mcpServerNames)
+    const isMcp = categoryKey.startsWith('mcp:')
     const request: AcpPermissionRequest = {
       requestId,
       sessionId: params.sessionId,
       toolCallId: params.toolCall.toolCallId,
-      title: resolvePermissionTitle(params),
+      title: resolvePermissionTitle(params, isMcp),
       status: params.toolCall.status ?? undefined,
       providerToolName: extractProviderToolName(params.toolCall),
-      isMcp: categoryKey.startsWith('mcp:'),
+      isMcp,
       toolKind: params.toolCall.kind ?? undefined,
       toolLocations: params.toolCall.locations ?? undefined,
       rawInput: params.toolCall.rawInput,

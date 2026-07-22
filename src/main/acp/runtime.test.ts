@@ -2642,7 +2642,7 @@ describe('ACP runtime session management', () => {
     ])
   })
 
-  it('shows sparse Codex command approvals and remembers Always by executable', async () => {
+  it('shows sparse Codex commands and remembers Always for the same command only', async () => {
     const process = new FakeAgentProcess()
     const permissionRequests: Array<{
       title: string
@@ -2669,7 +2669,8 @@ describe('ACP runtime session management', () => {
       .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
         for (const [toolCallId, command] of [
           ['call-command-1', 'npm run lint'],
-          ['call-command-2', 'npm test']
+          ['call-command-2', 'npm run lint'],
+          ['call-command-3', 'npm test']
         ]) {
           await ctx.client.notify(acp.methods.client.session.update, {
             sessionId: ctx.params.sessionId,
@@ -2720,7 +2721,7 @@ describe('ACP runtime session management', () => {
           permissionRequests.push(request)
           runtime.respondToPermission({
             requestId: request.requestId,
-            optionId: 'allow-session'
+            optionId: permissionRequests.length === 1 ? 'allow-session' : 'allow-once'
           })
         }
       }
@@ -2729,17 +2730,24 @@ describe('ACP runtime session management', () => {
 
     await runtime.sendPrompt({ sessionId: session.sessionId, text: 'run two npm commands' })
 
-    expect(permissionRequests).toHaveLength(1)
-    expect(permissionRequests[0]).toMatchObject({
-      title: 'npm run lint',
-      rawInput: { command: 'npm run lint' }
-    })
+    expect(permissionRequests).toHaveLength(2)
+    expect(permissionRequests).toMatchObject([
+      {
+        title: 'npm run lint',
+        rawInput: { command: 'npm run lint' }
+      },
+      {
+        title: 'npm test',
+        rawInput: { command: 'npm test' }
+      }
+    ])
     expect(permissionResponses).toEqual([
       { outcome: { outcome: 'selected', optionId: 'allow-session' } },
+      { outcome: { outcome: 'selected', optionId: 'allow-once' } },
       { outcome: { outcome: 'selected', optionId: 'allow-once' } }
     ])
     expect(runtime.getSnapshot().permissionGrants[session.sessionId]).toEqual([
-      { categoryKey: 'bash:npm', kind: 'shell', label: 'npm' }
+      { categoryKey: 'bash:npm run lint', kind: 'shell', label: 'npm run lint' }
     ])
   })
 
