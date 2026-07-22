@@ -6,6 +6,7 @@ import {
   realpath,
   rename,
   rm,
+  symlink,
   writeFile
 } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -1042,6 +1043,94 @@ describe('artifact repository', () => {
     // Build the expectation with join() so the separator matches the host the test runs on.
     expect(getProjectArtifactDir('/Users/example/.open-science', 'default-project')).toBe(
       join('/Users/example/.open-science', 'artifacts', 'default-project')
+    )
+  })
+
+  describe('resolveSessionArtifactFilePath', () => {
+    const pendingPlotPath = (root: string, project: string, session: string): string =>
+      join(root, 'artifacts', project, session, '.pending', 'run-1', 'plot.png')
+
+    const writePendingPlot = (
+      repository: ArtifactRepository,
+      project: string,
+      session: string
+    ): Promise<unknown> =>
+      repository.writePendingFile({
+        projectName: project,
+        sessionId: session,
+        runId: 'run-1',
+        filename: 'plot.png',
+        source: createInlineSource(`${project}/${session} bytes`)
+      })
+
+    it('resolves a file inside the declaring session subtree', async () => {
+      const root = await createStorageRoot()
+      const repository = new ArtifactRepository(root)
+      await writePendingPlot(repository, 'default-project', 'session-1')
+
+      const resolved = await repository.resolveSessionArtifactFilePath(
+        'default-project',
+        'session-1',
+        pendingPlotPath(root, 'default-project', 'session-1')
+      )
+
+      expect(resolved).toBe(await realpath(pendingPlotPath(root, 'default-project', 'session-1')))
+    })
+
+    it('rejects a file from another session of the same project', async () => {
+      const root = await createStorageRoot()
+      const repository = new ArtifactRepository(root)
+      await writePendingPlot(repository, 'default-project', 'session-1')
+      // The declaring session exists too, so the rejection comes from the subtree comparison.
+      await writePendingPlot(repository, 'default-project', 'session-2')
+
+      await expect(
+        repository.resolveSessionArtifactFilePath(
+          'default-project',
+          'session-2',
+          pendingPlotPath(root, 'default-project', 'session-1')
+        )
+      ).rejects.toThrow('Artifact file is outside the declaring session.')
+    })
+
+    it('rejects a file from another project', async () => {
+      const root = await createStorageRoot()
+      const repository = new ArtifactRepository(root)
+      await writePendingPlot(repository, 'default-project', 'session-1')
+      await writePendingPlot(repository, 'other-project', 'session-1')
+
+      await expect(
+        repository.resolveSessionArtifactFilePath(
+          'default-project',
+          'session-1',
+          pendingPlotPath(root, 'other-project', 'session-1')
+        )
+      ).rejects.toThrow('Artifact file is outside the declaring session.')
+    })
+
+    // File symlinks need elevated privileges on Windows; covered on POSIX CI.
+    it.skipIf(process.platform === 'win32')(
+      'rejects a symlink inside the session subtree that points into another session',
+      async () => {
+        const root = await createStorageRoot()
+        const repository = new ArtifactRepository(root)
+        await writePendingPlot(repository, 'default-project', 'session-1')
+        await writePendingPlot(repository, 'default-project', 'session-2')
+        const linkPath = join(
+          root,
+          'artifacts',
+          'default-project',
+          'session-1',
+          '.pending',
+          'run-1',
+          'link.png'
+        )
+        await symlink(pendingPlotPath(root, 'default-project', 'session-2'), linkPath)
+
+        await expect(
+          repository.resolveSessionArtifactFilePath('default-project', 'session-1', linkPath)
+        ).rejects.toThrow('Artifact file is outside the declaring session.')
+      }
     )
   })
 })

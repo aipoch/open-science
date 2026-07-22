@@ -530,6 +530,32 @@ class ArtifactRepository {
     return resolvedFilePath
   }
 
+  // resolveManagedFilePath additionally bound to one project/session subtree: an artifact record
+  // may only resolve to a file under its own declaring session, so a stale or crafted record (or a
+  // symlink inside the artifact root) cannot pull another session's or project's files into an
+  // export. Throws when the real path escapes that subtree.
+  async resolveSessionArtifactFilePath(
+    projectName: string,
+    sessionId: string,
+    path: string
+  ): Promise<string> {
+    const resolvedFilePath = await this.resolveManagedFilePath({ path })
+    const sessionRoot = join(getProjectArtifactDir(this.storageRoot, projectName), sessionId)
+
+    let resolvedSessionRoot: string
+    try {
+      resolvedSessionRoot = await realpath(sessionRoot)
+    } catch {
+      throw new Error('Artifact file is outside the declaring session.')
+    }
+
+    if (!isPathInsideRoot(resolvedSessionRoot, resolvedFilePath)) {
+      throw new Error('Artifact file is outside the declaring session.')
+    }
+
+    return resolvedFilePath
+  }
+
   // Given a now-missing `.pending/<run>/<file>` artifact path, finds the same file after finalize moved
   // it, using ONLY the run marker written at finalize (`.runs/<run>.json`), which pins the exact app
   // session + message the run produced. An unmarked run is never recovered by guessing among same-named

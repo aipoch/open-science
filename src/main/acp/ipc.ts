@@ -209,7 +209,12 @@ const createDefaultNotebookRuntimeService = (): NotebookRuntimeService => {
     // wired in main/ipc.ts via setPackageMirrorResolver once the settings service is constructed.
     locale: app.getLocale(),
     appVersion: app.getVersion(),
-    resolveArtifactPath: (path) => artifactRepository.resolveManagedFilePath({ path }),
+    resolveArtifactPath: (request) =>
+      artifactRepository.resolveSessionArtifactFilePath(
+        request.projectName,
+        request.sessionId,
+        request.path
+      ),
     callbacks: {
       onNotebookAvailable: (event) => broadcast('notebook:available', event),
       onNotebookChanged: (event) => broadcast('notebook:changed', event)

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
-import { readFile, rm, writeFile } from 'node:fs/promises'
+import { readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type {
@@ -308,8 +308,13 @@ type NotebookRuntimeServiceOptions = {
   appVersion?: string
   // Save-dialog seam for notebook export tests. Production falls back to Electron's native dialog.
   saveIpynb?: (suggestedName: string, data: string) => Promise<ExportNotebookResult>
-  // Resolves app-managed artifact paths with the artifact repository's canonical/symlink checks.
-  resolveArtifactPath?: (path: string) => Promise<string>
+  // Resolves app-managed artifact paths with the artifact repository's canonical/symlink checks,
+  // bound to the artifact's declaring project/session subtree.
+  resolveArtifactPath?: (request: {
+    path: string
+    projectName: string
+    sessionId: string
+  }) => Promise<string>
 }
 
 // The wire binding plus the interpreter override the executor needs. `resolvedInterpreter` is set only
@@ -393,13 +398,31 @@ const isPathInside = (root: string, candidate: string): boolean => {
 const artifactMimeData = async (
   root: string,
   artifact: NotebookRunRecord['artifacts'][number],
-  resolveManagedPath?: (path: string) => Promise<string>
+  resolveManagedPath?: (request: {
+    path: string
+    projectName: string
+    sessionId: string
+  }) => Promise<string>
 ): Promise<ResolvedArtifact | null> => {
   const mimeType = artifact.mimeType
   if (!mimeType) return null
-  const filePath = isPathInside(root, artifact.path)
-    ? artifact.path
-    : await resolveManagedPath?.(artifact.path)
+
+  let filePath: string | undefined
+  if (isPathInside(root, artifact.path)) {
+    // Lexical containment is not enough — a symlink inside the notebook root can point anywhere.
+    // Canonicalize both sides and require the real path to stay inside the real notebook root.
+    const [realRoot, realFilePath] = await Promise.all([realpath(root), realpath(artifact.path)])
+    if (!isPathInside(realRoot, realFilePath)) {
+      throw new Error(`Artifact escapes the notebook session root: ${artifact.name}`)
+    }
+    filePath = realFilePath
+  } else {
+    filePath = await resolveManagedPath?.({
+      path: artifact.path,
+      projectName: artifact.projectName,
+      sessionId: artifact.sessionId
+    })
+  }
   if (!filePath) return null
 
   const binary = await readFile(filePath)
@@ -425,7 +448,11 @@ const artifactMimeData = async (
 // to a stderr marker output rather than aborting the export.
 const resolveNotebookArtifactOutputs = async (
   document: NotebookRunDocument,
-  resolveManagedPath?: (path: string) => Promise<string>
+  resolveManagedPath?: (request: {
+    path: string
+    projectName: string
+    sessionId: string
+  }) => Promise<string>
 ): Promise<Map<string, NbformatOutput[]>> => {
   const outputsByRun = new Map<string, NbformatOutput[]>()
   const artifactSessionId = document.artifactSessionId ?? document.sessionId

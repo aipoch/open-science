@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -111,10 +111,38 @@ describe('NotebookRuntimeService exportIpynb', () => {
       return sessionRoot
     }
 
+    type ArtifactRecord = NotebookRunDocument['runs'][number]['artifacts'][number]
+
+    const makeArtifact = (overrides: Partial<ArtifactRecord> = {}): ArtifactRecord => ({
+      id: 'a1',
+      projectName: 'default-project',
+      sessionId: '12345678-abcd',
+      runId: 'run-1',
+      name: 'plot.png',
+      path: '',
+      fileUrl: 'artifact://plot.png',
+      mimeType: 'image/png',
+      size: 0,
+      mtimeMs: 1,
+      ...overrides
+    })
+
+    type ExportResult = {
+      outputs: Array<{ output_type: string; data?: Record<string, unknown>; text?: string[] }>
+      json: string
+    }
+
     const exportWithArtifact = async (
       root: string,
-      artifact: NotebookRunDocument['runs'][number]['artifacts'][number]
-    ): Promise<Record<string, unknown>> => {
+      artifact: ArtifactRecord,
+      options: {
+        resolveArtifactPath?: (request: {
+          path: string
+          projectName: string
+          sessionId: string
+        }) => Promise<string>
+      } = {}
+    ): Promise<ExportResult> => {
       const documentWithArtifact: NotebookRunDocument = {
         ...document,
         notebookSessionRoot: root,
@@ -129,20 +157,22 @@ describe('NotebookRuntimeService exportIpynb', () => {
         dataRoot: '/storage',
         projectName: 'default-project',
         repository,
-        saveIpynb
+        saveIpynb,
+        ...(options.resolveArtifactPath ? { resolveArtifactPath: options.resolveArtifactPath } : {})
       })
 
       await service.exportIpynb({ sessionId: '12345678-abcd', workspaceCwd: '/workspace' })
 
-      const notebook = JSON.parse(saveIpynb.mock.calls[0][1]) as {
-        cells: Array<{ outputs: Array<{ output_type: string; data?: Record<string, unknown> }> }>
+      const json = saveIpynb.mock.calls[0][1] as string
+      const notebook = JSON.parse(json) as {
+        cells: Array<{ outputs: ExportResult['outputs'] }>
       }
-      // The run's own stream fallback comes first; the artifact display output follows it.
-      const display = notebook.cells[0].outputs.find(
-        (output) => output.output_type === 'display_data'
-      )
-      return display?.data ?? {}
+      return { outputs: notebook.cells[0].outputs, json }
     }
+
+    // The run's own stream fallback comes first; the artifact display output follows it.
+    const displayData = (result: ExportResult): Record<string, unknown> =>
+      result.outputs.find((output) => output.output_type === 'display_data')?.data ?? {}
 
     it('inlines SVG artifacts as raw text, not base64', async () => {
       const root = await createSessionRoot()
@@ -150,20 +180,17 @@ describe('NotebookRuntimeService exportIpynb', () => {
       const svgPath = join(root, 'plot.svg')
       await writeFile(svgPath, svg)
 
-      const data = await exportWithArtifact(root, {
-        id: 'a1',
-        projectName: 'default-project',
-        sessionId: '12345678-abcd',
-        runId: 'run-1',
-        name: 'plot.svg',
-        path: svgPath,
-        fileUrl: 'artifact://plot.svg',
-        mimeType: 'image/svg+xml',
-        size: svg.length,
-        mtimeMs: 1
-      })
+      const result = await exportWithArtifact(
+        root,
+        makeArtifact({
+          name: 'plot.svg',
+          path: svgPath,
+          mimeType: 'image/svg+xml',
+          size: svg.length
+        })
+      )
 
-      expect(data['image/svg+xml']).toBe(svg)
+      expect(displayData(result)['image/svg+xml']).toBe(svg)
     })
 
     it('inlines binary image artifacts as base64', async () => {
@@ -171,20 +198,95 @@ describe('NotebookRuntimeService exportIpynb', () => {
       const pngPath = join(root, 'plot.png')
       await writeFile(pngPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]))
 
-      const data = await exportWithArtifact(root, {
-        id: 'a2',
-        projectName: 'default-project',
-        sessionId: '12345678-abcd',
-        runId: 'run-1',
-        name: 'plot.png',
-        path: pngPath,
-        fileUrl: 'artifact://plot.png',
-        mimeType: 'image/png',
-        size: 4,
-        mtimeMs: 1
+      const result = await exportWithArtifact(root, makeArtifact({ path: pngPath, size: 4 }))
+
+      expect(displayData(result)['image/png']).toBe(
+        Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64')
+      )
+    })
+
+    // File symlinks need elevated privileges on Windows; covered on POSIX CI.
+    it.skipIf(process.platform === 'win32')(
+      'refuses to inline a notebook-root symlink that escapes the session root',
+      async () => {
+        const root = await createSessionRoot()
+        const outsideDir = await mkdtemp(join(tmpdir(), 'open-science-ipynb-outside-'))
+        try {
+          const secretPath = join(outsideDir, 'secret.png')
+          await writeFile(secretPath, 'secret-png-bytes')
+          const linkPath = join(root, 'link.png')
+          await symlink(secretPath, linkPath)
+
+          const result = await exportWithArtifact(
+            root,
+            makeArtifact({ name: 'link.png', path: linkPath })
+          )
+
+          expect(result.outputs.some((output) => output.output_type === 'display_data')).toBe(false)
+          expect(result.outputs.some((output) => output.output_type === 'stream')).toBe(true)
+          expect(result.json).not.toContain('secret-png-bytes')
+        } finally {
+          await rm(outsideDir, { recursive: true, force: true })
+        }
+      }
+    )
+
+    it('inlines a managed artifact resolved inside the declaring session subtree', async () => {
+      const root = await createSessionRoot()
+      // The managed artifact tree lives outside the notebook session root, so resolution goes
+      // through the session-scoped resolver rather than the notebook-root branch.
+      const managedRoot = await mkdtemp(join(tmpdir(), 'open-science-ipynb-managed-'))
+      try {
+        const managedDir = join(managedRoot, 'artifacts', 'default-project', '12345678-abcd')
+        await mkdir(managedDir, { recursive: true })
+        const managedPath = join(managedDir, 'plot.png')
+        await writeFile(managedPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+        const resolveArtifactPath = vi.fn(
+          async (request: { path: string; projectName: string; sessionId: string }) => request.path
+        )
+
+        const result = await exportWithArtifact(
+          root,
+          makeArtifact({ path: managedPath, size: 4 }),
+          { resolveArtifactPath }
+        )
+
+        expect(resolveArtifactPath).toHaveBeenCalledWith({
+          path: managedPath,
+          projectName: 'default-project',
+          sessionId: '12345678-abcd'
+        })
+        expect(displayData(result)['image/png']).toBe(
+          Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64')
+        )
+      } finally {
+        await rm(managedRoot, { recursive: true, force: true })
+      }
+    })
+
+    it('degrades a managed artifact the session-scoped resolver rejects to a stderr marker', async () => {
+      const root = await createSessionRoot()
+      const outsidePath = join(
+        tmpdir(),
+        'artifacts',
+        'default-project',
+        'other-session',
+        'plot.png'
+      )
+      const resolveArtifactPath = vi.fn(async () => {
+        throw new Error('Artifact file is outside the declaring session.')
       })
 
-      expect(data['image/png']).toBe(Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64'))
+      const result = await exportWithArtifact(root, makeArtifact({ path: outsidePath }), {
+        resolveArtifactPath
+      })
+
+      expect(result.outputs.some((output) => output.output_type === 'display_data')).toBe(false)
+      expect(result.outputs).toContainEqual({
+        output_type: 'stream',
+        name: 'stderr',
+        text: ['[Open Science] Could not inline artifact: plot.png\n']
+      })
     })
   })
 })
