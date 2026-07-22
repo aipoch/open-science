@@ -86,6 +86,23 @@ export const resilientDownload = async (
     })
   }
 
+  // Resolves after `ms` ms but rejects early when the external abort signal fires, so a user
+  // cancel during exponential backoff does not wait up to MAX_BACKOFF_MS before taking effect.
+  const sleepOrAbort = (sleepFn: typeof sleep, ms: number, signal?: AbortSignal): Promise<void> => {
+    if (!signal) return sleepFn(ms)
+    if (signal.aborted) return Promise.reject(signal.reason ?? new Error('aborted'))
+    return Promise.race([
+      sleepFn(ms),
+      new Promise<never>((_, reject) => {
+        signal.addEventListener(
+          'abort',
+          () => reject(signal.reason ?? new Error('aborted')),
+          { once: true }
+        )
+      })
+    ])
+  }
+
   let lastError: unknown
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (opts.signal?.aborted) throw opts.signal.reason ?? new Error('aborted')
@@ -94,7 +111,9 @@ export const resilientDownload = async (
       const offset = await partSize()
       opts.onProgress?.({ phase: 'reconnecting', transferred: offset, bytesPerSecond: 0, attempt })
       const backoff = Math.min(BASE_BACKOFF_MS * 2 ** (attempt - 1), MAX_BACKOFF_MS)
-      await sleep(backoff + Math.floor((now() % 1000) / 4))
+      // Race the backoff sleep against the external abort signal so a user cancel does not wait up
+      // to MAX_BACKOFF_MS before taking effect.
+      await sleepOrAbort(sleep, backoff + Math.floor((now() % 1000) / 4), opts.signal)
     }
 
     const controller = new AbortController()
@@ -109,6 +128,11 @@ export const resilientDownload = async (
     const combined = opts.signal
       ? AbortSignal.any([controller.signal, opts.signal])
       : controller.signal
+
+    // Hoisted so the catch path can destroy the descriptor before the next retry attempt,
+    // preventing descriptor leaks and Windows rename/append failures on a retried .part file.
+    let file: WriteStream | undefined
+    let fileError: Error | null = null
 
     try {
       let offset = await partSize()
@@ -157,8 +181,7 @@ export const resilientDownload = async (
         attempt
       })
 
-      const file: WriteStream = mkWrite(partPath, offset > 0 ? { flags: 'a' } : undefined)
-      let fileError: Error | null = null
+      file = mkWrite(partPath, offset > 0 ? { flags: 'a' } : undefined)
       file.on('error', (e) => (fileError = e))
 
       const nodeStream = Readable.fromWeb(
@@ -169,7 +192,7 @@ export const resilientDownload = async (
         const buf = Buffer.from(chunk as Uint8Array)
         hash.update(buf)
         await new Promise<void>((resolve, reject) =>
-          file.write(buf, (e) => (e ? reject(e) : resolve()))
+          file!.write(buf, (e) => (e ? reject(e) : resolve()))
         )
         transferred += buf.length
         meter.record(transferred)
@@ -187,8 +210,9 @@ export const resilientDownload = async (
       }
 
       await new Promise<void>((resolve, reject) =>
-        file.end((e?: Error | null) => (e ? reject(e) : resolve()))
+        file!.end((e?: Error | null) => (e ? reject(e) : resolve()))
       )
+      file = undefined // fd closed cleanly — no cleanup needed in catch
       if (stallTimer) clearTimeout(stallTimer)
       if (fileError) throw fileError
 
@@ -213,12 +237,24 @@ export const resilientDownload = async (
       return destPath
     } catch (error) {
       if (stallTimer) clearTimeout(stallTimer)
+      // Close any open write descriptor before the next retry so the .part file is not held open
+      // across attempts (prevents descriptor leaks and Windows rename/append failures).
+      if (file !== undefined) {
+        const f = file
+        file = undefined
+        await new Promise<void>((resolve) => {
+          if (f.destroyed) { resolve(); return }
+          f.once('close', resolve)
+          f.destroy()
+        })
+      }
       // Terminal errors: never retry.
       if (error instanceof DownloadChecksumError) throw error
       if ((error as { terminal?: boolean }).terminal) throw error
       if (opts.signal?.aborted) throw opts.signal.reason ?? error
       if (isAbortError(error) && !controller.signal.aborted) throw error
       lastError = error
+      fileError = null // reset per-attempt error tracker
       // Retryable (network/stall/5xx/incomplete) — continue to next attempt.
     }
   }

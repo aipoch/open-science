@@ -187,4 +187,47 @@ describe('resilientDownload', () => {
     ).rejects.toThrow()
     expect(fetchImpl.mock.calls.length).toBe(1)
   })
+
+  it('cancels the retry backoff immediately when the signal fires mid-sleep', async () => {
+    const body = Buffer.from('data')
+    const fs = memFs()
+    const controller = new AbortController()
+    let sleepCallCount = 0
+    // First fetch succeeds with a short body so the core detects an incomplete read and schedules
+    // a retry with backoff. The signal is fired just as the backoff sleep starts; the sleep should
+    // resolve immediately rather than waiting the full delay.
+    const first = fakeFetch(body, { cutAfter: 2 }) // short read → retryable
+    const rest = fakeFetch(body)
+    let call = 0
+    const fetchImpl = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      call++
+      return call === 1 ? first(input, init) : rest(input, init)
+    })
+    const abortAfterFirstFetch = vi.fn(async (ms: number): Promise<void> => {
+      sleepCallCount++
+      if (sleepCallCount === 1) {
+        // Defer the abort to a microtask so sleepOrAbort's Promise.race has already attached the
+        // abort-event listener by the time the signal fires. Aborting synchronously inside the
+        // sleep mock would fire the event before the listener is registered.
+        void Promise.resolve().then(() => controller.abort())
+      }
+      return new Promise((resolve) => setTimeout(resolve, ms))
+    })
+    await expect(
+      resilientDownload('https://cdn/file', '/tmp/out.bin', {
+        expectedSha256: sha(body),
+        stallTimeoutMs: 20,
+        signal: controller.signal,
+        deps: {
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          ...fs,
+          sleep: abortAfterFirstFetch,
+          now: () => 0
+        }
+      })
+    ).rejects.toThrow()
+    // The download must have been aborted during backoff — not after the full sleep completes.
+    expect(sleepCallCount).toBe(1)
+    expect(call).toBe(1) // second fetch was never started
+  })
 })
