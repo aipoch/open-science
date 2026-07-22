@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { AcpRuntimeEvent } from '../../shared/acp'
+import type { AcpPermissionRequest, AcpRuntimeEvent } from '../../shared/acp'
 import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
 import {
+  describePermissionNotification,
   describeTaskNotification,
   TaskNotificationService,
   type TaskNotificationRequest
@@ -30,6 +31,43 @@ const errorEvent = (
   title: options.title ?? ACP_PROMPT_FAILED_EVENT_TITLE,
   text,
   ...(options.recoverable ? { recoverable: options.recoverable } : {})
+})
+
+const permissionRequest = (title: string, sessionId = 'session-1'): AcpPermissionRequest => ({
+  requestId: 'req-1',
+  sessionId,
+  toolCallId: 'tool-1',
+  title,
+  options: [],
+  raw: {}
+})
+
+describe('describePermissionNotification', () => {
+  it('names the task and the tool waiting for approval', () => {
+    expect(
+      describePermissionNotification(permissionRequest('Run command'), 'Plot the curve')
+    ).toEqual({
+      title: 'Approval needed',
+      body: '"Plot the curve" is waiting for approval: Run command'
+    })
+  })
+
+  it('falls back to a generic body when no prompt was tracked', () => {
+    expect(describePermissionNotification(permissionRequest('Edit results.csv'))).toEqual({
+      title: 'Approval needed',
+      body: 'The agent is waiting for approval: Edit results.csv'
+    })
+  })
+
+  it('truncates long tool titles so platform limits cannot clip the status away', () => {
+    const notification = describePermissionNotification(
+      permissionRequest(`Bash: ${'x'.repeat(300)}`),
+      'Plot the curve'
+    )
+
+    expect(notification.body.length).toBeLessThanOrEqual(200)
+    expect(notification.body.endsWith('…')).toBe(true)
+  })
 })
 
 describe('describeTaskNotification', () => {
@@ -276,5 +314,51 @@ describe('TaskNotificationService', () => {
 
     expect(service.takePendingOpenSession()).toEqual({ sessionId: 'session-7' })
     expect(service.takePendingOpenSession()).toBeNull()
+  })
+
+  it('notifies when a task parks on a permission request', async () => {
+    const { service, shown } = createService({})
+    const onActivate = vi.fn()
+
+    service.setActivationHandler(onActivate)
+    service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
+    await service.handlePermissionRequest(permissionRequest('Run command'))
+
+    expect(shown).toHaveLength(1)
+    expect(shown[0]).toMatchObject({
+      title: 'Approval needed',
+      body: '"Plot the curve" is waiting for approval: Run command'
+    })
+
+    // Clicking surfaces the same conversation as a terminal notification.
+    shown[0]?.onClick()
+    expect(onActivate).toHaveBeenCalledWith('session-1')
+  })
+
+  it('stays silent for permission requests on internal turns', async () => {
+    const { service, shown } = createService({})
+
+    // No tracked prompt: the turn was not user-initiated (e.g. reviewer correction).
+    await service.handlePermissionRequest(permissionRequest('Run command', 'main-session'))
+
+    expect(shown).toHaveLength(0)
+  })
+
+  it('does not notify for permission requests while the app is focused', async () => {
+    const { service, shown } = createService({ isAppFocused: () => true })
+
+    service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
+    await service.handlePermissionRequest(permissionRequest('Run command'))
+
+    expect(shown).toHaveLength(0)
+  })
+
+  it('does not notify for permission requests when the preference is disabled', async () => {
+    const { service, shown } = createService({ isEnabled: () => Promise.resolve(false) })
+
+    service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
+    await service.handlePermissionRequest(permissionRequest('Run command'))
+
+    expect(shown).toHaveLength(0)
   })
 })

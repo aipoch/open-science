@@ -1,4 +1,4 @@
-import type { AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
+import type { AcpPermissionRequest, AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
 import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
 import type { OpenSessionFromNotificationRequest } from '../../shared/notifications'
 
@@ -108,6 +108,26 @@ export const describeTaskNotification = (
   return null
 }
 
+// Maps a parked permission request to the notification to show. The turn hangs until the user
+// answers, so this is the "requires user attention" case from the original feature request; the
+// body names the task and the tool waiting for approval.
+export const describePermissionNotification = (
+  request: Pick<AcpPermissionRequest, 'title'>,
+  promptSnippet?: string
+): TaskNotification => {
+  const taskName = promptSnippet ? quoteSnippet(promptSnippet) : undefined
+
+  return {
+    title: 'Approval needed',
+    body: truncate(
+      taskName
+        ? `${taskName} is waiting for approval: ${request.title}`
+        : `The agent is waiting for approval: ${request.title}`,
+      MAX_BODY_LENGTH
+    )
+  }
+}
+
 // Watches agent-turn lifecycle events and posts an OS notification when a turn ends while the app
 // is unfocused. Kept free of Electron imports (delivery is injected) so the filtering rules are
 // unit-testable; wiring lives in main/ipc.ts.
@@ -187,6 +207,25 @@ export class TaskNotificationService {
     const notification = describeTaskNotification(event, snippet)
 
     if (!notification) return
+
+    await this.deliver(notification, sessionId)
+  }
+
+  // Observes permission requests (wired next to the 'acp:permission-request' broadcast): a pending
+  // approval parks the turn until the user answers, so an unfocused user needs a nudge. Same
+  // eligibility rule as terminal events — internal turns never notify.
+  handlePermissionRequest = async (request: AcpPermissionRequest): Promise<void> => {
+    const snippet = this.promptSnippets.get(request.sessionId)
+
+    if (!snippet) return
+
+    await this.deliver(describePermissionNotification(request, snippet), request.sessionId)
+  }
+
+  // Shared gates and delivery: a focused app and a disabled preference stay silent (and a settings
+  // read failure fails closed), and a throwing Notification can never surface as an unhandled
+  // rejection on the broadcast path that callers void.
+  private async deliver(notification: TaskNotification, sessionId: string): Promise<void> {
     if (this.deps.isAppFocused()) return
 
     let enabled = false

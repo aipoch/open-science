@@ -126,8 +126,11 @@ const createRuntime = ({
         // Fire-and-forget: a notification hiccup must never stall the renderer event stream.
         void taskNotifications?.handleRuntimeEvent(event)
       },
-      onPermissionRequest: (request: AcpPermissionRequest) =>
+      onPermissionRequest: (request: AcpPermissionRequest) => {
         broadcast('acp:permission-request', request)
+        // A pending approval parks the turn; an unfocused user gets a desktop nudge.
+        void taskNotifications?.handlePermissionRequest(request)
+      }
     }
   })
 }

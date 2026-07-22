@@ -102,7 +102,7 @@ const GeneralPanel = (): React.JSX.Element => {
         title="Notifications"
         description={
           <>
-            Get a desktop notification when a task finishes or needs your attention while
+            Get a desktop notification when a task finishes, fails, or waits for your approval while
             you&apos;re away from the app. Selecting it brings Open Science back to the front and
             opens the task.
           </>
