@@ -1,6 +1,7 @@
 import { Download, ExternalLink, RefreshCw, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 
+import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { useUpdateStore } from '@/stores/update-store'
@@ -69,20 +70,18 @@ const UpdateDialog = (): React.JSX.Element | null => {
 
           {isDownloading ? (
             <div className="mt-4">
-              <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground tabular-nums">
-                <span>
-                  {status.downloadedBytes != null && status.totalBytes && status.downloadedBytes > 0
-                    ? `${formatBytes(status.downloadedBytes)} / ${formatBytes(status.totalBytes)}`
-                    : ''}
-                </span>
-                <span>{status.progress ?? 0}%</span>
-              </div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-bg-300">
-                <div
-                  className="h-full rounded-full bg-primary transition-all duration-150 ease-out"
-                  style={{ width: `${status.progress ?? 0}%` }}
-                />
-              </div>
+              <DownloadProgressLine
+                progress={
+                  status.downloadProgress ?? {
+                    phase: 'downloading',
+                    transferred: status.downloadedBytes ?? 0,
+                    total: status.totalBytes,
+                    percent: status.progress ?? 0,
+                    bytesPerSecond: 0,
+                    attempt: 0
+                  }
+                }
+              />
             </div>
           ) : null}
 

@@ -139,9 +139,9 @@ describe('UpdateDialog', () => {
     expect(document.body.textContent).toContain('42%')
   })
 
-  it('hides the left label when byte counts are missing while downloading', () => {
-    // When transferred/total are unknown the left span should be empty — percent appears only on
-    // the right, avoiding a duplicate "35%   35%" display.
+  it('renders the download line without a percent when total is unknown', () => {
+    // No downloadProgress yet and unknown total: the shared line shows bytes downloaded, no percent,
+    // rather than a misleading fixed percentage against an unknown total.
     useUpdateStore.setState({
       isDialogOpen: true,
       status: {
@@ -154,31 +154,38 @@ describe('UpdateDialog', () => {
       }
     })
     act(() => root.render(<UpdateDialog />))
-    // The progress label row has two spans; the left one (context) should be empty.
-    const labelSpans = document.body.querySelectorAll('.tabular-nums span')
-    expect(labelSpans.length).toBeGreaterThanOrEqual(2)
-    expect(labelSpans[0].textContent).toBe('')
-    expect(labelSpans[1].textContent).toBe('35%')
+    // Scope the percent check to the download line itself (the last .tabular-nums; the first is the
+    // version subtitle). The download button label separately shows "Downloading 35%".
+    const lines = document.body.querySelectorAll('.tabular-nums')
+    const line = lines[lines.length - 1]
+    expect(line?.textContent).toContain('downloaded')
+    expect(line?.textContent).not.toContain('%')
   })
 
-  it('hides the left label when downloadedBytes is 0 while downloading', () => {
-    // A fresh download that hasn't received its first progress event yet: downloadedBytes is 0,
-    // so the left label should be empty — not "0 B / 9.8 KB".
+  it('mirrors the full download detail (speed) from downloadProgress while downloading', () => {
+    // Once a progress broadcast arrives, the store carries the superset detail and the dialog shows
+    // the speed line from the shared DownloadProgressLine.
     useUpdateStore.setState({
       isDialogOpen: true,
       status: {
         state: 'downloading',
         current: '0.1.0',
         latest: '0.2.0',
-        progress: 0,
-        downloadedBytes: 0,
-        totalBytes: 10000
+        progress: 42,
+        downloadedBytes: 4200,
+        totalBytes: 10000,
+        downloadProgress: {
+          phase: 'downloading',
+          transferred: 4200,
+          total: 10000,
+          percent: 42,
+          bytesPerSecond: 2_411_724,
+          attempt: 0
+        }
       }
     })
     act(() => root.render(<UpdateDialog />))
-    const labelSpans = document.body.querySelectorAll('.tabular-nums span')
-    expect(labelSpans.length).toBeGreaterThanOrEqual(2)
-    expect(labelSpans[0].textContent).toBe('')
-    expect(labelSpans[1].textContent).toBe('0%')
+    expect(document.body.textContent).toContain('2.3 MB/s')
+    expect(document.body.textContent).toContain('42%')
   })
 })

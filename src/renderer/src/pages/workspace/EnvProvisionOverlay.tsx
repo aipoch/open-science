@@ -1,3 +1,4 @@
+import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import type { ProvisionUiState } from './provisioning-view'
 
 // Reusable provisioning progress surface. Rendered as a greyed overlay over the notebook pane, and
@@ -29,12 +30,20 @@ const EnvProvisionOverlay = ({
       {ui.kind === 'preparing' ? (
         <>
           {ui.message ? <p className="text-xs text-text-300">{ui.message}</p> : null}
-          <div className="h-1.5 w-56 overflow-hidden rounded-full bg-bg-300">
-            <div
-              className="h-full bg-primary transition-all"
-              style={{ width: `${Math.round(ui.progress * 100)}%` }}
-            />
-          </div>
+          {ui.download ? (
+            // During the pack download, show the shared speed/ETA/resume line instead of the coarse
+            // overall bar so a weak-network stall reads as "resuming" rather than a frozen bar.
+            <div className="w-56">
+              <DownloadProgressLine progress={ui.download} />
+            </div>
+          ) : (
+            <div className="h-1.5 w-56 overflow-hidden rounded-full bg-bg-300">
+              <div
+                className="h-full bg-primary transition-all"
+                style={{ width: `${Math.round(ui.progress * 100)}%` }}
+              />
+            </div>
+          )}
         </>
       ) : (
         <>

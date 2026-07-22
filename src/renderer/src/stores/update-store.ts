@@ -42,7 +42,8 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
           ...s.status,
           progress: progress.percent,
           downloadedBytes: progress.transferred,
-          totalBytes: progress.total
+          totalBytes: progress.total,
+          downloadProgress: progress
         }
       }))
     )

@@ -1,3 +1,4 @@
+import type { DownloadProgress } from '../../../../shared/download-progress'
 import type {
   ProvisionOperationScope,
   ProvisionProgress,
@@ -20,6 +21,7 @@ export type ProvisionUiState =
       message: string
       progress: number
       sessionId?: string
+      download?: DownloadProgress
     }
   | { kind: 'error'; message: string; scope?: PreparingScope; sessionId?: string }
 
@@ -40,7 +42,8 @@ export function deriveProvisionUi(
       phase: progress?.phase ?? '',
       message: progress?.message ?? '',
       progress: progress?.progress ?? 0,
-      ...(progress?.sessionId ? { sessionId: progress.sessionId } : {})
+      ...(progress?.sessionId ? { sessionId: progress.sessionId } : {}),
+      ...(progress?.download ? { download: progress.download } : {})
     }
   }
   // A failed attempt only counts as a blocking error while python itself is missing; an R failure
