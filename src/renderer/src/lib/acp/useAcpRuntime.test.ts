@@ -158,7 +158,7 @@ describe('useAcpRuntime respondToPermission', () => {
 })
 
 describe('useAcpRuntime snapshot action failures', () => {
-  it('swallows a rejecting snapshot action, records the error, and clears the pending flag', async () => {
+  it('swallows a rejecting snapshot action, returns undefined, and clears the pending flag', async () => {
     acpApi.connect.mockRejectedValueOnce(new Error('connect failed'))
     const { result } = await mountRuntime()
 
@@ -172,7 +172,7 @@ describe('useAcpRuntime snapshot action failures', () => {
     expect(result.current.isConnecting).toBe(false)
   })
 
-  it('normalizes non-Error rejections into UI-safe text', async () => {
+  it('swallows non-Error rejections and returns undefined', async () => {
     acpApi.cancel.mockRejectedValueOnce('raw failure string')
     const { result } = await mountRuntime()
 
@@ -185,7 +185,7 @@ describe('useAcpRuntime snapshot action failures', () => {
 })
 
 describe('useAcpRuntime value action failures', () => {
-  it('rethrows a rejecting value action while still recording the error and clearing pending', async () => {
+  it('rethrows a rejecting value action while clearing the pending flag', async () => {
     const failure = new Error('createSession failed')
     acpApi.createSession.mockRejectedValueOnce(failure)
     const { result } = await mountRuntime()
