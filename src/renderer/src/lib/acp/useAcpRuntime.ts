@@ -72,7 +72,7 @@ const useAcpRuntime = (): {
     historyAttachments?: AcpPromptRequest['historyAttachments'],
     historyImages?: AcpPromptRequest['historyImages'],
     resumeFallback?: AcpPromptRequest['resumeFallback']
-  ) => Promise<AcpStateSnapshot | undefined>
+  ) => Promise<AcpStateSnapshot>
   respondToPermission: (
     requestId: string,
     optionId?: string
@@ -170,6 +170,24 @@ const useAcpRuntime = (): {
     []
   )
 
+  // Specialized helper for sendPrompt: rethrows errors (like runValueAction) but does NOT
+  // record actionError on failure, avoiding stale-state reads in .catch() handlers. Also performs
+  // the state-sync side-effect that runSnapshotAction provides, since callers use `void sendPrompt(...)`.
+  const runSendPromptAction = useCallback(
+    async (action: () => Promise<AcpStateSnapshot>): Promise<AcpStateSnapshot> => {
+      // Clear on entry so the helper is self-consistent with the other action helpers and does
+      // not rely on WorkspacePage's active-session visibility gate to hide a stale actionError.
+      setActionError(null)
+      const snapshot = await action()
+      // Apply state-sync side-effect before returning, matching runSnapshotAction's contract.
+      // Without this, callers that do `void runtime.sendPrompt(...)` would discard the snapshot
+      // and the UI would show stale state until the next async IPC event fires.
+      setState(snapshot)
+      return snapshot
+    },
+    []
+  )
+
   // Keep all renderer ACP IPC calls in one hook so the future conversation UI can reuse it.
   // Opens or reopens the runtime connection for a workspace directory.
   const connect = useCallback(
@@ -256,7 +274,7 @@ const useAcpRuntime = (): {
       historyImages?: AcpPromptRequest['historyImages'],
       resumeFallback?: AcpPromptRequest['resumeFallback']
     ) =>
-      runSnapshotAction(undefined, () =>
+      runSendPromptAction(() =>
         window.api.acp.sendPrompt({
           sessionId,
           text,
@@ -272,7 +290,7 @@ const useAcpRuntime = (): {
           ...(resumeFallback ? { resumeFallback } : {})
         })
       ),
-    [runSnapshotAction]
+    [runSendPromptAction]
   )
 
   // Converts a UI permission click into the response shape expected by IPC.

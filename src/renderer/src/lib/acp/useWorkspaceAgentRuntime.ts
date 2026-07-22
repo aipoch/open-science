@@ -123,8 +123,8 @@ const getErrorMessage = (error: unknown): string =>
 // failure time avoids the race where failRun would flip the session out of 'running' first.
 const failOrMarkDisconnected = async (sessionId: string, message: string): Promise<void> => {
   // A conversation being auto-compacted after a request-size overflow owns its own outcome (reset +
-  // retry). Don't overwrite the neutral compacting state with a dead-end error from the prompt rejection
-  // the runtime swallowed into undefined.
+  // retry). Don't overwrite the neutral compacting state with a dead-end error from the rejected
+  // sendPrompt call.
   if (useSessionStore.getState().sessions.find((session) => session.id === sessionId)?.compacting) {
     return
   }
@@ -133,7 +133,8 @@ const failOrMarkDisconnected = async (sessionId: string, message: string): Promi
     const snapshot = await window.api.acp.getState()
 
     if (snapshot.status === 'closed' || snapshot.status === 'error') {
-      useSessionStore.getState().markDisconnected(sessionId)
+      // Keep the specific failure cause (e.g. "Connection timeout") in the Resume banner.
+      useSessionStore.getState().markDisconnected(sessionId, message)
       return
     }
   } catch {
@@ -315,15 +316,12 @@ const startPendingSessionPrompt = (
 
     void runtime
       .sendPrompt(runtimeSessionId, content, promptAttachments, forcedSkillIds, referencedArtifacts)
-      .then((snapshot) => {
-        if (!snapshot) {
-          void failOrMarkDisconnected(runtimeSessionId, 'Agent run failed')
-        }
-      })
       .catch((error) => {
         // A rejected prompt surfaces as a Resume banner if the connection dropped, otherwise a
         // visible session error, instead of being swallowed as an unhandled rejection.
-        void failOrMarkDisconnected(runtimeSessionId, getErrorMessage(error))
+        // Ensure non-empty message to avoid being silently dropped by failRun's empty check.
+        const errorMessage = getErrorMessage(error).trim() || 'Agent run failed'
+        void failOrMarkDisconnected(runtimeSessionId, errorMessage)
       })
   })()
 }
@@ -509,15 +507,12 @@ const sendWorkspaceMessage = async (
         historyImages,
         resumeFallback
       )
-      .then((snapshot) => {
-        if (!snapshot) {
-          void failOrMarkDisconnected(targetSessionId, 'Agent run failed')
-        }
-      })
       .catch((error) => {
         // A rejected prompt surfaces as a Resume banner if the connection dropped, otherwise a
         // visible session error, instead of being swallowed as an unhandled rejection.
-        void failOrMarkDisconnected(targetSessionId, getErrorMessage(error))
+        // Ensure non-empty message to avoid being silently dropped by failRun's empty check.
+        const errorMessage = getErrorMessage(error).trim() || 'Agent run failed'
+        void failOrMarkDisconnected(targetSessionId, errorMessage)
       })
 
     return appended
