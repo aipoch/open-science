@@ -1732,6 +1732,55 @@ describe('resendEditedWorkspaceMessage', () => {
     expect(session?.status).toBe('error')
     expect(session?.error).toContain('image replay')
   })
+
+  it('refuses the edit before truncating when the kept history has user-uploaded images', async () => {
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'default-project',
+          title: 'Conversation',
+          cwd: '/workspace/project',
+          status: 'idle' as const,
+          messages: [
+            {
+              ...createMessage('user-1', 'user', 'first prompt', baseTime),
+              uploads: [createAttachment({ name: 'photo.png', mimeType: 'image/png' })]
+            },
+            createMessage('agent-1', 'agent', 'first answer', baseTime + 100),
+            createMessage('user-2', 'user', 'second prompt', baseTime + 200)
+          ],
+          createdAt: baseTime,
+          updatedAt: baseTime + 200
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    const resent = await resendEditedWorkspaceMessage(
+      runtime,
+      { sessionId: 'session-1', messageId: 'user-2', text: 'second prompt, edited' },
+      false
+    )
+
+    // User uploads replay as image attachments, so they are gated exactly like agent-emitted images.
+    expect(resent).toBe(false)
+    expect(runtime.resetSessionContext).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    const session = useSessionStore.getState().sessions[0]
+    expect(session?.messages.map((message) => message.id)).toEqual(['user-1', 'agent-1', 'user-2'])
+    expect(session?.status).toBe('error')
+    expect(session?.error).toContain('image replay')
+  })
 })
 
 describe('edit resend reply streaming', () => {
@@ -1837,5 +1886,82 @@ describe('edit resend reply streaming', () => {
       status: 'streaming',
       responseToMessageId: afterResend?.activeRun?.promptMessageId
     })
+  })
+})
+
+describe('sendWorkspaceMessage replay image gate', () => {
+  const baseTime = 1710000000000
+
+  const createMessage = (
+    id: string,
+    role: 'user' | 'agent',
+    content: string,
+    createdAt: number
+  ): ChatMessage => ({
+    id,
+    role,
+    content,
+    status: 'complete',
+    eventIds: [],
+    createdAt,
+    updatedAt: createdAt
+  })
+
+  beforeEach(() => {
+    useSessionStore.setState(createInitialSessionState())
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('blocks the replay before dispatch when the kept history has user-uploaded images', async () => {
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'default-project',
+          title: 'Conversation',
+          cwd: '/workspace/project',
+          status: 'idle' as const,
+          messages: [
+            {
+              ...createMessage('user-1', 'user', 'first prompt', baseTime),
+              uploads: [createAttachment({ name: 'photo.png', mimeType: 'image/png' })]
+            },
+            createMessage('agent-1', 'agent', 'first answer', baseTime + 100)
+          ],
+          createdAt: baseTime,
+          updatedAt: baseTime + 100
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    const sent = await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'follow up',
+      cwd: '/workspace/project',
+      forceHistoryReplay: true,
+      supportsImageInput: false
+    })
+
+    // The user turn is recorded, but the replayed upload would become an image block the model
+    // cannot take, so nothing is dispatched and the session carries the gate's error.
+    expect(sent).toBeDefined()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    const session = useSessionStore.getState().sessions[0]
+    expect(session?.status).toBe('error')
+    expect(session?.error).toContain('image replay')
   })
 })

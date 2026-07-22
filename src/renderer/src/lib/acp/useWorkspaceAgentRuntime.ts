@@ -495,7 +495,10 @@ const sendWorkspaceMessage = async (
     if ((contextResetFromResume || forceHistoryReplay) && historyMessages) {
       historyPreamble = buildHistoryPreamble(historyMessages)
       const media = buildHistoryReplayMedia(historyMessages)
-      if (supportsImageInput === false && media.images.length > 0) {
+      if (
+        supportsImageInput === false &&
+        (media.images.length > 0 || media.attachments.length > 0)
+      ) {
         useSessionStore.getState().failRun(targetSessionId, IMAGE_REPLAY_UNSUPPORTED_MESSAGE)
         return appended
       }
@@ -761,12 +764,14 @@ const resendEditedWorkspaceMessage = async (
 
   if (!resumeCwd || !content || cutIndex < 0) return false
 
-  // Validate replay compatibility before the destructive cut: a kept history with images cannot be
-  // replayed on a model without image input, and discovering that after the truncation would leave
-  // the later turns dropped with no prompt dispatched.
+  // Validate replay compatibility before the destructive cut: a kept history with images — whether
+  // agent-emitted blocks or user uploads — cannot be replayed on a model without image input, and
+  // discovering that after the truncation would leave the later turns dropped with no prompt dispatched.
+  const replayMedia = buildHistoryReplayMedia(session.messages.slice(0, cutIndex))
+
   if (
     supportsImageInput === false &&
-    buildHistoryReplayMedia(session.messages.slice(0, cutIndex)).images.length > 0
+    (replayMedia.images.length > 0 || replayMedia.attachments.length > 0)
   ) {
     useSessionStore.getState().failRun(input.sessionId, IMAGE_REPLAY_UNSUPPORTED_MESSAGE)
     return false

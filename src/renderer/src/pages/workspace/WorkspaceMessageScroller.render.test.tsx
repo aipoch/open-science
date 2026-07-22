@@ -204,9 +204,27 @@ describe('WorkspaceMessageScroller loading render', () => {
       messages: [createMessage({ id: 'prompt-1' })]
     })
 
-    // A permission wait is still mid-run, so the transcript keeps the working indicator.
+    // A permission wait is still mid-run, so the transcript keeps the working indicator — even
+    // when the agent already streamed visible text before asking.
     await expect(
       renderScroller({ ...runningSession, status: 'waiting-permission' })
+    ).resolves.toContain('role="status"')
+    await expect(
+      renderScroller({
+        ...runningSession,
+        status: 'waiting-permission',
+        messages: [
+          createMessage({ id: 'prompt-1' }),
+          createMessage({
+            id: 'reply-1',
+            role: 'agent',
+            content: "I'll inspect the files",
+            status: 'streaming',
+            streamId: 'stream-1',
+            responseToMessageId: 'prompt-1'
+          })
+        ]
+      })
     ).resolves.toContain('role="status"')
     await expect(
       renderScroller({ ...runningSession, activeRun: undefined })

@@ -219,4 +219,33 @@ describe('agent loading message state', () => {
       })
     ).toBe(false)
   })
+
+  it('keeps loading during a permission wait even after visible agent content arrives', async () => {
+    const { shouldShowAgentLoadingMessage } = await loadAgentLoadingMessageModule()
+
+    // The agent streamed text, then paused on a tool permission: the wait is on the user's
+    // decision, not on agent output, so the indicator stays.
+    expect(
+      shouldShowAgentLoadingMessage(
+        createSession({
+          status: 'waiting-permission',
+          activeRun: {
+            promptMessageId: 'prompt-1',
+            startedAt: 1710000000100
+          },
+          messages: [
+            createMessage({ id: 'prompt-1' }),
+            createMessage({
+              id: 'reply-1',
+              role: 'agent',
+              content: "I'll inspect the files",
+              status: 'streaming',
+              streamId: 'stream-1',
+              responseToMessageId: 'prompt-1'
+            })
+          ]
+        })
+      )
+    ).toBe(true)
+  })
 })
