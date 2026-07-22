@@ -298,6 +298,22 @@ const safeLogError = (message: string, data?: unknown): void => {
   }
 }
 
+const describesUnresumableSession = (details: unknown): boolean => {
+  if (typeof details !== 'string') return false
+
+  const mentionsSession = /\b(?:session|conversation|context)\b/i.test(details)
+  if (!mentionsSession) return false
+
+  const describesMissingSession =
+    /\b(?:not found|does not exist|unknown|missing)\b/i.test(details) ||
+    /\bno\s+(?:saved\s+)?(?:session|conversation|context)\b/i.test(details)
+  const describesFailedResume =
+    /\b(?:failed|unable|cannot|can't|could not)\b/i.test(details) &&
+    /\b(?:resume|restore|load|reopen|reattach)\w*\b/i.test(details)
+
+  return describesMissingSession || describesFailedResume
+}
+
 // Detects an agent-side resume failure that means the session cannot be reattached, so the thread
 // should adopt a fresh agent session instead of dead-ending. A spec-compliant agent returns
 // "Resource not found" (-32002) for a session id it no longer holds (e.g. after a provider switch);
@@ -313,13 +329,14 @@ const isUnresumableSessionError = (error: unknown): boolean => {
   if (candidate.code === -32002 || /resource not found|session not found/i.test(message))
     return true
 
-  // Some restarted agents return a bare JSON-RPC Internal error for a lost session. Treat only that
-  // exact detail-free shape as unresumable; richer -32603 errors carry the real auth/MCP/provider
-  // failure in data.details and must propagate rather than being hidden by a fresh-session fallback.
+  // The ACP SDK wraps a plain agent exception as a generic Internal error and stores its message in
+  // data.details. Recover that shape only when the detail identifies a missing/unrestorable session;
+  // unrelated auth, MCP, and provider failures must remain visible. Detail-free Internal errors keep the
+  // existing fallback because some agents discard the cause entirely.
   return (
     candidate.code === -32603 &&
     /^internal error\.?$/i.test(message.trim()) &&
-    candidate.data?.details === undefined
+    (candidate.data?.details === undefined || describesUnresumableSession(candidate.data.details))
   )
 }
 
@@ -1211,7 +1228,7 @@ class AcpRuntime {
       // than dead-end the thread, adopt a brand-new agent session under the SAME app id.
       log.info('resumed session adopted after unrecoverable resume error', {
         sessionId: request.sessionId,
-        reason: error instanceof Error ? error.message : String(error)
+        ...errorLogFields(error)
       })
 
       return this.adoptFreshSession(connection, request, sessionCwd, projectName)

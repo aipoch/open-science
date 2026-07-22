@@ -115,6 +115,9 @@ const startFakeAgent = (
     // When true, the resume handler rejects with a generic "Internal error" (-32603) — what some
     // agents return instead of a clean not-found after their process was replaced by an app restart.
     resumeInternalError?: boolean
+    // A plain handler error is serialized by the ACP SDK as -32603 with the original message in
+    // data.details. This mirrors agents that do not translate their resume failure to resourceNotFound.
+    resumeInternalErrorDetails?: string
     // When true, the agent does NOT advertise session/close capability, so the runtime must fall back to
     // the session/cancel notification on delete instead of a close request.
     supportsClose?: boolean
@@ -198,6 +201,10 @@ const startFakeAgent = (
 
       if (options.resumeInternalError) {
         throw acp.RequestError.internalError()
+      }
+
+      if (options.resumeInternalErrorDetails) {
+        throw new Error(options.resumeInternalErrorDetails)
       }
 
       resumedSessions.push({
@@ -3182,6 +3189,63 @@ describe('ACP runtime session management', () => {
         { sessionId: 'restarted-session', text: 'reply for adopted-session-1' }
       ])
     )
+  })
+
+  it('adopts a fresh session when the ACP agent wraps a resume failure in Internal error details', async () => {
+    infoLogSpy.mockClear()
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['adopted-session-1'], {
+      resumeInternalErrorDetails: 'Failed to restore the previous conversation'
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const resumed = await runtime.resumeSession({
+      sessionId: 'restarted-session',
+      cwd: '/workspace'
+    })
+    expect(resumed).toMatchObject({
+      sessionId: 'restarted-session',
+      contextReset: true
+    })
+    expect(
+      infoLogSpy.mock.calls.find(
+        ([message]) => message === 'resumed session adopted after unrecoverable resume error'
+      )?.[1]
+    ).toMatchObject({
+      sessionId: 'restarted-session',
+      error: 'Internal error',
+      code: -32603,
+      data: { details: 'Failed to restore the previous conversation' }
+    })
+
+    await runtime.sendPrompt({ sessionId: 'restarted-session', text: 'keep going' })
+
+    expect(fakeAgent.prompts).toEqual([{ sessionId: 'adopted-session-1', text: 'keep going' }])
+  })
+
+  it('keeps an unrelated detailed Internal error visible instead of adopting a fresh session', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, [], {
+      resumeInternalErrorDetails: 'Authentication failed while configuring the provider'
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await expect(
+      runtime.resumeSession({ sessionId: 'restarted-session', cwd: '/workspace' })
+    ).rejects.toMatchObject({
+      code: -32603,
+      message: 'Internal error',
+      data: { details: 'Authentication failed while configuring the provider' }
+    })
+    expect(fakeAgent.newSessions).toEqual([])
   })
 
   it('skips resume entirely for a session that last ran under a different framework', async () => {
