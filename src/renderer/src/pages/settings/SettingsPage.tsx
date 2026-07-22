@@ -6,6 +6,7 @@ import {
   Maximize2,
   Minimize2,
   Plus,
+  RefreshCw,
   ScrollText,
   Settings2,
   SlidersHorizontal,
@@ -17,18 +18,29 @@ import { useEffect, useState } from 'react'
 
 import type {
   AgentFrameworkId,
+  ClaudeInstallSource,
+  ClaudeInstallSourceInfo,
   ProviderView,
   UpsertProviderRequest
 } from '../../../../shared/settings'
+import {
+  getClaudeInstallSources,
+  getCodexInstallSources,
+  getOpencodeInstallSources
+} from '../../../../shared/settings'
+// Import the bare Mono/Color components straight from their modules: each icon's entry point
+// eagerly attaches its Avatar/Combine companions, which drag in @lobehub/ui (antd-style + an
+// emoji-mart JSON import vitest can't parse). The Mono/Color components are self-contained.
+import ClaudeColor from '@lobehub/icons/es/Claude/components/Color'
+import Codex from '@lobehub/icons/es/Codex/components/Mono'
+import OpenCode from '@lobehub/icons/es/OpenCode/components/Mono'
+import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ModelFrameworkCompatibilityAlert } from './ModelFrameworkCompatibilityAlert'
-import { ClaudeInstallCard } from './ClaudeInstallCard'
-import { ClaudeStatusCard } from './ClaudeStatusCard'
-import { CodexStatusCard } from './CodexStatusCard'
-import { OpencodeStatusCard } from './OpencodeStatusCard'
+import { AgentFrameworkCard } from './AgentFrameworkCard'
 import { GeneralPanel } from './GeneralPanel'
 import { NetworkPanel } from './NetworkPanel'
 import { StoragePanel } from './StoragePanel'
@@ -48,7 +60,7 @@ import {
   type ProviderFormValue
 } from './provider-form-value'
 import { ProviderList } from './ProviderList'
-import { SettingsRow, SettingsSection } from './SettingsLayout'
+import { SettingsSection } from './SettingsLayout'
 import { UninstallRuntimeDialog } from './UninstallRuntimeDialog'
 import { SwitchFrameworkDialog } from './SwitchFrameworkDialog'
 
@@ -90,14 +102,19 @@ const toUpsertRequest = (
 })
 
 // Left-nav panels, grouped in the sidebar. "Capabilities" holds agent extensions (Skills); "Workspace"
-// holds environment/config (Model manages Claude + providers, General holds app settings incl. logs).
+// holds environment/config (Model manages providers, its Agent sub-panel manages agent frameworks,
+// General holds app settings incl. logs).
 type SettingsPanelId =
-  'model' | 'skills' | 'connectors' | 'general' | 'storage' | 'network' | 'runtimes'
+  'model' | 'agent' | 'skills' | 'connectors' | 'general' | 'storage' | 'network' | 'runtimes'
 
 type SettingsPanel = {
   id: SettingsPanelId
   label: string
-  Icon: React.ComponentType<{ className?: string }>
+  // Top-level entries carry a nav icon; sub-items (see `parent`) render indented without one.
+  Icon?: React.ComponentType<{ className?: string }>
+  // Marks this panel as a sub-item of another panel in the nav (e.g. Agent under Model). Sub-items
+  // are still full panels in the location/history model — `parent` only affects nav presentation.
+  parent?: SettingsPanelId
 }
 
 const SETTINGS_GROUPS: ReadonlyArray<{ label: string; panels: ReadonlyArray<SettingsPanel> }> = [
@@ -113,6 +130,7 @@ const SETTINGS_GROUPS: ReadonlyArray<{ label: string; panels: ReadonlyArray<Sett
     label: 'Workspace',
     panels: [
       { id: 'model', label: 'Model', Icon: SlidersHorizontal },
+      { id: 'agent', label: 'Agent', parent: 'model' },
       { id: 'runtimes', label: 'Runtimes', Icon: TerminalSquare },
       { id: 'storage', label: 'Storage', Icon: Cloud },
       { id: 'general', label: 'General', Icon: Settings2 }
@@ -210,9 +228,17 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const [isUninstalling, setIsUninstalling] = useState(false)
   // The framework the user picked (via a card) but hasn't confirmed switching to yet.
   const [pendingSwitch, setPendingSwitch] = useState<AgentFrameworkId | null>(null)
+  // The framework whose Install menu started the current/last install run. The store's install
+  // state is global (one install at a time), so this local tag routes the progress bar, logs, and
+  // errors to the card that initiated them.
+  const [installTarget, setInstallTarget] = useState<'claude' | 'opencode' | 'codex' | null>(null)
   const [statusMessage, setStatusMessage] = useState<string | undefined>(undefined)
   const [statusOk, setStatusOk] = useState(false)
   const [busyProviderId, setBusyProviderId] = useState<string | undefined>(undefined)
+  // The Model branch's sub-item (Agent) starts expanded when settings lands on the Model panel
+  // (the default) and collapsed when it deep-links elsewhere (e.g. a skill mention). Clicking
+  // Model/Agent expands it, and the expansion is sticky — other panels never collapse it.
+  const [agentMenuExpanded, setAgentMenuExpanded] = useState(pendingSkillId === undefined)
 
   // Refresh settings whenever the dialog opens so external changes are reflected.
   useEffect(() => {
@@ -472,6 +498,142 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
     (framework) => framework.id === pendingSwitch
   )?.displayName
 
+  // The section-level Re-detect re-scans all three frameworks at once; the per-card detect buttons
+  // were removed in favor of this single action.
+  const isDetectingAnyFramework = isDetectingClaude || isDetectingOpencode || isDetectingCodex
+  const handleDetectAllFrameworks = (): void => {
+    void detectClaude()
+    void detectOpencode()
+    void detectCodex()
+  }
+
+  // One descriptor per agent framework, in canonical display order. Cards are grouped by install
+  // state (Installed / Available) below, preserving this order within each group. The source link
+  // points at each agent's own repository — for Codex that is the ACP adapter repo, since the app
+  // talks to Codex through the agentclientprotocol/codex-acp bridge.
+  type FrameworkCardModel = {
+    key: 'claude' | 'opencode' | 'codex'
+    frameworkId: AgentFrameworkId
+    name: string
+    icon: React.ReactNode
+    description: string
+    ready: boolean
+    version?: string
+    path?: string
+    sourceLabel: string
+    sourceUrl: string
+    notReadyHint: React.ReactNode
+    uninstallCommand: string
+    managed: boolean
+    installSources: ClaudeInstallSourceInfo[]
+    onInstall: (source: ClaudeInstallSource) => void
+  }
+
+  const frameworkCards: FrameworkCardModel[] = [
+    {
+      key: 'claude',
+      frameworkId: 'claude-code',
+      name: 'Claude Agent',
+      icon: <ClaudeColor size={24} />,
+      description: "Anthropic's agentic coding tool for the terminal.",
+      ready: preflight.claudeReady,
+      version: claude.version,
+      path: claude.resolvedPath,
+      sourceLabel: 'anthropics/claude-code',
+      sourceUrl: 'https://github.com/anthropics/claude-code',
+      notReadyHint: 'Install Claude Agent below, or install it manually and re-detect.',
+      uninstallCommand: 'npm uninstall -g @anthropic-ai/claude-code',
+      managed: claudeManaged,
+      installSources: getClaudeInstallSources(window.api?.platform),
+      onInstall: (source) => void installClaude(source)
+    },
+    {
+      key: 'opencode',
+      frameworkId: 'opencode',
+      name: 'OpenCode',
+      icon: <OpenCode size={24} className="text-foreground" />,
+      description: 'Open-source coding agent for the terminal.',
+      ready: preflight.opencodeReady,
+      version: opencode.version,
+      path: opencode.resolvedPath,
+      sourceLabel: 'anomalyco/opencode',
+      sourceUrl: 'https://github.com/anomalyco/opencode',
+      notReadyHint: (
+        <>
+          OpenCode is required for this framework. Install it below, or install it manually (see{' '}
+          <ExternalTextLink href="https://opencode.ai/docs">opencode.ai/docs</ExternalTextLink>) and
+          re-detect.
+        </>
+      ),
+      uninstallCommand: 'npm uninstall -g opencode-ai',
+      managed: opencodeManaged,
+      installSources: getOpencodeInstallSources(window.api?.platform),
+      onInstall: (source) => void installOpencode(source)
+    },
+    {
+      key: 'codex',
+      frameworkId: 'codex',
+      name: 'Codex',
+      icon: <Codex size={24} className="text-foreground" />,
+      description: "OpenAI's coding agent, connected through the Codex ACP adapter.",
+      ready: preflight.codexReady,
+      version: codex.version,
+      path: codex.resolvedPath,
+      sourceLabel: 'agentclientprotocol/codex-acp',
+      sourceUrl: 'https://github.com/agentclientprotocol/codex-acp',
+      notReadyHint: codex.resolvedPath
+        ? 'The adapter or its paired native Codex runtime did not pass detection. Reinstall the managed pair below, or repair your manual installation and re-detect.'
+        : 'Codex ACP is required for this framework. Install it below, or install it manually and re-detect.',
+      uninstallCommand: 'npm uninstall -g @agentclientprotocol/codex-acp',
+      managed: codexManaged,
+      installSources: getCodexInstallSources(),
+      // Codex has no official-script source; the guard keeps the shared install-source type happy.
+      onInstall: (source) => {
+        if (source !== 'official-script') void installCodex(source)
+      }
+    }
+  ]
+
+  const installedFrameworks = frameworkCards.filter((card) => card.ready)
+  const availableFrameworks = frameworkCards.filter((card) => !card.ready)
+
+  // Maps one framework descriptor to its card, wiring in the page-level concerns: radio selection
+  // (via the switch confirmation), the uninstall dialog, and routing the global install state to
+  // only the card that started the install (installTarget).
+  const renderFrameworkCard = (card: FrameworkCardModel): React.JSX.Element => (
+    <AgentFrameworkCard
+      key={card.key}
+      icon={card.icon}
+      name={card.name}
+      description={card.description}
+      ready={card.ready}
+      version={card.version}
+      path={card.path}
+      sourceLabel={card.sourceLabel}
+      sourceUrl={card.sourceUrl}
+      notReadyHint={card.notReadyHint}
+      active={agentFrameworkId === card.frameworkId}
+      onSelect={() => requestSwitch(card.frameworkId)}
+      selectDisabled={isInstalling || isUninstalling}
+      uninstallCommand={card.uninstallCommand}
+      managed={card.managed}
+      isUninstalling={isUninstalling && pendingUninstall === card.key}
+      isDetecting={isDetectingAnyFramework}
+      onUninstall={() => setPendingUninstall(card.key)}
+      installSources={card.installSources}
+      installing={isInstalling && installTarget === card.key}
+      installDisabled={isInstalling || isUninstalling}
+      installLogs={installTarget === card.key ? installLogs : []}
+      installProgress={installTarget === card.key ? installProgress : null}
+      installError={installTarget === card.key ? installError : undefined}
+      npmAvailable={npmAvailable}
+      onInstall={(source) => {
+        setInstallTarget(card.key)
+        card.onInstall(source)
+      }}
+    />
+  )
+
   const handleSave = async (): Promise<void> => {
     setIsSaving(true)
     setStatusMessage(undefined)
@@ -564,35 +726,66 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                   {group.label}
                 </div>
                 <ul className="flex flex-col gap-0.5">
-                  {group.panels.map(({ id, label, Icon }) => {
+                  {group.panels.map(({ id, label, Icon, parent }) => {
                     const isActive = activePanel === id
+                    // A sub-item (Agent under Model) expands once the user enters the Model branch
+                    // and then stays expanded — selecting other panels never collapses it.
+                    const branchActive = parent === undefined || agentMenuExpanded
 
-                    return (
-                      <li key={id}>
-                        <button
-                          type="button"
-                          aria-current={isActive ? 'page' : undefined}
-                          onClick={() =>
-                            navigate({
-                              panel: id,
-                              skills: { kind: 'list' },
-                              model: { kind: 'list' }
-                            })
-                          }
-                          className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors duration-150 motion-reduce:transition-none ${
-                            isActive
-                              ? 'bg-muted font-medium text-foreground'
-                              : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                          }`}
-                        >
+                    const button = (
+                      <button
+                        type="button"
+                        aria-current={isActive ? 'page' : undefined}
+                        // A collapsed sub-item is height-0/opacity-0 — keep it out of the tab order too.
+                        tabIndex={parent && !branchActive ? -1 : undefined}
+                        onClick={() => {
+                          // Entering the Model branch expands its sub-item (sticky — see above).
+                          if (id === 'model' || id === 'agent') setAgentMenuExpanded(true)
+                          navigate({
+                            panel: id,
+                            skills: { kind: 'list' },
+                            model: { kind: 'list' }
+                          })
+                        }}
+                        className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors duration-150 motion-reduce:transition-none ${
+                          parent ? 'h-7 text-[13px] ' : ''
+                        }${
+                          isActive
+                            ? 'bg-muted font-medium text-foreground'
+                            : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                        }`}
+                      >
+                        {Icon ? (
                           <Icon
                             className="size-4 shrink-0 text-muted-foreground"
                             aria-hidden="true"
                           />
-                          <span className="min-w-0 flex-1 truncate">{label}</span>
-                        </button>
-                      </li>
+                        ) : null}
+                        <span className="min-w-0 flex-1 truncate">{label}</span>
+                      </button>
                     )
+
+                    // Sub-items render inside a height-animated wrapper (0fr → 1fr) with a tree
+                    // guide line dropped from the parent's icon gutter, marking the relationship.
+                    if (parent) {
+                      return (
+                        <li
+                          key={id}
+                          className={cn(
+                            'grid transition-[grid-template-rows,opacity] duration-200 motion-reduce:transition-none',
+                            branchActive
+                              ? 'grid-rows-[1fr] opacity-100'
+                              : 'grid-rows-[0fr] opacity-0'
+                          )}
+                        >
+                          <div className="ml-[15px] min-h-0 overflow-hidden border-l border-border pl-[9px]">
+                            {button}
+                          </div>
+                        </li>
+                      )
+                    }
+
+                    return <li key={id}>{button}</li>
                   })}
                 </ul>
               </div>
@@ -729,6 +922,72 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                   <NetworkPanel view={networkView} onNavigate={navigateNetwork} />
                 ) : activePanel === 'general' ? (
                   <GeneralPanel />
+                ) : activePanel === 'agent' ? (
+                  <div className="space-y-5 p-5">
+                    <ModelFrameworkCompatibilityAlert />
+
+                    {/* The runtime cards double as the framework selector: pick a card to make it
+                        the active backend (confirmed, since it starts a fresh session). Cards are
+                        grouped by install state so management (Installed) and acquisition
+                        (Available) don't compete for attention — but the active runtime can't be
+                        uninstalled (switch to the other one first). */}
+                    <SettingsSection
+                      title="Agent framework"
+                      aria-label="Agent framework"
+                      description={
+                        <>
+                          Choose which coding-agent backend drives your sessions. Select a card to
+                          switch; switching starts a fresh agent session, and open conversations
+                          have their transcript replayed to the new backend. The active runtime
+                          can&apos;t be uninstalled — switch to the other one first.
+                        </>
+                      }
+                      action={
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleDetectAllFrameworks}
+                          disabled={isDetectingAnyFramework || isInstalling || isUninstalling}
+                        >
+                          <RefreshCw
+                            className={isDetectingAnyFramework ? 'animate-spin' : ''}
+                            aria-hidden="true"
+                          />
+                          {isDetectingAnyFramework ? 'Detecting…' : 'Re-detect'}
+                        </Button>
+                      }
+                    >
+                      <div className="space-y-5">
+                        {installedFrameworks.length > 0 ? (
+                          <div className="space-y-2">
+                            <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                              Installed · {installedFrameworks.length}
+                            </p>
+                            <div className="space-y-3">
+                              {installedFrameworks.map(renderFrameworkCard)}
+                            </div>
+                          </div>
+                        ) : null}
+                        {availableFrameworks.length > 0 ? (
+                          <div className="space-y-2">
+                            <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                              Available · {availableFrameworks.length}
+                            </p>
+                            <div className="space-y-3">
+                              {availableFrameworks.map(renderFrameworkCard)}
+                            </div>
+                          </div>
+                        ) : null}
+                        {activeFramework && !activeFramework.supportsSkills ? (
+                          <p className="text-xs text-muted-foreground">
+                            Skills aren&apos;t available with {activeFramework.displayName}; use
+                            Claude Code for skill-based workflows.
+                          </p>
+                        ) : null}
+                      </div>
+                    </SettingsSection>
+                  </div>
                 ) : isProviderFormOpen ? (
                   // Add/edit provider is a secondary page reached via the shared back/forward arrows.
                   <div className="p-5">
@@ -778,111 +1037,27 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                   </div>
                 ) : (
                   <div className="space-y-5 p-5">
-                    <ModelFrameworkCompatibilityAlert />
+                    {/* Active model is its own section so the current selection reads separately
+                        from provider management. */}
+                    {providers.length > 0 ? (
+                      <SettingsSection
+                        title="Active model"
+                        aria-label="Active model"
+                        description="The model that drives new agent sessions."
+                      >
+                        <div className="max-w-md">
+                          <ActiveModelSelect />
+                        </div>
+                      </SettingsSection>
+                    ) : null}
 
-                    {/* The runtime cards double as the framework selector: pick a card to make it
-                        the active backend (confirmed, since it starts a fresh session). Both are always
-                        shown so either app-managed runtime can be detected, installed, or uninstalled —
-                        but the active runtime can't be uninstalled (switch to the other one first). */}
-                    <SettingsSection
-                      title="Agent framework"
-                      aria-label="Agent framework"
-                      description={
-                        <>
-                          Choose which coding-agent backend drives your sessions. Select a card to
-                          switch; switching starts a fresh agent session, and open conversations
-                          have their transcript replayed to the new backend. The active runtime
-                          can&apos;t be uninstalled — switch to the other one first.
-                        </>
-                      }
-                      separated
-                    >
-                      <div className="space-y-3">
-                        <ClaudeStatusCard
-                          claude={claude}
-                          claudeReady={preflight.claudeReady}
-                          isDetecting={isDetectingClaude}
-                          onDetect={() => void detectClaude()}
-                          active={agentFrameworkId === 'claude-code'}
-                          onSelect={() => requestSwitch('claude-code')}
-                          selectDisabled={isInstalling || isUninstalling}
-                          managed={claudeManaged}
-                          isUninstalling={isUninstalling && pendingUninstall === 'claude'}
-                          isInstalling={isInstalling}
-                          onUninstall={() => setPendingUninstall('claude')}
-                        />
-                        {!preflight.claudeReady ? (
-                          <ClaudeInstallCard
-                            isInstalling={isInstalling}
-                            installLogs={installLogs}
-                            installProgress={installProgress}
-                            installError={installError}
-                            npmAvailable={npmAvailable}
-                            onInstall={(source) => void installClaude(source)}
-                          />
-                        ) : null}
-                        <OpencodeStatusCard
-                          opencode={opencode}
-                          opencodeReady={preflight.opencodeReady}
-                          isDetecting={isDetectingOpencode}
-                          onDetect={() => void detectOpencode()}
-                          isInstalling={isInstalling}
-                          installLogs={installLogs}
-                          installProgress={installProgress}
-                          installError={installError}
-                          npmAvailable={npmAvailable}
-                          onInstall={(source) => void installOpencode(source)}
-                          active={agentFrameworkId === 'opencode'}
-                          onSelect={() => requestSwitch('opencode')}
-                          selectDisabled={isInstalling || isUninstalling}
-                          managed={opencodeManaged}
-                          isUninstalling={isUninstalling && pendingUninstall === 'opencode'}
-                          onUninstall={() => setPendingUninstall('opencode')}
-                        />
-                        <CodexStatusCard
-                          codex={codex}
-                          codexReady={preflight.codexReady}
-                          isDetecting={isDetectingCodex}
-                          onDetect={() => void detectCodex()}
-                          isInstalling={isInstalling}
-                          installLogs={installLogs}
-                          installProgress={installProgress}
-                          installError={installError}
-                          npmAvailable={npmAvailable}
-                          onInstall={(source) => void installCodex(source)}
-                          active={agentFrameworkId === 'codex'}
-                          onSelect={() => requestSwitch('codex')}
-                          selectDisabled={isInstalling || isUninstalling}
-                          managed={codexManaged}
-                          isUninstalling={isUninstalling && pendingUninstall === 'codex'}
-                          onUninstall={() => setPendingUninstall('codex')}
-                        />
-                        {activeFramework && !activeFramework.supportsSkills ? (
-                          <p className="text-xs text-muted-foreground">
-                            Skills aren&apos;t available with {activeFramework.displayName}; use
-                            Claude Code for skill-based workflows.
-                          </p>
-                        ) : null}
-                      </div>
-                    </SettingsSection>
-
+                    {/* The add action lives with the list: a dashed ghost row appended after the
+                        last provider, matching the Available-group placeholder treatment. */}
                     <SettingsSection
                       title="Providers"
                       aria-label="Providers"
-                      separated
-                      action={
-                        <Button type="button" variant="outline" onClick={openCreate}>
-                          <Plus className="size-4" aria-hidden="true" />
-                          Add provider
-                        </Button>
-                      }
+                      separated={providers.length > 0}
                     >
-                      {providers.length > 0 ? (
-                        <SettingsRow label="Active model" className="border-b border-border pt-0">
-                          <ActiveModelSelect />
-                        </SettingsRow>
-                      ) : null}
-
                       <ProviderList
                         providers={providers}
                         activeProviderId={activeProviderId}
@@ -891,6 +1066,14 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                         onDelete={(provider) => void deleteProvider(provider.id)}
                         onTest={(provider) => void handleTest(provider)}
                       />
+                      <button
+                        type="button"
+                        onClick={openCreate}
+                        className="mt-2 flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border text-sm text-muted-foreground transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/60 hover:text-foreground"
+                      >
+                        <Plus className="size-4" aria-hidden="true" />
+                        Add provider
+                      </button>
                     </SettingsSection>
                   </div>
                 )}
