@@ -194,7 +194,7 @@ describe('agent loading message state', () => {
     ).toBe(false)
   })
 
-  it('does not show loading for permission waits or sessions without an active run', async () => {
+  it('keeps loading during permission waits and hides it only without an active run', async () => {
     const { shouldShowAgentLoadingMessage } = await loadAgentLoadingMessageModule()
     const runningSession = createSession({
       activeRun: {
@@ -204,12 +204,13 @@ describe('agent loading message state', () => {
       messages: [createMessage({ id: 'prompt-1' })]
     })
 
+    // A permission wait is still mid-run: the row stays so the transcript keeps a working indicator.
     expect(
       shouldShowAgentLoadingMessage({
         ...runningSession,
         status: 'waiting-permission'
       })
-    ).toBe(false)
+    ).toBe(true)
     expect(
       shouldShowAgentLoadingMessage({
         ...runningSession,

@@ -195,7 +195,7 @@ describe('WorkspaceMessageScroller loading render', () => {
     expect(html).toContain('Answer text')
   })
 
-  it('does not render loading for permission waits or missing active runs', async () => {
+  it('keeps the loading row during permission waits and hides it without an active run', async () => {
     const runningSession = createSession({
       activeRun: {
         promptMessageId: 'prompt-1',
@@ -204,12 +204,41 @@ describe('WorkspaceMessageScroller loading render', () => {
       messages: [createMessage({ id: 'prompt-1' })]
     })
 
+    // A permission wait is still mid-run, so the transcript keeps the working indicator.
     await expect(
       renderScroller({ ...runningSession, status: 'waiting-permission' })
-    ).resolves.not.toContain('role="status"')
+    ).resolves.toContain('role="status"')
     await expect(
       renderScroller({ ...runningSession, activeRun: undefined })
     ).resolves.not.toContain('role="status"')
+  })
+
+  it('renders the loading row for a follow-up prompt after a tool-calling turn', async () => {
+    const html = await renderScroller(
+      createSession({
+        activeRun: {
+          promptMessageId: 'prompt-2',
+          startedAt: 1710000000200
+        },
+        messages: [
+          createMessage({ id: 'prompt-1', content: 'First prompt', sortIndex: 1 }),
+          createMessage({
+            id: 'reply-1',
+            role: 'agent',
+            content: 'First answer',
+            status: 'complete',
+            streamId: 'stream-1',
+            responseToMessageId: 'prompt-1',
+            sortIndex: 2
+          }),
+          createMessage({ id: 'prompt-2', content: 'Follow up', sortIndex: 4 })
+        ],
+        activities: [createActivity({ id: 'tool-1', sortIndex: 3 })]
+      })
+    )
+
+    expect(html).toContain('role="status"')
+    expect(html).toContain('Agent is responding')
   })
 
   it('renders generated artifact gallery cards under agent messages', async () => {
