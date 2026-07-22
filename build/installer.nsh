@@ -2,6 +2,16 @@
   nsExec::ExecToLog 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\windows-runtime-cache-uninstall.ps1"'
 !macroend
 
+!macro customInit
+  # Cache any stray per-user install location NOW (install start), BEFORE any uninstall pass
+  # runs: the HKCU uninstall pass deletes this value on success, so customUnInstallCheckCurrentUser
+  # — which runs after that pass — could never read it there. Declared inside this macro (rather
+  # than at file scope) because customInit only expands into the installer build; a file-scope
+  # Var would be declared-but-unused in the uninstaller build, and makensis fails that warning.
+  Var /GLOBAL perUserInstallDirCache
+  ReadRegStr $perUserInstallDirCache HKEY_CURRENT_USER "${INSTALL_REGISTRY_KEY}" InstallLocation
+!macroend
+
 # Resilient replacement for handleUninstallResult's default failure handling, installed via
 # electron-builder's customUnInstallCheck hooks below. During an in-app update the new installer
 # runs the OLD uninstaller and treats any non-zero exit code as fatal ("Failed to uninstall old
@@ -30,17 +40,21 @@
     # matches on ExecutablePath (Win32_Process has no Path property) with a trailing-backslash
     # boundary so a sibling directory can never match, and receives the directory as an ARGUMENT —
     # never interpolated into the script source — so a custom install dir containing an apostrophe
-    # breaks nothing and injects nothing. The image-name taskkill is ONLY a fallback for when the
-    # sweep could not run (PowerShell missing or policy-blocked): it matches the exe name in ANY
-    # directory, so a second install or the portable zip copy would be killed too — acceptable
-    # solely when no path-scoped option exists. Both are best-effort; the retry is the verdict.
+    # breaks nothing and injects nothing. The image-name taskkills are ONLY a fallback for when
+    # the sweep could not run (PowerShell missing or policy-blocked): they match by exe name in
+    # ANY directory — open-science.exe covers the app and its Electron-as-Node children (the
+    # CLI), micromamba.exe covers in-flight provisioning — so a second install, the portable zip
+    # copy, or an unrelated micromamba would be killed too. Acceptable solely when no path-scoped
+    # option exists. Both are best-effort; the retry is the verdict.
     # $0 keeps the uninstaller arguments (/currentuser etc.) — neither nsExec call touches it.
     nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -C "$$root = $$args[0].TrimEnd('\') + '\'; Get-CimInstance -ClassName Win32_Process | ? { $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$root, 'CurrentCultureIgnoreCase') } | % { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }" "${DIR}"`
     Pop $R1
     # nsExec pushes "error" when powershell.exe cannot even start, otherwise its exit code — any
-    # non-zero means the sweep did not run, so only then widen to the image-name kill.
+    # non-zero means the sweep did not run, so only then widen to the image-name kills.
     ${if} $R1 != 0
       nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"`
+      Pop $R1
+      nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM micromamba.exe`
       Pop $R1
     ${endif}
     ClearErrors
@@ -65,16 +79,17 @@
 !macro customUnInstallCheckCurrentUser
   ${if} $R0 != 0
     # installMode==all pass: it removes a stray PER-USER install, which may live anywhere —
-    # $INSTDIR/$appExe describe the new (machine-wide) target, not it. Recover the real location
-    # from the registry; when it is unreadable, keep electron-builder's default fatal handling
-    # rather than retry against the wrong directory.
-    !insertmacro readReg $R9 "HKEY_CURRENT_USER" "${INSTALL_REGISTRY_KEY}" InstallLocation
-    ${if} $R9 == ""
+    # $INSTDIR/$appExe describe the new (machine-wide) target, not it. Use the location cached in
+    # customInit: reading the registry HERE is useless for the spurious-failure case, because a
+    # successful per-user uninstall deletes InstallLocation before returning its (untrustworthy)
+    # exit code. Empty cache means no per-user install was registered at install start; keep
+    # electron-builder's default fatal handling rather than retry against an unknown directory.
+    ${if} $perUserInstallDirCache == ""
       MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0"
       DetailPrint `Uninstall was not successful. Uninstaller error code: $R0.`
       SetErrorLevel 2
       Quit
     ${endif}
-    !insertmacro uninstallFailureRecoveryAt $R9
+    !insertmacro uninstallFailureRecoveryAt $perUserInstallDirCache
   ${endif}
 !macroend

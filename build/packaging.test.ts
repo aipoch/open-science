@@ -75,12 +75,16 @@ describe('NSIS installer include (build/installer.nsh)', () => {
   it('runs the image-name taskkill only as a fallback when the PowerShell sweep cannot run', () => {
     // taskkill /IM matches the exe name in ANY directory — a second install or the portable zip
     // copy would be killed too, discarding unsaved work. It must fire only when the path-scoped
-    // PowerShell sweep failed to run (nsExec pushes "error" or a non-zero exit code).
+    // PowerShell sweep failed to run (nsExec pushes "error" or a non-zero exit code). micromamba
+    // is included: its image name differs from the app exe, so the app-exe kill alone cannot
+    // cover an in-flight provisioning lock on PowerShell-blocked machines.
     const code = include
       .split('\n')
       .filter((line) => !/^\s*#/.test(line))
       .join('\n')
-    expect(code.match(/taskkill/g) ?? []).toHaveLength(1)
+    expect(code.match(/taskkill/g) ?? []).toHaveLength(2)
+    expect(code).toContain('taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"')
+    expect(code).toContain('taskkill /F /IM micromamba.exe')
     expect(code).toMatch(
       /Pop \$R1[\s\S]*?\$\{if\} \$R1 != 0\s+nsExec::Exec `"\$SYSDIR\\cmd\.exe" \/C taskkill/
     )
@@ -106,17 +110,31 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     expect(include).not.toContain(`StartsWith('$INSTDIR'`)
   })
 
-  it('targets the real per-user install location in the current-user hook', () => {
-    // The installMode==all HKCU pass removes a stray per-user install, which may live anywhere —
-    // $INSTDIR/$appExe describe the new machine-wide target. The hook must read InstallLocation
-    // from HKCU and fall back to the default fatal handling when it is unreadable, rather than
-    // retry against the wrong directory.
-    expect(include).toContain(
-      '!insertmacro readReg $R9 "HKEY_CURRENT_USER" "${INSTALL_REGISTRY_KEY}" InstallLocation'
-    )
-    expect(include).toMatch(/\$\{if\} \$R9 == ""/)
-    expect(include).toContain('!insertmacro uninstallFailureRecoveryAt $R9')
+  it('caches the per-user install location before the HKCU uninstall pass deletes it', () => {
+    // A successful per-user uninstall deletes HKCU InstallLocation, so reading it inside the hook
+    // — after the pass — always comes up empty in exactly the spurious-failure case the hook
+    // exists for. customInit runs before any uninstall pass; the hook must consume its cached
+    // value and fall back to the default fatal handling only when no per-user install was
+    // registered at install start.
+    expect(include).toMatch(/\$\{if\} \$perUserInstallDirCache == ""/)
+    expect(include).toContain('!insertmacro uninstallFailureRecoveryAt $perUserInstallDirCache')
     expect(include).toContain('!insertmacro uninstallFailureRecoveryAt $INSTDIR')
+    // The cache is declared inside customInit itself: a file-scope Var would be declared-but-
+    // unused in the uninstaller build, which makensis fails as a warning.
+    const initHook = include.match(/!macro customInit([\s\S]*?)!macroend/)?.[1] ?? ''
+    expect(initHook).toMatch(
+      /Var \/GLOBAL perUserInstallDirCache[\s\S]*ReadRegStr \$perUserInstallDirCache HKEY_CURRENT_USER "\$\{INSTALL_REGISTRY_KEY\}" InstallLocation/
+    )
+    // The hook itself must not re-read the registry after the pass — that pins the broken order.
+    // (Comments may name the value while explaining; strip them before checking.)
+    const hkcuHook = (
+      include.match(/!macro customUnInstallCheckCurrentUser([\s\S]*?)!macroend/)?.[1] ?? ''
+    )
+      .split('\n')
+      .filter((line) => !/^\s*#/.test(line))
+      .join('\n')
+    expect(hkcuHook).not.toContain('readReg')
+    expect(hkcuHook).not.toContain('InstallLocation')
   })
 
   it('never references symbols declared only after handleUninstallResult is parsed', () => {
