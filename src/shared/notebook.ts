@@ -224,6 +224,13 @@ export type NotebookSessionRequest = {
   workspaceCwd: string
 }
 
+export type ExportNotebookResult =
+  | { saved: false }
+  | {
+      saved: true
+      filePath: string
+    }
+
 // Starts a streamed code write into a notebook cell.
 export type BeginNotebookCodeCellRequest = NotebookSessionRequest & {
   cellId?: string

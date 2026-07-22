@@ -1,8 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
-import { rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { readFile, rm, writeFile } from 'node:fs/promises'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type {
   NotebookCell,
@@ -11,6 +11,7 @@ import type {
   ExecuteNotebookCodeRequest,
   ExecuteNotebookControlRequest,
   ExecuteShellRequest,
+  ExportNotebookResult,
   FinishNotebookCodeCellRequest,
   NotebookEnvironmentStatus,
   NotebookKernelMetadata,
@@ -34,6 +35,7 @@ import type {
   ProvisionProgress
 } from '../../shared/notebook-env'
 import type { PackageMirror } from '../../shared/mirror'
+import { runDocumentToIpynb, type ResolvedArtifact } from './ipynb-export'
 import { NotebookKernelExecutor, type NotebookKernelExecutorOptions } from './kernel-executor'
 import type { KernelProcessKind } from './kernel-executor'
 import { effectiveMirrorAsync, type ProbeDeps } from './mirror-probe'
@@ -301,6 +303,12 @@ type NotebookRuntimeServiceOptions = {
   // fake; the production instance (the DefaultRuntimeProvisioner) is wired after construction in
   // main/ipc.ts via setEnvironmentManager, mirroring the mcp/mirror resolvers.
   environmentManager?: NotebookEnvironmentManager
+  // Included in exported notebook provenance. Tests may omit it.
+  appVersion?: string
+  // Save-dialog seam for notebook export tests. Production falls back to Electron's native dialog.
+  saveIpynb?: (suggestedName: string, data: string) => Promise<ExportNotebookResult>
+  // Resolves app-managed artifact paths with the artifact repository's canonical/symlink checks.
+  resolveArtifactPath?: (path: string) => Promise<string>
 }
 
 // The wire binding plus the interpreter override the executor needs. `resolvedInterpreter` is set only
@@ -353,6 +361,57 @@ type RuntimeSession = {
   // Process keys whose in-flight run is being FORCE-STOPPED by a disable (kernel killed mid-run): the
   // run's kill is recorded 'cancelled' (not 'failed'), then the key is cleared. WS10 force-stop.
   forceStoppedKeys: Set<string>
+}
+
+const saveIpynbWithDialog = async (
+  suggestedName: string,
+  data: string
+): Promise<ExportNotebookResult> => {
+  const { app, dialog } = await import('electron')
+  const { canceled, filePath } = await dialog.showSaveDialog({
+    defaultPath: join(app.getPath('downloads'), suggestedName),
+    title: 'Export notebook',
+    filters: [{ name: 'Jupyter Notebook', extensions: ['ipynb'] }]
+  })
+
+  if (canceled || !filePath) return { saved: false }
+  await writeFile(filePath, data, 'utf8')
+  return { saved: true, filePath }
+}
+
+const isPathInside = (root: string, candidate: string): boolean => {
+  const relativePath = relative(resolve(root), resolve(candidate))
+  return (
+    relativePath !== '' &&
+    relativePath !== '..' &&
+    !relativePath.startsWith(`..${sep}`) &&
+    !isAbsolute(relativePath)
+  )
+}
+
+const artifactMimeData = async (
+  root: string,
+  artifact: NotebookRunRecord['artifacts'][number],
+  resolveManagedPath?: (path: string) => Promise<string>
+): Promise<ResolvedArtifact | null> => {
+  const mimeType = artifact.mimeType
+  if (!mimeType) return null
+  const filePath = isPathInside(root, artifact.path)
+    ? artifact.path
+    : await resolveManagedPath?.(artifact.path)
+  if (!filePath) return null
+
+  const binary = await readFile(filePath)
+  if (mimeType.startsWith('image/')) {
+    return { mimeType, data: binary.toString('base64') }
+  }
+  if (mimeType === 'application/json') {
+    return { mimeType, data: JSON.parse(binary.toString('utf8')) as unknown }
+  }
+  if (mimeType.startsWith('text/')) {
+    return { mimeType, data: binary.toString('utf8') }
+  }
+  return null
 }
 
 // Builds the compact plain text output list shown in the preview panel.
@@ -1868,6 +1927,37 @@ class NotebookRuntimeService {
       runtimeRoot: document.kernel.runtimeRoot,
       runJsonPath: getNotebookRunJsonPath(this.options.dataRoot, projectName, request.sessionId)
     }
+  }
+
+  // Exports the durable history as an nbformat projection; run.json remains the source of truth.
+  async exportIpynb(request: NotebookSessionRequest): Promise<ExportNotebookResult> {
+    const projectName = request.projectName ?? this.options.projectName
+    const document = await this.repository.findExisting(projectName, request.sessionId)
+    if (!document) {
+      throw new Error(`Notebook session not found: ${request.sessionId}`)
+    }
+
+    const notebook = await runDocumentToIpynb(document, {
+      appVersion: this.options.appVersion,
+      resolveArtifact: (artifact) => {
+        const artifactSessionId = document.artifactSessionId ?? document.sessionId
+        if (
+          artifact.projectName !== document.projectName ||
+          artifact.sessionId !== artifactSessionId
+        ) {
+          return Promise.resolve(null)
+        }
+        return artifactMimeData(
+          document.notebookSessionRoot,
+          artifact,
+          this.options.resolveArtifactPath
+        )
+      }
+    })
+    const suggestedName = `session-${request.sessionId.slice(0, 8)}.ipynb`
+    const serialized = `${JSON.stringify(notebook, null, 2)}\n`
+
+    return (this.options.saveIpynb ?? saveIpynbWithDialog)(suggestedName, serialized)
   }
 
   // Replaces the interpreter process while preserving cells and durable run history. Prefers the

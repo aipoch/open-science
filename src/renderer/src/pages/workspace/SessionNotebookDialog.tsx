@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Download, X } from 'lucide-react'
+import { Download, LoaderCircle, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import type { ChatSession } from '@/stores/session-store'
 
@@ -79,19 +78,23 @@ type SessionNotebookContentProps = {
   status: SessionNotebookStatus
   error?: string
   onClose: () => void
+  onExport: () => Promise<void>
 }
 
 // Pure presentational body of the dialog: header summary, empty/loading/error/populated states,
-// and the disabled .ipynb footer. Kept free of data-loading hooks and Dialog context so it renders
+// and the .ipynb export footer. Kept free of data-loading hooks and Dialog context so it renders
 // standalone in tests; close is delegated through onClose.
 const SessionNotebookContent = ({
   sessionId,
   runs,
   status,
   error,
-  onClose
+  onClose,
+  onExport
 }: SessionNotebookContentProps): React.JSX.Element => {
   const [activeKind, setActiveKind] = useState<NotebookKernelKind>('python')
+  const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState<string>()
   const shortId = sessionId.slice(0, 8)
   const agents = runs.some((run) => run.source === 'agent') ? 1 : 0
   // Only python/r runs are "cells" in the notebook sense; repl/bash are control-plane/shell runs
@@ -115,6 +118,19 @@ const SessionNotebookContent = ({
     ? activeKind
     : (KERNEL_KIND_ORDER.find((kind) => kindsWithRuns.has(kind)) ?? visibleKinds[0] ?? 'python')
   const visibleRuns = runs.filter((run) => resolveRunKernelKind(run) === effectiveActiveKind)
+  const exportDisabled = status !== 'ready' || runs.length === 0 || exporting
+
+  const handleExport = async (): Promise<void> => {
+    setExporting(true)
+    setExportError(undefined)
+    try {
+      await onExport()
+    } catch (exportFailure) {
+      setExportError(getErrorMessage(exportFailure))
+    } finally {
+      setExporting(false)
+    }
+  }
 
   return (
     <>
@@ -191,26 +207,24 @@ const SessionNotebookContent = ({
         )}
       </div>
 
-      <div className="flex justify-end gap-3 border-t border-border-300/15 px-5 py-3.5">
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              {/* Wrapper span keeps the tooltip reachable even though the button is disabled. */}
-              <span>
-                <button
-                  type="button"
-                  disabled
-                  className="flex items-center justify-center gap-1.5 rounded px-2 py-1 text-xs text-text-200 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50"
-                  aria-label="Download as .ipynb"
-                >
-                  <Download className="size-3.5" aria-hidden="true" />
-                  .ipynb
-                </button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>Notebook export is coming soon</TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+      <div className="flex items-center justify-between gap-3 border-t border-border-300/15 px-5 py-3.5">
+        <p className="min-w-0 truncate text-xs text-danger-000" role="alert">
+          {exportError}
+        </p>
+        <button
+          type="button"
+          disabled={exportDisabled}
+          onClick={() => void handleExport()}
+          className="flex shrink-0 items-center justify-center gap-1.5 rounded px-2 py-1 text-xs text-text-200 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50"
+          aria-label="Download as .ipynb"
+        >
+          {exporting ? (
+            <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+          ) : (
+            <Download className="size-3.5" aria-hidden="true" />
+          )}
+          {exporting ? 'Exporting…' : '.ipynb'}
+        </button>
       </div>
     </>
   )
@@ -291,6 +305,13 @@ const SessionNotebookDialog = ({
               status={status}
               error={error}
               onClose={onClose}
+              onExport={async () => {
+                await window.api.notebook.exportIpynb({
+                  sessionId: session.id,
+                  projectName: session.projectId,
+                  workspaceCwd: session.cwd ?? ''
+                })
+              }}
             />
           ) : null}
         </Dialog.Content>

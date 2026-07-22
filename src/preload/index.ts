@@ -37,6 +37,7 @@ import type {
   NotebookAvailableEvent,
   NotebookChangedEvent,
   ExecuteNotebookCodeRequest,
+  ExportNotebookResult,
   FinishNotebookCodeCellRequest,
   NotebookLanguage,
   NotebookRunSummary,
@@ -368,6 +369,7 @@ type OpenScienceAPI = {
     }>
     runCell: (request: RunNotebookCellRequest) => Promise<NotebookRunSummary>
     execute: (request: ExecuteNotebookCodeRequest) => Promise<NotebookRunSummary>
+    exportIpynb: (request: NotebookSessionRequest) => Promise<ExportNotebookResult>
     restart: (request: NotebookSessionRequest) => Promise<NotebookSessionState>
     shutdown: (
       request: NotebookSessionRequest
@@ -754,6 +756,8 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('notebook:run-cell', request) as Promise<NotebookRunSummary>,
     execute: (request) =>
       ipcRenderer.invoke('notebook:execute', request) as Promise<NotebookRunSummary>,
+    exportIpynb: (request) =>
+      ipcRenderer.invoke('notebook:export-ipynb', request) as Promise<ExportNotebookResult>,
     restart: (request) =>
       ipcRenderer.invoke('notebook:restart', request) as Promise<NotebookSessionState>,
     shutdown: (request) =>
