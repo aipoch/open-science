@@ -65,6 +65,31 @@ const notesToString = (notes: unknown): string => {
   return ''
 }
 
+// A file entry in electron-updater's UpdateInfo.files array.
+type UpdateFeedFile = { url?: string; size?: number }
+
+// The file extension electron-updater downloads for each platform (the auto-update artifact, not the
+// CDN manifest's installer entry): ZIP on macOS, NSIS .exe on Windows, AppImage on Linux.
+const PLATFORM_ARTIFACT_EXT: Record<string, string> = {
+  darwin: '.zip',
+  win32: '.exe',
+  linux: '.AppImage'
+}
+
+// Extracts the auto-update artifact size from the updater feed's files list. Prefers the file whose URL
+// matches the current platform's expected extension (the one electron-updater will actually download);
+// falls back to the first file with a size. This avoids advertising a DMG size when the updater actually
+// downloads a ZIP on macOS, or a deb size when it downloads an AppImage on Linux.
+const extractArtifactSize = (files?: UpdateFeedFile[]): number | undefined => {
+  if (!files || files.length === 0) return undefined
+  const targetExt = PLATFORM_ARTIFACT_EXT[process.platform]
+  if (targetExt) {
+    const match = files.find((f) => f.size != null && f.url?.endsWith(targetExt))
+    if (match?.size != null) return match.size
+  }
+  return files.find((f) => f.size != null)?.size
+}
+
 // In-place auto-update strategy: wraps electron-updater for true download + restart on win/linux and
 // on signed stable macOS (Squirrel.Mac). Emits the same UpdateStatus shape as UpdateService, always
 // stamped applyKind:'restart'. Opt-in: autoDownload and autoInstallOnAppQuit are disabled so nothing
@@ -116,11 +141,8 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private subscribe(): void {
     this.updater.on('checking-for-update', () => this.setStatus({ state: 'checking' }))
     this.updater.on('update-available', (info) => {
-      const i = info as { version?: string; releaseNotes?: unknown; files?: { size?: number }[] }
-      // The size comes from electron-updater's own feed (the artifact it will actually download —
-      // e.g. a macOS ZIP or Linux AppImage), not the CDN manifest's installer entry (DMG/deb) which
-      // is a different file with a different size.
-      const totalBytes = i.files?.find((f) => f.size != null)?.size
+      const i = info as { version?: string; releaseNotes?: unknown; files?: UpdateFeedFile[] }
+      const totalBytes = extractArtifactSize(i.files)
       this.setStatus({
         state: 'available',
         latest: i.version,

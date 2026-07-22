@@ -39,7 +39,7 @@ class FakeUpdater extends EventEmitter {
     this.emit('update-available', {
       version: '0.3.0',
       releaseNotes: 'notes',
-      files: [{ size: 10000 }]
+      files: [{ url: 'https://cdn/Open-Science-0.3.0.zip', size: 10000 }]
     })
   })
   downloadUpdate = vi.fn((token?: FakeToken): Promise<void> => {
@@ -355,7 +355,10 @@ describe('ElectronUpdaterStrategy', () => {
     updater.checkForUpdates = vi.fn(async () => {
       updater.emit('update-available', {
         version: '0.3.0',
-        files: [{ size: 99000 }, { size: 12000 }]
+        files: [
+          { url: 'https://cdn/app-0.3.0.zip', size: 99000 },
+          { url: 'https://cdn/app-0.3.0.dmg', size: 12000 }
+        ]
       })
     })
     const strategy = new ElectronUpdaterStrategy({
@@ -365,6 +368,7 @@ describe('ElectronUpdaterStrategy', () => {
       fetchImpl: offlineFetch()
     })
     const status = await strategy.check()
+    // darwin (the test default via process.platform mock) should match the .zip, not the .dmg.
     expect(status.totalBytes).toBe(99000)
   })
 
@@ -444,5 +448,29 @@ describe('ElectronUpdaterStrategy', () => {
     // The retry's progress event should report fresh transferred, not stale bytes.
     expect(retry.downloadedBytes).toBe(5500)
     await first
+  })
+
+  it('picks the platform-matching artifact over the first entry in a multi-file feed', async () => {
+    // A macOS feed lists both DMG (for manual download) and ZIP (for auto-update). The strategy
+    // must pick the ZIP size (what electron-updater downloads), not the DMG.
+    const updater = new FakeUpdater()
+    updater.checkForUpdates = vi.fn(async () => {
+      updater.emit('update-available', {
+        version: '0.3.0',
+        files: [
+          { url: 'https://cdn/app-0.3.0.dmg', size: 80000 },
+          { url: 'https://cdn/app-0.3.0.zip', size: 60000 }
+        ]
+      })
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    const status = await strategy.check()
+    // darwin → .zip (60000), not .dmg (80000) which is listed first.
+    expect(status.totalBytes).toBe(60000)
   })
 })
