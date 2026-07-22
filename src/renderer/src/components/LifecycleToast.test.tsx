@@ -38,6 +38,7 @@ describe('LifecycleToast', () => {
     const viewButton = [...container.querySelectorAll('button')].find(
       (button) => button.textContent === 'View'
     )
+    expect(container.textContent).toContain('External session')
     viewButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     expect(onView).toHaveBeenCalledOnce()
 
