@@ -345,11 +345,16 @@ describe('defaultCandidatePaths Windows CRAN R detection', () => {
     const originalEnv = process.env.ProgramFiles
     const originalPlatform = process.platform
     process.env.ProgramFiles = join(root, 'Program Files')
-    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
     try {
-      // Python should not scan R paths
+      // On Windows: Python should not scan R paths
+      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
       const pythonPaths = await defaultCandidatePaths(root)('python')
       expect(pythonPaths.filter((p) => p.includes('R-4.4.3')).length).toBe(0)
+
+      // On non-Windows: R should not enumerate CRAN Program Files roots
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+      const rPaths = await defaultCandidatePaths(root)('r')
+      expect(rPaths.filter((p) => p.includes('R-4.4.3')).length).toBe(0)
     } finally {
       process.env.ProgramFiles = originalEnv
       Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })

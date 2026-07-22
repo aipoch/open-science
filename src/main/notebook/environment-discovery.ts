@@ -259,9 +259,12 @@ export const defaultCandidatePaths =
         try {
           entries = await readdir(rRoot)
         } catch (err: unknown) {
-          // Skip if R root doesn't exist; rethrow permission or other unexpected errors
-          if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
-          continue
+          // Skip if R root doesn't exist or is inaccessible (ENOENT, EACCES, EPERM).
+          // These are expected on locked-down corporate machines where Program Files may be ACL-restricted.
+          const code = (err as NodeJS.ErrnoException).code
+          if (code === 'ENOENT' || code === 'EACCES' || code === 'EPERM') continue
+          // Rethrow unexpected errors (e.g., ENOTDIR, EIO) for observability
+          throw err
         }
         for (const ver of entries) {
           // Match R-x.y.z or R-x.y.z-suffix (e.g., R-4.2.0-ucrt for CRAN's UCRT builds)
