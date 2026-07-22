@@ -88,14 +88,15 @@ describe('provisionAppClaudeConfigDir', () => {
     }
   })
 
-  it('disables the built-in WebSearch tool in the app user scope', async () => {
+  it('leaves the built-in web tools enabled in the app user scope', async () => {
     root = await mkdtemp(join(tmpdir(), 'os-claude-config-'))
     const configDir = join(root, 'claude')
 
     await provisionAppClaudeConfigDir(configDir)
 
     const settings = JSON.parse(await readFile(join(configDir, 'settings.json'), 'utf8'))
-    expect(settings.permissions.deny).toContain('WebSearch')
+    expect(settings.permissions.deny).not.toContain('WebSearch')
+    expect(settings.permissions.deny).not.toContain('WebFetch')
   })
 
   it('disables Claude Code bundled skills in the app user scope', async () => {
