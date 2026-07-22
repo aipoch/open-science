@@ -142,7 +142,7 @@ const renderScroller = async (session: ChatSession): Promise<string> => {
     <WorkspaceMessageScroller
       activeSession={session}
       canEditMessage={false}
-      onEditMessage={vi.fn()}
+      onSendEditedMessage={vi.fn()}
     />
   )
 }

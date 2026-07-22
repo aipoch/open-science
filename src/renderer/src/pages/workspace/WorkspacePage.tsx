@@ -19,7 +19,7 @@ import {
   PROJECT_FILES_PREVIEW_ID,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
-import type { ChatMessage, ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
 import { useReviewStore } from '@/stores/review-store'
 import {
@@ -31,10 +31,9 @@ import type { StageUploadFile, UploadedAttachment } from '../../../../shared/upl
 
 import { planComposerAttachmentIntake } from './composer-attachment-intake'
 import {
-  docFromMessageParts,
-  docFromText,
   docIsEmpty,
   docToArtifactRefs,
+  docToSkillIds,
   docToText,
   emptyDoc,
   type ComposerDoc
@@ -581,14 +580,23 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
     })
   }
 
-  // Reloads a sent user prompt into the composer draft, restoring structured mention chips when the
-  // message carries them. The current draft is replaced, matching the resend-as-new-turn semantics.
-  const editSentMessage = (message: ChatMessage): void => {
-    setDraftDoc(
-      message.parts && message.parts.length > 0
-        ? docFromMessageParts(message.parts)
-        : docFromText(message.content)
-    )
+  // Resends an inline-edited prompt as a new turn in the current session. The edited doc carries no
+  // attachments, and the gate mirrors canEditMessage so a resend never overlaps an in-flight turn.
+  const sendEditedMessage = (doc: ComposerDoc): void => {
+    if (!canEditMessage || docIsEmpty(doc)) return
+
+    void sendMessage({
+      sessionId: activeSession?.id,
+      text: docToText(doc),
+      attachments: [],
+      referencedArtifacts: docToArtifactRefs(doc),
+      parts: doc.nodes,
+      cwd: activeSession?.cwd,
+      projectId: activeSession?.projectId ?? scopedProjectId,
+      projectName: activeSession?.projectId ?? scopedProjectId,
+      permissionProfile: activePermissionProfile,
+      forcedSkillIds: docToSkillIds(doc)
+    })
   }
 
   // Sends the current draft only after hydration so restored selection cannot overwrite intent.
@@ -852,7 +860,7 @@ const WorkspacePage = ({ isSessionPersistenceReady }: WorkspacePageProps): React
             onRequestReview={requestManualReview}
             isRequestReviewDisabled={isRequestReviewDisabled}
             canEditMessage={canEditMessage}
-            onEditMessage={editSentMessage}
+            onSendEditedMessage={sendEditedMessage}
           />
 
           <ResizableHandle

@@ -10,6 +10,14 @@ import type { MessagePart } from '../../../../shared/session-persistence'
 import { getUploadedAttachmentName } from '../../../../shared/uploads'
 
 import { ArtifactPreview } from './artifact-preview'
+import { ComposerEditor } from './composer/ComposerEditor'
+import {
+  docFromMessageParts,
+  docFromText,
+  docIsEmpty,
+  emptyDoc,
+  type ComposerDoc
+} from './composer/composer-doc'
 import {
   ARTIFACT_PREVIEW_BYTES,
   getArtifactName,
@@ -30,9 +38,9 @@ type WorkspaceMessageItemProps = {
   onOpenSkillMention: (skillId: string, name: string) => void
   onPreviewMentionArtifact: (part: ArtifactMentionPart) => void
   artifacts?: MessageArtifact[]
-  // Edit reloads the prompt into the composer draft; only enabled once the session's run settles.
+  // Inline editing is only enabled once the session's run settles; confirm resends as a new turn.
   canEditMessage?: boolean
-  onEditMessage?: (message: ChatMessage) => void
+  onSendEditedMessage?: (doc: ComposerDoc) => void
 }
 
 const ARTIFACT_GALLERY_VISIBLE_COUNT = 5
@@ -48,6 +56,15 @@ const userMessageActionsClassName =
   'flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100'
 const userMessageActionButtonClassName =
   'flex size-6 items-center justify-center rounded-md text-text-300 transition-colors duration-200 ease-out hover:bg-bg-200 hover:text-text-100 disabled:cursor-not-allowed disabled:opacity-50'
+// Inline editing replaces the bubble with a bordered multi-line editor card aligned to the right.
+const editCardClassName =
+  'flex w-[85%] max-w-[56rem] flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2 shadow-card'
+const editCancelButtonClassName =
+  'flex h-7 items-center rounded-md px-2.5 text-[12px] font-medium text-text-300 transition-colors duration-200 ease-out hover:bg-bg-200 hover:text-text-100'
+const editSendButtonClassName =
+  'flex h-7 items-center rounded-md bg-primary px-2.5 text-[12px] font-medium text-primary-foreground transition-colors duration-200 ease-out hover:bg-primary/80 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary'
+// The inline editor ignores pasted files; plain-text paste is handled by the editor itself.
+const ignoreEditPaste = (): void => {}
 // Staged uploads render as gray file pills inside the sent bubble.
 const uploadedAttachmentButtonClassName =
   'inline-flex max-w-full items-center gap-1.5 rounded-md border border-border-200 bg-bg-200 px-2 py-0.5 text-left text-[13px] leading-5 text-text-000 transition-colors hover:bg-bg-000 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-200/60'
@@ -343,12 +360,16 @@ const WorkspaceMessageItem = ({
   onOpenSkillMention,
   onPreviewMentionArtifact,
   canEditMessage = false,
-  onEditMessage,
+  onSendEditedMessage,
   artifacts = []
 }: WorkspaceMessageItemProps): React.JSX.Element => {
   const isUserMessage = message.role === 'user'
   const uploads = message.uploads ?? []
   const [copied, setCopied] = useState(false)
+  // Inline editing swaps the bubble for a multi-line editor; the doc starts from the message's
+  // structured parts so mention chips survive the round-trip.
+  const [isEditing, setIsEditing] = useState(false)
+  const [editDoc, setEditDoc] = useState<ComposerDoc>(emptyDoc)
   const copyResetTimeoutRef = useRef<number | null>(null)
 
   // Clear a pending copied-state reset so it never fires setState after unmount.
@@ -368,6 +389,29 @@ const WorkspaceMessageItem = ({
     })
   }
 
+  // Opens the inline editor with the prompt rebuilt as a composer doc (mention chips restored when
+  // the message carries structured parts, plain text otherwise).
+  const handleStartEdit = (): void => {
+    setEditDoc(
+      message.parts && message.parts.length > 0
+        ? docFromMessageParts(message.parts)
+        : docFromText(message.content)
+    )
+    setIsEditing(true)
+  }
+
+  const handleCancelEdit = (): void => {
+    setIsEditing(false)
+  }
+
+  // Confirms the inline edit: the adjusted prompt is resent as a new turn, then the editor closes.
+  const handleConfirmEdit = (): void => {
+    if (!canEditMessage || docIsEmpty(editDoc)) return
+
+    onSendEditedMessage?.(editDoc)
+    setIsEditing(false)
+  }
+
   return (
     <MessageScrollerItem
       key={message.id}
@@ -378,50 +422,83 @@ const WorkspaceMessageItem = ({
       <div className="px-4 pb-1 pt-5 md:px-6">
         {/* User prompts stay compact; assistant responses remain a readable transcript surface. */}
         {isUserMessage ? (
-          <div className="group flex items-center justify-end gap-1">
-            {/* Copy/edit actions ride to the left of the user bubble, surfaced on hover or focus. */}
-            <div className={userMessageActionsClassName}>
-              <button
-                type="button"
-                className={userMessageActionButtonClassName}
-                aria-label={copied ? 'Copied' : 'Copy message'}
-                onClick={handleCopyMessage}
-              >
-                {copied ? (
-                  <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                ) : (
-                  <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                )}
-              </button>
-              <button
-                type="button"
-                className={userMessageActionButtonClassName}
-                aria-label="Edit message"
-                disabled={!canEditMessage}
-                onClick={() => onEditMessage?.(message)}
-              >
-                <Pencil className="size-3.5" strokeWidth={2} aria-hidden="true" />
-              </button>
-            </div>
-            <div className={userMessageBubbleClassName}>
-              <MessageUploadAttachmentList
-                attachments={uploads}
-                onPreviewUploadAttachment={onPreviewUploadAttachment}
-              />
-              {/* Structured parts drive styled pills; plain content is the backward-compatible fallback. */}
-              {message.parts && message.parts.length > 0 ? (
-                <MessagePartsContent
-                  parts={message.parts}
-                  onOpenSkillMention={onOpenSkillMention}
-                  onPreviewMentionArtifact={onPreviewMentionArtifact}
+          isEditing ? (
+            <div className="flex justify-end">
+              {/* Inline editing swaps the bubble for a multi-line editor; confirm resends the prompt. */}
+              <div className={editCardClassName}>
+                <ComposerEditor
+                  doc={editDoc}
+                  onDocChange={setEditDoc}
+                  onSubmit={handleConfirmEdit}
+                  onPaste={ignoreEditPaste}
+                  placeholder="Edit your message"
+                  ariaLabel="Edit message"
                 />
-              ) : message.content ? (
-                <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-                  {message.content}
-                </p>
-              ) : null}
+                <div className="flex items-center justify-end gap-1">
+                  <button
+                    type="button"
+                    className={editCancelButtonClassName}
+                    onClick={handleCancelEdit}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className={editSendButtonClassName}
+                    disabled={!canEditMessage || docIsEmpty(editDoc)}
+                    onClick={handleConfirmEdit}
+                  >
+                    Send
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="group flex items-center justify-end gap-1">
+              {/* Copy/edit actions ride to the left of the user bubble, surfaced on hover or focus. */}
+              <div className={userMessageActionsClassName}>
+                <button
+                  type="button"
+                  className={userMessageActionButtonClassName}
+                  aria-label={copied ? 'Copied' : 'Copy message'}
+                  onClick={handleCopyMessage}
+                >
+                  {copied ? (
+                    <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                  ) : (
+                    <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className={userMessageActionButtonClassName}
+                  aria-label="Edit message"
+                  disabled={!canEditMessage}
+                  onClick={handleStartEdit}
+                >
+                  <Pencil className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                </button>
+              </div>
+              <div className={userMessageBubbleClassName}>
+                <MessageUploadAttachmentList
+                  attachments={uploads}
+                  onPreviewUploadAttachment={onPreviewUploadAttachment}
+                />
+                {/* Structured parts drive styled pills; plain content is the backward-compatible fallback. */}
+                {message.parts && message.parts.length > 0 ? (
+                  <MessagePartsContent
+                    parts={message.parts}
+                    onOpenSkillMention={onOpenSkillMention}
+                    onPreviewMentionArtifact={onPreviewMentionArtifact}
+                  />
+                ) : message.content ? (
+                  <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                    {message.content}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          )
         ) : (
           <div className={cn(assistantMessageSurfaceClassName, 'select-text overflow-visible')}>
             {message.content ? (

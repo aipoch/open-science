@@ -102,7 +102,7 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
         onRequestReview={vi.fn()}
         isRequestReviewDisabled={false}
         canEditMessage={true}
-        onEditMessage={vi.fn()}
+        onSendEditedMessage={vi.fn()}
         {...props}
       />
     )

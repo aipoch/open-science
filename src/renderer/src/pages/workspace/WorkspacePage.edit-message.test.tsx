@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-// Pins the edit-sent-message flow: the gate follows the same settled-run conditions as sending, and
-// editing rebuilds the composer draft from the sent message, restoring structured mention chips.
+// Pins the inline edit-resend flow: the gate follows the same settled-run conditions as sending, and
+// confirming an inline edit resends the adjusted prompt as a new turn without attachments.
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -19,14 +19,12 @@ import {
   type ChatSession
 } from '@/stores/session-store'
 
-import { type ComposerDoc } from './composer/composer-doc'
+import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
 
-// Capture the ConversationPanel props the page computes, notably canEditMessage and the edit handler.
+// Capture the ConversationPanel props the page computes, notably canEditMessage and the resend handler.
 let conversationProps: {
-  draftDoc: ComposerDoc
   canEditMessage: boolean
-  onDraftDocChange: (doc: ComposerDoc) => void
-  onEditMessage: (message: ChatMessage) => void
+  onSendEditedMessage: (doc: ComposerDoc) => void
 }
 
 const runtime = vi.hoisted(() => ({
@@ -110,6 +108,14 @@ const promptMessage: ChatMessage = {
   updatedAt: 1710000000000
 }
 
+const editedDoc: ComposerDoc = {
+  nodes: [
+    { type: 'text', text: 'Run ' },
+    { type: 'skill', id: 'skill-forecast', name: 'forecast' },
+    { type: 'text', text: ' tomorrow' }
+  ]
+}
+
 const setSession = (overrides: Partial<ChatSession>): void => {
   useSessionStore.setState({
     sessions: [createSession(overrides)],
@@ -117,7 +123,7 @@ const setSession = (overrides: Partial<ChatSession>): void => {
   })
 }
 
-describe('WorkspacePage edit sent message', () => {
+describe('WorkspacePage inline edit resend', () => {
   let container: HTMLDivElement
   let root: Root
 
@@ -169,38 +175,50 @@ describe('WorkspacePage edit sent message', () => {
     })
   }
 
-  it('reloads the sent prompt into the composer draft, restoring mention chips', async () => {
+  it('resends the edited prompt as a new turn with its skills and artifacts resolved', async () => {
     await renderPage()
 
     expect(conversationProps.canEditMessage).toBe(true)
 
-    // An in-progress draft is replaced by the edited prompt, matching resend-as-new-turn semantics.
     await act(async () => {
-      conversationProps.onDraftDocChange({ nodes: [{ type: 'text', text: 'typed draft' }] })
-    })
-    await act(async () => {
-      conversationProps.onEditMessage(promptMessage)
+      conversationProps.onSendEditedMessage(editedDoc)
     })
 
-    expect(conversationProps.draftDoc).toEqual({
-      nodes: [
-        { type: 'text', text: 'Run ' },
-        { type: 'skill', id: 'skill-forecast', name: 'forecast' },
-        { type: 'text', text: ' now' }
-      ]
-    })
-
-    // Messages without structured parts fall back to their plain text content.
-    await act(async () => {
-      conversationProps.onEditMessage({
-        ...promptMessage,
-        id: 'message-2',
-        content: 'plain prompt',
-        parts: undefined
+    // The resend carries the doc's text, mention parts, and skill ids, and never attaches files.
+    expect(runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'sess-a',
+        text: 'Run /forecast tomorrow',
+        attachments: [],
+        referencedArtifacts: [],
+        parts: editedDoc.nodes,
+        forcedSkillIds: ['skill-forecast']
       })
-    })
+    )
+  })
 
-    expect(conversationProps.draftDoc).toEqual({ nodes: [{ type: 'text', text: 'plain prompt' }] })
+  it('refuses to resend while a run is active or the edited doc is empty', async () => {
+    await renderPage()
+
+    await act(async () => {
+      setSession({ status: 'running', messages: [promptMessage] })
+    })
+    expect(conversationProps.canEditMessage).toBe(false)
+
+    await act(async () => {
+      conversationProps.onSendEditedMessage(editedDoc)
+    })
+    expect(runtime.sendMessage).not.toHaveBeenCalled()
+
+    await act(async () => {
+      setSession({ messages: [promptMessage] })
+    })
+    expect(conversationProps.canEditMessage).toBe(true)
+
+    await act(async () => {
+      conversationProps.onSendEditedMessage(emptyDoc)
+    })
+    expect(runtime.sendMessage).not.toHaveBeenCalled()
   })
 
   it('gates editing while a run is active and restores it once settled', async () => {

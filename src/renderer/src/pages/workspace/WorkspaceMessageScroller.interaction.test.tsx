@@ -151,7 +151,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         <WorkspaceMessageScroller
           activeSession={session}
           canEditMessage={false}
-          onEditMessage={vi.fn()}
+          onSendEditedMessage={vi.fn()}
         />
       )
     })
@@ -214,7 +214,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         <WorkspaceMessageScroller
           activeSession={session}
           canEditMessage={false}
-          onEditMessage={vi.fn()}
+          onSendEditedMessage={vi.fn()}
         />
       )
     })
@@ -251,7 +251,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         <WorkspaceMessageScroller
           activeSession={session}
           canEditMessage={false}
-          onEditMessage={vi.fn()}
+          onSendEditedMessage={vi.fn()}
         />
       )
     })
@@ -325,7 +325,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         <WorkspaceMessageScroller
           activeSession={session}
           canEditMessage={false}
-          onEditMessage={vi.fn()}
+          onSendEditedMessage={vi.fn()}
         />
       )
     })

@@ -29,12 +29,13 @@ import { createConversationItems } from './workspace-conversation-items'
 import { groupConversationItems } from './workspace-tool-activity-groups'
 import type { ActivityExpansionOverrides } from './workspace-tool-activity-groups'
 import type { GoToTranscriptIntent, ReviewWithChecks } from '../../../../shared/reviewer'
+import type { ComposerDoc } from './composer/composer-doc'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
-  // Gates the per-message edit action; the handler reloads a user prompt into the composer draft.
+  // Gates inline editing of sent user prompts; the handler resends the edited doc as a new turn.
   canEditMessage: boolean
-  onEditMessage: (message: ChatSession['messages'][number]) => void
+  onSendEditedMessage: (doc: ComposerDoc) => void
 }
 
 type SessionScopedActivityGroupState = {
@@ -99,7 +100,7 @@ const openSessionReviewer = (sessionId: string, intent: GoToTranscriptIntent): v
 const WorkspaceMessageScroller = ({
   activeSession,
   canEditMessage,
-  onEditMessage
+  onSendEditedMessage
 }: WorkspaceMessageScrollerProps): React.JSX.Element => {
   const currentSessionId = activeSession?.id
   const getReviewForTurn = useReviewStore((state) => state.getReviewForTurn)
@@ -321,7 +322,7 @@ const WorkspaceMessageScroller = ({
                         onOpenSkillMention={onOpenSkillMention}
                         onPreviewMentionArtifact={onPreviewMentionArtifact}
                         canEditMessage={canEditMessage}
-                        onEditMessage={onEditMessage}
+                        onSendEditedMessage={onSendEditedMessage}
                         artifacts={artifacts}
                       />
                       {review ? (
