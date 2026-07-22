@@ -16,8 +16,8 @@ type PermissionPolicyContext = {
 }
 
 // MCP tool naming differs per framework: Claude Code namespaces them mcp__<server>__<tool>, Codex
-// reports mcp.<server>.<tool>, and opencode joins them <server>_<tool>. The explicit mcp prefixes
-// identify Claude/Codex regardless of server; opencode's are checked against known session servers.
+// reports mcp.<server>.<tool>, and opencode joins them <server>_<tool>. Claude's distinctive prefix is
+// self-identifying; the shorter Codex/opencode forms are checked against known session servers.
 const MCP_TOOL_PREFIX = 'mcp__'
 const CODEX_MCP_TOOL_PREFIX = 'mcp.'
 const MCP_PROVIDER_LEAF_NAMES: Record<string, readonly string[]> = {
@@ -33,10 +33,10 @@ const isMcpToolName = (
 ): boolean =>
   name != null &&
   (name.startsWith(MCP_TOOL_PREFIX) ||
-    name.startsWith(CODEX_MCP_TOOL_PREFIX) ||
     mcpServerNames.some(
       (server) =>
         name === server ||
+        name.startsWith(`${CODEX_MCP_TOOL_PREFIX}${server}.`) ||
         name.startsWith(`${server}_`) ||
         MCP_PROVIDER_LEAF_NAMES[server]?.includes(name)
     ))

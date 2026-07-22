@@ -37,15 +37,29 @@ const getPermissionActionLabel = (
   actionKind: PermissionActionKind,
   hasMultipleOptionsForAction: boolean
 ): string => {
-  // Providers may offer multiple scopes with the same ACP kind (for example, session-only and
-  // persistent allow_always). Preserve their display names only when the canonical label would make
-  // distinct decisions indistinguishable; the common one-option case stays compact.
-  if (hasMultipleOptionsForAction) return option.name
-  if (actionKind === 'always') return 'Always'
-  if (actionKind === 'allow-once') return 'Allow once'
-  if (actionKind === 'reject') return 'Reject'
+  const canonicalLabel =
+    actionKind === 'always'
+      ? 'Always'
+      : actionKind === 'allow-once'
+        ? 'Allow once'
+        : actionKind === 'reject'
+          ? 'Reject'
+          : undefined
 
-  return option.name
+  if (!canonicalLabel) return option.name
+
+  // Provider names distinguish multiple scopes, but never replace the protocol-derived semantic
+  // label: an untrusted allow_always name such as "Reject" must still render as an Always action.
+  const providerLabel = option.name.trim()
+  if (
+    hasMultipleOptionsForAction &&
+    providerLabel &&
+    providerLabel.toLowerCase() !== canonicalLabel.toLowerCase()
+  ) {
+    return `${canonicalLabel} - ${providerLabel}`
+  }
+
+  return canonicalLabel
 }
 
 const getOrderedPermissionOptions = (options: PermissionOption[]): PermissionOption[] =>

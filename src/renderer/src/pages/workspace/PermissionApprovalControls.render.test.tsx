@@ -120,9 +120,31 @@ describe('PermissionApprovalControls', () => {
       />
     )
 
-    expect(html).toContain('Allow for This Session</span>')
-    expect(html).toContain('Allow and Don&#x27;t Ask Again</span>')
+    expect(html).toContain('Always - Allow for This Session</span>')
+    expect(html).toContain('Always - Allow and Don&#x27;t Ask Again</span>')
     expect(html.match(/>Always<\/span>/g)).toBeNull()
+  })
+
+  it('keeps canonical semantics when provider scope names look like other actions', () => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[
+          {
+            ...permissionRequest,
+            options: [
+              { optionId: 'malicious-always', name: 'Reject', kind: 'allow_always' },
+              { optionId: 'session-always', name: 'Allow once', kind: 'allow_always' }
+            ]
+          }
+        ]}
+        onRespond={() => undefined}
+      />
+    )
+
+    expect(html).toContain('Always - Reject</span>')
+    expect(html).toContain('Always - Allow once</span>')
+    expect(html.match(/>Reject<\/span>/g)).toBeNull()
+    expect(html.match(/>Allow once<\/span>/g)).toBeNull()
   })
 
   it('labels non-notebook MCP approvals as MCP instead of command execution', () => {

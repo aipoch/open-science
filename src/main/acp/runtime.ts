@@ -243,6 +243,8 @@ const codexMcpToolIdentity = (
 
 // Keeps runtime snapshots bounded so long conversations do not grow renderer payloads forever.
 const MAX_EVENTS = 500
+// Bounds pending Codex MCP identities even if an agent never emits terminal tool updates.
+const MAX_CODEX_MCP_TOOL_IDENTITIES_PER_SESSION = 32
 // Appends artifact tool guidance as system prompt metadata so user prompts stay untouched.
 const ARTIFACT_FILE_SYSTEM_PROMPT_APPEND = [
   '<open_science_artifact_instructions>',
@@ -323,6 +325,7 @@ const log = createLogger('acp')
 const REVIEWER_MCP_OPENCODE_TOOL_NAMES = new Set(
   Object.values(REVIEWER_MCP_TOOLS).map((toolName) => `${REVIEWER_MCP_SERVER_NAME}_${toolName}`)
 )
+const REVIEWER_MCP_LEAF_TOOL_NAMES = new Set<string>(Object.values(REVIEWER_MCP_TOOLS))
 const REVIEWER_MCP_PROVIDER_TOOL_NAMES = new Set([
   ...REVIEWER_MCP_OPENCODE_TOOL_NAMES,
   ...Object.values(REVIEWER_MCP_TOOLS).map(
@@ -1932,6 +1935,7 @@ class AcpRuntime {
         const cancelTimer = this.cancelTimers.get(request.sessionId)
         if (cancelTimer) this.clearTimer(cancelTimer)
         this.cancelTimers.delete(request.sessionId)
+        this.codexMcpToolIdentities.delete(request.sessionId)
         this.currentPromptTurnBySession.delete(request.sessionId)
         this.promptInFlightSessionIds.delete(request.sessionId)
       }
@@ -2401,6 +2405,9 @@ class AcpRuntime {
       .client({ name: 'open-science' })
       .onRequest(acp.methods.client.session.requestPermission, (ctx) =>
         this.handlePermissionRequest(ctx.params)
+      )
+      .onNotification(acp.methods.client.session.update, (ctx) =>
+        this.observeCodexMcpToolIdentity(ctx.params)
       )
       .onRequest(acp.methods.client.fs.readTextFile, (ctx) =>
         readWorkspaceTextFile(
@@ -2925,7 +2932,7 @@ class AcpRuntime {
       // and unknown tools are rejected without involving the renderer.
       if (this.reviewerSessionIds.has(params.sessionId)) {
         return this.resolveReviewerPermission(
-          params,
+          normalizedParams,
           mcpServerNames,
           this.sessionFrameworks.get(params.sessionId)
         )
@@ -2957,6 +2964,40 @@ class AcpRuntime {
       })
       throw error
     }
+  }
+
+  // Observes every ACP update before framework-specific consumers drain their ActiveSession queue.
+  // Reviewer updates are consumed outside handleSessionUpdate, so this shared boundary is the only
+  // place where a preceding Codex tool_call can reliably enrich its later sparse permission request.
+  private observeCodexMcpToolIdentity(notification: SessionNotification): void {
+    const sessionId = this.agentToAppSessionId.get(notification.sessionId) ?? notification.sessionId
+    if (this.sessionFrameworks.get(sessionId) !== 'codex') return
+
+    const routed =
+      sessionId === notification.sessionId ? notification : { ...notification, sessionId }
+    const event = toAcpRuntimeEvent(routed, 'codex-mcp-identity')
+    if (event.kind !== 'tool' || !event.toolCallId) return
+
+    const identities = this.codexMcpToolIdentities.get(sessionId) ?? new Map()
+    if (event.status === 'completed' || event.status === 'failed') {
+      identities.delete(event.toolCallId)
+      if (identities.size === 0) this.codexMcpToolIdentities.delete(sessionId)
+      return
+    }
+
+    const identity = codexMcpToolIdentity(event, this.sessionMcpServerNames.get(sessionId) ?? [])
+    if (!identity) return
+
+    if (
+      !identities.has(event.toolCallId) &&
+      identities.size >= MAX_CODEX_MCP_TOOL_IDENTITIES_PER_SESSION
+    ) {
+      const oldestToolCallId = identities.keys().next().value
+      if (oldestToolCallId) identities.delete(oldestToolCallId)
+    }
+
+    identities.set(event.toolCallId, identity)
+    this.codexMcpToolIdentities.set(sessionId, identities)
   }
 
   private restoreCodexMcpPermissionIdentity(
@@ -3006,11 +3047,19 @@ class AcpRuntime {
       REVIEWER_MCP_OPENCODE_TOOL_NAMES.has(reportedTitle)
         ? reportedTitle
         : undefined
+    const codexToolName =
+      frameworkId === 'codex' &&
+      toolName != null &&
+      REVIEWER_MCP_LEAF_TOOL_NAMES.has(toolName) &&
+      reportedTitle === `mcp.${REVIEWER_MCP_SERVER_NAME}.${toolName}`
+        ? toolName
+        : undefined
     const isReviewerMcp =
       mcpServerNames.length === 1 &&
       mcpServerNames[0] === REVIEWER_MCP_SERVER_NAME &&
       ((toolName != null && REVIEWER_MCP_PROVIDER_TOOL_NAMES.has(toolName)) ||
-        opencodeToolName != null)
+        opencodeToolName != null ||
+        codexToolName != null)
 
     if (!isReviewerMcp) {
       const rejectOption =
@@ -3071,27 +3120,6 @@ class AcpRuntime {
     }
 
     const event = toAcpRuntimeEvent(routed, this.nextEventId())
-
-    if (
-      event.kind === 'tool' &&
-      event.sessionId &&
-      event.toolCallId &&
-      this.sessionFrameworks.get(event.sessionId) === 'codex'
-    ) {
-      const identities = this.codexMcpToolIdentities.get(event.sessionId) ?? new Map()
-      const identity = codexMcpToolIdentity(
-        event,
-        this.sessionMcpServerNames.get(event.sessionId) ?? []
-      )
-
-      if (identity && event.status !== 'completed' && event.status !== 'failed') {
-        identities.set(event.toolCallId, identity)
-        this.codexMcpToolIdentities.set(event.sessionId, identities)
-      } else if (event.status === 'completed' || event.status === 'failed') {
-        identities.delete(event.toolCallId)
-        if (identities.size === 0) this.codexMcpToolIdentities.delete(event.sessionId)
-      }
-    }
 
     // Tool results (e.g. WebFetch's claude.ai domain-safety preflight, a failed Bash command) stream as
     // tool_call_update content, which the session-update log omits — so a tool that runs and fails leaves
@@ -3304,6 +3332,7 @@ class AcpRuntime {
   private clearReviewerSessionState(): void {
     for (const [sessionId, reviewerCwd] of this.reviewerSessionDirectories) {
       this.removeReviewerDirectory(reviewerCwd)
+      this.codexMcpToolIdentities.delete(sessionId)
       this.sessionFrameworks.delete(sessionId)
     }
     this.reviewerSessionDirectories.clear()
