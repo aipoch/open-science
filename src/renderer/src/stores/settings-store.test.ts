@@ -1141,6 +1141,21 @@ describe('settings store: setAgentFramework', () => {
     expect(states.opencode.installError).toBeUndefined()
   })
 
+  it('does not relabel a successful install as failed when the post-install reconcile throws', async () => {
+    api.installCodex.mockResolvedValue({ installId: 'codex-1', ok: true })
+    // The install succeeded, but the snapshot reconcile that follows it fails (transient IPC error).
+    api.getSettings.mockRejectedValueOnce(new Error('IPC channel closed'))
+
+    // The reconcile error is swallowed (the install succeeded), so the call resolves rather than throws.
+    const result = await useSettingsStore.getState().installCodex()
+    expect(result).toEqual({ installId: 'codex-1', ok: true })
+
+    const state = useSettingsStore.getState().installStates.codex
+    // No phantom failure: installError stays clear and the install flag is reset.
+    expect(state.installError).toBeUndefined()
+    expect(state.isInstalling).toBe(false)
+  })
+
   it('refuses a second concurrent install so subscriptions can never cross-contaminate (#278)', async () => {
     // Hold a Claude install open so a second install is attempted while the first is still in flight.
     api.onInstallLog.mockReturnValue(vi.fn())

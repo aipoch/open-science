@@ -645,7 +645,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                           environment={environmentCheck}
                           isChecking={isCheckingEnvironment}
                           isInstalling={isInstalling}
-                          busy={anyInstalling}
+                          installBusy={anyInstalling}
                           installLogs={installLogs}
                           installProgress={installProgress}
                           error={
@@ -717,7 +717,7 @@ const OnboardingWizard = (): React.JSX.Element => {
                                   installLogs={installLogs}
                                   installProgress={installProgress}
                                   installError={storeInstallError}
-                                  busy={anyInstalling}
+                                  installBusy={anyInstalling}
                                   npmAvailable={npmAvailable}
                                   onInstall={(source) => void handleInstall(source, 'claude-code')}
                                   embedded

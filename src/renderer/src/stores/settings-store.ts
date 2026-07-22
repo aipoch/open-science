@@ -394,21 +394,36 @@ const runRuntimeInstall = async (
   })
 
   try {
-    const result = await invoke()
+    // The install itself and the post-install snapshot reconcile are distinct concerns. Only an install
+    // failure (invoke throwing, or a non-ok result) may set installError; a reconcile that throws AFTER
+    // a successful install must not relabel it as failed (that would be a phantom failure on a runtime
+    // that actually installed).
+    let result: ClaudeInstallResult
+    try {
+      result = await invoke()
+    } catch (error) {
+      patchInstallState(set, runtime, {
+        installError: error instanceof Error ? error.message : 'Install failed.'
+      })
+      throw error
+    }
 
-    // A successful install re-detected/persisted the runtime in main; reload so the card reflects it.
-    set(applySnapshot(await window.api.settings.getSettings()))
-    await get().refreshPreflight()
+    // Record the outcome from the install result itself, before the (best-effort) reconcile below.
     patchInstallState(set, runtime, {
       installError: result.ok ? undefined : (result.error ?? 'Install failed.')
     })
 
+    // A successful install re-detected/persisted the runtime in main; reload so the card reflects it.
+    // Best-effort: a transient snapshot/preflight error leaves the card briefly stale (corrected on the
+    // next detect/refresh), which is preferable to overwriting a good install result with a failure.
+    try {
+      set(applySnapshot(await window.api.settings.getSettings()))
+      await get().refreshPreflight()
+    } catch {
+      // Intentionally swallowed — the install succeeded; installError already reflects `result`.
+    }
+
     return result
-  } catch (error) {
-    patchInstallState(set, runtime, {
-      installError: error instanceof Error ? error.message : 'Install failed.'
-    })
-    throw error
   } finally {
     unsubscribe()
     patchInstallState(set, runtime, { isInstalling: false, installProgress: null })

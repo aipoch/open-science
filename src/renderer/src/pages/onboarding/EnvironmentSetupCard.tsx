@@ -28,7 +28,7 @@ type EnvironmentSetupCardProps = {
   // the action buttons while ANY runtime installs — including one still finishing on the previously
   // selected framework during an async switch — so a second install can't start. Defaults to isInstalling.
   isInstalling: boolean
-  busy?: boolean
+  installBusy?: boolean
   installLogs: string[]
   installProgress?: ClaudeInstallProgressEvent | null
   error?: string
@@ -152,7 +152,7 @@ const EnvironmentSetupCard = ({
   environment,
   isChecking,
   isInstalling,
-  busy,
+  installBusy,
   installLogs,
   installProgress,
   error,
@@ -161,7 +161,7 @@ const EnvironmentSetupCard = ({
 }: EnvironmentSetupCardProps): React.JSX.Element => {
   // Any install running (this runtime's or one finishing on a just-switched-away framework) locks the
   // buttons; default to this card's own install when the caller doesn't pass a global signal.
-  const anyInstalling = busy ?? isInstalling
+  const anyInstalling = installBusy ?? isInstalling
   const structuredProgress = installProgress ? describeInstallProgress(installProgress) : undefined
   const progress =
     structuredProgress?.fraction !== undefined

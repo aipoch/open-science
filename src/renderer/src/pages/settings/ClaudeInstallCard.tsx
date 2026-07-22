@@ -26,7 +26,7 @@ type ClaudeInstallCardProps = {
   // Whether another runtime's install is in flight. Only one install runs at a time, so this locks the
   // source picker and Install button (without showing this card's own "Installing…" state) so a second
   // install can't start and cross-contaminate the shared install-event channel. Defaults to isInstalling.
-  busy?: boolean
+  installBusy?: boolean
   embedded?: boolean
   // The install sources to offer; defaults to Claude's. Pass getOpencodeInstallSources to reuse this
   // card for OpenCode (same picker, progress bar, log pane, and copyable command).
@@ -43,12 +43,12 @@ const ClaudeInstallCard = ({
   installError,
   npmAvailable,
   onInstall,
-  busy,
+  installBusy,
   embedded = false,
   sources
 }: ClaudeInstallCardProps): React.JSX.Element => {
   // The picker/Install button lock while THIS runtime installs or while ANY other install runs.
-  const locked = isInstalling || (busy ?? false)
+  const locked = isInstalling || (installBusy ?? false)
   // Default to the app-managed download — it needs no Node.js/npm and works behind region blocks.
   const [source, setSource] = useState<ClaudeInstallSource>('managed')
   const [showLog, setShowLog] = useState(false)

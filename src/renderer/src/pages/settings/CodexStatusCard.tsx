@@ -171,7 +171,7 @@ const CodexStatusCard = ({
               installLogs={installLogs}
               installProgress={installProgress}
               installError={installError}
-              busy={anyInstalling}
+              installBusy={anyInstalling}
               npmAvailable={npmAvailable}
               onInstall={(source) => {
                 if (source !== 'official-script') onInstall(source)

@@ -177,7 +177,7 @@ const OpencodeStatusCard = ({
               installLogs={installLogs}
               installProgress={installProgress}
               installError={installError}
-              busy={anyInstalling}
+              installBusy={anyInstalling}
               npmAvailable={npmAvailable}
               onInstall={onInstall}
             />

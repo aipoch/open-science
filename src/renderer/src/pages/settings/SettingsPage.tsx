@@ -876,7 +876,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                             installLogs={claudeInstall.installLogs}
                             installProgress={claudeInstall.installProgress}
                             installError={claudeInstall.installError}
-                            busy={anyInstalling}
+                            installBusy={anyInstalling}
                             npmAvailable={npmAvailable}
                             onInstall={(source) => void installClaude(source)}
                           />
