@@ -29,10 +29,10 @@ The user may enable one host for this conversation via the `≡` panel in the co
 Always check which host is active before creating a handle:
 
 ```javascript
-// Returns the session-enabled hosts (subset of all registered hosts, [{provider_id, ...}]).
+// Returns the session-enabled host provider_ids (a string[] subset of all registered hosts).
 // Empty array means the user hasn't chosen a host for this conversation yet.
 const activeHosts = await host.compute.list_compute()
-const c = activeHosts[0] ? host.compute.create(activeHosts[0].provider_id) : null
+const c = activeHosts[0] ? host.compute.create(activeHosts[0]) : null
 ```
 
 ## API reference
@@ -77,7 +77,7 @@ automatically harvests the outputs and initiates a new analysis turn — **you n
 ```javascript
 // List the session's active compute hosts (set via the ≡ host selector)
 const activeHosts = await host.compute.list_compute()
-// returns [{provider_id, display_name, shape, status}] for currently enabled hosts
+// returns ['ssh:<alias>', ...] — the provider_ids currently enabled for this session
 
 // Submit a non-blocking job — returns immediately after the user approves
 const c = host.compute.create('ssh:<alias>')
@@ -246,6 +246,29 @@ print(jobs)   // end the cell — no waiting, no loop
 The app triggers one analysis turn per job completion (or a merged turn for simultaneous
 completions). **Do NOT write a loop collecting all results** — each analysis turn handles
 its job independently.
+
+## Session concurrency control
+
+Cap how many non-terminal jobs run at once across all providers in this conversation. Jobs that
+would exceed the cap enter a `queued` state and auto-dispatch when a slot frees up. These two
+methods live on the handle returned by `create()`, but they are **session-scoped** — they act on
+the whole conversation, not on the handle's bound provider.
+
+```javascript
+const c = host.compute.create('ssh:<alias>')
+
+// Set the conversation-wide limit (positive integer 1..500).
+await c.set_concurrency_limit(2)
+
+// Read the session's concurrency status (non-blocking DB read, no SSH).
+const s = await c.status()
+// s → {
+//   session_limit: number | null,            // the cap you set, or null if unset
+//   active_count: number,                    // non-terminal jobs running now
+//   queued_count: number,                    // jobs waiting for a slot
+//   provider_ceilings: Record<string, number> // per-host hard limits (host config)
+// }
+```
 
 ## call_command error handling
 

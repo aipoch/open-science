@@ -38,7 +38,6 @@ import { ComposerEditor } from './composer/ComposerEditor'
 import { docToSkillIds, type ComposerDoc } from './composer/composer-doc'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
 import { ComposerModelPicker } from './ComposerModelPicker'
-import { ComputeHostSelector } from './ComputeHostSelector'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 import { SessionInterruptedBanner } from './SessionInterruptedBanner'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
@@ -304,7 +303,9 @@ const ConversationPanel = ({
                     {hasAnyJobs && activeSession ? (
                       <RemoteJobBadge
                         sessionId={activeSession.id}
-                        onOpenJobList={onOpenJobList ? () => onOpenJobList(activeSession.id) : undefined}
+                        onOpenJobList={
+                          onOpenJobList ? () => onOpenJobList(activeSession.id) : undefined
+                        }
                       />
                     ) : null}
                   </div>
@@ -425,11 +426,6 @@ const ConversationPanel = ({
                           onChange={handleAttachmentInputChange}
                         />
 
-                        <ComputeHostSelector
-                          enabledHosts={enabledComputeHosts}
-                          onToggle={onComputeHostToggle}
-                        />
-
                         <ComposerAgentControlsMenu
                           profile={permissionProfile}
                           profileState={permissionProfileState}
@@ -437,6 +433,8 @@ const ConversationPanel = ({
                           autoReviewEnabled={autoReviewEnabled}
                           readOnly={!canChangePermissionProfile}
                           autoReviewDisabled={!canEditDraft}
+                          enabledComputeHosts={enabledComputeHosts}
+                          onComputeHostToggle={onComputeHostToggle}
                           onProfileChange={onPermissionProfileChange}
                           onAutoReviewChange={onAutoReviewToggle}
                           onRevokeGrant={onRevokePermissionGrant}

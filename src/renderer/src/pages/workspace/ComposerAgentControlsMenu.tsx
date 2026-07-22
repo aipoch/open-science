@@ -1,9 +1,11 @@
-// Unified composer menu for per-session agent controls: permission profile + auto-review.
-// Replaces the separate ComposerPermissionProfilePicker and ComposerAutoReviewToggle buttons
-// with a single icon trigger. A primary-color dot on the trigger marks any deviation from the
-// defaults (profile 'ask', auto-review off); session grants keep their own count pill.
-// The first-level menu shows the current permission level as a borderless colored capsule
-// (ask = neutral, auto = blue, full = warning amber); picking a level lives in a submenu.
+// Unified composer menu: per-session agent controls (permission profile + auto-review) and
+// compute host selection, behind a single icon trigger. Replaces the earlier split into
+// ComposerPermissionProfilePicker, ComposerAutoReviewToggle, and ComputeHostSelector.
+// A primary-color dot on the trigger marks any deviation from the defaults (profile 'ask',
+// auto-review off); session grants keep their own count pill. The first-level menu shows the
+// current permission level as a borderless colored capsule (ask = neutral, auto = blue,
+// full = warning amber); picking a level lives in a submenu. SSH hosts are appended below
+// auto-review, reading from the global compute store like ComposerModelPicker.
 
 import {
   DEFAULT_PERMISSION_PROFILE,
@@ -16,6 +18,7 @@ import {
   Check,
   ChevronRight,
   ScanEye,
+  Settings,
   Shield,
   ShieldAlert,
   ShieldCheck,
@@ -29,7 +32,10 @@ import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -37,6 +43,8 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
+import { useComputeStore } from '@/stores/compute-store'
+import { useSettingsStore } from '@/stores/settings-store'
 
 // Mirrors composerIconButtonClassName in ConversationPanel, but hugs the icon + grants pill.
 const triggerButtonClassName =
@@ -55,6 +63,10 @@ type ComposerAgentControlsMenuProps = {
   onAutoReviewChange: (enabled: boolean) => void
   onRevokeGrant?: (categoryKey: string) => void
   onClearGrants?: () => void
+  // Compute hosts: the SSH section is appended below auto-review. Optional so the menu still
+  // renders without a compute binding (e.g. in isolation tests); the composer passes both.
+  enabledComputeHosts?: string[]
+  onComputeHostToggle?: (providerId: string, enabled: boolean) => void
 }
 
 const permissionProfiles: Array<{
@@ -106,7 +118,9 @@ const ComposerAgentControlsMenu = ({
   onProfileChange,
   onAutoReviewChange,
   onRevokeGrant,
-  onClearGrants
+  onClearGrants,
+  enabledComputeHosts,
+  onComputeHostToggle
 }: ComposerAgentControlsMenuProps): React.JSX.Element => {
   const [confirmFullAccess, setConfirmFullAccess] = useState(false)
   const selectedProfile = permissionProfiles.find((candidate) => candidate.id === profile)!
@@ -128,9 +142,30 @@ const ComposerAgentControlsMenu = ({
     onProfileChange(next)
   }
 
+  // Compute hosts read from the global compute store (no prop drilling), mirroring
+  // ComposerModelPicker. Lazy-loaded on first open so the menu stays cheap while closed.
+  const hosts = useComputeStore((state) => state.hosts)
+  const isLoaded = useComputeStore((state) => state.isLoaded)
+  const loadHosts = useComputeStore((state) => state.loadHosts)
+  const openSettingsToCompute = useSettingsStore((state) => state.openSettingsToCompute)
+
+  const sshHosts = hosts.filter((host) => host.sshAlias)
+
+  const handleOpenChange = (open: boolean): void => {
+    if (open && !isLoaded) {
+      void loadHosts()
+    }
+  }
+
+  // Single-select semantics live in the parent (onComputeHostToggle); here we just flip the
+  // clicked host and let the store/parent disable any previously enabled host.
+  const handleHostToggle = (providerId: string, currentlyEnabled: boolean): void => {
+    onComputeHostToggle?.(providerId, !currentlyEnabled)
+  }
+
   return (
     <>
-      <DropdownMenu>
+      <DropdownMenu onOpenChange={handleOpenChange}>
         {/* The trigger stays enabled in read-only mode so the menu (and its submenu)
             remains browsable while a session is running; only the controls are disabled. */}
         <DropdownMenuTrigger asChild>
@@ -325,6 +360,62 @@ const ComposerAgentControlsMenu = ({
               </div>
             </div>
           ) : null}
+
+          {/* Compute hosts: appended below the agent controls so a single trigger covers
+              both. SSH hosts are single-select; Manage compute opens the settings panel. */}
+          <DropdownMenuSeparator />
+          {sshHosts.length > 0 ? (
+            <>
+              <DropdownMenuLabel className="text-[10.5px] uppercase tracking-wide text-text-300 font-normal">
+                SSH
+              </DropdownMenuLabel>
+              <DropdownMenuGroup>
+                {sshHosts.map((host) => {
+                  const isEnabled = enabledComputeHosts?.includes(host.providerId) ?? false
+                  return (
+                    <DropdownMenuItem
+                      key={host.providerId}
+                      disabled={readOnly}
+                      onSelect={(event) => {
+                        event.preventDefault()
+                        handleHostToggle(host.providerId, isEnabled)
+                      }}
+                      className="flex items-center justify-between gap-3 cursor-pointer"
+                    >
+                      <span
+                        className={cn(
+                          'min-w-0 flex-1 truncate text-sm',
+                          isEnabled ? 'font-medium text-text-100' : 'text-text-200'
+                        )}
+                      >
+                        {host.displayName}
+                      </span>
+                      {/* pointer-events-none: the Switch is a visual indicator only;
+                          the row's onSelect is the single toggle entry point. */}
+                      <Switch
+                        checked={isEnabled}
+                        aria-hidden="true"
+                        tabIndex={-1}
+                        className="pointer-events-none"
+                      />
+                    </DropdownMenuItem>
+                  )
+                })}
+              </DropdownMenuGroup>
+            </>
+          ) : (
+            <DropdownMenuItem disabled className="text-text-300 text-sm">
+              {isLoaded ? 'No SSH hosts registered' : 'Loading…'}
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onSelect={() => openSettingsToCompute()}
+            className="gap-2 text-sm text-text-200"
+          >
+            <Settings className="size-4 shrink-0" aria-hidden="true" />
+            Manage compute...
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 

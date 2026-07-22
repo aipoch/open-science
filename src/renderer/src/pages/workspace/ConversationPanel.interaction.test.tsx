@@ -54,10 +54,6 @@ vi.mock('./ComposerAgentControlsMenu', () => ({
   ComposerAgentControlsMenu: (): null => null
 }))
 
-vi.mock('./ComputeHostSelector', () => ({
-  ComputeHostSelector: (): null => null
-}))
-
 // session-job-store mock: controls whether the active session has running/finished jobs.
 // Default: no jobs. Override mockHasRunningJobs / mockAllJobs per test.
 let mockHasRunningJobs = false
@@ -581,7 +577,11 @@ describe('ConversationPanel notebook bar', () => {
     mockHasRunningJobs = true
     mockAllJobs = [{ job_id: 'job-1', status: 'running', created_at: Date.now() }]
     const handleOpenJobList = vi.fn()
-    renderPanel({ activeSession: session, notebookReference: undefined, onOpenJobList: handleOpenJobList })
+    renderPanel({
+      activeSession: session,
+      notebookReference: undefined,
+      onOpenJobList: handleOpenJobList
+    })
 
     const badge = container.querySelector('[data-testid="remote-job-badge"]')
     expect(badge).not.toBeNull()
