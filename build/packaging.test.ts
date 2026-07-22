@@ -83,11 +83,12 @@ describe('NSIS installer include (build/installer.nsh)', () => {
       .filter((line) => !/^\s*#/.test(line))
       .join('\n')
     expect(code.match(/taskkill/g) ?? []).toHaveLength(2)
-    expect(code).toContain('taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"')
-    expect(code).toContain('taskkill /F /IM micromamba.exe')
-    expect(code).toMatch(
-      /Pop \$R1[\s\S]*?\$\{if\} \$R1 != 0\s+nsExec::Exec `"\$SYSDIR\\cmd\.exe" \/C taskkill/
-    )
+    // Capture the whole guard block and assert BOTH kills live inside it — asserting only the
+    // first one's position would still pass with micromamba's taskkill moved outside the guard.
+    const guardBlock = code.match(/\$\{if\} \$R1 != 0([\s\S]*?)\$\{endif\}/)?.[1] ?? ''
+    expect(guardBlock).toContain('taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"')
+    expect(guardBlock).toContain('taskkill /F /IM micromamba.exe')
+    expect(guardBlock.match(/taskkill/g) ?? []).toHaveLength(2)
   })
 
   it('retries the old uninstaller exactly once', () => {
@@ -169,5 +170,17 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     expect(installUtil).toContain('!insertmacro customUnInstallCheck')
     expect(installUtil).toContain('!ifmacrodef customUnInstallCheckCurrentUser')
     expect(installUtil).toContain('!insertmacro customUnInstallCheckCurrentUser')
+  })
+
+  it('the installed electron-builder still inserts customInit before the uninstall passes', () => {
+    // The per-user install-dir cache only ever runs if installer.nsi keeps inserting customInit
+    // in .onInit. Losing that insertion point leaves the HKCU hook with an always-empty cache —
+    // the exact fatal-path regression the cache fixed — while every source-text test stays green.
+    const installerNsi = readFileSync(
+      join(repoRoot, 'node_modules/app-builder-lib/templates/nsis/installer.nsi'),
+      'utf8'
+    )
+    expect(installerNsi).toContain('!ifmacrodef customInit')
+    expect(installerNsi).toContain('!insertmacro customInit')
   })
 })
