@@ -11,6 +11,7 @@ import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeHostRepository } from './repository'
 import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
 import type { ScpRunner } from './scp-runner'
+import type { ConcurrencyManager } from './concurrency-manager'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -2291,7 +2292,7 @@ describe('ComputeService.getJobResult', () => {
   const makeServiceWithStorageRoot = (
     job: import('../../shared/compute').ComputeJob,
     storageRoot: string
-  ) => {
+  ): ComputeService => {
     const runner = makeFakeRunner({
       exitCode: 0,
       stdout: '',
@@ -2436,5 +2437,169 @@ describe('ComputeService.getJobResult', () => {
       tmpDir
     )
     await expect(service.getJobResult('no-such-job')).rejects.toThrow(/No compute job/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Session concurrency control (Phase 3c, issue 04)
+// ---------------------------------------------------------------------------
+
+describe('setSessionConcurrencyLimit', () => {
+  it('delegates to concurrency manager', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo()
+    const setSessionLimit = vi.fn()
+    const concurrencyManager = {
+      setSessionLimit,
+      getStatus: vi.fn(),
+      enqueue: vi.fn(),
+      onJobCompleted: vi.fn()
+    }
+    const service = new ComputeService(
+      runner,
+      repo,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      concurrencyManager as unknown as ConcurrencyManager
+    )
+
+    await service.setSessionConcurrencyLimit('session-123', 10)
+    expect(setSessionLimit).toHaveBeenCalledWith('session-123', 10)
+  })
+
+  it('throws when concurrency manager not initialized', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo)
+
+    await expect(service.setSessionConcurrencyLimit('session-123', 10)).rejects.toThrow(
+      /ConcurrencyManager not initialized/
+    )
+  })
+
+  it('validates limit is positive integer', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo()
+    const concurrencyManager = {
+      setSessionLimit: vi.fn(),
+      getStatus: vi.fn(),
+      enqueue: vi.fn(),
+      onJobCompleted: vi.fn()
+    }
+    const service = new ComputeService(
+      runner,
+      repo,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      concurrencyManager as unknown as ConcurrencyManager
+    )
+
+    await expect(service.setSessionConcurrencyLimit('session-123', 0)).rejects.toThrow(
+      /positive integer/
+    )
+    await expect(service.setSessionConcurrencyLimit('session-123', -5)).rejects.toThrow(
+      /positive integer/
+    )
+    await expect(service.setSessionConcurrencyLimit('session-123', 3.5)).rejects.toThrow(
+      /positive integer/
+    )
+  })
+})
+
+describe('getSessionConcurrencyStatus', () => {
+  it('delegates to concurrency manager and enriches with all host ceilings', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const hostA = sampleHost({ providerId: 'ssh:host-a', concurrencyLimit: 20 })
+    const hostB = sampleHost({ providerId: 'ssh:host-b', concurrencyLimit: undefined })
+    const hostC = sampleHost({ providerId: 'ssh:host-c', concurrencyLimit: 50 })
+    const list = vi.fn(() => Promise.resolve([hostA, hostB, hostC]))
+    const { repo } = makeRepo()
+    repo.list = list
+
+    const managerStatus = {
+      session_limit: 10,
+      active_count: 3,
+      queued_count: 2,
+      provider_ceilings: { 'ssh:host-a': 20 } // Only one host has jobs in this session
+    }
+    const getStatus = vi.fn(() => Promise.resolve(managerStatus))
+    const concurrencyManager = {
+      setSessionLimit: vi.fn(),
+      getStatus,
+      enqueue: vi.fn(),
+      onJobCompleted: vi.fn()
+    }
+    const service = new ComputeService(
+      runner,
+      repo,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      concurrencyManager as unknown as ConcurrencyManager
+    )
+
+    const result = await service.getSessionConcurrencyStatus('session-123')
+    expect(getStatus).toHaveBeenCalledWith('session-123')
+    expect(result.session_limit).toBe(10)
+    expect(result.active_count).toBe(3)
+    expect(result.queued_count).toBe(2)
+    // All registered hosts appear in provider_ceilings
+    expect(result.provider_ceilings['ssh:host-a']).toBe(20) // from jobs
+    expect(result.provider_ceilings['ssh:host-b']).toBe(10) // added (null -> 10)
+    expect(result.provider_ceilings['ssh:host-c']).toBe(50) // added
+  })
+
+  it('throws when concurrency manager not initialized', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo()
+    const service = new ComputeService(runner, repo)
+
+    await expect(service.getSessionConcurrencyStatus('session-123')).rejects.toThrow(
+      /ConcurrencyManager not initialized/
+    )
   })
 })

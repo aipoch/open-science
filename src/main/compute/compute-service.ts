@@ -38,7 +38,7 @@ import { computeRemoteWorkdir, dispatchJob, hashCommand } from './job-dispatcher
 import type { StagedInputEntry } from './job-dispatcher'
 import { getJobHarvestDir } from './harvest-engine'
 import { getNotebookSessionRoot } from '../notebook/repository'
-import type { ConcurrencyManager } from './concurrency-manager'
+import type { ConcurrencyManager, SessionStatus } from './concurrency-manager'
 
 // Probe timeout for the full bundle — individual commands share one connection but each gets this
 // budget. Set generously so slow clusters don't abort, but short enough for a responsive UI (30s).
@@ -563,8 +563,11 @@ export class ComputeService {
     // Exception: bare `~` and `~/…` are user-facing navigation shortcuts. Single-quoting suppresses
     // tilde expansion, so `realpath '~'` resolves to a literal file named "~" and `cd '~'` fails.
     // Expand these to `$HOME` / `$HOME/…` instead — $HOME is safe (set by sshd, not user input).
-    const expandedPath = path === '~' ? '$HOME' : path.startsWith('~/') ? `$HOME/${path.slice(2)}` : path
-    const quotedPath = expandedPath.startsWith('$HOME') ? expandedPath : shellSingleQuote(expandedPath)
+    const expandedPath =
+      path === '~' ? '$HOME' : path.startsWith('~/') ? `$HOME/${path.slice(2)}` : path
+    const quotedPath = expandedPath.startsWith('$HOME')
+      ? expandedPath
+      : shellSingleQuote(expandedPath)
     const remoteCmd = [
       `realpath ${quotedPath} 2>/dev/null || echo ${quotedPath}`,
       `cd ${quotedPath} || exit 1`,
@@ -1417,14 +1420,24 @@ export class ComputeService {
   }
 
   // Returns the session concurrency status (session limit, active/queued counts, provider ceilings).
-  async getSessionConcurrencyStatus(
-    sessionId: string
-  ): Promise<import('./concurrency-manager').SessionStatus> {
+  // Enriches with all registered compute hosts' concurrency limits.
+  async getSessionConcurrencyStatus(sessionId: string): Promise<SessionStatus> {
     if (!this.concurrencyManager) {
       throw new Error('ConcurrencyManager is required to get session concurrency status.')
     }
 
-    return this.concurrencyManager.getStatus(sessionId)
+    const status = this.concurrencyManager.getStatus(sessionId)
+
+    // Enrich with ALL registered compute hosts (not just those with jobs in this session).
+    const allHosts = await this.repository.list()
+    for (const host of allHosts) {
+      // Only set if not already present from jobs.
+      if (!(host.providerId in status.provider_ceilings)) {
+        status.provider_ceilings[host.providerId] = host.concurrencyLimit ?? 10
+      }
+    }
+
+    return status
   }
 
   // Internal callback wrapper: when a job transitions to a terminal state, notify ConcurrencyManager

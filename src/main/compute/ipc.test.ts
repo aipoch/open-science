@@ -488,3 +488,54 @@ describe('production ComputeService wiring (finding #3)', () => {
     ).rejects.not.toThrow(/ComputeJobRepository is required/)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Session concurrency control IPC handlers (Phase 3c, issue 04)
+// ---------------------------------------------------------------------------
+
+describe('session concurrency control handlers', () => {
+  it('setSessionConcurrencyLimit delegates to ComputeService', async () => {
+    const setSessionConcurrencyLimit = vi.fn(() => Promise.resolve())
+    const service = mockService({ setSessionConcurrencyLimit })
+    const handlers = createComputeHandlers(mockRepository({}), undefined, service)
+
+    await handlers.setSessionConcurrencyLimit('session-123', 5)
+    expect(setSessionConcurrencyLimit).toHaveBeenCalledWith('session-123', 5)
+  })
+
+  it('getSessionConcurrencyStatus delegates to ComputeService', async () => {
+    const status = {
+      session_limit: 10,
+      active_count: 3,
+      queued_count: 2,
+      provider_ceilings: { 'ssh:host-a': 10, 'ssh:host-b': 50 }
+    }
+    const getSessionConcurrencyStatus = vi.fn(() => Promise.resolve(status))
+    const service = mockService({ getSessionConcurrencyStatus })
+    const handlers = createComputeHandlers(mockRepository({}), undefined, service)
+
+    const result = await handlers.getSessionConcurrencyStatus('session-123')
+    expect(getSessionConcurrencyStatus).toHaveBeenCalledWith('session-123')
+    expect(result).toEqual(status)
+  })
+
+  it('status returns accurate provider ceilings for all registered hosts', async () => {
+    const hostA = sampleHost({ providerId: 'ssh:host-a', concurrencyLimit: 20 })
+    const hostB = sampleHost({ providerId: 'ssh:host-b', concurrencyLimit: undefined })
+    const list = vi.fn(() => Promise.resolve([hostA, hostB]))
+
+    const status = {
+      session_limit: 5,
+      active_count: 2,
+      queued_count: 1,
+      provider_ceilings: { 'ssh:host-a': 20, 'ssh:host-b': 10 }
+    }
+    const getSessionConcurrencyStatus = vi.fn(() => Promise.resolve(status))
+    const service = mockService({ getSessionConcurrencyStatus })
+    const handlers = createComputeHandlers(mockRepository({ list }), undefined, service)
+
+    const result = await handlers.getSessionConcurrencyStatus('session-123')
+    expect(result.provider_ceilings['ssh:host-a']).toBe(20)
+    expect(result.provider_ceilings['ssh:host-b']).toBe(10)
+  })
+})

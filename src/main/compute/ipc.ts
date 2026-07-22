@@ -144,6 +144,14 @@ type ComputeHandlers = {
   scratchSet: (providerId: string, path: string) => Promise<void>
   // Concurrent job limit: store 1..500 (not enforced in Phase 1).
   concurrencySet: (providerId: string, limit: number) => Promise<void>
+  // Session-level concurrency control (Phase 3c, issue 04).
+  setSessionConcurrencyLimit: (sessionId: string, limit: number) => Promise<void>
+  getSessionConcurrencyStatus: (sessionId: string) => Promise<{
+    session_limit: number | null
+    active_count: number
+    queued_count: number
+    provider_ceilings: Record<string, number>
+  }>
   // Lists the contents of a remote directory (non-approval, metadata only).
   listDir: (providerId: string, path: string) => Promise<DirListing>
   // Downloads a remote file to OS Downloads or project artifact. No approval gate for UI actions.
@@ -259,6 +267,9 @@ const createComputeHandlers = (
       service.replaceDetails(providerId, { text, oldText, author }),
     scratchSet: (providerId, path) => service.setScratchRoot(providerId, path),
     concurrencySet: (providerId, limit) => service.setConcurrencyLimit(providerId, limit),
+    setSessionConcurrencyLimit: (sessionId, limit) =>
+      service.setSessionConcurrencyLimit(sessionId, limit),
+    getSessionConcurrencyStatus: (sessionId) => service.getSessionConcurrencyStatus(sessionId),
     listDir: (providerId, path) => service.listDir(providerId, path),
     download: (providerId, remotePath, dest) => service.download(providerId, remotePath, dest),
     revealInFolder: (filePath) => {
@@ -272,7 +283,9 @@ const createComputeHandlers = (
       const hostNameMap = new Map(hosts.map((h) => [h.providerId, h.displayName]))
       const jobs = await jobRepository.findBySession(filter.sessionId, filter.status)
       return Promise.all(
-        jobs.map((j) => toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot))
+        jobs.map((j) =>
+          toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot)
+        )
       )
     },
     jobsPendingNotification: async (sessionId) => {
@@ -281,7 +294,9 @@ const createComputeHandlers = (
       const hostNameMap = new Map(hosts.map((h) => [h.providerId, h.displayName]))
       const jobs = await jobRepository.findPendingNotifications(sessionId)
       return Promise.all(
-        jobs.map((j) => toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot))
+        jobs.map((j) =>
+          toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot)
+        )
       )
     },
     jobsMarkConsumed: async (_sessionId, jobIds) => {
@@ -394,6 +409,15 @@ const registerComputeIpcHandlers = (
   )
   ipcMain.handle('compute:concurrency:set', (_event, providerId: string, limit: number) =>
     handlers.concurrencySet(providerId, limit)
+  )
+  // Session-level concurrency control (Phase 3c, issue 04).
+  ipcMain.handle(
+    'compute:session:set-concurrency-limit',
+    (_event, sessionId: string, limit: number) =>
+      handlers.setSessionConcurrencyLimit(sessionId, limit)
+  )
+  ipcMain.handle('compute:session:status', (_event, sessionId: string) =>
+    handlers.getSessionConcurrencyStatus(sessionId)
   )
   // Lists a remote directory (browse experience, issue 05).
   ipcMain.handle('compute:list-dir', async (_event, providerId: string, path: string) => {
