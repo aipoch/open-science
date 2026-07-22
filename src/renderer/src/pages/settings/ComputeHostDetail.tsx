@@ -308,10 +308,6 @@ export function ComputeHostDetail({
               {probed.errorTail}
             </pre>
           ) : null}
-          <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">
-            Run <code className="font-mono">ssh {host.sshAlias}</code> manually to accept the host
-            key, then retry.
-          </p>
         </div>
       ) : null}
 
