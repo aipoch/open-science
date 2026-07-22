@@ -99,6 +99,8 @@ export type StoredSettings = {
   agentFrameworkId?: AgentFrameworkId
   // Reasoning-effort preference. Absent (or 'default') means the agent keeps its own default.
   reasoningEffort?: ReasoningEffort
+  // Desktop-notification preference for finished/failed agent tasks. Absent means enabled.
+  notificationsEnabled?: boolean
   // Detected opencode executable path + reported version (for the status card). Absent = detect on PATH.
   opencodePath?: string
   opencodeVersion?: string

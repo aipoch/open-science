@@ -4,10 +4,11 @@ import { useEffect, useState } from 'react'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { Button } from '@/components/ui/button'
+import { useSettingsStore } from '@/stores/settings-store'
 import type { CliLauncherStatus } from '../../../../shared/cli'
 import { APP } from '../../../../shared/app-config'
 import { AppVersionSection } from './AppVersionSection'
-import { SettingsRow, SettingsSection } from './SettingsLayout'
+import { SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
 
 // Community entry links (Discord, X) share the GitHub badge's compact look so the row reads as one
 // set of "connect with the project" actions.
@@ -37,6 +38,8 @@ const GeneralPanel = (): React.JSX.Element => {
   const [cli, setCli] = useState<CliLauncherStatus | null>(null)
   const [isUpdatingCli, setIsUpdatingCli] = useState(false)
   const [cliError, setCliError] = useState<string | undefined>(undefined)
+  const notificationsEnabled = useSettingsStore((state) => state.notificationsEnabled)
+  const setNotificationsEnabled = useSettingsStore((state) => state.setNotificationsEnabled)
 
   useEffect(() => {
     void window.api.logs.getPath().then(setLogPath)
@@ -94,6 +97,27 @@ const GeneralPanel = (): React.JSX.Element => {
   return (
     <div className="space-y-5 p-5">
       <AppVersionSection />
+
+      <SettingsSection
+        title="Notifications"
+        description={
+          <>
+            Get a desktop notification when a task finishes or needs your attention while
+            you&apos;re away from the app. Selecting it brings Open Science back to the front and
+            opens the task.
+          </>
+        }
+        aria-label="Notifications"
+        separated
+      >
+        <SettingsRow label="Task notifications" className="pt-0">
+          <SettingsToggle
+            enabled={notificationsEnabled}
+            aria-label="Toggle task notifications"
+            onToggle={() => void setNotificationsEnabled(!notificationsEnabled)}
+          />
+        </SettingsRow>
+      </SettingsSection>
 
       <SettingsSection
         title="Diagnostics"

@@ -40,6 +40,7 @@ type PreloadApi = {
     installOpencode: (request: unknown) => unknown
     installCodex: (request: unknown) => unknown
     setAgentFramework: (request: unknown) => unknown
+    setNotificationsEnabled: (request: unknown) => unknown
     uninstallClaude: () => unknown
     uninstallOpencode: () => unknown
     uninstallCodex: () => unknown
@@ -148,6 +149,12 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.settings.setAgentFramework(sampleFramework),
     channel: 'settings:set-agent-framework',
     args: [sampleFramework]
+  },
+  {
+    name: 'settings.setNotificationsEnabled → settings:set-notifications-enabled',
+    invoke: (a) => a.settings.setNotificationsEnabled({ enabled: false }),
+    channel: 'settings:set-notifications-enabled',
+    args: [{ enabled: false }]
   },
   {
     name: 'settings.uninstallClaude → settings:uninstall-claude (no args)',

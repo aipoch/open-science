@@ -31,6 +31,7 @@ import type {
   SaveManagedFileResult
 } from '../shared/file-save'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
+import type { OpenSessionFromNotificationRequest } from '../shared/notifications'
 import type {
   AppendNotebookCodeCellRequest,
   BeginNotebookCodeCellRequest,
@@ -102,6 +103,7 @@ import type {
   SetActiveProviderRequest,
   SetPackageMirrorRequest,
   SetAgentFrameworkRequest,
+  SetNotificationsEnabledRequest,
   SetReasoningEffortRequest,
   SetSkillEnabledRequest,
   SettingsSnapshot,
@@ -237,6 +239,7 @@ type OpenScienceAPI = {
     setActiveProvider: (request: SetActiveProviderRequest) => Promise<SettingsSnapshot>
     setAgentFramework: (request: SetAgentFrameworkRequest) => Promise<SettingsSnapshot>
     setReasoningEffort: (request: SetReasoningEffortRequest) => Promise<SettingsSnapshot>
+    setNotificationsEnabled: (request: SetNotificationsEnabledRequest) => Promise<SettingsSnapshot>
     validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
     cancelCodexLogin: () => Promise<void>
     loginIsolatedCodex: () => Promise<ValidateProviderResult>
@@ -276,6 +279,10 @@ type OpenScienceAPI = {
     getPath: () => Promise<string | null>
     openFile: () => Promise<OpenLogFileResult>
     revealInFolder: () => Promise<RevealLogFileResult>
+  }
+  notifications: {
+    // Fires when the user clicks a desktop notification: open the conversation it belongs to.
+    onOpenSession: (listener: AcpListener<OpenSessionFromNotificationRequest>) => RemoveListener
   }
   github: {
     getStars: () => Promise<number | null>
@@ -557,6 +564,11 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('settings:set-agent-framework', request) as Promise<SettingsSnapshot>,
     setReasoningEffort: (request) =>
       ipcRenderer.invoke('settings:set-reasoning-effort', request) as Promise<SettingsSnapshot>,
+    setNotificationsEnabled: (request) =>
+      ipcRenderer.invoke(
+        'settings:set-notifications-enabled',
+        request
+      ) as Promise<SettingsSnapshot>,
     validateProvider: (request) =>
       ipcRenderer.invoke('settings:validate-provider', request) as Promise<ValidateProviderResult>,
     cancelCodexLogin: () => ipcRenderer.invoke('settings:cancel-codex-login') as Promise<void>,
@@ -640,6 +652,10 @@ const api: OpenScienceAPI = {
     openFile: () => ipcRenderer.invoke('logs:open-file') as Promise<OpenLogFileResult>,
     revealInFolder: () =>
       ipcRenderer.invoke('logs:reveal-in-folder') as Promise<RevealLogFileResult>
+  },
+  notifications: {
+    // Main-process task notifications route their click through this channel.
+    onOpenSession: (listener) => onIpcMessage('notifications:open-session', listener)
   },
   github: {
     getStars: () => ipcRenderer.invoke('github:get-stars') as Promise<number | null>

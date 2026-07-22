@@ -79,6 +79,15 @@ const App = (): React.JSX.Element | null => {
     [enqueueApproval]
   )
 
+  // Clicking a desktop notification opens the conversation the finished/failed task belongs to.
+  useEffect(
+    () =>
+      window.api.notifications.onOpenSession(({ sessionId }) =>
+        useNavigationStore.getState().openSessionById(sessionId)
+      ),
+    []
+  )
+
   // Load the project list once on startup so Home can render immediately after hydration.
   useEffect(() => {
     void loadProjects()

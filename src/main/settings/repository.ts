@@ -437,6 +437,13 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     settings.reasoningEffort = reasoningEffort
   }
 
+  // Desktop-notification preference; only a real boolean survives.
+  const notificationsEnabled = asBoolean(value.notificationsEnabled)
+
+  if (notificationsEnabled !== undefined) {
+    settings.notificationsEnabled = notificationsEnabled
+  }
+
   const opencodePath = asString(value.opencodePath)
 
   if (opencodePath) {
@@ -639,6 +646,12 @@ class SettingsRepository {
   // Persists the reasoning-effort preference; applied to sessions created after the next reconnect.
   async setReasoningEffort(effort: ReasoningEffort): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, reasoningEffort: effort }))
+  }
+
+  // Persists the desktop-notification preference; read fresh at notification time so it applies
+  // immediately, without a restart.
+  async setNotificationsEnabled(enabled: boolean): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, notificationsEnabled: enabled }))
   }
 
   // Records the detected opencode executable path + version for later spawns + the settings status card.

@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-import { app, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, Notification } from 'electron'
 
 import { createDefaultNotebookRuntimeService, registerAcpIpcHandlers } from './acp/ipc'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
@@ -20,6 +20,7 @@ import { registerGithubIpcHandlers } from './github-ipc'
 import { BackendShutdownCoordinator, UPDATE_SHUTDOWN_BUDGET_MS } from './lifecycle-shutdown'
 import { registerLogsIpcHandlers } from './logs-ipc'
 import { registerWindowIpcHandlers } from './window-ipc'
+import { TaskNotificationService } from './notifications/task-notifications'
 import { createLogger } from './logger'
 import {
   broadcastNotebookEnvProgress,
@@ -131,6 +132,7 @@ const registerIpcHandlers = async ({
   runtime: ReturnType<typeof registerAcpIpcHandlers>
   notebook: ReturnType<typeof createDefaultNotebookRuntimeService>
   shutdownCoordinator: BackendShutdownCoordinator
+  taskNotifications: TaskNotificationService
 }> => {
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const settingsService = createDefaultSettingsService()
@@ -313,13 +315,31 @@ const registerIpcHandlers = async ({
   registerWindowIpcHandlers()
   const updateService = registerUpdateIpcHandlers()
   startUpdateScheduler(updateService)
+  // Desktop notifications for finished/failed agent tasks. Delivery is Electron's Notification
+  // (Notification Center on macOS, toasts on Windows, libnotify on Linux); the service itself
+  // stays Electron-free so its filtering rules are unit-testable. The click handler is bound
+  // later, in index.ts, where showMainWindow exists.
+  const taskNotifications = new TaskNotificationService({
+    isEnabled: () => settingsService.getNotificationsEnabled(),
+    isAppFocused: () => BrowserWindow.getAllWindows().some((window) => window.isFocused()),
+    show: ({ title, body, onClick }) => {
+      // Some Linux desktops lack a notification daemon; Electron reports support per platform.
+      if (!Notification.isSupported()) return
+
+      const notification = new Notification({ title, body })
+
+      notification.on('click', onClick)
+      notification.show()
+    }
+  })
   const runtime = registerAcpIpcHandlers({
     mcpEntryPath: mainEntryPath,
     repository: artifactRepository,
     runRegistry: artifactRunRegistry,
     uploadRepository,
     notebookRpcServer,
-    settingsService
+    settingsService,
+    taskNotifications
   })
   runtimeRef.current = runtime
   // Single shared teardown owner for both the before-quit handler (index.ts) and the pre-update-install
@@ -506,7 +526,7 @@ const registerIpcHandlers = async ({
 
   // Return the long-lived backend handles so the app lifecycle (before-quit) can shut them down
   // cleanly on quit — the agent process tree and every notebook kernel.
-  return { runtime, notebook: notebookService, shutdownCoordinator }
+  return { runtime, notebook: notebookService, shutdownCoordinator, taskNotifications }
 }
 
 export { registerIpcHandlers }

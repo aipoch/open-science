@@ -29,6 +29,7 @@ import type {
   SaveManagedFileResult
 } from '../shared/file-save'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
+import type { OpenSessionFromNotificationRequest } from '../shared/notifications'
 import type {
   AppendNotebookCodeCellRequest,
   BeginNotebookCodeCellRequest,
@@ -100,6 +101,7 @@ import type {
   SetActiveProviderRequest,
   SetPackageMirrorRequest,
   SetAgentFrameworkRequest,
+  SetNotificationsEnabledRequest,
   SetReasoningEffortRequest,
   SetSkillEnabledRequest,
   SettingsSnapshot,
@@ -214,6 +216,7 @@ interface OpenScienceAPI {
     setActiveProvider(request: SetActiveProviderRequest): Promise<SettingsSnapshot>
     setAgentFramework(request: SetAgentFrameworkRequest): Promise<SettingsSnapshot>
     setReasoningEffort(request: SetReasoningEffortRequest): Promise<SettingsSnapshot>
+    setNotificationsEnabled(request: SetNotificationsEnabledRequest): Promise<SettingsSnapshot>
     validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult>
     cancelCodexLogin(): Promise<void>
     loginIsolatedCodex(): Promise<ValidateProviderResult>
@@ -253,6 +256,9 @@ interface OpenScienceAPI {
     getPath(): Promise<string | null>
     openFile(): Promise<OpenLogFileResult>
     revealInFolder(): Promise<RevealLogFileResult>
+  }
+  notifications: {
+    onOpenSession(listener: AcpListener<OpenSessionFromNotificationRequest>): RemoveListener
   }
   github: {
     getStars(): Promise<number | null>

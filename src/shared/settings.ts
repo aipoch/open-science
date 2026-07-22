@@ -205,6 +205,10 @@ export type ReasoningEffort = 'default' | 'low' | 'medium' | 'high' | 'max'
 
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'default'
 
+// Desktop notifications for finished/failed agent tasks are opt-out: they only fire while the app
+// is unfocused, so the default surprises no one staring at the window.
+export const DEFAULT_NOTIFICATIONS_ENABLED = true
+
 const REASONING_EFFORTS: readonly ReasoningEffort[] = ['default', 'low', 'medium', 'high', 'max']
 
 // Runtime guard for untrusted values (IPC payloads, settings.json): only the known levels pass.
@@ -250,6 +254,8 @@ export type SettingsSnapshot = {
   // The user's reasoning-effort preference for agent requests. 'default' leaves the agent's own
   // default untouched; concrete levels apply to subsequent requests when the agent supports them.
   reasoningEffort: ReasoningEffort
+  // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
+  notificationsEnabled: boolean
 }
 
 // Request to set (or clear, via omitted fields) the package-mirror configuration.
@@ -261,6 +267,10 @@ export type SetAgentFrameworkRequest = {
 
 export type SetReasoningEffortRequest = {
   effort: ReasoningEffort
+}
+
+export type SetNotificationsEnabledRequest = {
+  enabled: boolean
 }
 
 // The hard startup gates. Kept as plain booleans so the wizard can target the first unmet step.

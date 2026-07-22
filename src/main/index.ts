@@ -137,9 +137,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // can reach them. It only wraps ipcMain.handle — no server, no cost until something serves.
       const rpcCapture = installRpcCapture(ipcMain)
       // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
-      const { runtime, notebook, shutdownCoordinator } = await registerIpcHandlers({
-        mainEntryPath
-      })
+      const { runtime, notebook, shutdownCoordinator, taskNotifications } =
+        await registerIpcHandlers({
+          mainEntryPath
+        })
       const webController = createWebServiceController({
         rpc: rpcCapture,
         requestQuit: () => app.quit()
@@ -156,6 +157,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         buildAuthenticatedWebUrl,
         routeSecondInstance,
         shutdownCoordinator,
+        taskNotifications,
         // Running-work snapshot + confirm coordinator, bound here where runtime/notebook are in scope.
         detectActiveSessions: () => computeActiveSessions({ runtime, notebook }),
         createConfirmClose: createElectronCloseConfirm,
@@ -215,6 +217,27 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         createInitialWindow: !ctx.webMode.headless,
         detectActiveSessions: ctx.detectActiveSessions,
         createConfirmClose: ctx.createConfirmClose
+      })
+
+      // Clicking a task notification surfaces the app and tells the renderer which conversation
+      // to open. showMainWindow may have just recreated the window, in which case the renderer is
+      // still loading and its subscription doesn't exist yet — defer the message until it is ready.
+      ctx.taskNotifications.setActivationHandler((sessionId) => {
+        showMainWindow()
+
+        const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+
+        if (!window) return
+
+        const openSession = (): void => {
+          window.webContents.send('notifications:open-session', { sessionId })
+        }
+
+        if (window.webContents.isLoading()) {
+          window.webContents.once('did-finish-load', openSession)
+        } else {
+          openSession()
+        }
       })
 
       // Route each second launch by its forwarded argv (see second-instance-router): a CLI

@@ -10,6 +10,9 @@ type NavigationStore = {
   goHome: () => void
   openProject: (projectId: string) => void
   openSession: (projectId: string, sessionId: string) => void
+  // Opens a session knowing only its id (e.g. a desktop-notification click); a no-op when the
+  // session no longer exists or hasn't loaded yet.
+  openSessionById: (sessionId: string) => void
 }
 
 // Picks the most recently updated non-pending session in a project so opening a project lands on its
@@ -47,5 +50,20 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
     useSessionStore.getState().selectSession(sessionId)
 
     set({ view: 'workspace', activeProjectId: projectId })
+  },
+
+  // Resolves the session's project from the session store, then navigates exactly like
+  // openSession. Unknown ids stay put: a notification for a deleted conversation must not
+  // yank the user to a blank workspace.
+  openSessionById: (sessionId) => {
+    const session = useSessionStore
+      .getState()
+      .sessions.find((candidate) => candidate.id === sessionId)
+
+    if (!session) return
+
+    useSessionStore.getState().selectSession(sessionId)
+
+    set({ view: 'workspace', activeProjectId: session.projectId })
   }
 }))

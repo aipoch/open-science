@@ -2872,3 +2872,30 @@ describe('SettingsService: reasoning effort', () => {
     expect(upstreamRequest).not.toHaveProperty('reasoning_effort')
   })
 })
+
+describe('SettingsService: notifications preference', () => {
+  it('projects enabled when no preference is stored', async () => {
+    const service = createService()
+
+    expect((await service.getSettingsView()).notificationsEnabled).toBe(true)
+    expect(await service.getNotificationsEnabled()).toBe(true)
+  })
+
+  it('projects the stored preference into the settings view', async () => {
+    const service = createService()
+
+    await repository.setNotificationsEnabled(false)
+
+    expect((await service.getSettingsView()).notificationsEnabled).toBe(false)
+    expect(await service.getNotificationsEnabled()).toBe(false)
+  })
+
+  it('persists the preference and returns the refreshed snapshot', async () => {
+    const service = createService()
+
+    const snapshot = await service.setNotificationsEnabled(false)
+
+    expect(snapshot.notificationsEnabled).toBe(false)
+    expect((await repository.getSettings()).notificationsEnabled).toBe(false)
+  })
+})
