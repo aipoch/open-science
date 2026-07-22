@@ -640,12 +640,8 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
       isDetecting={isDetectingAnyFramework}
       onUninstall={() => setPendingUninstall(card.key)}
       installSources={card.installSources}
-      installing={card.install.isInstalling}
+      install={card.install}
       installRunning={anyInstalling}
-      installDisabled={anyInstalling || isUninstalling}
-      installLogs={card.install.installLogs}
-      installProgress={card.install.installProgress}
-      installError={card.install.installError}
       npmAvailable={npmAvailable}
       onInstall={(source) => card.onInstall(source)}
     />

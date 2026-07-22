@@ -51,16 +51,17 @@ type AgentFrameworkCardProps = {
   onUninstall: () => void
   // Install menu + progress wiring (only meaningful on not-ready cards).
   installSources: ClaudeInstallSourceInfo[]
-  // True while THIS card's install is running: the button reads "Installing…" and the bar shows.
-  installing: boolean
+  // This runtime's own install slice from the store (progress/logs/error plus whether THIS card's
+  // install runs, which flips the button to "Installing…").
+  install: {
+    isInstalling: boolean
+    installLogs: string[]
+    installProgress: ClaudeInstallProgressEvent | null
+    installError?: string
+  }
   // Global install-in-flight flag (any framework). RuntimeUninstallControl's contract locks every
-  // card's Uninstall while ANY install runs — do not narrow this to this card's `installing`.
+  // card's Uninstall while ANY install runs; it also locks this card's Install menu.
   installRunning: boolean
-  // A global operation (another framework's install, or any uninstall) locks this card's Install.
-  installDisabled: boolean
-  installLogs: string[]
-  installProgress: ClaudeInstallProgressEvent | null
-  installError?: string
   npmAvailable: boolean
   onInstall: (source: ClaudeInstallSource) => void
 }
@@ -151,12 +152,8 @@ const AgentFrameworkCard = ({
   isDetecting,
   onUninstall,
   installSources,
-  installing,
+  install,
   installRunning,
-  installDisabled,
-  installLogs,
-  installProgress,
-  installError,
   npmAvailable,
   onInstall
 }: AgentFrameworkCardProps): React.JSX.Element => {
@@ -165,10 +162,16 @@ const AgentFrameworkCard = ({
   // A runtime with a resolved path (even a broken one) shows its path/link and the Uninstall control.
   const found = Boolean(path)
 
+  const installing = install.isInstalling
+  const installLogs = install.installLogs
+  const installError = install.installError
+  // Any framework's install (or any uninstall) locks this card's Install menu.
+  const installLocked = installRunning || isUninstalling
+
   // Show the bar while this card's install runs; fall back to an indeterminate label before the
   // first progress tick arrives.
-  const progress = installProgress
-    ? describeInstallProgress(installProgress)
+  const progress = install.installProgress
+    ? describeInstallProgress(install.installProgress)
     : installing
       ? { label: 'Starting…' }
       : null
@@ -291,7 +294,7 @@ const AgentFrameworkCard = ({
                 name={name}
                 sources={installSources}
                 installing={installing}
-                disabled={installDisabled}
+                disabled={installLocked}
                 npmAvailable={npmAvailable}
                 onInstall={onInstall}
               />
@@ -343,12 +346,7 @@ const AgentFrameworkCard = ({
                 {!installError ? (
                   <button
                     type="button"
-                    onClick={(event) => {
-                      // Defensive: not-ready cards aren't selectable today, but keep the toggle
-                      // from ever bubbling into a card-level selection handler.
-                      event.stopPropagation()
-                      setShowLog((visible) => !visible)
-                    }}
+                    onClick={() => setShowLog((visible) => !visible)}
                     className="text-xs font-medium text-muted-foreground hover:text-foreground"
                   >
                     {logVisible ? 'Hide log' : 'Show log'}

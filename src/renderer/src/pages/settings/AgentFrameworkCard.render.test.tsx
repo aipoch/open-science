@@ -42,11 +42,8 @@ const baseProps: CardProps = {
   isDetecting: false,
   onUninstall: vi.fn(),
   installSources: getClaudeInstallSources('darwin'),
-  installing: false,
+  install: { isInstalling: false, installLogs: [] as string[], installProgress: null },
   installRunning: false,
-  installDisabled: false,
-  installLogs: [] as string[],
-  installProgress: null,
   npmAvailable: true,
   onInstall: vi.fn()
 }
@@ -159,13 +156,16 @@ describe('AgentFrameworkCard', () => {
   it('shows the progress bar and an "Installing…" button while its install runs', () => {
     renderCard({
       ready: false,
-      installing: true,
-      installProgress: {
-        kind: 'progress',
-        installId: 'test',
-        phase: 'downloading',
-        receivedBytes: 50,
-        totalBytes: 100
+      install: {
+        isInstalling: true,
+        installLogs: [],
+        installProgress: {
+          kind: 'progress',
+          installId: 'test',
+          phase: 'downloading',
+          receivedBytes: 50,
+          totalBytes: 100
+        }
       }
     })
 
@@ -180,8 +180,12 @@ describe('AgentFrameworkCard', () => {
   it('surfaces an install error and force-shows the log for triage', () => {
     renderCard({
       ready: false,
-      installError: 'boom',
-      installLogs: ['line one\n']
+      install: {
+        isInstalling: false,
+        installLogs: ['line one\n'],
+        installProgress: null,
+        installError: 'boom'
+      }
     })
 
     expect(container.querySelector('[role="alert"]')?.textContent).toBe('boom')

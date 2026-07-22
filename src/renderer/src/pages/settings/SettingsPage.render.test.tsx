@@ -125,6 +125,15 @@ const openAgentPanel = async (): Promise<void> => {
   await act(async () => item?.click())
 }
 
+// Finds a left-nav button by its exact label.
+const navButton = (label: string): HTMLButtonElement | undefined =>
+  Array.from(
+    document.body.querySelectorAll<HTMLButtonElement>('nav[aria-label="Settings"] button')
+  ).find((candidate) => candidate.textContent?.trim() === label)
+
+// The Agent sub-item's <li> wrapper, whose grid-rows class drives the expand/collapse animation.
+const agentItem = (): HTMLElement | null => navButton('Agent')?.closest('li') ?? null
+
 describe('SettingsPage layout', () => {
   it('mounts the sidebar + content with grouped nav items and a close control', () => {
     useSettingsStore.setState({
@@ -220,12 +229,6 @@ describe('SettingsPage layout', () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
 
-    const navButton = (label: string): HTMLButtonElement | undefined =>
-      Array.from(
-        document.body.querySelectorAll<HTMLButtonElement>('nav[aria-label="Settings"] button')
-      ).find((candidate) => candidate.textContent?.trim() === label)
-    const agentItem = (): HTMLElement | null => navButton('Agent')?.closest('li') ?? null
-
     // Model is the default panel, so the branch starts expanded…
     expect(agentItem()?.className).toContain('grid-rows-[1fr]')
 
@@ -241,12 +244,6 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
-
-    const navButton = (label: string): HTMLButtonElement | undefined =>
-      Array.from(
-        document.body.querySelectorAll<HTMLButtonElement>('nav[aria-label="Settings"] button')
-      ).find((candidate) => candidate.textContent?.trim() === label)
-    const agentItem = (): HTMLElement | null => navButton('Agent')?.closest('li') ?? null
 
     expect(agentItem()?.className).toContain('grid-rows-[1fr]')
 
