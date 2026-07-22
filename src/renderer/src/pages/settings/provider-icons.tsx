@@ -11,6 +11,7 @@ import kimiLogo from '@/assets/provider-icons/kimi.svg'
 import openrouterLogo from '@/assets/provider-icons/openrouter.svg'
 import xiaomimimoLogo from '@/assets/provider-icons/xiaomimimo.svg'
 import sensenovaLogo from '@/assets/provider-icons/sensenova.svg'
+import volcengineLogo from '@/assets/provider-icons/volcengine.svg'
 import type { OfficialVendorId } from '../../../../shared/provider-registry'
 
 // Official vendor brand marks, bundled as assets. Both Kimi providers (the general Moonshot platform
@@ -29,7 +30,8 @@ const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   kimiforcode: kimiLogo,
   openrouter: openrouterLogo,
   xiaomimimo: xiaomimimoLogo,
-  sensenova: sensenovaLogo
+  sensenova: sensenovaLogo,
+  volcengine: volcengineLogo
 }
 
 // Renders the icon for a provider-kind key ('custom', 'claude-default', or `official:<vendorId>`).

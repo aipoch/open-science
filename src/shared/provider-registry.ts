@@ -21,6 +21,7 @@ export type OfficialVendorId =
   | 'stepfun'
   | 'xiaomimimo'
   | 'sensenova'
+  | 'volcengine'
   | 'openrouter'
 
 // A selectable endpoint for vendors that publish more than one host — e.g. a Global vs. China region
@@ -293,6 +294,35 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     models: ['sensenova-6.7-flash-lite', 'deepseek-v4-flash'],
     // Only sensenova-6.7-flash-lite accepts image input; deepseek-v4-flash is text-only.
     multimodal: { multimodalModels: ['sensenova-6.7-flash-lite'] }
+  },
+  {
+    id: 'volcengine',
+    label: 'Volcengine Ark',
+    // ByteDance's Volcengine Ark serves both routes on one host: the Anthropic-compatible
+    // /v1/messages under /api/compatible and the OpenAI-compatible /v1/chat/completions under
+    // /api/v3. The same model ids work on both. No modelsListUrl: Ark's catalog also serves
+    // embedding, image (Seedream), and video (Seedance) models alongside the chat ids, and the
+    // refresh has no modality filter — so the Doubao Seed chat catalog stays curated.
+    apiEndpoints: ['anthropic', 'openai'],
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/compatible',
+    openaiBaseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    apiKeyUrl: 'https://console.volcengine.com/ark/region:ark+cn-beijing/apikey',
+    models: [
+      'doubao-seed-2-1-pro-260628',
+      'doubao-seed-2-0-pro-260215',
+      'doubao-seed-2-0-lite-260215',
+      'doubao-seed-2-0-mini-260215',
+      'doubao-seed-2-0-code-preview-260215'
+    ],
+    // The Seed 2.x general models accept image input; the code-preview coding model is text-only.
+    multimodal: {
+      multimodalModels: [
+        'doubao-seed-2-1-pro-260628',
+        'doubao-seed-2-0-pro-260215',
+        'doubao-seed-2-0-lite-260215',
+        'doubao-seed-2-0-mini-260215'
+      ]
+    }
   },
   // OpenRouter is an aggregation gateway (many vendors behind one key), so it sits last in the picker.
   {

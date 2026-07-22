@@ -128,6 +128,23 @@ describe('provider registry', () => {
     expect(defaultVendorModel('sensenova')).toBe('sensenova-6.7-flash-lite')
   })
 
+  it('routes Volcengine Ark through both APIs with a curated Doubao Seed catalog', () => {
+    expect(resolveVendorApiEndpoints('volcengine')).toEqual(['anthropic', 'openai'])
+    expect(resolveVendorBaseUrl('volcengine')).toBe(
+      'https://ark.cn-beijing.volces.com/api/compatible'
+    )
+    expect(resolveVendorOpenAiBaseUrl('volcengine')).toBe(
+      'https://ark.cn-beijing.volces.com/api/v3'
+    )
+    expect(resolveVendorApiKeyUrl('volcengine')).toBe(
+      'https://console.volcengine.com/ark/region:ark+cn-beijing/apikey'
+    )
+    // Ark's catalog also serves embedding/image/video models the refresh cannot filter out —
+    // so refresh-from-vendor is hidden and the Doubao Seed chat catalog stays curated.
+    expect(resolveVendorModelsUrl('volcengine')).toBeUndefined()
+    expect(defaultVendorModel('volcengine')).toBe('doubao-seed-2-1-pro-260628')
+  })
+
   it('routes Kimi through both APIs so Codex can bridge it', () => {
     expect(resolveVendorApiEndpoints('kimi')).toEqual(['anthropic', 'openai'])
     expect(resolveVendorBaseUrl('kimi')).toBe('https://api.moonshot.cn/anthropic')
@@ -232,6 +249,16 @@ describe('provider registry', () => {
     it('returns true only for the SenseNova vision model', () => {
       expect(isVendorModelMultimodal('sensenova', 'sensenova-6.7-flash-lite')).toBe(true)
       expect(isVendorModelMultimodal('sensenova', 'deepseek-v4-flash')).toBe(false)
+    })
+
+    it('returns true for Volcengine Ark Seed 2.x general models but not the coding model', () => {
+      expect(isVendorModelMultimodal('volcengine', 'doubao-seed-2-1-pro-260628')).toBe(true)
+      expect(isVendorModelMultimodal('volcengine', 'doubao-seed-2-0-pro-260215')).toBe(true)
+      expect(isVendorModelMultimodal('volcengine', 'doubao-seed-2-0-lite-260215')).toBe(true)
+      expect(isVendorModelMultimodal('volcengine', 'doubao-seed-2-0-mini-260215')).toBe(true)
+      expect(isVendorModelMultimodal('volcengine', 'doubao-seed-2-0-code-preview-260215')).toBe(
+        false
+      )
     })
 
     it('returns true only for the StepFun multimodal flash model', () => {
