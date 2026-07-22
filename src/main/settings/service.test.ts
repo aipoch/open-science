@@ -671,6 +671,37 @@ describe('SettingsService: validation', () => {
 
     expect(result).toMatchObject({ ok: true, category: 'ok' })
     expect(fetchMock).toHaveBeenCalledOnce()
+    expect(fetchMock.mock.calls[0][0]).toContain('/v1/chat/completions')
+  })
+
+  it('probes the route the active framework drives for a multi-route provider', async () => {
+    const service = createService()
+    const fetchMock = vi.fn().mockResolvedValue({ status: 200 })
+    vi.stubGlobal('fetch', fetchMock)
+
+    // A provider that speaks both routes. preferredEndpoint would pick OpenAI globally, but Claude Code
+    // runs /v1/messages — so the probe must hit that, or a passing test wouldn't prove the real route.
+    const created = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'G',
+        baseUrl: 'https://g',
+        model: 'm',
+        key: 'k',
+        apiEndpoints: ['anthropic', 'openai']
+      })
+    ).providers[0]
+
+    // Default framework is Claude Code (Anthropic only).
+    await service.validateProvider({ providerId: created.id })
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(fetchMock.mock.calls[0][0]).toContain('/v1/messages')
+
+    // The same provider under OpenCode should instead be probed on the OpenAI route it will run.
+    await service.setAgentFramework('opencode')
+    await service.validateProvider({ providerId: created.id })
+    expect(fetchMock.mock.calls[1][0]).toContain('/v1/chat/completions')
   })
 
   it('clears a recorded failure once a later validation succeeds', async () => {
@@ -1611,6 +1642,9 @@ describe('SettingsService: official vendors', () => {
     const fetchMock = vi.fn().mockResolvedValue({ status: 200 })
     vi.stubGlobal('fetch', fetchMock)
 
+    // OpenCode drives DeepSeek's OpenAI route, so the probe hits /v1/chat/completions — but as a plain
+    // non-streaming ping (the bridge streaming function-tool probe is Codex-only).
+    await service.setAgentFramework('opencode')
     const result = await service.validateProvider({
       draft: { type: 'official', vendorId: 'deepseek', key: 'sk-ds' }
     })

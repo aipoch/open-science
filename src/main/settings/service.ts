@@ -1593,9 +1593,10 @@ class SettingsService {
     // auth error, even though the key is valid — the pairing, not the credential, is the problem. Decide
     // this before any network call so the card names the real reason (which route the framework needs).
     // codex-subscription keeps its own login-status branch below; its usability is enforced elsewhere.
+    const framework = getAgentFramework(settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
     const incompatibility = isCodexSubscriptionProvider(resolved.provider.type)
       ? undefined
-      : this.frameworkIncompatibilityResult(resolved.provider, settings)
+      : this.frameworkIncompatibilityResult(resolved.provider, framework)
 
     const result =
       incompatibility ??
@@ -1613,7 +1614,12 @@ class SettingsService {
             runClaudeProbe:
               resolved.provider.type === 'claude-default'
                 ? () => this.runClaudeProbe(resolved.provider, settings)
-                : undefined
+                : undefined,
+            // For a multi-route provider, probe the route this framework actually drives so a passing
+            // test proves that route (e.g. Claude Code hits /v1/messages, not /v1/chat/completions).
+            // Codex is excluded: it bridges the provider's OpenAI route under its `responses` protocol,
+            // so its HTTP route is decided by the bridge, not by supportedApiTypes — keep it as-is.
+            frameworkEndpoints: framework.id === 'codex' ? undefined : framework.supportedApiTypes
           }))
 
     if (resolved.storedId) {
@@ -2464,10 +2470,8 @@ class SettingsService {
   // reports the same mismatch here, instead of a misleading auth failure, before it blocks a session.
   private frameworkIncompatibilityResult(
     provider: ResolvedProvider,
-    settings: StoredSettings
+    framework: ReturnType<typeof getAgentFramework>
   ): ValidateProviderResult | undefined {
-    const framework = getAgentFramework(settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
-
     if (
       isProviderUsableByFramework(
         { apiEndpoints: provider.apiEndpoints, type: provider.type },

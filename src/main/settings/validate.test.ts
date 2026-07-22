@@ -115,6 +115,26 @@ describe('validate: request construction', () => {
     expect(request.url).toBe('https://gateway.example.com/v1/chat/completions')
   })
 
+  it('targets the route the active framework drives when frameworkEndpoints is given', () => {
+    const provider = {
+      type: 'custom' as const,
+      baseUrl: 'https://gateway.example.com/v1',
+      model: 'm',
+      key: 'k',
+      apiEndpoints: ['anthropic', 'openai'] as const
+    }
+
+    // A framework that only speaks Anthropic must probe /v1/messages, even though the provider also
+    // offers OpenAI (which the framework-agnostic preference would otherwise pick).
+    expect(buildValidationRequest(provider, false, ['anthropic']).url).toBe(
+      'https://gateway.example.com/v1/messages'
+    )
+    // A framework that speaks OpenAI probes chat/completions for the same provider.
+    expect(buildValidationRequest(provider, false, ['anthropic', 'openai']).url).toBe(
+      'https://gateway.example.com/v1/chat/completions'
+    )
+  })
+
   it('builds a minimal /v1/responses probe without treating it as chat completions', () => {
     const request = buildValidationRequest({
       type: 'custom',
