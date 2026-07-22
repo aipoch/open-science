@@ -85,6 +85,26 @@ describe('ACP permission broker', () => {
     })
   })
 
+  it('preserves an explicit shell title when raw input also contains a command', async () => {
+    const emitted: Array<Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]> = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const request = createToolPermissionRequest({
+      title: 'Build project',
+      providerToolName: 'Bash',
+      kind: 'execute'
+    })
+    request.toolCall.rawInput = { command: './build.sh --verbose' }
+
+    const response = broker.requestPermission(request)
+
+    expect(emitted[0].title).toBe('Build project')
+    broker.respond({ requestId: emitted[0].requestId, optionId: 'allow-always' })
+    await response
+    expect(broker.listGrants('session-1')).toEqual([
+      { categoryKey: 'bash:Build project', kind: 'shell', label: 'Build project' }
+    ])
+  })
+
   it('auto-approves only conservative Auto operations accepted by policy', async () => {
     const emittedRequests: string[] = []
     const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))

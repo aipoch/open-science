@@ -41,9 +41,10 @@ const reportedPermissionTitle = (params: RequestPermissionRequest): string =>
 const resolvePermissionTitle = (params: RequestPermissionRequest, isMcp: boolean): string => {
   const isShell =
     extractProviderToolName(params.toolCall) === 'Bash' || params.toolCall.kind === 'execute'
+  const hasNoTitle = !params.toolCall.title?.trim()
 
   return (
-    (!isMcp && isShell ? commandFromRawInput(params.toolCall.rawInput) : undefined) ??
+    (!isMcp && isShell && hasNoTitle ? commandFromRawInput(params.toolCall.rawInput) : undefined) ??
     reportedPermissionTitle(params)
   )
 }
