@@ -201,7 +201,7 @@ export class TaskNotificationService {
   // superseded predecessor never resurrects as the active head.
   private readonly deadTokens = new Set<number>()
   private trackCounter = 0
-  private activationHandler: ((sessionId: string) => void) | undefined
+  private activationHandler: ((sessionId?: string) => void) | undefined
   // Click target held for the renderer to pull: a push sent before the renderer's listener exists
   // (window just recreated, React not mounted yet) is lost, so the payload lives here until the
   // renderer — once its sessions are hydrated — takes it. Consume-once.

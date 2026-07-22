@@ -26,7 +26,9 @@ class FakeNotification {
   }
 }
 
-const createLog = (): { info: ReturnType<typeof vi.fn> } => ({ info: vi.fn() })
+const createLog = (): { info: (message: string, data?: unknown) => void } => ({
+  info: vi.fn() as unknown as (message: string, data?: unknown) => void
+})
 
 afterEach(() => {
   FakeNotification.reset()
