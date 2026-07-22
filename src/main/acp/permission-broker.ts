@@ -23,7 +23,6 @@ type EmitPermissionRequest = (request: AcpPermissionRequest) => void
 
 const ALLOW_ALWAYS_OPTION_KIND = 'allow_always'
 const ALLOW_ONCE_OPTION_KIND = 'allow_once'
-const CODEX_SESSION_COMMAND_OPTION_IDS = new Set(['allow_once', 'allow_always', 'reject_once'])
 const CODEX_POLICY_AMENDMENT_OPTION_ID_PATTERN = /^accept_.*policy_amendment$/
 
 const commandFromRawInput = (rawInput: unknown): string | undefined => {
@@ -70,9 +69,9 @@ const commandSignature = (command: string): string => {
   return rest.length > 0 ? rest.join(' ') : command.trim()
 }
 
-// Open Science owns per-session grants, so Codex command approvals expose only its canonical session
-// actions. Native exec/network policy amendments persist outside the app's visible, revocable grant
-// model. Their presence also identifies command requests when optional execute metadata is absent.
+// Open Science owns per-session grants, so Codex command approvals omit native exec/network policy
+// amendments that persist outside the app's visible, revocable grant model. Their presence also
+// identifies command requests when optional execute metadata is absent.
 const projectPermissionOptions = (
   params: RequestPermissionRequest,
   policyContext: PermissionPolicyContext | undefined,
@@ -90,7 +89,9 @@ const projectPermissionOptions = (
     return params.options
   }
 
-  return params.options.filter((option) => CODEX_SESSION_COMMAND_OPTION_IDS.has(option.optionId))
+  return params.options.filter(
+    (option) => !CODEX_POLICY_AMENDMENT_OPTION_ID_PATTERN.test(option.optionId)
+  )
 }
 
 // Derives a session-scoped "Always" category key from a permission request (first match wins):

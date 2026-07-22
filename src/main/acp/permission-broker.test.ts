@@ -206,7 +206,7 @@ describe('ACP permission broker', () => {
     ])
   })
 
-  it('fails closed when a Codex command omits canonical session actions', () => {
+  it('removes policy amendments when a Codex command omits canonical session actions', () => {
     const emitted: Array<Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]> = []
     const broker = new AcpPermissionBroker((request) => emitted.push(request))
     const request = createCodexCommandPermissionRequest()
