@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ConnectorApprovalRequest } from '../../shared/settings'
 import type { TaskNotificationService } from './task-notifications'
@@ -26,32 +26,37 @@ class FakeNotification {
   }
 }
 
-const noopLog = { info: vi.fn() }
+const createLog = (): { info: ReturnType<typeof vi.fn> } => ({ info: vi.fn() })
+
+afterEach(() => {
+  FakeNotification.reset()
+})
 
 describe('buildTaskNotificationShow', () => {
   it('does nothing when headless is true (the web-serve contract)', () => {
+    const log = createLog()
     const notifications = new Set<FakeNotification>()
     const show = buildTaskNotificationShow({
       notificationCtor: FakeNotification as never,
       liveNotifications: notifications as never,
-      log: noopLog,
+      log,
       headless: true
     })
 
     show({ title: 't', body: 'b', onClick: vi.fn() })
 
     expect(notifications.size).toBe(0)
-    expect(noopLog.info).not.toHaveBeenCalled()
+    expect(log.info).not.toHaveBeenCalled()
   })
 
   it('delivers the notification when not headless and the OS supports it', () => {
-    FakeNotification.reset()
+    const log = createLog()
     const notifications = new Set<FakeNotification>()
     const onClick = vi.fn()
     const show = buildTaskNotificationShow({
       notificationCtor: FakeNotification as never,
       liveNotifications: notifications as never,
-      log: noopLog,
+      log,
       headless: false
     })
 
@@ -59,7 +64,7 @@ describe('buildTaskNotificationShow', () => {
 
     const [notification] = Array.from(notifications)
     expect(notification?.show).toHaveBeenCalledTimes(1)
-    expect(noopLog.info).toHaveBeenCalledWith(
+    expect(log.info).toHaveBeenCalledWith(
       'delivering task notification',
       expect.objectContaining({ title: 'Task completed' })
     )
@@ -71,19 +76,20 @@ describe('buildTaskNotificationShow', () => {
   })
 
   it('skips delivery when Notification.isSupported() reports no daemon', () => {
+    const log = createLog()
     FakeNotification.isSupported.mockReturnValue(false)
     const notifications = new Set<FakeNotification>()
     const show = buildTaskNotificationShow({
       notificationCtor: FakeNotification as never,
       liveNotifications: notifications as never,
-      log: noopLog,
+      log,
       headless: false
     })
 
     show({ title: 't', body: 'b', onClick: vi.fn() })
 
     expect(notifications.size).toBe(0)
-    expect(noopLog.info).not.toHaveBeenCalled()
+    expect(log.info).not.toHaveBeenCalled()
   })
 })
 

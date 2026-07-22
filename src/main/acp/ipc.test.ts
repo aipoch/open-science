@@ -92,8 +92,8 @@ const registerWithFakes = (overrides?: {
     uploadRepository: {} as never,
     notebookRpcServer: {} as never,
     settingsService: {} as never,
-    taskNotifications
-  } as Parameters<typeof registerAcpIpcHandlers>[0])
+    taskNotifications: taskNotifications as never
+  })
 }
 
 afterEach(() => {

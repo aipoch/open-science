@@ -320,5 +320,32 @@ describe('ConnectorService', () => {
       })
       await expect(svc.call('nope', 'do_thing', {})).rejects.toThrow(/not enabled/)
     })
+
+    it('threads context.sessionId through to requestApproval for custom MCP tools', async () => {
+      const call = vi.fn().mockResolvedValue({ ok: true })
+      const requestApproval = vi.fn().mockResolvedValue('allow')
+      const svc = new ConnectorService({
+        mcpClientManager: { call },
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          askToolIds: ['myserver/do_thing'],
+          customMcpServers: [
+            { id: 'srv-1', name: 'myserver', transport: 'stdio', command: 'npx', enabled: true }
+          ]
+        }),
+        resolveApiKey: () => undefined,
+        requestApproval
+      })
+
+      await svc.call('myserver', 'do_thing', { x: 1 }, { sessionId: 'session-99' })
+
+      expect(requestApproval).toHaveBeenCalledWith({
+        connector: 'myserver',
+        method: 'do_thing',
+        args: { x: 1 },
+        sessionId: 'session-99'
+      })
+    })
   })
 })

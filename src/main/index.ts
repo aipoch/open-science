@@ -225,8 +225,12 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // click that recreates the window cannot lose the navigation — the send below is only a
       // nudge for an already-running renderer and may safely be lost otherwise.
       ctx.taskNotifications.setActivationHandler((sessionId) => {
+        const window = showMainWindow()
+        if (!sessionId) return
+
+        // The renderer pulls the click target once its sessions are hydrated.
         ctx.taskNotifications.setPendingOpenSession(sessionId)
-        showMainWindow().webContents.send('notifications:open-session')
+        window.webContents.send('notifications:open-session')
       })
 
       // Route each second launch by its forwarded argv (see second-instance-router): a CLI

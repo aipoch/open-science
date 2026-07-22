@@ -64,9 +64,10 @@ const EARLY_STOP_BODY: Record<string, (taskName?: string) => string> = {
     taskName ? `${taskName} was declined by the agent.` : 'The agent declined the request.'
 }
 
-// Strips control characters and folds whitespace so an arbitrary stop-reason text (or one from a
-// future ACP extension) can't smuggle newlines or terminal escapes into a single-line OS-notification
-// body, where some platforms would either truncate hard or render them as control glyphs.
+// Strips control characters, folds whitespace, and turns underscores into spaces so an arbitrary
+// stop-reason text (or one from a future ACP extension) reads naturally and can't smuggle newlines
+// or terminal escapes into a single-line OS-notification body — some platforms truncate hard or
+// render control glyphs.
 const sanitizeReason = (text: string): string => {
   let stripped = ''
   for (const ch of text) {
@@ -74,7 +75,7 @@ const sanitizeReason = (text: string): string => {
     // 0x00–0x1F (C0 control) and 0x7F (DEL) are non-printable; everything else keeps its shape.
     if (code >= 0x20 && code !== 0x7f) stripped += ch
   }
-  return stripped.replace(/\s+/g, ' ').trim()
+  return stripped.replace(/_/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
 // Maps a terminal runtime event to the notification to show, or null when the event should stay
@@ -100,11 +101,11 @@ export const describeTaskNotification = (
       }
     }
 
-    // Only an explicit end_turn counts as a clean completion. Any other reason — including an
+    // Only an explicit end_turn counts as a clean completion. Any other value — including an
     // absent text (defensive: the runtime always emits a stop reason in practice) and any future
     // ACP stop reason we don't yet know — is surfaced as needing attention.
-    if (reason && reason !== 'end_turn') {
-      const cleaned = sanitizeReason(reason)
+    if (reason !== 'end_turn') {
+      const cleaned = reason ? sanitizeReason(reason) : ''
       const suffix = cleaned ? ` (${cleaned})` : ''
       const body = taskName
         ? `${taskName} finished without a clean completion status${suffix}.`
@@ -216,8 +217,9 @@ export class TaskNotificationService {
   constructor(private readonly deps: TaskNotificationServiceDeps) {}
 
   // Bound once the window lifecycle exists (index.ts, after installAppLifecycle): clicking a
-  // notification surfaces the main window and opens the conversation.
-  setActivationHandler(handler: (sessionId: string) => void): void {
+  // notification surfaces the main window (always) and opens the conversation when the notification
+  // belonged to a known session.
+  setActivationHandler(handler: (sessionId?: string) => void): void {
     this.activationHandler = handler
   }
 
@@ -264,9 +266,10 @@ export class TaskNotificationService {
 
   // Reverts a trackPrompt whose send never became a turn (the runtime rejected it before the turn
   // started). Marks the token dead, then pops any dead entries from the head of the chain until it
-  // finds a live one. Only proceeds with the revert when the caller's token is the live head — so
-  // concurrent rejections on the same session (B then C, both dead) cannot resurrect a stale entry
-  // and overwrite a still-running turn's name.
+  // finds a live one. Dead tokens are removed from the set as they're popped so it can't grow
+  // unbounded across a long session. Only proceeds with the revert when the caller's token is the
+  // live head — so concurrent rejections on the same session (B then C, both dead) cannot resurrect
+  // a stale entry and overwrite a still-running turn's name.
   untrackPrompt(sessionId: string, tracked: TrackedPrompt): void {
     this.deadTokens.add(tracked.token)
 
@@ -275,16 +278,20 @@ export class TaskNotificationService {
     if (!chain || chain.length === 0) return
 
     while (chain.length > 0 && this.deadTokens.has(chain[chain.length - 1].token)) {
+      const popped = chain[chain.length - 1]
+      this.deadTokens.delete(popped.token)
       chain = chain.slice(0, -1)
     }
 
     if (chain.length === 0 || chain[chain.length - 1].token !== tracked.token) {
       // A newer track superseded this one; the chain is already correct.
-      this.tracks.set(sessionId, chain)
+      if (chain.length === 0) this.tracks.delete(sessionId)
+      else this.tracks.set(sessionId, chain)
       return
     }
 
     // Our token was the live head; pop it (the chain may still hold an older live track).
+    this.deadTokens.delete(tracked.token)
     chain = chain.slice(0, -1)
 
     if (chain.length === 0) {
@@ -307,8 +314,12 @@ export class TaskNotificationService {
 
     // Only genuinely turn-terminal events settle the prompt tracking: a stop (any reason) or a
     // prompt failure. Ancillary session-scoped errors (artifact cleanup, cancel timeout) leave the
-    // snippet in place for the turn's own terminal event.
+    // snippet in place for the turn's own terminal event. Clearing the chain also reaps the dead
+    // tokens those entries carried so the set can't grow unbounded.
     if (event.kind === 'stop' || event.title === ACP_PROMPT_FAILED_EVENT_TITLE) {
+      const chain = this.tracks.get(sessionId)
+
+      if (chain) for (const entry of chain) this.deadTokens.delete(entry.token)
       this.tracks.delete(sessionId)
     }
 
@@ -372,9 +383,8 @@ export class TaskNotificationService {
     try {
       this.deps.show({
         ...notification,
-        onClick: () => {
-          if (sessionId) this.activationHandler?.(sessionId)
-        }
+        // Clicks always surface the window; the handler opens the conversation when there is one.
+        onClick: () => this.activationHandler?.(sessionId)
       })
     } catch (error) {
       this.deps.onDeliveryError?.(error)

@@ -174,9 +174,15 @@ describe('describeTaskNotification', () => {
       text: 'budget\n\rexceeded\u0007 extra'
     }
 
-    // Newlines, the \r, and the bell get stripped; whitespace folds to a single space.
+    // Newlines and the bell get stripped; whitespace folds to a single space.
     expect(describeTaskNotification(event, 'Plot the curve')?.body).toBe(
       '"Plot the curve" finished without a clean completion status (budget exceeded extra).'
+    )
+  })
+
+  it('turns underscores into spaces in unknown reasons', () => {
+    expect(describeTaskNotification(stopEvent('budget_exceeded'), 'Plot the curve')?.body).toBe(
+      '"Plot the curve" finished without a clean completion status (budget exceeded).'
     )
   })
 
@@ -395,6 +401,19 @@ describe('TaskNotificationService', () => {
 
     expect(service.takePendingOpenSession()).toEqual({ sessionId: 'session-7' })
     expect(service.takePendingOpenSession()).toBeNull()
+  })
+
+  it('surfaces the window on click even without a session (degraded connector approval)', async () => {
+    const { service, shown } = createService({})
+    const onActivate = vi.fn()
+
+    service.setActivationHandler(onActivate)
+    // A connector approval with no in-flight turn: no session to open, but the window must focus.
+    await service.handleConnectorApproval({ connector: 'pubchem', method: 'search_compound' })
+
+    shown[0]?.onClick()
+
+    expect(onActivate).toHaveBeenCalledWith(undefined)
   })
 
   it('notifies when a task parks on a permission request', async () => {
