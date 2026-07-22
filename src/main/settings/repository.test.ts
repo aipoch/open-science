@@ -234,6 +234,28 @@ describe('settings repository', () => {
     })
   })
 
+  it('round-trips an incompatible validation failure across a reload', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.upsertProvider(
+      provider({
+        lastValidationFailure: {
+          at: 1717000000000,
+          category: 'incompatible',
+          message: 'Not compatible with Claude Code: it needs /v1/messages.'
+        }
+      })
+    )
+
+    const reloaded = await new SettingsRepository(root).getSettings()
+    expect(reloaded.providers[0].lastValidationFailure).toEqual({
+      at: 1717000000000,
+      category: 'incompatible',
+      message: 'Not compatible with Claude Code: it needs /v1/messages.'
+    })
+  })
+
   it('drops a malformed validation failure (bad category or missing timestamp) on load', async () => {
     const root = await createStorageRoot()
 

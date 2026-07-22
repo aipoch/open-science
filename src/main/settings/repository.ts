@@ -48,6 +48,7 @@ const VALIDATION_CATEGORIES = new Set<ValidationCategory>([
   'model-not-found',
   'bad-url',
   'timeout',
+  'incompatible',
   'unknown'
 ])
 

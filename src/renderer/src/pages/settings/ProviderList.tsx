@@ -58,6 +58,9 @@ const describeValidationFailure = (failure: ProviderValidationFailure): string =
       return 'Test failed: the configured model was not found.'
     case 'timeout':
       return 'Test failed: the connection timed out.'
+    case 'incompatible':
+      // The pairing, not the credential, is the problem — carry the specific route-mismatch reason.
+      return failure.message ?? 'Not compatible with the active agent framework.'
     default:
       return failure.message ? `Test failed: ${failure.message}` : 'Connection test failed.'
   }

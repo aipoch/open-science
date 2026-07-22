@@ -620,6 +620,59 @@ describe('SettingsService: validation', () => {
     expect(stored.lastValidationFailure?.at).toBeGreaterThan(0)
   })
 
+  it('reports incompatible (no network probe) when the provider cannot drive the active framework', async () => {
+    const service = createService()
+    const fetchMock = vi.fn().mockResolvedValue({ status: 200 })
+    vi.stubGlobal('fetch', fetchMock)
+
+    // Default framework is Claude Code (Anthropic /v1/messages only); an OpenAI-only gateway can't drive
+    // it, so testing must fail with the pairing reason rather than firing a misleading /v1/messages probe.
+    const created = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'G',
+        baseUrl: 'https://g',
+        model: 'm',
+        key: 'k',
+        apiEndpoints: ['openai']
+      })
+    ).providers[0]
+
+    const result = await service.validateProvider({ providerId: created.id })
+
+    expect(result).toMatchObject({ ok: false, category: 'incompatible', applied: true })
+    expect(result.message).toContain('/v1/chat/completions')
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    const stored = (await repository.getSettings()).providers.find((p) => p.id === created.id)
+    expect(stored?.lastValidatedAt).toBeUndefined()
+    expect(stored?.lastValidationFailure).toMatchObject({ category: 'incompatible' })
+  })
+
+  it('probes normally once the active framework can drive the provider', async () => {
+    const service = createService()
+    const fetchMock = vi.fn().mockResolvedValue({ status: 200 })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const created = (
+      await service.upsertProvider({
+        type: 'custom',
+        name: 'G',
+        baseUrl: 'https://g',
+        model: 'm',
+        key: 'k',
+        apiEndpoints: ['openai']
+      })
+    ).providers[0]
+
+    // OpenCode accepts /v1/chat/completions, so the same provider now validates over the network.
+    await service.setAgentFramework('opencode')
+    const result = await service.validateProvider({ providerId: created.id })
+
+    expect(result).toMatchObject({ ok: true, category: 'ok' })
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
   it('clears a recorded failure once a later validation succeeds', async () => {
     const service = createService()
     const fetchMock = vi.fn().mockResolvedValue({ status: 401 })

@@ -63,7 +63,8 @@ import {
   codexSubscriptionProviderIdentity,
   DEFAULT_REASONING_EFFORT,
   isCodexSubscriptionProvider,
-  isProviderUsableByFramework
+  isProviderUsableByFramework,
+  providerEndpoints
 } from '../../shared/settings'
 import type { PackageMirror } from '../../shared/mirror'
 import type { NotebookLanguage } from '../../shared/notebook'
@@ -1587,22 +1588,33 @@ class SettingsService {
       this.providerValidationGenerations.set(resolved.storedId, validationGeneration)
     }
 
-    const result = isCodexSubscriptionProvider(resolved.provider.type)
-      ? this.codexAuthValidationResult(
-          // Validation is a read-only status check in both modes: signing in is a separate explicit
-          // action (loginIsolatedCodex), so testing or saving a provider never pops a browser the
-          // user didn't ask for.
-          await this.codexAuth.getStatus(
-            resolved.provider.type === 'codex-shared' ? 'shared' : 'isolated'
-          ),
-          'Not signed in. Use Sign in to connect your ChatGPT account.'
-        )
-      : await validateProvider(resolved.provider, {
-          runClaudeProbe:
-            resolved.provider.type === 'claude-default'
-              ? () => this.runClaudeProbe(resolved.provider, settings)
-              : undefined
-        })
+    // Test against the framework the agent will actually spawn with. An OpenAI-only gateway tested
+    // while Claude Code is active would otherwise fail a raw /v1/messages probe and be reported as an
+    // auth error, even though the key is valid — the pairing, not the credential, is the problem. Decide
+    // this before any network call so the card names the real reason (which route the framework needs).
+    // codex-subscription keeps its own login-status branch below; its usability is enforced elsewhere.
+    const incompatibility = isCodexSubscriptionProvider(resolved.provider.type)
+      ? undefined
+      : this.frameworkIncompatibilityResult(resolved.provider, settings)
+
+    const result =
+      incompatibility ??
+      (isCodexSubscriptionProvider(resolved.provider.type)
+        ? this.codexAuthValidationResult(
+            // Validation is a read-only status check in both modes: signing in is a separate explicit
+            // action (loginIsolatedCodex), so testing or saving a provider never pops a browser the
+            // user didn't ask for.
+            await this.codexAuth.getStatus(
+              resolved.provider.type === 'codex-shared' ? 'shared' : 'isolated'
+            ),
+            'Not signed in. Use Sign in to connect your ChatGPT account.'
+          )
+        : await validateProvider(resolved.provider, {
+            runClaudeProbe:
+              resolved.provider.type === 'claude-default'
+                ? () => this.runClaudeProbe(resolved.provider, settings)
+                : undefined
+          }))
 
     if (resolved.storedId) {
       // Each early return here means the tested target no longer matches what is stored (a newer test
@@ -2445,6 +2457,55 @@ class SettingsService {
       key: draft.key,
       apiEndpoints: draft.apiEndpoints ?? ['anthropic']
     }
+  }
+
+  // A failed-validation result when the provider can't drive the active agent framework, or undefined
+  // when the pair is compatible. Mirrors the spawn-time guard in resolveActiveAgentBackend so the test
+  // reports the same mismatch here, instead of a misleading auth failure, before it blocks a session.
+  private frameworkIncompatibilityResult(
+    provider: ResolvedProvider,
+    settings: StoredSettings
+  ): ValidateProviderResult | undefined {
+    const framework = getAgentFramework(settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
+
+    if (
+      isProviderUsableByFramework(
+        { apiEndpoints: provider.apiEndpoints, type: provider.type },
+        framework
+      )
+    ) {
+      return undefined
+    }
+
+    return {
+      ok: false,
+      category: 'incompatible',
+      message: this.frameworkIncompatibilityMessage(provider, framework)
+    }
+  }
+
+  // The human reason a provider can't drive a framework: a Claude-only login, else a route mismatch
+  // (which endpoint the framework needs vs. which the provider speaks). Route paths, not vendor names,
+  // so it reads as "which API shape".
+  private frameworkIncompatibilityMessage(
+    provider: ResolvedProvider,
+    framework: { displayName: string; supportedApiTypes: readonly ChatApiEndpoint[] }
+  ): string {
+    if (provider.type === 'claude-default') {
+      return `Uses this machine's Claude sign-in, which only Claude Code can run. Switch to Claude Code or pick another provider.`
+    }
+
+    const routes: Record<ChatApiEndpoint, string> = {
+      anthropic: '/v1/messages',
+      openai: '/v1/chat/completions',
+      responses: '/v1/responses'
+    }
+    const needs = framework.supportedApiTypes.map((endpoint) => routes[endpoint]).join(' or ')
+    const speaks = providerEndpoints(provider)
+      .map((endpoint) => routes[endpoint])
+      .join(' or ')
+
+    return `Not compatible with ${framework.displayName}: it needs ${needs}, but this provider speaks ${speaks}. Change the API format or switch the agent framework.`
   }
 
   // Resolves what validateProvider should probe: a stored provider (by id) or an inline draft.

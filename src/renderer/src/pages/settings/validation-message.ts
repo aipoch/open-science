@@ -9,6 +9,7 @@ const CATEGORY_MESSAGES: Record<ValidationCategory, string> = {
   'model-not-found': 'The model was rejected. Check the model name for this gateway.',
   'bad-url': 'The base URL is invalid. Enter a full URL like https://gateway.example/v1.',
   timeout: 'The request timed out and was stopped.',
+  incompatible: "This provider isn't compatible with the active agent framework.",
   unknown: 'Validation failed for an unknown reason.'
 }
 
@@ -24,6 +25,12 @@ const describeValidation = (result: ValidateProviderResult): string => {
   // Local Claude has no API-key field. Its subprocess probe supplies a controlled, actionable auth
   // message, so prefer that over the generic gateway wording used for HTTP 401/403 responses.
   if (result.category === 'auth' && result.message) {
+    return result.message
+  }
+
+  // An incompatible pairing carries the specific route mismatch (which API format the framework needs
+  // vs. what this provider speaks); surface it instead of the generic fallback.
+  if (result.category === 'incompatible' && result.message) {
     return result.message
   }
 
