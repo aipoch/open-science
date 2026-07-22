@@ -2,11 +2,7 @@ import { deflateRawSync } from 'node:zlib'
 
 import { describe, expect, it } from 'vitest'
 
-import {
-  DOCX_PREVIEW_MAX_COMPRESSED_BYTES,
-  OFFICE_PREVIEW_MAX_COMPRESSED_BYTES,
-  validateOfficePackage
-} from './office-package'
+import { OFFICE_PREVIEW_MAX_COMPRESSED_BYTES, validateOfficePackage } from './office-package'
 
 type ZipEntry = {
   name: string
@@ -111,7 +107,6 @@ const validEntries = {
 describe('validateOfficePackage', () => {
   it('uses one 40 MiB compressed-file admission limit for every Office format', () => {
     expect(OFFICE_PREVIEW_MAX_COMPRESSED_BYTES).toBe(40 * 1024 * 1024)
-    expect(DOCX_PREVIEW_MAX_COMPRESSED_BYTES).toBe(OFFICE_PREVIEW_MAX_COMPRESSED_BYTES)
   })
 
   it.each(Object.entries(validEntries))(

@@ -16,7 +16,6 @@ export class OfficePackageValidationError extends Error {
 }
 
 export const OFFICE_PREVIEW_MAX_COMPRESSED_BYTES = OFFICE_PREVIEW_MAX_FILE_BYTES
-export const DOCX_PREVIEW_MAX_COMPRESSED_BYTES = OFFICE_PREVIEW_MAX_FILE_BYTES
 
 // Bound both ZIP metadata and actual decompression work before any third-party renderer sees input.
 const MAX_ZIP_ENTRIES = 4000
@@ -551,10 +550,6 @@ export const validateOfficePackage = async (
   if (bytes.length > OFFICE_PREVIEW_MAX_COMPRESSED_BYTES) {
     throw resourceLimit('This Office file is too large to preview safely')
   }
-  if (extension === 'docx' && bytes.length > DOCX_PREVIEW_MAX_COMPRESSED_BYTES) {
-    throw resourceLimit('This Word file is too large to preview safely')
-  }
-
   if (extension === 'xls') {
     if (!isLegacyExcelFile(bytes)) {
       throw invalidPackage("This isn't a valid legacy Excel file")

@@ -11,9 +11,7 @@ export const FastaPreviewRenderer = ({ item }: PreviewFileRendererProps): React.
   if (state.status === 'error' || state.preview.encoding !== 'utf8') {
     return (
       <PreviewErrorCard
-        path={item.path}
         name={item.name}
-        source={item.source}
         error={state.status === 'error' ? state.error : undefined}
         fallbackMessage="FASTA couldn't be read for preview"
       />

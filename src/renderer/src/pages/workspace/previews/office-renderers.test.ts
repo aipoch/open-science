@@ -829,28 +829,6 @@ describe('renderOfficeFile', () => {
     expect(mocks.destroyPptx).toHaveBeenCalledOnce()
   })
 
-  it('uses the provided Office scroll container for windowed PPTX mounting', async () => {
-    const scrollContainer = document.createElement('div')
-    mocks.openPptx.mockResolvedValue(undefined)
-
-    const cleanup = await renderOfficeFile({
-      bytes,
-      extension: 'pptx',
-      name: 'scrollable-slides.pptx',
-      container,
-      scrollContainer,
-      signal
-    })
-
-    expect(mocks.constructPptx).toHaveBeenCalledWith(
-      container,
-      expect.objectContaining({ scrollContainer })
-    )
-    expect(mocks.constructPptx.mock.calls[0]?.[1].scrollContainer).toBe(scrollContainer)
-
-    await cleanup()
-  })
-
   it('fits PPTX slides in place while the preview panel is resized', async () => {
     let containerWidth = 800
     let resizeCallback: ResizeObserverCallback | undefined

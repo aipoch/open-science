@@ -62,38 +62,20 @@ const OfficeDownloadFallback = ({
   title: string
   message: string
 }): React.JSX.Element => (
-  <div data-preview-status="error" className="flex size-full items-center justify-center px-6 py-8">
-    <div className="grid w-full max-w-[19rem] grid-cols-[2.25rem_minmax(0,1fr)] items-start gap-x-3">
-      <div className="grid size-9 place-items-center rounded-lg border border-danger-000/15 bg-danger-900/45 text-danger-000">
-        <FileWarning className="size-4" aria-hidden />
-      </div>
-      <div className="min-w-0 pt-px">
-        <div className="text-[12px] font-medium text-text-000">{title}</div>
-        <p className="mt-0.5 text-[10px] leading-4 text-text-300">{message}</p>
-        <ManagedFileDownloadButton
-          source={source}
-          path={item.path}
-          suggestedName={item.name}
-          appearance="primary"
-          wrapperClassName="mt-3"
-        />
-      </div>
-    </div>
-  </div>
-)
-
-const OfficeFileTooLarge = ({
-  item,
-  source
-}: {
-  item: PreviewFileItem
-  source: PreviewFileSource
-}): React.JSX.Element => (
-  <OfficeDownloadFallback
-    item={item}
-    source={source}
-    title="File too large to preview"
-    message="This file is larger than 40 MB. Download it to view."
+  <PreviewFallbackCard
+    icon={FileWarning}
+    name={item.name}
+    title={title}
+    message={message}
+    action={
+      <ManagedFileDownloadButton
+        source={source}
+        path={item.path}
+        suggestedName={item.name}
+        appearance="primary"
+        wrapperClassName="mt-3"
+      />
+    }
   />
 )
 
@@ -122,33 +104,18 @@ export const OfficePreviewContent = ({
   const runtime = usePreviewRuntime()
   const attempt = runtime?.attempt ?? 0
   const extension = resolveOfficeExtension(item)
-  const requestKey = JSON.stringify([attempt, extension, item.name, item.path, source])
-  const requestKeyRef = useRef(requestKey)
   const [ownsLease, setOwnsLease] = useState(false)
-  const [stateSnapshot, setStateSnapshot] = useState<{
-    key: string
-    value: OfficeHostState
-  }>({ key: requestKey, value: OFFICE_CHECKING_STATE })
-  const [sessionSnapshot, setSessionSnapshot] = useState<{
-    key: string
-    value?: string
-  }>({ key: requestKey })
-  const state: OfficeHostState =
-    stateSnapshot.key === requestKey ? stateSnapshot.value : OFFICE_CHECKING_STATE
-  const sessionId = sessionSnapshot.key === requestKey ? sessionSnapshot.value : undefined
-
-  useEffect(() => {
-    requestKeyRef.current = requestKey
-  }, [requestKey])
+  const [state, setState] = useState<OfficeHostState>(OFFICE_CHECKING_STATE)
+  const [sessionId, setSessionId] = useState<string | undefined>(undefined)
 
   useEffect(
     () =>
-      officePreviewHostLeaseCoordinator.register(hostId, (active) => {
+      officePreviewHostLeaseCoordinator.register((active) => {
         setOwnsLease(active)
-        setStateSnapshot({ key: requestKeyRef.current, value: OFFICE_CHECKING_STATE })
-        setSessionSnapshot({ key: requestKeyRef.current })
+        setState(OFFICE_CHECKING_STATE)
+        setSessionId(undefined)
       }),
-    [hostId]
+    []
   )
 
   useEffect(() => {
@@ -158,18 +125,16 @@ export const OfficePreviewContent = ({
     let active = true
     let openedSessionId: string | undefined
     let pendingState: OfficePreviewRuntimeState | undefined
-    const updateState = (value: OfficeHostState): void =>
-      setStateSnapshot({ key: requestKey, value })
 
     const applyRuntimeState = (nextState: OfficePreviewRuntimeState): void => {
       if (nextState.phase === 'ready') {
-        updateState({ kind: 'ready' })
+        setState({ kind: 'ready' })
       } else if (nextState.phase === 'error') {
         // Main destroys terminal sessions, so release native-view observers at the same boundary.
-        setSessionSnapshot({ key: requestKey })
-        updateState({ kind: 'error', error: nextState.error })
+        setSessionId(undefined)
+        setState({ kind: 'error', error: nextState.error })
       } else {
-        updateState({
+        setState({
           kind: 'loading',
           title: nextState.title,
           description: nextState.description
@@ -196,7 +161,7 @@ export const OfficePreviewContent = ({
         }
         if (result.kind === 'cancelled') return
         if (result.kind === 'unavailable') {
-          updateState(
+          setState(
             result.reason === 'FILE_TOO_LARGE'
               ? { kind: 'too-large' }
               : { kind: 'error', error: result.reason }
@@ -205,7 +170,7 @@ export const OfficePreviewContent = ({
         }
 
         openedSessionId = result.sessionId
-        setSessionSnapshot({ key: requestKey, value: result.sessionId })
+        setSessionId(result.sessionId)
         if (pendingState?.sessionId === result.sessionId) applyRuntimeState(pendingState)
         pendingState = undefined
       })
@@ -216,7 +181,7 @@ export const OfficePreviewContent = ({
           applyRuntimeState(pendingState)
           pendingState = undefined
         } else {
-          updateState({ kind: 'error', error: 'FILE_READ_FAILED' })
+          setState({ kind: 'error', error: 'FILE_READ_FAILED' })
         }
       })
 
@@ -225,7 +190,7 @@ export const OfficePreviewContent = ({
       removeStateListener()
       if (openedSessionId) void window.api.officePreview.close(openedSessionId)
     }
-  }, [attempt, extension, hostId, item.name, item.path, ownsLease, requestKey, source])
+  }, [attempt, extension, hostId, item.name, item.path, ownsLease, source])
 
   useEffect(() => {
     const host = hostRef.current
@@ -283,7 +248,16 @@ export const OfficePreviewContent = ({
     }
   }, [sessionId])
 
-  if (state.kind === 'too-large') return <OfficeFileTooLarge item={item} source={source} />
+  if (state.kind === 'too-large') {
+    return (
+      <OfficeDownloadFallback
+        item={item}
+        source={source}
+        title="File too large to preview"
+        message="This file is larger than 40 MB. Download it to view."
+      />
+    )
+  }
   if (state.kind === 'error') {
     const downloadOnlyMessage = getDownloadOnlyErrorMessage(state.error)
     if (downloadOnlyMessage) {

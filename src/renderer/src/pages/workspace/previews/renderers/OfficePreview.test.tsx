@@ -8,22 +8,6 @@ import { PreviewRuntimeBoundary } from '../preview-runtime'
 import { OfficePreviewRenderer } from './OfficePreview'
 import { isOfficePreviewHostVisible } from './office-preview-visibility'
 
-const mocks = vi.hoisted(() => ({
-  readBytes: vi.fn(),
-  validate: vi.fn(),
-  render: vi.fn()
-}))
-
-// These legacy calls remain mocked so the migration test can prove the parent renderer stops using them.
-vi.mock('../managed-file-bytes', () => ({ readManagedFileBytes: mocks.readBytes }))
-vi.mock('../office-package', () => ({
-  DOCX_PREVIEW_MAX_COMPRESSED_BYTES: 40 * 1024 * 1024,
-  OFFICE_PREVIEW_MAX_COMPRESSED_BYTES: 40 * 1024 * 1024,
-  isLegacyExcelFile: vi.fn(() => false),
-  validateOfficePackage: mocks.validate
-}))
-vi.mock('../office-renderers', () => ({ renderOfficeFile: mocks.render }))
-
 const flushMicrotasks = async (): Promise<void> => {
   for (let index = 0; index < 8; index += 1) await Promise.resolve()
 }
@@ -77,8 +61,6 @@ describe('OfficePreviewRenderer', () => {
     })
     setBounds.mockResolvedValue(undefined)
     close.mockResolvedValue(undefined)
-    mocks.readBytes.mockResolvedValue(new Uint8Array([1, 2, 3]))
-    mocks.render.mockResolvedValue(vi.fn())
     Object.defineProperty(window, 'api', {
       configurable: true,
       value: {
@@ -192,9 +174,6 @@ describe('OfficePreviewRenderer', () => {
       extension: 'docx',
       attempt: 0
     })
-    expect(mocks.readBytes).not.toHaveBeenCalled()
-    expect(mocks.validate).not.toHaveBeenCalled()
-    expect(mocks.render).not.toHaveBeenCalled()
   })
 
   it('shows the authoritative file-check stage while opening the isolated runtime', async () => {

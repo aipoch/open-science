@@ -35,9 +35,7 @@ export const PreviewImageContent = ({
   if (state.status === 'error') {
     return (
       <PreviewErrorCard
-        path={path}
         name={name}
-        source={source}
         error={state.error}
         fallbackMessage="Image couldn't be loaded for preview"
       />

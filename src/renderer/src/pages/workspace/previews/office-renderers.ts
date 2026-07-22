@@ -12,7 +12,6 @@ type RenderOfficeFileOptions = {
   extension: OfficeFileExtension
   name: string
   container: HTMLDivElement
-  scrollContainer?: HTMLElement
   signal: AbortSignal
   onStatus?: (status: OfficeRenderStatus) => void
 }
@@ -548,7 +547,6 @@ export const renderOfficeFile = async ({
   extension,
   name,
   container,
-  scrollContainer,
   signal,
   onStatus
 }: RenderOfficeFileOptions): Promise<OfficeRenderCleanup> => {
@@ -743,7 +741,7 @@ export const renderOfficeFile = async ({
     zipLimits: RECOMMENDED_ZIP_LIMITS,
     lazySlides: true,
     lazyMedia: true,
-    scrollContainer: scrollContainer ?? container,
+    scrollContainer: container,
     pdfjs: false,
     onRenderStart: reportRendering,
     onSlideUnmounted: () =>

@@ -21,9 +21,7 @@ export const PreviewTextContent = ({
   if (state.status === 'error' || state.preview.encoding !== 'utf8') {
     return (
       <PreviewErrorCard
-        path={path}
         name={name}
-        source={source}
         error={state.status === 'error' ? state.error : undefined}
         fallbackMessage="File couldn't be read for preview"
       />

@@ -140,7 +140,6 @@ const runOfficePreview = async (
         extension,
         name: start.name,
         container,
-        scrollContainer: container,
         signal: controller.signal,
         onStatus: (status) =>
           reportState({

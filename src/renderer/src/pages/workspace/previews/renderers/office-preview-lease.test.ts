@@ -8,8 +8,8 @@ describe('OfficePreviewHostLeaseCoordinator', () => {
     const first = vi.fn()
     const second = vi.fn()
 
-    const releaseFirst = coordinator.register('first', first)
-    const releaseSecond = coordinator.register('second', second)
+    const releaseFirst = coordinator.register(first)
+    const releaseSecond = coordinator.register(second)
 
     expect(first.mock.calls).toEqual([[true], [false]])
     expect(second.mock.calls).toEqual([[true]])

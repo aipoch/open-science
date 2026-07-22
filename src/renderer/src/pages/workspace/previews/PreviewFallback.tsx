@@ -148,13 +148,15 @@ export const PreviewFallbackCard = ({
   name,
   title = 'Preview unavailable',
   message,
-  retryable = false
+  retryable = false,
+  action
 }: {
   icon: LucideIcon
   name: string
   title?: string
   message: string
   retryable?: boolean
+  action?: React.ReactNode
 }): React.JSX.Element => {
   const runtime = usePreviewRuntime()
 
@@ -182,6 +184,7 @@ export const PreviewFallbackCard = ({
               Retry
             </Button>
           ) : null}
+          {action}
           <span className="sr-only">{name}</span>
         </div>
       </div>
@@ -194,9 +197,7 @@ export const PreviewFallbackCard = ({
 // unavailable and get the FileX icon, but with different copy — deleted vs "not in current
 // storage". Everything else keeps the renderer's type-specific message.
 export const PreviewErrorCard = (props: {
-  path: string
   name: string
-  source?: PreviewFileSource
   error?: unknown
   fallbackMessage: string
 }): React.JSX.Element => {
