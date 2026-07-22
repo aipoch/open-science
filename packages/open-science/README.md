@@ -24,6 +24,7 @@ The package also installs the `open-science` command:
 open-science start --no-open
 open-science project list --json
 open-science run --project systematic-review --prompt-file task.md --wait --json
+open-science run status <run-id> --json
 open-science session status <session-id> --json
 open-science artifacts list <session-id> --json
 open-science artifacts download <artifact-id> --output ./report.md

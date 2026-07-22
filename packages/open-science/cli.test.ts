@@ -31,6 +31,12 @@ describe('task CLI', () => {
         approvalProfile: 'auto'
       }
     })
+    expect(parseCliArgs(['run', 'status', 'run-1', '--json'])).toEqual({
+      command: 'run',
+      subcommand: 'status',
+      positionals: ['run-1'],
+      options: { open: true, json: true, jsonl: false, wait: false }
+    })
   })
 
   it('reads a prompt file, waits for completion, and emits one JSON result', async () => {
@@ -84,6 +90,7 @@ describe('task CLI', () => {
       listProjects: vi.fn().mockResolvedValue([{ id: 'project-1', name: 'Research' }]),
       createProject: vi.fn().mockResolvedValue({ id: 'project-2', name: 'Created' }),
       getSession: vi.fn().mockResolvedValue({ id: 'session-1', status: 'idle' }),
+      getRun: vi.fn().mockResolvedValue({ id: 'run-1', status: 'completed' }),
       listArtifacts: vi.fn().mockResolvedValue([{ id: 'artifact-1', name: 'report.md' }]),
       downloadArtifact: vi.fn().mockResolvedValue(new Response('report'))
     }
@@ -116,6 +123,15 @@ describe('task CLI', () => {
     )
     await runTaskCommand(
       {
+        command: 'run',
+        subcommand: 'status',
+        positionals: ['run-1'],
+        options: { json: true, jsonl: false }
+      },
+      deps
+    )
+    await runTaskCommand(
+      {
         command: 'artifacts',
         subcommand: 'list',
         positionals: ['session-1'],
@@ -135,6 +151,7 @@ describe('task CLI', () => {
 
     expect(client.createProject).toHaveBeenCalledWith({ name: 'Created', description: undefined })
     expect(client.getSession).toHaveBeenCalledWith('session-1')
+    expect(client.getRun).toHaveBeenCalledWith('run-1')
     expect(client.listArtifacts).toHaveBeenCalledWith('session-1')
     expect(client.downloadArtifact).toHaveBeenCalledWith('artifact-1')
     expect(writeDownload).toHaveBeenCalledWith(expect.any(Response), 'report.md')

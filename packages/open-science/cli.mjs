@@ -29,6 +29,7 @@ Commands:
   project list
   project create <name> [--description <text>]
   run --project <id-or-name> (--prompt <text> | --prompt-file <path>) [--wait]
+  run status <run-id>
   session status <session-id>
   artifacts list <session-id>
   artifacts download <artifact-id> --output <path>
@@ -80,7 +81,10 @@ export class CliUsageError extends Error {
 export const parseCliArgs = (argv) => {
   const args = [...argv]
   const command = args.shift()
-  const subcommand = GROUP_COMMANDS.has(command) ? args.shift() : undefined
+  const subcommand =
+    GROUP_COMMANDS.has(command) || (command === 'run' && args[0] === 'status')
+      ? args.shift()
+      : undefined
   const options = {
     open: true,
     json: false,
@@ -516,6 +520,12 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     const response = await client.downloadArtifact(artifactId)
     await deps.writeDownload(response, options.output)
     outputValue({ artifactId, output: resolve(options.output) }, options, deps)
+    return
+  }
+  if (command === 'run' && subcommand === 'status') {
+    const runId = positionals[0]
+    if (!runId) throw new CliUsageError('Run id is required.')
+    outputValue(await client.getRun(runId), options, deps)
     return
   }
   if (command === 'run') {

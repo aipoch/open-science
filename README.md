@@ -312,6 +312,7 @@ cat follow-up.md | open-science run \
   --wait
 
 open-science session status <session-id> --json
+open-science run status <run-id> --json
 open-science artifacts list <session-id> --json
 open-science artifacts download <artifact-id> --output ./report.md
 ```
