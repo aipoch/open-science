@@ -26,7 +26,10 @@ type NbformatOutput =
 
 type OpenScienceCellMetadata = {
   runId: string
+  cellId: string
+  source: NotebookRunRecord['source']
   startedAt: number
+  endedAt?: number
   status: NotebookRunRecord['status']
   kernel: NotebookKernelKind
   environment?: string
@@ -58,7 +61,11 @@ type IpynbNotebook = {
     open_science: {
       sessionId: string
       projectName: string
+      artifactSessionId?: string
       appVersion?: string
+      // The dominant analysis kernel's env (see dominantEnvironment), per issue #293's
+      // notebook-level metadata; omitted when no analysis run recorded one.
+      environment?: string
     }
   }
   nbformat: 4
@@ -72,10 +79,10 @@ type ResolvedArtifact = {
 
 type RunDocumentToIpynbOptions = {
   appVersion?: string
-  resolveArtifact?: (
-    artifact: NotebookRunRecord['artifacts'][number],
-    run: NotebookRunRecord
-  ) => Promise<ResolvedArtifact | null>
+  // Per-run artifact outputs keyed by runId, produced by the caller's async IO phase (artifact
+  // file reads) BEFORE this projection runs — keeping this module a pure function of
+  // (document, artifactOutputs, appVersion) whose result never depends on filesystem state.
+  artifactOutputs?: ReadonlyMap<string, NbformatOutput[]>
 }
 
 // nbformat accepts either one string or an array of lines. Arrays make generated notebooks stable and
@@ -86,9 +93,28 @@ const splitLines = (value: string): string[] => {
   return lines ?? []
 }
 
-const nbformatCellId = (runId: string): string => {
-  const safe = runId.replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 64)
-  return safe || 'open-science-cell'
+// nbformat 4.5 cell ids are 1-64 chars of [A-Za-z0-9-_] and must be unique per notebook. runIds
+// already satisfy that almost always, so sanitize rather than generate; dedup suffixes (only
+// reachable via truncation collisions or empty ids) reserve room from the same 64-char budget.
+const MAX_CELL_ID_LENGTH = 64
+
+const nbformatCellId = (runId: string, seen: Set<string>): string => {
+  const base =
+    runId
+      .replace(/[^A-Za-z0-9_-]/g, '-')
+      .slice(0, MAX_CELL_ID_LENGTH)
+      .replace(/^-+|-+$/g, '') || 'open-science-cell'
+
+  let candidate = base
+  let suffix = 2
+  while (seen.has(candidate)) {
+    const suffixText = `-${suffix}`
+    candidate = `${base.slice(0, MAX_CELL_ID_LENGTH - suffixText.length)}${suffixText}`
+    suffix += 1
+  }
+  seen.add(candidate)
+
+  return candidate
 }
 
 const shellSource = (run: NotebookRunRecord): string => {
@@ -159,10 +185,9 @@ const fallbackTextOutputs = (run: NotebookRunRecord): NbformatOutput[] => {
   return outputs
 }
 
-const executionCountFor = (run: NotebookRunRecord): number | null =>
-  run.status === 'completed' || run.status === 'failed' || run.status === 'timeout'
-    ? (run.executionCount ?? null)
-    : null
+// Direct field mapping per issue #293: run.json's executionCount passes through for every status —
+// including interrupted/cancelled runs, which still executed (partially) under that count.
+const executionCountFor = (run: NotebookRunRecord): number | null => run.executionCount ?? null
 
 const dominantKernel = (runs: NotebookRunRecord[]): 'python' | 'r' => {
   let python = 0
@@ -179,38 +204,35 @@ const kernelspecFor = (kernel: 'python' | 'r'): IpynbNotebook['metadata']['kerne
     ? { display_name: 'R', language: 'R', name: 'ir' }
     : { display_name: 'Python 3', language: 'python', name: 'python3' }
 
-const artifactOutputs = async (
-  run: NotebookRunRecord,
-  resolver: RunDocumentToIpynbOptions['resolveArtifact']
-): Promise<NbformatOutput[]> => {
-  if (!resolver) return []
+// The notebook-level environment name (#293): the dominant analysis kernel's most frequent run
+// environment. Ties resolve to first-seen (Map insertion order), keeping the pick deterministic.
+const dominantEnvironment = (
+  runs: NotebookRunRecord[],
+  kernel: 'python' | 'r'
+): string | undefined => {
+  const counts = new Map<string, number>()
+  for (const run of runs) {
+    if (run.kernelKind !== kernel || !run.environment) continue
+    counts.set(run.environment, (counts.get(run.environment) ?? 0) + 1)
+  }
 
-  const outputs: NbformatOutput[] = []
-  for (const artifact of run.artifacts) {
-    try {
-      const resolved = await resolver(artifact, run)
-      if (resolved) {
-        outputs.push({
-          output_type: 'display_data',
-          data: { [resolved.mimeType]: resolved.data },
-          metadata: {}
-        })
-      }
-    } catch {
-      outputs.push({
-        output_type: 'stream',
-        name: 'stderr',
-        text: [`[Open Science] Could not inline artifact: ${artifact.name}\n`]
-      })
+  let best: string | undefined
+  let bestCount = 0
+  for (const [environment, count] of counts) {
+    if (count > bestCount) {
+      best = environment
+      bestCount = count
     }
   }
-  return outputs
+
+  return best
 }
 
-const runToCell = async (
+const runToCell = (
   run: NotebookRunRecord,
-  options: RunDocumentToIpynbOptions
-): Promise<NbformatCodeCell> => {
+  options: RunDocumentToIpynbOptions,
+  seen: Set<string>
+): NbformatCodeCell => {
   const executionCount = executionCountFor(run)
   const structuredOutputs =
     run.outputs.length > 0
@@ -219,7 +241,10 @@ const runToCell = async (
   const metadata: NbformatCodeCell['metadata'] = {
     open_science: {
       runId: run.runId,
+      cellId: run.cellId,
+      source: run.source,
       startedAt: run.startedAt,
+      ...(run.endedAt === undefined ? {} : { endedAt: run.endedAt }),
       status: run.status,
       kernel: run.kernelKind,
       ...(run.environment ? { environment: run.environment } : {})
@@ -233,31 +258,37 @@ const runToCell = async (
   return {
     cell_type: 'code',
     execution_count: executionCount,
-    id: nbformatCellId(run.runId),
+    id: nbformatCellId(run.runId, seen),
     metadata,
-    outputs: [...structuredOutputs, ...(await artifactOutputs(run, options.resolveArtifact))],
+    outputs: [...structuredOutputs, ...(options.artifactOutputs?.get(run.runId) ?? [])],
     source: splitLines(shellSource(run))
   }
 }
 
-// Projects the append-only run document into a standards-compliant nbformat 4.5 notebook without
-// changing run.json. Artifact IO is injected so the mapping stays deterministic and unit-testable.
-const runDocumentToIpynb = async (
+// Pure, synchronous projection of the append-only run document into a standards-compliant nbformat
+// 4.5 notebook, without changing run.json. All IO (artifact file reads) happens in the caller
+// beforehand and arrives via options.artifactOutputs, so the output is byte-identical for the same
+// (document, artifactOutputs, appVersion) inputs and never depends on filesystem state.
+const runDocumentToIpynb = (
   document: NotebookRunDocument,
   options: RunDocumentToIpynbOptions = {}
-): Promise<IpynbNotebook> => {
+): IpynbNotebook => {
   const kernel = dominantKernel(document.runs)
   const kernelspec = kernelspecFor(kernel)
+  const environment = dominantEnvironment(document.runs, kernel)
+  const seen = new Set<string>()
 
   return {
-    cells: await Promise.all(document.runs.map((run) => runToCell(run, options))),
+    cells: document.runs.map((run) => runToCell(run, options, seen)),
     metadata: {
       kernelspec,
       language_info: { name: kernelspec.language },
       open_science: {
         sessionId: document.sessionId,
         projectName: document.projectName,
-        ...(options.appVersion ? { appVersion: options.appVersion } : {})
+        ...(document.artifactSessionId ? { artifactSessionId: document.artifactSessionId } : {}),
+        ...(options.appVersion ? { appVersion: options.appVersion } : {}),
+        ...(environment ? { environment } : {})
       }
     },
     nbformat: 4,
@@ -266,4 +297,4 @@ const runDocumentToIpynb = async (
 }
 
 export { runDocumentToIpynb }
-export type { IpynbNotebook, ResolvedArtifact, RunDocumentToIpynbOptions }
+export type { IpynbNotebook, NbformatOutput, ResolvedArtifact, RunDocumentToIpynbOptions }

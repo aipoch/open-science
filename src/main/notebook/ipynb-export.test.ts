@@ -1,7 +1,10 @@
-import { describe, expect, it, vi } from 'vitest'
+import { readFile } from 'node:fs/promises'
+
+import Ajv from 'ajv'
+import { describe, expect, it } from 'vitest'
 
 import type { NotebookRunDocument, NotebookRunRecord } from '../../shared/notebook'
-import { runDocumentToIpynb } from './ipynb-export'
+import { runDocumentToIpynb, type NbformatOutput } from './ipynb-export'
 
 const makeRun = (overrides: Partial<NotebookRunRecord> = {}): NotebookRunRecord => ({
   runId: 'run-1',
@@ -38,8 +41,23 @@ const makeDocument = (runs: NotebookRunRecord[]): NotebookRunDocument => ({
   updatedAt: 300
 })
 
+// The vendored nbformat schema declares draft-04, which ajv 8 no longer loads; it only uses
+// draft-07-compatible keywords (verified when vendoring), so it is validated as draft-07 here.
+const validateAgainstNbformatSchema = async (notebook: unknown): Promise<void> => {
+  const schemaUrl = new URL('../../../test/fixtures/nbformat.v4.5.schema.json', import.meta.url)
+  const schema = JSON.parse(await readFile(schemaUrl, 'utf8')) as Record<string, unknown>
+  schema.$schema = 'http://json-schema.org/draft-07/schema#'
+
+  const ajv = new Ajv({ strict: false })
+  const validate = ajv.compile(schema)
+  const valid = validate(notebook)
+
+  expect(validate.errors).toBeNull()
+  expect(valid).toBe(true)
+}
+
 describe('runDocumentToIpynb', () => {
-  it('projects source, provenance, execution count, and every structured output kind', async () => {
+  it('projects source, provenance, execution count, and every structured output kind', () => {
     const run = makeRun({
       outputs: [
         { type: 'stream', name: 'stdout', text: 'hello\nworld' },
@@ -51,7 +69,7 @@ describe('runDocumentToIpynb', () => {
       ]
     })
 
-    const notebook = await runDocumentToIpynb(makeDocument([run]), { appVersion: '1.2.3' })
+    const notebook = runDocumentToIpynb(makeDocument([run]), { appVersion: '1.2.3' })
 
     expect(notebook).toMatchObject({
       nbformat: 4,
@@ -61,7 +79,8 @@ describe('runDocumentToIpynb', () => {
         open_science: {
           sessionId: 'session-123',
           projectName: 'default-project',
-          appVersion: '1.2.3'
+          appVersion: '1.2.3',
+          environment: 'default-python'
         }
       }
     })
@@ -73,7 +92,10 @@ describe('runDocumentToIpynb', () => {
       metadata: {
         open_science: {
           runId: 'run-1',
+          cellId: 'cell-1',
+          source: 'agent',
           startedAt: 100,
+          endedAt: 200,
           status: 'completed',
           kernel: 'python',
           environment: 'default-python'
@@ -104,7 +126,7 @@ describe('runDocumentToIpynb', () => {
     ])
   })
 
-  it('uses flattened text only as a legacy fallback, without duplicating structured streams', async () => {
+  it('uses flattened text only as a legacy fallback, without duplicating structured streams', () => {
     const fallback = makeRun({
       runId: 'fallback',
       text: { stdout: 'out', stderr: 'err', traceback: 'boom', plain: [] }
@@ -115,7 +137,7 @@ describe('runDocumentToIpynb', () => {
       outputs: [{ type: 'stream', name: 'stdout', text: 'canonical' }]
     })
 
-    const notebook = await runDocumentToIpynb(makeDocument([fallback, structured]))
+    const notebook = runDocumentToIpynb(makeDocument([fallback, structured]))
 
     expect(notebook.cells[0].outputs).toHaveLength(3)
     expect(notebook.cells[1].outputs).toEqual([
@@ -123,11 +145,11 @@ describe('runDocumentToIpynb', () => {
     ])
   })
 
-  it('chooses the dominant data kernel and marks downgraded bash and repl cells', async () => {
-    const notebook = await runDocumentToIpynb(
+  it('chooses the dominant data kernel and marks downgraded bash and repl cells', () => {
+    const notebook = runDocumentToIpynb(
       makeDocument([
-        makeRun({ runId: 'r-1', kernelKind: 'r', script: 'print(1)' }),
-        makeRun({ runId: 'r-2', kernelKind: 'r', script: 'print(2)' }),
+        makeRun({ runId: 'r-1', kernelKind: 'r', script: 'print(1)', environment: 'default-r' }),
+        makeRun({ runId: 'r-2', kernelKind: 'r', script: 'print(2)', environment: 'default-r' }),
         makeRun({ runId: 'py', kernelKind: 'python' }),
         makeRun({ runId: 'bash', kernelKind: 'bash', script: 'pwd', environment: undefined }),
         makeRun({
@@ -144,6 +166,8 @@ describe('runDocumentToIpynb', () => {
       language: 'R',
       name: 'ir'
     })
+    // Notebook-level environment follows the dominant (r) kernel's runs, not the python minority.
+    expect(notebook.metadata.open_science.environment).toBe('default-r')
     expect(notebook.cells[3]).toMatchObject({
       source: ['%%bash\n', 'pwd'],
       metadata: { tags: ['open-science-bash'], open_science: { kernel: 'bash' } }
@@ -154,69 +178,121 @@ describe('runDocumentToIpynb', () => {
     })
   })
 
-  it('sets unfinished execution counts to null and emits valid unique run-based cell ids', async () => {
-    const notebook = await runDocumentToIpynb(
+  it('passes execution counts through for every run status, including interrupted', () => {
+    const notebook = runDocumentToIpynb(
       makeDocument([
         makeRun({ runId: 'run.with invalid spaces', cellId: 'same', status: 'running' }),
-        makeRun({ runId: 'run-2', cellId: 'same', status: 'interrupted' })
+        makeRun({ runId: 'run-2', cellId: 'same', status: 'interrupted' }),
+        makeRun({ runId: 'run-3', cellId: 'other', status: 'cancelled', executionCount: undefined })
       ])
     )
 
-    expect(notebook.cells.map((cell) => cell.id)).toEqual(['run-with-invalid-spaces', 'run-2'])
-    expect(notebook.cells.map((cell) => cell.execution_count)).toEqual([null, null])
+    expect(notebook.cells.map((cell) => cell.id)).toEqual([
+      'run-with-invalid-spaces',
+      'run-2',
+      'run-3'
+    ])
+    expect(notebook.cells.map((cell) => cell.execution_count)).toEqual([1, 1, null])
   })
 
-  it('inlines resolved artifacts and degrades resolver failures to stderr', async () => {
-    const run = makeRun({
-      artifacts: [
-        {
-          id: 'a1',
-          projectName: 'default-project',
-          sessionId: 'session-123',
-          runId: 'run-1',
-          name: 'plot.png',
-          path: '/data/plot.png',
-          fileUrl: 'artifact://plot.png',
-          mimeType: 'image/png',
-          size: 3,
-          mtimeMs: 1
-        },
-        {
-          id: 'a2',
-          projectName: 'default-project',
-          sessionId: 'session-123',
-          runId: 'run-1',
-          name: 'missing.txt',
-          path: '/data/missing.txt',
-          fileUrl: 'artifact://missing.txt',
-          mimeType: 'text/plain',
-          size: 0,
-          mtimeMs: 1
-        }
-      ]
-    })
-    const resolveArtifact = vi.fn(async (artifact: NotebookRunRecord['artifacts'][number]) => {
-      if (artifact.id === 'a2') throw new Error('missing')
-      return { mimeType: 'image/png', data: 'cG5n' }
-    })
+  it('keeps cell ids unique and within nbformat’s 64-character budget', () => {
+    const oversized = `run-${'x'.repeat(100)}`
+    const notebook = runDocumentToIpynb(
+      makeDocument([
+        makeRun({ runId: oversized }),
+        makeRun({ runId: `${oversized}-different-tail` }),
+        makeRun({ runId: '!!!' })
+      ])
+    )
 
-    const notebook = await runDocumentToIpynb(makeDocument([run]), { resolveArtifact })
+    const ids = notebook.cells.map((cell) => cell.id)
+    expect(ids[0]).toBe(oversized.slice(0, 64))
+    // The second runId truncates to the same 64 chars, so the dedup suffix kicks in.
+    expect(ids[1]).toBe(`${oversized.slice(0, 62)}-2`)
+    expect(ids[2]).toBe('open-science-cell')
+    expect(new Set(ids).size).toBe(3)
+    for (const id of ids) {
+      expect(id).toMatch(/^[A-Za-z0-9-_]{1,64}$/)
+    }
+  })
+
+  it('appends pre-resolved artifact outputs without doing any IO itself', () => {
+    const artifactOutputs = new Map<string, NbformatOutput[]>([
+      [
+        'run-1',
+        [
+          {
+            output_type: 'display_data',
+            data: { 'image/svg+xml': '<svg xmlns="http://www.w3.org/2000/svg"/>' },
+            metadata: {}
+          }
+        ]
+      ]
+    ])
+
+    const notebook = runDocumentToIpynb(makeDocument([makeRun()]), { artifactOutputs })
 
     expect(notebook.cells[0].outputs).toEqual([
-      { output_type: 'display_data', data: { 'image/png': 'cG5n' }, metadata: {} },
       {
-        output_type: 'stream',
-        name: 'stderr',
-        text: ['[Open Science] Could not inline artifact: missing.txt\n']
+        output_type: 'display_data',
+        data: { 'image/svg+xml': '<svg xmlns="http://www.w3.org/2000/svg"/>' },
+        metadata: {}
       }
     ])
   })
 
-  it('is idempotent for the same document and deterministic resolver', async () => {
-    const document = makeDocument([makeRun()])
-    const first = await runDocumentToIpynb(document)
-    const second = await runDocumentToIpynb(document)
+  it('is byte-identical for the same document and embeds no absolute paths', () => {
+    const document = makeDocument([
+      makeRun({ outputs: [{ type: 'display', data: { 'image/png': 'aW1hZ2U=' } }] })
+    ])
+    const artifactOutputs = new Map<string, NbformatOutput[]>([
+      ['run-1', [{ output_type: 'display_data', data: { 'image/png': 'cG5n' }, metadata: {} }]]
+    ])
 
-    expect(second).toEqual(first)
+    const first = `${JSON.stringify(runDocumentToIpynb(document, { appVersion: '1.2.3', artifactOutputs }), null, 2)}\n`
+    const second = `${JSON.stringify(runDocumentToIpynb(document, { appVersion: '1.2.3', artifactOutputs }), null, 2)}\n`
+
+    expect(first).toBe(second)
+    expect(first).not.toContain('/workspace')
+    expect(first).not.toContain('/data/notebooks')
+    expect(first).not.toContain('/data/runtime')
+  })
+
+  it('validates against the nbformat 4.5 JSON schema', async () => {
+    const document = makeDocument([
+      makeRun({
+        outputs: [
+          { type: 'stream', name: 'stdout', text: 'hello\n' },
+          { type: 'display', data: { 'image/png': 'aW1hZ2U=' } },
+          { type: 'json', data: { answer: 42 } },
+          { type: 'text', text: '4' },
+          { type: 'error', name: 'ValueError', message: 'bad value', traceback: 'line 1\nline 2' }
+        ]
+      }),
+      makeRun({ runId: 'bash-1', kernelKind: 'bash', script: 'pwd', environment: undefined }),
+      makeRun({
+        runId: 'repl-1',
+        kernelKind: 'repl',
+        script: 'await host.mcp()',
+        environment: undefined
+      }),
+      makeRun({ runId: 'r-1', kernelKind: 'r', script: 'print(1)', environment: 'default-r' })
+    ])
+    const artifactOutputs = new Map<string, NbformatOutput[]>([
+      [
+        'run-1',
+        [
+          {
+            output_type: 'display_data',
+            data: { 'image/svg+xml': '<svg xmlns="http://www.w3.org/2000/svg"/>' },
+            metadata: {}
+          }
+        ]
+      ]
+    ])
+
+    const notebook = runDocumentToIpynb(document, { appVersion: '1.2.3', artifactOutputs })
+
+    await validateAgainstNbformatSchema(notebook)
   })
 })

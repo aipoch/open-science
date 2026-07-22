@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRunDocument } from '../../shared/notebook'
 import type { NotebookRunRepository } from './repository'
@@ -91,5 +94,97 @@ describe('NotebookRuntimeService exportIpynb', () => {
       service.exportIpynb({ sessionId: 'missing', workspaceCwd: '/workspace' })
     ).rejects.toThrow('Notebook session not found: missing')
     expect(saveIpynb).not.toHaveBeenCalled()
+  })
+
+  describe('artifact inlining', () => {
+    let sessionRoot: string | undefined
+
+    afterEach(async () => {
+      if (sessionRoot) {
+        await rm(sessionRoot, { recursive: true, force: true })
+        sessionRoot = undefined
+      }
+    })
+
+    const createSessionRoot = async (): Promise<string> => {
+      sessionRoot = await mkdtemp(join(tmpdir(), 'open-science-ipynb-artifacts-'))
+      return sessionRoot
+    }
+
+    const exportWithArtifact = async (
+      root: string,
+      artifact: NotebookRunDocument['runs'][number]['artifacts'][number]
+    ): Promise<Record<string, unknown>> => {
+      const documentWithArtifact: NotebookRunDocument = {
+        ...document,
+        notebookSessionRoot: root,
+        runs: [{ ...document.runs[0], artifacts: [artifact] }]
+      }
+      const repository = {
+        findExisting: vi.fn().mockResolvedValue(documentWithArtifact)
+      } as unknown as NotebookRunRepository
+      const saveIpynb = vi.fn().mockResolvedValue({ saved: true, filePath: '/out/session.ipynb' })
+      const service = new NotebookRuntimeService({
+        configRoot: '/config',
+        dataRoot: '/storage',
+        projectName: 'default-project',
+        repository,
+        saveIpynb
+      })
+
+      await service.exportIpynb({ sessionId: '12345678-abcd', workspaceCwd: '/workspace' })
+
+      const notebook = JSON.parse(saveIpynb.mock.calls[0][1]) as {
+        cells: Array<{ outputs: Array<{ output_type: string; data?: Record<string, unknown> }> }>
+      }
+      // The run's own stream fallback comes first; the artifact display output follows it.
+      const display = notebook.cells[0].outputs.find(
+        (output) => output.output_type === 'display_data'
+      )
+      return display?.data ?? {}
+    }
+
+    it('inlines SVG artifacts as raw text, not base64', async () => {
+      const root = await createSessionRoot()
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>'
+      const svgPath = join(root, 'plot.svg')
+      await writeFile(svgPath, svg)
+
+      const data = await exportWithArtifact(root, {
+        id: 'a1',
+        projectName: 'default-project',
+        sessionId: '12345678-abcd',
+        runId: 'run-1',
+        name: 'plot.svg',
+        path: svgPath,
+        fileUrl: 'artifact://plot.svg',
+        mimeType: 'image/svg+xml',
+        size: svg.length,
+        mtimeMs: 1
+      })
+
+      expect(data['image/svg+xml']).toBe(svg)
+    })
+
+    it('inlines binary image artifacts as base64', async () => {
+      const root = await createSessionRoot()
+      const pngPath = join(root, 'plot.png')
+      await writeFile(pngPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+
+      const data = await exportWithArtifact(root, {
+        id: 'a2',
+        projectName: 'default-project',
+        sessionId: '12345678-abcd',
+        runId: 'run-1',
+        name: 'plot.png',
+        path: pngPath,
+        fileUrl: 'artifact://plot.png',
+        mimeType: 'image/png',
+        size: 4,
+        mtimeMs: 1
+      })
+
+      expect(data['image/png']).toBe(Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64'))
+    })
   })
 })
