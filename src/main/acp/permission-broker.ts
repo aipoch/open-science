@@ -72,23 +72,38 @@ const commandSignature = (command: string): string => {
   return rest.length > 0 ? rest.join(' ') : command.trim()
 }
 
-// Open Science owns per-session grants, so Codex command approvals omit native exec/network policy
-// amendments that persist outside the app's visible, revocable grant model. Their presence also
-// identifies command requests when optional execute metadata is absent.
+// Open Science owns per-session grants, so Codex approvals omit options that grant persistent
+// (cross-session) access outside the app's visible, revocable grant model.
 const projectPermissionOptions = (
   params: RequestPermissionRequest,
   policyContext: PermissionPolicyContext | undefined,
   isMcp: boolean
 ): RequestPermissionRequest['options'] => {
+  if (policyContext?.frameworkId !== 'codex') {
+    return params.options
+  }
+
+  // Codex MCP tools send two allow_always variants: a session-scoped one and a persistent
+  // "don't ask again" one. Only the first (session-scoped) fits the app's grant model.
+  if (isMcp) {
+    let allowAlwaysSeen = false
+    return params.options.filter((option) => {
+      if (option.kind.toLowerCase() !== ALLOW_ALWAYS_OPTION_KIND) return true
+      if (!allowAlwaysSeen) {
+        allowAlwaysSeen = true
+        return true
+      }
+      return false
+    })
+  }
+
+  // For non-MCP Codex tools, strip native policy amendments that persist outside the app.
+  // Their presence also identifies execute requests when optional kind metadata is absent.
   const hasPolicyAmendment = params.options.some((option) =>
     CODEX_POLICY_AMENDMENT_OPTION_ID_PATTERN.test(option.optionId)
   )
 
-  if (
-    policyContext?.frameworkId !== 'codex' ||
-    isMcp ||
-    (params.toolCall.kind !== 'execute' && !hasPolicyAmendment)
-  ) {
+  if (params.toolCall.kind !== 'execute' && !hasPolicyAmendment) {
     return params.options
   }
 

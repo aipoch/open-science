@@ -85,6 +85,22 @@ const createCodexCommandPermissionRequest = (
   ]
 })
 
+// Codex MCP requests send two allow_always variants: a session-scoped one and a persistent one.
+const createCodexMcpPermissionRequest = (sessionId = 'session-1'): RequestPermissionRequest => ({
+  sessionId,
+  toolCall: {
+    toolCallId: `tool-${Math.random()}`,
+    title: 'mcp.open-science-notebook.notebook_execute',
+    status: 'pending'
+  },
+  options: [
+    { optionId: 'allow-session', name: 'Allow for This Session', kind: 'allow_always' },
+    { optionId: 'allow-always', name: "Allow and Don't Ask Again", kind: 'allow_always' },
+    { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+    { optionId: 'decline', name: 'Decline', kind: 'reject_once' }
+  ]
+})
+
 describe('ACP permission broker', () => {
   it('preserves structured tool metadata for risk-aware approval UI', () => {
     const emitted: Array<Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]> = []
@@ -222,6 +238,24 @@ describe('ACP permission broker', () => {
     expect(emitted[0].options.map((option) => option.optionId)).toEqual([
       'allow_once',
       'reject_once'
+    ])
+  })
+
+  it('collapses Codex MCP allow_always options to a single session-scoped Always', () => {
+    const emitted: Array<Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]> = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+
+    void broker.requestPermission(createCodexMcpPermissionRequest(), {
+      profile: 'ask',
+      frameworkId: 'codex',
+      mcpServerNames: ['open-science-notebook']
+    })
+
+    // Only the first allow_always (session-scoped) survives; the persistent one is hidden.
+    expect(emitted[0].options).toEqual([
+      { optionId: 'allow-session', name: 'Allow for This Session', kind: 'allow_always' },
+      { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+      { optionId: 'decline', name: 'Decline', kind: 'reject_once' }
     ])
   })
 
