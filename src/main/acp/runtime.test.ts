@@ -2962,59 +2962,84 @@ describe('ACP runtime session management', () => {
   })
 
   // Regression: claude-code (and OpenAI-compatible providers routed through it) emit reviewer MCP calls
-  // with the sanitized mcp__<server>__<tool> identity in the title/toolCallId and no provider _meta tool
-  // name. The gate must recognize that form or every reviewer tool call is rejected (issue #329).
-  it.each([
-    { label: 'title', toolTitle: 'mcp__open_science_reviewer__read_turn', toolCallId: 'call-a' },
-    {
-      label: 'toolCallId suffix',
-      toolTitle: 'Read audited turn',
-      toolCallId: 'mcp__open_science_reviewer__read_turn_0'
-    }
-  ])(
-    'auto-approves a claude-code reviewer MCP tool identified by $label',
-    async ({ toolTitle, toolCallId }) => {
-      const process = new FakeAgentProcess()
-      let permissionResponse: unknown
-      startPermissionProbeAgent(process, {
-        newSessionId: 'reviewer-session-1',
-        toolCallId,
-        toolTitle,
-        permissionOptions: [
-          { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
-          { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
-        ],
-        onPermissionResponse: (response) => {
-          permissionResponse = response
-        }
-      })
-      const runtime = new AcpRuntime({
-        appVersion: '0.1.0',
-        defaultCwd: '/workspace',
-        spawnAgent: () => asAgentProcess(process),
-        framework: claudeCodeFramework
-      })
+  // with the sanitized mcp__<server>__<tool> identity in the title and no provider _meta tool name. The
+  // gate must recognize that title form or every reviewer tool call is rejected (issue #329).
+  it('auto-approves a claude-code reviewer MCP tool identified by its sanitized title', async () => {
+    const process = new FakeAgentProcess()
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'reviewer-session-1',
+      toolCallId: 'mcp__open_science_reviewer__read_turn_0',
+      toolTitle: 'mcp__open_science_reviewer__read_turn',
+      permissionOptions: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+      ],
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework
+    })
 
-      const { session } = await runtime.buildReviewerSession({
-        cwd: '/workspace',
-        mcpServers: [
-          {
-            type: 'http',
-            name: 'open-science-reviewer',
-            url: 'http://127.0.0.1:1/mcp',
-            headers: []
-          }
-        ]
-      })
-      await session.prompt([{ type: 'text', text: 'read the audited turn' }])
+    const { session } = await runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        { type: 'http', name: 'open-science-reviewer', url: 'http://127.0.0.1:1/mcp', headers: [] }
+      ]
+    })
+    await session.prompt([{ type: 'text', text: 'read the audited turn' }])
 
-      expect(permissionResponse).toEqual({
-        outcome: { outcome: 'selected', optionId: 'allow-once' }
-      })
-      expect(runtime.reviewerRejectedToolCallCount(session.sessionId)).toBe(0)
-      runtime.disposeReviewerSession(session)
-    }
-  )
+    expect(permissionResponse).toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(runtime.reviewerRejectedToolCallCount(session.sessionId)).toBe(0)
+    runtime.disposeReviewerSession(session)
+  })
+
+  // Security: the toolCallId is agent-controlled, so a reviewer-shaped id must NOT authorize a call
+  // whose title/kind are a genuinely disallowed tool. Only the title carries the trusted MCP identity.
+  it('rejects a Bash call that carries a reviewer-shaped toolCallId', async () => {
+    const process = new FakeAgentProcess()
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'reviewer-session-1',
+      toolCallId: 'mcp__open_science_reviewer__read_turn_0',
+      toolTitle: 'Bash',
+      toolKind: 'execute',
+      permissionOptions: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+      ],
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework
+    })
+
+    const { session } = await runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        { type: 'http', name: 'open-science-reviewer', url: 'http://127.0.0.1:1/mcp', headers: [] }
+      ]
+    })
+    await session.prompt([{ type: 'text', text: 'run a shell command with a spoofed id' }])
+
+    expect(permissionResponse).toEqual({
+      outcome: { outcome: 'selected', optionId: 'reject-once' }
+    })
+    expect(runtime.reviewerRejectedToolCallCount(session.sessionId)).toBe(1)
+    runtime.disposeReviewerSession(session)
+  })
 
   it('counts reviewer tool calls rejected by the strict gate', async () => {
     const process = new FakeAgentProcess()

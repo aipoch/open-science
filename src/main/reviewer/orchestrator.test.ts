@@ -409,7 +409,7 @@ describe('reviewer orchestrator', () => {
     await client.$disconnect()
   })
 
-  it('reports the permission gate as the cause when it rejected the reviewer tool calls', async () => {
+  it('notes permission-gate rejections as context on an incomplete review', async () => {
     const process = new FakeAgentProcess()
     startFakeReviewerAgent(process, 'reviewer-session-1', { emitRejectedToolCall: true })
 
@@ -434,8 +434,9 @@ describe('reviewer orchestrator', () => {
     })
 
     expect(review.lifecycle).toBe('error')
+    // The message reports the rejection count as context without claiming it blocked submit_findings.
     expect(review.errorMessage).toContain('rejected by the permission gate')
-    expect(review.errorMessage).not.toContain('stopped without calling submit_findings')
+    expect(review.errorMessage).toContain('stopped without calling submit_findings')
     expect(review.checks).toHaveLength(0)
 
     await client.$disconnect()

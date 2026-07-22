@@ -329,7 +329,7 @@ const REVIEWER_MCP_OPENCODE_TOOL_NAMES = new Set(
 const REVIEWER_MCP_LEAF_TOOL_NAMES = new Set<string>(Object.values(REVIEWER_MCP_TOOLS))
 // claude-code namespaces MCP tools as mcp__<server>__<tool> and sanitizes the server name by replacing
 // every non-alphanumeric char with an underscore, so "open-science-reviewer" becomes
-// "open_science_reviewer". Match that sanitized identity, which appears in the tool call title/id and
+// "open_science_reviewer". Match that sanitized identity, which appears in the tool call title and
 // carries no provider _meta tool name.
 const REVIEWER_MCP_SERVER_NAME_SANITIZED = REVIEWER_MCP_SERVER_NAME.replace(/[^a-zA-Z0-9]/g, '_')
 const REVIEWER_MCP_CLAUDE_TOOL_NAMES = new Set(
@@ -3046,14 +3046,15 @@ class AcpRuntime {
     }
   }
 
-  // Returns the leaf reviewer tool name when a claude-code MCP identity string matches the reviewer.
-  // claude-code sanitizes server names (hyphens → underscores) and may append a _<n> disambiguator to
-  // the toolCallId; strip it before checking so both the title and toolCallId forms are recognized.
-  private matchReviewerClaudeToolName(candidate: string | null | undefined): string | undefined {
-    if (typeof candidate !== 'string') return undefined
-    const stripped = candidate.replace(/_\d+$/, '')
-    if (REVIEWER_MCP_CLAUDE_TOOL_NAMES.has(stripped)) return stripped
-    return undefined
+  // Returns the leaf reviewer tool name when a claude-code MCP *title* matches the reviewer. The
+  // identity must come from the title (the same field the generic MCP classifier trusts), never the
+  // toolCallId: a tool call id is an opaque, agent-chosen string, so matching it would let a Bash call
+  // carrying a reviewer-shaped id (e.g. mcp__open_science_reviewer__read_turn_0) slip past the gate.
+  // claude-code sanitizes server names (hyphens → underscores) and emits the exact mcp__<server>__<tool>
+  // form as the title with no numeric suffix, so an exact set membership check is sufficient.
+  private matchReviewerClaudeToolName(title: string | null | undefined): string | undefined {
+    if (typeof title !== 'string') return undefined
+    return REVIEWER_MCP_CLAUDE_TOOL_NAMES.has(title) ? title : undefined
   }
 
   // Grants only the dedicated reviewer MCP. The old implementation selected the first available option
@@ -3081,13 +3082,13 @@ class AcpRuntime {
         ? toolName
         : undefined
     // claude-code (and the OpenAI-compatible providers routed through it) emit reviewer MCP calls with
-    // no provider _meta tool name; the mcp__<sanitized-server>__<tool> identity rides only in the tool
-    // call title or its toolCallId (the latter may carry a trailing _<n> disambiguator). Recognize it
-    // there so the strict allowlist does not reject the reviewer's own tools.
+    // no provider _meta tool name; the sanitized mcp__<server>__<tool> identity rides in the tool call
+    // title. Recognize it there — the same field the generic MCP classifier trusts — so the strict
+    // allowlist does not reject the reviewer's own tools. The toolCallId is deliberately not consulted:
+    // it is agent-controlled, so trusting it would let a Bash call with a reviewer-shaped id slip past.
     const claudeToolName =
       toolName == null && frameworkId === 'claude-code'
-        ? (this.matchReviewerClaudeToolName(reportedTitle) ??
-          this.matchReviewerClaudeToolName(params.toolCall?.toolCallId))
+        ? this.matchReviewerClaudeToolName(reportedTitle)
         : undefined
     const isReviewerMcp =
       mcpServerNames.length === 1 &&

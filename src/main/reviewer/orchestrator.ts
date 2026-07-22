@@ -106,12 +106,13 @@ const DEFAULT_SESSION_REFRESH_TIMEOUT_MS = 10_000
 const SESSION_REFRESH_POLL_MS = 50
 
 // A review can end without submit_findings for two very different reasons: the reviewer genuinely
-// stalled, or the permission gate rejected its own tool calls (submit_findings included). Report the
-// gate case explicitly instead of the misleading "stopped without calling submit_findings".
+// stalled, or the permission gate rejected its tool calls. The rejection counter cannot tell these
+// apart — it counts every rejected call, including tools the gate is *meant* to block (Bash/network) —
+// so the message reports the count as context without asserting it blocked submit_findings.
 const incompleteReviewMessage = (rejectedToolCalls: number): string =>
   rejectedToolCalls > 0
-    ? `Reviewer tool calls were rejected by the permission gate (${rejectedToolCalls} blocked); ` +
-      'submit_findings never reached the orchestrator.'
+    ? 'Reviewer stopped without calling submit_findings; ' +
+      `${rejectedToolCalls} tool call(s) were also rejected by the permission gate.`
     : 'Reviewer stopped without calling submit_findings.'
 
 // Streaming content deltas are emitted one-per-chunk as the reviewer writes its message/thinking, so
